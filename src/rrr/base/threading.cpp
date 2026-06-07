@@ -24,83 +24,183 @@ export namespace rrr {
 // wrapper is `@safe` with the single libc call wrapped in an inline
 // `@unsafe` block.
 
-// @safe
-inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
+// Pthread_spin_* wrappers around libc pthread spin primitives. Each
+// passes the caller-owned `pthread_spinlock_t*` through to the matching
+// libc call and verifies the return code.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn Pthread_spin_init(lock: *mut pthread_spinlock_t, pshared: i32) {
     // @unsafe { libc pthread_spin_init }
     { verify(pthread_spin_init(lock, pshared) == 0); }
 }
 
-// @safe
-inline void Pthread_spin_lock(pthread_spinlock_t* lock) {
+fn Pthread_spin_lock(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_lock }
     { verify(pthread_spin_lock(lock) == 0); }
 }
 
-// @safe
-inline void Pthread_spin_unlock(pthread_spinlock_t* lock) {
+fn Pthread_spin_unlock(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_unlock }
     { verify(pthread_spin_unlock(lock) == 0); }
 }
 
-// @safe
-inline void Pthread_spin_destroy(pthread_spinlock_t* lock) {
+fn Pthread_spin_destroy(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_destroy }
     { verify(pthread_spin_destroy(lock) == 0); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=threading.pthread_spin version=1 rust_sha256=2beea7b64b35e14d0fc3301e572e477dc6f5792d62795118122329b24336b3be*/
+void Pthread_spin_init(pthread_spinlock_t* lock, int32_t pshared);
+void Pthread_spin_lock(pthread_spinlock_t* lock);
+void Pthread_spin_unlock(pthread_spinlock_t* lock);
+void Pthread_spin_destroy(pthread_spinlock_t* lock);
 
-// @safe
-inline void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
+void Pthread_spin_init(pthread_spinlock_t* lock, int32_t pshared) {
+    {
+        verify(pthread_spin_init(lock, std::move(pshared)) == 0);
+    }
+}
+
+void Pthread_spin_lock(pthread_spinlock_t* lock) {
+    {
+        verify(pthread_spin_lock(lock) == 0);
+    }
+}
+
+void Pthread_spin_unlock(pthread_spinlock_t* lock) {
+    {
+        verify(pthread_spin_unlock(lock) == 0);
+    }
+}
+
+void Pthread_spin_destroy(pthread_spinlock_t* lock) {
+    {
+        verify(pthread_spin_destroy(lock) == 0);
+    }
+}
+/*RUSTYCPP:GEN-END id=threading.pthread_spin*/
+
+// Pthread_mutex_* / Pthread_cond_* wrappers around libc pthread mutex
+// + condvar primitives. Each forwards the caller-owned raw pointers
+// through to the matching libc call and verifies the return code.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+fn Pthread_mutex_init(mutex: *mut pthread_mutex_t, attr: *const pthread_mutexattr_t) {
     // @unsafe { libc pthread_mutex_init }
     { verify(pthread_mutex_init(mutex, attr) == 0); }
 }
 
-// @safe
-inline void Pthread_mutex_lock(pthread_mutex_t* mutex) {
+fn Pthread_mutex_lock(mutex: *mut pthread_mutex_t) {
     // @unsafe { libc pthread_mutex_lock }
     { verify(pthread_mutex_lock(mutex) == 0); }
 }
 
-// @safe
-inline void Pthread_mutex_unlock(pthread_mutex_t* mutex) {
+fn Pthread_mutex_unlock(mutex: *mut pthread_mutex_t) {
     // @unsafe { libc pthread_mutex_unlock }
     { verify(pthread_mutex_unlock(mutex) == 0); }
 }
 
-// @safe
-inline void Pthread_mutex_destroy(pthread_mutex_t* mutex) {
+fn Pthread_mutex_destroy(mutex: *mut pthread_mutex_t) {
     // @unsafe { libc pthread_mutex_destroy }
     { verify(pthread_mutex_destroy(mutex) == 0); }
 }
 
-// @safe
-inline void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr) {
+fn Pthread_cond_init(cond: *mut pthread_cond_t, attr: *const pthread_condattr_t) {
     // @unsafe { libc pthread_cond_init }
     { verify(pthread_cond_init(cond, attr) == 0); }
 }
 
-// @safe
-inline void Pthread_cond_destroy(pthread_cond_t* cond) {
+fn Pthread_cond_destroy(cond: *mut pthread_cond_t) {
     // @unsafe { libc pthread_cond_destroy }
     { verify(pthread_cond_destroy(cond) == 0); }
 }
 
-// @safe
-inline void Pthread_cond_signal(pthread_cond_t* cond) {
+fn Pthread_cond_signal(cond: *mut pthread_cond_t) {
     // @unsafe { libc pthread_cond_signal }
     { verify(pthread_cond_signal(cond) == 0); }
 }
 
-// @safe
-inline void Pthread_cond_broadcast(pthread_cond_t* cond) {
+fn Pthread_cond_broadcast(cond: *mut pthread_cond_t) {
     // @unsafe { libc pthread_cond_broadcast }
     { verify(pthread_cond_broadcast(cond) == 0); }
 }
 
-// @safe
-inline void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
+fn Pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) {
     // @unsafe { libc pthread_cond_wait }
     { verify(pthread_cond_wait(cond, mutex) == 0); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=threading.pthread_mutex_cond version=1 rust_sha256=33a2388103ed79a770c9bb55bd8bac55a1e4472d1112dcae41064362726c8467*/
+void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr);
+void Pthread_mutex_lock(pthread_mutex_t* mutex);
+void Pthread_mutex_unlock(pthread_mutex_t* mutex);
+void Pthread_mutex_destroy(pthread_mutex_t* mutex);
+void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr);
+void Pthread_cond_destroy(pthread_cond_t* cond);
+void Pthread_cond_signal(pthread_cond_t* cond);
+void Pthread_cond_broadcast(pthread_cond_t* cond);
+void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex);
+
+void Pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t* attr) {
+    {
+        verify(pthread_mutex_init(mutex, attr) == 0);
+    }
+}
+
+void Pthread_mutex_lock(pthread_mutex_t* mutex) {
+    {
+        verify(pthread_mutex_lock(mutex) == 0);
+    }
+}
+
+void Pthread_mutex_unlock(pthread_mutex_t* mutex) {
+    {
+        verify(pthread_mutex_unlock(mutex) == 0);
+    }
+}
+
+void Pthread_mutex_destroy(pthread_mutex_t* mutex) {
+    {
+        verify(pthread_mutex_destroy(mutex) == 0);
+    }
+}
+
+void Pthread_cond_init(pthread_cond_t* cond, const pthread_condattr_t* attr) {
+    {
+        verify(pthread_cond_init(cond, attr) == 0);
+    }
+}
+
+void Pthread_cond_destroy(pthread_cond_t* cond) {
+    {
+        verify(pthread_cond_destroy(cond) == 0);
+    }
+}
+
+void Pthread_cond_signal(pthread_cond_t* cond) {
+    {
+        verify(pthread_cond_signal(cond) == 0);
+    }
+}
+
+void Pthread_cond_broadcast(pthread_cond_t* cond) {
+    {
+        verify(pthread_cond_broadcast(cond) == 0);
+    }
+}
+
+void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
+    {
+        verify(pthread_cond_wait(cond, mutex) == 0);
+    }
+}
+/*RUSTYCPP:GEN-END id=threading.pthread_mutex_cond*/
 
 // @safe
 inline void Pthread_create(pthread_t* thread,
