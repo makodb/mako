@@ -30,8 +30,24 @@ enum class OverflowStrategy {
 };
 
 // Canonical queue callback errors for caller observability.
-inline constexpr int kRequestQueueRejectedError = EAGAIN;
-inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Same
+// shape as the wire-protocol constants in internal_protocol.cpp —
+// libc-macro RHS values (EAGAIN / ETIMEDOUT) get emitted verbatim.
+#if RUSTYCPP_RUST
+const kRequestQueueRejectedError: i32 = EAGAIN;
+const kRequestQueueExpiredError: i32 = ETIMEDOUT;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.err_codes version=1 rust_sha256=f0652fbb44002bbb667042a6bbb01ba5cd204496acc11bf10713b53ab4321f2d*/
+extern const int32_t kRequestQueueRejectedError;
+extern const int32_t kRequestQueueExpiredError;
+
+constexpr int32_t kRequestQueueRejectedError = EAGAIN;
+
+constexpr int32_t kRequestQueueExpiredError = ETIMEDOUT;
+/*RUSTYCPP:GEN-END id=request_queue.err_codes*/
 
 // Type alias for QueuedRequest's completion callback. Defined outside
 // the DSL block so the inline-Rust source can refer to it by an
