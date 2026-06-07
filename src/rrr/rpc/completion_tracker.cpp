@@ -421,12 +421,37 @@ public:
 /**
  * @safe - Result of a completion query
  */
-enum class CompletionStatus : uint8_t {
-    NOT_FOUND = 0,      // XID not in completion log
-    COMPLETED = 1,      // XID completed successfully
-    COMPLETED_WITH_ERROR = 2,  // XID completed with error
-    EXPIRED = 3         // XID was completed but entry expired
+// `CompletionStatus` — result of a completion query. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+#[repr(u8)]
+enum CompletionStatus {
+    NOT_FOUND = 0,
+    COMPLETED = 1,
+    COMPLETED_WITH_ERROR = 2,
+    EXPIRED = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.status version=1 rust_sha256=5a8ff53e7d4b35269cb9d71788d0564ed2bb5f64332622e6888d5048af0616fd*/
+enum class CompletionStatus;
+constexpr CompletionStatus CompletionStatus_NOT_FOUND();
+constexpr CompletionStatus CompletionStatus_COMPLETED();
+constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR();
+constexpr CompletionStatus CompletionStatus_EXPIRED();
+
+enum class CompletionStatus {
+    NOT_FOUND = 0,
+    COMPLETED = 1,
+    COMPLETED_WITH_ERROR = 2,
+    EXPIRED = 3
 };
+inline constexpr CompletionStatus CompletionStatus_NOT_FOUND() { return CompletionStatus::NOT_FOUND; }
+inline constexpr CompletionStatus CompletionStatus_COMPLETED() { return CompletionStatus::COMPLETED; }
+inline constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR() { return CompletionStatus::COMPLETED_WITH_ERROR; }
+inline constexpr CompletionStatus CompletionStatus_EXPIRED() { return CompletionStatus::EXPIRED; }
+/*RUSTYCPP:GEN-END id=completion_tracker.status*/
 
 /**
  * @safe - Result struct for completion queries.

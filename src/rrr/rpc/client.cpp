@@ -103,13 +103,29 @@ export namespace rrr {
 // TCP `ChannelFactoryProxy` when none has been bound via
 // `set_channel_factory(...)`.
 
-/**
- * Behavior when a request is made while disconnected.
- */
+// `DisconnectBehavior` — categorical tag for what Client::request_*
+// does when the connection is down. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block.
+#if RUSTYCPP_RUST
+enum DisconnectBehavior {
+    QUEUE,
+    FAIL_FAST,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.disconnect_behavior version=1 rust_sha256=1264991ea2319838074ef74280655bc750a6fe3de14ac2eee3d01644d5f5a66f*/
+enum class DisconnectBehavior;
+constexpr DisconnectBehavior DisconnectBehavior_QUEUE();
+constexpr DisconnectBehavior DisconnectBehavior_FAIL_FAST();
+
 enum class DisconnectBehavior {
-    QUEUE,      // Queue requests for later replay (default)
-    FAIL_FAST   // Immediately fail with ENOTCONN
+    QUEUE,
+    FAIL_FAST
 };
+inline constexpr DisconnectBehavior DisconnectBehavior_QUEUE() { return DisconnectBehavior::QUEUE; }
+inline constexpr DisconnectBehavior DisconnectBehavior_FAIL_FAST() { return DisconnectBehavior::FAIL_FAST; }
+/*RUSTYCPP:GEN-END id=client.disconnect_behavior*/
 
 /**
  * Configuration for request buffering during disconnection.

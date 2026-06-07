@@ -59,13 +59,40 @@ struct RpcServiceContext;
  * Server shutdown phases for graceful shutdown support.
  * Progression: RUNNING -> STOP_ACCEPTING -> DRAINING -> CLOSING -> STOPPED
  */
+// `ShutdownPhase` — server-shutdown FSM state. Authored as inline Rust
+// DSL: the `#if RUSTYCPP_RUST` block below is the source of truth;
+// the transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block.
+#if RUSTYCPP_RUST
+enum ShutdownPhase {
+    RUNNING,
+    STOP_ACCEPTING,
+    DRAINING,
+    CLOSING,
+    STOPPED,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.shutdown_phase version=1 rust_sha256=81e13454ca98eab16f2d19f5ffc68ccdd723a3fa26e9a3324485b87e0b21fd8d*/
+enum class ShutdownPhase;
+constexpr ShutdownPhase ShutdownPhase_RUNNING();
+constexpr ShutdownPhase ShutdownPhase_STOP_ACCEPTING();
+constexpr ShutdownPhase ShutdownPhase_DRAINING();
+constexpr ShutdownPhase ShutdownPhase_CLOSING();
+constexpr ShutdownPhase ShutdownPhase_STOPPED();
+
 enum class ShutdownPhase {
-    RUNNING,         // Normal operation
-    STOP_ACCEPTING,  // Not accepting new connections
-    DRAINING,        // Waiting for in-flight requests to complete
-    CLOSING,         // Closing all connections
-    STOPPED          // Fully stopped
+    RUNNING,
+    STOP_ACCEPTING,
+    DRAINING,
+    CLOSING,
+    STOPPED
 };
+inline constexpr ShutdownPhase ShutdownPhase_RUNNING() { return ShutdownPhase::RUNNING; }
+inline constexpr ShutdownPhase ShutdownPhase_STOP_ACCEPTING() { return ShutdownPhase::STOP_ACCEPTING; }
+inline constexpr ShutdownPhase ShutdownPhase_DRAINING() { return ShutdownPhase::DRAINING; }
+inline constexpr ShutdownPhase ShutdownPhase_CLOSING() { return ShutdownPhase::CLOSING; }
+inline constexpr ShutdownPhase ShutdownPhase_STOPPED() { return ShutdownPhase::STOPPED; }
+/*RUSTYCPP:GEN-END id=server.shutdown_phase*/
 
 // @safe - Convert ShutdownPhase to string for logging
 inline const char* shutdown_phase_to_string(ShutdownPhase phase) {
