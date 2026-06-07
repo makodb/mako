@@ -13,11 +13,27 @@ import std;
 
 export namespace rrr {
 
-inline uint64_t current_time_us() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+// Wrapper around rusty::sys::time::clock_monotonic_us. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Previously called `clock_gettime(CLOCK_MONOTONIC)` directly — a raw
+// libc syscall the DSL doesn't model. Now delegates to
+// `rusty::sys::time::clock_monotonic_us`, the @safe rusty wrapper
+// that already underpins `queued_request_time_us` in request_queue.cpp.
+#if RUSTYCPP_RUST
+fn current_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.current_time_us version=1 rust_sha256=59d1205c379f1e9809a003db13d7fab7a67a858c4a53d9a7b77085ae984b22a0*/
+uint64_t current_time_us();
+
+uint64_t current_time_us() {
+    return rusty::sys::time::clock_monotonic_us();
+}
+/*RUSTYCPP:GEN-END id=circuit_breaker.current_time_us*/
 
 enum class CircuitState : int {
     CLOSED = 0,
