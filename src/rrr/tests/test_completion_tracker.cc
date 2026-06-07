@@ -99,6 +99,15 @@ class CompletionTrackerTest : public ::testing::Test {
 protected:
     CompletionTracker tracker_;
 
+    // Explicit noexcept dtor — gtest's `virtual ~Test()` is defaulted in
+    // the .cc TU, so it's noexcept(true). `CompletionTracker` transitively
+    // owns a `rusty::HashSet<int64_t>` whose RawTable dtor is
+    // `noexcept(false)`, which would make this fixture's implicit dtor
+    // `noexcept(false)` — strictly laxer than the gtest base, which clang
+    // rejects. Promise noexcept and accept that an exception escaping
+    // CompletionTracker's drop will terminate (it never does in practice).
+    ~CompletionTrackerTest() noexcept override = default;
+
     void SetUp() override {
         tracker_.set_config(CompletionTrackerConfig::defaults());
     }
