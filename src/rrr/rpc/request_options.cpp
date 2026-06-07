@@ -15,13 +15,42 @@ import rrr.rand;
 // operator-overload chains.
 export namespace rrr {
 
-enum class TimeoutType : uint8_t {
+// `TimeoutType` — categorical tag for which timeout fired in a
+// request lifecycle. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block with the C++ `enum class : uint8_t`.
+#if RUSTYCPP_RUST
+#[repr(u8)]
+enum TimeoutType {
+    NONE = 0,
+    CONNECT_TIMEOUT,
+    REQUEST_TIMEOUT,
+    RESPONSE_TIMEOUT,
+    TOTAL_TIMEOUT,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_options.timeout_type version=1 rust_sha256=ee966c5adf41577267e2ffd0f3b6ddaf04f80abb05651cb07d588f30cfe6cfac*/
+enum class TimeoutType;
+constexpr TimeoutType TimeoutType_NONE();
+constexpr TimeoutType TimeoutType_CONNECT_TIMEOUT();
+constexpr TimeoutType TimeoutType_REQUEST_TIMEOUT();
+constexpr TimeoutType TimeoutType_RESPONSE_TIMEOUT();
+constexpr TimeoutType TimeoutType_TOTAL_TIMEOUT();
+
+enum class TimeoutType {
     NONE = 0,
     CONNECT_TIMEOUT,
     REQUEST_TIMEOUT,
     RESPONSE_TIMEOUT,
     TOTAL_TIMEOUT
 };
+inline constexpr TimeoutType TimeoutType_NONE() { return TimeoutType::NONE; }
+inline constexpr TimeoutType TimeoutType_CONNECT_TIMEOUT() { return TimeoutType::CONNECT_TIMEOUT; }
+inline constexpr TimeoutType TimeoutType_REQUEST_TIMEOUT() { return TimeoutType::REQUEST_TIMEOUT; }
+inline constexpr TimeoutType TimeoutType_RESPONSE_TIMEOUT() { return TimeoutType::RESPONSE_TIMEOUT; }
+inline constexpr TimeoutType TimeoutType_TOTAL_TIMEOUT() { return TimeoutType::TOTAL_TIMEOUT; }
+/*RUSTYCPP:GEN-END id=request_options.timeout_type*/
 
 // `RequestOptions` — per-request timeout + retry config POD plus a
 // handful of preset factories and a stateless `calculate_delay_ms`
