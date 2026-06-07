@@ -118,19 +118,47 @@ struct PendingRequestGuard {
     PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
 };
 
-// @safe - Simple request container
+// `Request` — simple in-flight RPC request container.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The `{rusty::None}` field default
+// on `pending_guard` drops away — `Option<T>::Option()` already
+// default-constructs to `None`, so `make_box<Request>()` zero-init
+// callers keep observing the same initial state.
+#if RUSTYCPP_RUST
 struct Request {
-    Marshal m;
-    i64 xid;
-    rusty::Option<rusty::Box<PendingRequestGuard>> pending_guard{rusty::None};
+    m: Marshal,
+    xid: i64,
+    pending_guard: rusty::Option<rusty::Box<PendingRequestGuard>>,
+}
 
-    // @safe - Attach request-lifetime pending counter guard once.
-    void attach_pending_guard(const rusty::Arc<std::atomic<int>>& counter) {
-        if (pending_guard.is_none() && counter.is_valid()) {
-            pending_guard = rusty::Some(rusty::make_box<PendingRequestGuard>(counter.clone()));
+impl Request {
+    fn attach_pending_guard(&mut self, counter: &rusty::Arc<std::atomic<i32>>) {
+        if self.pending_guard.is_none() && counter.is_valid() {
+            self.pending_guard = rusty::Some(rusty::make_box::<PendingRequestGuard>(counter.clone()));
         }
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=6def5a3206d9261c1289ce335913e64090f08e3446f690c4091ec31144fdd0c4*/
+struct Request;
+
+struct Request {
+    Marshal m;
+    int64_t xid;
+    rusty::Option<rusty::Box<PendingRequestGuard>> pending_guard;
+
+    void attach_pending_guard(const rusty::Arc<std::atomic<int32_t>>& counter);
 };
+
+
+void Request::attach_pending_guard(const rusty::Arc<std::atomic<int32_t>>& counter) {
+    if (this->pending_guard.is_none() && counter.is_valid()) {
+        this->pending_guard = rusty::Option<rusty::Box<PendingRequestGuard>>(rusty::make_box<PendingRequestGuard>(rusty::clone(counter)));
+    }
+}
+/*RUSTYCPP:GEN-END id=server.request*/
 
 // Forward declaration for WeakServerConnection
 class ServerConnection;
