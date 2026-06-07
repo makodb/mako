@@ -194,11 +194,24 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
-// @safe - rusty::sys::process::sysconf is @safe.
-int get_ncpu() {
-    return static_cast<int>(
-        rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
+// Thin wrapper around `rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN)`.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Same shape as the rrr time
+// wrappers (`current_time_us` / `heartbeat_time_us` / etc.) — one-line
+// passthroughs into the @safe rusty::sys::* layer.
+#if RUSTYCPP_RUST
+fn get_ncpu() -> i32 {
+    rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN) as i32
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.get_ncpu version=1 rust_sha256=327365961737aad75f0a0355a2f51b97d7bab81213e792a945a6319eac498564*/
+int32_t get_ncpu();
+
+int32_t get_ncpu() {
+    return static_cast<int32_t>(rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
+}
+/*RUSTYCPP:GEN-END id=misc.get_ncpu*/
 
 // @unsafe - static `char[PATH_MAX]` buffer, snprintf, readlink syscall,
 // returns raw `const char*` into static storage. (getpid is now @safe
