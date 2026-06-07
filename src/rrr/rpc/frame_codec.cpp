@@ -49,11 +49,34 @@ constexpr int32_t kMaxFramePayloadSize = static_cast<int32_t>(2147483647);
 // Decode results
 // ---------------------------------------------------------------------------
 
-enum class FrameDecodeStatus : int {
-    NeedMoreBytes = 0, // not enough buffered bytes to form a complete frame
-    Complete      = 1, // a full frame is available
-    Malformed     = 2, // size header decodes to a negative or out-of-range size
+// `FrameDecodeStatus` — return code from frame_codec_peek_header /
+// FrameStreamReader::next_frame. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum FrameDecodeStatus {
+    NeedMoreBytes = 0,
+    Complete = 1,
+    Malformed = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.decode_status version=1 rust_sha256=d3e1ec610533207465603ff52cd7106252ec8cf46fa0ea3a9ffc4e26dcb993f6*/
+enum class FrameDecodeStatus;
+constexpr FrameDecodeStatus FrameDecodeStatus_NeedMoreBytes();
+constexpr FrameDecodeStatus FrameDecodeStatus_Complete();
+constexpr FrameDecodeStatus FrameDecodeStatus_Malformed();
+
+enum class FrameDecodeStatus {
+    NeedMoreBytes = 0,
+    Complete = 1,
+    Malformed = 2
 };
+inline constexpr FrameDecodeStatus FrameDecodeStatus_NeedMoreBytes() { return FrameDecodeStatus::NeedMoreBytes; }
+inline constexpr FrameDecodeStatus FrameDecodeStatus_Complete() { return FrameDecodeStatus::Complete; }
+inline constexpr FrameDecodeStatus FrameDecodeStatus_Malformed() { return FrameDecodeStatus::Malformed; }
+/*RUSTYCPP:GEN-END id=frame_codec.decode_status*/
 
 inline constexpr const char* frame_decode_status_to_string(FrameDecodeStatus s) {
     switch (s) {
