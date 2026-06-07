@@ -162,10 +162,29 @@ template <class U> class ChannelListenerBaseAdapterRefMut;
 
 using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;
 
+// `ConnectResult` — value-result returned by `ChannelFactoryBase::connect`.
+// All call sites use positional brace init (`ConnectResult{connection,
+// error}`), so dropping the field-level defaults (`{rusty::None}` /
+// `= ChannelError::None`) is safe: no `ConnectResult{}` zero-init callers
+// remain in the tree.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ struct.
+#if RUSTYCPP_RUST
 struct ConnectResult {
-    rusty::Option<ChannelConnectionProxy> connection{rusty::None};
-    ChannelError                          error = ChannelError::None;
+    connection: rusty::Option<ChannelConnectionProxy>,
+    error: ChannelError,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.connect_result version=1 rust_sha256=7bbe3787f9a7b6904d3b5194e148a9baab9ef1d9f6971846ad946afb022873cf*/
+struct ConnectResult;
+
+struct ConnectResult {
+    rusty::Option<ChannelConnectionProxy> connection;
+    ChannelError error;
 };
+/*RUSTYCPP:GEN-END id=channel.connect_result*/
 
 // `ChannelFactoryBase` — abstract transport factory (TcpFactory,
 // inmemory factory, ...). Tier-1.4 trait migration. `backend_name`
