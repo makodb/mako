@@ -745,6 +745,27 @@ TypedFutureResultAwaiter<TypedFuture> make_typed_future_result_awaitable(
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
 
+// Async-callback slot array size — slim alternative to `pending_fu_` for
+// callers that don't need an `Arc<Future>` handle (no sync-wait,
+// no retry, no reply-buffer inspection — just "call me back when
+// the reply arrives"). Indexed by `xid % kAsyncSlotCount`. At
+// typical in-flight depths (a few thousand), collisions are
+// impossible. See `ClientConnection::request_async` below.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Moved
+// out of `ClientConnection` class scope (was `static constexpr size_t
+// kAsyncSlotCount` there) because the DSL emits constants at namespace
+// scope. Every call site uses the unqualified name and resolves via
+// namespace lookup, which still finds it.
+#if RUSTYCPP_RUST
+const kAsyncSlotCount: usize = 16384;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.async_slot_count version=1 rust_sha256=57a7b55ab412027a575a05239198cafdcdf9f2a955fcf5ebbe2dd8788b45714c*/
+constexpr size_t kAsyncSlotCount = static_cast<size_t>(16384);
+/*RUSTYCPP:GEN-END id=client.async_slot_count*/
+
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
 // chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
@@ -859,13 +880,6 @@ class ClientConnection {
     SpinMutex<rusty::HashMap<i64, rusty::Arc<Future>>> pending_fu_{rusty::HashMap<i64, rusty::Arc<Future>>()};
 
 public:
-    // Async-callback slot array — slim alternative to `pending_fu_` for
-    // callers that don't need an `Arc<Future>` handle (no sync-wait,
-    // no retry, no reply-buffer inspection — just "call me back when
-    // the reply arrives").  Indexed by `xid % kAsyncSlotCount`.  At
-    // typical in-flight depths (a few thousand), collisions are
-    // impossible.  See `request_async` below.
-    static constexpr size_t kAsyncSlotCount = 16384;
     using AsyncReplyCallback = rusty::Function<
         void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 private:
