@@ -475,6 +475,24 @@ struct FiberContext {
 
 extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
 
+// Default stack size for stackless fibers (1 MiB). Lifted out of
+// `fiber_task_t` class scope (was `private static constexpr`) because
+// DSL constants live at namespace scope. The one use site
+// (`fiber_task_t::init_context`) references it unqualified, so
+// namespace lookup still resolves to this constant.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+const kDefaultStackBytes: usize = 1usize << 20;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_default_stack version=1 rust_sha256=573a148f9a126f68ff3cd154018259cab614444f2c74a62837b70635855b9e68*/
+extern const size_t kDefaultStackBytes;
+
+constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
+/*RUSTYCPP:GEN-END id=reactor.fiber_default_stack*/
+
 class fiber_task_t;
 
 class fiber_yield_t {
@@ -516,7 +534,6 @@ class fiber_task_t {
     FINISHED
   };
 
-  static constexpr std::size_t kDefaultStackBytes = 1u << 20;  // 1 MiB
   static thread_local fiber_task_t* tls_active_task_;
 
   static void entry_trampoline();
