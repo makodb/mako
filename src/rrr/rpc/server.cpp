@@ -651,7 +651,16 @@ DeferredReply::~DeferredReply() noexcept(false) {
 // before the DSL prep dropped those defaults; preserved here so call
 // sites that previously relied on the implicit value can keep the same
 // behaviour by passing it explicitly.
-inline constexpr uint64_t kDefaultDrainTimeoutMs = 30000;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr.
+#if RUSTYCPP_RUST
+const kDefaultDrainTimeoutMs: u64 = 30000u64;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.const_drain_timeout version=1 rust_sha256=33e39f14c5b597708d9bf6b9c5a742d0bb58df09e9976f26e91613b8b6430b9c*/
+constexpr uint64_t kDefaultDrainTimeoutMs = static_cast<uint64_t>(30000);
+/*RUSTYCPP:GEN-END id=server.const_drain_timeout*/
 
 // Shutdown coordination state — guarded by `Server::shutdown_state_field`
 // (a `rusty::Mutex<ShutdownState>`). Defined outside the DSL block so the
