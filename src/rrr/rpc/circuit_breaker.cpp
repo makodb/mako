@@ -35,11 +35,33 @@ uint64_t current_time_us() {
 }
 /*RUSTYCPP:GEN-END id=circuit_breaker.current_time_us*/
 
-enum class CircuitState : int {
+// `CircuitState` — circuit-breaker FSM state. Authored as inline Rust
+// DSL: the `#if RUSTYCPP_RUST` block below is the source of truth;
+// the transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum CircuitState {
+    CLOSED = 0,
+    OPEN = 1,
+    HALF_OPEN = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.circuit_state version=1 rust_sha256=07bc3717701d61ea9ba1c278fe0410c40e6b2eb99468f298e2449462497a3489*/
+enum class CircuitState;
+constexpr CircuitState CircuitState_CLOSED();
+constexpr CircuitState CircuitState_OPEN();
+constexpr CircuitState CircuitState_HALF_OPEN();
+
+enum class CircuitState {
     CLOSED = 0,
     OPEN = 1,
     HALF_OPEN = 2
 };
+inline constexpr CircuitState CircuitState_CLOSED() { return CircuitState::CLOSED; }
+inline constexpr CircuitState CircuitState_OPEN() { return CircuitState::OPEN; }
+inline constexpr CircuitState CircuitState_HALF_OPEN() { return CircuitState::HALF_OPEN; }
+/*RUSTYCPP:GEN-END id=circuit_breaker.circuit_state*/
 
 inline const char* circuit_state_to_string(CircuitState state) {
     switch (state) {
