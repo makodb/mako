@@ -4,6 +4,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <rusty/option.hpp>
 #include "../rrr.hpp"
 
 namespace rrr {
@@ -15,7 +16,13 @@ protected:
     }
 
     void TearDown() override {
-        // Clean up
+        // Drop the thread-local reactor + any running-fiber slot between
+        // tests so each test gets a fresh scheduler. Without this, fibers
+        // suspended in one test (e.g. after a yield/sleep) stay registered
+        // in the next test's `reactor->loop()` call and block it forever.
+        // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
+        *Reactor::sp_running_fiber_th_.borrow_mut() = rusty::None;
+        Reactor::sp_reactor_th_ = rusty::None;
     }
 };
 
