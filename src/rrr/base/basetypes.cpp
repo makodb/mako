@@ -255,7 +255,16 @@ void Counter::reset(int64_t start) const {
 // callers (fiber.cpp, fiber_test.cc) migrate from
 // `Time::RRR_USEC_PER_SEC` to bare `RRR_USEC_PER_SEC` (or
 // `rrr::RRR_USEC_PER_SEC` from outside the namespace).
-inline constexpr uint64_t RRR_USEC_PER_SEC = 1000000;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr.
+#if RUSTYCPP_RUST
+const RRR_USEC_PER_SEC: u64 = 1000000u64;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.usec_per_sec version=1 rust_sha256=fdcd10a701ceea804c90d4007d1b8fd274b61b7daade45fc6388979c7afb3fb2*/
+constexpr uint64_t RRR_USEC_PER_SEC = static_cast<uint64_t>(1000000);
+/*RUSTYCPP:GEN-END id=basetypes.usec_per_sec*/
 
 // @safe - precondition check that aborts on failure. Defined outside
 // the DSL because `verify()` lives in `rrr.debugging` which imports
