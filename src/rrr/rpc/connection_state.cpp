@@ -13,7 +13,31 @@ import std;
 
 export namespace rrr {
 
-enum class ConnectionState : int {
+// `ConnectionState` — RPC connection lifecycle FSM state. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+#[repr(i32)]
+enum ConnectionState {
+    NEW = 0,
+    CONNECTING = 1,
+    CONNECTED = 2,
+    DISCONNECTING = 3,
+    DISCONNECTED = 4,
+    FAILED = 5,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_state.connection_state version=1 rust_sha256=331c7caea343efb561988478429c2ac7b98c8028490a710e6e910ef6ec358d28*/
+enum class ConnectionState;
+constexpr ConnectionState ConnectionState_NEW();
+constexpr ConnectionState ConnectionState_CONNECTING();
+constexpr ConnectionState ConnectionState_CONNECTED();
+constexpr ConnectionState ConnectionState_DISCONNECTING();
+constexpr ConnectionState ConnectionState_DISCONNECTED();
+constexpr ConnectionState ConnectionState_FAILED();
+
+enum class ConnectionState {
     NEW = 0,
     CONNECTING = 1,
     CONNECTED = 2,
@@ -21,6 +45,13 @@ enum class ConnectionState : int {
     DISCONNECTED = 4,
     FAILED = 5
 };
+inline constexpr ConnectionState ConnectionState_NEW() { return ConnectionState::NEW; }
+inline constexpr ConnectionState ConnectionState_CONNECTING() { return ConnectionState::CONNECTING; }
+inline constexpr ConnectionState ConnectionState_CONNECTED() { return ConnectionState::CONNECTED; }
+inline constexpr ConnectionState ConnectionState_DISCONNECTING() { return ConnectionState::DISCONNECTING; }
+inline constexpr ConnectionState ConnectionState_DISCONNECTED() { return ConnectionState::DISCONNECTED; }
+inline constexpr ConnectionState ConnectionState_FAILED() { return ConnectionState::FAILED; }
+/*RUSTYCPP:GEN-END id=connection_state.connection_state*/
 
 inline const char* connection_state_to_string(ConnectionState state) {
     switch (state) {

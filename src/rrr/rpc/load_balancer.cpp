@@ -13,12 +13,37 @@ import std;
 
 export namespace rrr {
 
-enum class LoadBalancingStrategy : uint8_t {
+// `LoadBalancingStrategy` — selection algorithm picked by the
+// LoadBalancer. Authored as inline Rust DSL: the `#if RUSTYCPP_RUST`
+// block below is the source of truth; the transpiler regenerates the
+// matching `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+#[repr(u8)]
+enum LoadBalancingStrategy {
+    RANDOM = 0,
+    ROUND_ROBIN = 1,
+    LEAST_CONNECTIONS = 2,
+    LEAST_LATENCY = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.strategy version=1 rust_sha256=11bb5040a9e54302f28bb33abcd98c64893bcafd45c7d348ad0f77d281b71d5c*/
+enum class LoadBalancingStrategy;
+constexpr LoadBalancingStrategy LoadBalancingStrategy_RANDOM();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_ROUND_ROBIN();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_CONNECTIONS();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_LATENCY();
+
+enum class LoadBalancingStrategy {
     RANDOM = 0,
     ROUND_ROBIN = 1,
     LEAST_CONNECTIONS = 2,
     LEAST_LATENCY = 3
 };
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_RANDOM() { return LoadBalancingStrategy::RANDOM; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_ROUND_ROBIN() { return LoadBalancingStrategy::ROUND_ROBIN; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_CONNECTIONS() { return LoadBalancingStrategy::LEAST_CONNECTIONS; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_LATENCY() { return LoadBalancingStrategy::LEAST_LATENCY; }
+/*RUSTYCPP:GEN-END id=load_balancer.strategy*/
 
 inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strategy) {
     switch (strategy) {
