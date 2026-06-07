@@ -1,8 +1,14 @@
 module;
 
+#include <rusty/move.hpp>
+#include <rusty/slice.hpp>
+
+#include <cstdint>
+
 export module rrr.errors;
 
 import std;
+import rusty;
 
 // @safe - RPC error enums + classification helpers. Pure switch tables
 // + std::string formatting; no raw pointers, syscalls, or operator
@@ -124,19 +130,50 @@ inline bool is_timeout_error(RpcError err) {
     return get_error_category(err) == RpcErrorCategory::TIMEOUT;
 }
 
-inline bool is_retryable_error(RpcError err) {
-    switch (err) {
-        case RpcError::CONNECTION_RESET:
-        case RpcError::NETWORK_UNREACHABLE:
-        case RpcError::HOST_UNREACHABLE:
-        case RpcError::CONNECT_TIMEOUT:
-        case RpcError::REQUEST_TIMEOUT:
-        case RpcError::RESPONSE_TIMEOUT:
-        case RpcError::SERVICE_UNAVAILABLE:
-            return true;
-        default:
-            return false;
+// `is_retryable_error` — pure classification of which `RpcError` codes
+// the client should retry on (transient connection/timeout faults).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Avoids `match err { … }` — the transpiler currently emits the entire
+// rusty cmp/Ord standard-library scaffolding (~130 KB of inlined Rust-
+// std code) when it sees a match arm pattern over an enum. The
+// equivalent if/else-if chain emits cleanly. Switch back to `match`
+// once the transpiler stops shipping cmp/Ord adapters for enum-match.
+#if RUSTYCPP_RUST
+fn is_retryable_error(err: RpcError) -> bool {
+    if err == RpcError::CONNECTION_RESET { true }
+    else if err == RpcError::NETWORK_UNREACHABLE { true }
+    else if err == RpcError::HOST_UNREACHABLE { true }
+    else if err == RpcError::CONNECT_TIMEOUT { true }
+    else if err == RpcError::REQUEST_TIMEOUT { true }
+    else if err == RpcError::RESPONSE_TIMEOUT { true }
+    else if err == RpcError::SERVICE_UNAVAILABLE { true }
+    else { false }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=errors.is_retryable_error version=1 rust_sha256=20628b5cb37cb5cf5202b6560f0b7edeb76f104ebacbe703565a1812cad0a44e*/
+bool is_retryable_error(RpcError err) {
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::CONNECTION_RESET)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::NETWORK_UNREACHABLE)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::HOST_UNREACHABLE)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::CONNECT_TIMEOUT)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::REQUEST_TIMEOUT)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::RESPONSE_TIMEOUT)) {
+        return true;
+    } else if (rusty::detail::deref_if_pointer_like(err) == rusty::clone(RpcError::SERVICE_UNAVAILABLE)) {
+        return true;
+    } else {
+        return false;
     }
 }
+/*RUSTYCPP:GEN-END id=errors.is_retryable_error*/
 
 } // export namespace rrr
