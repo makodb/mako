@@ -18,11 +18,11 @@ import rrr.misc;
 // owns PollThread is the supported pattern.
 import rrr.reactor;
 
-// @safe - Alarm: ordered timed-callback queue. Bodies use std::map +
-// rusty::Function + rrr::Time::now(false) — no raw pointer arithmetic,
-// no syscalls, no Marshal chains. Inherits Job directly (the old
-// FrequentJob intermediate was flattened away — its only consumer
-// was Alarm, and the `Ready()` body is inlined below).
+// @safe - Alarm: ordered timed-callback queue. Bodies use
+// rusty::BTreeMap + rusty::Function + rrr::Time::now(false) — no raw
+// pointer arithmetic, no syscalls, no Marshal chains. Inherits Job
+// directly (the old FrequentJob intermediate was flattened away — its
+// only consumer was Alarm, and the `Ready()` body is inlined below).
 export namespace rrr {
 
 // @safe - see file header.
@@ -37,17 +37,18 @@ class Alarm: public Job {
   uint64_t tm_last_ = 0;
   uint64_t period_ = 50 * 1000;
 
-  // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has a
-  // chain of unresolved transpiler bugs (btree_internal: variant ._0
-  // access, NodeRef temp binding, non-const member calls, copy-ctor
-  // requirement on non-copyable T) that surface when iter() / clone() /
-  // remove() are instantiated. std::map is semantically equivalent for
-  // this use (ordered map with begin/end, insert, erase). Migrate back
-  // when the upstream transpiler bugs are patched.
-  std::map<uint64_t,
-           std::pair<uint64_t, rusty::Function<void(void)>>> waiting_;
+  // BTreeMap keyed by alarm id (monotonic via next_id_), value is
+  // `(tm_out, callback)`. Was std::map until the transpiled BTreeMap
+  // port's iter()/remove()/non-copyable-T bug cluster (B1-B4) was
+  // fixed upstream and the rusty.cppm umbrella aliases re-synced
+  // with the namespace-strip refactor (rusty-cpp e680b1c).
+  rusty::BTreeMap<uint64_t,
+                  std::pair<uint64_t, rusty::Function<void(void)>>> waiting_;
 
-  Alarm() : waiting_() { }
+  Alarm()
+      : waiting_(rusty::BTreeMap<uint64_t,
+                                 std::pair<uint64_t, rusty::Function<void(void)>>>
+                     ::new_in(rusty::alloc::Global{})) { }
 
   Alarm(const Alarm&) = delete;
   Alarm& operator=(const Alarm&) = delete;
@@ -66,24 +67,26 @@ class Alarm: public Job {
   }
 
   bool exe_next() {
-    bool ret = false;
-    auto it = waiting_.begin();
-    if (it != waiting_.end()) {
-      uint64_t tm_now = rrr::Time::now(false);
-      // Take a reference (not a copy) — the value holds a non-copyable
-      // rusty::Function. `*it` is std::pair<const u64, V>.
-      auto& item = *it;
-      const uint64_t id = item.first;
-      auto& val = item.second;
-      uint64_t tm_out = val.first;
-      ret = (tm_now > tm_out);
-      if (ret) {
-        auto& func = val.second;
-        func();
-        waiting_.erase(id);  // std::map::erase (was BTreeMap::remove)
-      }
-    }
-    return ret;
+    // Peek the smallest-keyed entry (BTreeMap iterates in key order,
+    // and ids are monotonic via next_id_). If its `tm_out` has passed,
+    // fire and erase. Otherwise leave it for a later poll.
+    auto head = waiting_.first_key_value();
+    if (head.is_none()) return false;
+    const auto& kv = head.unwrap();
+    const uint64_t id     = std::get<0>(kv);
+    const uint64_t tm_out = std::get<1>(kv).first;
+    const uint64_t tm_now = rrr::Time::now(false);
+    if (tm_now <= tm_out) return false;
+
+    // Remove the entry by key (BTreeMap::remove returns Option<V>),
+    // then call the stored callback on the moved-out Function. We
+    // call after the remove so the callback can re-arm against
+    // `*this` without map-mutation-during-iteration concerns.
+    auto popped = waiting_.remove(id);
+    verify(popped.is_some());
+    auto val = popped.unwrap();
+    val.second();
+    return true;
   }
 
   // @safe - rrr::Time::now(false) flows through rusty::sys::time::clock_*_us.
@@ -108,15 +111,14 @@ class Alarm: public Job {
 
   uint64_t add(uint64_t time, rusty::Function<void(void)> func) {
     uint64_t id = next_id_++;
-    // std::map::emplace inserts in-place — moves the non-copyable
-    // rusty::Function into the map without an intermediate copy.
-    waiting_.emplace(id, std::make_pair(time, std::move(func)));
+    waiting_.insert(id, std::make_pair(time, std::move(func)));
     return id;
   }
 
   bool remove(uint64_t id) {
-    // std::map::erase returns the count of erased elements (0 or 1).
-    return waiting_.erase(id) > 0;
+    // BTreeMap::remove returns Option<V> (Some if the key was present,
+    // None otherwise).
+    return waiting_.remove(id).is_some();
   }
 
 };

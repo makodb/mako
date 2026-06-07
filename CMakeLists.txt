@@ -189,7 +189,8 @@ add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
 # without the "GNU extensions was disabled" PCM-config mismatch.
 foreach(_rusty_port_target IN ITEMS
     vec_port btree_port rc_port hashbrown_port rusty_async
-    binary_heap_port vec_deque_port cell_port string_port arc_port)
+    binary_heap_port vec_deque_port cell_port string_port arc_port
+    linked_list_port)
     if(TARGET ${_rusty_port_target})
         set_target_properties(${_rusty_port_target} PROPERTIES CXX_EXTENSIONS ON)
     endif()

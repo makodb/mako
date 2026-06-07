@@ -96,6 +96,7 @@ if(NOT TARGET rusty)
     target_link_libraries(rusty PUBLIC
         vec_port btree_port rc_port hashbrown_port rusty_async
         binary_heap_port vec_deque_port cell_port string_port arc_port
+        linked_list_port
     )
 endif()
 
