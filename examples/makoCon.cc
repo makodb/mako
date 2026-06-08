@@ -120,6 +120,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     std::unordered_map<std::string, bool> batch_exists;
     std::unordered_map<std::string, std::string> batch_values;
     std::unordered_map<std::string, int64_t> batch_ttls;
+    std::unordered_map<std::string, std::vector<std::string>> staged_lists;
+    std::unordered_set<std::string> staged_lists_loaded;
+    std::unordered_set<std::string> dirty_lists;
     std::unordered_map<uint32_t, bool> group_can_write;
 
     auto make_prefixed_key = [](const TxnOperation& op) {
@@ -169,6 +172,40 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             key.push_back(static_cast<char>((static_cast<uint64_t>(set_key.size()) >> shift) & 0xff));
         }
         key.append(set_key);
+        return key;
+    };
+
+    auto append_u64_be = [](std::string& out, uint64_t value) {
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            out.push_back(static_cast<char>((value >> shift) & 0xff));
+        }
+    };
+
+    auto make_list_element_prefix = [&](const std::string& list_key) {
+        std::string prefix;
+        prefix.reserve(sizeof("\x01L:") - 1 + 8 + list_key.size());
+        prefix.append("\x01L:", sizeof("\x01L:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            prefix.push_back(static_cast<char>((static_cast<uint64_t>(list_key.size()) >> shift) & 0xff));
+        }
+        prefix.append(list_key);
+        return prefix;
+    };
+
+    auto make_list_element_key = [&](const std::string& list_key, int64_t index) {
+        std::string key = make_list_element_prefix(list_key);
+        append_u64_be(key, static_cast<uint64_t>(index) ^ (1ULL << 63));
+        return key;
+    };
+
+    auto make_list_meta_key = [](const std::string& list_key) {
+        std::string key;
+        key.reserve(sizeof("\x01L#:") - 1 + 8 + list_key.size());
+        key.append("\x01L#:", sizeof("\x01L#:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            key.push_back(static_cast<char>((static_cast<uint64_t>(list_key.size()) >> shift) & 0xff));
+        }
+        key.append(list_key);
         return key;
     };
 
@@ -226,6 +263,32 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             pos += static_cast<size_t>(item_len);
         }
         return pos == len;
+    };
+
+    auto append_i64_le = [](std::string& out, int64_t value) {
+        uint64_t raw = static_cast<uint64_t>(value);
+        for (int shift = 0; shift < 64; shift += 8) {
+            out.push_back(static_cast<char>((raw >> shift) & 0xff));
+        }
+    };
+
+    auto read_i64_le_from_string = [](const std::string& input, size_t& pos, int64_t& out) {
+        if (input.size() - pos < 8) {
+            return false;
+        }
+        uint64_t raw = 0;
+        for (int shift = 0; shift < 64; shift += 8) {
+            raw |= static_cast<uint64_t>(static_cast<unsigned char>(input[pos++])) << shift;
+        }
+        out = static_cast<int64_t>(raw);
+        return true;
+    };
+
+    auto pack_list_meta = [&](int64_t head, int64_t tail) {
+        std::string payload;
+        append_i64_le(payload, head);
+        append_i64_le(payload, tail);
+        return payload;
     };
 
     auto pack_bytes_list = [&](const std::vector<std::string>& items) {
@@ -457,6 +520,154 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto read_internal_current = [&](void* txn, const std::string& key, std::string& value, bool& exists) {
+        auto batch_it = batch_exists.find(key);
+        if (batch_it != batch_exists.end()) {
+            exists = batch_it->second;
+            if (!exists) {
+                value.clear();
+                return mako::Status::OK();
+            }
+            auto value_it = batch_values.find(key);
+            if (value_it != batch_values.end()) {
+                value = value_it->second;
+                return mako::Status::OK();
+            }
+        }
+        return read_raw(txn, key, value, exists);
+    };
+
+    auto read_list_meta = [&](void* txn, const std::string& list_key, int64_t& head, int64_t& tail) {
+        head = 0;
+        tail = 0;
+        std::string meta_key = make_list_meta_key(list_key);
+        std::string value;
+        bool exists = false;
+        mako::Status s = read_internal_current(txn, meta_key, value, exists);
+        if (!s.ok() || !exists) {
+            return s;
+        }
+        size_t pos = 0;
+        if (!read_i64_le_from_string(value, pos, head) || !read_i64_le_from_string(value, pos, tail)
+            || pos != value.size() || tail < head) {
+            head = 0;
+            tail = 0;
+        }
+        return mako::Status::OK();
+    };
+
+    auto write_list_meta = [&](void* txn, const std::string& list_key, int64_t head, int64_t tail) {
+        std::string meta_key = make_list_meta_key(list_key);
+        if (tail <= head) {
+            batch_exists[meta_key] = false;
+            batch_values.erase(meta_key);
+            return delete_raw_if_exists(txn, meta_key);
+        }
+        std::string payload = pack_list_meta(head, tail);
+        mako::Status s = put_raw(txn, meta_key, payload);
+        if (s.ok()) {
+            batch_exists[meta_key] = true;
+            batch_values[meta_key] = payload;
+        }
+        return s;
+    };
+
+    auto read_list_values = [&](void* txn, const std::string& list_key, std::vector<std::string>& values) {
+        values.clear();
+        int64_t head = 0;
+        int64_t tail = 0;
+        mako::Status s = read_list_meta(txn, list_key, head, tail);
+        if (!s.ok()) {
+            return s;
+        }
+        values.reserve(static_cast<size_t>(std::max<int64_t>(0, tail - head)));
+        for (int64_t index = head; index < tail; ++index) {
+            std::string element;
+            bool exists = false;
+            s = read_internal_current(txn, make_list_element_key(list_key, index), element, exists);
+            if (!s.ok()) {
+                return s;
+            }
+            if (exists) {
+                values.push_back(element);
+            }
+        }
+        return mako::Status::OK();
+    };
+
+    auto clear_list_elements = [&](void* txn, const std::string& list_key, int64_t head, int64_t tail) {
+        mako::Status s = mako::Status::OK();
+        for (int64_t index = head; index < tail; ++index) {
+            std::string element_key = make_list_element_key(list_key, index);
+            s = delete_raw_if_exists(txn, element_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[element_key] = false;
+            batch_values.erase(element_key);
+        }
+        return s;
+    };
+
+    auto delete_list = [&](void* txn, const std::string& list_key) {
+        int64_t head = 0;
+        int64_t tail = 0;
+        mako::Status s = read_list_meta(txn, list_key, head, tail);
+        if (!s.ok()) {
+            return s;
+        }
+        s = clear_list_elements(txn, list_key, head, tail);
+        if (s.ok()) {
+            s = write_list_meta(txn, list_key, 0, 0);
+        }
+        if (s.ok()) {
+            staged_lists.erase(list_key);
+            staged_lists_loaded.erase(list_key);
+            dirty_lists.erase(list_key);
+        }
+        return s;
+    };
+
+    auto rewrite_list_values = [&](void* txn, const std::string& list_key, const std::vector<std::string>& values) {
+        int64_t old_head = 0;
+        int64_t old_tail = 0;
+        mako::Status s = read_list_meta(txn, list_key, old_head, old_tail);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t new_head = old_tail;
+        if (!values.empty()
+            && old_tail > std::numeric_limits<int64_t>::max() - static_cast<int64_t>(values.size())) {
+            if (old_head < std::numeric_limits<int64_t>::min() + static_cast<int64_t>(values.size())) {
+                return mako::Status::InvalidArgument("list index overflow");
+            }
+            new_head = old_head - static_cast<int64_t>(values.size());
+        }
+        int64_t index = new_head;
+        for (const auto& value : values) {
+            std::string element_key = make_list_element_key(list_key, index++);
+            s = put_raw(txn, element_key, value);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[element_key] = true;
+            batch_values[element_key] = value;
+        }
+        s = clear_list_elements(txn, list_key, old_head, old_tail);
+        if (!s.ok()) {
+            return s;
+        }
+        return write_list_meta(txn, list_key, new_head, new_head + static_cast<int64_t>(values.size()));
+    };
+
+    auto read_list_length = [&](void* txn, const std::string& list_key, int64_t& length) {
+        int64_t head = 0;
+        int64_t tail = 0;
+        mako::Status s = read_list_meta(txn, list_key, head, tail);
+        length = std::max<int64_t>(0, tail - head);
+        return s;
+    };
+
     auto collect_set_members = [&](void* txn, const std::string& set_key, std::vector<std::string>& members) {
         members.clear();
         const std::string user_prefix = make_set_member_prefix(set_key);
@@ -539,6 +750,20 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto expire_list_if_needed = [&](void* txn, const std::string& list_key) {
+        int64_t expire_at_ms = 0;
+        bool ttl_exists = false;
+        mako::Status s = read_ttl_meta(txn, list_key, expire_at_ms, ttl_exists);
+        if (!s.ok() || !ttl_exists || expire_at_ms > now_unix_ms()) {
+            return s;
+        }
+        s = delete_list(txn, list_key);
+        if (s.ok()) {
+            s = clear_ttl_meta(txn, list_key);
+        }
+        return s;
+    };
+
     auto expire_logical_key_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
         int64_t expire_at_ms = 0;
         bool ttl_exists = false;
@@ -553,6 +778,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         batch_exists[storage_key] = false;
         batch_values.erase(storage_key);
         s = delete_set(txn, user_key);
+        if (s.ok()) {
+            s = delete_list(txn, user_key);
+        }
         if (s.ok()) {
             s = clear_ttl_meta(txn, user_key);
         }
@@ -581,7 +809,18 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         }
         int64_t set_cardinality = 0;
         s = read_set_cardinality(txn, user_key, set_cardinality);
-        exists = set_cardinality > 0;
+        if (!s.ok() || set_cardinality > 0) {
+            exists = set_cardinality > 0;
+            return s;
+        }
+        auto staged_it = staged_lists.find(user_key);
+        if (staged_it != staged_lists.end()) {
+            exists = !staged_it->second.empty();
+            return mako::Status::OK();
+        }
+        int64_t list_length = 0;
+        s = read_list_length(txn, user_key, list_length);
+        exists = list_length > 0;
         return s;
     };
 
@@ -606,11 +845,62 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists;
+        int64_t list_length = 0;
+        s = read_list_length(txn, set_key, list_length);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && list_length == 0;
         if (!allowed) {
             result.success = false;
         }
         return mako::Status::OK();
+    };
+
+    auto list_key_allowed = [&](void* txn, const std::string& list_key, TxnOpResult& result, bool& allowed) {
+        std::string string_storage_key = "table_key_" + list_key;
+        mako::Status s = expire_logical_key_if_needed(txn, list_key, string_storage_key);
+        if (!s.ok()) {
+            return s;
+        }
+        bool string_exists = false;
+        s = read_string_exists_no_expire(txn, string_storage_key, string_exists);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t set_cardinality = 0;
+        s = read_set_cardinality(txn, list_key, set_cardinality);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0;
+        if (!allowed) {
+            result.success = false;
+        }
+        return mako::Status::OK();
+    };
+
+    auto load_list_stage = [&](void* txn, const std::string& list_key, TxnOpResult& result, bool& allowed) {
+        auto loaded_it = staged_lists_loaded.find(list_key);
+        if (loaded_it != staged_lists_loaded.end()) {
+            allowed = true;
+            return mako::Status::OK();
+        }
+        mako::Status s = list_key_allowed(txn, list_key, result, allowed);
+        if (!s.ok() || !allowed) {
+            return s;
+        }
+        s = expire_list_if_needed(txn, list_key);
+        if (!s.ok()) {
+            return s;
+        }
+        std::vector<std::string> values;
+        s = read_list_values(txn, list_key, values);
+        if (s.ok()) {
+            staged_lists[list_key] = std::move(values);
+            staged_lists_loaded.insert(list_key);
+        }
+        return s;
     };
 
     auto read_set_members = [&](void* txn, const std::string& set_key, std::vector<std::string>& members) {
@@ -790,6 +1080,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         all_success = false;
                         continue;
                     }
+                    s = delete_list(txn, user_key);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
                     s = put_raw(txn, tl_key_buf, raw_val);
                     if (!s.ok()) {
                         result.success = false;
@@ -836,9 +1132,23 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     continue;
                 }
                 bool set_exists = set_cardinality > 0;
+                int64_t list_length = 0;
+                mako::Status list_status = read_list_length(txn, user_key, list_length);
+                if (!list_status.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                auto staged_list_it = staged_lists.find(user_key);
+                if (staged_list_it != staged_lists.end()) {
+                    list_length = static_cast<int64_t>(staged_list_it->second.size());
+                }
+                bool list_exists = list_length > 0;
                 mako::Status s = mako::Status::OK();
                 if (set_exists) {
                     s = delete_set(txn, user_key);
+                }
+                if (s.ok() && list_exists) {
+                    s = delete_list(txn, user_key);
                 }
                 if (s.ok() && string_exists) {
                     s = g_table->Delete(txn, tl_key_buf);
@@ -1004,7 +1314,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     if (set_status.ok() && set_cardinality > 0) {
                         s = delete_set(txn, user_key);
                     } else {
-                        s = delete_raw_if_exists(txn, tl_key_buf);
+                        int64_t list_length = 0;
+                        mako::Status list_status = read_list_length(txn, user_key, list_length);
+                        if (list_status.ok() && list_length > 0) {
+                            s = delete_list(txn, user_key);
+                        } else {
+                            s = delete_raw_if_exists(txn, tl_key_buf);
+                        }
                     }
                     if (s.ok()) {
                         s = clear_ttl_meta(txn, user_key);
@@ -1052,7 +1368,19 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 const int64_t remaining_ms = expire_at_ms - now_unix_ms();
                 if (remaining_ms <= 0) {
-                    s = delete_raw_if_exists(txn, tl_key_buf);
+                    int64_t set_cardinality = 0;
+                    mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
+                    if (set_status.ok() && set_cardinality > 0) {
+                        s = delete_set(txn, user_key);
+                    } else {
+                        int64_t list_length = 0;
+                        mako::Status list_status = read_list_length(txn, user_key, list_length);
+                        if (list_status.ok() && list_length > 0) {
+                            s = delete_list(txn, user_key);
+                        } else {
+                            s = delete_raw_if_exists(txn, tl_key_buf);
+                        }
+                    }
                     if (s.ok()) {
                         s = clear_ttl_meta(txn, user_key);
                     }
@@ -1116,9 +1444,22 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 int64_t set_count = 0;
                 s = read_set_cardinality(txn, user_key, set_count);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                int64_t list_length = 0;
+                auto staged_list_it = staged_lists.find(user_key);
+                if (staged_list_it != staged_lists.end()) {
+                    list_length = static_cast<int64_t>(staged_list_it->second.size());
+                    s = mako::Status::OK();
+                } else {
+                    s = read_list_length(txn, user_key, list_length);
+                }
                 result.success = s.ok();
                 result.value_present = true;
-                result.int_value = string_exists ? 1 : (set_count > 0 ? 2 : 0);
+                result.int_value = string_exists ? 1 : (set_count > 0 ? 2 : (list_length > 0 ? 3 : 0));
                 if (!s.ok()) {
                     all_success = false;
                 }
@@ -1527,6 +1868,339 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         all_success = false;
                     }
                 }
+            } else if (op.op == TXN_OP_LPUSH || op.op == TXN_OP_RPUSH) {
+                std::vector<std::string> values;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, values)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& staged = staged_lists[user_key];
+                if ((op.flags & TXN_FLAG_LIST_PUSH_IF_EXISTS) != 0 && staged.empty()) {
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = 0;
+                    continue;
+                }
+                for (const auto& value : values) {
+                    if (op.op == TXN_OP_LPUSH) {
+                        staged.insert(staged.begin(), value);
+                    } else {
+                        staged.push_back(value);
+                    }
+                }
+                dirty_lists.insert(user_key);
+                result.success = true;
+                result.value_present = true;
+                result.int_value = static_cast<int64_t>(staged.size());
+            } else if (op.op == TXN_OP_LPOP || op.op == TXN_OP_RPOP) {
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& staged = staged_lists[user_key];
+                int64_t available = static_cast<int64_t>(staged.size());
+                int64_t requested = (op.flags & TXN_FLAG_LIST_COUNT_GIVEN) != 0 ? op.expire_at_ms : 1;
+                requested = std::clamp<int64_t>(requested, 0, available);
+                std::vector<std::string> selected;
+                selected.reserve(static_cast<size_t>(requested));
+                for (int64_t n = 0; n < requested; ++n) {
+                    if (op.op == TXN_OP_LPOP) {
+                        selected.push_back(staged.front());
+                        staged.erase(staged.begin());
+                    } else {
+                        selected.push_back(staged.back());
+                        staged.pop_back();
+                    }
+                }
+                if (requested > 0) {
+                    dirty_lists.insert(user_key);
+                }
+                result.success = true;
+                result.value_present = !selected.empty();
+                std::string payload = pack_bytes_list(selected);
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_LLEN) {
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = static_cast<int64_t>(staged_lists[user_key].size());
+            } else if (op.op == TXN_OP_LINDEX) {
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_lists[user_key];
+                result.success = true;
+                int64_t index = op.expire_at_ms;
+                if (index < 0) {
+                    index += static_cast<int64_t>(values.size());
+                }
+                if (index < 0 || index >= static_cast<int64_t>(values.size())) {
+                    result.value_present = false;
+                    continue;
+                }
+                if (!copy_result_value(result, values[static_cast<size_t>(index)])) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_LRANGE || op.op == TXN_OP_LTRIM) {
+                std::vector<std::string> bounds;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, bounds) || bounds.size() != 2) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t start_index = 0;
+                int64_t stop_index = 0;
+                if (!parse_int64(bounds[0], start_index) || !parse_int64(bounds[1], stop_index)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_lists[user_key];
+                const int64_t length = static_cast<int64_t>(values.size());
+                if (start_index < 0) {
+                    start_index += length;
+                }
+                if (stop_index < 0) {
+                    stop_index += length;
+                }
+                start_index = std::max<int64_t>(0, start_index);
+                stop_index = std::min<int64_t>(length - 1, stop_index);
+                std::vector<std::string> selected;
+                if (length > 0 && start_index <= stop_index && start_index < length) {
+                    selected.assign(
+                        values.begin() + static_cast<size_t>(start_index),
+                        values.begin() + static_cast<size_t>(stop_index + 1));
+                }
+                if (op.op == TXN_OP_LTRIM) {
+                    values = selected;
+                    dirty_lists.insert(user_key);
+                    result.success = true;
+                    result.value_present = true;
+                } else {
+                    result.success = true;
+                    result.value_present = true;
+                    std::string payload = pack_bytes_list(selected);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                }
+            } else if (op.op == TXN_OP_LSET || op.op == TXN_OP_LREM || op.op == TXN_OP_LINSERT) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_lists[user_key];
+                if (op.op == TXN_OP_LSET) {
+                    if (parts.size() != 2) {
+                        all_success = false;
+                        continue;
+                    }
+                    int64_t index = 0;
+                    if (!parse_int64(parts[0], index)) {
+                        all_success = false;
+                        continue;
+                    }
+                    if (index < 0) {
+                        index += static_cast<int64_t>(values.size());
+                    }
+                    if (index < 0 || index >= static_cast<int64_t>(values.size())) {
+                        result.success = false;
+                        continue;
+                    }
+                    values[static_cast<size_t>(index)] = parts[1];
+                    dirty_lists.insert(user_key);
+                    result.success = true;
+                    result.value_present = true;
+                } else if (op.op == TXN_OP_LREM) {
+                    if (parts.size() != 2) {
+                        all_success = false;
+                        continue;
+                    }
+                    int64_t count = 0;
+                    if (!parse_int64(parts[0], count)) {
+                        all_success = false;
+                        continue;
+                    }
+                    const std::string& needle = parts[1];
+                    int64_t removed = 0;
+                    std::vector<std::string> next;
+                    if (count >= 0) {
+                        for (const auto& value : values) {
+                            if (value == needle && (count == 0 || removed < count)) {
+                                ++removed;
+                                continue;
+                            }
+                            next.push_back(value);
+                        }
+                    } else {
+                        int64_t remaining = -count;
+                        std::vector<bool> remove(values.size(), false);
+                        for (size_t idx = values.size(); idx > 0 && removed < remaining; --idx) {
+                            if (values[idx - 1] == needle) {
+                                remove[idx - 1] = true;
+                                ++removed;
+                            }
+                        }
+                        for (size_t idx = 0; idx < values.size(); ++idx) {
+                            if (!remove[idx]) {
+                                next.push_back(values[idx]);
+                            }
+                        }
+                    }
+                    values = std::move(next);
+                    if (removed > 0) {
+                        dirty_lists.insert(user_key);
+                    }
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = removed;
+                } else {
+                    if (parts.size() != 2) {
+                        all_success = false;
+                        continue;
+                    }
+                    auto pivot_it = std::find(values.begin(), values.end(), parts[0]);
+                    result.value_present = true;
+                    if (pivot_it == values.end()) {
+                        result.success = true;
+                        result.int_value = values.empty() ? -1 : -1;
+                        continue;
+                    }
+                    if ((op.flags & TXN_FLAG_LIST_INSERT_BEFORE) == 0) {
+                        ++pivot_it;
+                    }
+                    values.insert(pivot_it, parts[1]);
+                    dirty_lists.insert(user_key);
+                    result.success = true;
+                    result.int_value = static_cast<int64_t>(values.size());
+                }
+            } else if (op.op == TXN_OP_LMOVE) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts) || parts.size() != 1) {
+                    all_success = false;
+                    continue;
+                }
+                const std::string& destination = parts[0];
+                bool source_allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, source_allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!source_allowed) {
+                    continue;
+                }
+                auto& source_values = staged_lists[user_key];
+                result.success = true;
+                result.value_present = false;
+                if (source_values.empty()) {
+                    continue;
+                }
+                bool dest_allowed = false;
+                s = load_list_stage(txn, destination, result, dest_allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!dest_allowed) {
+                    continue;
+                }
+                std::string moved;
+                if ((op.flags & TXN_FLAG_LIST_SOURCE_LEFT) != 0) {
+                    moved = source_values.front();
+                    source_values.erase(source_values.begin());
+                } else {
+                    moved = source_values.back();
+                    source_values.pop_back();
+                }
+                if (destination == user_key) {
+                    if ((op.flags & TXN_FLAG_LIST_DEST_LEFT) != 0) {
+                        source_values.insert(source_values.begin(), moved);
+                    } else {
+                        source_values.push_back(moved);
+                    }
+                } else {
+                    auto& dest_values = staged_lists[destination];
+                    if ((op.flags & TXN_FLAG_LIST_DEST_LEFT) != 0) {
+                        dest_values.insert(dest_values.begin(), moved);
+                    } else {
+                        dest_values.push_back(moved);
+                    }
+                }
+                dirty_lists.insert(user_key);
+                dirty_lists.insert(destination);
+                result.success = true;
+                if (!copy_result_value(result, moved)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_LPOS) {
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_lists[user_key];
+                result.success = true;
+                result.value_present = false;
+                std::string needle(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                for (size_t idx = 0; idx < values.size(); ++idx) {
+                    if (values[idx] == needle) {
+                        result.value_present = true;
+                        result.int_value = static_cast<int64_t>(idx);
+                        break;
+                    }
+                }
             } else if (op.op == TXN_OP_SCAN) {
                 const bool count_only = (op.flags & TXN_FLAG_SCAN_COUNT_ONLY) != 0;
                 const size_t limit = count_only ? std::numeric_limits<size_t>::max()
@@ -1681,6 +2355,22 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             } else {
                 // Unknown operation
                 all_success = false;
+            }
+        }
+
+        if (all_success) {
+            for (const auto& list_key : dirty_lists) {
+                auto values_it = staged_lists.find(list_key);
+                const std::vector<std::string> empty_values;
+                const auto& values = values_it == staged_lists.end() ? empty_values : values_it->second;
+                mako::Status s = rewrite_list_values(txn, list_key, values);
+                if (s.ok() && values.empty()) {
+                    s = clear_ttl_meta(txn, list_key);
+                }
+                if (!s.ok()) {
+                    all_success = false;
+                    break;
+                }
             }
         }
 

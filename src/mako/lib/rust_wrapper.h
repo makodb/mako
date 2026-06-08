@@ -48,7 +48,20 @@ enum class OpCode : uint32_t {
     SRandMember = 19,
     SMove = 20,
     SetAlgebra = 21,
-    Type = 22
+    Type = 22,
+    LPush = 23,
+    RPush = 24,
+    LPop = 25,
+    RPop = 26,
+    LLen = 27,
+    LIndex = 28,
+    LRange = 29,
+    LSet = 30,
+    LRem = 31,
+    LTrim = 32,
+    LInsert = 33,
+    LMove = 34,
+    LPos = 35
 };
 
 class RustWrapper {

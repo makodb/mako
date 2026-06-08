@@ -26,8 +26,9 @@
  *
  * Reserved internal keys:
  *   Redis-visible keys must not use the 0x01 prefix. The Redis layer stores
- *   TTL metadata under "\x01TTL:<key>" inside the same transaction as the user
- *   key operation that creates, clears, or observes the expiry.
+ *   TTL metadata under "\x01TTL:<key>", set internals under "\x01S:" /
+ *   "\x01S#:", and list internals under "\x01L:" / "\x01L#:". These records
+ *   are hidden from Redis keyspace commands.
  */
 
 #ifdef __cplusplus
@@ -61,6 +62,19 @@ typedef enum {
     TXN_OP_SMOVE = 20,
     TXN_OP_SET_ALGEBRA = 21,
     TXN_OP_TYPE = 22,
+    TXN_OP_LPUSH = 23,
+    TXN_OP_RPUSH = 24,
+    TXN_OP_LPOP = 25,
+    TXN_OP_RPOP = 26,
+    TXN_OP_LLEN = 27,
+    TXN_OP_LINDEX = 28,
+    TXN_OP_LRANGE = 29,
+    TXN_OP_LSET = 30,
+    TXN_OP_LREM = 31,
+    TXN_OP_LTRIM = 32,
+    TXN_OP_LINSERT = 33,
+    TXN_OP_LMOVE = 34,
+    TXN_OP_LPOS = 35,
 } TxnOpCode;
 
 typedef enum {
@@ -82,6 +96,11 @@ typedef enum {
     TXN_FLAG_SET_ALGEBRA_UNION = 1u << 14,
     TXN_FLAG_SET_ALGEBRA_DIFF = 1u << 15,
     TXN_FLAG_SET_ALGEBRA_STORE = 1u << 16,
+    TXN_FLAG_LIST_PUSH_IF_EXISTS = 1u << 17,
+    TXN_FLAG_LIST_INSERT_BEFORE = 1u << 18,
+    TXN_FLAG_LIST_SOURCE_LEFT = 1u << 19,
+    TXN_FLAG_LIST_DEST_LEFT = 1u << 20,
+    TXN_FLAG_LIST_COUNT_GIVEN = 1u << 21,
 } TxnOpFlags;
 
 /**
@@ -109,6 +128,17 @@ typedef enum {
  *   - SPOP/SRANDMEMBER expire_at_ms carries the requested count
  *   - SET_ALGEBRA key carries the destination for *STORE or the first source
  *     for non-store; val_ptr carries source set names
+ *
+ * For list operations:
+ *   - LPUSH/RPUSH val_ptr carries a length-prefixed list of elements
+ *   - LPOP/RPOP expire_at_ms carries count; LIST_COUNT_GIVEN controls
+ *     bulk-vs-array response formatting in Rust
+ *   - LINDEX expire_at_ms carries the signed list index
+ *   - LRANGE/LTRIM val_ptr carries [start, stop] as byte strings
+ *   - LSET/LREM/LINSERT val_ptr carries command-specific byte lists
+ *   - LMOVE key carries source; val_ptr carries [destination]
+ *   - The C++ executor stages list contents per transaction and flushes dirty
+ *     lists once before commit.
  */
 typedef struct {
     uint32_t op;           // TxnOpCode
