@@ -1309,17 +1309,24 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 result.int_value = 1;
                 if (op.expire_at_ms <= now_unix_ms()) {
-                    int64_t set_cardinality = 0;
-                    mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
-                    if (set_status.ok() && set_cardinality > 0) {
-                        s = delete_set(txn, user_key);
+                    auto staged_list_it = staged_lists.find(user_key);
+                    if (staged_list_it != staged_lists.end() && !staged_list_it->second.empty()) {
+                        staged_list_it->second.clear();
+                        dirty_lists.insert(user_key);
+                        s = mako::Status::OK();
                     } else {
-                        int64_t list_length = 0;
-                        mako::Status list_status = read_list_length(txn, user_key, list_length);
-                        if (list_status.ok() && list_length > 0) {
-                            s = delete_list(txn, user_key);
+                        int64_t set_cardinality = 0;
+                        mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
+                        if (set_status.ok() && set_cardinality > 0) {
+                            s = delete_set(txn, user_key);
                         } else {
-                            s = delete_raw_if_exists(txn, tl_key_buf);
+                            int64_t list_length = 0;
+                            mako::Status list_status = read_list_length(txn, user_key, list_length);
+                            if (list_status.ok() && list_length > 0) {
+                                s = delete_list(txn, user_key);
+                            } else {
+                                s = delete_raw_if_exists(txn, tl_key_buf);
+                            }
                         }
                     }
                     if (s.ok()) {
@@ -1368,17 +1375,24 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 const int64_t remaining_ms = expire_at_ms - now_unix_ms();
                 if (remaining_ms <= 0) {
-                    int64_t set_cardinality = 0;
-                    mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
-                    if (set_status.ok() && set_cardinality > 0) {
-                        s = delete_set(txn, user_key);
+                    auto staged_list_it = staged_lists.find(user_key);
+                    if (staged_list_it != staged_lists.end() && !staged_list_it->second.empty()) {
+                        staged_list_it->second.clear();
+                        dirty_lists.insert(user_key);
+                        s = mako::Status::OK();
                     } else {
-                        int64_t list_length = 0;
-                        mako::Status list_status = read_list_length(txn, user_key, list_length);
-                        if (list_status.ok() && list_length > 0) {
-                            s = delete_list(txn, user_key);
+                        int64_t set_cardinality = 0;
+                        mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
+                        if (set_status.ok() && set_cardinality > 0) {
+                            s = delete_set(txn, user_key);
                         } else {
-                            s = delete_raw_if_exists(txn, tl_key_buf);
+                            int64_t list_length = 0;
+                            mako::Status list_status = read_list_length(txn, user_key, list_length);
+                            if (list_status.ok() && list_length > 0) {
+                                s = delete_list(txn, user_key);
+                            } else {
+                                s = delete_raw_if_exists(txn, tl_key_buf);
+                            }
                         }
                     }
                     if (s.ok()) {
@@ -2110,7 +2124,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     result.value_present = true;
                     if (pivot_it == values.end()) {
                         result.success = true;
-                        result.int_value = values.empty() ? -1 : -1;
+                        result.int_value = values.empty() ? 0 : -1;
                         continue;
                     }
                     if ((op.flags & TXN_FLAG_LIST_INSERT_BEFORE) == 0) {

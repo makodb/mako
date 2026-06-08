@@ -28,6 +28,9 @@ def test_basic_push_pop_and_range(mako_client: redis.Redis) -> None:
 def test_list_mutation_commands(mako_client: redis.Redis) -> None:
     name = key("mutate")
 
+    assert mako_client.linsert(name, "BEFORE", b"missing", b"value") == 0
+    assert mako_client.exists(name) == 0
+
     assert mako_client.rpush(name, b"a", b"b", b"c", b"b", b"d") == 5
     assert mako_client.lset(name, 1, b"B") is True
     assert mako_client.lrange(name, 0, -1) == [b"a", b"B", b"c", b"b", b"d"]
@@ -93,3 +96,16 @@ def test_list_commands_inside_multi(mako_client: redis.Redis) -> None:
     pipe.llen(name)
 
     assert pipe.execute() == [2, 3, [b"z", b"a", b"b"], b"z", 2]
+
+
+def test_immediate_expire_clears_staged_list_inside_multi(mako_client: redis.Redis) -> None:
+    name = key("multi-expire")
+
+    pipe = mako_client.pipeline(transaction=True)
+    pipe.rpush(name, b"a")
+    pipe.expire(name, 0)
+    pipe.exists(name)
+    pipe.type(name)
+    pipe.lrange(name, 0, -1)
+
+    assert pipe.execute() == [1, True, 0, b"none", []]
