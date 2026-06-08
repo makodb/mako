@@ -51,6 +51,16 @@ typedef enum {
     TXN_OP_TTL = 10,
     TXN_OP_PERSIST = 11,
     TXN_OP_SCAN = 12,
+    TXN_OP_SADD = 13,
+    TXN_OP_SREM = 14,
+    TXN_OP_SISMEMBER = 15,
+    TXN_OP_SCARD = 16,
+    TXN_OP_SMEMBERS = 17,
+    TXN_OP_SPOP = 18,
+    TXN_OP_SRANDMEMBER = 19,
+    TXN_OP_SMOVE = 20,
+    TXN_OP_SET_ALGEBRA = 21,
+    TXN_OP_TYPE = 22,
 } TxnOpCode;
 
 typedef enum {
@@ -67,6 +77,11 @@ typedef enum {
     TXN_FLAG_EXPIRE_GT = 1u << 9,
     TXN_FLAG_EXPIRE_LT = 1u << 10,
     TXN_FLAG_SCAN_COUNT_ONLY = 1u << 11,
+    TXN_FLAG_SET_COUNT_GIVEN = 1u << 12,
+    TXN_FLAG_SET_ALLOW_DUPLICATES = 1u << 13,
+    TXN_FLAG_SET_ALGEBRA_UNION = 1u << 14,
+    TXN_FLAG_SET_ALGEBRA_DIFF = 1u << 15,
+    TXN_FLAG_SET_ALGEBRA_STORE = 1u << 16,
 } TxnOpFlags;
 
 /**
@@ -86,6 +101,14 @@ typedef enum {
  *   - val_ptr/val_len carries the literal scan prefix derived from MATCH
  *   - expire_at_ms carries the COUNT work hint
  *   - TXN_FLAG_SCAN_COUNT_ONLY returns DBSIZE in int_value instead of key bytes
+ *
+ * For set operations:
+ *   - SADD/SREM val_ptr carries a length-prefixed list of members
+ *   - SISMEMBER val_ptr carries one member
+ *   - SMOVE key carries the source set; val_ptr carries [destination, member]
+ *   - SPOP/SRANDMEMBER expire_at_ms carries the requested count
+ *   - SET_ALGEBRA key carries the destination for *STORE or the first source
+ *     for non-store; val_ptr carries source set names
  */
 typedef struct {
     uint32_t op;           // TxnOpCode

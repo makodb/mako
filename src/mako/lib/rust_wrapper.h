@@ -38,7 +38,17 @@ enum class OpCode : uint32_t {
     Expire = 9,
     Ttl = 10,
     Persist = 11,
-    Scan = 12
+    Scan = 12,
+    SAdd = 13,
+    SRem = 14,
+    SIsMember = 15,
+    SCard = 16,
+    SMembers = 17,
+    SPop = 18,
+    SRandMember = 19,
+    SMove = 20,
+    SetAlgebra = 21,
+    Type = 22
 };
 
 class RustWrapper {

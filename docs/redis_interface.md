@@ -16,9 +16,11 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `MGET`, `MSET`, `MSETNX` | Multi-key string reads and writes | `MSETNX` is scoped to one FFI request | Expands to per-key operations while returning one Redis reply |
 | `APPEND`, `STRLEN` | String append and length | String type only | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry for growing values |
 | `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT` | Counter updates | No integer overflow parity tests yet | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry |
-| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `PERSIST` | Adds, reads, or removes key expiry metadata | No background expiry scanner | Stores absolute Unix millisecond expiry under an internal TTL key and checks it inside C++ transactions |
-| `KEYS pattern`, `SCAN cursor [MATCH p] [COUNT n] [TYPE string]`, `DBSIZE` | Enumerates user-visible string keys | Current `makoCon` single-shard path only; `HSCAN` waits for hash storage | Uses the sharded Masstree scan path with an opaque numeric cursor and Rust-side glob filtering |
-| `TYPE key` | Returns `string` or `none` for the current string-only surface | No composite Redis types yet | Uses the existence FFI path so expired keys are hidden |
+| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `PERSIST` | Adds, reads, or removes key expiry metadata for strings and sets | No background expiry scanner | Stores absolute Unix millisecond expiry under an internal TTL key and checks it inside C++ transactions |
+| `KEYS pattern`, `SCAN cursor [MATCH p] [COUNT n] [TYPE string]`, `DBSIZE` | Enumerates user-visible string keys | Current `makoCon` single-shard path only; set keys are hidden until typed keyspace scan is added | Uses the sharded Masstree scan path with an opaque numeric cursor and Rust-side glob filtering |
+| `TYPE key` | Returns `string`, `set`, or `none` | No hash/list/zset type replies yet | Uses the logical-key FFI path so expired keys are hidden |
+| `SADD`, `SMEMBERS`, `SISMEMBER`, `SREM`, `SCARD`, `SMOVE`, `SPOP`, `SRANDMEMBER` | Basic Redis set operations | Random member selection is deterministic first-member selection in this phase | Stores members as internal composite keys and maintains cardinality metadata transactionally |
+| `SINTER`, `SUNION`, `SDIFF`, `SINTERSTORE`, `SUNIONSTORE`, `SDIFFSTORE` | Set algebra and store variants | Implemented by scanning composite set members in the local transaction executor | Computes algebra in C++ and writes `*STORE` destinations inside the same OCC transaction |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
 | `EXISTS key [key ...]` | Checks one or more keys and returns the count present | No bloom-filter/cache shortcut; remote tables use `remoteGet()` and may copy the value | Uses a dedicated local no-copy existence path that participates in OCC read observation |
@@ -43,6 +45,8 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TXN_OP_APPEND`, `TXN_OP_STRLEN`, `TXN_OP_INCRBY`, `TXN_OP_INCRBYFLOAT` | Phase 3 string/counter operations | String-only command surface | Keeps read-modify-write logic in one C++ transaction |
 | `TXN_OP_EXPIRE`, `TXN_OP_TTL`, `TXN_OP_PERSIST` | Phase 4 TTL-family operations | No background expiry scanner | Keeps expiry decisions and lazy deletion inside one C++ transaction |
 | `TXN_OP_SCAN` | Phase 5 key enumeration and `DBSIZE` | Single local shard only; no hash field scan yet | Reuses the sharded Masstree scan path and returns cursor-key batches to Rust |
+| `TXN_OP_SADD` through `TXN_OP_SET_ALGEBRA` | Phase 6 set operations | Local composite-key set storage only | Keeps set member updates, cardinality metadata, and set-store writes in one transaction |
+| `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/none | Keeps string and set expiry checks in C++ |
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
 | `TxnOpResult::data_ptr/data_len` | Returned value bytes for `GET` | Null for non-value operations | Keeps Redis bytes opaque to Rust while preserving empty-string correctness |
@@ -228,7 +232,7 @@ Phase 5 adds user-visible string-key enumeration:
 
 - `KEYS pattern` returns matching keys.
 - `SCAN cursor [MATCH pattern] [COUNT n] [TYPE string]` returns `[cursor, keys]`.
-- `DBSIZE` counts visible user keys.
+- `DBSIZE` counts visible string keys.
 
 The cursor is an opaque numeric token so Redis clients such as `redis-py` can
 parse it. Cursor `0` starts and ends a scan. Rust maps nonzero cursor tokens to
@@ -240,9 +244,41 @@ multi-shard Redis server must either add remote scan coordination or reject
 `SCAN`; returning one local shard as if it were global would be silently
 incomplete. That is a correctness limitation, not a Redis parser limitation.
 
+Phase 6 set keys use internal composite records outside the visible
+`table_key_` namespace. That prevents leaking `\x01S:` and `\x01S#:` records,
+but it means `KEYS`, `SCAN`, and `DBSIZE` do not yet report
+sets as logical keys. Typed keyspace enumeration should be added with a shared
+logical key index rather than exposing composite storage details.
+
 `HSCAN` is not implemented yet because hash commands and hash field encoding
 are not in the current Redis surface. It should be added with the hash phase so
 field scan uses the same encoding as `HSET`/`HGET`.
+
+---
+
+## Set Storage
+
+Phase 6 adds Redis set commands with composite storage:
+
+- Member key: `\x01S:<u64 set-len><set><member>` -> `"1"`.
+- Cardinality key: `\x01S#:<u64 set-len><set>` -> decimal member count.
+- Redis clients cannot create keys beginning with `0x01`.
+
+Set writes update member keys and cardinality metadata in the same C++
+transaction. `SINTERSTORE`, `SUNIONSTORE`, and `SDIFFSTORE` reconcile the
+destination set in place, deleting stale members and inserting new members
+without delete-then-reinsert for overlapping members.
+
+The set-name length prefix avoids collisions between keys and members containing
+separator bytes such as `:`.
+
+TTL metadata is still keyed by the visible Redis key. When a set expires, the
+logical expiry path deletes the bare string key, all set composite members, the
+set cardinality key, and the TTL metadata inside the same transaction.
+
+Current limitation: a single `EXEC` that creates a set member and then moves
+that same newly-created member with `SMOVE` needs staged set writes. The case is
+tracked as an expected compatibility gap.
 
 ---
 
