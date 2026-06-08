@@ -37,7 +37,8 @@ enum class OpCode : uint32_t {
     IncrByFloat = 8,
     Expire = 9,
     Ttl = 10,
-    Persist = 11
+    Persist = 11,
+    Scan = 12
 };
 
 class RustWrapper {

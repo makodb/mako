@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include <algorithm>
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
@@ -152,6 +153,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return true;
     };
 
+    auto append_u64_le = [](std::string& out, uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            out.push_back(static_cast<char>((value >> shift) & 0xff));
+        }
+    };
+
     auto parse_int64 = [](const std::string& input, int64_t& out) {
         if (input.empty()) {
             return false;
@@ -261,6 +268,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
+        batch_it = batch_exists.find(key);
+        if (batch_it != batch_exists.end() && !batch_it->second) {
+            exists = false;
+            value.clear();
+            return mako::Status::OK();
+        }
         return read_raw(txn, key, value, exists);
     };
 
@@ -289,6 +302,19 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto storage_prefix_upper = [](const std::string& prefix) {
+        std::optional<std::string> upper = prefix;
+        for (size_t i = upper->size(); i > 0; --i) {
+            unsigned char c = static_cast<unsigned char>((*upper)[i - 1]);
+            if (c != 0xff) {
+                (*upper)[i - 1] = static_cast<char>(c + 1);
+                upper->resize(i);
+                return upper;
+            }
+        }
+        return std::optional<std::string>{};
+    };
+
     auto read_user_exists = [&](void* txn, const std::string& user_key, const std::string& storage_key, bool& exists) {
         auto batch_it = batch_exists.find(storage_key);
         if (batch_it != batch_exists.end()) {
@@ -298,6 +324,11 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         mako::Status expire_status = expire_if_needed(txn, user_key, storage_key);
         if (!expire_status.ok()) {
             return expire_status;
+        }
+        batch_it = batch_exists.find(storage_key);
+        if (batch_it != batch_exists.end()) {
+            exists = batch_it->second;
+            return mako::Status::OK();
         }
         return g_table->Exists(txn, storage_key, &exists);
     };
@@ -729,6 +760,149 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 result.int_value = s.ok() ? 1 : 0;
                 if (!s.ok()) {
                     all_success = false;
+                }
+            } else if (op.op == TXN_OP_SCAN) {
+                const bool count_only = (op.flags & TXN_FLAG_SCAN_COUNT_ONLY) != 0;
+                const size_t limit = count_only ? std::numeric_limits<size_t>::max()
+                    : static_cast<size_t>(std::clamp<int64_t>(op.expire_at_ms, 1, 1000000));
+                std::string cursor(reinterpret_cast<const char*>(op.key_ptr), op.key_len);
+                std::string user_prefix;
+                if (op.val_ptr != nullptr && op.val_len > 0) {
+                    user_prefix.assign(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                }
+
+                const std::string storage_prefix = "table_key_" + user_prefix;
+                std::string scan_start = cursor.empty() ? storage_prefix : "table_key_" + cursor + '\0';
+                std::optional<std::string> scan_end = storage_prefix_upper(storage_prefix);
+                const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
+                std::vector<std::string> keys;
+                std::vector<std::string> expired_user_keys;
+                std::string last_seen_before_current;
+                std::string next_cursor;
+                bool has_more = false;
+                int64_t visible_count = 0;
+
+                class RedisScanCallback : public abstract_ordered_index::scan_callback {
+                public:
+                    RedisScanCallback(
+                        bool count_only,
+                        size_t limit,
+                        std::vector<std::string>& keys,
+                        std::vector<std::string>& expired_user_keys,
+                        std::string& last_seen_before_current,
+                        std::string& next_cursor,
+                        bool& has_more,
+                        int64_t& visible_count,
+                        const std::function<bool(const std::string&)>& is_expired)
+                        : count_only_(count_only),
+                          limit_(limit),
+                          keys_(keys),
+                          expired_user_keys_(expired_user_keys),
+                          last_seen_before_current_(last_seen_before_current),
+                          next_cursor_(next_cursor),
+                          has_more_(has_more),
+                          visible_count_(visible_count),
+                          is_expired_(is_expired) {}
+
+                    bool invoke(const char* keyp, size_t keylen, const std::string&) override {
+                        std::string storage_key(keyp, keylen);
+                        constexpr std::string_view kStoragePrefix = "table_key_";
+                        if (storage_key.rfind(kStoragePrefix, 0) != 0) {
+                            return true;
+                        }
+
+                        std::string user_key = storage_key.substr(kStoragePrefix.size());
+                        if (!count_only_ && keys_.size() >= limit_) {
+                            has_more_ = true;
+                            next_cursor_ = last_seen_before_current_;
+                            return false;
+                        }
+
+                        const bool expired = is_expired_(user_key);
+                        if (expired) {
+                            expired_user_keys_.push_back(std::move(user_key));
+                            return true;
+                        }
+
+                        if (count_only_) {
+                            ++visible_count_;
+                        } else {
+                            keys_.push_back(user_key);
+                        }
+                        last_seen_before_current_ = user_key;
+                        return true;
+                    }
+
+                private:
+                    bool count_only_;
+                    size_t limit_;
+                    std::vector<std::string>& keys_;
+                    std::vector<std::string>& expired_user_keys_;
+                    std::string& last_seen_before_current_;
+                    std::string& next_cursor_;
+                    bool& has_more_;
+                    int64_t& visible_count_;
+                    const std::function<bool(const std::string&)>& is_expired_;
+                };
+
+                std::function<bool(const std::string&)> is_expired =
+                    [&](const std::string& scanned_user_key) {
+                        int64_t expire_at_ms = 0;
+                        bool ttl_exists = false;
+                        mako::Status ttl_status = read_ttl_meta(txn, scanned_user_key, expire_at_ms, ttl_exists);
+                        if (!ttl_status.ok() || !ttl_exists) {
+                            return false;
+                        }
+                        return expire_at_ms <= now_unix_ms();
+                    };
+
+                RedisScanCallback callback(
+                    count_only,
+                    limit,
+                    keys,
+                    expired_user_keys,
+                    last_seen_before_current,
+                    next_cursor,
+                    has_more,
+                    visible_count,
+                    is_expired);
+                g_table->scan(txn, scan_start, scan_end_ptr, callback, tl_arena);
+
+                for (const auto& expired_user_key : expired_user_keys) {
+                    std::string expired_storage_key = "table_key_" + expired_user_key;
+                    mako::Status s = delete_raw_if_exists(txn, expired_storage_key);
+                    if (s.ok()) {
+                        s = clear_ttl_meta(txn, expired_user_key);
+                    }
+                    if (!s.ok()) {
+                        all_success = false;
+                        break;
+                    }
+                    batch_exists[expired_storage_key] = false;
+                    batch_values.erase(expired_storage_key);
+                }
+                if (!all_success) {
+                    continue;
+                }
+
+                result.success = true;
+                result.value_present = true;
+                if (count_only) {
+                    result.int_value = visible_count;
+                } else {
+                    std::string payload;
+                    append_u64_le(payload, has_more ? next_cursor.size() : 0);
+                    if (has_more) {
+                        payload.append(next_cursor);
+                    }
+                    append_u64_le(payload, keys.size());
+                    for (const auto& key : keys) {
+                        append_u64_le(payload, key.size());
+                        payload.append(key);
+                    }
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
                 }
             } else {
                 // Unknown operation

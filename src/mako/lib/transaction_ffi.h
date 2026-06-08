@@ -50,6 +50,7 @@ typedef enum {
     TXN_OP_EXPIRE = 9,
     TXN_OP_TTL = 10,
     TXN_OP_PERSIST = 11,
+    TXN_OP_SCAN = 12,
 } TxnOpCode;
 
 typedef enum {
@@ -65,6 +66,7 @@ typedef enum {
     TXN_FLAG_EXPIRE_XX = 1u << 8,
     TXN_FLAG_EXPIRE_GT = 1u << 9,
     TXN_FLAG_EXPIRE_LT = 1u << 10,
+    TXN_FLAG_SCAN_COUNT_ONLY = 1u << 11,
 } TxnOpFlags;
 
 /**
@@ -78,6 +80,12 @@ typedef enum {
  *   - expire_at_ms: absolute Unix millisecond expiry for SET/EXPIRE, or -1
  *     for no expiry metadata
  *   - group_id: non-zero when ops belong to one all-or-nothing group, such as MSETNX
+ *
+ * For TXN_OP_SCAN:
+ *   - key_ptr/key_len carries the decoded cursor user key, or empty for cursor 0
+ *   - val_ptr/val_len carries the literal scan prefix derived from MATCH
+ *   - expire_at_ms carries the COUNT work hint
+ *   - TXN_FLAG_SCAN_COUNT_ONLY returns DBSIZE in int_value instead of key bytes
  */
 typedef struct {
     uint32_t op;           // TxnOpCode
