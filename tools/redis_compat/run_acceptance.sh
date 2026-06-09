@@ -49,7 +49,12 @@ run_optional_script() {
     if output="$(cd "${ROOT_DIR}" && "$@" 2>&1)"; then
         line "${name}" "PASS" "$(echo "${output}" | tail -n 1)"
     else
-        line "${name}" "FAIL" "$(echo "${output}" | tail -n 1)"
+        local status=$?
+        if [[ "${status}" -eq 78 ]]; then
+            line "${name}" "N/A" "$(echo "${output}" | tail -n 1)"
+        else
+            line "${name}" "FAIL" "$(echo "${output}" | tail -n 1)"
+        fi
     fi
 }
 

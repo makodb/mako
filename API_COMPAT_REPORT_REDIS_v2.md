@@ -70,22 +70,22 @@ no replication.
 Phase 12 acceptance is not yet a clean release gate.
 
 Latest artifact:
-`tools/redis_compat/acceptance/ACCEPTANCE_20260609_125648_5ebde060.txt`
+`tools/redis_compat/acceptance/ACCEPTANCE_20260609_131133_2115981f.txt`
 
 | Acceptance line | Status | Detail |
 |---|---|---|
 | G1 wire compatibility | PASS | 90 passed, 1 xfailed |
-| G2 bank transfer | N/A | missing `run_bank_transfer.py` |
-| G3 failover durability | N/A | missing `run_failover_durability.py` |
-| G4 Elle isolation | N/A | missing `run_elle_isolation.py` |
-| Throughput guard | PASS | 33,333.34 req/s, p50 0.151 ms |
-| Memtier p99 guard | PASS | 39,980.81 ops/sec, p99 0.231 ms |
-| TCL semantic guard | N/A | missing `run_tcl_suite.sh` |
+| G2 bank transfer | N/A | requires multi-shard fixture; local smoke is opt-in |
+| G3 failover durability | N/A | missing fault command hooks |
+| G4 Elle isolation | N/A | missing Elle jar/history workflow |
+| Throughput guard | PASS | 38,461.54 req/s, p50 0.231 ms |
+| Memtier p99 guard | PASS | 37,560.10 ops/sec, p99 0.239 ms |
+| TCL semantic guard | N/A | missing vendored Redis TCL test helper |
 | INFO metrics guard | PASS | scoped metrics present |
-| RESP fuzz guard | N/A | missing `run_fuzz.sh` |
-| Soak guard | N/A | missing `run_soak.sh` |
-| Restart durability guard | N/A | missing `run_restart_durability.py` |
-| Client failover guard | N/A | missing `run_client_failover.py` |
+| RESP fuzz guard | PASS | 80 malformed/valid RESP frames, post-fuzz `PING` passed |
+| Soak guard | PASS | 1081 SET/GET ops, RSS/FD/thread sample recorded |
+| Restart durability guard | N/A | missing restart stop/start commands |
+| Client failover guard | N/A | missing failover targets |
 
-The orchestrator records missing harnesses as `N/A` instead of converting them
-into passes.
+The orchestrator treats harness exit code `78` as `N/A`. That lets checked-in
+harnesses distinguish missing environment from real failures.
