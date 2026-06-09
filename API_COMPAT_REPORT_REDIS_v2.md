@@ -70,22 +70,45 @@ no replication.
 Phase 12 acceptance is not yet a clean release gate.
 
 Latest artifact:
-`tools/redis_compat/acceptance/ACCEPTANCE_20260609_131133_2115981f.txt`
+`tools/redis_compat/acceptance/ACCEPTANCE_20260609_134456_11fa4764.txt`
 
 | Acceptance line | Status | Detail |
 |---|---|---|
 | G1 wire compatibility | PASS | 90 passed, 1 xfailed |
-| G2 bank transfer | N/A | requires multi-shard fixture; local smoke is opt-in |
-| G3 failover durability | N/A | missing fault command hooks |
-| G4 Elle isolation | N/A | missing Elle jar/history workflow |
-| Throughput guard | PASS | 38,461.54 req/s, p50 0.231 ms |
-| Memtier p99 guard | PASS | 37,560.10 ops/sec, p99 0.239 ms |
-| TCL semantic guard | N/A | missing vendored Redis TCL test helper |
+| G2 bank transfer | N/A | requires `MAKO_G2_MULTI_SHARD=1` fixture; local smoke is opt-in |
+| G3 failover durability | N/A | requires replicated Mako start/kill/recover hooks |
+| G4 Elle isolation | N/A | requires Elle jar/history; built-in RMW smoke is opt-in |
+| Throughput guard | PASS | 29,411.76 req/s, p50 0.311 ms |
+| Memtier p99 guard | PASS | 28,104.10 ops/sec, p99 0.311 ms |
+| TCL semantic guard | N/A | bootstrap hook added; Redis TCL tests are not vendored by default |
 | INFO metrics guard | PASS | scoped metrics present |
-| RESP fuzz guard | PASS | 80 malformed/valid RESP frames, post-fuzz `PING` passed |
-| Soak guard | PASS | 1081 SET/GET ops, RSS/FD/thread sample recorded |
-| Restart durability guard | N/A | missing restart stop/start commands |
-| Client failover guard | N/A | missing failover targets |
+| Soak guard | PASS | 1029 SET/GET ops, RSS/FD/thread sample recorded |
+| Restart durability guard | N/A | restart hooks added; current Redis path is in-memory |
+| Client failover guard | N/A | requires one or more failover targets |
+| RESP fuzz guard | PASS | deterministic 80-frame fuzz run, delayed `PING` checks passed |
 
 The orchestrator treats harness exit code `78` as `N/A`. That lets checked-in
 harnesses distinguish missing environment from real failures.
+
+## Fixture Hooks
+
+The harnesses now include external fixture hooks:
+
+- `tools/redis_compat/fixtures/makocon_local.sh` starts/stops one local
+  `makoCon` for smoke and restart-hook testing.
+- `tools/redis_compat/fixtures/redis_cluster.sh` starts a local Redis Cluster
+  comparison fixture.
+- `tools/redis_compat/bootstrap_redis_tests.sh` links or fetches Redis TCL
+  tests when explicitly requested.
+- `tools/redis_compat/fixtures/README.md` lists the environment variables for
+  G2, G3, G4, TCL, restart durability, and client failover.
+
+These hooks do not change the current claim status. A local single-shard
+`makoCon` run remains a smoke test, not proof of cross-shard atomicity,
+replicated failover durability, or Elle-checked serializability.
+
+Validation note: the fuzz guard now uses deterministic bytes and delayed
+liveness checks. During manual validation, a longer-tail post-fuzz server exit
+was observed after the guard had passed. Treat this as a follow-up stability
+item; the checked-in guard is reproducible but not a substitute for a longer
+fuzz-plus-soak run.

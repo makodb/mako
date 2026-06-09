@@ -2,19 +2,75 @@
 from __future__ import annotations
 
 import os
+import random
+import subprocess
+import threading
+import time
 from pathlib import Path
 
-from harness_common import main_guard, na
+from harness_common import connect, env_int, main_guard, na
+
+
+def run_builtin_rmw_smoke() -> None:
+    client = connect()
+    prefix = f"g4:rmw:{int(time.time() * 1000)}"
+    keys = [f"{prefix}:{i}" for i in range(env_int("MAKO_G4_KEYS", 10))]
+    clients = env_int("MAKO_G4_CLIENTS", 8)
+    iterations = env_int("MAKO_G4_ITERATIONS", 100)
+    for key in keys:
+        client.set(key, 0)
+
+    errors: list[BaseException] = []
+
+    def worker(seed: int) -> None:
+        rng = random.Random(seed)
+        local = connect()
+        try:
+            for _ in range(iterations):
+                key = rng.choice(keys)
+                txn = local.pipeline(transaction=True)
+                txn.incrby(key, 1)
+                txn.execute()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+        finally:
+            local.close()
+
+    threads = [threading.Thread(target=worker, args=(i,), daemon=True) for i in range(clients)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise errors[0]
+
+    values = [int(value) for value in client.mget(keys)]
+    observed = sum(values)
+    expected = clients * iterations
+    client.delete(*keys)
+    client.close()
+    if observed != expected:
+        print(f"G4 built-in RMW smoke failed observed={observed} expected={expected}")
+        raise SystemExit(1)
+    print(f"G4 built-in RMW smoke passed operations={expected}")
 
 
 def main() -> None:
     elle_jar = os.environ.get("ELLE_JAR", "tools/redis_compat/elle.jar")
     if not Path(elle_jar).exists():
+        if os.environ.get("MAKO_G4_ALLOW_BUILTIN") == "1":
+            run_builtin_rmw_smoke()
+            return
         na(f"missing Elle jar at {elle_jar}")
     history = os.environ.get("MAKO_G4_HISTORY")
     if not history:
         na("missing MAKO_G4_HISTORY history file for Elle analysis")
-    na("Elle jar/history hooks are present, but the G4 workload generator is not wired in this checkout")
+    if not Path(history).exists():
+        na(f"missing MAKO_G4_HISTORY file at {history}")
+    result = subprocess.run(["java", "-jar", elle_jar, history], check=False)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
+    print(f"Elle isolation check passed history={history}")
 
 
 if __name__ == "__main__":

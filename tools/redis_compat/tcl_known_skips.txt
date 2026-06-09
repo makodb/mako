@@ -1,0 +1,6 @@
+# Redis TCL Known Skips
+
+No per-test skips are checked in yet.
+
+If an in-scope TCL file needs skips, add exact test names here with one short
+reason each. Do not skip a whole in-scope file to hide an implementation gap.

@@ -62,8 +62,8 @@ def run_local_bank_transfer() -> None:
 
 
 def main() -> None:
-    if os.environ.get("MAKO_G2_ALLOW_SINGLE_SHARD") != "1":
-        na("requires multi-shard G2 fixture; set MAKO_G2_ALLOW_SINGLE_SHARD=1 for local invariant smoke")
+    if os.environ.get("MAKO_G2_MULTI_SHARD") != "1" and os.environ.get("MAKO_G2_ALLOW_SINGLE_SHARD") != "1":
+        na("requires MAKO_G2_MULTI_SHARD=1 fixture; set MAKO_G2_ALLOW_SINGLE_SHARD=1 for local smoke")
     run_local_bank_transfer()
 
 

@@ -125,10 +125,10 @@ run_info_guard() {
     run_memtier_guard
     run_optional_script "TCL semantic guard" "tools/redis_compat/run_tcl_suite.sh" bash tools/redis_compat/run_tcl_suite.sh
     run_info_guard
-    run_optional_script "RESP fuzz guard" "tools/redis_compat/run_fuzz.sh" bash tools/redis_compat/run_fuzz.sh
     run_optional_script "Soak guard" "tools/redis_compat/run_soak.sh" bash tools/redis_compat/run_soak.sh
     run_optional_script "Restart durability guard" "tools/redis_compat/run_restart_durability.py" python3 tools/redis_compat/run_restart_durability.py
     run_optional_script "Client failover guard" "tools/redis_compat/run_client_failover.py" python3 tools/redis_compat/run_client_failover.py
+    run_optional_script "RESP fuzz guard" "tools/redis_compat/run_fuzz.sh" bash tools/redis_compat/run_fuzz.sh
 } | tee "${OUT_FILE}"
 
 echo "Saved acceptance artifact: ${OUT_FILE}" >&2

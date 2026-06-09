@@ -11,6 +11,10 @@ if ! command -v tclsh >/dev/null 2>&1; then
     exit 78
 fi
 
+if [[ ! -f "${TEST_HELPER}" && "${REDIS_COMPAT_BOOTSTRAP_TCL:-0}" == "1" ]]; then
+    bash "${ROOT_DIR}/tools/redis_compat/bootstrap_redis_tests.sh" || exit $?
+fi
+
 if [[ ! -f "${TEST_HELPER}" ]]; then
     echo "missing third-party/redis-tests/tests/test_helper.tcl"
     exit 78

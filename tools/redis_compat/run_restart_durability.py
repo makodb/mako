@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from pathlib import Path
 
 from harness_common import connect, env_int, main_guard, na
 
@@ -15,6 +16,10 @@ def run_shell(command: str) -> None:
 def main() -> None:
     stop_cmd = os.environ.get("MAKO_RESTART_STOP_CMD")
     start_cmd = os.environ.get("MAKO_RESTART_START_CMD")
+    if os.environ.get("MAKO_RESTART_USE_LOCAL_FIXTURE") == "1":
+        fixture = Path("tools/redis_compat/fixtures/makocon_local.sh")
+        stop_cmd = stop_cmd or f"bash {fixture} stop"
+        start_cmd = start_cmd or f"bash {fixture} start"
     if not stop_cmd or not start_cmd:
         na("missing MAKO_RESTART_STOP_CMD or MAKO_RESTART_START_CMD")
 
