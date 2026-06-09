@@ -115,7 +115,8 @@ def test_set_replaced_by_string_and_delete_removes_logical_key(mako_client: redi
     assert mako_client.set(name, b"value") is True
     assert mako_client.type(name) == b"string"
     assert mako_client.get(name) == b"value"
-    assert mako_client.smembers(name) == set()
+    with pytest.raises(redis.ResponseError):
+        mako_client.smembers(name)
 
     assert mako_client.delete(name) == 1
     assert mako_client.type(name) == b"none"

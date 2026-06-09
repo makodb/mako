@@ -1303,9 +1303,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         bool allowed = false;
         TxnOpResult ignored{};
         mako::Status type_status = set_key_allowed(txn, set_key, ignored, allowed);
-        if (!type_status.ok() || !allowed) {
+        if (!type_status.ok()) {
             members.clear();
             return type_status;
+        }
+        if (!allowed) {
+            members.clear();
+            return mako::Status::InvalidArgument("wrong type");
         }
         mako::Status expire_status = expire_set_if_needed(txn, set_key);
         if (!expire_status.ok()) {

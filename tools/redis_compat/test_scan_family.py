@@ -64,6 +64,21 @@ def test_zscan_supports_nonzero_cursor_and_match(mako_client: redis.Redis) -> No
     }
 
 
+def test_member_scans_return_empty_for_missing_keys(mako_client: redis.Redis) -> None:
+    assert mako_client.sscan(key("missing-set"), 0) == (0, [])
+    assert mako_client.zscan(key("missing-zset"), 0) == (0, [])
+
+
+def test_member_scans_reject_wrong_type(mako_client: redis.Redis) -> None:
+    string_key = key("string")
+    assert mako_client.set(string_key, b"value") is True
+
+    with pytest.raises(redis.ResponseError):
+        mako_client.sscan(string_key, 0)
+    with pytest.raises(redis.ResponseError):
+        mako_client.zscan(string_key, 0)
+
+
 def test_hscan_remains_blocked_until_hash_storage_exists(mako_client: redis.Redis) -> None:
     with pytest.raises(redis.ResponseError, match="hash command storage"):
         mako_client.hscan(key("hash"), 0)
