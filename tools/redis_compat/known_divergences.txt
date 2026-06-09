@@ -14,5 +14,4 @@ MULTI set write+move ordering :: mako-design-difference :: SADD followed by SMOV
 KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Phase 7 hides composite list storage and does not yet expose lists as logical keys through keyspace enumeration.
 LPOS options :: mako-design-difference :: Phase 7 implements the basic LPOS key element form; RANK/COUNT/MAXLEN options need additional result-shape handling.
 KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Phase 8 hides composite sorted-set storage and does not yet expose sorted sets as logical keys through keyspace enumeration.
-ZSCAN cursor :: mako-design-difference :: Phase 8 implements cursor-0 sorted-set scans only; paginated ZSCAN cursor state is deferred.
 Sorted-set store/range-removal/lex commands :: mako-design-difference :: Phase 8 implements core sorted-set commands; ZRANGEBYLEX, ZREMRANGEBY*, ZRANGESTORE, ZUNIONSTORE, ZINTERSTORE, and ZDIFFSTORE are deferred.
