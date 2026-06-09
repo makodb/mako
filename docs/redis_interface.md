@@ -24,6 +24,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE` | Basic non-blocking Redis list operations | Blocking pops are intentionally out of scope | Stores elements as internal composite keys and maintains head/tail metadata transactionally |
 | `LSET`, `LREM`, `LTRIM`, `LINSERT`, `LPUSHX`, `RPUSHX`, `LPOS`, `LMOVE`, `RPOPLPUSH` | Non-blocking list mutation and move operations | `LPOS` currently supports the basic key/element form | Rewrites affected logical list contents inside the same OCC transaction |
 | `ZADD`, `ZSCORE`, `ZINCRBY`, `ZREM`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZPOPMIN`, `ZPOPMAX`, `ZSCAN` | Core sorted-set operations | Store/range-removal/lex variants are deferred; `ZSCAN` is cursor-0 only | Stores member and score indexes transactionally and stages zset updates inside one `EXEC` |
+| `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `PUBSUB CHANNELS/NUMSUB/NUMPAT` | In-memory Redis Pub/Sub | Process-local only; no persistence or delivery after disconnect | Adds Rust-side subscriber mode, channel registry, pattern matching, and outbound queues without touching Mako storage |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
 | `EXISTS key [key ...]` | Checks one or more keys and returns the count present | No bloom-filter/cache shortcut; remote tables use `remoteGet()` and may copy the value | Uses a dedicated local no-copy existence path that participates in OCC read observation |
@@ -33,7 +34,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `COMMAND`, `COMMAND DOCS`, `COMMAND COUNT`, `COMMAND INFO` | Returns parseable command metadata stubs | Minimal metadata only | Satisfies client/tooling probes without claiming full Redis metadata parity |
 | `CONFIG GET/SET/RESETSTAT` | Handles common client configuration probes | Static compatibility values; no runtime server reconfiguration | Lets Redis clients and benchmarks complete setup probes |
 | `RESET`, `QUIT`, `SELECT 0`, `AUTH`, `ECHO` | Handles common connection commands | `AUTH` is a no-op trust-boundary shim; only DB 0 is accepted | Matches the plan's connection-compatibility scope |
-| `INFO [section]` | Returns parseable `server`, `clients`, and `mako` sections | Small scoped metric surface only | Exposes the counters required by the plan without claiming full Redis INFO parity |
+| `INFO [section]` | Returns parseable `server`, `clients`, `stats`, and `mako` sections | Small scoped metric surface only | Exposes the counters required by the plan without claiming full Redis INFO parity |
 | `WAIT 0 0` | Returns `0` as a no-replication compatibility shim | No replica waiting | Lets clients that issue `WAIT` after writes continue |
 | `MULTI` / `EXEC` / `DISCARD` | Queues commands and executes supported operations through one C++ transaction | No `WATCH`; no Lua | Mako's transaction model is the replacement for Redis WATCH/Lua-style optimistic wrappers |
 
@@ -347,6 +348,29 @@ Current limitations:
 - `ZRANGEBYLEX`, `ZREMRANGEBY*`, `ZRANGESTORE`, `ZUNIONSTORE`,
   `ZINTERSTORE`, and `ZDIFFSTORE` are deferred.
 - `KEYS`, `SCAN`, and `DBSIZE` still do not expose sorted sets as logical keys.
+
+---
+
+## Pub/Sub
+
+Phase 9 adds Redis Pub/Sub in the Rust RESP handler only.
+
+- `SUBSCRIBE channel ...` and `PSUBSCRIBE pattern ...` put the connection into
+  subscriber mode.
+- Subscriber-mode connections accept only subscribe, unsubscribe, `PING`,
+  `QUIT`, and `RESET`.
+- `PUBLISH channel message` enqueues RESP messages to matching subscriber
+  connections.
+- `PUBLISH` inside `MULTI` is queued and delivered when `EXEC` runs.
+- `PUBSUB CHANNELS [pattern]`, `PUBSUB NUMSUB [channel ...]`, and
+  `PUBSUB NUMPAT` read the in-memory registry.
+- `INFO clients` and `INFO stats` expose `pubsub_channels` and
+  `pubsub_patterns`.
+
+Pub/Sub does not use Mako storage. Messages are not persisted, are not replayed
+after disconnect, and are scoped to the current `makoCon` process. This matches
+Redis Pub/Sub's ephemeral delivery model while keeping Mako's transaction
+executor unchanged.
 
 ---
 
