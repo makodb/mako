@@ -2487,9 +2487,16 @@ void PollThreadWorker::poll_loop() {
       poll_.Remove(fd);
     }
   }
-  fd_to_pollable_.clear();
-  mode_.clear();
-  pending_remove_.clear();
+  // Workaround for hashbrown port `clear()` bug: ScopeGuard captures the
+  // RawTable by value, double-freeing the buffer on guard destruction.
+  // Use move-assignment to a fresh empty map instead — the old map is
+  // dropped normally via ~HashMap, which is bug-free.
+  // @unsafe { HashMap move-assignment }
+  {
+    fd_to_pollable_ = rusty::HashMap<int, PollableProxy>{};
+    mode_ = rusty::HashMap<int, int>{};
+    pending_remove_ = rusty::HashSet<int>{};
+  }
   Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
 }
 
