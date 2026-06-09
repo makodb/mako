@@ -1702,7 +1702,6 @@ void Fiber::do_finalize() {
 
 // --- from reactor.cc -----------------------------------------------------
 
-const int64_t n_max_fiber = 2000;
 // `REUSING_FIBER` is provided as a macro by reactor.h (line 203).
 // The original module-attached `constexpr bool REUSING_FIBER`
 // shadowed the macro inside the rrr module's purview; with
