@@ -970,16 +970,13 @@ class PollThreadWorker;
 // =============================================================================
 
 // Commands sent from PollThread to PollThreadWorker via channel
-// Using std::variant for type-safe discriminated union
-//
-// `CmdAddPollable` stays hand-written because its `PollableProxy`
-// (= `Box<PollableBase>`) field is a typedef the DSL can't resolve.
-// The six below — including the `Arc<Job>`-bearing add/remove pair —
-// emit cleanly as 1:1 POD aggregates.
-struct CmdAddPollable {
-    PollableProxy pollable;
-};
+// Using std::variant for type-safe discriminated union. All seven
+// emit through the DSL block below; the `pollable` field's DSL form
+// `Box<PollableBase>` lowers to `rusty::Box<PollableBase>`, which the
+// `PollableProxy = rusty::Box<PollableBase>` using-alias in
+// `rrr.pollable_proxy` keeps backward-compatible with prior call sites.
 #if RUSTYCPP_RUST
+struct CmdAddPollable { pollable: Box<PollableBase> }
 struct CmdRemovePollable { fd: i32 }
 struct CmdClosePollable { fd: i32 }
 struct CmdUpdateMode { fd: i32, new_mode: i32 }
@@ -987,13 +984,18 @@ struct CmdAddJob { job: Arc<Job> }
 struct CmdRemoveJob { job: Arc<Job> }
 struct CmdShutdown {}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=3f0ed55eab0006b5ac96604e1b75831f67149f4742361539cb643eeb2b43aa59*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=322b492b439ebf16ebbdfa4e0177a363ef006de129416083fa97070e3002de7f*/
+struct CmdAddPollable;
 struct CmdRemovePollable;
 struct CmdClosePollable;
 struct CmdUpdateMode;
 struct CmdAddJob;
 struct CmdRemoveJob;
 struct CmdShutdown;
+
+struct CmdAddPollable {
+    rusty::Box<PollableBase> pollable;
+};
 
 struct CmdRemovePollable {
     int32_t fd;
