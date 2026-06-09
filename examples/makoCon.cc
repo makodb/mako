@@ -21,6 +21,7 @@
 #include <examples/common.h>
 #include "lib/transaction_ffi.h"
 #include "silo_runtime.h"
+#include "makocon_ffi_impl.hh"
 
 import std;
 
@@ -82,22 +83,7 @@ void cleanup_thread_info() {
 bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     ensure_thread_info();
 
-    if (!request || !response || request->num_ops == 0) {
-        if (response) {
-            response->transaction_success = false;
-            response->num_results = 0;
-            response->results = nullptr;
-        }
-        return false;
-    }
-
-    // Allocate results array
-    response->num_results = request->num_ops;
-    response->results = static_cast<TxnOpResult*>(
-        std::calloc(request->num_ops, sizeof(TxnOpResult)));
-    if (!response->results) {
-        response->transaction_success = false;
-        response->num_results = 0;
+    if (!makocon_ffi::allocate_response(request, response)) {
         return false;
     }
 
@@ -3257,16 +3243,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
 // Free transaction response resources
 void free_transaction_response(TxnResponse* response) {
-    if (response && response->results) {
-        for (size_t i = 0; i < response->num_results; i++) {
-            if (response->results[i].data_ptr) {
-                std::free(response->results[i].data_ptr);
-            }
-        }
-        std::free(response->results);
-        response->results = nullptr;
-        response->num_results = 0;
-    }
+    makocon_ffi::free_transaction_response(response);
 }
 
 // FFI exports - called by Rust
@@ -3294,20 +3271,13 @@ extern "C" {
     }
 
     bool cpp_get_metrics(MakoMetrics* metrics) {
-        if (!metrics) {
-            return false;
-        }
-        const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - g_mako_start_time);
-        metrics->txn_commits = g_mako_txn_commits.load(std::memory_order_relaxed);
-        metrics->txn_aborts = g_mako_txn_aborts.load(std::memory_order_relaxed);
-        metrics->txn_retries = g_mako_txn_retries.load(std::memory_order_relaxed);
-        metrics->uptime_seconds = static_cast<uint64_t>(uptime.count());
-        return true;
+        return makocon_ffi::populate_metrics(
+            metrics, g_mako_start_time, g_mako_txn_commits, g_mako_txn_aborts,
+            g_mako_txn_retries);
     }
 
     void cpp_record_txn_retry(void) {
-        g_mako_txn_retries.fetch_add(1, std::memory_order_relaxed);
+        makocon_ffi::record_txn_retry(g_mako_txn_retries);
     }
 }
 

@@ -111,6 +111,22 @@ The C++ Redis entry point is `examples/makoCon.cc`.
 
 All supported data operations go through `execute_transaction()`. Single commands are sent as one-operation transactions. `MULTI` / `EXEC` sends the queued operations as one transaction.
 
+`examples/makocon_ffi_impl.hh` holds the shared C/Rust FFI helpers used by both
+Redis binaries:
+
+- static layout checks for `TxnOperation`, `TxnRequest`, `TxnOpResult`, and
+  `TxnResponse`;
+- response allocation/freeing;
+- `INFO mako` metric population;
+- Redis-layer retry accounting.
+
+`examples/makoConMultiTrd.cc` remains ABI-compatible only. Its queue worker
+still implements only the legacy `GET`/`SET`/`DEL`/`EXISTS` storage verbs, so
+the broader Redis command semantics are not claimed for that binary. If
+MultiTrd becomes a correctness target, it needs to call the same transaction
+executor as `makoCon.cc` instead of keeping a separate queue-side command
+implementation.
+
 ### Thread Initialization
 
 Redis worker threads must initialize both:

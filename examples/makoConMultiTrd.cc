@@ -6,6 +6,7 @@
 #include <examples/common.h>
 #include "lib/rust_wrapper.h"
 #include "lib/transaction_ffi.h"
+#include "makocon_ffi_impl.hh"
 #include "../src/mako/spinbarrier.h"
 
 import std;
@@ -315,17 +316,7 @@ extern "C" {
 
     // Transaction API - required by new Rust FFI interface
     bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response) {
-        if (!g_work_queue || !request || !response) {
-            return false;
-        }
-
-        // Allocate results array
-        response->num_results = request->num_ops;
-        response->results = static_cast<TxnOpResult*>(
-            std::calloc(request->num_ops, sizeof(TxnOpResult))
-        );
-        if (!response->results) {
-            response->transaction_success = false;
+        if (!g_work_queue || !makocon_ffi::allocate_response(request, response)) {
             return false;
         }
 
@@ -334,8 +325,9 @@ extern "C" {
         for (size_t i = 0; i < request->num_ops; ++i) {
             const TxnOperation& txn_op = request->ops[i];
 
-            // Validate operation
-            if (txn_op.op < 1 || txn_op.op > 11) {
+            // makoConMultiTrd is ABI-aligned with the primary Redis binary, but
+            // its queue worker still implements only GET/SET/DEL/EXISTS.
+            if (!makocon_ffi::opcode_supported_by_multitrd_queue(txn_op.op)) {
                 response->results[i].success = false;
                 all_success = false;
                 continue;
@@ -396,19 +388,7 @@ extern "C" {
     }
 
     void cpp_free_transaction_response(TxnResponse* response) {
-        if (!response || !response->results) {
-            return;
-        }
-
-        for (size_t i = 0; i < response->num_results; ++i) {
-            if (response->results[i].data_ptr) {
-                std::free(response->results[i].data_ptr);
-            }
-        }
-
-        std::free(response->results);
-        response->results = nullptr;
-        response->num_results = 0;
+        makocon_ffi::free_transaction_response(response);
     }
 
     void cpp_cleanup_thread_info() {
@@ -416,20 +396,13 @@ extern "C" {
     }
 
     bool cpp_get_metrics(MakoMetrics* metrics) {
-        if (!metrics) {
-            return false;
-        }
-        const auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - g_mako_start_time);
-        metrics->txn_commits = g_mako_txn_commits.load(std::memory_order_relaxed);
-        metrics->txn_aborts = g_mako_txn_aborts.load(std::memory_order_relaxed);
-        metrics->txn_retries = g_mako_txn_retries.load(std::memory_order_relaxed);
-        metrics->uptime_seconds = static_cast<uint64_t>(uptime.count());
-        return true;
+        return makocon_ffi::populate_metrics(
+            metrics, g_mako_start_time, g_mako_txn_commits, g_mako_txn_aborts,
+            g_mako_txn_retries);
     }
 
     void cpp_record_txn_retry(void) {
-        g_mako_txn_retries.fetch_add(1, std::memory_order_relaxed);
+        makocon_ffi::record_txn_retry(g_mako_txn_retries);
     }
 }
 
