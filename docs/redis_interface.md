@@ -23,6 +23,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `SINTER`, `SUNION`, `SDIFF`, `SINTERSTORE`, `SUNIONSTORE`, `SDIFFSTORE` | Set algebra and store variants | Implemented by scanning composite set members in the local transaction executor | Computes algebra in C++ and writes `*STORE` destinations inside the same OCC transaction |
 | `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE` | Basic non-blocking Redis list operations | Blocking pops are intentionally out of scope | Stores elements as internal composite keys and maintains head/tail metadata transactionally |
 | `LSET`, `LREM`, `LTRIM`, `LINSERT`, `LPUSHX`, `RPUSHX`, `LPOS`, `LMOVE`, `RPOPLPUSH` | Non-blocking list mutation and move operations | `LPOS` currently supports the basic key/element form | Rewrites affected logical list contents inside the same OCC transaction |
+| `ZADD`, `ZSCORE`, `ZINCRBY`, `ZREM`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZPOPMIN`, `ZPOPMAX`, `ZSCAN` | Core sorted-set operations | Store/range-removal/lex variants are deferred; `ZSCAN` is cursor-0 only | Stores member and score indexes transactionally and stages zset updates inside one `EXEC` |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
 | `EXISTS key [key ...]` | Checks one or more keys and returns the count present | No bloom-filter/cache shortcut; remote tables use `remoteGet()` and may copy the value | Uses a dedicated local no-copy existence path that participates in OCC read observation |
@@ -48,8 +49,9 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TXN_OP_EXPIRE`, `TXN_OP_TTL`, `TXN_OP_PERSIST` | Phase 4 TTL-family operations | No background expiry scanner | Keeps expiry decisions and lazy deletion inside one C++ transaction |
 | `TXN_OP_SCAN` | Phase 5 key enumeration and `DBSIZE` | Single local shard only; no hash field scan yet | Reuses the sharded Masstree scan path and returns cursor-key batches to Rust |
 | `TXN_OP_SADD` through `TXN_OP_SET_ALGEBRA` | Phase 6 set operations | Local composite-key set storage only | Keeps set member updates, cardinality metadata, and set-store writes in one transaction |
-| `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/list/none | Keeps string, set, and list expiry checks in C++ |
+| `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/list/zset/none | Keeps string, set, list, and sorted-set expiry checks in C++ |
 | `TXN_OP_LPUSH` through `TXN_OP_LPOS` | Phase 7 list operations | Non-blocking list surface only | Keeps element writes, head/tail metadata, and list moves in one transaction |
+| `TXN_OP_ZADD` through `TXN_OP_ZSCAN` | Phase 8 sorted-set operations | Store/range-removal/lex variants are deferred | Keeps member index, score index, and zset metadata updates in one transaction |
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
 | `TxnOpResult::data_ptr/data_len` | Returned value bytes for `GET` | Null for non-value operations | Keeps Redis bytes opaque to Rust while preserving empty-string correctness |
@@ -247,11 +249,12 @@ multi-shard Redis server must either add remote scan coordination or reject
 `SCAN`; returning one local shard as if it were global would be silently
 incomplete. That is a correctness limitation, not a Redis parser limitation.
 
-Set and list keys use internal composite records outside the visible
+Set, list, and sorted-set keys use internal composite records outside the visible
 `table_key_` namespace. That prevents leaking `\x01S:`, `\x01S#:`, `\x01L:`,
-and `\x01L#:` records, but it means `KEYS`, `SCAN`, and `DBSIZE` do not yet
-report collections as logical keys. Typed keyspace enumeration should be added
-with a shared logical key index rather than exposing composite storage details.
+`\x01L#:`, `\x01Z:`, `\x01ZS:`, and `\x01Z#:` records, but it means `KEYS`,
+`SCAN`, and `DBSIZE` do not yet report collections as logical keys. Typed
+keyspace enumeration should be added with a shared logical key index rather than
+exposing composite storage details.
 
 `HSCAN` is not implemented yet because hash commands and hash field encoding
 are not in the current Redis surface. It should be added with the hash phase so
@@ -312,6 +315,38 @@ and TTL metadata inside the same transaction.
 
 Blocking list commands (`BLPOP`, `BRPOP`, `BLMOVE`, and related variants) are
 not implemented; they remain out of scope per the plan's killed-feature list.
+
+---
+
+## Sorted-Set Storage
+
+Phase 8 adds core Redis sorted-set commands with composite storage:
+
+- Member key: `\x01Z:<u64 zset-len><zset><member>` -> score text.
+- Score key: `\x01ZS:<u64 zset-len><zset><encoded-score><member>` -> `"1"`.
+- Cardinality key: `\x01Z#:<u64 zset-len><zset>` -> decimal member count.
+- Redis clients cannot create keys beginning with `0x01`.
+
+Scores are encoded for the score index with order-preserving IEEE-754 double
+encoding: positives flip the sign bit, negatives flip all bits, then bytes are
+stored big-endian. `NaN` is rejected.
+
+Sorted-set commands use a transaction-local overlay. Reads inside one `EXEC`
+observe earlier zset writes, and dirty zsets are flushed once before commit.
+The flush updates changed member records in place and only deletes stale score
+index records, avoiding delete-then-reinsert of the same member key.
+
+TTL metadata is keyed by the visible Redis key. When a sorted set expires, the
+logical expiry path deletes the bare string key, zset member records, score
+index records, cardinality metadata, and TTL metadata inside the same
+transaction.
+
+Current limitations:
+
+- `ZSCAN` supports cursor `0` only.
+- `ZRANGEBYLEX`, `ZREMRANGEBY*`, `ZRANGESTORE`, `ZUNIONSTORE`,
+  `ZINTERSTORE`, and `ZDIFFSTORE` are deferred.
+- `KEYS`, `SCAN`, and `DBSIZE` still do not expose sorted sets as logical keys.
 
 ---
 

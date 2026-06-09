@@ -123,6 +123,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     std::unordered_map<std::string, std::vector<std::string>> staged_lists;
     std::unordered_set<std::string> staged_lists_loaded;
     std::unordered_set<std::string> dirty_lists;
+    std::unordered_map<std::string, std::map<std::string, double>> staged_zsets;
+    std::unordered_set<std::string> staged_zsets_loaded;
+    std::unordered_set<std::string> dirty_zsets;
     std::unordered_map<uint32_t, bool> group_can_write;
 
     auto make_prefixed_key = [](const TxnOperation& op) {
@@ -206,6 +209,60 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             key.push_back(static_cast<char>((static_cast<uint64_t>(list_key.size()) >> shift) & 0xff));
         }
         key.append(list_key);
+        return key;
+    };
+
+    auto make_zset_member_prefix = [](const std::string& zset_key) {
+        std::string prefix;
+        prefix.reserve(sizeof("\x01Z:") - 1 + 8 + zset_key.size());
+        prefix.append("\x01Z:", sizeof("\x01Z:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            prefix.push_back(static_cast<char>((static_cast<uint64_t>(zset_key.size()) >> shift) & 0xff));
+        }
+        prefix.append(zset_key);
+        return prefix;
+    };
+
+    auto make_zset_member_key = [&](const std::string& zset_key, const std::string& member) {
+        std::string key = make_zset_member_prefix(zset_key);
+        key.append(member);
+        return key;
+    };
+
+    auto make_zset_score_prefix = [](const std::string& zset_key) {
+        std::string prefix;
+        prefix.reserve(sizeof("\x01ZS:") - 1 + 8 + zset_key.size());
+        prefix.append("\x01ZS:", sizeof("\x01ZS:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            prefix.push_back(static_cast<char>((static_cast<uint64_t>(zset_key.size()) >> shift) & 0xff));
+        }
+        prefix.append(zset_key);
+        return prefix;
+    };
+
+    auto encode_zset_score = [&](double score) {
+        uint64_t raw = std::bit_cast<uint64_t>(score);
+        uint64_t encoded = (raw & (1ULL << 63)) != 0 ? ~raw : (raw ^ (1ULL << 63));
+        std::string out;
+        append_u64_be(out, encoded);
+        return out;
+    };
+
+    auto make_zset_score_key = [&](const std::string& zset_key, double score, const std::string& member) {
+        std::string key = make_zset_score_prefix(zset_key);
+        key.append(encode_zset_score(score));
+        key.append(member);
+        return key;
+    };
+
+    auto make_zset_meta_key = [](const std::string& zset_key) {
+        std::string key;
+        key.reserve(sizeof("\x01Z#:") - 1 + 8 + zset_key.size());
+        key.append("\x01Z#:", sizeof("\x01Z#:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            key.push_back(static_cast<char>((static_cast<uint64_t>(zset_key.size()) >> shift) & 0xff));
+        }
+        key.append(zset_key);
         return key;
     };
 
@@ -476,6 +533,18 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return make_set_meta_key(set_key);
     };
 
+    auto zset_member_storage_key = [&](const std::string& zset_key, const std::string& member) {
+        return make_zset_member_key(zset_key, member);
+    };
+
+    auto zset_score_storage_key = [&](const std::string& zset_key, double score, const std::string& member) {
+        return make_zset_score_key(zset_key, score, member);
+    };
+
+    auto zset_meta_storage_key = [&](const std::string& zset_key) {
+        return make_zset_meta_key(zset_key);
+    };
+
     auto read_set_cardinality = [&](void* txn, const std::string& set_key, int64_t& count) {
         std::string meta_key = set_meta_storage_key(set_key);
         auto batch_it = batch_exists.find(meta_key);
@@ -535,6 +604,76 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             }
         }
         return read_raw(txn, key, value, exists);
+    };
+
+    auto parse_zset_score_value = [](const std::string& input, double& out) {
+        if (input.empty()) {
+            return false;
+        }
+        size_t pos = 0;
+        try {
+            double parsed = std::stod(input, &pos);
+            if (pos != input.size() || !std::isfinite(parsed)) {
+                return false;
+            }
+            out = parsed;
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto format_zset_score = [](double value) {
+        if (value == 0.0) {
+            return std::string("0");
+        }
+        std::ostringstream oss;
+        oss << std::setprecision(17) << value;
+        std::string out = oss.str();
+        if (out.find('.') != std::string::npos && out.find('e') == std::string::npos
+            && out.find('E') == std::string::npos) {
+            while (!out.empty() && out.back() == '0') {
+                out.pop_back();
+            }
+            if (!out.empty() && out.back() == '.') {
+                out.pop_back();
+            }
+        }
+        return out;
+    };
+
+    auto read_zset_cardinality = [&](void* txn, const std::string& zset_key, int64_t& count) {
+        std::string meta_key = zset_meta_storage_key(zset_key);
+        std::string value;
+        bool exists = false;
+        mako::Status s = read_internal_current(txn, meta_key, value, exists);
+        if (!s.ok()) {
+            return s;
+        }
+        if (!exists) {
+            count = 0;
+            return mako::Status::OK();
+        }
+        if (!parse_int64(value, count) || count < 0) {
+            count = 0;
+        }
+        return mako::Status::OK();
+    };
+
+    auto write_zset_cardinality = [&](void* txn, const std::string& zset_key, int64_t count) {
+        std::string meta_key = zset_meta_storage_key(zset_key);
+        if (count <= 0) {
+            batch_exists[meta_key] = false;
+            batch_values.erase(meta_key);
+            return delete_raw_if_exists(txn, meta_key);
+        }
+        std::string payload = std::to_string(count);
+        mako::Status s = put_raw(txn, meta_key, payload);
+        if (s.ok()) {
+            batch_exists[meta_key] = true;
+            batch_values[meta_key] = payload;
+        }
+        return s;
     };
 
     auto read_list_meta = [&](void* txn, const std::string& list_key, int64_t& head, int64_t& tail) {
@@ -668,6 +807,174 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto collect_zset_values = [&](void* txn, const std::string& zset_key, std::map<std::string, double>& values) {
+        values.clear();
+        const std::string member_prefix = make_zset_member_prefix(zset_key);
+        std::optional<std::string> scan_end = storage_prefix_upper(member_prefix);
+        const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
+
+        class ZSetMemberScanCallback : public abstract_ordered_index::scan_callback {
+        public:
+            ZSetMemberScanCallback(
+                std::map<std::string, double>& values,
+                std::string_view member_prefix,
+                size_t member_prefix_len,
+                const std::function<bool(const std::string&, double&)>& parse_score)
+                : values_(values),
+                  member_prefix_(member_prefix),
+                  member_prefix_len_(member_prefix_len),
+                  parse_score_(parse_score) {}
+
+            bool invoke(const char* keyp, size_t keylen, const std::string& value) override {
+                std::string_view storage_key(keyp, keylen);
+                if (storage_key.rfind(member_prefix_, 0) != 0) {
+                    return true;
+                }
+                double score = 0.0;
+                if (!parse_score_(value, score)) {
+                    return true;
+                }
+                values_[std::string(storage_key.substr(member_prefix_len_))] = score;
+                return true;
+            }
+
+        private:
+            std::map<std::string, double>& values_;
+            std::string_view member_prefix_;
+            size_t member_prefix_len_;
+            const std::function<bool(const std::string&, double&)>& parse_score_;
+        };
+
+        std::function<bool(const std::string&, double&)> parse_score =
+            [&](const std::string& input, double& out) {
+                return parse_zset_score_value(input, out);
+            };
+        ZSetMemberScanCallback callback(values, member_prefix, member_prefix.size(), parse_score);
+        g_table->scan(txn, member_prefix, scan_end_ptr, callback, tl_arena);
+
+        for (const auto& [storage_key, exists] : batch_exists) {
+            if (storage_key.rfind(member_prefix, 0) != 0) {
+                continue;
+            }
+            std::string member = storage_key.substr(member_prefix.size());
+            if (!exists) {
+                values.erase(member);
+                continue;
+            }
+            auto value_it = batch_values.find(storage_key);
+            if (value_it == batch_values.end()) {
+                continue;
+            }
+            double score = 0.0;
+            if (parse_zset_score_value(value_it->second, score)) {
+                values[member] = score;
+            }
+        }
+        return mako::Status::OK();
+    };
+
+    auto zset_ordered_items = [](const std::map<std::string, double>& values) {
+        std::vector<std::pair<std::string, double>> items(values.begin(), values.end());
+        std::sort(items.begin(), items.end(), [](const auto& lhs, const auto& rhs) {
+            if (lhs.second < rhs.second) {
+                return true;
+            }
+            if (lhs.second > rhs.second) {
+                return false;
+            }
+            return lhs.first < rhs.first;
+        });
+        return items;
+    };
+
+    auto delete_zset = [&](void* txn, const std::string& zset_key) {
+        std::map<std::string, double> values;
+        mako::Status s = collect_zset_values(txn, zset_key, values);
+        if (!s.ok()) {
+            return s;
+        }
+        for (const auto& [member, score] : values) {
+            std::string member_key = zset_member_storage_key(zset_key, member);
+            s = delete_raw_if_exists(txn, member_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[member_key] = false;
+            batch_values.erase(member_key);
+
+            std::string score_key = zset_score_storage_key(zset_key, score, member);
+            s = delete_raw_if_exists(txn, score_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[score_key] = false;
+            batch_values.erase(score_key);
+        }
+        if (s.ok()) {
+            s = write_zset_cardinality(txn, zset_key, 0);
+        }
+        if (s.ok()) {
+            staged_zsets.erase(zset_key);
+            staged_zsets_loaded.erase(zset_key);
+            dirty_zsets.erase(zset_key);
+        }
+        return s;
+    };
+
+    auto rewrite_zset_values = [&](void* txn, const std::string& zset_key, const std::map<std::string, double>& values) {
+        std::map<std::string, double> existing;
+        mako::Status s = collect_zset_values(txn, zset_key, existing);
+        if (!s.ok()) {
+            return s;
+        }
+        for (const auto& [member, old_score] : existing) {
+            auto next_it = values.find(member);
+            if (next_it != values.end() && next_it->second == old_score) {
+                continue;
+            }
+            if (next_it == values.end()) {
+                std::string member_key = zset_member_storage_key(zset_key, member);
+                s = delete_raw_if_exists(txn, member_key);
+                if (!s.ok()) {
+                    return s;
+                }
+                batch_exists[member_key] = false;
+                batch_values.erase(member_key);
+            }
+
+            std::string score_key = zset_score_storage_key(zset_key, old_score, member);
+            s = delete_raw_if_exists(txn, score_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[score_key] = false;
+            batch_values.erase(score_key);
+        }
+        for (const auto& [member, score] : values) {
+            auto old_it = existing.find(member);
+            if (old_it != existing.end() && old_it->second == score) {
+                continue;
+            }
+            std::string score_text = format_zset_score(score);
+            std::string member_key = zset_member_storage_key(zset_key, member);
+            s = put_raw(txn, member_key, score_text);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[member_key] = true;
+            batch_values[member_key] = score_text;
+
+            std::string score_key = zset_score_storage_key(zset_key, score, member);
+            s = put_raw(txn, score_key, "1");
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[score_key] = true;
+            batch_values[score_key] = "1";
+        }
+        return write_zset_cardinality(txn, zset_key, static_cast<int64_t>(values.size()));
+    };
+
     auto collect_set_members = [&](void* txn, const std::string& set_key, std::vector<std::string>& members) {
         members.clear();
         const std::string user_prefix = make_set_member_prefix(set_key);
@@ -764,6 +1071,20 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto expire_zset_if_needed = [&](void* txn, const std::string& zset_key) {
+        int64_t expire_at_ms = 0;
+        bool ttl_exists = false;
+        mako::Status s = read_ttl_meta(txn, zset_key, expire_at_ms, ttl_exists);
+        if (!s.ok() || !ttl_exists || expire_at_ms > now_unix_ms()) {
+            return s;
+        }
+        s = delete_zset(txn, zset_key);
+        if (s.ok()) {
+            s = clear_ttl_meta(txn, zset_key);
+        }
+        return s;
+    };
+
     auto expire_logical_key_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
         int64_t expire_at_ms = 0;
         bool ttl_exists = false;
@@ -780,6 +1101,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         s = delete_set(txn, user_key);
         if (s.ok()) {
             s = delete_list(txn, user_key);
+        }
+        if (s.ok()) {
+            s = delete_zset(txn, user_key);
         }
         if (s.ok()) {
             s = clear_ttl_meta(txn, user_key);
@@ -820,7 +1144,18 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         }
         int64_t list_length = 0;
         s = read_list_length(txn, user_key, list_length);
-        exists = list_length > 0;
+        if (!s.ok() || list_length > 0) {
+            exists = list_length > 0;
+            return s;
+        }
+        auto staged_zset_it = staged_zsets.find(user_key);
+        if (staged_zset_it != staged_zsets.end()) {
+            exists = !staged_zset_it->second.empty();
+            return mako::Status::OK();
+        }
+        int64_t zset_count = 0;
+        s = read_zset_cardinality(txn, user_key, zset_count);
+        exists = zset_count > 0;
         return s;
     };
 
@@ -850,7 +1185,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists && list_length == 0;
+        int64_t zset_count = 0;
+        s = read_zset_cardinality(txn, set_key, zset_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && list_length == 0 && zset_count == 0;
         if (!allowed) {
             result.success = false;
         }
@@ -873,11 +1213,67 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists && set_cardinality == 0;
+        int64_t zset_count = 0;
+        s = read_zset_cardinality(txn, list_key, zset_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0 && zset_count == 0;
         if (!allowed) {
             result.success = false;
         }
         return mako::Status::OK();
+    };
+
+    auto zset_key_allowed = [&](void* txn, const std::string& zset_key, TxnOpResult& result, bool& allowed) {
+        std::string string_storage_key = "table_key_" + zset_key;
+        mako::Status s = expire_logical_key_if_needed(txn, zset_key, string_storage_key);
+        if (!s.ok()) {
+            return s;
+        }
+        bool string_exists = false;
+        s = read_string_exists_no_expire(txn, string_storage_key, string_exists);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t set_cardinality = 0;
+        s = read_set_cardinality(txn, zset_key, set_cardinality);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t list_length = 0;
+        s = read_list_length(txn, zset_key, list_length);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0 && list_length == 0;
+        if (!allowed) {
+            result.success = false;
+        }
+        return mako::Status::OK();
+    };
+
+    auto load_zset_stage = [&](void* txn, const std::string& zset_key, TxnOpResult& result, bool& allowed) {
+        auto loaded_it = staged_zsets_loaded.find(zset_key);
+        if (loaded_it != staged_zsets_loaded.end()) {
+            allowed = true;
+            return mako::Status::OK();
+        }
+        mako::Status s = zset_key_allowed(txn, zset_key, result, allowed);
+        if (!s.ok() || !allowed) {
+            return s;
+        }
+        s = expire_zset_if_needed(txn, zset_key);
+        if (!s.ok()) {
+            return s;
+        }
+        std::map<std::string, double> values;
+        s = collect_zset_values(txn, zset_key, values);
+        if (s.ok()) {
+            staged_zsets[zset_key] = std::move(values);
+            staged_zsets_loaded.insert(zset_key);
+        }
+        return s;
     };
 
     auto load_list_stage = [&](void* txn, const std::string& list_key, TxnOpResult& result, bool& allowed) {
@@ -1086,6 +1482,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         all_success = false;
                         continue;
                     }
+                    s = delete_zset(txn, user_key);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
                     s = put_raw(txn, tl_key_buf, raw_val);
                     if (!s.ok()) {
                         result.success = false;
@@ -1143,12 +1545,26 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     list_length = static_cast<int64_t>(staged_list_it->second.size());
                 }
                 bool list_exists = list_length > 0;
+                int64_t zset_count = 0;
+                mako::Status zset_status = read_zset_cardinality(txn, user_key, zset_count);
+                if (!zset_status.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                auto staged_zset_it = staged_zsets.find(user_key);
+                if (staged_zset_it != staged_zsets.end()) {
+                    zset_count = static_cast<int64_t>(staged_zset_it->second.size());
+                }
+                bool zset_exists = zset_count > 0;
                 mako::Status s = mako::Status::OK();
                 if (set_exists) {
                     s = delete_set(txn, user_key);
                 }
                 if (s.ok() && list_exists) {
                     s = delete_list(txn, user_key);
+                }
+                if (s.ok() && zset_exists) {
+                    s = delete_zset(txn, user_key);
                 }
                 if (s.ok() && string_exists) {
                     s = g_table->Delete(txn, tl_key_buf);
@@ -1315,17 +1731,30 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         dirty_lists.insert(user_key);
                         s = mako::Status::OK();
                     } else {
-                        int64_t set_cardinality = 0;
-                        mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
-                        if (set_status.ok() && set_cardinality > 0) {
-                            s = delete_set(txn, user_key);
+                        auto staged_zset_it = staged_zsets.find(user_key);
+                        if (staged_zset_it != staged_zsets.end() && !staged_zset_it->second.empty()) {
+                            staged_zset_it->second.clear();
+                            dirty_zsets.insert(user_key);
+                            s = mako::Status::OK();
                         } else {
-                            int64_t list_length = 0;
-                            mako::Status list_status = read_list_length(txn, user_key, list_length);
-                            if (list_status.ok() && list_length > 0) {
-                                s = delete_list(txn, user_key);
+                            int64_t set_cardinality = 0;
+                            mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
+                            if (set_status.ok() && set_cardinality > 0) {
+                                s = delete_set(txn, user_key);
                             } else {
-                                s = delete_raw_if_exists(txn, tl_key_buf);
+                                int64_t list_length = 0;
+                                mako::Status list_status = read_list_length(txn, user_key, list_length);
+                                if (list_status.ok() && list_length > 0) {
+                                    s = delete_list(txn, user_key);
+                                } else {
+                                    int64_t zset_count = 0;
+                                    mako::Status zset_status = read_zset_cardinality(txn, user_key, zset_count);
+                                    if (zset_status.ok() && zset_count > 0) {
+                                        s = delete_zset(txn, user_key);
+                                    } else {
+                                        s = delete_raw_if_exists(txn, tl_key_buf);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1381,17 +1810,30 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         dirty_lists.insert(user_key);
                         s = mako::Status::OK();
                     } else {
-                        int64_t set_cardinality = 0;
-                        mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
-                        if (set_status.ok() && set_cardinality > 0) {
-                            s = delete_set(txn, user_key);
+                        auto staged_zset_it = staged_zsets.find(user_key);
+                        if (staged_zset_it != staged_zsets.end() && !staged_zset_it->second.empty()) {
+                            staged_zset_it->second.clear();
+                            dirty_zsets.insert(user_key);
+                            s = mako::Status::OK();
                         } else {
-                            int64_t list_length = 0;
-                            mako::Status list_status = read_list_length(txn, user_key, list_length);
-                            if (list_status.ok() && list_length > 0) {
-                                s = delete_list(txn, user_key);
+                            int64_t set_cardinality = 0;
+                            mako::Status set_status = read_set_cardinality(txn, user_key, set_cardinality);
+                            if (set_status.ok() && set_cardinality > 0) {
+                                s = delete_set(txn, user_key);
                             } else {
-                                s = delete_raw_if_exists(txn, tl_key_buf);
+                                int64_t list_length = 0;
+                                mako::Status list_status = read_list_length(txn, user_key, list_length);
+                                if (list_status.ok() && list_length > 0) {
+                                    s = delete_list(txn, user_key);
+                                } else {
+                                    int64_t zset_count = 0;
+                                    mako::Status zset_status = read_zset_cardinality(txn, user_key, zset_count);
+                                    if (zset_status.ok() && zset_count > 0) {
+                                        s = delete_zset(txn, user_key);
+                                    } else {
+                                        s = delete_raw_if_exists(txn, tl_key_buf);
+                                    }
+                                }
                             }
                         }
                     }
@@ -1471,9 +1913,22 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 } else {
                     s = read_list_length(txn, user_key, list_length);
                 }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                int64_t zset_count = 0;
+                auto staged_zset_it = staged_zsets.find(user_key);
+                if (staged_zset_it != staged_zsets.end()) {
+                    zset_count = static_cast<int64_t>(staged_zset_it->second.size());
+                    s = mako::Status::OK();
+                } else {
+                    s = read_zset_cardinality(txn, user_key, zset_count);
+                }
                 result.success = s.ok();
                 result.value_present = true;
-                result.int_value = string_exists ? 1 : (set_count > 0 ? 2 : (list_length > 0 ? 3 : 0));
+                result.int_value = string_exists ? 1 : (set_count > 0 ? 2 : (list_length > 0 ? 3 : (zset_count > 0 ? 4 : 0)));
                 if (!s.ok()) {
                     all_success = false;
                 }
@@ -2215,6 +2670,368 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         break;
                     }
                 }
+            } else if (op.op == TXN_OP_ZADD) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts) || parts.size() % 2 != 0) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_zsets[user_key];
+                const bool nx = (op.flags & TXN_FLAG_ZADD_NX) != 0;
+                const bool xx = (op.flags & TXN_FLAG_ZADD_XX) != 0;
+                const bool ch = (op.flags & TXN_FLAG_ZADD_CH) != 0;
+                const bool incr = (op.flags & TXN_FLAG_ZADD_INCR) != 0;
+                const bool gt = (op.flags & TXN_FLAG_ZADD_GT) != 0;
+                const bool lt = (op.flags & TXN_FLAG_ZADD_LT) != 0;
+                int64_t added = 0;
+                int64_t changed = 0;
+                std::optional<double> increment_result;
+                for (size_t part_idx = 0; part_idx < parts.size(); part_idx += 2) {
+                    double score = 0.0;
+                    if (!parse_zset_score_value(parts[part_idx], score)) {
+                        all_success = false;
+                        break;
+                    }
+                    const std::string& member = parts[part_idx + 1];
+                    auto current_it = values.find(member);
+                    const bool exists = current_it != values.end();
+                    if (incr) {
+                        if (!exists && xx) {
+                            result.success = true;
+                            result.value_present = false;
+                            continue;
+                        }
+                        if (exists && nx) {
+                            result.success = true;
+                            result.value_present = false;
+                            continue;
+                        }
+                        double next_score = (exists ? current_it->second : 0.0) + score;
+                        if (!std::isfinite(next_score)) {
+                            all_success = false;
+                            break;
+                        }
+                        values[member] = next_score;
+                        increment_result = next_score;
+                        dirty_zsets.insert(user_key);
+                        if (!exists) {
+                            ++added;
+                            ++changed;
+                        } else if (next_score != current_it->second) {
+                            ++changed;
+                        }
+                        continue;
+                    }
+                    bool should_write = true;
+                    if (nx && exists) {
+                        should_write = false;
+                    }
+                    if (xx && !exists) {
+                        should_write = false;
+                    }
+                    if (gt && (!exists || score <= current_it->second)) {
+                        should_write = false;
+                    }
+                    if (lt && (!exists || score >= current_it->second)) {
+                        should_write = false;
+                    }
+                    if (!should_write) {
+                        continue;
+                    }
+                    if (!exists) {
+                        ++added;
+                        ++changed;
+                    } else if (score != current_it->second) {
+                        ++changed;
+                    }
+                    values[member] = score;
+                    dirty_zsets.insert(user_key);
+                }
+                if (!all_success) {
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                if (incr) {
+                    if (increment_result.has_value()) {
+                        std::string score_text = format_zset_score(*increment_result);
+                        if (!copy_result_value(result, score_text)) {
+                            all_success = false;
+                        }
+                    } else {
+                        result.value_present = false;
+                    }
+                } else {
+                    result.int_value = ch ? changed : added;
+                }
+            } else if (op.op == TXN_OP_ZSCORE) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string member(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                auto& values = staged_zsets[user_key];
+                auto value_it = values.find(member);
+                result.success = true;
+                if (value_it == values.end()) {
+                    result.value_present = false;
+                    continue;
+                }
+                std::string score_text = format_zset_score(value_it->second);
+                if (!copy_result_value(result, score_text)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_ZREM) {
+                std::vector<std::string> members;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, members)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto& values = staged_zsets[user_key];
+                int64_t removed = 0;
+                for (const auto& member : members) {
+                    removed += values.erase(member) > 0 ? 1 : 0;
+                }
+                if (removed > 0) {
+                    dirty_zsets.insert(user_key);
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = removed;
+            } else if (op.op == TXN_OP_ZCARD) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = static_cast<int64_t>(staged_zsets[user_key].size());
+            } else if (op.op == TXN_OP_ZRANK) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string member(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                auto items = zset_ordered_items(staged_zsets[user_key]);
+                if ((op.flags & TXN_FLAG_Z_REV) != 0) {
+                    std::reverse(items.begin(), items.end());
+                }
+                result.success = true;
+                result.value_present = false;
+                for (size_t idx = 0; idx < items.size(); ++idx) {
+                    if (items[idx].first == member) {
+                        result.value_present = true;
+                        result.int_value = static_cast<int64_t>(idx);
+                        break;
+                    }
+                }
+            } else if (op.op == TXN_OP_ZRANGE || op.op == TXN_OP_ZCOUNT) {
+                std::vector<std::string> bounds;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, bounds) || bounds.size() < 2) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto parse_score_bound = [](const std::string& raw, double& score, bool& exclusive) {
+                    std::string input = raw;
+                    exclusive = false;
+                    if (!input.empty() && input[0] == '(') {
+                        exclusive = true;
+                        input.erase(input.begin());
+                    }
+                    if (input == "-inf") {
+                        score = -std::numeric_limits<double>::infinity();
+                        return true;
+                    }
+                    if (input == "+inf" || input == "inf") {
+                        score = std::numeric_limits<double>::infinity();
+                        return true;
+                    }
+                    size_t pos = 0;
+                    try {
+                        score = std::stod(input, &pos);
+                        return pos == input.size() && !std::isnan(score);
+                    } catch (...) {
+                        return false;
+                    }
+                };
+                auto items = zset_ordered_items(staged_zsets[user_key]);
+                std::vector<std::pair<std::string, double>> selected;
+                if (op.op == TXN_OP_ZCOUNT || (op.flags & TXN_FLAG_Z_BYSCORE) != 0) {
+                    double min_score = 0.0;
+                    double max_score = 0.0;
+                    bool min_exclusive = false;
+                    bool max_exclusive = false;
+                    if (!parse_score_bound(bounds[0], min_score, min_exclusive)
+                        || !parse_score_bound(bounds[1], max_score, max_exclusive)) {
+                        all_success = false;
+                        continue;
+                    }
+                    for (const auto& item : items) {
+                        const bool above_min = min_exclusive ? item.second > min_score : item.second >= min_score;
+                        const bool below_max = max_exclusive ? item.second < max_score : item.second <= max_score;
+                        if (above_min && below_max) {
+                            selected.push_back(item);
+                        }
+                    }
+                    if ((op.flags & TXN_FLAG_Z_REV) != 0) {
+                        std::reverse(selected.begin(), selected.end());
+                    }
+                    if (bounds.size() >= 4) {
+                        int64_t offset = 0;
+                        int64_t count = 0;
+                        if (!parse_int64(bounds[2], offset) || !parse_int64(bounds[3], count)) {
+                            all_success = false;
+                            continue;
+                        }
+                        if (offset < 0 || count <= 0 || offset >= static_cast<int64_t>(selected.size())) {
+                            selected.clear();
+                        } else {
+                            auto begin = selected.begin() + static_cast<size_t>(offset);
+                            auto end = begin + std::min<size_t>(
+                                static_cast<size_t>(count),
+                                static_cast<size_t>(selected.end() - begin));
+                            selected.assign(begin, end);
+                        }
+                    }
+                } else {
+                    if ((op.flags & TXN_FLAG_Z_REV) != 0) {
+                        std::reverse(items.begin(), items.end());
+                    }
+                    int64_t start_index = 0;
+                    int64_t stop_index = 0;
+                    if (!parse_int64(bounds[0], start_index) || !parse_int64(bounds[1], stop_index)) {
+                        all_success = false;
+                        continue;
+                    }
+                    const int64_t length = static_cast<int64_t>(items.size());
+                    if (start_index < 0) {
+                        start_index += length;
+                    }
+                    if (stop_index < 0) {
+                        stop_index += length;
+                    }
+                    start_index = std::max<int64_t>(0, start_index);
+                    stop_index = std::min<int64_t>(length - 1, stop_index);
+                    if (length > 0 && start_index <= stop_index && start_index < length) {
+                        selected.assign(
+                            items.begin() + static_cast<size_t>(start_index),
+                            items.begin() + static_cast<size_t>(stop_index + 1));
+                    }
+                }
+                result.success = true;
+                result.value_present = true;
+                if (op.op == TXN_OP_ZCOUNT) {
+                    result.int_value = static_cast<int64_t>(selected.size());
+                } else {
+                    std::vector<std::string> payload_items;
+                    const bool with_scores = (op.flags & TXN_FLAG_Z_WITHSCORES) != 0;
+                    for (const auto& [member, score] : selected) {
+                        payload_items.push_back(member);
+                        if (with_scores) {
+                            payload_items.push_back(format_zset_score(score));
+                        }
+                    }
+                    std::string payload = pack_bytes_list(payload_items);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                }
+            } else if (op.op == TXN_OP_ZPOPMIN) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto items = zset_ordered_items(staged_zsets[user_key]);
+                if ((op.flags & TXN_FLAG_Z_REV) != 0) {
+                    std::reverse(items.begin(), items.end());
+                }
+                int64_t requested = (op.flags & TXN_FLAG_Z_COUNT_GIVEN) != 0 ? op.expire_at_ms : 1;
+                requested = std::clamp<int64_t>(requested, 0, static_cast<int64_t>(items.size()));
+                std::vector<std::string> payload_items;
+                auto& values = staged_zsets[user_key];
+                for (int64_t idx = 0; idx < requested; ++idx) {
+                    const auto& [member, score] = items[static_cast<size_t>(idx)];
+                    payload_items.push_back(member);
+                    payload_items.push_back(format_zset_score(score));
+                    values.erase(member);
+                }
+                if (requested > 0) {
+                    dirty_zsets.insert(user_key);
+                }
+                result.success = true;
+                result.value_present = true;
+                std::string payload = pack_bytes_list(payload_items);
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_ZSCAN) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::vector<std::string> payload_items;
+                for (const auto& [member, score] : zset_ordered_items(staged_zsets[user_key])) {
+                    payload_items.push_back(member);
+                    payload_items.push_back(format_zset_score(score));
+                }
+                result.success = true;
+                result.value_present = true;
+                std::string payload = pack_bytes_list(payload_items);
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
             } else if (op.op == TXN_OP_SCAN) {
                 const bool count_only = (op.flags & TXN_FLAG_SCAN_COUNT_ONLY) != 0;
                 const size_t limit = count_only ? std::numeric_limits<size_t>::max()
@@ -2380,6 +3197,21 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 mako::Status s = rewrite_list_values(txn, list_key, values);
                 if (s.ok() && values.empty()) {
                     s = clear_ttl_meta(txn, list_key);
+                }
+                if (!s.ok()) {
+                    all_success = false;
+                    break;
+                }
+            }
+        }
+        if (all_success) {
+            for (const auto& zset_key : dirty_zsets) {
+                auto values_it = staged_zsets.find(zset_key);
+                const std::map<std::string, double> empty_values;
+                const auto& values = values_it == staged_zsets.end() ? empty_values : values_it->second;
+                mako::Status s = rewrite_zset_values(txn, zset_key, values);
+                if (s.ok() && values.empty()) {
+                    s = clear_ttl_meta(txn, zset_key);
                 }
                 if (!s.ok()) {
                     all_success = false;

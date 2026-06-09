@@ -27,8 +27,14 @@
  * Reserved internal keys:
  *   Redis-visible keys must not use the 0x01 prefix. The Redis layer stores
  *   TTL metadata under "\x01TTL:<key>", set internals under "\x01S:" /
- *   "\x01S#:", and list internals under "\x01L:" / "\x01L#:". These records
- *   are hidden from Redis keyspace commands.
+ *   "\x01S#:", list internals under "\x01L:" / "\x01L#:", and sorted-set
+ *   internals under "\x01Z:" / "\x01ZS:" / "\x01Z#:". These records are
+ *   hidden from Redis keyspace commands.
+ *
+ * Sorted-set score encoding:
+ *   Sorted-set score indexes use order-preserving IEEE-754 double encoding:
+ *   positives flip the sign bit, negatives flip all bits, then bytes are
+ *   stored big-endian. NaN is rejected at command parse/execute time.
  */
 
 #ifdef __cplusplus
@@ -75,6 +81,15 @@ typedef enum {
     TXN_OP_LINSERT = 33,
     TXN_OP_LMOVE = 34,
     TXN_OP_LPOS = 35,
+    TXN_OP_ZADD = 36,
+    TXN_OP_ZSCORE = 37,
+    TXN_OP_ZREM = 38,
+    TXN_OP_ZCARD = 39,
+    TXN_OP_ZRANGE = 40,
+    TXN_OP_ZRANK = 41,
+    TXN_OP_ZPOPMIN = 42,
+    TXN_OP_ZCOUNT = 43,
+    TXN_OP_ZSCAN = 44,
 } TxnOpCode;
 
 typedef enum {
@@ -101,6 +116,16 @@ typedef enum {
     TXN_FLAG_LIST_SOURCE_LEFT = 1u << 19,
     TXN_FLAG_LIST_DEST_LEFT = 1u << 20,
     TXN_FLAG_LIST_COUNT_GIVEN = 1u << 21,
+    TXN_FLAG_ZADD_NX = 1u << 22,
+    TXN_FLAG_ZADD_XX = 1u << 23,
+    TXN_FLAG_ZADD_CH = 1u << 24,
+    TXN_FLAG_ZADD_INCR = 1u << 25,
+    TXN_FLAG_ZADD_GT = 1u << 26,
+    TXN_FLAG_ZADD_LT = 1u << 27,
+    TXN_FLAG_Z_WITHSCORES = 1u << 28,
+    TXN_FLAG_Z_REV = 1u << 29,
+    TXN_FLAG_Z_BYSCORE = 1u << 30,
+    TXN_FLAG_Z_COUNT_GIVEN = 1u << 31,
 } TxnOpFlags;
 
 /**
@@ -139,6 +164,14 @@ typedef enum {
  *   - LMOVE key carries source; val_ptr carries [destination]
  *   - The C++ executor stages list contents per transaction and flushes dirty
  *     lists once before commit.
+ *
+ * For sorted-set operations:
+ *   - ZADD val_ptr carries [score, member, ...]
+ *   - ZSCORE/ZRANK val_ptr carries one member
+ *   - ZREM val_ptr carries members
+ *   - ZRANGE val_ptr carries [start, stop] or [min, max, offset, count]
+ *   - ZPOPMIN/ZPOPMAX expire_at_ms carries count; Z_COUNT_GIVEN controls
+ *     whether the client supplied count
  */
 typedef struct {
     uint32_t op;           // TxnOpCode

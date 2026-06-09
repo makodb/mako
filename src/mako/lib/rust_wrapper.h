@@ -61,7 +61,16 @@ enum class OpCode : uint32_t {
     LTrim = 32,
     LInsert = 33,
     LMove = 34,
-    LPos = 35
+    LPos = 35,
+    ZAdd = 36,
+    ZScore = 37,
+    ZRem = 38,
+    ZCard = 39,
+    ZRange = 40,
+    ZRank = 41,
+    ZPopMin = 42,
+    ZCount = 43,
+    ZScan = 44
 };
 
 class RustWrapper {
