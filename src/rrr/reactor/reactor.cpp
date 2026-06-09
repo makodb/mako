@@ -972,11 +972,10 @@ class PollThreadWorker;
 // Commands sent from PollThread to PollThreadWorker via channel
 // Using std::variant for type-safe discriminated union
 //
-// `CmdAddPollable` / `CmdAddJob` / `CmdRemoveJob` stay hand-written
-// because they carry move-only Box / Arc fields whose default aggregate
-// shape conflicts with the DSL POD emit. The four below are pure
-// `int`-bag PODs (and one unit struct), so the DSL emit is a faithful
-// 1:1 with the hand-written form.
+// `CmdAddPollable` stays hand-written because its `PollableProxy`
+// (= `Box<PollableBase>`) field is a typedef the DSL can't resolve.
+// The six below — including the `Arc<Job>`-bearing add/remove pair —
+// emit cleanly as 1:1 POD aggregates.
 struct CmdAddPollable {
     PollableProxy pollable;
 };
@@ -984,12 +983,16 @@ struct CmdAddPollable {
 struct CmdRemovePollable { fd: i32 }
 struct CmdClosePollable { fd: i32 }
 struct CmdUpdateMode { fd: i32, new_mode: i32 }
+struct CmdAddJob { job: Arc<Job> }
+struct CmdRemoveJob { job: Arc<Job> }
 struct CmdShutdown {}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=b3b04dbc0338c1c3b4109c3f21be63a8e012d0002225e258e4d2631558917373*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=3f0ed55eab0006b5ac96604e1b75831f67149f4742361539cb643eeb2b43aa59*/
 struct CmdRemovePollable;
 struct CmdClosePollable;
 struct CmdUpdateMode;
+struct CmdAddJob;
+struct CmdRemoveJob;
 struct CmdShutdown;
 
 struct CmdRemovePollable {
@@ -1005,11 +1008,17 @@ struct CmdUpdateMode {
     int32_t new_mode;
 };
 
+struct CmdAddJob {
+    rusty::Arc<Job> job;
+};
+
+struct CmdRemoveJob {
+    rusty::Arc<Job> job;
+};
+
 struct CmdShutdown {
 };
 /*RUSTYCPP:GEN-END id=reactor.poll_cmds*/
-struct CmdAddJob { rusty::Arc<Job> job; };
-struct CmdRemoveJob { rusty::Arc<Job> job; };
 
 using PollCommand = std::variant<
     CmdAddPollable,
