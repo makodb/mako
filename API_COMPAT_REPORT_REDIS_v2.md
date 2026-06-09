@@ -107,6 +107,11 @@ These hooks do not change the current claim status. A local single-shard
 `makoCon` run remains a smoke test, not proof of cross-shard atomicity,
 replicated failover durability, or Elle-checked serializability.
 
+G2 follow-up checked: simply running `makoCon` with multiple local shards is
+not sufficient. Remote shard RPCs require long-lived backing shard servers; the
+existing `bash/shard.sh` / `dbtest` path is a benchmark runner and does not
+provide a stable Redis backing-shard fixture.
+
 Validation note: the fuzz guard now uses deterministic bytes and delayed
 liveness checks. During manual validation, a longer-tail post-fuzz server exit
 was observed after the guard had passed. Treat this as a follow-up stability

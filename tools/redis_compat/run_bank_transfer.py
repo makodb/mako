@@ -6,6 +6,8 @@ import random
 import threading
 import time
 
+import redis
+
 from harness_common import connect, env_int, main_guard, na
 
 
@@ -15,6 +17,7 @@ def run_local_bank_transfer() -> None:
     accounts = env_int("MAKO_G2_ACCOUNTS", 20)
     clients = env_int("MAKO_G2_CLIENTS", 4)
     iterations = env_int("MAKO_G2_ITERATIONS", 200)
+    max_retries = env_int("MAKO_G2_TRANSFER_RETRIES", 1000)
     initial_balance = env_int("MAKO_G2_INITIAL_BALANCE", 1000)
     keys = [f"{prefix}:acct:{i}" for i in range(accounts)]
     total = accounts * initial_balance
@@ -25,18 +28,30 @@ def run_local_bank_transfer() -> None:
     pipe.execute()
 
     errors: list[BaseException] = []
+    retry_count = 0
+    retry_lock = threading.Lock()
 
     def worker(seed: int) -> None:
+        nonlocal retry_count
         rng = random.Random(seed)
         local = connect()
         try:
             for _ in range(iterations):
                 src, dst = rng.sample(keys, 2)
                 amount = rng.randint(1, 7)
-                txn = local.pipeline(transaction=True)
-                txn.decrby(src, amount)
-                txn.incrby(dst, amount)
-                txn.execute()
+                for attempt in range(max_retries + 1):
+                    try:
+                        txn = local.pipeline(transaction=True)
+                        txn.decrby(src, amount)
+                        txn.incrby(dst, amount)
+                        txn.execute()
+                        break
+                    except redis.WatchError:
+                        if attempt == max_retries:
+                            raise
+                        with retry_lock:
+                            retry_count += 1
+                        time.sleep(0.001 * (attempt + 1))
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
         finally:
@@ -58,7 +73,7 @@ def run_local_bank_transfer() -> None:
         raise SystemExit(1)
 
     client.delete(*keys)
-    print(f"local bank transfer invariant preserved transfers={clients * iterations} total={observed}")
+    print(f"bank transfer invariant preserved transfers={clients * iterations} total={observed} retries={retry_count}")
 
 
 def main() -> None:
