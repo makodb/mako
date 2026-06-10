@@ -179,6 +179,89 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
 
+    def test_preproc_branch_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Ctx {
+                #if defined(__x86_64__)
+                    int a;
+                #elif defined(__aarch64__)
+                    int b;
+                #endif
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("preprocessor", rows[0]["notes"])
+
+    def test_default_arg_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    void thing(int n = 0);
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("default arg", rows[0]["notes"])
+
+    def test_nested_struct_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Outer {
+                    struct Inner {
+                        int x;
+                    };
+                    int y;
+                };
+            """),
+        })
+        outer = [r for r in rows if r["name"] == "Outer"]
+        self.assertEqual(len(outer), 1)
+        self.assertEqual(outer[0]["bucket"], "trivial-blocked")
+        self.assertIn("nested struct", outer[0]["notes"])
+
+    def test_template_method_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    template <typename T>
+                    static int as_index() { return 0; }
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("template method", rows[0]["notes"])
+
+    def test_std_function_field_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    std::function<void(int)> cb;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("std::function", rows[0]["notes"])
+
+    def test_clean_pod_stays_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Pure {
+                    int a;
+                    int b;
+                    bool c;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial")
+
 
 if __name__ == "__main__":
     unittest.main()

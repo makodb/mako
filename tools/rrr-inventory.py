@@ -108,6 +108,7 @@ class Decl:
     has_user_ctor: bool
     has_inheritance: bool
     base_clause: str
+    blockers: list[str]  # detected DSL-blockers in the body
     bucket: str          # classifier output
     notes: list[str] = field(default_factory=list)
 
@@ -204,13 +205,36 @@ def find_decl_end(lines: list[str], start_idx: int) -> int:
 
 def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
     """Look at the decl body (1-based start_line through end_line) for
-    coarse signals."""
+    coarse signals + DSL-blocker patterns.
+
+    Blockers are constructs we've confirmed the DSL doesn't accept (or
+    that would cascade the migration through many call sites):
+
+      - preprocessor branches inside the body (`#if` / `#ifdef` /
+        `#elif`) — the DSL emit can't fold conditional compilation.
+      - operator overloads — DSL has no operator-overload grammar.
+      - default arguments in member-function signatures — the DSL
+        grammar doesn't accept them; either drop the default or migrate
+        the caller first.
+      - nested struct/class — the DSL emits top-level structs only.
+      - template methods (`template <...>` lines inside the body) —
+        same templates-aren't-supported rule as the class-level check.
+      - `std::atomic<T>` field with `compare_exchange_*` call sites —
+        rusty's Atomic CAS returns Result<T, T>, not bool, so the
+        idiomatic `!atomic.cmpxchg(...)` callers need rewriting.
+      - `std::vector<T>` field with `.assign(...)` or `.emplace_back(...)`
+        usage — `rusty::Vec` doesn't expose `.assign`.
+      - `std::function<…>` field — needs a `rusty::Function<…>` typedef
+        first; the DSL parser doesn't accept raw `std::function` types.
+
+    Returns the (coarse signal, blocker-list) bundle as a dict."""
     name = ""
     has_virtual = False
     has_user_dtor = False
     has_user_ctor = False
     template = False
     base_clause = ""
+    blockers: list[str] = []
     # Check template prefix on line above
     if start_idx > 0 and TEMPLATE_LINE_RE.match(lines[start_idx - 1] or ""):
         template = True
@@ -222,22 +246,98 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         if ':' in first.split('{', 1)[0]:
             base_clause = first.split(':', 1)[1].split('{', 1)[0].strip()
     body_re_virtual = re.compile(r"\bvirtual\b")
-    body_re_dtor = re.compile(rf"~{re.escape(name)}\s*\(")
-    body_re_ctor = re.compile(rf"^\s*(?:explicit\s+)?{re.escape(name)}\s*\(")
+    body_re_dtor = re.compile(rf"~{re.escape(name)}\s*\(") if name else None
+    body_re_ctor = (
+        re.compile(rf"^\s*(?:explicit\s+)?{re.escape(name)}\s*\(") if name else None
+    )
+    body_re_preproc = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else)\b")
+    body_re_operator = re.compile(r"\boperator\s*(?:[(\[\]+\-*/%^&|~!<>=]|->|::)")
+    # Match `something = literal` inside a parameter list (default arg).
+    body_re_default_arg = re.compile(r"\([^()]*=[^()]*\)")
+    body_re_nested = re.compile(r"^\s*(?:class|struct|union)\s+\w+")
+    body_re_method_template = re.compile(r"^\s*template\s*<")
+    body_re_std_atomic = re.compile(r"\bstd::atomic\s*<")
+    body_re_std_vector = re.compile(r"\bstd::vector\s*<")
+    body_re_std_function = re.compile(r"\bstd::function\s*<")
+    body_re_std_unique = re.compile(r"\bstd::unique_ptr\s*<")
+    body_re_std_shared = re.compile(r"\bstd::shared_ptr\s*<")
+    body_re_compare_exchange = re.compile(r"\.compare_exchange_(weak|strong)\b")
+    body_re_vec_assign = re.compile(r"\.assign\s*\(")
+    body_re_emplace_back = re.compile(r"\.emplace_back\s*\(")
+
+    found_preproc = found_operator = found_default_arg = False
+    found_nested = found_method_template = False
+    has_std_atomic = has_std_vector = has_std_function = False
+    has_std_unique = has_std_shared = False
+    has_compare_exchange = has_vec_assign = has_emplace_back = False
+
+    # Skip the opening line for the nested-class check (the decl line itself
+    # matches `^\s*(?:class|struct)`).
     for i in range(start_idx, min(end_line, len(lines))):
         ln = lines[i]
         if body_re_virtual.search(ln):
             has_virtual = True
-        if name and body_re_dtor.search(ln):
+        if body_re_dtor and body_re_dtor.search(ln):
             has_user_dtor = True
-        if name and body_re_ctor.search(ln):
+        if body_re_ctor and body_re_ctor.search(ln):
             has_user_ctor = True
+        if i > start_idx:
+            if body_re_preproc.match(ln):
+                found_preproc = True
+            if body_re_operator.search(ln) and "operator" in ln:
+                # Filter out `using namespace foo::operator` or comment refs.
+                if "// " not in ln.split("operator", 1)[0][-40:]:
+                    found_operator = True
+            if body_re_default_arg.search(ln):
+                found_default_arg = True
+            if body_re_nested.match(ln):
+                found_nested = True
+            if body_re_method_template.match(ln):
+                found_method_template = True
+        if body_re_std_atomic.search(ln):
+            has_std_atomic = True
+        if body_re_std_vector.search(ln):
+            has_std_vector = True
+        if body_re_std_function.search(ln):
+            has_std_function = True
+        if body_re_std_unique.search(ln):
+            has_std_unique = True
+        if body_re_std_shared.search(ln):
+            has_std_shared = True
+        if body_re_compare_exchange.search(ln):
+            has_compare_exchange = True
+        if body_re_vec_assign.search(ln):
+            has_vec_assign = True
+        if body_re_emplace_back.search(ln):
+            has_emplace_back = True
+
+    if found_preproc:
+        blockers.append("preprocessor branches in body (#if/#ifdef)")
+    if found_operator:
+        blockers.append("operator overload")
+    if found_default_arg:
+        blockers.append("default arg in member fn")
+    if found_nested:
+        blockers.append("nested struct/class")
+    if found_method_template:
+        blockers.append("template method")
+    if has_std_atomic and has_compare_exchange:
+        blockers.append("std::atomic CAS — rusty::Atomic returns Result, not bool")
+    if has_std_vector and (has_vec_assign or has_emplace_back):
+        blockers.append("std::vector .assign/.emplace_back — rusty::Vec lacks these")
+    if has_std_function:
+        blockers.append("std::function field — needs rusty::Function typedef first")
+    if has_std_unique:
+        blockers.append("std::unique_ptr field — should use rusty::Box")
+    if has_std_shared:
+        blockers.append("std::shared_ptr field — should use rusty::Arc")
     return {
         "template": template,
         "has_virtual": has_virtual,
         "has_user_dtor": has_user_dtor,
         "has_user_ctor": has_user_ctor,
         "base_clause": base_clause,
+        "blockers": blockers,
     }
 
 
@@ -270,7 +370,12 @@ def classify(decl: Decl) -> tuple[str, list[str]]:
     if decl.has_user_ctor:
         notes.append("user ctor — needs static ::new() factory refactor first")
         return "refactor-then-dsl", notes
-    # Otherwise, plausibly trivial
+    # Otherwise it looks POD-ish. But body scan may have surfaced
+    # hidden DSL-blockers; if so, demote to `trivial-blocked` so the
+    # Phase 1 selector skips it.
+    if decl.blockers:
+        notes.extend(decl.blockers)
+        return "trivial-blocked", notes
     if decl.kind in ("enum", "enum class"):
         notes.append("plain enum — DSL pattern is `#[repr(int)] enum`")
     else:
@@ -318,6 +423,7 @@ def process_file(path: Path) -> list[Decl]:
             has_user_ctor=body["has_user_ctor"],
             has_inheritance=bool(body["base_clause"]),
             base_clause=body["base_clause"],
+            blockers=body["blockers"],
             bucket="",
         )
         bucket, notes = classify(decl)
@@ -363,6 +469,7 @@ def write_summary(decls: list[Decl], out_path: Path) -> None:
         f.write("|---|---:|---:|---:|\n")
         for bucket in (
             "trivial",
+            "trivial-blocked",
             "refactor-then-dsl",
             "needs-transpiler",
             "boundary",
@@ -425,7 +532,8 @@ def main() -> int:
         by_bucket[d.bucket] = by_bucket.get(d.bucket, 0) + 1
     print(f"wrote {args.out} ({len(decls)} decls)")
     print(f"wrote {args.summary}")
-    for b in ("trivial", "refactor-then-dsl", "needs-transpiler", "boundary", "already-dsl"):
+    for b in ("trivial", "trivial-blocked", "refactor-then-dsl",
+              "needs-transpiler", "boundary", "already-dsl"):
         print(f"  {b}: {by_bucket.get(b, 0)}")
     return 0
 

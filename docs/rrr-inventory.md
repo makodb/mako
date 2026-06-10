@@ -13,7 +13,8 @@ from the repo root to regenerate both this file and the CSV.
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 15 | 626 | 6.8% |
+| trivial | 6 | 125 | 1.4% |
+| trivial-blocked | 9 | 501 | 5.4% |
 | refactor-then-dsl | 32 | 1862 | 20.2% |
 | needs-transpiler | 60 | 5388 | 58.5% |
 | boundary | 3 | 117 | 1.3% |
@@ -25,7 +26,7 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|---|---|
 | `rpc/client.cpp` | 1309 | `ClientConnection` | needs-transpiler |
 | `misc/serializable.cpp` | 256 | `BinaryReadArchive` | refactor-then-dsl |
-| `misc/cpuinfo.cpp` | 253 | `CPUInfo` | trivial |
+| `misc/cpuinfo.cpp` | 253 | `CPUInfo` | trivial-blocked |
 | `rpc/idempotency.cpp` | 251 | `IdempotencyCache` | refactor-then-dsl |
 | `reactor/reactor.cpp` | 243 | `Reactor` | needs-transpiler |
 | `reactor/epoll_wrapper.cc` | 226 | `Epoll` | needs-transpiler |
