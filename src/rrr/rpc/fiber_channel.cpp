@@ -58,6 +58,9 @@ module;
 export module rrr.fiber_channel;
 
 import std;
+import rusty;       // rusty::Vec lives in the C++20 module umbrella; the
+                     // `<rusty/vec.hpp>` header alias was retired and
+                     // `OwnedFrame::bytes` now needs Vec<u8> at name lookup.
 import rrr.channel;
 import rrr.reactor;
 import rrr.threading;
@@ -77,10 +80,29 @@ export namespace rrr {
  * Heap-owned copy of an inbound frame's payload. The wrapping is
  * necessary because the channel-layer `ChannelFrame::payload` is
  * only valid for the duration of the `on_frame` callback.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
+ * is the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The field was a
+ * `std::vector<uint8_t>` before the migration; the DSL `Vec<u8>`
+ * lowers to `rusty::Vec<uint8_t>` (the transpiled rustc Vec), which
+ * is move-only and doesn't expose `.assign()`. The one call site in
+ * `FiberChannel::on_inbound_frame` flipped from a `.assign(p, p+n)`
+ * iterator-range build to a `reserve` + `memcpy` + `set_len` triple
+ * to fit the rusty::Vec API.
  */
+#if RUSTYCPP_RUST
 struct OwnedFrame {
-    std::vector<std::uint8_t> bytes;
+    bytes: Vec<u8>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.owned_frame version=1 rust_sha256=f8ed2cc17a3f8dfefed06907b9428287df01d7d0facfcd8bb77141a0a8f5e21c*/
+struct OwnedFrame;
+
+struct OwnedFrame {
+    rusty::Vec<uint8_t> bytes;
 };
+/*RUSTYCPP:GEN-END id=fiber_channel.owned_frame*/
 
 // @safe - see file header.
 class FiberChannel {
@@ -194,11 +216,20 @@ FiberChannel::~FiberChannel() {
     ch_->set_on_error ({});
 }
 
-// @unsafe - `bytes.assign(f.payload, f.payload + f.size)` raw
-// `const uint8_t*` arithmetic.
+// @unsafe - raw `const uint8_t*` + `memcpy` + `set_len` byte-copy
+// (rusty::Vec has no `.assign(iter, iter)` so we reserve, memcpy, then
+// commit the new length).
 void FiberChannel::on_inbound_frame(const ChannelFrame& f) {
     OwnedFrame copy;
-    copy.bytes.assign(f.payload, f.payload + f.size);
+    if (f.size > 0) {
+        // @unsafe { rusty::Vec::reserve + memcpy + set_len fill the
+        // buffer in place without per-element init }
+        {
+            copy.bytes.reserve(f.size);
+            std::memcpy(copy.bytes.data(), f.payload, f.size);
+            copy.bytes.set_len(f.size);
+        }
+    }
     {
         auto guard = queue_.lock().unwrap();
         guard->push_back(std::move(copy));
