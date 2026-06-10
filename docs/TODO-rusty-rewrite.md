@@ -1,0 +1,115 @@
+# Plan: drive rrr's manual C++ → 0 (or to a justified floor)
+
+## Baseline (as of submodule bump `b4fd3214`, rusty-cpp `63f56ac`)
+
+rrr source (excluding tests), ~25.3k non-blank C++ lines:
+
+| Category                                  |   Lines | % of total |
+|-------------------------------------------|--------:|-----------:|
+| Manual C++ (hand-written)                 |  19,975 |     78.9%  |
+| Transpiler-emitted C++ (`GEN` blocks)     |   2,920 |     11.5%  |
+| Rust DSL source (`#if RUSTYCPP_RUST`)     |   2,408 |      9.5%  |
+
+DSL-controlled (DSL + GEN): **21.1%**. Manual share of non-generated code (manual / (manual + DSL)): **89.2%**.
+
+## Phase 0 — Inventory & triage (~1 day, no code changes)
+
+Walk the 19,975 manual lines once and tag every top-level decl as one of:
+
+- **Trivial** — POD struct, namespace constant, simple free function, file-scope `using`.
+- **Refactor-then-DSL** — class with public ctors (needs `::new()` factory), virtual base (→ trait), in-class statics — needs prep before the DSL pattern fits.
+- **Needs transpiler feature** — pattern that's known not to emit cleanly today: custom `Drop`, `static thread_local`, templates with non-type params, `std::variant` cases, etc.
+- **Boundary / cannot migrate** — generated `rcc_rpc.h` types, libc/syscall wrappers (`AddrInfo`, `set_nonblocking`, `find_open_port`), `Marshal`'s raw `uint8_t*` ring buffer, `RandomGenerator` (pthread keys + asm `rdtsc`), heavy templates we already use elsewhere (`SerializableEnvelope<TypeList>`, `CallbackWrapper<Sig>`, `Enumerator<T>`).
+
+Output: one CSV per file, ~150-line summary in a planning doc. This is the only document the rest of the plan keeps referring to.
+
+## Phase 1 — Convert the trivial bucket (~1–2 weeks, mostly automatable)
+
+Pure POD structs, free functions, and constants. Pattern is established (`internal_protocol.cpp`, `strop.cpp`-style constants, `reactor.poll_cmds`). Process per file:
+
+1. Write the `#if RUSTYCPP_RUST` block.
+2. Run `rusty-cpp-transpiler inline-rust --rewrite` to fill the GEN.
+3. Build, run rrr unit tests + `rpcbench` smoke, commit.
+
+Expected reach: **~2,000–3,000 lines** of manual C++ → DSL. Most files become "all-DSL except adapters."
+
+Stretch goal: a small script that finds candidate POD structs (no virtual, no template, no raw pointer fields, no inheritance) and emits a draft DSL block. Cuts the per-struct work to a review.
+
+## Phase 2 — Trait migrations (~2–4 weeks, mostly mechanical)
+
+Each abstract base class with virtual methods becomes a `pub trait` in DSL. Pattern is established via `PollableBase`, `SerializableBase`, `Job`, `Alarm`, `ChannelConnectionBase`, `ChannelListenerBase`, `ChannelFactoryBase`.
+
+Remaining bases to migrate:
+
+| Class                                                | File                          | Notes |
+|------------------------------------------------------|-------------------------------|-------|
+| `Service`                                            | `rpc/server.cpp`              | 2 virtual methods + default impl for `__get_service__` |
+| `Event`                                              | `reactor/reactor.cpp`         | Has concrete subclasses; check trait-with-state pattern |
+| `SinkBase` / `SourceBase`                            | `misc/serializable.cpp`       | Take `const void*` — needs `&[u8]` reshape first |
+| `ChannelConnectionBase` / `ChannelListenerBase`      | already done — verify         | |
+| `AnyMessage` (non-template parts)                    | `misc/any_message.cpp`        | Templates stay manual; the non-template impls + factory can DSL |
+
+Concrete subclasses follow once the trait is in: ~6–10 adapters per trait, each ~30–60 lines.
+
+Expected reach: **~3,000–4,000 lines** of manual C++ → DSL/GEN.
+
+## Phase 3 — RAII guards via `impl Drop` (~1 week if the transpiler supports it)
+
+Targets: `PendingRequestGuard` (server.cpp), `AddrInfo` (utils.cpp), `OwnedFd` is already done but several thin wrappers around it could fold in.
+
+**Transpiler ask (blocks this phase):** verify `impl Drop for X { fn drop(&mut self) { … } }` lowers to a proper `~X()` body with a single-drop guard. If not, file the bug at rusty-cpp and pause this phase. The QueuedRequest abandonment (task #127) suggests destructor emit isn't quite there — check first.
+
+If Drop works: **~500 lines** convert; the pattern generalizes to several other places (e.g. the cleanup-on-error closures in `Server::start`).
+
+## Phase 4 — Complex classes that need refactor first (~3–6 weeks)
+
+The big ones still hand-written, in rough difficulty order:
+
+1. **`Marshal`** (~600 lines). The `Vec<u8>` ring buffer is migratable — the public API is the hard part because every operator-overload (`<<` / `>>` / `peek`) currently takes `T&` by reference and reads bytes. Plan: keep operators as free C++ functions outside the DSL block (they're already `@unsafe`), DSL the data members + `read`/`write`/`set_bookmark` paths. ~70% migratable.
+2. **`Reactor`** (~700 lines, `reactor.cpp` line 720+). Fields are mostly already rusty; bodies dispatch through `RefCell` borrows. Mostly mechanical once trait migrations land for `Event` / `Fiber`.
+3. **`PollThreadWorker`** (~300 lines). Same shape as Reactor — most fields already rusty.
+4. **`InMemoryChannel` cluster** (~900 lines, `inmemory_channel.cpp`). Six classes; each is migratable individually.
+5. **`CompletionTracker`, `RequestQueue`, `Server`** — bodies still manual but classes already migrated; finish methods one-by-one.
+
+Expected reach: **~5,000–7,000 lines** → DSL/GEN. Cumulative manual drops below ~7,000.
+
+## Phase 5 — The justified floor
+
+Document and stop. These don't fit and shouldn't be forced:
+
+| Category                                                                                                                              | Approx lines | Reason |
+|--------------------------------------------------------------------------------------------------------------------------------------|--------------|--------|
+| `rcc_rpc.h` and adapter glue                                                                                                          | ~500         | Generated wire types — `std::string` / `std::shared_ptr<Marshallable>` on the wire boundary; conversion at the edge is correct as `@unsafe` C++. |
+| Syscall / libc wrappers (`AddrInfo`, `set_nonblocking`, `find_open_port`, `get_host_name`)                                            | ~150         | Raw `int fd`, `struct addrinfo*`, fcntl. Already isolated and `@unsafe`-marked. |
+| `RandomGenerator`                                                                                                                     | ~220         | pthread_key + inline-asm `rdtsc`. Possible move: replace whole thing with rusty's `RandomGenerator` if it can match the API. |
+| Template containers (`SerializableEnvelope<TypeList>`, `CallbackWrapper<Sig>`, `Enumerator<T>`, `MergedEnumerator<T>`, `std::hash` specializations) | ~600         | DSL doesn't accept C++ template parameters. |
+| Concrete `Event` subclasses if they keep virtual-dispatch-heavy hot paths                                                              | ~200         | If `Event` becomes a trait, subclasses may still be cleaner as hand-written impl blocks. |
+| Free-function `operator<<` / `operator>>` Marshal overloads                                                                           | ~300         | Operator overloading + ADL — DSL grammar lives outside this corner of C++. |
+
+Rough floor: **~2,000 manual C++ lines** (~8% of current rrr). Anything below that needs DSL-grammar extensions, which is a different project.
+
+## Transpiler/library asks that block the plan
+
+In priority order, file these against rusty-cpp before sinking weeks into Phases 3–4:
+
+1. `impl Drop for X` — confirm emit produces a single-drop, exception-safe destructor.
+2. `enum class` with explicit underlying type and method impls (some existing migrations use `#[repr(int)]`; verify the helper-function pattern is the only way or DSL supports method bodies on enums).
+3. Standalone `using Alias = …` inside DSL blocks (today these stay manual; cosmetic but covers ~20 small lines per file).
+4. The transpiler's diagnostic for "this construct won't emit" — Phase 0 triage moves much faster with a `--lint` mode that flags clear no-go patterns instead of failing at C++ build time.
+
+## Order of operations / risk
+
+- Phase 0 must finish first; everything else parallelizes per file.
+- Phase 1 has near-zero risk — same workflow already in flight.
+- Phase 2 is medium risk — trait migrations occasionally surface vtable-layout surprises (we saw one with `PollableBase` in the recent test_load_balancer chain).
+- Phase 3 is gated on a transpiler answer.
+- Phase 4 is the bulk of remaining work and benefits from a per-class checklist (movable, factory `::new`, no default args, fields renamed `_field` if they collide with method names).
+
+## Concrete next two commits
+
+If you want to start tomorrow without committing to the full plan:
+
+1. **Phase 0 inventory** — one CSV listing every top-level decl in rrr and its triage bucket. ~half a day.
+2. **One Phase 1 sweep** — pick `inmemory_channel.cpp`'s `InMemorySwitchboard` and `InMemoryConnectionState::Inner` (both pure POD-ish); migrate, commit, prove the workflow holds on a previously-untouched file.
+
+Honest estimate to reach the floor: **6–10 calendar weeks of focused work**, assuming the transpiler asks above land within the first 2 weeks.
