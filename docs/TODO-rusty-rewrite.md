@@ -31,17 +31,27 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |   15  | 626 |    6.8%  |
+| trivial           |    6  | 125 |    1.4%  |
+| trivial-blocked   |    9  | 501 |    5.4%  |
 | refactor-then-dsl |   32  |1,862|   20.2%  |
 | needs-transpiler  |   60  |5,388|   58.5%  |
 | boundary          |    3  | 117 |    1.3%  |
 | already-dsl       |  127  |1,210|   13.1%  |
 
-Important caveats (the script's `Caveats` section repeats these):
+The bucket-detection pass (Phase 1a, the script's body-scan blocker list) demoted 9 decls out of `trivial` into `trivial-blocked`. Examples:
 
-- The decl span is a brace-counted heuristic, not a full C++ parse. Spans within ~5% of the truth, but anything in `trivial` should be reviewed before migration — e.g. `ReconnectPolicy` and `CPUInfo` show up as `trivial` but the source comments document explicit decisions to keep them hand-written for compatibility reasons.
+- `IdempotencyKeyHash` → operator overload (`operator()`).
+- `FiberContext` → `#if defined(__x86_64__)` / `#elif defined(__aarch64__)`.
+- `LoadBalancer` → `template <typename ClientVec>` static methods.
+- `InMemoryConnectionState` → nested `struct Inner { … };`.
+- `SharedIntEvent` / `BufferSink` / `CPUInfo` → default args on member functions.
+- `DefaultPayloadList` / `SerializableRegistry` → template methods (`template<typename T> static …`).
+
+Trivial-bucket caveats (the script's `Caveats` section repeats these):
+
+- The decl span is a brace-counted heuristic, not a full C++ parse. Spans within ~5% of the truth, but anything in `trivial` should still be reviewed before migration — e.g. `ReconnectPolicy` shows up as `trivial` but the source comments document an explicit decision to keep it hand-written for compatibility reasons. Blockers that live in *call sites* (not in the decl body) — e.g. `std::atomic` field whose `compare_exchange_weak` is called from a free function nearby — are not yet detected.
 - The script only enumerates top-level `class` / `struct` / `enum` / `union`. File-scope free functions, typedefs, namespace constants, and `using` aliases are not counted — the existing GEN-block coverage already handles the simple-constant pattern.
-- Bucket assignment uses heuristics on the decl line + a body scan for `virtual` / `~Name(` / `Name(`. Custom-dtor classes route to `needs-transpiler` (gated on the `impl Drop` ask in the transpiler), even if they're otherwise trait-shaped.
+- Bucket assignment uses heuristics on the decl line + a body scan for `virtual` / `~Name(` / `Name(` plus the Phase 1a blocker list (preprocessor branches, operator overloads, default args, nested struct, template methods, `std::function` / `std::unique_ptr` / `std::shared_ptr` fields, `std::atomic` + CAS pattern, `std::vector` + `.assign`/`.emplace_back`). Custom-dtor classes route to `needs-transpiler` (gated on the `impl Drop` ask in the transpiler), even if they're otherwise trait-shaped.
 
 ## Phase 1 — Convert the trivial bucket (~1–2 weeks, mostly automatable)
 
