@@ -195,27 +195,42 @@ using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
 
 // @interface
 // @safe - Pure virtual interface. All declarations carry per-method `// @safe`.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Tier 2.3 of the rrr trait sweep.
+//
+// `__get_service__()` was a 1-liner default impl (`return *this;`) that
+// the only "non-default" implementer (`ServiceTypedBoxAdapter`) also
+// implemented as `return *this;` — i.e., it carried no semantics over
+// just dereferencing the `Box<Service>` directly. The
+// `for_each_service` callback now uses `**guard` instead. Dropping
+// the method is what lets the trait be a clean DSL trait (the DSL
+// `pub trait` emit has no default-impl grammar).
+#if RUSTYCPP_RUST
+pub trait Service {
+    fn __reg_to__(&mut self, server: &mut Server, svc_index: usize) -> i32;
+    fn __dispatch__(&mut self, rpc_id: i32, req: Box<Request>, sconn: WeakServerConnection);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.service version=1 rust_sha256=b614182f7824c551d93fd9d265efc7369734a5e86ebac38004bf7badb39dbb4f*/
 class Service {
 public:
-    virtual ~Service() = default;
-    // Virtual method for service registration with index (used by reg_service)
-    // Returns list of RPC IDs that this service handles
-    // @safe
-    virtual int __reg_to__(Server&, size_t svc_index) = 0;
-
-    // @safe - Virtual dispatch method for handling RPC requests
-    // Each service implements this to route requests to the appropriate handler
-    // Uses virtual dispatch to avoid raw pointer capture and static_cast
-    virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
-
-    // Return a reference to the underlying Service instance. Default
-    // returns `*this`; the typed-box adapter overrides this to return
-    // its Service-shaped adapter self (the wrapped concrete T is not
-    // a Service). Used by `Server::for_each_service` for cleanup hooks
-    // that need to inspect the concrete service.
-    // @safe - returns a reference to `*this`; no cast through void*.
-    virtual Service& __get_service__() { return *this; }
+    virtual ~Service() noexcept(false) {}
+    virtual int32_t __reg_to__(Server& server, size_t svc_index) = 0;
+    virtual void __dispatch__(int32_t rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
+    Service(const Service&) = delete;
+    Service& operator=(const Service&) = delete;
+    Service(Service&&) = delete;
+    Service& operator=(Service&&) = delete;
+protected:
+    Service() = default;
 };
+
+template <class U> class ServiceAdapter;
+template <class U> class ServiceAdapterRef;
+template <class U> class ServiceAdapterRefMut;
+/*RUSTYCPP:GEN-END id=server.service*/
 
 using ServiceProxy = rusty::Box<Service>;
 
@@ -257,13 +272,6 @@ class ServiceTypedBoxAdapter : public Service {
   void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) override {
     svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
   }
-
-  // Returns `*this` (the adapter itself, which IS a Service). The wrapped
-  // T does not inherit `Service`, so we can't expose it through a
-  // Service&-shaped callback; callers needing the concrete T should
-  // hold the typed handle separately.
-  // @safe - returns a reference to `*this`; no cast through void*.
-  Service& __get_service__() override { return *this; }
 
  private:
   rusty::Box<T> svc_;
@@ -1413,14 +1421,18 @@ void Server::for_each_service(F callback) const {
 // Body of the for_each_service helper. Defined after the GEN block
 // so it can refer to Server's fields directly. The DSL's
 // `for_each_service<F>` member template delegates here. Iterates
-// over the immutable `services` Vec inside `ctx_field`, calling
-// `(*guard)->__get_service__()` for each entry.
+// over the immutable `services` Vec inside `ctx_field`, dereferencing
+// the `Box<Service>` to pass each Service& to the callback.
+//
+// (Previously called the now-removed `__get_service__()` method, whose
+// default impl + sole override both just returned `*this` — equivalent
+// to dereferencing the Box directly.)
 template<typename F>
 inline void server_for_each_service_impl(const Server& self, F&& callback) {
     auto& ctx = self.ctx_field.as_ref().unwrap();
     for (size_t i = 0; i < ctx->services.size(); ++i) {
         auto guard = ctx->services[i].borrow_mut();
-        callback((*guard)->__get_service__());
+        callback(**guard);
     }
 }
 

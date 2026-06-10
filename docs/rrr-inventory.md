@@ -7,7 +7,7 @@ a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
 **Decl count (top-level class/struct/enum/union):** 238  
-**Span across all decls (LOC):** 9206
+**Span across all decls (LOC):** 9190
 
 ## Buckets
 
@@ -15,10 +15,10 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|---:|---:|
 | trivial | 6 | 178 | 1.9% |
 | trivial-blocked | 9 | 490 | 5.3% |
-| refactor-then-dsl | 31 | 1817 | 19.7% |
-| needs-transpiler | 60 | 5388 | 58.5% |
+| refactor-then-dsl | 31 | 1817 | 19.8% |
+| needs-transpiler | 59 | 5360 | 58.3% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 129 | 1216 | 13.2% |
+| already-dsl | 130 | 1228 | 13.4% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -55,8 +55,8 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/serializable.cpp` | 704 |
 | `rpc/tcp_channel.cpp` | 376 |
 | `rpc/idempotency.cpp` | 311 |
-| `rpc/server.cpp` | 303 |
 | `rpc/inmemory_channel.cpp` | 300 |
+| `rpc/server.cpp` | 275 |
 | `misc/cpuinfo.cpp` | 253 |
 | `misc/marshal.cpp` | 251 |
 | `reactor/epoll_wrapper.cc` | 240 |
