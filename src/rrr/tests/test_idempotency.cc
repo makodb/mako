@@ -79,11 +79,11 @@ TEST_F(IdempotencyKeyTest, Hash) {
     IdempotencyKey key3(2, 1);
 
     // Same keys should have same hash
-    EXPECT_EQ(hash(key1), hash(key2));
+    EXPECT_EQ(hash.hash_one(key1), hash.hash_one(key2));
 
     // Different keys should (likely) have different hashes
     // Note: hash collisions are possible but unlikely for these values
-    EXPECT_NE(hash(key1), hash(key3));
+    EXPECT_NE(hash.hash_one(key1), hash.hash_one(key3));
 }
 
 TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {

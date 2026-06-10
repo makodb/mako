@@ -7,15 +7,15 @@ a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
 **Decl count (top-level class/struct/enum/union):** 239  
-**Span across all decls (LOC):** 9175
+**Span across all decls (LOC):** 9177
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 3 | 95 | 1.0% |
+| trivial | 4 | 105 | 1.1% |
 | trivial-blocked | 12 | 573 | 6.2% |
-| refactor-then-dsl | 30 | 1782 | 19.4% |
+| refactor-then-dsl | 29 | 1774 | 19.3% |
 | needs-transpiler | 59 | 5360 | 58.4% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 132 | 1248 | 13.6% |
@@ -50,7 +50,7 @@ from the repo root to regenerate both this file and the CSV.
 | File | Manual decl LOC |
 |---|---:|
 | `rpc/client.cpp` | 1768 |
-| `reactor/reactor.cpp` | 1027 |
+| `reactor/reactor.cpp` | 1029 |
 | `misc/alock.cpp` | 720 |
 | `misc/serializable.cpp` | 704 |
 | `rpc/tcp_channel.cpp` | 376 |
