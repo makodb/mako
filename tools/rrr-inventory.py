@@ -271,6 +271,19 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
     has_std_unique = has_std_shared = False
     has_compare_exchange = has_vec_assign = has_emplace_back = False
 
+    # Field-name capture for call-site blocker detection (post-pass
+    # via scan_call_sites). Catches the pattern where a field's blocker
+    # method is invoked outside the decl body — e.g. a free function in
+    # the same TU calling `g_stackless_profile.max_slots.compare_exchange_weak(...)`.
+    atomic_field_names: list[str] = []
+    vector_field_names: list[str] = []
+    field_re_atomic = re.compile(
+        r"\bstd::atomic\s*<[^>]+>\s+(\w+)\b"
+    )
+    field_re_vector = re.compile(
+        r"\bstd::vector\s*<[^>]+>\s+(\w+)\b"
+    )
+
     # Skip the opening line for the nested-class check (the decl line itself
     # matches `^\s*(?:class|struct)`).
     for i in range(start_idx, min(end_line, len(lines))):
@@ -310,6 +323,15 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
             has_vec_assign = True
         if body_re_emplace_back.search(ln):
             has_emplace_back = True
+        # Capture field names — only inside the decl body, not the
+        # decl-introducer line itself.
+        if i > start_idx:
+            m_at = field_re_atomic.search(ln)
+            if m_at:
+                atomic_field_names.append(m_at.group(1))
+            m_vec = field_re_vector.search(ln)
+            if m_vec:
+                vector_field_names.append(m_vec.group(1))
 
     if found_preproc:
         blockers.append("preprocessor branches in body (#if/#ifdef)")
@@ -338,6 +360,8 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         "has_user_ctor": has_user_ctor,
         "base_clause": base_clause,
         "blockers": blockers,
+        "atomic_field_names": atomic_field_names,
+        "vector_field_names": vector_field_names,
     }
 
 
@@ -397,6 +421,10 @@ def process_file(path: Path) -> list[Decl]:
     lines = text.splitlines()
     regions = find_regions(lines)
     decls: list[Decl] = []
+    # Per-decl field-name bookkeeping so we can do file-wide call-site
+    # detection after the per-decl pass.
+    atomic_field_owner: dict[str, Decl] = {}
+    vector_field_owner: dict[str, Decl] = {}
     for i, ln in enumerate(lines):
         m = DECL_RE.match(ln)
         if not m:
@@ -423,13 +451,43 @@ def process_file(path: Path) -> list[Decl]:
             has_user_ctor=body["has_user_ctor"],
             has_inheritance=bool(body["base_clause"]),
             base_clause=body["base_clause"],
-            blockers=body["blockers"],
+            blockers=list(body["blockers"]),
             bucket="",
         )
+        for fn in body.get("atomic_field_names", []):
+            atomic_field_owner[fn] = decl
+        for fn in body.get("vector_field_names", []):
+            vector_field_owner[fn] = decl
+        decls.append(decl)
+
+    # Second pass: file-wide call-site scan. For each captured std::atomic
+    # field name, see if any line outside the decl body invokes a
+    # compare_exchange variant on it (`.<name>.compare_exchange_…`). For
+    # std::vector field names look for `.<name>.assign(` / `.emplace_back(`.
+    if atomic_field_owner or vector_field_owner:
+        for i, ln in enumerate(lines):
+            for name, owner in atomic_field_owner.items():
+                if owner.start_line - 1 <= i < owner.end_line:
+                    continue
+                if re.search(rf"\.{re.escape(name)}\.compare_exchange_(weak|strong)\b", ln):
+                    msg = ("std::atomic field used with `compare_exchange_*` "
+                           "at a call site — rusty::Atomic CAS returns Result, "
+                           "not bool")
+                    if msg not in owner.blockers:
+                        owner.blockers.append(msg)
+            for name, owner in vector_field_owner.items():
+                if owner.start_line - 1 <= i < owner.end_line:
+                    continue
+                if re.search(rf"\.{re.escape(name)}\.(assign|emplace_back)\s*\(", ln):
+                    msg = ("std::vector field used with `.assign/.emplace_back` "
+                           "at a call site — rusty::Vec lacks these")
+                    if msg not in owner.blockers:
+                        owner.blockers.append(msg)
+
+    for decl in decls:
         bucket, notes = classify(decl)
         decl.bucket = bucket
         decl.notes = notes
-        decls.append(decl)
     return decls
 
 
