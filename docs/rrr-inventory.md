@@ -13,9 +13,9 @@ from the repo root to regenerate both this file and the CSV.
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 4 | 112 | 1.2% |
-| trivial-blocked | 10 | 511 | 5.6% |
-| refactor-then-dsl | 32 | 1862 | 20.2% |
+| trivial | 6 | 178 | 1.9% |
+| trivial-blocked | 9 | 490 | 5.3% |
+| refactor-then-dsl | 31 | 1817 | 19.7% |
 | needs-transpiler | 60 | 5388 | 58.5% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 129 | 1216 | 13.2% |

@@ -252,8 +252,11 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
     )
     body_re_preproc = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else)\b")
     body_re_operator = re.compile(r"\boperator\s*(?:[(\[\]+\-*/%^&|~!<>=]|->|::)")
-    # Match `something = literal` inside a parameter list (default arg).
-    body_re_default_arg = re.compile(r"\([^()]*=[^()]*\)")
+    # Match `name = literal` inside a parameter list (default arg).
+    # Distinguish a real `name = literal` from a `==`/`!=`/`<=`/`>=`
+    # comparison in a body expression: require the `=` not to be part
+    # of a 2-char comparison operator (`(?<!=)`, `(?<![!<>])`, `(?!=)`).
+    body_re_default_arg = re.compile(r"\([^()]*(?<![!<>=])=(?!=)[^()]*\)")
     body_re_nested = re.compile(r"^\s*(?:class|struct|union)\s+\w+")
     body_re_method_template = re.compile(r"^\s*template\s*<")
     body_re_std_atomic = re.compile(r"\bstd::atomic\s*<")
@@ -293,13 +296,30 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         if body_re_dtor and body_re_dtor.search(ln):
             has_user_dtor = True
         if body_re_ctor and body_re_ctor.search(ln):
-            has_user_ctor = True
+            # A `Name(...) = default;` (or `=default;`) line is the
+            # implicit-ctor sugar — no real logic to migrate, the DSL
+            # aggregate behaves the same. Only count "real" user ctors;
+            # defaulted ones don't block trivial classification.
+            # Look at the matched line plus the next 2 lines (covers
+            # multi-line defaulted-ctor declarations).
+            tail = ln
+            for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
+                tail += " " + lines[k]
+            if not re.search(r"=\s*default\s*;", tail):
+                has_user_ctor = True
         if i > start_idx:
             if body_re_preproc.match(ln):
                 found_preproc = True
             if body_re_operator.search(ln) and "operator" in ln:
                 # Filter out `using namespace foo::operator` or comment refs.
-                if "// " not in ln.split("operator", 1)[0][-40:]:
+                # Also filter `operator=(...) = default;` — the DSL aggregate
+                # supplies the implicit assignment operator, so a defaulted
+                # operator overload carries no logic to migrate.
+                tail = ln
+                for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
+                    tail += " " + lines[k]
+                if ("// " not in ln.split("operator", 1)[0][-40:]
+                        and not re.search(r"=\s*default\s*;", tail)):
                     found_operator = True
             if body_re_default_arg.search(ln):
                 found_default_arg = True
