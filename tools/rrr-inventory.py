@@ -433,9 +433,15 @@ def classify(decl: Decl) -> tuple[str, list[str]]:
             "base-class pass"
         )
         return "refactor-then-dsl", notes
-    # User-defined ctor (needs static ::new() refactor first)
+    # User-defined ctor (needs static ::new() refactor first).
+    # Also append any body-scan blockers so the full migration picture
+    # is visible — the user ctor is the primary blocker for routing,
+    # but the secondary blockers (void*, va_list, etc.) tell the
+    # implementer which additional refactors are needed before the
+    # DSL block compiles.
     if decl.has_user_ctor:
         notes.append("user ctor — needs static ::new() factory refactor first")
+        notes.extend(decl.blockers)
         return "refactor-then-dsl", notes
     # Otherwise it looks POD-ish. But body scan may have surfaced
     # hidden DSL-blockers; if so, demote to `trivial-blocked` so the
