@@ -34,16 +34,20 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 | trivial           |    6  | 178 |    1.9%  |
 | trivial-blocked   |    9  | 444 |    4.8%  |
 | refactor-then-dsl |   31  |1,817|   19.7%  |
-| needs-transpiler  |   60  |5,388|   58.5%  |
+| needs-transpiler  |   59  |5,376|   58.4%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  129  |1,213|   13.2%  |
+| already-dsl       |  130  |1,225|   13.3%  |
 
-(Counts after OwnedFrame's Phase 1 migration + Phase 1c body-scan
-refinements. Phase 1c added defaulted-ctor detection (`Foo() = default;`
-no longer counts as a real user ctor), defaulted-operator detection
-(`Foo& operator=(Foo&&) = default;` no longer counts as an operator
-overload), and a tighter default-arg regex that distinguishes
-`(int x = 0)` from a body expression like `(ttl_ms == 0)`.)
+(Counts after OwnedFrame's Phase 1 migration, Phase 1c body-scan
+refinements, and Service's Phase 2 trait migration. Phase 1c added
+defaulted-ctor detection (`Foo() = default;` no longer counts as a
+real user ctor), defaulted-operator detection (`Foo& operator=(Foo&&)
+= default;` no longer counts as an operator overload), and a tighter
+default-arg regex that distinguishes `(int x = 0)` from a body
+expression like `(ttl_ms == 0)`. Service's migration dropped the noop
+`__get_service__()` default impl + override and the trait now has
+only the two semantically-meaningful methods `__reg_to__` and
+`__dispatch__`.)
 
 The two bucket-refinement passes (Phase 1a body-scan + Phase 1b file-wide call-site scan) demoted 11 decls out of `trivial` into `trivial-blocked`. Examples by blocker source:
 
@@ -90,13 +94,12 @@ Stretch goal: a small script that finds candidate POD structs (no virtual, no te
 
 ## Phase 2 — Trait migrations (~2–4 weeks, mostly mechanical)
 
-Each abstract base class with virtual methods becomes a `pub trait` in DSL. Pattern is established via `PollableBase`, `SerializableBase`, `Job`, `Alarm`, `ChannelConnectionBase`, `ChannelListenerBase`, `ChannelFactoryBase`.
+Each abstract base class with virtual methods becomes a `pub trait` in DSL. Pattern is established via `PollableBase`, `SerializableBase`, `Job`, `Alarm`, `ChannelConnectionBase`, `ChannelListenerBase`, `ChannelFactoryBase`, and `Service` (migrated 2026-06-10).
 
 Remaining bases to migrate:
 
 | Class                                                | File                          | Notes |
 |------------------------------------------------------|-------------------------------|-------|
-| `Service`                                            | `rpc/server.cpp`              | 2 virtual methods + default impl for `__get_service__` |
 | `Event`                                              | `reactor/reactor.cpp`         | Has concrete subclasses; check trait-with-state pattern |
 | `SinkBase` / `SourceBase`                            | `misc/serializable.cpp`       | Take `const void*` — needs `&[u8]` reshape first |
 | `ChannelConnectionBase` / `ChannelListenerBase`      | already done — verify         | |
