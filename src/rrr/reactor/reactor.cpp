@@ -495,33 +495,54 @@ constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
 
 class fiber_task_t;
 
-// DSL-prep refactor (not yet a full DSL block): the previous
-// `void operator()()` was renamed to `void yield_now()` so the DSL
-// grammar — which has no operator-overload form — won't trip on it
-// when this class is later moved to inline-Rust DSL. The previous
-// public ctor `fiber_yield_t(fiber_task_t&)` was replaced with a
-// `static fiber_yield_t new_(fiber_task_t&)` factory matching the
-// `fn new` shape the other migrated structs use; the one in-tree
-// member init `yield_(*this)` in `fiber_task_t::fiber_task_t` flipped
-// to `yield_(fiber_yield_t::new_(*this))`. The two callers of the
-// old operator() (`yield()` in `Fiber::run_wrapper`,
-// `(*yield_ptr)()` in `Fiber::yield_`) flipped to `.yield_now()`.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
 //
-// Full DSL migration is deferred: the `yield_now()` body raw-pointer
-// dereferences `task_` and the rusty-cpp transpiler doesn't yet
-// translate that style of body (it emits `// TODO: unhandled impl
-// item`). Once raw-deref support lands, the class is ready to move
-// into a DSL block — no further refactoring needed.
+// `fiber_yield_t` is now a pure-POD pointer wrapper. The previous
+// member method `void operator()()` (renamed to `void yield_now()` in
+// an earlier DSL-prep commit) is now the free function
+// `fiber_yield_invoke(fiber_yield_t&)`, kept outside the DSL block
+// because the body raw-dereferences `task_` and the rusty-cpp
+// transpiler doesn't yet translate that style of impl body. The two
+// call sites (`yield()` in `Fiber::run_wrapper`, `(*yield_ptr)()` in
+// `Fiber::yield_`) now use `fiber_yield_invoke(yield)` /
+// `fiber_yield_invoke(*yield_ptr)`. The DSL `fn new(task)` factory
+// lowers to the `static new_()` the one in-tree member init in
+// `fiber_task_t::fiber_task_t` already calls.
+#if RUSTYCPP_RUST
 struct fiber_yield_t {
-    fiber_task_t* task_{nullptr};
+    task_: *mut fiber_task_t,
+}
 
-    // @safe - Static factory matching `fn new() -> Self`.
-    static fiber_yield_t new_(fiber_task_t& task) {
-        return fiber_yield_t{.task_ = &task};
+impl fiber_yield_t {
+    fn new(task: &mut fiber_task_t) -> fiber_yield_t {
+        fiber_yield_t {
+            task_: task as *mut fiber_task_t,
+        }
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_yield version=1 rust_sha256=ab6ef3f623333af344b247aab5325e40a15188044251222c9884ef258de66b5d*/
+struct fiber_yield_t;
 
-    void yield_now();
+struct fiber_yield_t {
+    fiber_task_t* task_;
+
+    static fiber_yield_t new_(fiber_task_t& task);
 };
+
+
+fiber_yield_t fiber_yield_t::new_(fiber_task_t& task) {
+    return fiber_yield_t{.task_ = static_cast<fiber_task_t*>(&task)};
+}
+/*RUSTYCPP:GEN-END id=reactor.fiber_yield*/
+
+// @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
+// the friend declaration on fiber_task_t still applies. } Free
+// function — kept outside the DSL block because the body raw-deref
+// is not yet supported by the rusty-cpp transpiler.
+void fiber_yield_invoke(fiber_yield_t& self);
 
 class fiber_task_t {
  public:
@@ -545,6 +566,7 @@ class fiber_task_t {
 
  private:
   friend class fiber_yield_t;
+  friend void fiber_yield_invoke(fiber_yield_t& self);
 
   enum class State : uint8_t {
     NEW = 0,
@@ -1660,7 +1682,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
     }
     auto reactor = Reactor::get_reactor();
     reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
-    yield.yield_now();
+    fiber_yield_invoke(yield);
   }
 }
 
@@ -1698,7 +1720,7 @@ void Fiber::yield_() const {
       auto reactor = Reactor::get_reactor();
       reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
     }
-    yield_ptr->yield_now();
+    fiber_yield_invoke(*yield_ptr);
   }
 }
 
@@ -2902,9 +2924,9 @@ thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
 
 // @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
 // the friend declaration on fiber_task_t still applies. }
-void fiber_yield_t::yield_now() {
-  verify(task_ != nullptr);
-  task_->yield_to_caller();
+void fiber_yield_invoke(fiber_yield_t& self) {
+  verify(self.task_ != nullptr);
+  self.task_->yield_to_caller();
 }
 
 fiber_task_t::fiber_task_t(TaskFn fn)
