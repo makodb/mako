@@ -106,26 +106,45 @@ inline bool operator!=(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
     return !(lhs == rhs);
 }
 
-// Hash function for IdempotencyKey. Provides both:
-//   * std::hash-style `operator()` — for std::unordered_map use
-//   * hashbrown-style `hash_one()` — for rusty::HashMap (the transpiled
-//     hashbrown port calls `S::hash_one(K)` not `S::operator()(K)`)
-// @safe - pure function over POD inputs
+// Hash function for IdempotencyKey. Only the hashbrown-style
+// `hash_one()` is provided — that is what `rusty::HashMap` (the
+// transpiled hashbrown port) calls; the previous `operator()`
+// (intended for std::unordered_map) had no in-tree user beyond a unit
+// test, so we removed it to clear the DSL operator-overload blocker.
+// The single test caller now reaches in via `hash_one(key)`.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
+// is the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// The hash body is identity-of-client_id XOR golden-ratio-mix-of-sequence.
+// This matches the original C++ behavior exactly: libc++'s
+// `std::hash<uint64_t>` is the identity on unsigned-integer inputs, so
+// `h1 = std::hash{}(client_id)` simplifies to `client_id` and likewise
+// for `h2`. Unsigned multiplication wraps in both languages.
+#if RUSTYCPP_RUST
 struct IdempotencyKeyHash {
-    // @unsafe { hash computation }
-    std::size_t operator()(const IdempotencyKey& key) const noexcept {
-        // Combine client_id and sequence using FNV-1a style mixing
-        std::size_t h1 = std::hash<uint64_t>{}(key.client_id);
-        std::size_t h2 = std::hash<uint64_t>{}(key.sequence);
-        return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL);  // Golden ratio constant
+}
+
+impl IdempotencyKeyHash {
+    fn hash_one(&self, key: &IdempotencyKey) -> u64 {
+        key.client_id ^ key.sequence.wrapping_mul(0x9e3779b97f4a7c15u64)
     }
-    // hashbrown's `BuildHasher::hash_one<T>(&self, x: T) -> u64` shape.
-    // Delegate to operator() so both consumers (std/unordered_map and
-    // rusty/hashbrown HashMap) hash identically.
-    std::uint64_t hash_one(const IdempotencyKey& key) const noexcept {
-        return static_cast<std::uint64_t>((*this)(key));
-    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.key_hash version=1 rust_sha256=a159b426da97ec7baa50fa5fac23869a8d9959f967c3f7b4209f849091789249*/
+struct IdempotencyKeyHash;
+
+struct IdempotencyKeyHash {
+
+    uint64_t hash_one(const IdempotencyKey& key) const;
 };
+
+
+uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
+    return rusty::detail::deref_if_pointer_like(key.client_id) ^ (static_cast<size_t>(key.sequence) * static_cast<size_t>(static_cast<uint64_t>(11400714819323198485)));
+}
+/*RUSTYCPP:GEN-END id=idempotency.key_hash*/
 
 // Marshal operators for IdempotencyKey
 // @safe - Marshal::operator<< / operator>> overloads are @safe via the
