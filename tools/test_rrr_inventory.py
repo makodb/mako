@@ -262,6 +262,64 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["bucket"], "trivial")
 
+    def test_call_site_atomic_cas_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Counters {
+                    std::atomic<uint64_t> tick;
+                };
+
+                Counters g_counters;
+
+                void bump_max(uint64_t v) {
+                    uint64_t old = 0;
+                    while (!g_counters.tick.compare_exchange_weak(old, v)) {}
+                }
+            """),
+        })
+        counters = [r for r in rows if r["name"] == "Counters"]
+        self.assertEqual(len(counters), 1)
+        self.assertEqual(counters[0]["bucket"], "trivial-blocked")
+        self.assertIn("call site", counters[0]["notes"])
+
+    def test_call_site_vector_assign_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Frame {
+                    std::vector<uint8_t> bytes;
+                };
+
+                void copy_in(Frame& f, const uint8_t* p, size_t n) {
+                    f.bytes.assign(p, p + n);
+                }
+            """),
+        })
+        frame = [r for r in rows if r["name"] == "Frame"]
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame[0]["bucket"], "trivial-blocked")
+        self.assertIn("call site", frame[0]["notes"])
+
+    def test_unrelated_field_name_not_false_positive(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Frame {
+                    std::vector<uint8_t> bytes;
+                };
+
+                struct Other {
+                    int n;
+                };
+
+                void use_other() {
+                    Other o;
+                    o.n = 1;
+                }
+            """),
+        })
+        frame = [r for r in rows if r["name"] == "Frame"]
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame[0]["bucket"], "trivial")
+
 
 if __name__ == "__main__":
     unittest.main()
