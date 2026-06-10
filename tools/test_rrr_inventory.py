@@ -363,6 +363,42 @@ class InventoryTest(unittest.TestCase):
         # default arg.
         self.assertEqual(rows[0]["bucket"], "trivial")
 
+    def test_void_star_param_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    void write(const void* p, size_t n);
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("void*", rows[0]["notes"])
+
+    def test_va_list_param_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    void log_v(const char* fmt, va_list ap);
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("va_list", rows[0]["notes"])
+
+    def test_c_array_param_blocks_trivial(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    int parse(int argc, char* argv[]);
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial-blocked")
+        self.assertIn("array", rows[0]["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

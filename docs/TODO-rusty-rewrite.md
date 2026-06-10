@@ -31,12 +31,20 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    6  | 178 |    1.9%  |
-| trivial-blocked   |    9  | 444 |    4.8%  |
+| trivial           |    3  |  95 |    1.0%  |
+| trivial-blocked   |   12  | 527 |    5.7%  |
 | refactor-then-dsl |   31  |1,817|   19.7%  |
 | needs-transpiler  |   59  |5,376|   58.4%  |
 | boundary          |    3  | 117 |    1.3%  |
 | already-dsl       |  130  |1,225|   13.3%  |
+
+(Phase 1d added `void *` / `va_list` / C-style array-param detection to
+the body scan, correctly demoting three more decls out of `trivial`:
+BufferSink (`const void*` in `write`), Log (`va_list` in `Log_v`), and
+TestMgr (`char* argv[]` in `parse_args`/`run`). The remaining 3 trivial
+items are ReconnectPolicy (policy-manual), AnyMessageRegistry
+(templated dispatch siblings), and CachedResponse (Marshal-references
+that need Phase 4's reshape).)
 
 (Counts after OwnedFrame's Phase 1 migration, Phase 1c body-scan
 refinements, and Service's Phase 2 trait migration. Phase 1c added

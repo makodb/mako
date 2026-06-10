@@ -267,12 +267,23 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
     body_re_compare_exchange = re.compile(r"\.compare_exchange_(weak|strong)\b")
     body_re_vec_assign = re.compile(r"\.assign\s*\(")
     body_re_emplace_back = re.compile(r"\.emplace_back\s*\(")
+    # `void *` or `const void *` in a param list — DSL grammar doesn't
+    # accept untyped pointers; the migration needs a `&[u8]` / `*const u8`
+    # reshape first.
+    body_re_void_star = re.compile(r"\b(?:const\s+)?void\s*\*")
+    # `va_list` — variadic C-style param; DSL can't express it.
+    body_re_va_list = re.compile(r"\bva_list\b")
+    # C-style array params (`Type name[]` inside a parameter list).
+    # Match a closing `]` preceded by `[\s*\]` on the same line, scoped
+    # to a parameter list (parenthesized).
+    body_re_c_array_param = re.compile(r"\([^()]*\b\w+\s*\[\s*\][^()]*\)")
 
     found_preproc = found_operator = found_default_arg = False
     found_nested = found_method_template = False
     has_std_atomic = has_std_vector = has_std_function = False
     has_std_unique = has_std_shared = False
     has_compare_exchange = has_vec_assign = has_emplace_back = False
+    found_void_star = found_va_list = found_c_array = False
 
     # Field-name capture for call-site blocker detection (post-pass
     # via scan_call_sites). Catches the pattern where a field's blocker
@@ -343,9 +354,15 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
             has_vec_assign = True
         if body_re_emplace_back.search(ln):
             has_emplace_back = True
-        # Capture field names — only inside the decl body, not the
-        # decl-introducer line itself.
         if i > start_idx:
+            if body_re_void_star.search(ln):
+                found_void_star = True
+            if body_re_va_list.search(ln):
+                found_va_list = True
+            if body_re_c_array_param.search(ln):
+                found_c_array = True
+            # Capture field names — only inside the decl body, not the
+            # decl-introducer line itself.
             m_at = field_re_atomic.search(ln)
             if m_at:
                 atomic_field_names.append(m_at.group(1))
@@ -373,6 +390,12 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         blockers.append("std::unique_ptr field — should use rusty::Box")
     if has_std_shared:
         blockers.append("std::shared_ptr field — should use rusty::Arc")
+    if found_void_star:
+        blockers.append("void* in param — DSL grammar doesn't accept void*")
+    if found_va_list:
+        blockers.append("va_list — variadic C-style param, not expressible in DSL")
+    if found_c_array:
+        blockers.append("C-style array param — DSL needs slice/Vec instead")
     return {
         "template": template,
         "has_virtual": has_virtual,
