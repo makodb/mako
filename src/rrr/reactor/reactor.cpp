@@ -495,13 +495,32 @@ constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
 
 class fiber_task_t;
 
-class fiber_yield_t {
- public:
-  explicit fiber_yield_t(fiber_task_t& task) : task_(&task) {}
-  void operator()();
+// DSL-prep refactor (not yet a full DSL block): the previous
+// `void operator()()` was renamed to `void yield_now()` so the DSL
+// grammar — which has no operator-overload form — won't trip on it
+// when this class is later moved to inline-Rust DSL. The previous
+// public ctor `fiber_yield_t(fiber_task_t&)` was replaced with a
+// `static fiber_yield_t new_(fiber_task_t&)` factory matching the
+// `fn new` shape the other migrated structs use; the one in-tree
+// member init `yield_(*this)` in `fiber_task_t::fiber_task_t` flipped
+// to `yield_(fiber_yield_t::new_(*this))`. The two callers of the
+// old operator() (`yield()` in `Fiber::run_wrapper`,
+// `(*yield_ptr)()` in `Fiber::yield_`) flipped to `.yield_now()`.
+//
+// Full DSL migration is deferred: the `yield_now()` body raw-pointer
+// dereferences `task_` and the rusty-cpp transpiler doesn't yet
+// translate that style of body (it emits `// TODO: unhandled impl
+// item`). Once raw-deref support lands, the class is ready to move
+// into a DSL block — no further refactoring needed.
+struct fiber_yield_t {
+    fiber_task_t* task_{nullptr};
 
- private:
-  fiber_task_t* task_{nullptr};
+    // @safe - Static factory matching `fn new() -> Self`.
+    static fiber_yield_t new_(fiber_task_t& task) {
+        return fiber_yield_t{.task_ = &task};
+    }
+
+    void yield_now();
 };
 
 class fiber_task_t {
@@ -1641,7 +1660,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
     }
     auto reactor = Reactor::get_reactor();
     reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
-    yield();
+    yield.yield_now();
   }
 }
 
@@ -1679,7 +1698,7 @@ void Fiber::yield_() const {
       auto reactor = Reactor::get_reactor();
       reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
     }
-    (*yield_ptr)();
+    yield_ptr->yield_now();
   }
 }
 
@@ -2881,14 +2900,16 @@ void PollThread::remove(rusty::Arc<Job> job) const {
 
 thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
 
-void fiber_yield_t::operator()() {
+// @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
+// the friend declaration on fiber_task_t still applies. }
+void fiber_yield_t::yield_now() {
   verify(task_ != nullptr);
   task_->yield_to_caller();
 }
 
 fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
-      yield_(*this) {
+      yield_(fiber_yield_t::new_(*this)) {
   init_context();
   // Match Boost.Coroutine2 pull_type behavior: run immediately on construction.
   resume();
