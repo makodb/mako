@@ -17,6 +17,7 @@ module;
 #include <std_compat.hpp>
 #include <std_annotation.hpp>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -37,13 +38,11 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/async.hpp>
 #include <rusty/box.hpp>
-#include <rusty/btreeset.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/rusty.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -54,6 +53,7 @@ module;
 export module rrr.reactor;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;
@@ -167,10 +167,19 @@ class BoxEvent : public Event {
 class IntEvent : public Event {
 
  public:
+  // Legacy ctors kept for deptran call sites (`IntEvent()` as base init
+  // in derived classes, `Reactor::create_sp_event<IntEvent>(n)` which
+  // forwards to `IntEvent(int)`). New rrr code should prefer
+  // `IntEvent::new_(tar)` which matches the inline-Rust DSL form.
   IntEvent() {}
   IntEvent(int tar) :target_(tar) {}
   int value_{0};
   int target_{1};
+
+  // @safe - factory matching the DSL `fn new(tar) -> Self` form.
+  static IntEvent new_(int tar) {
+    return IntEvent(tar);
+  }
 
 
   bool test_trigger();
@@ -357,7 +366,13 @@ class DispatchEvent: public Event{
   public:
     uint32_t n_dispatch_;
     uint32_t n_dispatch_ack_ = 0;
-    rusty::BTreeMap<uint32_t, bool> dispatch_acks_ = {};
+    // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
+    // a chain of unresolved transpiler bugs in btree_internal that
+    // surface when iter() / clone() are instantiated. std::map is
+    // semantically equivalent for this use (ordered K→V) and ships in
+    // libc++. Migrate back to rusty::BTreeMap once the upstream bugs
+    // are patched.
+    std::map<uint32_t, bool> dispatch_acks_ = {};
     bool aborted_ = false;
     bool more = false;
 
@@ -460,6 +475,24 @@ struct FiberContext {
 
 extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
 
+// Default stack size for stackless fibers (1 MiB). Lifted out of
+// `fiber_task_t` class scope (was `private static constexpr`) because
+// DSL constants live at namespace scope. The one use site
+// (`fiber_task_t::init_context`) references it unqualified, so
+// namespace lookup still resolves to this constant.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+const kDefaultStackBytes: usize = 1usize << 20;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_default_stack version=1 rust_sha256=573a148f9a126f68ff3cd154018259cab614444f2c74a62837b70635855b9e68*/
+extern const size_t kDefaultStackBytes;
+
+constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
+/*RUSTYCPP:GEN-END id=reactor.fiber_default_stack*/
+
 class fiber_task_t;
 
 class fiber_yield_t {
@@ -501,7 +534,6 @@ class fiber_task_t {
     FINISHED
   };
 
-  static constexpr std::size_t kDefaultStackBytes = 1u << 20;  // 1 MiB
   static thread_local fiber_task_t* tls_active_task_;
 
   static void entry_trampoline();
@@ -728,7 +760,12 @@ class Reactor {
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
+  // std::set (not rusty::BTreeSet) — BTreeSet::remove() triggers a
+  // cascade of transpiler bugs in btree_internal (OccupiedEntry
+  // remove_entry path has ._0 variant-access typos, non-const member
+  // calls, NodeRef temporary binding issues). Migrate back when the
+  // upstream bugs are patched.
+  rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_{};
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
@@ -763,7 +800,6 @@ class Reactor {
   rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
   rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
   rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
-  static SpinLock trying_job_;
 #if defined(REUSE_FIBER) || defined(REUSE_CORO)
 #define REUSING_FIBER (true)
 #else
@@ -887,8 +923,8 @@ class Reactor {
   }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.len()=%zu",
-              all_events_.borrow()->len(), fibers_.borrow()->len());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.size()=%zu",
+              all_events_.borrow()->len(), fibers_.borrow()->size());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
@@ -934,16 +970,57 @@ class PollThreadWorker;
 // =============================================================================
 
 // Commands sent from PollThread to PollThreadWorker via channel
-// Using std::variant for type-safe discriminated union
+// Using std::variant for type-safe discriminated union. All seven
+// emit through the DSL block below; the `pollable` field's DSL form
+// `Box<PollableBase>` lowers to `rusty::Box<PollableBase>`, which the
+// `PollableProxy = rusty::Box<PollableBase>` using-alias in
+// `rrr.pollable_proxy` keeps backward-compatible with prior call sites.
+#if RUSTYCPP_RUST
+struct CmdAddPollable { pollable: Box<PollableBase> }
+struct CmdRemovePollable { fd: i32 }
+struct CmdClosePollable { fd: i32 }
+struct CmdUpdateMode { fd: i32, new_mode: i32 }
+struct CmdAddJob { job: Arc<Job> }
+struct CmdRemoveJob { job: Arc<Job> }
+struct CmdShutdown {}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=322b492b439ebf16ebbdfa4e0177a363ef006de129416083fa97070e3002de7f*/
+struct CmdAddPollable;
+struct CmdRemovePollable;
+struct CmdClosePollable;
+struct CmdUpdateMode;
+struct CmdAddJob;
+struct CmdRemoveJob;
+struct CmdShutdown;
+
 struct CmdAddPollable {
-    PollableProxy pollable;
+    rusty::Box<PollableBase> pollable;
 };
-struct CmdRemovePollable { int fd; };
-struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
-struct CmdUpdateMode { int fd; int new_mode; };
-struct CmdAddJob { rusty::Arc<Job> job; };
-struct CmdRemoveJob { rusty::Arc<Job> job; };
-struct CmdShutdown {};
+
+struct CmdRemovePollable {
+    int32_t fd;
+};
+
+struct CmdClosePollable {
+    int32_t fd;
+};
+
+struct CmdUpdateMode {
+    int32_t fd;
+    int32_t new_mode;
+};
+
+struct CmdAddJob {
+    rusty::Arc<Job> job;
+};
+
+struct CmdRemoveJob {
+    rusty::Arc<Job> job;
+};
+
+struct CmdShutdown {
+};
+/*RUSTYCPP:GEN-END id=reactor.poll_cmds*/
 
 using PollCommand = std::variant<
     CmdAddPollable,
@@ -987,7 +1064,10 @@ export namespace rrr {
 //    so RefCell borrow is never held across handler calls
 class PollThreadWorker {
     friend class PollThread;
-    friend class rusty::Rc<rusty::RefCell<PollThreadWorker>>;
+    // `rusty::Rc<T>` is now a template alias (to `rusty::port::rc::Rc<T,A>`),
+    // not a class template — alias templates can't be befriended. Dropped
+    // the friendship since the ctor below is public; Rc::make() reaches
+    // it through the normal public-API path.
 
 public:
     // @unsafe - Factory method - creates worker wrapped in Rc<RefCell<>>
@@ -1074,8 +1154,12 @@ private:
     rusty::HashMap<int, int> mode_;  // fd -> mode
     rusty::HashSet<int> pending_remove_;
 
-    // Jobs - single owner in worker thread
-    rusty::BTreeSet<rusty::Arc<Job>> jobs_;
+    // Jobs - single owner in worker thread.
+    // std::set (not rusty::BTreeSet) — same reason as dispatch_acks_:
+    // the transpiled BTreeSet calls into BTreeMap::clone() which drags
+    // in broken btree_internal templates. Migrate back when the upstream
+    // transpiler bugs are patched.
+    std::set<rusty::Arc<Job>> jobs_;
 
     // Stop flag
     bool stop_ = false;
@@ -1101,9 +1185,15 @@ private:
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
 
     // Thread ID of the poll thread - used to detect self-join attempts.
-    // rusty::Atomic wraps std::atomic<ThreadId> — ThreadId is TriviallyCopyable so
-    // this stays lock-free on typical platforms.
-    mutable rusty::sync::atomic::Atomic<rusty::thread::ThreadId> poll_thread_id_{};
+    // Stored as raw u64 (bit_cast of `platform::threading::thread_id`) so we
+    // can use the concrete `AtomicU64` alias — Rust std has no
+    // `AtomicThreadId`, and we don't want to re-introduce the generic
+    // `Atomic<T>`. The underlying native id is either `std::thread::id`
+    // (default backend) or `pthread_t` (POSIX backend); both are 8 bytes on
+    // the platforms we target, and the static_assert below guards the cast.
+    // Conversion helpers live alongside the two access sites
+    // (create() / shutdown()).
+    mutable rusty::sync::atomic::AtomicU64 poll_thread_id_bits_{};
 
     // Track if shutdown was called
     mutable std::atomic<bool> shutdown_called_{false};
@@ -1232,7 +1322,7 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @safe - test(), Time::now(), rusty::Vec::push, IntEvent::set
+  // @safe - test(), Time::now(false), rusty::Vec::push, IntEvent::set
   // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
   void vote_yes();
 
@@ -1381,7 +1471,10 @@ void Event::wait(uint64_t timeout) {
 //      }
 //      events.insert(it, shared_from_this());
 
-    wp_fiber_ = fiber;
+    // Transpiled Weak has no implicit Rc→Weak conversion / op= — use
+    // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
+    // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
+    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
     status_.set(WAIT);
     auto fiber_status = fiber->status_.get();
     verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
@@ -1437,7 +1530,9 @@ Event::Event() {
   // It's OK if no fiber is running - event might be created outside a fiber
   // and Wait() called later from within one
   if (fiber_opt.is_some()) {
-    wp_fiber_ = fiber_opt.unwrap();
+    // Same Rc→Weak conversion fix as above.
+    auto rc_fiber = fiber_opt.unwrap();
+    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
   // Otherwise wp_fiber_ stays as default empty weak pointer
 }
@@ -1534,7 +1629,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
   verify(static_cast<bool>(*func_.borrow()));
   auto reactor = Reactor::get_reactor();
   while (true) {
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     verify(static_cast<bool>(*func_.borrow()));
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -1560,7 +1655,7 @@ void Fiber::run() const {
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::get_reactor();
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     auto task = std::bind(&Fiber::run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
     *fiber_task_.borrow_mut() = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
@@ -1618,7 +1713,6 @@ void Fiber::do_finalize() {
 
 // --- from reactor.cc -----------------------------------------------------
 
-const int64_t n_max_fiber = 2000;
 // `REUSING_FIBER` is provided as a macro by reactor.h (line 203).
 // The original module-attached `constexpr bool REUSING_FIBER`
 // shadowed the macro inside the rrr module's purview; with
@@ -1699,7 +1793,6 @@ inline void stackless_profile_report_periodic() {
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
 // Same for PollThreadWorker::current_worker_, clients_, and dangling_ips_.
-SpinLock Reactor::trying_job_;
 
 // @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
@@ -1841,17 +1934,18 @@ void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
 
 // @safe - Registers a fiber in the active set
 void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe { RefCell::borrow_mut, BTreeSet::insert are not borrow-checked }
+  // @unsafe { RefCell::borrow_mut, std::set::insert are not borrow-checked }
   {
-  // BTreeSet::insert returns bool (true if newly inserted)
+  // std::set::insert returns pair<iterator, bool>; `.second` is true
+  // when the value was newly inserted.
   auto fibers_guard = fibers_.borrow_mut();
-  bool inserted = fibers_guard->insert(fiber.clone());
+  bool inserted = fibers_guard->insert(fiber.clone()).second;
   if (!inserted) {
     Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
-    Log_error("[DEBUG] fibers_ len: %zu, REUSING_FIBER: %d", fibers_guard->len(), REUSING_FIBER);
+    Log_error("[DEBUG] fibers_ size: %zu, REUSING_FIBER: %d", fibers_guard->size(), REUSING_FIBER);
   }
   verify(inserted);
-  verify(fibers_guard->len() > 0);
+  verify(fibers_guard->size() > 0);
   }
 }
 
@@ -2262,7 +2356,7 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
   }
   n_busy_fibers_.set(n_busy_fibers_.get() - 1);
   // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
-  { fibers_.borrow_mut()->remove(fiber); }
+  { fibers_.borrow_mut()->erase(fiber); }  // std::set::erase (was BTreeSet::remove)
 }
 
 void Reactor::display_waiting_ev() const {
@@ -2477,7 +2571,7 @@ void PollThreadWorker::process_commands() {
 // @unsafe blocks.
 void PollThreadWorker::trigger_job() {
   // Copy jobs to process (in case jobs modify the set).
-  rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
+  std::set<rusty::Arc<Job>> jobs_exec = jobs_;
   jobs_.clear();
 
   for (const auto& job : jobs_exec) {
@@ -2588,9 +2682,9 @@ void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
   jobs_.insert(job);
 }
 
-// @safe - rusty::BTreeSet::remove is @safe via namespace inheritance.
+// @safe - std::set::erase is the std equivalent of rusty::BTreeSet::remove.
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
-  jobs_.remove(job);
+  jobs_.erase(job);
 }
 
 // @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`
@@ -2631,11 +2725,31 @@ void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
 PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
     : sender_(std::move(sender)),
       join_handle_(rusty::None),
-      poll_thread_id_(),
+      poll_thread_id_bits_(0),
       shutdown_called_(false) {
 }
 
-// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_`)
+// @safe - ThreadId<->u64 bit_cast helpers. `platform::threading::thread_id`
+// is `std::thread::id` (default backend) or `pthread_t` (POSIX backend).
+// Both are 8-byte trivially copyable on the platforms we support; the
+// static_assert below makes the bit_cast safe.
+namespace {
+inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
+    using NativeId = decltype(tid.as_native());
+    static_assert(sizeof(NativeId) == sizeof(std::uint64_t),
+                  "platform thread_id must be 8 bytes for bit_cast to u64");
+    static_assert(std::is_trivially_copyable_v<NativeId>,
+                  "platform thread_id must be trivially copyable");
+    return std::bit_cast<std::uint64_t>(tid.as_native());
+}
+
+inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
+    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
+    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
+}
+} // namespace
+
+// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_bits_`)
 // and passes the raw pointer into a spawned thread closure. The Arc
 // keeps the PollThread (and thus the atomic) alive until the worker
 // thread finishes; rusty-cpp can't express that lifetime relationship.
@@ -2647,13 +2761,13 @@ rusty::Arc<PollThread> PollThread::create() {
   auto arc = rusty::Arc<PollThread>::make(std::move(sender));
 
   // Pointer to atomic thread ID for safe cross-thread access
-  rusty::sync::atomic::Atomic<rusty::thread::ThreadId>* thread_id_ptr = &arc->poll_thread_id_;
+  rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
 
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
     [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
       auto tid = rusty::thread::current_id();
-      thread_id_ptr->store(tid, rusty::sync::atomic::Ordering::Release);
+      thread_id_ptr->store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
@@ -2698,7 +2812,8 @@ void PollThread::shutdown() const {
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
   auto current_tid = rusty::thread::current_id();
-  auto poll_tid = poll_thread_id_.load(rusty::sync::atomic::Ordering::Acquire);
+  auto poll_tid = u64_to_thread_id(
+      poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
   if (current_tid == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;

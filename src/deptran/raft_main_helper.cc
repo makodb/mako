@@ -258,13 +258,13 @@ void create_stub_servers() {
     stub_poll_threads_g.push_back(poll_thread);
 
     // Create RPC server
-    auto* rpc_server = new rrr::Server(rusty::Some(poll_thread.clone()));
+    auto* rpc_server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread.clone())));
 
     // Register RaftServiceImpl pointing to the single RaftServer
-    rpc_server->reg_service(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
+    rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread.clone()));
 
     // Bind to the site's port
-    int ret = rpc_server->start(bind_addr.c_str());
+    int ret = rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
     if (ret != 0) {
       Log_fatal("[SINGLE-RAFT] Stub server failed to bind at %s", bind_addr.c_str());
     }

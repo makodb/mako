@@ -17,14 +17,12 @@
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/refcell.hpp>
-#include <rusty/vec.hpp>
 
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 namespace rrr {
 namespace {

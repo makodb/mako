@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
@@ -9,6 +8,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 import std;
 

@@ -166,7 +166,7 @@ static PyObject* _pyrpc_init_server(PyObject* self, PyObject* args) {
         return NULL;
     auto poll_arc = PollThread::create();
     Log_debug("created rrr::Server");
-    Server* svr = new Server(rusty::Some(poll_arc));
+    Server* svr = new Server(Server::new_(rusty::Some(poll_arc)));
     // poll_thread_worker is now managed by Server's Arc
     return Py_BuildValue("k", svr);
 }

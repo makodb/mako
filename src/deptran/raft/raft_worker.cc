@@ -131,7 +131,7 @@ void RaftWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // Create RPC server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
 
   // Create and register Raft services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -144,7 +144,7 @@ void RaftWorker::SetupService() {
   }
 
   // Start RPC server
-  int ret = rpc_server_->start(bind_addr.c_str());
+  int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("Raft server launch failed at %s", bind_addr.c_str());
   }
@@ -181,16 +181,16 @@ void RaftWorker::SetupHeartbeat() {
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5));
+  hb_rpc_server_->reg_service_typed(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
 
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
 }
 
 // @unsafe - uses delete, raw pointers, Option<Arc<PollThread>>

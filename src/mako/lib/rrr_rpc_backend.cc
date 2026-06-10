@@ -78,7 +78,7 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
 
     // Create server to listen for incoming requests
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
-    server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
+    server_ = new rrr::Server(rrr::Server::new_(poll_thread_worker_.as_ref().unwrap().clone()));
 
     // Register TransportBackendService to handle all request types in the range
     auto svc = rusty::make_box<TransportBackendService>(
@@ -86,10 +86,10 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
         static_cast<rrr::i32>(st_nr_req_types),
         static_cast<rrr::i32>(end_nr_req_types)
     );
-    server_->reg_service(std::move(svc));
+    server_->reg_service_typed(std::move(svc));
 
     // Start listening on the port
-    int ret = server_->start(("0.0.0.0:" + port_str).c_str());
+    int ret = server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + port_str).c_str()));
     if (ret != 0) {
         Panic("Failed to start rrr::Server on port %s", port_str.c_str());
         return ret;
@@ -233,7 +233,7 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
 
     Debug("GetOrCreateClient: Connecting to %s", addr.c_str());
 
-    int ret = client->connect(addr.c_str());
+    int ret = client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
     if (ret != 0) {
         //Warning("Failed to connect to %s (error %d)", addr.c_str(), ret);
         clients_lock_.unlock();
@@ -278,7 +278,7 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     Debug("RrrRpcBackend::SendToShard: Got client, calling request");
 
     // Send request with lambda API
-    auto fu_result = client->request(req_type, [&](rrr::BinaryWriteArchive& out) {
+    auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
         out.write_bytes(tls_buffers.request_buffer.data(), msg_len);
     });
     if (fu_result.is_err()) {
@@ -368,7 +368,7 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
 
         Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
 
-        auto fu_result = client->request(req_type, [&](rrr::BinaryWriteArchive& out) {
+        auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
             out.write_bytes(tls_buffers.request_buffer.data(), req_len);
         });
         if (fu_result.is_err()) {
@@ -453,7 +453,7 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         if (client_opt.is_none()) continue;
         rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        auto fu_result = client->request(req_type, [raw_data, req_len](rrr::BinaryWriteArchive& out) {
+        auto fu_result = client->request(req_type, rrr::FutureAttr(), [raw_data, req_len](rrr::BinaryWriteArchive& out) {
             out.write_bytes(raw_data, req_len);
         });
         if (fu_result.is_err()) continue;

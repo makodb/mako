@@ -76,7 +76,7 @@ public:
 // ============================================================================
 
 TEST(KeepaliveConfigTest, DefaultValues) {
-    KeepaliveConfig config;
+    auto config = KeepaliveConfig::new_();
     EXPECT_TRUE(config.enabled);
     EXPECT_EQ(config.idle_sec, 60);
     EXPECT_EQ(config.interval_sec, 10);
@@ -127,10 +127,10 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ValidationTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -153,7 +153,7 @@ TEST_F(ConnectionValidationTest, SetKeepaliveConfig) {
     client->set_keepalive(config);
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -173,7 +173,7 @@ TEST_F(ConnectionValidationTest, ValidateConnectedConnection) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -188,7 +188,7 @@ TEST_F(ConnectionValidationTest, ValidateDisconnectedConnection) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->validate_connection());
@@ -215,7 +215,7 @@ TEST_F(ConnectionValidationTest, IdleDetectionNotIdleInitially) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Just connected, should not be idle
@@ -230,7 +230,7 @@ TEST_F(ConnectionValidationTest, IdleDetectionBecomesIdle) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Wait for connection to become idle (use longer delay for robustness)
@@ -251,7 +251,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Wait a bit
@@ -261,7 +261,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     // Make a request (which will update activity time)
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -283,7 +283,7 @@ TEST_F(ConnectionValidationTest, ValidateAfterServerRestart) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -310,14 +310,14 @@ TEST_F(ConnectionValidationTest, KeepaliveAppliedOnConnect) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Set custom keepalive before connecting
-    KeepaliveConfig config;
+    auto config = KeepaliveConfig::new_();
     config.enabled = true;
     config.idle_sec = 30;
     config.interval_sec = 5;
     config.count = 4;
     client->set_keepalive(config);
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -341,7 +341,7 @@ TEST_F(ConnectionValidationTest, DisabledKeepalive) {
     // Disable keepalive
     client->set_keepalive(KeepaliveConfig::disabled());
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -366,7 +366,7 @@ TEST_F(ConnectionValidationTest, ValidationWithReconnect) {
     client->set_reconnect_policy(ReconnectPolicy::aggressive());
     client->set_keepalive(KeepaliveConfig::aggressive());
 
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->validate_connection());

@@ -189,9 +189,9 @@ protected:
     // @unsafe - RPC server startup
     void StartServer() {
         poll_thread_ = rusty::Some(rrr::PollThread::create());
-        server_ = new rrr::Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-        server_->reg_service(rusty::make_box<ConfigServiceImpl>(*store_));
-        ASSERT_EQ(server_->start(server_addr_.c_str()), 0);
+        server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
+        server_->reg_service_typed(rusty::make_box<ConfigServiceImpl>(*store_));
+        ASSERT_EQ(server_->start(reinterpret_cast<const int8_t*>(server_addr_.c_str())), 0);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 

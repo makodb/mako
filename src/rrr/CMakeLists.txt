@@ -66,6 +66,40 @@ list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
 
 set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 
+# The `rusty` umbrella module — defined here (not upstream in rusty-cpp)
+# because rusty-cpp ships rusty.cppm only as a header on the include
+# path, leaving consumers responsible for compiling it as a named
+# C++20 module unit. We re-export the transpiled port libraries
+# (vec_port, btree_port, rc_port, hashbrown_port, rusty_async) so that
+# `import rusty;` in rrr sources resolves rusty::Vec / Rc / BTreeMap
+# / HashMap / etc. via the umbrella's `using` aliases.
+if(NOT TARGET rusty)
+    add_library(rusty STATIC)
+    target_sources(rusty PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
+        FILES
+        ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include/rusty/rusty.cppm
+    )
+    target_include_directories(rusty PUBLIC
+        ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
+    )
+    target_compile_features(rusty PUBLIC cxx_std_23)
+    # Mako-default toolchain uses `-std=gnu++23` (CMAKE_CXX_EXTENSIONS=ON
+    # at the top level — matches how CMake builds std.pcm). The rusty
+    # umbrella has to match so consumers in rrr can `import rusty;`
+    # without tripping the "GNU extensions was disabled in precompiled
+    # file" PCM-config check.
+    target_compile_options(rusty PRIVATE
+        -O3 -DNDEBUG -march=native -std=gnu++23
+    )
+    target_link_libraries(rusty PUBLIC
+        vec_port btree_port rc_port hashbrown_port rusty_async
+        binary_heap_port vec_deque_port cell_port string_port arc_port
+        linked_list_port
+    )
+endif()
+
 if(NOT TARGET rrr)
     add_library(rrr STATIC ${RRR_BENCH_SRC})
     if(RRR_MODULE_SRC)
@@ -92,7 +126,7 @@ if(NOT TARGET rrr)
         ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
     )
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
-    target_link_libraries(rrr pthread)
+    target_link_libraries(rrr pthread rusty)
 
     # RRR files for borrow checking — every non-test C++ module unit in rrr
     # except for the two genuine exclusions called out at the bottom.

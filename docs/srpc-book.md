@@ -2199,3 +2199,5 @@ If the process hangs during shutdown, check the transport stop fix documentation
 ---
 
 *This document consolidates the RRR/SRPC framework documentation from across the Mako project. For detailed implementation plans, phase documents, and migration guides, see `docs/rpc/`, `docs/developer/`, and `docs/migration/rustycpp/`.*
+
+*For the ongoing manual-C++ → Rust DSL migration roadmap, see [`docs/TODO-rusty-rewrite.md`](TODO-rusty-rewrite.md) (the phased plan) and [`docs/rrr-inventory.md`](rrr-inventory.md) (the per-decl triage CSV + bucket summary, regeneratable via `python3 tools/rrr-inventory.py`).*

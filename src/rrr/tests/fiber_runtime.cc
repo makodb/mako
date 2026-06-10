@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
@@ -22,6 +21,7 @@ using namespace rrr;
 #include "gtest/gtest.h"
 
 import std;
+import rusty;
 
 TEST(FiberRuntimeTest, helloworld) {
   Fiber::create_run([] () {ASSERT_EQ(1, 1);});

@@ -545,7 +545,7 @@ class TcpFactory {
     // ChannelFactoryBase methods.
     ConnectResult                       connect(std::string_view addr);
     rusty::Option<ChannelListenerProxy> make_listener();
-    const char*                         backend_name() const { return "tcp"; }
+    std::string                         backend_name() const { return "tcp"; }
 
     // Optional override for the connect-side IPv4 timeout (default
     // 5s). Only used when the kernel doesn't fail-fast on
@@ -568,7 +568,7 @@ class TcpFactoryAdapter : public ChannelFactoryBase {
     ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
     // @unsafe - forwards through mut_factory() const_cast.
     rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
-    const char*                         backend_name() const override           { return factory_->backend_name(); }
+    std::string                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().

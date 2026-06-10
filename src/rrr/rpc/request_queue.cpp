@@ -12,6 +12,7 @@ module;
 export module rrr.request_queue;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.marshal;
 import rrr.threading;
@@ -19,93 +20,270 @@ import rrr.threading;
 export namespace rrr {
 
 
-/**
- * Strategy for handling queue overflow.
- */
+// `OverflowStrategy` — categorical tag for how the queue should
+// handle a push when at capacity. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block with the C++ `enum class`.
+#if RUSTYCPP_RUST
+enum OverflowStrategy {
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.overflow_strategy version=1 rust_sha256=bf9f48db6809a04afbd718314f92b36dbe612714d96e1a75115ad2bb39673b15*/
+enum class OverflowStrategy;
+constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();
+constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST();
+constexpr OverflowStrategy OverflowStrategy_FAIL_FAST();
+
 enum class OverflowStrategy {
-    DROP_OLDEST,   // Remove oldest request to make room
-    DROP_NEWEST,   // Reject new request if queue full
-    FAIL_FAST      // Immediately fail the request with error callback
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST
 };
+inline constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST() { return OverflowStrategy::DROP_OLDEST; }
+inline constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST() { return OverflowStrategy::DROP_NEWEST; }
+inline constexpr OverflowStrategy OverflowStrategy_FAIL_FAST() { return OverflowStrategy::FAIL_FAST; }
+/*RUSTYCPP:GEN-END id=request_queue.overflow_strategy*/
 
 // Canonical queue callback errors for caller observability.
-inline constexpr int kRequestQueueRejectedError = EAGAIN;
-inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Same
+// shape as the wire-protocol constants in internal_protocol.cpp —
+// libc-macro RHS values (EAGAIN / ETIMEDOUT) get emitted verbatim.
+#if RUSTYCPP_RUST
+const kRequestQueueRejectedError: i32 = EAGAIN;
+const kRequestQueueExpiredError: i32 = ETIMEDOUT;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.err_codes version=1 rust_sha256=f0652fbb44002bbb667042a6bbb01ba5cd204496acc11bf10713b53ab4321f2d*/
+extern const int32_t kRequestQueueRejectedError;
+extern const int32_t kRequestQueueExpiredError;
+
+constexpr int32_t kRequestQueueRejectedError = EAGAIN;
+
+constexpr int32_t kRequestQueueExpiredError = ETIMEDOUT;
+/*RUSTYCPP:GEN-END id=request_queue.err_codes*/
+
+// Type alias for QueuedRequest's completion callback. Defined outside
+// the DSL block so the inline-Rust source can refer to it by an
+// opaque type name (the DSL transpiler does not parse C++ function-
+// template arguments like `<void(int)>`).
+using QueuedRequestCallback = rusty::Function<void(int)>;
+
+// Wrapper around rusty::sys::time::clock_monotonic_us, named so the
+// DSL block below can call it as a simple identifier rather than the
+// fully-qualified path. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block. Same shape as `heartbeat_time_us` (heartbeat.cpp) and
+// `current_time_us` (circuit_breaker.cpp).
+#if RUSTYCPP_RUST
+fn queued_request_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queued_request_time_us version=1 rust_sha256=75814fdd205b8de30a538e2f38098e5f2c23f97f12f2952d426174ea0864a759*/
+uint64_t queued_request_time_us();
+
+uint64_t queued_request_time_us() {
+    return rusty::sys::time::clock_monotonic_us();
+}
+/*RUSTYCPP:GEN-END id=request_queue.queued_request_time_us*/
 
 /**
  * A queued RPC request awaiting transmission.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a static `QueuedRequest::new_()` factory.
+ *
+ * Behavioral diffs from the original C++ struct:
+ *   * No user-defined default constructor — callers that previously
+ *     default-constructed (`QueuedRequest req;`) now write
+ *     `auto req = QueuedRequest::new_();` explicitly. The factory
+ *     does the same field-init work the original ctor did
+ *     (`timestamp_us = queued_request_time_us()`,
+ *     `payload = Arc::<Marshal>::make()`, `ttl_ms = 30000`).
+ *   * Fields no longer marked private (the DSL emits all fields
+ *     public); no callers reach into them through anything other
+ *     than the public field names that were already public-by-
+ *     designation in the aggregate-style original.
  */
+#if RUSTYCPP_RUST
 struct QueuedRequest {
-    i64 xid;                           // Request transaction ID
-    i32 rpc_id;                        // RPC method ID
-    std::uint64_t timestamp_us;        // When queued, monotonic microseconds
-    uint32_t retry_count;              // Number of retries
-    rusty::Arc<Marshal> payload;       // Serialized request data
-    rusty::Function<void(int)> callback; // Completion callback (error_code)
-    uint32_t ttl_ms;                   // TTL in milliseconds
+    xid: i64,
+    rpc_id: i32,
+    timestamp_us: u64,
+    retry_count: u32,
+    payload: Arc<Marshal>,
+    callback: QueuedRequestCallback,
+    ttl_ms: u32,
+}
 
-    // @safe - rusty::sys::time::clock_monotonic_us is @safe.
-    QueuedRequest()
-        : xid(0)
-        , rpc_id(0)
-        , timestamp_us(rusty::sys::time::clock_monotonic_us())
-        , retry_count(0)
-        , payload(rusty::Arc<Marshal>::make())
-        , ttl_ms(30000)
-    {}
-
-    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
-    bool is_expired() const {
-        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        const std::uint64_t elapsed_us = now_us - timestamp_us;
-        return (elapsed_us / 1000) > ttl_ms;
+impl QueuedRequest {
+    fn new() -> QueuedRequest {
+        QueuedRequest {
+            xid: 0i64,
+            rpc_id: 0i32,
+            timestamp_us: queued_request_time_us(),
+            retry_count: 0u32,
+            payload: Arc::<Marshal>::make(),
+            callback: QueuedRequestCallback {},
+            ttl_ms: 30000u32,
+        }
     }
 
-    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
-    uint32_t age_ms() const {
-        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        return static_cast<uint32_t>((now_us - timestamp_us) / 1000);
+    fn is_expired(&self) -> bool {
+        let now_us: u64 = queued_request_time_us();
+        let elapsed_us: u64 = now_us - self.timestamp_us;
+        (elapsed_us / 1000u64) > (self.ttl_ms as u64)
     }
+
+    fn age_ms(&self) -> u32 {
+        let now_us: u64 = queued_request_time_us();
+        ((now_us - self.timestamp_us) / 1000u64) as u32
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.2 version=1 rust_sha256=e1030e3c7232098b7e5960fca2e18aac19e4cdf30c22f01e504c54a63b9feb1b*/
+struct QueuedRequest;
+
+struct QueuedRequest {
+    int64_t xid;
+    int32_t rpc_id;
+    uint64_t timestamp_us;
+    uint32_t retry_count;
+    rusty::Arc<Marshal> payload;
+    QueuedRequestCallback callback;
+    uint32_t ttl_ms;
+
+    static QueuedRequest new_();
+    bool is_expired() const;
+    uint32_t age_ms() const;
 };
 
-/**
- * Configuration for RequestQueue.
- */
+
+QueuedRequest QueuedRequest::new_() {
+    return QueuedRequest{.xid = static_cast<int64_t>(0), .rpc_id = static_cast<int32_t>(0), .timestamp_us = queued_request_time_us(), .retry_count = static_cast<uint32_t>(0), .payload = rusty::Arc<Marshal>::make(), .callback = QueuedRequestCallback{}, .ttl_ms = static_cast<uint32_t>(30000)};
+}
+
+bool QueuedRequest::is_expired() const {
+    const uint64_t now_us = queued_request_time_us();
+    const uint64_t elapsed_us = rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(this->timestamp_us);
+    return ((rusty::detail::deref_if_pointer_like(elapsed_us) / static_cast<uint64_t>(1000))) > ((static_cast<uint64_t>(this->ttl_ms)));
+}
+
+uint32_t QueuedRequest::age_ms() const {
+    const uint64_t now_us = queued_request_time_us();
+    return static_cast<uint32_t>((((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(this->timestamp_us))) / static_cast<uint64_t>(1000)));
+}
+/*RUSTYCPP:GEN-END id=request_queue.2*/
+
+// Configuration for RequestQueue.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static RequestQueueConfig new_()` factory. Callers construct via
+// the factory (`auto config = RequestQueueConfig::new_();`) or one of
+// the `defaults()` / `small()` / `large()` / `disabled()` presets.
+//
+// Now that there is no cpp_ctor, RequestQueueConfig is a pure
+// aggregate; the preset bodies use the populated DSL literal form
+// `RequestQueueConfig { max_size: ..., ... }` which lowers to a clean
+// designated initializer `RequestQueueConfig{.max_size = ...}`.
+#if RUSTYCPP_RUST
 struct RequestQueueConfig {
-    size_t max_size = 1000;            // Maximum queue entries
-    uint32_t default_ttl_ms = 30000;   // 30 second default TTL
-    OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
-    bool enabled = true;
+    max_size: usize,
+    default_ttl_ms: u32,
+    overflow_strategy: OverflowStrategy,
+    enabled: bool,
+}
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig defaults() {
-        return RequestQueueConfig{};
+impl RequestQueueConfig {
+    fn new() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 1000usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig small() {
-        RequestQueueConfig config;
-        config.max_size = 10;
-        config.default_ttl_ms = 5000;
-        return config;
+    fn defaults() -> RequestQueueConfig {
+        RequestQueueConfig::new()
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig large() {
-        RequestQueueConfig config;
-        config.max_size = 10000;
-        config.default_ttl_ms = 60000;
-        return config;
+    fn small() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 10usize,
+            default_ttl_ms: 5000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig disabled() {
-        RequestQueueConfig config;
-        config.enabled = false;
-        config.max_size = 0;
-        return config;
+    fn large() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 10000usize,
+            default_ttl_ms: 60000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
+
+    fn disabled() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 0usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: false,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=18bf9469715694e84270d5bde4d97e4b7daa0b11880dbefa385105d079f4294f*/
+struct RequestQueueConfig;
+
+struct RequestQueueConfig {
+    size_t max_size;
+    uint32_t default_ttl_ms;
+    OverflowStrategy overflow_strategy;
+    bool enabled;
+
+    static RequestQueueConfig new_();
+    static RequestQueueConfig defaults();
+    static RequestQueueConfig small();
+    static RequestQueueConfig large();
+    static RequestQueueConfig disabled();
 };
+
+
+RequestQueueConfig RequestQueueConfig::new_() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::defaults() {
+    return RequestQueueConfig::new_();
+}
+
+RequestQueueConfig RequestQueueConfig::small() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10), .default_ttl_ms = static_cast<uint32_t>(5000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::large() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10000), .default_ttl_ms = static_cast<uint32_t>(60000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::disabled() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(0), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=request_queue.1*/
 
 /**
  * Thread-safe queue for pending RPC requests.

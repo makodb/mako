@@ -10,6 +10,7 @@ module;
 export module rrr.completion_tracker;
 
 import std;
+import rusty;
 import rrr.idempotency;
 
 export namespace rrr {
@@ -19,75 +20,157 @@ export namespace rrr {
 // CompletionTrackerConfig
 // ===========================================================================
 
-/**
- * @safe - Configuration for CompletionTracker
- */
+// Configuration for CompletionTracker.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
+// is the source of truth; the transpiler regenerates the matching
+// GEN-BEGIN block. The plain `fn new()` lowers to a
+// `static CompletionTrackerConfig new_()` factory.
+//
+// Now that there is no cpp_ctor, CompletionTrackerConfig is a pure
+// aggregate; the preset bodies use the populated DSL literal form
+// `CompletionTrackerConfig { ttl_ms: ..., ... }` which lowers to a
+// clean designated initializer.
+#if RUSTYCPP_RUST
 struct CompletionTrackerConfig {
-    uint64_t ttl_ms = 60000;        // Time-to-live for completed XIDs (60 seconds)
-    size_t max_entries = 100000;    // Maximum XIDs to track
-    bool enabled = true;            // Enable/disable tracking
+    ttl_ms: u64,
+    max_entries: usize,
+    enabled: bool,
+}
 
-    // @safe - Default constructor
-    CompletionTrackerConfig() = default;
-
-    // @safe - Copy constructor
-    CompletionTrackerConfig(const CompletionTrackerConfig&) = default;
-
-    // @safe - Copy assignment
-    CompletionTrackerConfig& operator=(const CompletionTrackerConfig&) = default;
-
-    // @safe - Default preset
-    static CompletionTrackerConfig defaults() {
-        return CompletionTrackerConfig{};
+impl CompletionTrackerConfig {
+    fn new() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: true,
+        }
     }
 
-    // @safe - Small preset (fewer entries, shorter TTL)
-    static CompletionTrackerConfig small() {
-        CompletionTrackerConfig cfg;
-        cfg.ttl_ms = 30000;      // 30 seconds
-        cfg.max_entries = 10000;
-        return cfg;
+    fn defaults() -> CompletionTrackerConfig {
+        CompletionTrackerConfig::new()
     }
 
-    // @safe - Large preset (more entries, longer TTL)
-    static CompletionTrackerConfig large() {
-        CompletionTrackerConfig cfg;
-        cfg.ttl_ms = 300000;     // 5 minutes
-        cfg.max_entries = 1000000;
-        return cfg;
+    fn small() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 30000u64,
+            max_entries: 10000usize,
+            enabled: true,
+        }
     }
 
-    // @safe - Disabled preset
-    static CompletionTrackerConfig disabled() {
-        CompletionTrackerConfig cfg;
-        cfg.enabled = false;
-        return cfg;
+    fn large() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 300000u64,
+            max_entries: 1000000usize,
+            enabled: true,
+        }
     }
+
+    fn disabled() -> CompletionTrackerConfig {
+        CompletionTrackerConfig {
+            ttl_ms: 60000u64,
+            max_entries: 100000usize,
+            enabled: false,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.1 version=1 rust_sha256=7e32fc065aab499e699818c6fb08acf209183d782c763409b341bb17eead3316*/
+struct CompletionTrackerConfig;
+
+struct CompletionTrackerConfig {
+    uint64_t ttl_ms;
+    size_t max_entries;
+    bool enabled;
+
+    static CompletionTrackerConfig new_();
+    static CompletionTrackerConfig defaults();
+    static CompletionTrackerConfig small();
+    static CompletionTrackerConfig large();
+    static CompletionTrackerConfig disabled();
 };
+
+
+CompletionTrackerConfig CompletionTrackerConfig::new_() {
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(100000), .enabled = true};
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::defaults() {
+    return CompletionTrackerConfig::new_();
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::small() {
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(30000), .max_entries = static_cast<size_t>(10000), .enabled = true};
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::large() {
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(300000), .max_entries = static_cast<size_t>(1000000), .enabled = true};
+}
+
+CompletionTrackerConfig CompletionTrackerConfig::disabled() {
+    return CompletionTrackerConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(100000), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.1*/
 
 // ===========================================================================
 // CompletedEntry
 // ===========================================================================
 
 /**
- * @safe - Entry for tracking completed XIDs
+ * @safe - Entry for tracking completed XIDs.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(x, ts) -> Self` lowers
+ * to a static `CompletedEntry::new_(x, ts)` factory.
+ *
+ * The DSL emits a pure C++20 aggregate (no in-class default
+ * initializers, no user-declared ctors). Brace-init and designated-
+ * init still work. Default-construct (`CompletedEntry e;`) is now
+ * uninitialized; the one test that relied on `{0, 0}` defaults moves
+ * to an explicit `CompletedEntry::new_(0, 0)`.
  */
+#if RUSTYCPP_RUST
 struct CompletedEntry {
-    int64_t xid = 0;
-    uint64_t timestamp_ms = 0;
+    xid: i64,
+    timestamp_ms: u64,
+}
 
-    // @safe - Default constructor
-    CompletedEntry() = default;
-
-    // @safe - Constructor with values
-    CompletedEntry(int64_t x, uint64_t ts) : xid(x), timestamp_ms(ts) {}
-
-    // @safe - Check if entry has expired
-    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
+impl CompletedEntry {
+    fn new(x: i64, ts: u64) -> CompletedEntry {
+        CompletedEntry { xid: x, timestamp_ms: ts }
     }
+
+    fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+        if ttl_ms == 0u64 { return false; }
+        current_time_ms > self.timestamp_ms + ttl_ms
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.2 version=1 rust_sha256=a8f4fe4b150667270eeed4db72615d281ea9b0c0ba0d468201cf4e60c3e856c3*/
+struct CompletedEntry;
+
+struct CompletedEntry {
+    int64_t xid;
+    uint64_t timestamp_ms;
+
+    static CompletedEntry new_(int64_t x, uint64_t ts);
+    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
 };
+
+
+CompletedEntry CompletedEntry::new_(int64_t x, uint64_t ts) {
+    return CompletedEntry{.xid = std::move(x), .timestamp_ms = std::move(ts)};
+}
+
+bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(this->timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.2*/
 
 // ===========================================================================
 // CompletionTracker
@@ -175,7 +258,7 @@ public:
         }
 
         // Add new entry
-        list_guard->push_front(CompletedEntry{xid, current_time_ms});
+        list_guard->push_front(CompletedEntry::new_(xid, current_time_ms));
         set_guard->insert(xid);
         total_tracked_.set(total_tracked_.get() + 1);
     }
@@ -338,51 +421,129 @@ public:
 /**
  * @safe - Result of a completion query
  */
-enum class CompletionStatus : uint8_t {
-    NOT_FOUND = 0,      // XID not in completion log
-    COMPLETED = 1,      // XID completed successfully
-    COMPLETED_WITH_ERROR = 2,  // XID completed with error
-    EXPIRED = 3         // XID was completed but entry expired
+// `CompletionStatus` — result of a completion query. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+#[repr(u8)]
+enum CompletionStatus {
+    NOT_FOUND = 0,
+    COMPLETED = 1,
+    COMPLETED_WITH_ERROR = 2,
+    EXPIRED = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.status version=1 rust_sha256=5a8ff53e7d4b35269cb9d71788d0564ed2bb5f64332622e6888d5048af0616fd*/
+enum class CompletionStatus;
+constexpr CompletionStatus CompletionStatus_NOT_FOUND();
+constexpr CompletionStatus CompletionStatus_COMPLETED();
+constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR();
+constexpr CompletionStatus CompletionStatus_EXPIRED();
+
+enum class CompletionStatus {
+    NOT_FOUND = 0,
+    COMPLETED = 1,
+    COMPLETED_WITH_ERROR = 2,
+    EXPIRED = 3
 };
+inline constexpr CompletionStatus CompletionStatus_NOT_FOUND() { return CompletionStatus::NOT_FOUND; }
+inline constexpr CompletionStatus CompletionStatus_COMPLETED() { return CompletionStatus::COMPLETED; }
+inline constexpr CompletionStatus CompletionStatus_COMPLETED_WITH_ERROR() { return CompletionStatus::COMPLETED_WITH_ERROR; }
+inline constexpr CompletionStatus CompletionStatus_EXPIRED() { return CompletionStatus::EXPIRED; }
+/*RUSTYCPP:GEN-END id=completion_tracker.status*/
 
 /**
- * @safe - Result struct for completion queries
+ * @safe - Result struct for completion queries.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. `fn new() -> Self` lowers to a
+ * `static CompletionQueryResult new_()` factory (the NOT_FOUND
+ * default); `not_found`/`completed`/`expired` are explicit named
+ * factories. Both `completed`'s default args (`err_code = 0`,
+ * `has_response = false`) are dropped — every existing caller already
+ * passes both args explicitly.
  */
+#if RUSTYCPP_RUST
 struct CompletionQueryResult {
-    CompletionStatus status = CompletionStatus::NOT_FOUND;
-    int32_t error_code = 0;         // Only valid if COMPLETED or COMPLETED_WITH_ERROR
-    bool has_cached_response = false;  // True if IdempotencyCache has the response
+    status: CompletionStatus,
+    error_code: i32,
+    has_cached_response: bool,
+}
 
-    // @safe - Default constructor
-    CompletionQueryResult() = default;
-
-    // @safe - Create NOT_FOUND result
-    static CompletionQueryResult not_found() {
-        return CompletionQueryResult{};
+impl CompletionQueryResult {
+    fn new() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::NOT_FOUND,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
     }
 
-    // @safe - Create COMPLETED result
-    static CompletionQueryResult completed(int32_t err_code = 0, bool has_response = false) {
-        CompletionQueryResult r;
-        r.status = (err_code == 0) ? CompletionStatus::COMPLETED : CompletionStatus::COMPLETED_WITH_ERROR;
-        r.error_code = err_code;
-        r.has_cached_response = has_response;
-        return r;
+    fn not_found() -> CompletionQueryResult {
+        CompletionQueryResult::new()
     }
 
-    // @safe - Create EXPIRED result
-    static CompletionQueryResult expired() {
-        CompletionQueryResult r;
-        r.status = CompletionStatus::EXPIRED;
-        return r;
+    fn completed(err_code: i32, has_response: bool) -> CompletionQueryResult {
+        let s: CompletionStatus = if err_code == 0i32 {
+            CompletionStatus::COMPLETED
+        } else {
+            CompletionStatus::COMPLETED_WITH_ERROR
+        };
+        CompletionQueryResult { status: s, error_code: err_code, has_cached_response: has_response }
     }
 
-    // @safe - Check if completed (with or without error)
-    bool is_completed() const {
-        return status == CompletionStatus::COMPLETED ||
-               status == CompletionStatus::COMPLETED_WITH_ERROR;
+    fn expired() -> CompletionQueryResult {
+        CompletionQueryResult {
+            status: CompletionStatus::EXPIRED,
+            error_code: 0i32,
+            has_cached_response: false,
+        }
     }
+
+    fn is_completed(&self) -> bool {
+        self.status == CompletionStatus::COMPLETED || self.status == CompletionStatus::COMPLETED_WITH_ERROR
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.3 version=1 rust_sha256=6742787d7b990417abb19cf8a8c18444d1bc7ba24218f8e51589d36d4426058a*/
+struct CompletionQueryResult;
+
+struct CompletionQueryResult {
+    CompletionStatus status;
+    int32_t error_code;
+    bool has_cached_response;
+
+    static CompletionQueryResult new_();
+    static CompletionQueryResult not_found();
+    static CompletionQueryResult completed(int32_t err_code, bool has_response);
+    static CompletionQueryResult expired();
+    bool is_completed() const;
 };
+
+
+CompletionQueryResult CompletionQueryResult::new_() {
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::NOT_FOUND)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+}
+
+CompletionQueryResult CompletionQueryResult::not_found() {
+    return CompletionQueryResult::new_();
+}
+
+CompletionQueryResult CompletionQueryResult::completed(int32_t err_code, bool has_response) {
+    CompletionStatus s = (rusty::detail::deref_if_pointer_like(err_code) == static_cast<int32_t>(0) ? rusty::clone(CompletionStatus::COMPLETED) : rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+    return CompletionQueryResult{.status = std::move(s), .error_code = std::move(err_code), .has_cached_response = std::move(has_response)};
+}
+
+CompletionQueryResult CompletionQueryResult::expired() {
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::EXPIRED)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+}
+
+bool CompletionQueryResult::is_completed() const {
+    return (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED)) || (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.3*/
 
 // @safe - Convert status to string for logging
 inline const char* completion_status_to_string(CompletionStatus status) {

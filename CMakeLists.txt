@@ -168,6 +168,35 @@ set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
 set(YAML_CPP_INSTALL OFF CACHE BOOL "Disable yaml-cpp install targets" FORCE)
 add_subdirectory(third-party/yaml-cpp)
 
+# rusty-cpp main HEAD retired the hand-written hashmap/btreemap/btreeset/rc/vec
+# headers in favor of transpiled C++20 modules (vec_port.vec, btree_port.btree.*,
+# rc_port, hashbrown_port, plus the umbrella rusty.cppm). Pull in those targets
+# via add_subdirectory so rrr can `import rusty;`. EXCLUDE_FROM_ALL keeps
+# rusty-cpp's test/bench targets out of the default build — they only build
+# if explicitly requested via `cmake --build build --target <name>.out`.
+#
+# rusty-cpp's top-level CMakeLists.txt sets CMAKE_CXX_EXTENSIONS=OFF
+# (it uses -std=c++23 strict). Mako uses -std=gnu++23 (see line ~45
+# above: CMAKE_CXX_EXTENSIONS=ON, to match the GNU-extensions setting
+# CMake bakes into std.pcm for `import std;`). PCM consumption checks
+# these flags strictly: rusty.cppm + the port PCMs (built strict) can't
+# be imported from gnu++23 TUs ("GNU extensions was disabled in
+# precompiled file"). Force the port modules onto gnu++23 just for
+# this subdirectory so rrr can consume them.
+add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
+# rusty-cpp's CMakeLists.txt locally sets CMAKE_CXX_EXTENSIONS=OFF.
+# Override on each port target so rrr (gnu++23) can `import` them
+# without the "GNU extensions was disabled" PCM-config mismatch.
+foreach(_rusty_port_target IN ITEMS
+    vec_port btree_port rc_port hashbrown_port rusty_async rusty
+    binary_heap_port binary_heap_tests_port linked_list_tests_port
+    eq_diff_len_tests_port vec_deque_port cell_port string_port
+    arc_port linked_list_port borrow_port ascii_port)
+    if(TARGET ${_rusty_port_target})
+        set_target_properties(${_rusty_port_target} PROPERTIES CXX_EXTENSIONS ON)
+    endif()
+endforeach()
+
 # RUST
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})

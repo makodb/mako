@@ -122,7 +122,7 @@ class ClientChannelCloseTest : public ::testing::Test {
         // would also work, but sharing an Arc lets the test (a)
         // register before bind_channel and (b) read the registered
         // callbacks back if needed.
-        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::make());
+        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()));
         mut_conn().set_callback_manager(callback_manager_.as_ref().unwrap());
 
         callback_manager_.as_ref().unwrap()->add_on_error([this](RpcError e, const std::string&) {

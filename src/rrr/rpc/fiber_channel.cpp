@@ -94,6 +94,18 @@ class FiberChannel {
     FiberChannel& operator=(FiberChannel&&)      = delete;
 
     /**
+     * Wire up `on_frame` / `on_closed` / `on_error` callbacks on the
+     * owned `ChannelConnectionProxy`. Must be called exactly once,
+     * immediately after construction (when the FiberChannel is in
+     * its final memory location — typically inside a `rusty::Box`).
+     * Split from the ctor so the lambda installation can live in a
+     * named method body, matching the rusty-cpp DSL constraint that
+     * `#[cpp_ctor]` bodies are pure field-init lists (no arbitrary
+     * post-construction statements).
+     */
+    void bind_callbacks();
+
+    /**
      * Suspend the calling fiber until a frame arrives or the channel
      * is closed.
      *
@@ -150,13 +162,18 @@ class FiberChannel {
 // in the export namespace above.
 namespace rrr {
 
+// @safe - Pure field-init; lambda installation moved to bind_callbacks().
+FiberChannel::FiberChannel(ChannelConnectionProxy ch)
+    : ch_(std::move(ch)) {}
+
 // @unsafe - `ch_->set_on_*` driven through std::unique_ptr deref +
 // rusty::Function ctor chain on three captured `[this]` lambdas.
-FiberChannel::FiberChannel(ChannelConnectionProxy ch)
-    : ch_(std::move(ch)) {
-
+void FiberChannel::bind_callbacks() {
     // Install callbacks. Each fires on the reactor (poll) thread; we
-    // forward to member methods that touch local state.
+    // forward to member methods that touch local state. Capturing
+    // `this` is safe because callers always hold FiberChannel inside
+    // a `rusty::Box`, so its address is pinned for the channel
+    // proxy's lifetime (which the FiberChannel owns).
     ch_->set_on_frame([this](const ChannelFrame& f) {
         on_inbound_frame(f);
     });

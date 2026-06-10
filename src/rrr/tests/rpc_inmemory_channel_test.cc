@@ -57,7 +57,7 @@ class InMemoryChannelTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BackendName) {
-    EXPECT_STREQ(factory().backend_name(), "inmemory");
+    EXPECT_EQ(factory().backend_name(), "inmemory");
 }
 
 TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {

@@ -161,7 +161,7 @@ void PaxosWorker::SetupService() {
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 
   // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -178,7 +178,7 @@ void PaxosWorker::SetupService() {
   // start rpc server
   Log_debug("starting server at %s", bind_addr.c_str());
   std::cout << "starting server at " << bind_addr.c_str() << std::endl;
-  int ret = rpc_server_->start(bind_addr.c_str());
+  int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("server launch failed.");
     std::cout << "server launch failed.\n";
@@ -207,16 +207,16 @@ void PaxosWorker::SetupHeartbeat() {
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
+  hb_rpc_server_->reg_service_typed(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
                           std::to_string(port);
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for %s", bind_addr.c_str());
     server_status_.as_ref().unwrap()->set_ready();

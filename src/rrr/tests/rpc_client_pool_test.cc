@@ -31,7 +31,7 @@ static uint64_t current_time_ms() {
 // ============================================================================
 
 TEST(PoolConfigTest, DefaultValues) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     EXPECT_EQ(config.min_connections, 1);
     EXPECT_EQ(config.max_connections, 4);
     EXPECT_EQ(config.idle_timeout_ms, 300000u);  // 5 minutes
@@ -124,10 +124,10 @@ static Server* start_server_with_retry(const rusty::Arc<PollThread>& poll_thread
     const int kMaxAttempts = 10;
     for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
         int port = (port_out != nullptr && *port_out > 0) ? *port_out : test_ports::get_port();
-        auto server = new Server(rusty::Some(poll_thread.clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread.clone())));
         auto service_box = rusty::make_box<PoolTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(port)).c_str()) == 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(port)).c_str())) == 0) {
             if (port_out != nullptr) {
                 *port_out = port;
             }
@@ -293,7 +293,7 @@ TEST_F(ClientPoolTest, CloseIdleClientsNoTimeout) {
     ASSERT_NE(server, nullptr);
 
     // Config with no idle timeout
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.idle_timeout_ms = 0;
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
@@ -312,7 +312,7 @@ TEST_F(ClientPoolTest, CloseIdleClientsRespectsMinConnections) {
     ASSERT_NE(server, nullptr);
 
     // Config with min_connections = 1 and short idle timeout
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.min_connections = 1;
     config.idle_timeout_ms = 10;  // 10ms timeout
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
@@ -350,7 +350,7 @@ TEST_F(ClientPoolTest, RemoveUnhealthyRespectsMinConnections) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.min_connections = 1;
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
@@ -379,7 +379,7 @@ TEST_F(ClientPoolTest, GetClientWithRealRequests) {
     for (int i = 0; i < 5; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -412,7 +412,7 @@ TEST_F(ClientPoolTest, CloseAllIdleWithMultipleAddresses) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.idle_timeout_ms = 10;  // 10ms
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 

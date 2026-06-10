@@ -563,7 +563,7 @@ void* heartbeatBackground(void* arg) {
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
   std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
   Log_info("start a heartbeatBackground, addr:%s",addr_port.c_str());
-  while (rpc_cli->connect(addr_port.c_str())!=0) {
+  while (rpc_cli->connect(reinterpret_cast<const int8_t*>(addr_port.c_str()), true)!=0) {
      usleep(100 * 1000); // retry to connect
   }
 
@@ -771,10 +771,10 @@ nc_pclock(char *msg, clockid_t cid)
 
 void *nc_start_server(void *input) {
     auto poll_arc = PollThread::create();
-    rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
+    rrr::Server *server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_arc)));
 
-    server->reg_service(rusty::make_box<NetworkClientServiceImpl>());
-    server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
+    server->reg_service_typed(rusty::make_box<NetworkClientServiceImpl>());
+    server->start(reinterpret_cast<const int8_t*>((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str())  );
     // Service is now owned by server
     int c=0;
     while (1) {

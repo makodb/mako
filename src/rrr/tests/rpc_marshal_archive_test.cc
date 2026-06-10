@@ -23,11 +23,6 @@
 
 #include <gtest/gtest.h>
 
-#include <rusty/btreemap.hpp>
-#include <rusty/btreeset.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
-#include <rusty/vec.hpp>
 
 #include "../rrr.hpp"
 #include "../misc/marshal.hpp"
@@ -35,6 +30,7 @@
 #include "../misc/serializable_envelope.hpp"
 
 import std;
+import rusty;
 import rrr.basetypes;
 
 namespace rrr {

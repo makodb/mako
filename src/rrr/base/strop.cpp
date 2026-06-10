@@ -6,6 +6,7 @@ module;
 export module rrr.strop;
 
 import std;
+import rusty;
 
 // @safe - string ops. format_decimal and strsplit are pure std::string
 // + ostringstream + rusty::Vec; startswith/endswith carry per-method

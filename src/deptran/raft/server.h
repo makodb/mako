@@ -482,7 +482,7 @@ class RaftServer : public TxLogServer {
     {
       const char* why = reason ? reason : "unspecified";
       auto prev_time = last_heartbeat_time_;
-      last_heartbeat_time_ = Time::now();
+      last_heartbeat_time_ = Time::now(false);
       // Log only important timer resets (elections, votes), not routine heartbeats
       if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
         Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",

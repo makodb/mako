@@ -15,7 +15,7 @@ using namespace rrr;
 // ============================================================================
 
 TEST(ConnectionStateTest, InitialState) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_EQ(sm.state(), ConnectionState::NEW);
     EXPECT_FALSE(sm.is_connected());
     EXPECT_FALSE(sm.is_terminal());
@@ -36,7 +36,7 @@ TEST(ConnectionStateTest, StateToString) {
 // ============================================================================
 
 TEST(ConnectionStateTest, NewToConnecting) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_TRUE(sm.transition_to(ConnectionState::CONNECTING));
     EXPECT_EQ(sm.state(), ConnectionState::CONNECTING);
     EXPECT_FALSE(sm.is_connected());
@@ -44,7 +44,7 @@ TEST(ConnectionStateTest, NewToConnecting) {
 }
 
 TEST(ConnectionStateTest, ConnectingToConnected) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     EXPECT_TRUE(sm.transition_to(ConnectionState::CONNECTED));
     EXPECT_EQ(sm.state(), ConnectionState::CONNECTED);
@@ -52,7 +52,7 @@ TEST(ConnectionStateTest, ConnectingToConnected) {
 }
 
 TEST(ConnectionStateTest, ConnectedToDisconnecting) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
     EXPECT_TRUE(sm.transition_to(ConnectionState::DISCONNECTING));
@@ -61,7 +61,7 @@ TEST(ConnectionStateTest, ConnectedToDisconnecting) {
 }
 
 TEST(ConnectionStateTest, DisconnectingToDisconnected) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
     sm.transition_to(ConnectionState::DISCONNECTING);
@@ -71,7 +71,7 @@ TEST(ConnectionStateTest, DisconnectingToDisconnected) {
 }
 
 TEST(ConnectionStateTest, ConnectingToFailed) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     EXPECT_TRUE(sm.transition_to(ConnectionState::FAILED));
     EXPECT_EQ(sm.state(), ConnectionState::FAILED);
@@ -79,7 +79,7 @@ TEST(ConnectionStateTest, ConnectingToFailed) {
 }
 
 TEST(ConnectionStateTest, ConnectedToFailed) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
     EXPECT_TRUE(sm.transition_to(ConnectionState::FAILED));
@@ -88,7 +88,7 @@ TEST(ConnectionStateTest, ConnectedToFailed) {
 
 TEST(ConnectionStateTest, DisconnectedToConnecting) {
     // From DISCONNECTED, you CAN transition to CONNECTING (reconnect)
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
     sm.transition_to(ConnectionState::DISCONNECTING);
@@ -100,7 +100,7 @@ TEST(ConnectionStateTest, DisconnectedToConnecting) {
 
 TEST(ConnectionStateTest, FailedToConnecting) {
     // From FAILED, you CAN transition to CONNECTING (reconnect attempt)
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::FAILED);
 
@@ -114,20 +114,20 @@ TEST(ConnectionStateTest, FailedToConnecting) {
 
 TEST(ConnectionStateTest, NewToFailed_Invalid) {
     // From NEW, you can only go to CONNECTING, not directly to FAILED
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.transition_to(ConnectionState::FAILED));
     EXPECT_EQ(sm.state(), ConnectionState::NEW);  // Unchanged
 }
 
 TEST(ConnectionStateTest, NewToConnected_Invalid) {
     // Cannot skip CONNECTING state
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.transition_to(ConnectionState::CONNECTED));
     EXPECT_EQ(sm.state(), ConnectionState::NEW);
 }
 
 TEST(ConnectionStateTest, ConnectedToNew_Invalid) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
     EXPECT_FALSE(sm.transition_to(ConnectionState::NEW));
@@ -136,7 +136,7 @@ TEST(ConnectionStateTest, ConnectedToNew_Invalid) {
 
 TEST(ConnectionStateTest, FailedToConnected_Invalid) {
     // From FAILED, must go through CONNECTING first
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::FAILED);
     EXPECT_FALSE(sm.transition_to(ConnectionState::CONNECTED));
@@ -144,7 +144,7 @@ TEST(ConnectionStateTest, FailedToConnected_Invalid) {
 }
 
 TEST(ConnectionStateTest, SameStateTransition) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.transition_to(ConnectionState::NEW));  // Already NEW
     EXPECT_EQ(sm.state(), ConnectionState::NEW);
 }
@@ -154,7 +154,7 @@ TEST(ConnectionStateTest, SameStateTransition) {
 // ============================================================================
 
 TEST(ConnectionStateTest, ForceStateBypassesValidation) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
 
@@ -166,7 +166,7 @@ TEST(ConnectionStateTest, ForceStateBypassesValidation) {
 
 TEST(ConnectionStateTest, ForceStateToFailed) {
     // Force to FAILED from any state
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.force_state(ConnectionState::FAILED);
     EXPECT_EQ(sm.state(), ConnectionState::FAILED);
     EXPECT_TRUE(sm.is_terminal());
@@ -174,7 +174,7 @@ TEST(ConnectionStateTest, ForceStateToFailed) {
 }
 
 TEST(ConnectionStateTest, ForceStateFromTerminal) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::FAILED);
     EXPECT_TRUE(sm.is_terminal());
@@ -190,7 +190,7 @@ TEST(ConnectionStateTest, ForceStateFromTerminal) {
 // ============================================================================
 
 TEST(ConnectionStateTest, IsConnectedOnlyInConnectedState) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.is_connected());  // NEW
 
     sm.transition_to(ConnectionState::CONNECTING);
@@ -204,7 +204,7 @@ TEST(ConnectionStateTest, IsConnectedOnlyInConnectedState) {
 }
 
 TEST(ConnectionStateTest, IsTerminalOnlyInTerminalStates) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.is_terminal());  // NEW
 
     sm.transition_to(ConnectionState::CONNECTING);
@@ -221,7 +221,7 @@ TEST(ConnectionStateTest, IsTerminalOnlyInTerminalStates) {
 }
 
 TEST(ConnectionStateTest, IsFailedTerminal) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::FAILED);
     EXPECT_TRUE(sm.is_terminal());
@@ -229,7 +229,7 @@ TEST(ConnectionStateTest, IsFailedTerminal) {
 }
 
 TEST(ConnectionStateTest, CanConnectFromReconnectableStates) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_TRUE(sm.can_connect());  // NEW
 
     sm.transition_to(ConnectionState::CONNECTING);
@@ -246,14 +246,14 @@ TEST(ConnectionStateTest, CanConnectFromReconnectableStates) {
 }
 
 TEST(ConnectionStateTest, CanConnectFromFailed) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::FAILED);
     EXPECT_TRUE(sm.can_connect());  // Can reconnect from FAILED
 }
 
 TEST(ConnectionStateTest, IsUsable) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     EXPECT_FALSE(sm.is_usable());  // NEW
 
     sm.transition_to(ConnectionState::CONNECTING);
@@ -271,7 +271,7 @@ TEST(ConnectionStateTest, IsUsable) {
 // ============================================================================
 
 TEST(ConnectionStateTest, CallbackOnStateChange) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
 
     std::atomic<int> callback_count{0};
     ConnectionState last_from = ConnectionState::NEW;
@@ -295,7 +295,7 @@ TEST(ConnectionStateTest, CallbackOnStateChange) {
 }
 
 TEST(ConnectionStateTest, NoCallbackOnInvalidTransition) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
 
@@ -310,7 +310,7 @@ TEST(ConnectionStateTest, NoCallbackOnInvalidTransition) {
 }
 
 TEST(ConnectionStateTest, CallbackOnForceState) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
 
     std::atomic<int> callback_count{0};
     sm.set_on_state_change([&](ConnectionState, ConnectionState) {
@@ -326,7 +326,7 @@ TEST(ConnectionStateTest, CallbackOnForceState) {
 // ============================================================================
 
 TEST(ConnectionStateTest, ConcurrentReads) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
 
@@ -351,7 +351,7 @@ TEST(ConnectionStateTest, ConcurrentReads) {
 }
 
 TEST(ConnectionStateTest, ConcurrentStateQueries) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
     sm.transition_to(ConnectionState::CONNECTING);
     sm.transition_to(ConnectionState::CONNECTED);
 
@@ -383,7 +383,7 @@ TEST(ConnectionStateTest, ConcurrentStateQueries) {
 // ============================================================================
 
 TEST(ConnectionStateTest, CanTransitionTo) {
-    ConnectionStateMachine sm;
+    auto sm = ConnectionStateMachine::new_();
 
     // From NEW
     EXPECT_TRUE(sm.can_transition_to(ConnectionState::CONNECTING));

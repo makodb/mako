@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
@@ -25,6 +24,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace std::chrono;
 
@@ -187,7 +187,7 @@ protected:
         poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
 
         // Create server
-        server_ = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register TestRangeService to handle test request types
         auto svc = rusty::make_box<TestRangeService>(
@@ -201,13 +201,13 @@ protected:
 
         // Start server
         std::string addr = "0.0.0.0:" + std::to_string(port_);
-        ASSERT_EQ(server_->start(addr.c_str()), 0) << "Failed to start server on " << addr;
+        ASSERT_EQ(server_->start(reinterpret_cast<const int8_t*>(addr.c_str())), 0) << "Failed to start server on " << addr;
         server_running_ = true;
 
         // Create client
         client_ = rusty::Some(rrr::Client::create(poll_thread_worker_.as_ref().unwrap()));
         std::string connect_addr = "127.0.0.1:" + std::to_string(port_);
-        ASSERT_EQ(client_.as_ref().unwrap()->connect(connect_addr.c_str()), 0)
+        ASSERT_EQ(client_.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(connect_addr.c_str()), true), 0)
             << "Failed to connect to " << connect_addr;
 
         // Wait for connection to establish
@@ -377,7 +377,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
         threads.emplace_back([this, t, requests_per_thread, &success_count]() {
             // Each thread creates its own client
             auto thread_client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-            int ret = thread_client->connect(("127.0.0.1:" + std::to_string(port_)).c_str());
+            int ret = thread_client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true);
             if (ret != 0) return;
 
             std::this_thread::sleep_for(milliseconds(50));
@@ -511,7 +511,7 @@ protected:
 
 TEST_F(ConnectionResilienceTest, ConnectToNonExistentServer) {
     auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    int result = client->connect("127.0.0.1:19999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:19999"), true);
     EXPECT_NE(result, 0);
     client->close();
 }
@@ -520,7 +520,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::atomic<int> request_count{0};
 
     // Start server
-    auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+    auto server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
     auto svc = rusty::make_box<TestSingleService>(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();
@@ -530,11 +530,11 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
         }
     });
     server->reg_service(std::move(svc));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(port_)).c_str())), 0);
 
     // Connect client
     auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
     // Send request - use no-op lambda to avoid template overload issues
@@ -552,7 +552,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::this_thread::sleep_for(milliseconds(100));
 
     auto client2 = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    ASSERT_EQ(client2->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
     // Send another request

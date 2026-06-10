@@ -736,7 +736,7 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
 
 // @unsafe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
-  uint64_t current_time = Time::now();
+  uint64_t current_time = Time::now(false);
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
   bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
 
@@ -904,7 +904,7 @@ void RaftServer::StartApplyThread() {
 // @unsafe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
   // Record startup time for grace period logic
-  startup_timestamp_ = Time::now();
+  startup_timestamp_ = Time::now(false);
 
   // ========== INITIALIZE PERSISTENCE (LogStorage + RecoveryManager) ==========
   const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
@@ -2348,7 +2348,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
 void RaftServer::StartElectionTimer() {
   // @unsafe
   { resetTimer("start election timer"); }
-  last_heartbeat_time_ = Time::now();
+  last_heartbeat_time_ = Time::now(false);
 
   Fiber::create_run([this]() {
     Log_debug("start timer for election") ;
@@ -2368,7 +2368,7 @@ void RaftServer::StartElectionTimer() {
         c->RetryPendingNotifyRestart();
       }
 
-      auto time_now = Time::now();
+      auto time_now = Time::now(false);
       auto time_elapsed = time_now - last_heartbeat_time_;
 
       // Only log when timeout actually fires or when debugging
@@ -3018,7 +3018,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
     const uint64_t CHECK_INTERVAL_MS = 1000;  // Check every 1 second
     const uint64_t MIN_STABLE_TIME_US = 500000; // Wait 0.5 seconds (in microseconds) after becoming leader before transferring
 
-    uint64_t became_leader_time = Time::now();
+    uint64_t became_leader_time = Time::now(false);
 
     Log_info("[LEADERSHIP-TRANSFER] Site %d: Monitor thread started (will check every %lums)",
              site_id_, CHECK_INTERVAL_MS);
@@ -3058,7 +3058,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
         }
 
         // Wait for cluster to stabilize after becoming leader
-        uint64_t time_as_leader = Time::now() - became_leader_time;
+        uint64_t time_as_leader = Time::now(false) - became_leader_time;
         if (time_as_leader < MIN_STABLE_TIME_US) {
           continue;
         }
@@ -3166,7 +3166,7 @@ void RaftServer::InitiateLeadershipTransfer() {
 
     // Mark transfer as in progress - this will suppress elections on non-preferred replicas
     transferring_leadership_ = true;
-    leadership_transfer_start_time_ = Time::now();
+    leadership_transfer_start_time_ = Time::now(false);
 
     Log_info("[LEADERSHIP-TRANSFER] Site %d (partition %d): Starting transfer to site %d",
              site_id_, partition_id_, target_site_id);

@@ -11,7 +11,7 @@ TEST(Time, perf) {
 
     int n = 1000000;
 
-    Timer t;
+    auto t = Timer::new_();
 
     uint64_t tmp = 0;
     t.start();

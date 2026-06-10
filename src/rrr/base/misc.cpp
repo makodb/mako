@@ -21,7 +21,7 @@ import rrr.basetypes;
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
 // functions (`rdtsc`, `time_now_str`, `get_ncpu`, `get_exec_path`,
 // `getline`, the static `make_int` byte-writer) and
-// `FrequentJob::Ready` (calls rrr::Time::now()) carry per-method
+// `FrequentJob::Ready` (calls rrr::Time::now(false)) carry per-method
 // `// @unsafe` overrides.
 export namespace rrr {
 
@@ -74,21 +74,75 @@ erase(Container &l,
   return std::reverse_iterator<typename Container::iterator>(it);
 }
 
+// `Job` — abstract base trait for unit-of-work scheduling. Concrete
+// impls (OneTimeJob, FrequentJob, Alarm) inherit from the emitted
+// `class Job` directly; the trait shape is preserved verbatim
+// (3 pure virtuals + virtual dtor). Method names stay PascalCase
+// (`Ready` / `Work` / `Done`) to match the existing C++ override
+// surface — the DSL accepts any valid Rust ident, so the
+// non-snake_case names emit unchanged.
+//
+// First DSL trait in the rrr base layer. Authored as inline Rust;
+// the transpiler emits `class Job` at namespace scope because the
+// trait is `pub` — same pattern as `PollableBase` in
+// `rrr.pollable_proxy` (rusty-cpp main 591aca7 fix).
+#if RUSTYCPP_RUST
+pub trait Job {
+    fn Ready(&mut self) -> bool;
+    fn Work(&mut self);
+    fn Done(&mut self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=job.0 version=1 rust_sha256=18786ba6577a83b252e1bcef0f636e48705c6028747245d431309a72153fea97*/
 class Job {
 public:
-  virtual bool Ready() = 0;
-  virtual void Work() = 0;
-  virtual bool Done() = 0;
-  virtual ~Job() = default;
+    virtual ~Job() noexcept(false) {}
+    virtual bool Ready() = 0;
+    virtual void Work() = 0;
+    virtual bool Done() = 0;
+    Job(const Job&) = delete;
+    Job& operator=(const Job&) = delete;
+    Job(Job&&) = delete;
+    Job& operator=(Job&&) = delete;
+protected:
+    Job() = default;
 };
+
+template <class U> class JobAdapter;
+template <class U> class JobAdapterRef;
+template <class U> class JobAdapterRefMut;
+/*RUSTYCPP:GEN-END id=job.0*/
 
 class OneTimeJob : public Job {
  public:
+  // Legacy value ctor — kept for compatibility with deptran call sites
+  // (`OneTimeJob(lambda)` syntax). New rrr code should prefer
+  // `OneTimeJob::new_(lambda)` below, which matches the inline-Rust DSL
+  // form. The ctor delegates to the factory so they stay in lockstep.
   OneTimeJob(rusty::Function<void()> func) : func_(std::move(func)) {
   }
+
+  // Explicit move ctor. The DSL-emitted `Job` base deletes its
+  // implicit copy / move, which would otherwise make `OneTimeJob`'s
+  // implicit move ctor `= delete` too — breaking `Arc<OneTimeJob>::new_(
+  // OneTimeJob::new_(...))` call sites. We construct a fresh `Job`
+  // base subobject (protected default ctor) and move the derived
+  // members. Copy stays implicitly deleted.
+  OneTimeJob(OneTimeJob&& other) noexcept
+      : Job(), done_(other.done_), ready_(other.ready_),
+        func_(std::move(other.func_)) {}
+
   bool done_{false};
   bool ready_{true};
   rusty::Function<void()> func_{};
+
+  // @safe - factory matching the DSL `fn new(func) -> Self` form.
+  // Existing call sites switch from `OneTimeJob(lambda)` to
+  // `OneTimeJob::new_(lambda)`.
+  static OneTimeJob new_(rusty::Function<void()> func) {
+    return OneTimeJob(std::move(func));
+  }
+
   bool Ready() override { return ready_; }
   bool Done() override { return done_; }
   void Work() override {
@@ -96,32 +150,6 @@ class OneTimeJob : public Job {
     func_();
     done_ = true;
   }
-};
-
-class FrequentJob : public Job {
-public:
-  uint64_t tm_last_ = 0;
-  uint64_t period_ = 0;
-
-  virtual ~FrequentJob() {}
-  // @safe - rrr::Time::now() flows through rusty::sys::time::clock_*_us.
-  virtual bool Ready() override {
-    uint64_t tm_now = rrr::Time::now();
-    uint64_t s = tm_now - tm_last_;
-    if (s > period_) {
-      tm_last_ = tm_now;
-      return true;
-    }
-    return false;
-  }
-
-  virtual bool Done() override {
-    return false;
-  }
-
-  virtual uint64_t get_last_time() { return tm_last_; }
-
-  virtual void set_period(uint64_t p) { period_ = p; }
 };
 
 } // export namespace rrr
@@ -166,11 +194,24 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
-// @safe - rusty::sys::process::sysconf is @safe.
-int get_ncpu() {
-    return static_cast<int>(
-        rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
+// Thin wrapper around `rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN)`.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Same shape as the rrr time
+// wrappers (`current_time_us` / `heartbeat_time_us` / etc.) — one-line
+// passthroughs into the @safe rusty::sys::* layer.
+#if RUSTYCPP_RUST
+fn get_ncpu() -> i32 {
+    rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN) as i32
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.get_ncpu version=1 rust_sha256=327365961737aad75f0a0355a2f51b97d7bab81213e792a945a6319eac498564*/
+int32_t get_ncpu();
+
+int32_t get_ncpu() {
+    return static_cast<int32_t>(rusty::sys::process::sysconf(_SC_NPROCESSORS_ONLN));
+}
+/*RUSTYCPP:GEN-END id=misc.get_ncpu*/
 
 // @unsafe - static `char[PATH_MAX]` buffer, snprintf, readlink syscall,
 // returns raw `const char*` into static storage. (getpid is now @safe

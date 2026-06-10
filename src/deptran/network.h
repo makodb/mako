@@ -247,7 +247,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnRmwResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -265,7 +265,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -283,7 +283,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnNewOrderResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -301,7 +301,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnPaymentResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -319,7 +319,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnDeliveryResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -337,7 +337,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnOrderStatusResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
@@ -355,7 +355,7 @@ private:
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
             __req_ar__ >> __typed_req__._req;
             auto __typed_resp__ = std::make_shared<RpcTxnStockLevelResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {

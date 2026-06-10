@@ -1,6 +1,7 @@
 module;
 
 #include <rusty/rusty.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <inttypes.h>
 #include <pthread.h>
 #include <sys/time.h>
@@ -9,6 +10,7 @@ module;
 export module rrr.basetypes;
 
 import std;
+import rusty;
 
 // @safe - POD/value-type helpers + small classes (SparseInt, v32/v64,
 // NoCopy, Counter, Time, Timer, Rand, Enumerator, MergedEnumerator).
@@ -18,6 +20,12 @@ import std;
 // overrides cover raw `char*` byte slicing via `reinterpret_cast<char*>`
 // and `pthread_self`-based hashing in `Rand`.
 export namespace rrr {
+
+// Bring `Ordering` and `AtomicI64` into the `rrr` namespace so DSL
+// bodies can write `Ordering::Relaxed` / `AtomicI64::new(...)` (Rust
+// idiom) and the emitted C++ resolves via these using-decls.
+using rusty::sync::atomic::Ordering;
+using rusty::sync::atomic::AtomicI64;
 
 template<typename T>
 inline void atomic_store_relaxed(std::atomic<T>& atomic_var, T value) {
@@ -54,23 +62,111 @@ public:
     static i64 load_i64(const char* buf);
 };
 
-class v32 {
-    i32 val_;
-public:
-    v32(i32 v = 0): val_(v) { }
-    void set(i32 v) { val_ = v; }
-    i32 get() const { return val_; }
-    size_t val_size() const { return SparseInt::val_size(val_); }
+// `v32` — variable-length 32-bit integer wrapper for Marshal wire ops.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(v)` lowers to a static
+// `v32::new_(v)` factory.
+//
+// Behavioral diffs from the original C++ class:
+//   * No default constructor — callers that previously default-
+//     constructed (`v32 v_err;`) now write `v32 v_err = {}` (value-
+//     init zero-fills the aggregate) or `v32::new_(0)` explicitly.
+//   * The single-arg ctor (`v32(123)`) keeps compiling via C++20
+//     aggregate paren-init (P0960), which binds the arg to
+//     `val_field`.
+//   * `set()` becomes `&mut self` (Rust-idiomatic) and stays non-const
+//     on the C++ side. `get()` and `val_size()` stay `const`.
+//   * Field renamed `val_` → `val_field` (cosmetic; private in the
+//     legacy class, public in the DSL-emitted aggregate, but no
+//     callers reach into them — `get()`/`set()` is the public API).
+#if RUSTYCPP_RUST
+struct v32 {
+    val_field: i32,
+}
+
+impl v32 {
+    fn new(v: i32) -> v32 { v32 { val_field: v } }
+    fn set(&mut self, v: i32) { self.val_field = v; }
+    fn get(&self) -> i32 { self.val_field }
+    fn val_size(&self) -> usize { SparseInt::val_size(self.val_field as i64) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.4 version=1 rust_sha256=3ef01e6050afc2b59a98ef8361930b1cb4d4cbb1345d73481ad776eeeb410641*/
+struct v32;
+
+struct v32 {
+    int32_t val_field;
+
+    static v32 new_(int32_t v);
+    void set(int32_t v);
+    int32_t get() const;
+    size_t val_size() const;
 };
 
-class v64 {
-    i64 val_;
-public:
-    v64(i64 v = 0): val_(v) { }
-    void set(i64 v) { val_ = v; }
-    i64 get() const { return val_; }
-    size_t val_size() const { return SparseInt::val_size(val_); }
+
+v32 v32::new_(int32_t v) {
+    return v32{.val_field = std::move(v)};
+}
+
+void v32::set(int32_t v) {
+    this->val_field = std::move(v);
+}
+
+int32_t v32::get() const {
+    return this->val_field;
+}
+
+size_t v32::val_size() const {
+    return SparseInt::val_size(static_cast<int64_t>(this->val_field));
+}
+/*RUSTYCPP:GEN-END id=basetypes.4*/
+
+// `v64` — variable-length 64-bit integer wrapper for Marshal wire ops.
+// Same DSL pattern + behavioral diffs as `v32` (see above), just at
+// 64-bit width.
+#if RUSTYCPP_RUST
+struct v64 {
+    val_field: i64,
+}
+
+impl v64 {
+    fn new(v: i64) -> v64 { v64 { val_field: v } }
+    fn set(&mut self, v: i64) { self.val_field = v; }
+    fn get(&self) -> i64 { self.val_field }
+    fn val_size(&self) -> usize { SparseInt::val_size(self.val_field) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.5 version=1 rust_sha256=b79e4b80239015966c8c9d9c9c3cffc923aab52fb8b1c3c28bbba0b2188818bd*/
+struct v64;
+
+struct v64 {
+    int64_t val_field;
+
+    static v64 new_(int64_t v);
+    void set(int64_t v);
+    int64_t get() const;
+    size_t val_size() const;
 };
+
+
+v64 v64::new_(int64_t v) {
+    return v64{.val_field = std::move(v)};
+}
+
+void v64::set(int64_t v) {
+    this->val_field = std::move(v);
+}
+
+int64_t v64::get() const {
+    return this->val_field;
+}
+
+size_t v64::val_size() const {
+    return SparseInt::val_size(this->val_field);
+}
+/*RUSTYCPP:GEN-END id=basetypes.5*/
 
 class NoCopy {
 protected:
@@ -83,70 +179,250 @@ public:
     NoCopy& operator=(NoCopy&&) = default;
 };
 
-class Counter: public NoCopy {
-    std::atomic<i64> next_;
-public:
-    Counter(i64 start = 0) : next_(start) { }
-    i64 peek_next() const {
-        return atomic_load_relaxed(next_);
+// `Counter` — atomic-backed monotonically-increasing counter.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. `fn new(start)` lowers to a
+// static `Counter::new_(start)` factory.
+//
+// Behavioral diffs from the original C++ class:
+//   * No default constructor — callers that previously default-
+//     constructed (`Counter xid_counter_;`, `static Counter g_nop_counter;`)
+//     now write `Counter::new_(0)` explicitly.
+//   * `next()` and `reset()` no longer carry default arguments —
+//     callers write `next(1)` / `reset(0)` explicitly.
+//   * `next` is now `&self` (const-qualified) since the underlying
+//     atomic provides interior mutability — same change as SpinLock.
+//   * No more inheritance from `NoCopy`; DSL structs are non-copyable
+//     by default (move-only) which matches what `NoCopy` provided.
+#if RUSTYCPP_RUST
+struct Counter {
+    next_field: AtomicI64,
+}
+
+impl Counter {
+    fn new(start: i64) -> Counter {
+        Counter { next_field: AtomicI64::new(start) }
     }
-    i64 next(i64 step = 1) {
-        return atomic_fetch_add_acq_rel(next_, step);
+
+    fn peek_next(&self) -> i64 {
+        self.next_field.load(Ordering::Relaxed)
     }
-    void reset(i64 start = 0) {
-        atomic_store_relaxed(next_, start);
+
+    fn next(&self, step: i64) -> i64 {
+        self.next_field.fetch_add(step, Ordering::AcqRel)
     }
+
+    fn reset(&self, start: i64) {
+        self.next_field.store(start, Ordering::Relaxed);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.1 version=1 rust_sha256=f1d8fa5f0444e6e132967de2255c0a516a65acd4aaaaa581d3c1bc9b4dbe5c02*/
+struct Counter;
+
+struct Counter {
+    rusty::sync::atomic::AtomicI64 next_field;
+
+    static Counter new_(int64_t start);
+    int64_t peek_next() const;
+    int64_t next(int64_t step) const;
+    void reset(int64_t start) const;
 };
 
-class Time {
-public:
-    static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
-    // @safe - delegates to rusty::sys::time::clock_*_us(), each of
-    // which wraps its clock_gettime call in an inner @unsafe block.
-    static uint64_t now(bool accurate = false) {
-#ifdef __APPLE__
-        return rusty::sys::time::clock_realtime_us();
-#else
-        return accurate ? rusty::sys::time::clock_monotonic_us()
-                        : rusty::sys::time::clock_realtime_coarse_us();
+Counter Counter::new_(int64_t start) {
+    return Counter{.next_field = AtomicI64::new_(std::move(start))};
+}
+
+int64_t Counter::peek_next() const {
+    return this->next_field.load(Ordering::Relaxed);
+}
+
+int64_t Counter::next(int64_t step) const {
+    return this->next_field.fetch_add(std::move(step), Ordering::AcqRel);
+}
+
+void Counter::reset(int64_t start) const {
+    this->next_field.store(std::move(start), Ordering::Relaxed);
+}
+/*RUSTYCPP:GEN-END id=basetypes.1*/
+
+// `RRR_USEC_PER_SEC` was a class-static const on `Time`. DSL impl
+// blocks don't model associated constants today, so the constant
+// moves to a free `inline constexpr` at namespace scope. The 2
+// callers (fiber.cpp, fiber_test.cc) migrate from
+// `Time::RRR_USEC_PER_SEC` to bare `RRR_USEC_PER_SEC` (or
+// `rrr::RRR_USEC_PER_SEC` from outside the namespace).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr.
+#if RUSTYCPP_RUST
+const RRR_USEC_PER_SEC: u64 = 1000000u64;
 #endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.usec_per_sec version=1 rust_sha256=fdcd10a701ceea804c90d4007d1b8fd274b61b7daade45fc6388979c7afb3fb2*/
+constexpr uint64_t RRR_USEC_PER_SEC = static_cast<uint64_t>(1000000);
+/*RUSTYCPP:GEN-END id=basetypes.usec_per_sec*/
+
+// @safe - precondition check that aborts on failure. Defined outside
+// the DSL because `verify()` lives in `rrr.debugging` which imports
+// basetypes (would be circular). Same shape, different name.
+inline void abort_if_false(bool cond) {
+    if (!cond) {
+        // @unsafe { libc abort }
+        { std::abort(); }
+    }
+}
+
+// @safe - architecture-conditional wall-clock helper. Defined outside
+// the DSL because the DSL has no preprocessor / `cfg!` support; the
+// `#ifdef __APPLE__` branch maps to a single dispatch on Linux.
+inline uint64_t time_now_us(bool accurate) {
+#ifdef __APPLE__
+    (void)accurate;
+    return rusty::sys::time::clock_realtime_us();
+#else
+    return accurate ? rusty::sys::time::clock_monotonic_us()
+                    : rusty::sys::time::clock_realtime_coarse_us();
+#endif
+}
+
+// `Time` — wall-clock + sleep facade. The historical class was static-
+// only; the DSL form is an empty struct with associated functions.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Behavioral diff vs the pre-DSL form:
+//   * `now()` no longer carries a default arg; callers explicitly
+//     write `now(false)` for coarse wall-clock and `now(true)` for
+//     monotonic. 15 no-arg sites updated.
+//   * `RRR_USEC_PER_SEC` is now a namespace-level free constant
+//     (see above), not a class-static member.
+#if RUSTYCPP_RUST
+struct Time {}
+
+impl Time {
+    fn now(accurate: bool) -> u64 {
+        time_now_us(accurate)
     }
 
-    // @safe - delegates to rusty::sys::time::sleep_us, which wraps
-    // nanosleep in an inner @unsafe block. (Replaces the historical
-    // select(0,NULL,NULL,NULL,&tv) sleep idiom.)
-    static void sleep(uint64_t t) {
+    fn sleep(t: u64) {
         rusty::sys::time::sleep_us(t);
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.2 version=1 rust_sha256=083eafe4dc21a130d6016d56995496d81632d3839d29622e2d0ec49e43ea890d*/
+struct Time;
+
+struct Time {
+
+    static uint64_t now(bool accurate);
+    static void sleep(uint64_t t);
 };
 
-class Timer {
-public:
-    Timer();
+
+uint64_t Time::now(bool accurate) {
+    return time_now_us(std::move(accurate));
+}
+
+void Time::sleep(uint64_t t) {
+    rusty::sys::time::sleep_us(std::move(t));
+}
+/*RUSTYCPP:GEN-END id=basetypes.2*/
+
+// `Timer` — wall-clock stopwatch. Pre-DSL stored two `struct timeval`
+// fields and converted to/from `uint64_t` microseconds on every read
+// and write. The DSL form stores `u64` microseconds directly (0 = not
+// set), which is what the C++ impl was doing under the hood anyway.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Behavioral diff vs the pre-DSL form:
+//   * No default constructor — callers move from `Timer t;` to
+//     `auto t = Timer::new();`.
+//   * `elapsed()` aborts (via `verify(false)`) if start() was never
+//     called, matching the pre-DSL `std::abort()` semantics.
+#if RUSTYCPP_RUST
+struct Timer {
+    begin_us: u64,
+    end_us: u64,
+}
+
+impl Timer {
+    fn new() -> Timer {
+        Timer { begin_us: 0u64, end_us: 0u64 }
+    }
+
+    fn start(&mut self) {
+        self.begin_us = rusty::sys::time::gettimeofday_us();
+        self.end_us = 0u64;
+    }
+
+    fn stop(&mut self) {
+        self.end_us = rusty::sys::time::gettimeofday_us();
+    }
+
+    fn reset(&mut self) {
+        self.begin_us = 0u64;
+        self.end_us = 0u64;
+    }
+
+    fn elapsed(&self) -> f64 {
+        abort_if_false(self.begin_us != 0u64);
+        let end: u64 = if self.end_us == 0u64 {
+            rusty::sys::time::gettimeofday_us()
+        } else {
+            self.end_us
+        };
+        ((end - self.begin_us) as f64) / 1000000.0f64
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.3 version=1 rust_sha256=09ec6064726af792d141ac2b60837dc2b58a3b91b6a6d23f41084d6ed843e5cd*/
+struct Timer;
+
+struct Timer {
+    uint64_t begin_us;
+    uint64_t end_us;
+
+    static Timer new_();
     void start();
     void stop();
     void reset();
     double elapsed() const;
-private:
-    struct timeval begin_;
-    struct timeval end_;
 };
 
-class Rand: public NoCopy {
-    std::mt19937 rand_;
-public:
-    Rand();
-    std::mt19937::result_type next() {
-        return rand_();
-    }
-    std::mt19937::result_type next(int lower, int upper) {
-        return lower + rand_() % (upper - lower);
-    }
-    std::mt19937::result_type operator() () {
-        return rand_();
-    }
-};
+
+Timer Timer::new_() {
+    return Timer{.begin_us = static_cast<uint64_t>(0), .end_us = static_cast<uint64_t>(0)};
+}
+
+void Timer::start() {
+    this->begin_us = rusty::sys::time::gettimeofday_us();
+    this->end_us = static_cast<uint64_t>(0);
+}
+
+void Timer::stop() {
+    this->end_us = rusty::sys::time::gettimeofday_us();
+}
+
+void Timer::reset() {
+    this->begin_us = static_cast<uint64_t>(0);
+    this->end_us = static_cast<uint64_t>(0);
+}
+
+double Timer::elapsed() const {
+    abort_if_false(rusty::detail::deref_if_pointer_like(this->begin_us) != static_cast<uint64_t>(0));
+    const uint64_t end = (rusty::detail::deref_if_pointer_like(this->end_us) == static_cast<uint64_t>(0) ? rusty::sys::time::gettimeofday_us() : this->end_us);
+    return ((static_cast<double>((rusty::detail::deref_if_pointer_like(end) - rusty::detail::deref_if_pointer_like(this->begin_us))))) / 1000000.0;
+}
+/*RUSTYCPP:GEN-END id=basetypes.3*/
 
 template<class T>
 class Enumerator {
@@ -432,61 +708,6 @@ i64 SparseInt::load_i64(const char* buf) {
         }
     }
     return val;
-}
-
-Timer::Timer() : begin_(), end_() {
-    reset();
-}
-
-// @safe - delegates to rusty::sys::time::gettimeofday_us, which wraps
-// gettimeofday(2) in an inner @unsafe block.
-void Timer::start() {
-    reset();
-    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    begin_.tv_sec  = static_cast<time_t>(now / 1000000);
-    begin_.tv_usec = static_cast<suseconds_t>(now % 1000000);
-}
-
-// @safe - delegates to rusty::sys::time::gettimeofday_us.
-void Timer::stop() {
-    const std::uint64_t now = rusty::sys::time::gettimeofday_us();
-    end_.tv_sec  = static_cast<time_t>(now / 1000000);
-    end_.tv_usec = static_cast<suseconds_t>(now % 1000000);
-}
-
-void Timer::reset() {
-    begin_.tv_sec = 0;
-    begin_.tv_usec = 0;
-    end_.tv_sec = 0;
-    end_.tv_usec = 0;
-}
-
-// @safe - live-elapsed branch delegates to rusty::sys::time::gettimeofday_us.
-double Timer::elapsed() const {
-    if (begin_.tv_sec == 0 && begin_.tv_usec == 0) std::abort();
-    if (end_.tv_sec == 0 && end_.tv_usec == 0) {
-        const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
-        const std::uint64_t begin_us =
-            static_cast<std::uint64_t>(begin_.tv_sec) * 1000000 + begin_.tv_usec;
-        return static_cast<double>(now_us - begin_us) / 1000000.0;
-    }
-    return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
-}
-
-// @safe - all three seed contributors flow through @safe wrappers:
-// gettimeofday_us, pthread::current_id_hash, and the reinterpret_cast
-// of `this` (mod address-of-this — wrapped inline below since
-// uintptr_t-from-pointer is @unsafe by the rusty-cpp pointer-safety rules).
-Rand::Rand() : rand_() {
-    const std::uint64_t now_us = rusty::sys::time::gettimeofday_us();
-    const auto thread_hash =
-        static_cast<long long>(rusty::sys::pthread::current_id_hash());
-    long long this_hash;
-    // @unsafe { reinterpret_cast<uintptr_t>(this) — pointer-to-int cast }
-    {
-        this_hash = static_cast<long long>(reinterpret_cast<uintptr_t>(this));
-    }
-    rand_.seed(static_cast<long long>(now_us) + thread_hash + this_hash);
 }
 
 } // namespace rrr

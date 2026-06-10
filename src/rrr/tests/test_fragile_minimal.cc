@@ -21,7 +21,7 @@ int main() {
     Log_info("Fragile minimal test starting...");
 
     // Test 2: Basic timer
-    Timer timer;
+    auto timer = Timer::new_();
     timer.start();
 
     // Test 3: Simple loop with time measurement
@@ -36,7 +36,7 @@ int main() {
     Log_info("Sum: %d", sum);
     Log_info("Elapsed: %f seconds", timer.elapsed());
 
-    // Test 5: Test Time::now()
+    // Test 5: Test Time::now(false)
     uint64_t now = Time::now(true);
     Log_info("Current time (ns): %lu", now);
 

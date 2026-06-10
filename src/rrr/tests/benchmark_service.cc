@@ -6,7 +6,7 @@
 using namespace benchmark;
 using namespace rrr;
 
-static Counter g_nop_counter;
+static Counter g_nop_counter = Counter::new_(0);
 extern int rpc_bench_vector_size;
 
 namespace {
@@ -68,7 +68,7 @@ BenchmarkService::fast_add(const RpcFastAddRequest& req) {
 rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
 BenchmarkService::fast_nop(const RpcFastNopRequest& req) {
     (void)req;
-    int cnt = g_nop_counter.next();
+    int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
         Log_info("%d nop requests", cnt);
     }
@@ -107,7 +107,7 @@ BenchmarkService::add(const RpcAddRequest& req) {
 rusty::Result<BenchmarkService::RpcNopResponse, i32>
 BenchmarkService::nop(const RpcNopRequest& req) {
     (void)req;
-    int cnt = g_nop_counter.next();
+    int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
         Log_info("%d nop requests", cnt);
     }
@@ -117,7 +117,7 @@ BenchmarkService::nop(const RpcNopRequest& req) {
 rusty::Task<rusty::Result<BenchmarkService::RpcAsyncNopResponse, i32>>
 BenchmarkService::async_nop(const RpcAsyncNopRequest& req) {
     (void)req;
-    int cnt = g_nop_counter.next();
+    int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
         Log_info("%d async_nop requests", cnt);
     }

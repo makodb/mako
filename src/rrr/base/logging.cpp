@@ -25,7 +25,7 @@ export namespace rrr {
 
 // @safe - see file header.
 class Log {
-    static rusty::sync::atomic::Atomic<int> level_s;
+    static rusty::sync::atomic::AtomicI32 level_s;
     static std::ostream* stm_s;
 
     // @unsafe - va_list + sprintf + vsprintf into a raw `char buf[1000]`
@@ -112,7 +112,7 @@ inline void Log_fatal(const char* fmt, Args&&... args) {
 // `// @unsafe` for the raw `const char*` arithmetic.
 namespace rrr {
 
-rusty::sync::atomic::Atomic<int> Log::level_s{Log::DEBUG};
+rusty::sync::atomic::AtomicI32 Log::level_s{Log::DEBUG};
 std::ostream* Log::stm_s = &std::cout;
 
 // @safe - Atomic<int>::store is @safe.

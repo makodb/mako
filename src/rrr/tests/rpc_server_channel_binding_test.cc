@@ -36,7 +36,7 @@ class NullFactoryStub {
     rusty::Option<ChannelListenerProxy> make_listener() {
         return rusty::None;
     }
-    const char* backend_name() const { return "null-stub"; }
+    std::string backend_name() const { return "null-stub"; }
 };
 
 class NullFactoryStubAdapter : public ChannelFactoryBase {
@@ -45,7 +45,7 @@ class NullFactoryStubAdapter : public ChannelFactoryBase {
         : stub_(std::move(p)) {}
     ConnectResult                       connect(std::string_view addr) override { return stub_->connect(addr); }
     rusty::Option<ChannelListenerProxy> make_listener() override                { return stub_->make_listener(); }
-    const char*                         backend_name() const override           { return stub_->backend_name(); }
+    std::string                         backend_name() const override           { return stub_->backend_name(); }
 
  private:
     std::shared_ptr<NullFactoryStub> stub_;
@@ -63,7 +63,7 @@ class ServerChannelBindingTest : public ::testing::Test {
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
         server_ = rusty::make_box<Server>(
-            rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     }
 
     void TearDown() override {

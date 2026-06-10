@@ -1,6 +1,5 @@
 #include <stddef.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
@@ -9,6 +8,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;
@@ -61,14 +61,14 @@ protected:
     void SetUp() override {
         poll_thread_worker_ = rusty::Some(PollThread::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register service - server takes ownership via Box
-        server->reg_service(rusty::make_box<BenchService>());
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
+        server->reg_service_typed(rusty::make_box<BenchService>());
+        ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(base_port)).c_str())), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(base_port)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(base_port)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }

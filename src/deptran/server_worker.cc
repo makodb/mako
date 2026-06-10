@@ -20,16 +20,16 @@ void ServerWorker::SetupHeartbeat() {
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
-  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
+  hb_rpc_server_->reg_service_typed(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
       std::to_string(port);
-  hb_rpc_server_->start(addr_port.c_str());
+  hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for %s", bind_addr.c_str());
     server_status_.as_ref().unwrap()->set_ready();
@@ -201,7 +201,7 @@ void ServerWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
 
   // Create and register services (ownership transferred to rpc_server_)
 #ifdef RAFT_TEST_CORO
@@ -242,7 +242,7 @@ void ServerWorker::SetupService() {
 
   // start rpc server
   Log_debug("starting server at %s", bind_addr.c_str());
-  ret = rpc_server_->start(bind_addr.c_str());
+  ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("server launch failed.");
   }

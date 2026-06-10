@@ -10,17 +10,13 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/rusty.hpp>
-#include <rusty/btreemap.hpp>
-#include <rusty/btreeset.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
-#include <rusty/vec.hpp>
 
 export module rrr.serializable;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.threading;
@@ -341,7 +337,7 @@ class BinaryWriteArchive {
 
   // ---- Variable-length byte sequences. ----------------------------------
   BinaryWriteArchive& operator<<(std::string_view s) {
-    rrr::v64 v_len = static_cast<rrr::i64>(s.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
     *this << v_len;
     if (s.size() > 0) {
       sink_->write(s.data(), s.size());
@@ -375,7 +371,7 @@ class BinaryWriteArchive {
   // `Marshal` operator<<, so byte-for-byte compatibility holds.
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::Vec<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -383,7 +379,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::vector<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -391,7 +387,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::list<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -399,7 +395,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::BTreeSet<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -407,7 +403,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::set<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -415,7 +411,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const rusty::HashSet<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -423,7 +419,7 @@ class BinaryWriteArchive {
 
   template<class T>
   BinaryWriteArchive& operator<<(const std::unordered_set<T>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
     return *this;
@@ -431,7 +427,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
@@ -444,7 +440,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const std::map<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) {
       *this << it->first << it->second;
@@ -454,7 +450,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.len());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
     // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, V&>` (post-2026-04 API).
@@ -467,7 +463,7 @@ class BinaryWriteArchive {
 
   template<class K, class V>
   BinaryWriteArchive& operator<<(const std::unordered_map<K, V>& v) {
-    rrr::v64 v_len = static_cast<rrr::i64>(v.size());
+    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
     *this << v_len;
     for (auto it = v.begin(); it != v.end(); ++it) {
       *this << it->first << it->second;
@@ -766,13 +762,44 @@ class BinaryReadArchive {
 //
 // Downcasting: `dynamic_cast<T*>(proxy.get())` recovers the concrete
 // derived type.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ abstract class.
+// Tier-2.1 of the rrr trait sweep — same `pub trait` → namespace-
+// scope-class pattern as PollableBase / Job / Channel*Base.
+//
+// `SerializableSharedPtrHolder<T>` inherits the emitted class as
+// before; the DSL form adds `= delete` for copy/move on the base,
+// but no caller copies/moves a `SerializableBase` value — it's only
+// reachable through `std::shared_ptr<SerializableBase>`, which only
+// needs the base to be polymorphic-deletable.
+#if RUSTYCPP_RUST
+pub trait SerializableBase {
+    fn save(&self, ar: &mut BinaryWriteArchive);
+    fn load(&mut self, ar: &mut BinaryReadArchive);
+    fn kind(&self) -> i32;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.1 version=1 rust_sha256=09faf724fbedcb9cf6f47203e2f6865062f27426a1e4b6a2f2c53a8bfe3afa60*/
 class SerializableBase {
- public:
-  virtual ~SerializableBase() = default;
-  virtual void save(BinaryWriteArchive& ar) const = 0;
-  virtual void load(BinaryReadArchive& ar) = 0;
-  virtual int32_t kind() const = 0;
+public:
+    virtual ~SerializableBase() noexcept(false) {}
+    virtual void save(BinaryWriteArchive& ar) const = 0;
+    virtual void load(BinaryReadArchive& ar) = 0;
+    virtual int32_t kind() const = 0;
+    SerializableBase(const SerializableBase&) = delete;
+    SerializableBase& operator=(const SerializableBase&) = delete;
+    SerializableBase(SerializableBase&&) = delete;
+    SerializableBase& operator=(SerializableBase&&) = delete;
+protected:
+    SerializableBase() = default;
 };
+
+template <class U> class SerializableBaseAdapter;
+template <class U> class SerializableBaseAdapterRef;
+template <class U> class SerializableBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=serializable.1*/
 
 using SerializableProxy = std::shared_ptr<SerializableBase>;
 
@@ -1041,9 +1068,25 @@ namespace rrr {
 
 namespace {
 
+// `SerializableRegistryMap` — TU-local POD wrapping the single
+// `HashMap<i32, Factory>` the SpinMutex guards. Mirrors the shape of
+// `AnyMessageRegistryMap` over in any_message.cpp.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
 struct SerializableRegistryMap {
-  rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
+    map: rusty::HashMap<i32, SerializableRegistry::Factory>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry_map version=1 rust_sha256=86fdf7049e82b2c9a5ffdda569e5e58f144d17e43af1a83bb338aea30c052631*/
+struct SerializableRegistryMap;
+
+struct SerializableRegistryMap {
+    rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
 };
+/*RUSTYCPP:GEN-END id=serializable.registry_map*/
 
 // @unsafe - Returns a reference into a process-wide static singleton; the
 // caller treats the returned reference as `'static`-lifetime, which rusty-cpp

@@ -41,7 +41,7 @@ int main() {
     // Test 2: Timer test (from librrr)
     Log_info("Testing timer...");
     {
-        Timer timer;
+        auto timer = Timer::new_();
         timer.start();
 
         volatile int sum = 0;

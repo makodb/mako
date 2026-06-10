@@ -13,12 +13,37 @@ import std;
 
 export namespace rrr {
 
-enum class LoadBalancingStrategy : uint8_t {
+// `LoadBalancingStrategy` — selection algorithm picked by the
+// LoadBalancer. Authored as inline Rust DSL: the `#if RUSTYCPP_RUST`
+// block below is the source of truth; the transpiler regenerates the
+// matching `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+#[repr(u8)]
+enum LoadBalancingStrategy {
+    RANDOM = 0,
+    ROUND_ROBIN = 1,
+    LEAST_CONNECTIONS = 2,
+    LEAST_LATENCY = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.strategy version=1 rust_sha256=11bb5040a9e54302f28bb33abcd98c64893bcafd45c7d348ad0f77d281b71d5c*/
+enum class LoadBalancingStrategy;
+constexpr LoadBalancingStrategy LoadBalancingStrategy_RANDOM();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_ROUND_ROBIN();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_CONNECTIONS();
+constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_LATENCY();
+
+enum class LoadBalancingStrategy {
     RANDOM = 0,
     ROUND_ROBIN = 1,
     LEAST_CONNECTIONS = 2,
     LEAST_LATENCY = 3
 };
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_RANDOM() { return LoadBalancingStrategy::RANDOM; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_ROUND_ROBIN() { return LoadBalancingStrategy::ROUND_ROBIN; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_CONNECTIONS() { return LoadBalancingStrategy::LEAST_CONNECTIONS; }
+inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_LATENCY() { return LoadBalancingStrategy::LEAST_LATENCY; }
+/*RUSTYCPP:GEN-END id=load_balancer.strategy*/
 
 inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strategy) {
     switch (strategy) {
@@ -33,10 +58,9 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
 // `LoadBalancerState` — single-counter round-robin index holder.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute so existing call sites
-// (`LoadBalancerState state_;` as a member, `LoadBalancerState{}`
-// inserted into a `BTreeMap`) keep compiling.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new()` lowers
+// to a `static LoadBalancerState new_()` factory; callers construct
+// via the factory rather than direct ctor syntax.
 //
 // Behavioral diffs from the original C++ class:
 //   * `next_round_robin_index()` becomes `const`. It only mutates the
@@ -51,14 +75,13 @@ inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strat
 //     DSL-migrated classes in this branch).
 #if RUSTYCPP_RUST
 struct LoadBalancerState {
-    round_robin_index_field: rusty::Cell<usize>,
+    round_robin_index_field: Cell<usize>,
 }
 
 impl LoadBalancerState {
-    #[cpp_ctor]
     fn new() -> LoadBalancerState {
         LoadBalancerState {
-            round_robin_index_field: rusty::Cell::<usize>::new(0usize),
+            round_robin_index_field: Cell::<usize>::new(0usize),
         }
     }
 
@@ -77,21 +100,21 @@ impl LoadBalancerState {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=4f03e300b96cfac2cf0f36f06c0d0db5252a1da7b3b9045074e2829cef1acfbf*/
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.1 version=1 rust_sha256=9a65aa8a0df8c08d110e5f08193b07481fb250775b17a92d1a966f06e05fe705*/
 struct LoadBalancerState;
 
 struct LoadBalancerState {
     rusty::Cell<size_t> round_robin_index_field;
 
-    LoadBalancerState();
+    static LoadBalancerState new_();
     size_t next_round_robin_index(size_t pool_size) const;
     void reset() const;
 };
 
 
-LoadBalancerState::LoadBalancerState()
-    : round_robin_index_field(rusty::Cell<size_t>::new_(static_cast<size_t>(0)))
-{}
+LoadBalancerState LoadBalancerState::new_() {
+    return LoadBalancerState{.round_robin_index_field = rusty::Cell<size_t>::new_(static_cast<size_t>(0))};
+}
 
 size_t LoadBalancerState::next_round_robin_index(size_t pool_size) const {
     if (rusty::detail::deref_if_pointer_like(pool_size) == static_cast<size_t>(0)) {

@@ -15,11 +15,25 @@ import std;
 
 export namespace rrr {
 
-inline uint64_t heartbeat_time_us() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<uint64_t>(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000;
+// Wrapper around rusty::sys::time::clock_monotonic_us. Authored as
+// inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the source
+// of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Same shape as
+// `current_time_us` (circuit_breaker.cpp) and `queued_request_time_us`
+// (request_queue.cpp) — body delegates to the @safe rusty wrapper
+// instead of calling `clock_gettime(CLOCK_MONOTONIC)` directly.
+#if RUSTYCPP_RUST
+fn heartbeat_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.heartbeat_time_us version=1 rust_sha256=7074d1b727630247c224432d96fd2828d55e7b0e8017939f22176b0e4699428e*/
+uint64_t heartbeat_time_us();
+
+uint64_t heartbeat_time_us() {
+    return rusty::sys::time::clock_monotonic_us();
+}
+/*RUSTYCPP:GEN-END id=heartbeat.heartbeat_time_us*/
 
 // Type alias for the heartbeat timeout callback. Defined outside the
 // DSL block so the inline-Rust source can refer to it by an opaque
@@ -27,36 +41,101 @@ inline uint64_t heartbeat_time_us() {
 // template arguments like `rusty::Function<void()>` directly).
 using HeartbeatTimeoutCallback = rusty::Function<void()>;
 
-// HeartbeatConfig is a plain aggregate POD: no user-declared
-// constructors, fields carry in-class default initializers that the
-// previous default ctor body matched. Intentionally kept in plain
-// C++ (not migrated to inline-Rust DSL) because the DSL does not
-// emit per-field in-class `= default` initializers, and the few
-// `HeartbeatConfig config; config.X = ...;` default-mutate-customize
-// callers need those documented defaults present after default
-// construction.
-//
-// The previous user-defined default and parameterized ctors were
-// dropped; the parameterized form was used only by the three named
-// factories below, which now use positional aggregate-init.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static HeartbeatConfig new_()` factory (the balanced default).
+// Callers use `::aggressive()`, `::relaxed()`, `::disabled()`,
+// `::defaults()`, or brace-init. Test sites that previously
+// default-constructed `HeartbeatConfig cfg;` move to
+// `auto cfg = HeartbeatConfig::defaults();`.
+#if RUSTYCPP_RUST
 struct HeartbeatConfig {
-    bool enabled = true;
-    uint32_t interval_ms = 10000;
-    uint32_t timeout_ms = 5000;
-    uint32_t max_missed = 3;
+    enabled: bool,
+    interval_ms: u32,
+    timeout_ms: u32,
+    max_missed: u32,
+}
 
-    static HeartbeatConfig aggressive() {
-        return HeartbeatConfig{true, 5000, 2000, 2};
+impl HeartbeatConfig {
+    fn new() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 10000u32,
+            timeout_ms: 5000u32,
+            max_missed: 3u32,
+        }
     }
 
-    static HeartbeatConfig relaxed() {
-        return HeartbeatConfig{true, 30000, 15000, 5};
+    fn defaults() -> HeartbeatConfig {
+        HeartbeatConfig::new()
     }
 
-    static HeartbeatConfig disabled() {
-        return HeartbeatConfig{false, 0, 0, 0};
+    fn aggressive() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 5000u32,
+            timeout_ms: 2000u32,
+            max_missed: 2u32,
+        }
     }
+
+    fn relaxed() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: true,
+            interval_ms: 30000u32,
+            timeout_ms: 15000u32,
+            max_missed: 5u32,
+        }
+    }
+
+    fn disabled() -> HeartbeatConfig {
+        HeartbeatConfig {
+            enabled: false,
+            interval_ms: 0u32,
+            timeout_ms: 0u32,
+            max_missed: 0u32,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.2 version=1 rust_sha256=ce1955104c60643b36350d6c096ba3ed8bd4b54d5049a8c3d16ea914e4d69b49*/
+struct HeartbeatConfig;
+
+struct HeartbeatConfig {
+    bool enabled;
+    uint32_t interval_ms;
+    uint32_t timeout_ms;
+    uint32_t max_missed;
+
+    static HeartbeatConfig new_();
+    static HeartbeatConfig defaults();
+    static HeartbeatConfig aggressive();
+    static HeartbeatConfig relaxed();
+    static HeartbeatConfig disabled();
 };
+
+
+HeartbeatConfig HeartbeatConfig::new_() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(10000), .timeout_ms = static_cast<uint32_t>(5000), .max_missed = static_cast<uint32_t>(3)};
+}
+
+HeartbeatConfig HeartbeatConfig::defaults() {
+    return HeartbeatConfig::new_();
+}
+
+HeartbeatConfig HeartbeatConfig::aggressive() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(5000), .timeout_ms = static_cast<uint32_t>(2000), .max_missed = static_cast<uint32_t>(2)};
+}
+
+HeartbeatConfig HeartbeatConfig::relaxed() {
+    return HeartbeatConfig{.enabled = true, .interval_ms = static_cast<uint32_t>(30000), .timeout_ms = static_cast<uint32_t>(15000), .max_missed = static_cast<uint32_t>(5)};
+}
+
+HeartbeatConfig HeartbeatConfig::disabled() {
+    return HeartbeatConfig{.enabled = false, .interval_ms = static_cast<uint32_t>(0), .timeout_ms = static_cast<uint32_t>(0), .max_missed = static_cast<uint32_t>(0)};
+}
+/*RUSTYCPP:GEN-END id=heartbeat.2*/
 
 // `HeartbeatManager` — single-threaded heartbeat tracker. All
 // time/count/flag state is `rusty::Cell<T>` for trivially-copyable
@@ -67,10 +146,10 @@ struct HeartbeatConfig {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute so every existing call site
-// (`HeartbeatManager hb(cfg);` in tests, `heartbeat_manager_(...)`
-// in the ClientConnection ctor init-list) keeps compiling unchanged.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new(config)`
+// lowers to a `static HeartbeatManager new_(const HeartbeatConfig&)`
+// factory; callers construct via the factory rather than direct ctor
+// syntax.
 //
 // Behavioral diffs from the original C++ class:
 //   * Methods that previously were non-const but only touched Cell
@@ -88,30 +167,29 @@ struct HeartbeatConfig {
 #if RUSTYCPP_RUST
 struct HeartbeatManager {
     config_field: HeartbeatConfig,
-    last_send_time: rusty::Cell<u64>,
-    last_recv_time: rusty::Cell<u64>,
-    missed_count_field: rusty::Cell<u32>,
-    pending_pong: rusty::Cell<bool>,
-    timed_out: rusty::Cell<bool>,
+    last_send_time: Cell<u64>,
+    last_recv_time: Cell<u64>,
+    missed_count_field: Cell<u32>,
+    pending_pong: Cell<bool>,
+    timed_out: Cell<bool>,
     on_timeout: HeartbeatTimeoutCallback,
 }
 
 impl HeartbeatManager {
-    #[cpp_ctor]
     fn new(config: &HeartbeatConfig) -> HeartbeatManager {
         HeartbeatManager {
-            config_field: rusty::clone(config),
-            last_send_time: rusty::Cell::<u64>::new(0u64),
-            last_recv_time: rusty::Cell::<u64>::new(0u64),
-            missed_count_field: rusty::Cell::<u32>::new(0u32),
-            pending_pong: rusty::Cell::<bool>::new(false),
-            timed_out: rusty::Cell::<bool>::new(false),
+            config_field: config.clone(),
+            last_send_time: Cell::<u64>::new(0u64),
+            last_recv_time: Cell::<u64>::new(0u64),
+            missed_count_field: Cell::<u32>::new(0u32),
+            pending_pong: Cell::<bool>::new(false),
+            timed_out: Cell::<bool>::new(false),
             on_timeout: HeartbeatTimeoutCallback {},
         }
     }
 
     fn set_config(&mut self, config: &HeartbeatConfig) {
-        self.config_field = rusty::clone(config);
+        self.config_field = config.clone();
         self.reset();
     }
 
@@ -224,7 +302,7 @@ impl HeartbeatManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=f80d1f6815f199a7f94d5ea9692769a8f1395acd109ae8dcf4e7c68180072d65*/
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.1 version=1 rust_sha256=9623c51035abd26d5771427ef7af4a2e7764da6bcf25a3ee8d8ed11c79c166dd*/
 struct HeartbeatManager;
 
 struct HeartbeatManager {
@@ -236,7 +314,7 @@ struct HeartbeatManager {
     rusty::Cell<bool> timed_out;
     HeartbeatTimeoutCallback on_timeout;
 
-    HeartbeatManager(const HeartbeatConfig& config);
+    static HeartbeatManager new_(const HeartbeatConfig& config);
     void set_config(const HeartbeatConfig& config);
     void set_on_timeout(HeartbeatTimeoutCallback callback);
     bool should_send_heartbeat() const;
@@ -252,15 +330,9 @@ struct HeartbeatManager {
 };
 
 
-HeartbeatManager::HeartbeatManager(const HeartbeatConfig& config)
-    : config_field(rusty::clone(std::move(config)))
-    , last_send_time(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , last_recv_time(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
-    , missed_count_field(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-    , pending_pong(rusty::Cell<bool>::new_(false))
-    , timed_out(rusty::Cell<bool>::new_(false))
-    , on_timeout(HeartbeatTimeoutCallback{})
-{}
+HeartbeatManager HeartbeatManager::new_(const HeartbeatConfig& config) {
+    return HeartbeatManager{.config_field = rusty::clone(config), .last_send_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_recv_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .missed_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .pending_pong = rusty::Cell<bool>::new_(false), .timed_out = rusty::Cell<bool>::new_(false), .on_timeout = HeartbeatTimeoutCallback{}};
+}
 
 void HeartbeatManager::set_config(const HeartbeatConfig& config) {
     this->config_field = rusty::clone(config);

@@ -62,16 +62,16 @@ void client_setup_heartbeat(int num_clients) {
   if (hb) {
     // setup controller rpc server
     cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-    cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
+    cli_hb_server_g = new rrr::Server(rrr::Server::new_(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone())));
 
     // Create service with Arc<ClientStatus>, register as owned Box<Service>
-    cli_hb_server_g->reg_service(rusty::make_box<ClientControlServiceImpl>(
+    cli_hb_server_g->reg_service_typed(rusty::make_box<ClientControlServiceImpl>(
         client_status_g.as_ref().unwrap().clone()));
 
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());
     std::string server_address = std::string("0.0.0.0:").append(ctrl_port);
     Log_info("Start control server on port %s", ctrl_port.c_str());
-    cli_hb_server_g->start(server_address.c_str());
+    cli_hb_server_g->start(reinterpret_cast<const int8_t*>(server_address.c_str()));
   }
 }
 

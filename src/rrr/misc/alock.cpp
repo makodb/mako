@@ -14,11 +14,13 @@ module;
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <rusty/once.hpp>
 #include <rusty/rusty.hpp>
 
 export module rrr.alock;
 
 import std;
+import rusty;
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.callback_wrapper;
@@ -596,9 +598,19 @@ class TimeoutALock: public ALock {
 
  public:
 
+  // @safe - Rust-idiomatic singleton accessor (mirrors
+  // `std::sync::OnceLock<Alarm>` + `get_or_init`).
+  //
+  // Replaces the C++11 function-local static (Meyers singleton).
+  // Same laziness, same thread-safe first-call init, but with a
+  // direct mapping to Rust's `OnceLock<T>` for future DSL migration.
+  //
+  // Alarm is now a DSL-emitted struct without a default ctor, so we
+  // build via the `Alarm::new_()` factory.
   static Alarm &get_alarm_s() {
-    static Alarm alarm;
-    return alarm;
+    static rusty::OnceCell<Alarm> inst;
+    inst.get_or_init([]() -> Alarm { return Alarm::new_(); });
+    return *inst.get_mut();
   }
 
   uint64_t id_locked_ = 0;
@@ -632,7 +644,7 @@ class TimeoutALock: public ALock {
   virtual ~TimeoutALock();
 
   //void safe_check() {
-  //auto tm_now = rrr::Time::now();
+  //auto tm_now = rrr::Time::now(false);
   //if (tm_last_ != 0 && tm_now - tm_last_ > 5 * 1000 * 1000) {
   //    verify(0);
   //}
@@ -679,8 +691,11 @@ class ALockGroup {
   // of concurrency should use SpinMutex<Inner>, not a separate
   // std::mutex.
 
-  rusty::BTreeMap<ALock *, uint64_t> locked_;
-  rusty::BTreeMap<ALock *, ALock::type_t> tolock_;
+  // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
+  // unresolved transpiler bugs (see reactor.cpp / alarm.cpp comments).
+  // ALockGroup only needs ordered map-of-pointer-keys; std::map suffices.
+  std::map<ALock *, uint64_t> locked_;
+  std::map<ALock *, ALock::type_t> tolock_;
 
   uint64_t priority_;
   ALockWoundCallback wound_callback_;
@@ -739,7 +754,7 @@ class ALockGroup {
       //	    mtx_locks_.lock();
       //	    tolock_.insert(std::pair<ALock*, uint64_t>(&alock, 0));
       //	    tolock_.insert(std::pair<ALock*, ALock::type_t>(&alock, type));
-      tolock_.insert(alock, type);
+      tolock_.emplace(alock, type);  // std::map::emplace (was BTreeMap::insert)
       //	    mtx_locks_.unlock();
     } else {
       verify(0);
@@ -1318,7 +1333,7 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
         // status is RLOCKED, type is WLOCK
         // or status is WLOCKED.
         req.set_status(ALockReq::WAIT);
-        uint64_t tm_now = rrr::Time::now();
+        uint64_t tm_now = rrr::Time::now(false);
         uint64_t tm_out = tm_now + tm_wait_;
         auto& alarm = get_alarm_s();
         // @unsafe - Lambda captures reference to req
@@ -1379,7 +1394,7 @@ uint32_t TimeoutALock::lock_all(rusty::Vec<ALockReq*>& lock_reqs) {
             }
 
             it++;
-            //                tm_last_ = rrr::Time::now();
+            //                tm_last_ = rrr::Time::now(false);
             break;
         }
     }

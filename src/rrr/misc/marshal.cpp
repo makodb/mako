@@ -13,13 +13,12 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/fn.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/rusty.hpp>
-#include <rusty/vec.hpp>
 
 export module rrr.marshal;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.misc;
@@ -68,14 +67,27 @@ class Marshal;
 // + read_pos_ and advance read_pos_. When read_pos_ catches up to
 // buf_.size() (fully drained), both reset to zero so steady-state
 // write/read loops don't grow buf_ unboundedly.
+// Pre-reserved capacity on first construction so small payloads don't
+// pay a realloc-on-first-write. 4 KB matches the legacy chunk-list's
+// default chunk size, keeping per-Marshal memory footprint comparable
+// for the bench comparison.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Lifted
+// from `Marshal` class scope (private static constexpr) to namespace
+// scope because DSL constants live at namespace level; the one
+// existing use site references it unqualified, so namespace lookup
+// still resolves to the new constant.
+#if RUSTYCPP_RUST
+const kInitialCapacity: usize = 4096;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=marshal.initial_capacity version=1 rust_sha256=72b7f808695d048223203b2f3e49c2f8b175eace523aaf80b1b560ffaccb10a6*/
+constexpr size_t kInitialCapacity = static_cast<size_t>(4096);
+/*RUSTYCPP:GEN-END id=marshal.initial_capacity*/
+
 class Marshal: public NoCopy {
 private:
-  // Pre-reserved capacity on first construction so small payloads
-  // don't pay a realloc-on-first-write. 4 KB matches the legacy
-  // chunk-list's default chunk size, keeping per-Marshal memory
-  // footprint comparable for the bench comparison.
-  static constexpr std::size_t kInitialCapacity = 4096;
-
   rusty::Vec<std::uint8_t> buf_{};
   std::size_t read_pos_{0};
   rrr::i32 write_cnt_{0};
@@ -131,6 +143,21 @@ public:
   // @safe - Trivial dtor — Vec releases the heap on drop. noexcept to
   // match NoCopy::~NoCopy()'s exception spec.
   ~Marshal() noexcept = default;
+
+  // @safe - Explicit move declarations restore implicit-move
+  // suppression caused by the user-declared destructor above. With
+  // these, `Marshal` becomes move-constructible / move-assignable
+  // (delegated through NoCopy's defaulted move members + rusty::Vec's
+  // move). Copy stays deleted via NoCopy.
+  Marshal(Marshal&&) noexcept = default;
+  Marshal& operator=(Marshal&&) noexcept = default;
+
+  // @safe - Rust-style factory matching `fn new() -> Self`. Equivalent
+  // to default construction; provided for symmetry with the rest of
+  // the rrr `new_()` rollout.
+  static Marshal new_() {
+    return Marshal{};
+  }
 
   // @safe - Pre-reserve `block_size` bytes of capacity. The chunk-list
   // version allocated a single chunk of this size up front; here we
@@ -440,7 +467,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) {
 // @safe
 // @lifetime: (&'a, const std::string&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
-  v64 v_len = v.length();
+  v64 v_len{static_cast<rrr::i64>(v.length())};
   m << v_len;
   if (v_len.get() > 0) {
     verify(m.write(v.c_str(), v_len.get()) == (size_t) v_len.get());
@@ -470,7 +497,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
 // @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::Vec<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -484,7 +511,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
   // Keep std::vector support for non-rrr call sites while rrr internals move to rusty containers.
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -497,7 +524,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
 // @lifetime: (&'a, const std::list<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename std::list<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -510,7 +537,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
 // @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::BTreeSet<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
@@ -523,7 +550,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
 // @lifetime: (&'a, const std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -536,7 +563,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
 // @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
@@ -552,7 +579,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v)
 // @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
        ++it) {
@@ -566,7 +593,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const rusty::HashSet<T> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     for (typename rusty::HashSet<T>::const_iterator it = v.begin();
          it != v.end(); ++it) {
@@ -580,7 +607,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_set<T> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::unordered_set<T>::const_iterator it = v.begin();
        it != v.end(); ++it) {
@@ -594,7 +621,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const rusty::HashMap<K, V> &v) {
-    v64 v_len = v.size();
+    v64 v_len{static_cast<rrr::i64>(v.size())};
     m << v_len;
     // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
@@ -611,7 +638,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_map<K, V> &v) {
-  v64 v_len = v.size();
+  v64 v_len{static_cast<rrr::i64>(v.size())};
   m << v_len;
   for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
        it != v.end(); ++it) {

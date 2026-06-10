@@ -207,7 +207,7 @@ static void* client_proc(void* arg_ptr) {
     int thread_idx = arg->thread_idx;
     auto poll_thread_worker = PollThread::create();
     auto cl = Client::create(poll_thread_worker);
-    verify(cl->connect(svr_addr) == 0);
+    verify(cl->connect(reinterpret_cast<const int8_t*>(svr_addr), true) == 0);
     FutureAttr fu_attr;
     i32 rpc_id;
 
@@ -406,9 +406,9 @@ int main(int argc, char **argv) {
     request_str = string(byte_size, 'x');
     if (is_server) {
         auto server_poll_thread = rusty::Some(PollThread::create());
-        Server svr(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
-        svr.reg_service(rusty::make_box<BenchmarkService>());
-        verify(svr.start(svr_addr) == 0);
+        auto svr = Server::new_(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
+        svr.reg_service_typed(rusty::make_box<BenchmarkService>());
+        verify(svr.start(reinterpret_cast<const int8_t*>(svr_addr)) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);
         Pthread_cond_init(&g_stop_cond, nullptr);

@@ -1,6 +1,5 @@
 #include <stddef.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
@@ -9,6 +8,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 // External safety annotations for std::shared_ptr atomic internals
 // and RPC server types with mutable fields
@@ -131,17 +131,17 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThread::create());
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Create service, store raw pointer for test access, server takes ownership via Box
         auto service_box = rusty::make_box<TestFutureService>();
         service_ = service_box.get();  // Store raw pointer before transferring ownership
         server->reg_service(std::move(service_box));
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port)).c_str())), 0);
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(50));
     }

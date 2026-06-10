@@ -123,7 +123,7 @@ class FakeChannelFactory {
         // Not exercised by these tests.
         return rusty::None;
     }
-    const char* backend_name() const { return "fake"; }
+    std::string backend_name() const { return "fake"; }
 
     // Test introspection.
     std::size_t connect_count() {
@@ -160,7 +160,7 @@ class FakeChannelFactoryAdapter : public ChannelFactoryBase {
         : f_(std::move(p)) {}
     ConnectResult                       connect(std::string_view a) override { return f_->connect(a); }
     rusty::Option<ChannelListenerProxy> make_listener() override             { return f_->make_listener(); }
-    const char*                         backend_name() const override        { return f_->backend_name(); }
+    std::string                         backend_name() const override        { return f_->backend_name(); }
  private:
     std::shared_ptr<FakeChannelFactory> f_;
 };

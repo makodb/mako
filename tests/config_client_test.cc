@@ -70,12 +70,12 @@ protected:
         int port = 19100 + (port_counter_.fetch_add(1) % 900);
         server_addr_ = "127.0.0.1:" + std::to_string(port);
 
-        server_ = new rrr::Server(poll_thread_.as_ref().unwrap().clone());
+        server_ = new rrr::Server(rrr::Server::new_(poll_thread_.as_ref().unwrap().clone()));
         // Note: service_ will be owned by the Box after this call
-        server_->reg_service(rusty::Box<ConfigServiceImpl>(service_));
+        server_->reg_service_typed(rusty::Box<ConfigServiceImpl>(service_));
 
         // Start server
-        int result = server_->start(server_addr_.c_str());
+        int result = server_->start(reinterpret_cast<const int8_t*>(server_addr_.c_str()));
         ASSERT_EQ(result, 0) << "Failed to start server on " << server_addr_;
 
         // Give server time to start

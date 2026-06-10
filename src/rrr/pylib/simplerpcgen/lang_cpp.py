@@ -179,7 +179,14 @@ def emit_proxy_request_call(service, func, marshal_args, f):
                 f.writeln("__m__ << %s;" % arg)
         f.writeln("});")
     else:
-        f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+        # Always emit the 3-arg `request(rpc_id, attr, write_fn)` form,
+        # even when the RPC has no input fields (use an empty lambda).
+        # This collapses Client::request's overload set toward a single
+        # canonical 3-arg method, which is what the inline-Rust DSL
+        # needs (Rust has no method overloading). The empty-lambda case
+        # was previously emitted as `request(rpc_id, attr)` (the no-fn
+        # overload), the only deptran consumer of that overload.
+        f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [](rrr::BinaryWriteArchive&) {});" % (service.name, func.name.upper()))
 
 def emit_typed_proxy_future_wrapper(func, f):
     wrapper_name = typed_proxy_future_wrapper_name(func)
@@ -252,7 +259,11 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
                     f.writeln("__m__ << %s;" % param)
             f.writeln("});")
         else:
-            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+            # Empty-input case — always emit the 3-arg form with an
+            # empty lambda, matching `emit_proxy_request_call`. Keeps
+            # the no-fn `Client::request(rpc_id, attr)` overload
+            # un-consumed, which is what the inline-Rust DSL needs.
+            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__, [](rrr::BinaryWriteArchive&) {});" % (service.name, func.name.upper()))
         f.writeln("if (__fu_result__.is_err()) {")
         with f.indent():
             f.writeln("return %s::Err(__fu_result__.unwrap_err());" % result_type)
@@ -360,7 +371,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             for _, field_name in input_fields:
                                 f.writeln("__req_ar__ >> __typed_req__.%s;" % field_name)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
-                        f.writeln("rrr::DeferredReply __defer__(")
+                        f.writeln("auto __defer__ = rrr::DeferredReply::new_(")
                         with f.indent():
                             f.writeln("std::move(req),")
                             f.writeln("weak_sconn,")

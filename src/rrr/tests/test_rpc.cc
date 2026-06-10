@@ -117,13 +117,13 @@ protected:
             auto& poll_ref = poll_thread_worker_.as_ref().unwrap();
             auto poll_clone = poll_ref.clone();
             auto server_poll = rusty::Some(std::move(poll_clone));
-            server = new Server(std::move(server_poll));
+            server = new Server(Server::new_(std::move(server_poll)));
 
             auto service_box = rusty::make_box<TestService>();
             service_ = service_box.get();
-            server->reg_service(std::move(service_box));
+            server->reg_service_typed(std::move(service_box));
 
-            if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) == 0) {
+            if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
                 started = true;
                 break;
             }
@@ -137,7 +137,7 @@ protected:
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
@@ -153,7 +153,7 @@ protected:
 TEST_F(RPCTest, BasicNop) {
     std::string input = "Hello, RPC!";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -172,7 +172,7 @@ TEST_F(RPCTest, MultipleRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -204,7 +204,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
             // Each thread creates its own client
             auto thread_client = Client::create(worker_clone);
             std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
-            if (thread_client->connect(server_addr.c_str()) != 0) {
+            if (thread_client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true) != 0) {
                 return;  // Connection failed
             }
             std::this_thread::sleep_for(milliseconds(10));  // Wait for connection
@@ -212,7 +212,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
             for (int i = 0; i < requests_per_thread; i++) {
                 std::string input = "Thread_" + std::to_string(t) + "_Request_" + std::to_string(i);
                 auto fu_result = thread_client->request(
-                    benchmark::BenchmarkService::FAST_NOP,
+                    benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
                     [&](BinaryWriteArchive& m) { m << input; }
                 );
                 if (fu_result.is_err()) continue;
@@ -241,7 +241,7 @@ TEST_F(RPCTest, LargePayload) {
     std::string large_input(1000000, 'X');
 
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << large_input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -257,7 +257,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::NOP,
+            benchmark::BenchmarkService::NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -271,7 +271,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         i32 prime_input = 17;
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::PRIME,
+            benchmark::BenchmarkService::PRIME, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << prime_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -289,7 +289,7 @@ TEST_F(RPCTest, DifferentMethods) {
     {
         i32 composite_input = 24;
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::PRIME,
+            benchmark::BenchmarkService::PRIME, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << composite_input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -307,7 +307,7 @@ TEST_F(RPCTest, TimeoutHandling) {
     // Test timed_wait functionality with a fast request
     std::string input = "timeout_test";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -350,7 +350,7 @@ TEST_F(RPCTest, CallbackMechanism) {
 }
 
 TEST_F(RPCTest, InvalidRequest) {
-    auto fu_result = client.as_ref().unwrap()->request(99999);
+    auto fu_result = client.as_ref().unwrap()->request(99999, FutureAttr(), [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();
@@ -362,7 +362,7 @@ TEST_F(RPCTest, InvalidRequest) {
 TEST_F(RPCTest, EmptyPayload) {
     std::string dummy = "";
     auto fu_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << dummy; }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -376,7 +376,7 @@ TEST_F(RPCTest, EmptyPayload) {
 TEST_F(RPCTest, ConnectionResilience) {
     std::string input1 = "before_reconnect";
     auto fu1_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input1; }
     );
     ASSERT_TRUE(fu1_result.is_ok());
@@ -393,13 +393,13 @@ TEST_F(RPCTest, ConnectionResilience) {
 
     // Create new client using factory method
     client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-    ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
 
     std::this_thread::sleep_for(milliseconds(100));
 
     std::string input2 = "after_reconnect";
     auto fu2_result = client.as_ref().unwrap()->request(
-        benchmark::BenchmarkService::FAST_NOP,
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
         [&](BinaryWriteArchive& m) { m << input2; }
     );
     ASSERT_TRUE(fu2_result.is_ok());
@@ -417,7 +417,7 @@ TEST_F(RPCTest, PipelinedRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string dummy = "";
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << dummy; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -441,7 +441,7 @@ TEST_F(RPCTest, SlowClientFastServer) {
     for (int i = 0; i < 100; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::FAST_NOP,
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -469,7 +469,7 @@ TEST_F(RPCTest, FastClientSlowServer) {
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(
-            benchmark::BenchmarkService::NOP,
+            benchmark::BenchmarkService::NOP, FutureAttr(),
             [&](BinaryWriteArchive& m) { m << input; }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -506,7 +506,7 @@ protected:
 TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("127.0.0.1:9999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:9999"), true);
 
     EXPECT_NE(result, 0);
 
@@ -517,7 +517,7 @@ TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
 TEST_F(ConnectionErrorTest, InvalidAddress) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("invalid_address:1234");
+    int result = client->connect(reinterpret_cast<const int8_t*>("invalid_address:1234"), true);
 
     EXPECT_NE(result, 0);
 
@@ -528,7 +528,7 @@ TEST_F(ConnectionErrorTest, InvalidAddress) {
 TEST_F(ConnectionErrorTest, InvalidPort) {
     auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
-    int result = client->connect("127.0.0.1:99999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:99999"), true);
 
     EXPECT_NE(result, 0);
 
@@ -566,7 +566,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
 
                 // Connect to server (construct address from port)
                 std::string server_addr = "127.0.0.1:" + std::to_string(port);
-                int conn_result = thread_client->connect(server_addr.c_str());
+                int conn_result = thread_client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true);
                 if (conn_result != 0) {
                     thread_failures++;
                     per_thread_results[tid] = {thread_successes, thread_failures};
@@ -582,7 +582,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
                                       "_Request_" + std::to_string(i);
 
                     auto fu_result = thread_client->request(
-                        benchmark::BenchmarkService::FAST_NOP,
+                        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
                         [&](BinaryWriteArchive& m) { m << input; }
                     );
 
