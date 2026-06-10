@@ -6,8 +6,8 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 238  
-**Span across all decls (LOC):** 9190
+**Decl count (top-level class/struct/enum/union):** 239  
+**Span across all decls (LOC):** 9175
 
 ## Buckets
 
@@ -15,10 +15,10 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|---:|---:|
 | trivial | 3 | 95 | 1.0% |
 | trivial-blocked | 12 | 573 | 6.2% |
-| refactor-then-dsl | 31 | 1817 | 19.8% |
-| needs-transpiler | 59 | 5360 | 58.3% |
+| refactor-then-dsl | 30 | 1782 | 19.4% |
+| needs-transpiler | 59 | 5360 | 58.4% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 130 | 1228 | 13.4% |
+| already-dsl | 132 | 1248 | 13.6% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -56,9 +56,9 @@ from the repo root to regenerate both this file and the CSV.
 | `rpc/tcp_channel.cpp` | 376 |
 | `rpc/idempotency.cpp` | 311 |
 | `rpc/inmemory_channel.cpp` | 300 |
-| `rpc/server.cpp` | 275 |
 | `misc/cpuinfo.cpp` | 253 |
 | `misc/marshal.cpp` | 251 |
+| `rpc/server.cpp` | 240 |
 | `reactor/epoll_wrapper.cc` | 240 |
 | `rpc/completion_tracker.cpp` | 222 |
 | `rpc/request_queue.cpp` | 216 |

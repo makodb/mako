@@ -175,14 +175,15 @@ class ServerChannelRecvTest : public ::testing::Test {
         rusty::Vec<rusty::RefCell<ServiceProxy>> services;
         auto pending = rusty::Arc<std::atomic<int>>::make(0);
         auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-        ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
-            std::move(rpc_to_service),
-            std::move(fast_rpc_ids),
-            std::move(services),
-            std::string("0.0.0.0:0"),
-            std::move(pending),
-            std::move(drop),
-            kFakeServerInstanceId));
+        ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
+            RpcServiceContext::new_(
+                std::move(rpc_to_service),
+                std::move(fast_rpc_ids),
+                std::move(services),
+                std::string("0.0.0.0:0"),
+                std::move(pending),
+                std::move(drop),
+                kFakeServerInstanceId)));
         sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
             ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
         // Wire `weak_self_` so the on_frame callback can upgrade.
@@ -303,14 +304,15 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     fast_rpc_ids.insert(RecordingService::kEchoRpcId);
     auto pending = rusty::Arc<std::atomic<int>>::make(0);
     auto drop = rusty::Arc<std::atomic<bool>>::make(false);
-    ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
-        std::move(rpc_to_service),
-        std::move(fast_rpc_ids),
-        std::move(services),
-        std::string("0.0.0.0:0"),
-        std::move(pending),
-        std::move(drop),
-        kFakeServerInstanceId));
+    ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
+        RpcServiceContext::new_(
+            std::move(rpc_to_service),
+            std::move(fast_rpc_ids),
+            std::move(services),
+            std::string("0.0.0.0:0"),
+            std::move(pending),
+            std::move(drop),
+            kFakeServerInstanceId)));
     sconn_ = rusty::Some(rusty::Arc<ServerConnection>::make(
         ctx_.as_ref().unwrap().clone(), /*socket=*/-1));
     const_cast<ServerConnection&>(*sconn_.as_ref().unwrap().get())

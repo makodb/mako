@@ -283,6 +283,14 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
   return rusty::make_box<ServiceTypedBoxAdapter<T>>(std::move(svc));
 }
 
+// Forward-declared atomic typedefs (full definitions repeated below near
+// Server, where the original definitions live). Hoisted here because
+// RpcServiceContext lowered to inline-Rust DSL references them in its
+// field types, and the DSL grammar can't parse `std::atomic<...>`.
+// C++ allows redundant identical `using` declarations at namespace scope.
+using ServerPendingRequestsAtomic = std::atomic<int32_t>;
+using ServerDropHeartbeatRepliesAtomic = std::atomic<bool>;
+
 /**
  * Shared context for RPC service dispatch.
  *
@@ -295,43 +303,70 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
  *
  * NOTE: RefCell is single-threaded. All RPC dispatches must occur on the same thread.
  */
-// @safe - All fields are const after construction; the ctor just moves
+// @safe - All fields are const after construction; the factory just moves
 // owned containers into place. No syscalls, no raw pointers.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The previous public ctor was
+// replaced with a `fn new` factory; the 6 `Arc<RpcServiceContext>::make`
+// callers were flipped to `Arc::new_(RpcServiceContext::new_(...))`.
+// The atomic-field types reuse the `ServerPendingRequestsAtomic` and
+// `ServerDropHeartbeatRepliesAtomic` typedefs (defined below) so the DSL
+// emit names match Server's existing pattern.
+#if RUSTYCPP_RUST
 struct RpcServiceContext {
-    // Maps RPC ID to service index for dispatch (immutable after setup)
-    const rusty::HashMap<i32, size_t> rpc_to_service;
-    // RPC IDs that should be dispatched inline (no per-request server fiber).
-    const rusty::HashSet<i32> fast_rpc_ids;
+    rpc_to_service: HashMap<i32, usize>,
+    fast_rpc_ids: HashSet<i32>,
+    services: Vec<RefCell<ServiceProxy>>,
+    addr: std::string,
+    pending_requests: Arc<ServerPendingRequestsAtomic>,
+    drop_heartbeat_replies: Arc<ServerDropHeartbeatRepliesAtomic>,
+    server_instance_id: u64,
+}
 
-    // Owned service proxies wrapped in RefCell for interior mutability
-    // RefCell allows mutable access through const reference (borrow_mut)
-    const rusty::Vec<rusty::RefCell<ServiceProxy>> services;
+impl RpcServiceContext {
+    fn new(
+        rpc_map: HashMap<i32, usize>,
+        fast_rpc_set: HashSet<i32>,
+        svcs: Vec<RefCell<ServiceProxy>>,
+        address: std::string,
+        pending_counter: Arc<ServerPendingRequestsAtomic>,
+        drop_heartbeats: Arc<ServerDropHeartbeatRepliesAtomic>,
+        instance_id: u64,
+    ) -> RpcServiceContext {
+        RpcServiceContext {
+            rpc_to_service: rpc_map,
+            fast_rpc_ids: fast_rpc_set,
+            services: svcs,
+            addr: address,
+            pending_requests: pending_counter,
+            drop_heartbeat_replies: drop_heartbeats,
+            server_instance_id: instance_id,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.rpc_service_context version=1 rust_sha256=bd8f74e7bb86875f04ef69793e587526f572c45107731574d786dd4948e50da7*/
+struct RpcServiceContext;
 
-    // Server address for logging (immutable after setup)
-    const std::string addr;
-    // Shared in-flight request counter for dispatch-lifetime tracking.
-    const rusty::Arc<std::atomic<int>> pending_requests;
-    // Test/runtime toggle to intentionally drop heartbeat probe replies.
-    const rusty::Arc<std::atomic<bool>> drop_heartbeat_replies;
-    // Stable server instance ID for restart detection in response headers.
-    const uint64_t server_instance_id;
+struct RpcServiceContext {
+    rusty::HashMap<int32_t, size_t> rpc_to_service;
+    rusty::HashSet<int32_t> fast_rpc_ids;
+    rusty::Vec<rusty::RefCell<ServiceProxy>> services;
+    std::string addr;
+    rusty::Arc<ServerPendingRequestsAtomic> pending_requests;
+    rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeat_replies;
+    uint64_t server_instance_id;
 
-    // Constructor taking ownership of all data
-    RpcServiceContext(rusty::HashMap<i32, size_t> rpc_map,
-                      rusty::HashSet<i32> fast_rpc_set,
-                      rusty::Vec<rusty::RefCell<ServiceProxy>> svcs,
-                      std::string address,
-                      rusty::Arc<std::atomic<int>> pending_counter,
-                      rusty::Arc<std::atomic<bool>> drop_heartbeats,
-                      uint64_t instance_id)
-        : rpc_to_service(std::move(rpc_map))
-        , fast_rpc_ids(std::move(fast_rpc_set))
-        , services(std::move(svcs))
-        , addr(std::move(address))
-        , pending_requests(std::move(pending_counter))
-        , drop_heartbeat_replies(std::move(drop_heartbeats))
-        , server_instance_id(instance_id) {}
+    static RpcServiceContext new_(rusty::HashMap<int32_t, size_t> rpc_map, rusty::HashSet<int32_t> fast_rpc_set, rusty::Vec<rusty::RefCell<ServiceProxy>> svcs, std::string address, rusty::Arc<ServerPendingRequestsAtomic> pending_counter, rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeats, uint64_t instance_id);
 };
+
+
+RpcServiceContext RpcServiceContext::new_(rusty::HashMap<int32_t, size_t> rpc_map, rusty::HashSet<int32_t> fast_rpc_set, rusty::Vec<rusty::RefCell<ServiceProxy>> svcs, std::string address, rusty::Arc<ServerPendingRequestsAtomic> pending_counter, rusty::Arc<ServerDropHeartbeatRepliesAtomic> drop_heartbeats, uint64_t instance_id) {
+    return RpcServiceContext{.rpc_to_service = std::move(rpc_map), .fast_rpc_ids = std::move(fast_rpc_set), .services = std::move(svcs), .addr = std::move(address), .pending_requests = std::move(pending_counter), .drop_heartbeat_replies = std::move(drop_heartbeats), .server_instance_id = std::move(instance_id)};
+}
+/*RUSTYCPP:GEN-END id=server.rpc_service_context*/
 
 // 5g1: legacy `ServerListener` class deleted. The channel layer's
 // `TcpListener` (registered via `ChannelFactoryProxy::make_listener()`)
@@ -1823,14 +1858,15 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
 
     // Create immutable RpcServiceContext from pending registration data
     std::string addr_str(bind_addr, strlen(bind_addr));
-    self.ctx_field = rusty::Some(rusty::Arc<RpcServiceContext>::make(
-        std::move(self.pending_rpc_to_service_field),
-        std::move(self.pending_fast_rpc_ids_field),
-        std::move(wrapped_services),
-        addr_str,
-        self.pending_requests_field,
-        self.drop_heartbeat_replies_field,
-        self.instance_id_field));
+    self.ctx_field = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
+        RpcServiceContext::new_(
+            std::move(self.pending_rpc_to_service_field),
+            std::move(self.pending_fast_rpc_ids_field),
+            std::move(wrapped_services),
+            addr_str,
+            self.pending_requests_field,
+            self.drop_heartbeat_replies_field,
+            self.instance_id_field)));
 
     // auto-install default TcpFactory if the caller hasn't bound one.
     if (!self.is_channel_factory_bound()) {
