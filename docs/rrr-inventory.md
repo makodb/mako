@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 237  
-**Span across all decls (LOC):** 9203
+**Decl count (top-level class/struct/enum/union):** 238  
+**Span across all decls (LOC):** 9206
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
 | trivial | 4 | 112 | 1.2% |
-| trivial-blocked | 11 | 514 | 5.6% |
+| trivial-blocked | 10 | 511 | 5.6% |
 | refactor-then-dsl | 32 | 1862 | 20.2% |
 | needs-transpiler | 60 | 5388 | 58.5% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 127 | 1210 | 13.1% |
+| already-dsl | 129 | 1216 | 13.2% |
 
 ## Top 20 largest manual decls by LOC
 
