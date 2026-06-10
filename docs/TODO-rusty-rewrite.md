@@ -31,12 +31,19 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    4  |  87 |    0.9%  |
-| trivial-blocked   |   11  | 539 |    5.9%  |
-| refactor-then-dsl |   32  |1,862|   20.2%  |
+| trivial           |    6  | 178 |    1.9%  |
+| trivial-blocked   |    9  | 444 |    4.8%  |
+| refactor-then-dsl |   31  |1,817|   19.7%  |
 | needs-transpiler  |   60  |5,388|   58.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  127  |1,210|   13.1%  |
+| already-dsl       |  129  |1,213|   13.2%  |
+
+(Counts after OwnedFrame's Phase 1 migration + Phase 1c body-scan
+refinements. Phase 1c added defaulted-ctor detection (`Foo() = default;`
+no longer counts as a real user ctor), defaulted-operator detection
+(`Foo& operator=(Foo&&) = default;` no longer counts as an operator
+overload), and a tighter default-arg regex that distinguishes
+`(int x = 0)` from a body expression like `(ttl_ms == 0)`.)
 
 The two bucket-refinement passes (Phase 1a body-scan + Phase 1b file-wide call-site scan) demoted 11 decls out of `trivial` into `trivial-blocked`. Examples by blocker source:
 
@@ -52,18 +59,22 @@ The two bucket-refinement passes (Phase 1a body-scan + Phase 1b file-wide call-s
   - `OwnedFrame` → `std::vector<uint8_t> bytes;` with `frame.bytes.assign(p, p + n)` in a sibling free function.
   - `StacklessProfileCounters` → `std::atomic<size_t> max_slots;` with `g_stackless_profile.max_slots.compare_exchange_weak(...)` in a sibling free function.
 
-### Phase 1 status: nearly exhausted (2026-06-10)
+### Phase 1 status (2026-06-10, after Phase 1c)
 
-The remaining `trivial` bucket is 4 decls totaling 87 LOC, and each is either policy-manual or has an out-of-band blocker that the script can't see yet:
+The `trivial` bucket has 6 decls totaling 178 LOC. The 2 newcomers (`BufferSink`, `CachedResponse`) only surfaced once Phase 1c filtered the false-positive blockers (defaulted operator overloads + body-expression `==` masquerading as default args). Each remaining trivial item is one of: policy-manual, has an out-of-band blocker the script can't see, or has methods whose bodies need to be co-migrated:
 
 | Decl                              | Why it isn't a free win                                                                                                                                                                                                                                                       |
 |-----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `ReconnectPolicy` (20 LOC)        | Source comment documents an explicit decision to keep hand-written — ~20 callers rely on the `Policy p; p.x = ...;` mutate-and-customize idiom, which the DSL's aggregate emit doesn't preserve as transparently.                                                            |
 | `TestMgr` (20 LOC)                | Field is `rusty::Vec<TestCase*>`; method bodies live out-of-class and take raw `int argc, char* argv[]`. Migrating means co-migrating ~50 lines of impl bodies and managing the `OnceCell<TestMgr>` singleton init dance.                                                     |
+| `BufferSink` (21 LOC)             | Methods take `const void* p, size_t n` — DSL grammar doesn't yet accept `const void*`. Migration first needs a `&[u8]` reshape across the SinkBase/SourceBase hierarchy (call out as a Phase 4 precondition: see `Phase 4 — Marshal / Cursor`).                                  |
 | `AnyMessageRegistry` (30 LOC)     | Internal state is a `SpinMutex<HashMap<...>>` of factory callbacks; the `is_a<T>()`, `pack<T>()`, `unpack<T>()` API on `AnyMessage` is templated and inlines the registry lookup. Migrating one without the other fragments the type system.                                  |
 | `Log` (42 LOC)                    | Wraps `std::cerr` / `printf`-style logging with thread-local context. The bodies live out-of-class and the file already opts into per-method `@unsafe { std::cerr is not borrow-checked }` blocks; the class shape is fine but the bodies are where the work is.            |
+| `CachedResponse` (45 LOC)         | POD-ish (4 fields, all defaulted ctors/ops). `set_response_data(const Marshal&)` does `m.peek(...)` + `const_cast<Marshal&>`; `get_response_data(Marshal*)` does `out->write(...)`. Methods are doable in DSL once a `Marshal` reference type works (Phase 4 prereq).             |
 
-**Recommendation**: pivot the active work to Phase 2 (trait migrations). The remaining 4 `trivial` items are small enough to revisit later (e.g. when the `Log` macros get a separate rewrite, or when the rusty-cpp transpiler grows enough features to express `OnceCell<TestMgr>` cleanly), but they aren't where the next 100 LOC of progress comes from. Phase 2 has 32 decls / 1,862 LOC across trait-shaped classes; the bucket already has established precedent (`PollableBase`, `SerializableBase`, `Job`, `Alarm`, `ChannelConnectionBase`, `ChannelListenerBase`, `ChannelFactoryBase` are all migrated traits).
+Note that `OwnedFrame` was migrated in the iteration of 2026-06-10 — see the `rrr/fiber_channel: migrate OwnedFrame to inline Rust DSL` commit.
+
+**Recommendation**: pivot the active work to Phase 2 (trait migrations). The remaining 6 `trivial` items are small enough to revisit later (most of them block on Phase 4 prereqs — Marshal/Cursor reshape; the rest are policy-manual). Phase 2 has 31 decls / 1,817 LOC across trait-shaped classes; the bucket already has established precedent (`PollableBase`, `SerializableBase`, `Job`, `Alarm`, `ChannelConnectionBase`, `ChannelListenerBase`, `ChannelFactoryBase` are all migrated traits).
 
 ## Phase 1 — Convert the trivial bucket (~1–2 weeks, mostly automatable)
 
