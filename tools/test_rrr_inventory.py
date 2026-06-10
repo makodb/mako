@@ -320,6 +320,49 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(len(frame), 1)
         self.assertEqual(frame[0]["bucket"], "trivial")
 
+    def test_defaulted_ctor_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    Foo() = default;
+                    Foo(Foo&&) = default;
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "trivial")
+
+    def test_defaulted_assignment_op_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    Foo& operator=(Foo&&) = default;
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # Defaulted op= must not trigger "operator overload" blocker.
+        self.assertEqual(rows[0]["bucket"], "trivial")
+
+    def test_double_equals_in_body_not_default_arg(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    bool is_expired(uint64_t ttl_ms) const {
+                        if (ttl_ms == 0) return false;
+                        return true;
+                    }
+                    uint64_t timestamp_ms;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # `ttl_ms == 0` body expression must not be mistaken for a
+        # default arg.
+        self.assertEqual(rows[0]["bucket"], "trivial")
+
 
 if __name__ == "__main__":
     unittest.main()
