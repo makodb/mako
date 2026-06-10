@@ -1772,16 +1772,53 @@ inline bool stackless_profile_enabled() {
   return enabled;
 }
 
+// Type aliases — the DSL grammar can't parse `std::atomic<...>` itself,
+// so we hide the template behind typedefs (same pattern as Server's
+// `ServerPendingRequestsAtomic`). C++20 guarantees `std::atomic<T>{}`
+// zero-initializes integer T, so the previous brace-init `{0}` is the
+// same as default-construction; the DSL aggregate emit relies on that.
+using StacklessProfileCountU64 = std::atomic<uint64_t>;
+using StacklessProfileCountUsize = std::atomic<size_t>;
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Pure POD bag of profile counters. The per-field `.load()` /
+// `.fetch_add()` / `.compare_exchange_weak()` calls live in the
+// surrounding free functions (`stackless_profile_update_max_slots`,
+// `stackless_profile_report_periodic`, and the dispatcher hot-path
+// callers); the CAS loop on `max_slots` was the reason this struct
+// was previously trivial-blocked. Moving the struct itself into a
+// DSL block (with the helpers staying as plain C++ free functions
+// against the global) clears that — the DSL emit keeps the same
+// memory layout as the original brace-init form.
+#if RUSTYCPP_RUST
 struct StacklessProfileCounters {
-  std::atomic<uint64_t> reg_calls{0};
-  std::atomic<uint64_t> reg_scan_steps{0};
-  std::atomic<uint64_t> reg_reuse{0};
-  std::atomic<uint64_t> reg_new{0};
-  std::atomic<uint64_t> poll_calls{0};
-  std::atomic<uint64_t> poll_ready{0};
-  std::atomic<uint64_t> enqueue_calls{0};
-  std::atomic<size_t> max_slots{0};
+    reg_calls: StacklessProfileCountU64,
+    reg_scan_steps: StacklessProfileCountU64,
+    reg_reuse: StacklessProfileCountU64,
+    reg_new: StacklessProfileCountU64,
+    poll_calls: StacklessProfileCountU64,
+    poll_ready: StacklessProfileCountU64,
+    enqueue_calls: StacklessProfileCountU64,
+    max_slots: StacklessProfileCountUsize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.stackless_profile version=1 rust_sha256=89b7d7978e54ae9761a6ce9cd806b5f954a010c626df7683c7b74daac49f9502*/
+struct StacklessProfileCounters;
+
+struct StacklessProfileCounters {
+    StacklessProfileCountU64 reg_calls;
+    StacklessProfileCountU64 reg_scan_steps;
+    StacklessProfileCountU64 reg_reuse;
+    StacklessProfileCountU64 reg_new;
+    StacklessProfileCountU64 poll_calls;
+    StacklessProfileCountU64 poll_ready;
+    StacklessProfileCountU64 enqueue_calls;
+    StacklessProfileCountUsize max_slots;
 };
+/*RUSTYCPP:GEN-END id=reactor.stackless_profile*/
 
 StacklessProfileCounters g_stackless_profile;
 
