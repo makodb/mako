@@ -188,9 +188,10 @@ add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
 # Override on each port target so rrr (gnu++23) can `import` them
 # without the "GNU extensions was disabled" PCM-config mismatch.
 foreach(_rusty_port_target IN ITEMS
-    vec_port btree_port rc_port hashbrown_port rusty_async
-    binary_heap_port vec_deque_port cell_port string_port arc_port
-    linked_list_port)
+    vec_port btree_port rc_port hashbrown_port rusty_async rusty
+    binary_heap_port binary_heap_tests_port linked_list_tests_port
+    eq_diff_len_tests_port vec_deque_port cell_port string_port
+    arc_port linked_list_port borrow_port ascii_port)
     if(TARGET ${_rusty_port_target})
         set_target_properties(${_rusty_port_target} PROPERTIES CXX_EXTENSIONS ON)
     endif()
