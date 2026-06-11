@@ -140,10 +140,10 @@ using SourceProxy = rusty::Box<SourceBase>;
 // `write(const void*, size_t)` lives OUTSIDE the DSL block as a free
 // function (`buffer_sink_write`) — the body's `std::memcpy` over the
 // raw `const void*` parameter isn't expressible in inline-Rust today
-// (the DSL grammar doesn't accept `void*`). `clear()` also moves to a
-// free function (`buffer_sink_clear`) so the API stays symmetrical.
-// That was the previous "trivial-blocked (void* in param)"
-// classification.
+// (the DSL grammar doesn't accept `void*`). That was the previous
+// "trivial-blocked (void* in param)" classification. Callers that
+// need to reset just touch the field directly via `sink.bytes.clear()`
+// (the legacy `clear()` method had zero callers).
 #if RUSTYCPP_RUST
 struct BufferSink {
     bytes: Vec<u8>,
@@ -172,11 +172,6 @@ inline void buffer_sink_write(BufferSink& self, const void* p, size_t n) {
     }
     std::memcpy(self.bytes.data() + old_len, p, n);
     self.bytes.set_len(needed);
-}
-
-// @safe - Allow callers to reset between encodings without reallocating.
-inline void buffer_sink_clear(BufferSink& self) noexcept {
-    self.bytes.clear();
 }
 
 // In-memory byte source. Wraps a `const uint8_t*` view + length;
