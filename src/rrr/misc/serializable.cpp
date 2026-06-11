@@ -57,26 +57,74 @@ export namespace rrr {
 // The trait surface uses `const uint8_t*` (matching the actual byte-
 // buffer semantics) instead of the historical `const void*`. Callers
 // at the BinaryWriteArchive / BinaryReadArchive layer reinterpret_cast
-// from typed pointers before dispatch; the previous `void*` form
-// silently allowed implicit conversion, which is exactly the opacity
-// that blocks DSL trait migration. The defaulted virtual destructors
-// don't gate trivial classification any more (inventory v1d).
+// from typed pointers before dispatch.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block as a virtual `class SinkBase`
+// (same pattern as the Service / PollableBase / Job pub-trait
+// migrations).
+//
+// The method is named `write_bytes` not `write` because rusty-cpp's
+// `escape_cpp_keyword` list treats `write` as reserved (libc syscall
+// collision) and would append an underscore in the emit; using a
+// non-reserved name keeps the C++ symbol the same as the DSL
+// signature and avoids the `sink_->write_(...)` naming dissonance.
+#if RUSTYCPP_RUST
+pub trait SinkBase {
+    fn write_bytes(&mut self, p: *const u8, n: usize);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.sink_base version=1 rust_sha256=c6dde192737a6cb41eeb1ea174af464c9775406a8821e4aaab6934e2d107bbab*/
 class SinkBase {
- public:
-  virtual ~SinkBase() = default;
-  virtual void write(const uint8_t* p, size_t n) = 0;
+public:
+    virtual ~SinkBase() noexcept(false) {}
+    virtual void write_bytes(const uint8_t* p, size_t n) = 0;
+    SinkBase(const SinkBase&) = delete;
+    SinkBase& operator=(const SinkBase&) = delete;
+    SinkBase(SinkBase&&) = delete;
+    SinkBase& operator=(SinkBase&&) = delete;
+protected:
+    SinkBase() = default;
 };
+
+template <class U> class SinkBaseAdapter;
+template <class U> class SinkBaseAdapterRef;
+template <class U> class SinkBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=serializable.sink_base*/
 using SinkProxy = rusty::Box<SinkBase>;
 
 // Source: returns the number of bytes actually read (may be < n at EOF).
 //
 // Convention: returns 0 at EOF; raises (or aborts) on transport error.
 // Concrete sources control their own buffering / blocking semantics.
+//
+// Authored as inline Rust DSL — same pattern as SinkBase above.
+// (`read` isn't in the rusty-cpp keyword-escape list so the DSL name
+// emits verbatim, but we use `read_bytes` for symmetry with the sink
+// side.)
+#if RUSTYCPP_RUST
+pub trait SourceBase {
+    fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.source_base version=1 rust_sha256=8ca92ac4f6d36965baaf91b4f6c0f852f253d7cd57cdb4177b27183f31a9a383*/
 class SourceBase {
- public:
-  virtual ~SourceBase() = default;
-  virtual size_t read(uint8_t* p, size_t n) = 0;
+public:
+    virtual ~SourceBase() noexcept(false) {}
+    virtual size_t read_bytes(uint8_t* p, size_t n) = 0;
+    SourceBase(const SourceBase&) = delete;
+    SourceBase& operator=(const SourceBase&) = delete;
+    SourceBase(SourceBase&&) = delete;
+    SourceBase& operator=(SourceBase&&) = delete;
+protected:
+    SourceBase() = default;
 };
+
+template <class U> class SourceBaseAdapter;
+template <class U> class SourceBaseAdapterRef;
+template <class U> class SourceBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=serializable.source_base*/
 using SourceProxy = rusty::Box<SourceBase>;
 
 // ---------------------------------------------------------------------------
@@ -226,14 +274,14 @@ class BufferSinkAdapter : public SinkBase {
   BufferSink* sink_;
  public:
   explicit BufferSinkAdapter(BufferSink* s) noexcept : sink_(s) {}
-  void write(const uint8_t* p, size_t n) override { buffer_sink_write(*sink_, p, n); }
+  void write_bytes(const uint8_t* p, size_t n) override { buffer_sink_write(*sink_, p, n); }
 };
 
 class BufferSourceAdapter : public SourceBase {
   BufferSource* source_;
  public:
   explicit BufferSourceAdapter(BufferSource* s) noexcept : source_(s) {}
-  size_t read(uint8_t* p, size_t n) override { return buffer_source_read(*source_, p, n); }
+  size_t read_bytes(uint8_t* p, size_t n) override { return buffer_source_read(*source_, p, n); }
 };
 
 inline SinkProxy make_sink_proxy(BufferSink* sink) {
@@ -380,14 +428,14 @@ class FdSinkAdapter : public SinkBase {
   FdSink* sink_;
  public:
   explicit FdSinkAdapter(FdSink* s) noexcept : sink_(s) {}
-  void write(const uint8_t* p, size_t n) override { fd_sink_write(*sink_, p, n); }
+  void write_bytes(const uint8_t* p, size_t n) override { fd_sink_write(*sink_, p, n); }
 };
 
 class FdSourceAdapter : public SourceBase {
   FdSource* source_;
  public:
   explicit FdSourceAdapter(FdSource* s) noexcept : source_(s) {}
-  size_t read(uint8_t* p, size_t n) override { return fd_source_read(*source_, p, n); }
+  size_t read_bytes(uint8_t* p, size_t n) override { return fd_source_read(*source_, p, n); }
 };
 
 inline SinkProxy make_sink_proxy(FdSink* sink) {
@@ -448,7 +496,7 @@ class BinaryWriteArchive {
   // @unsafe { the historical `const void*` parameter becomes
   //   `const uint8_t*` at the sink trait boundary }
   void write_bytes(const void* p, size_t n) {
-    sink_->write(reinterpret_cast<const uint8_t*>(p), n);
+    sink_->write_bytes(reinterpret_cast<const uint8_t*>(p), n);
   }
 
   // ---- Fixed-width primitives. ------------------------------------------
@@ -456,28 +504,28 @@ class BinaryWriteArchive {
   // uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
   // makes the byte view explicit (the previous `const void*` form
   // hid it behind implicit conversion).
-  BinaryWriteArchive& operator<<(int8_t v)   { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int16_t v)  { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int32_t v)  { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int64_t v)  { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint8_t v)  { sink_->write(&v, sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint16_t v) { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint32_t v) { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint64_t v) { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(double v)   { sink_->write(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(int8_t v)   { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(int16_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(int32_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(int64_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(uint8_t v)  { sink_->write_bytes(&v, sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(uint16_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(uint32_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(uint64_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
+  BinaryWriteArchive& operator<<(double v)   { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
 
   // ---- Variable-length integer encoding (SparseInt). --------------------
   BinaryWriteArchive& operator<<(rrr::v32 v) {
     char buf[5];
     size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    sink_->write(reinterpret_cast<const uint8_t*>(buf), bsize);
+    sink_->write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
     return *this;
   }
 
   BinaryWriteArchive& operator<<(rrr::v64 v) {
     char buf[9];
     size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    sink_->write(reinterpret_cast<const uint8_t*>(buf), bsize);
+    sink_->write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
     return *this;
   }
 
@@ -486,7 +534,7 @@ class BinaryWriteArchive {
     rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
     *this << v_len;
     if (s.size() > 0) {
-      sink_->write(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+      sink_->write_bytes(reinterpret_cast<const uint8_t*>(s.data()), s.size());
     }
     return *this;
   }
@@ -645,7 +693,7 @@ class BinaryReadArchive {
   // Returns false if the source ran out (caller can decide whether to
   // abort or surface the error).
   [[nodiscard]] bool read_exact(void* p, size_t n) {
-    size_t got = source_->read(reinterpret_cast<uint8_t*>(p), n);
+    size_t got = source_->read_bytes(reinterpret_cast<uint8_t*>(p), n);
     return got == n;
   }
 
