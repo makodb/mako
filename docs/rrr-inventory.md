@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 254  
-**Span across all decls (LOC):** 9076
+**Decl count (top-level class/struct/enum/union):** 258  
+**Span across all decls (LOC):** 9005
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 5 | 128 | 1.4% |
-| trivial-blocked | 8 | 482 | 5.3% |
-| refactor-then-dsl | 34 | 2504 | 27.6% |
-| needs-transpiler | 44 | 4416 | 48.7% |
+| trivial | 2 | 50 | 0.6% |
+| trivial-blocked | 8 | 482 | 5.4% |
+| refactor-then-dsl | 32 | 2448 | 27.2% |
+| needs-transpiler | 44 | 4420 | 49.1% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 160 | 1429 | 15.7% |
+| already-dsl | 169 | 1488 | 16.5% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -53,35 +53,35 @@ from the repo root to regenerate both this file and the CSV.
 | `reactor/reactor.cpp` | 1010 |
 | `misc/alock.cpp` | 720 |
 | `misc/serializable.cpp` | 591 |
-| `rpc/tcp_channel.cpp` | 371 |
+| `rpc/tcp_channel.cpp` | 350 |
 | `misc/cpuinfo.cpp` | 253 |
 | `rpc/idempotency.cpp` | 251 |
 | `rpc/server.cpp` | 240 |
-| `rpc/inmemory_channel.cpp` | 240 |
-| `reactor/epoll_wrapper.cc` | 240 |
 | `misc/marshal.cpp` | 226 |
+| `reactor/epoll_wrapper.cc` | 226 |
 | `rpc/completion_tracker.cpp` | 222 |
 | `rpc/request_queue.cpp` | 216 |
 | `misc/serializable_envelope.cpp` | 207 |
 | `base/threading.cpp` | 192 |
+| `reactor/future.cpp` | 145 |
 
 ## Blocker histogram (manual decls, all buckets)
 
 | Blocker | Decls | LOC |
 |---|---:|---:|
 | custom dtor | 19 | 3388 |
-| user ctor | 13 | 1764 |
+| user ctor | 12 | 1722 |
 | default arg in member fn | 8 | 1151 |
-| template | 25 | 1028 |
+| template | 25 | 1032 |
 | operator overload | 4 | 851 |
-| virtual / inheritance | 21 | 740 |
+| virtual / inheritance | 20 | 726 |
 | template method | 7 | 719 |
 | void* in param | 3 | 468 |
 | preprocessor branches in body (#if/#ifdef) | 2 | 280 |
 | nested struct/class | 1 | 194 |
-| POD-shaped | 5 | 128 |
 | name flagged as boundary in plan | 3 | 117 |
 | std::shared_ptr field | 2 | 56 |
+| POD-shaped | 2 | 50 |
 | va_list | 1 | 42 |
 | C-style array param | 1 | 20 |
 
