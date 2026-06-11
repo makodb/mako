@@ -42,18 +42,12 @@ export namespace rrr {
 // Layer 1+2: Sink / Source virtual base classes.
 // ---------------------------------------------------------------------------
 
-// Sink: anything that can accept (const void*, size_t) bytes.
+// Sink: anything that can accept (const uint8_t*, size_t) bytes.
 //
 // Convention is fire-and-forget. Concrete sinks may flush lazily;
 // callers that need durability must call sink-specific flush methods
 // before observing (FdSink will drain on destruction).
 //
-// Adapters inherit `SinkBase` so callers can recover the concrete
-// adapter type via `dynamic_cast<Adapter*>(sink_base_ptr)` — used by
-// the MarshallDeputy archive operators in
-// marshal_serializable_bridge.hpp to detect a Marshal-backed
-// sink/source and short-circuit through the existing legacy
-// operator<<>>.
 // The trait surface uses `const uint8_t*` (matching the actual byte-
 // buffer semantics) instead of the historical `const void*`. Callers
 // at the BinaryWriteArchive / BinaryReadArchive layer reinterpret_cast
@@ -484,14 +478,6 @@ class BinaryWriteArchive {
   // (The MarshalSink convenience constructor was removed when
   // MarshalSink moved to marshal.hpp and serializable became a module.)
 
-  // Expose the inner SinkProxy so callers can dynamic_cast to recover
-  // the concrete adapter type (e.g.
-  // `dynamic_cast<MarshalSinkAdapter*>(archive.sink().get())` to
-  // detect a Marshal-backed sink). Used by the MarshallDeputy archive
-  // operators in marshal_serializable_bridge.hpp.
-  SinkProxy& sink() noexcept { return sink_; }
-  const SinkProxy& sink() const noexcept { return sink_; }
-
   // Emit raw bytes (used for unstructured payloads).
   // @unsafe { the historical `const void*` parameter becomes
   //   `const uint8_t*` at the sink trait boundary }
@@ -682,12 +668,6 @@ class BinaryReadArchive {
 
   // For Marshal-backed archives, use:
   //   BinaryReadArchive(make_source_proxy(&marshal_source));
-
-  // Expose the inner SourceProxy so callers can dynamic_cast to
-  // recover the concrete adapter type. Used by the MarshallDeputy
-  // archive operators in marshal_serializable_bridge.hpp.
-  SourceProxy& source() noexcept { return source_; }
-  const SourceProxy& source() const noexcept { return source_; }
 
   // Read into raw bytes; verifies n bytes were actually read.
   // Returns false if the source ran out (caller can decide whether to
