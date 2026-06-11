@@ -82,36 +82,41 @@ class AnyMessage {
 // `const std::string*` into the SpinMutex-owned HashMap; that
 // method and its caller `AnyMessage::is_a<T>` / `AnyMessage::pack<T>`
 // carry per-method `// @unsafe`.
-class AnyMessageRegistry {
- public:
-  // rusty::Function is move-only; the registry stores each factory by
-  // move and invokes it under the registry's SpinMutex inside `create()`.
-  using Factory = rusty::Function<SerializableProxy()>;
+// `any_message_registry` was a class with only static methods + a
+// public Factory typedef and no fields. Converted to a namespace so
+// the inventory reflects what it actually is — a namespace-scoped
+// API over the file-static SpinMutex<AnyMessageRegistryMap> below.
+namespace any_message_registry {
 
-  // Register `T` under `name`. Returns 0 so it can sit at namespace
-  // scope as a static-initializer return value:
-  //   static int _reg = AnyMessageRegistry::register_type(...);
-  // Aborts if `name` is already registered to a different type, or
-  // if `T` is already registered under a different name.
-  static int register_type(std::string name,
-                           std::type_index ti,
-                           Factory factory);
+// rusty::Function is move-only; the registry stores each factory by
+// move and invokes it under the registry's SpinMutex inside `create()`.
+using Factory = rusty::Function<SerializableProxy()>;
 
-  // Create a fresh payload proxy for the given name. Returns an
-  // empty proxy if the name is not registered.
-  static SerializableProxy create(const std::string& name);
+// Register `T` under `name`. Returns 0 so it can sit at namespace
+// scope as a static-initializer return value:
+//   static int _reg = any_message_registry::register_type(...);
+// Aborts if `name` is already registered to a different type, or
+// if `T` is already registered under a different name.
+int register_type(std::string name,
+                  std::type_index ti,
+                  Factory factory);
 
-  // Look up the registered name for type `ti`. Returns nullptr if
-  // the type was not registered.
-  static const std::string* name_for_type(std::type_index ti);
+// Create a fresh payload proxy for the given name. Returns an
+// empty proxy if the name is not registered.
+SerializableProxy create(const std::string& name);
 
-  static bool is_registered_name(const std::string& name);
-  static bool is_registered_type(std::type_index ti);
+// Look up the registered name for type `ti`. Returns nullptr if
+// the type was not registered.
+const std::string* name_for_type(std::type_index ti);
 
-  // Test helper: clear the registry. Not thread-safe; use only
-  // between tests in single-threaded fixtures.
-  static void clear_for_testing();
-};
+bool is_registered_name(const std::string& name);
+bool is_registered_type(std::type_index ti);
+
+// Test helper: clear the registry. Not thread-safe; use only
+// between tests in single-threaded fixtures.
+void clear_for_testing();
+
+}  // namespace any_message_registry
 
 // Register T under `name` so:
 //   * `AnyMessage::pack(make_shared<T>())` knows what name to stamp.
@@ -129,7 +134,7 @@ inline int reg_any_message_as(std::string name) {
     return std::make_shared<details::SerializableSharedPtrHolder<T>>(
         std::move(sp));
   };
-  return AnyMessageRegistry::register_type(std::move(name),
+  return any_message_registry::register_type(std::move(name),
                                            std::type_index(typeid(T)),
                                            std::move(factory));
 }
@@ -137,10 +142,10 @@ inline int reg_any_message_as(std::string name) {
 // ---- Inlines that rely on the registry ------------------------------
 
 // @unsafe - dereferences raw `const std::string*` returned by
-// AnyMessageRegistry::name_for_type.
+// any_message_registry::name_for_type.
 template <typename T>
 inline bool AnyMessage::is_a() const {
-  const std::string* name = AnyMessageRegistry::name_for_type(
+  const std::string* name = any_message_registry::name_for_type(
       std::type_index(typeid(T)));
   if (name == nullptr) return false;
   return type_name_ == *name;
@@ -173,7 +178,7 @@ inline std::shared_ptr<AnyMessage> AnyMessage::pack_as(
 // and forwards to the @unsafe pack_as.
 template <typename T>
 inline std::shared_ptr<AnyMessage> AnyMessage::pack(std::shared_ptr<T> val) {
-  const std::string* name = AnyMessageRegistry::name_for_type(
+  const std::string* name = any_message_registry::name_for_type(
       std::type_index(typeid(T)));
   verify(name != nullptr &&
          "AnyMessage::pack<T>: T not registered. "
@@ -225,7 +230,7 @@ void AnyMessage::save(BinaryWriteArchive& ar) const {
 // shared_ptr deref to call payload_->load.
 void AnyMessage::load(BinaryReadArchive& ar) {
   ar >> type_name_;
-  payload_ = AnyMessageRegistry::create(type_name_);
+  payload_ = any_message_registry::create(type_name_);
   verify(payload_ &&
          "AnyMessage::load: unknown type name on wire.  "
          "Did the sender register a type the receiver does not know?");
@@ -242,7 +247,7 @@ namespace {
 // `registry()` and the impl functions below all see it.
 #if RUSTYCPP_RUST
 struct AnyMessageRegistryMap {
-    by_name: rusty::HashMap<std::string, AnyMessageRegistry::Factory>,
+    by_name: rusty::HashMap<std::string, any_message_registry::Factory>,
     name_by_type_hash: rusty::HashMap<usize, std::string>,
 }
 #endif
@@ -250,7 +255,7 @@ struct AnyMessageRegistryMap {
 struct AnyMessageRegistryMap;
 
 struct AnyMessageRegistryMap {
-    rusty::HashMap<std::string, AnyMessageRegistry::Factory> by_name;
+    rusty::HashMap<std::string, any_message_registry::Factory> by_name;
     rusty::HashMap<size_t, std::string> name_by_type_hash;
 };
 /*RUSTYCPP:GEN-END id=any_message.1*/
@@ -265,7 +270,7 @@ SpinMutex<AnyMessageRegistryMap>& registry() {
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::get / contains_key /
 // insert pattern not yet recognized as @safe here (annotation
 // discovery limitation across the AnyMessageRegistryMap struct).
-int AnyMessageRegistry::register_type(std::string name,
+int any_message_registry::register_type(std::string name,
                                       std::type_index ti,
                                       Factory factory) {
   auto guard = registry().lock().unwrap();
@@ -281,7 +286,7 @@ int AnyMessageRegistry::register_type(std::string name,
 
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::get + invocation
 // through `*entry.unwrap()` (Option-of-pointer deref).
-SerializableProxy AnyMessageRegistry::create(const std::string& name) {
+SerializableProxy any_message_registry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
   auto entry = guard->by_name.get(name);
   if (entry.is_none()) return SerializableProxy{};
@@ -291,7 +296,7 @@ SerializableProxy AnyMessageRegistry::create(const std::string& name) {
 // @unsafe - returns a raw `const std::string*` into the SpinMutex-
 // owned HashMap. Callers must not outlive the guard's borrow window;
 // in practice each caller dereferences immediately and discards.
-const std::string* AnyMessageRegistry::name_for_type(std::type_index ti) {
+const std::string* any_message_registry::name_for_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
   size_t hash = ti.hash_code();
   auto entry = guard->name_by_type_hash.get(hash);
@@ -300,19 +305,19 @@ const std::string* AnyMessageRegistry::name_for_type(std::type_index ti) {
 }
 
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::get + Option::is_some.
-bool AnyMessageRegistry::is_registered_name(const std::string& name) {
+bool any_message_registry::is_registered_name(const std::string& name) {
   auto guard = registry().lock().unwrap();
   return guard->by_name.get(name).is_some();
 }
 
 // @unsafe - same pattern as is_registered_name.
-bool AnyMessageRegistry::is_registered_type(std::type_index ti) {
+bool any_message_registry::is_registered_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
   return guard->name_by_type_hash.get(ti.hash_code()).is_some();
 }
 
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::clear().
-void AnyMessageRegistry::clear_for_testing() {
+void any_message_registry::clear_for_testing() {
   auto guard = registry().lock().unwrap();
   guard->by_name.clear();
   guard->name_by_type_hash.clear();
