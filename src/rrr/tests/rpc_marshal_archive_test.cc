@@ -337,7 +337,7 @@ TEST(BufferSourceSemantics, EofReturnsZero) {
 TEST(BufferSinkSemantics, AccumulatesBytes) {
   BufferSink sink;
   uint32_t value = 0xDEADBEEF;
-  sink.write(&value, sizeof(value));
+  buffer_sink_write(sink, &value, sizeof(value));
   ASSERT_EQ(sink.bytes.len(), 4u);
 
   uint32_t reread;

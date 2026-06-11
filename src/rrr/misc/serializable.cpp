@@ -84,27 +84,51 @@ using SourceProxy = rusty::Box<SourceBase>;
 // geometric grow), so we double the capacity ourselves on every
 // realloc to keep amortized append cost O(1).  Without this, a
 // frame built from N small writes triggers N reallocations.
-class BufferSink {
- public:
-  rusty::Vec<uint8_t> bytes;
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// `write(const void*, size_t)` lives OUTSIDE the DSL block as a free
+// function (`buffer_sink_write`) — the body's `std::memcpy` over the
+// raw `const void*` parameter isn't expressible in inline-Rust today
+// (the DSL grammar doesn't accept `void*`). `clear()` also moves to a
+// free function (`buffer_sink_clear`) so the API stays symmetrical.
+// That was the previous "trivial-blocked (void* in param)"
+// classification.
+#if RUSTYCPP_RUST
+struct BufferSink {
+    bytes: Vec<u8>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=1ef4ae34716fe7653a7128bd0e275e5a3455ac22e32d18a2cd69a94ba30515db*/
+struct BufferSink;
 
-  // @unsafe { memcpy + set_len bypass per-element init for trivial T=uint8_t }
-  void write(const void* p, size_t n) {
-    if (n == 0) return;
-    const size_t old_len = bytes.len();
-    const size_t needed = old_len + n;
-    if (needed > bytes.capacity()) {
-      size_t new_cap = bytes.capacity() == 0 ? 64 : bytes.capacity() * 2;
-      while (new_cap < needed) new_cap *= 2;
-      bytes.reserve(new_cap);
-    }
-    std::memcpy(bytes.data() + old_len, p, n);
-    bytes.set_len(needed);
-  }
-
-  // Allow callers to reset between encodings without reallocating.
-  void clear() noexcept { bytes.clear(); }
+struct BufferSink {
+    rusty::Vec<uint8_t> bytes;
 };
+/*RUSTYCPP:GEN-END id=serializable.buffer_sink*/
+
+// @unsafe { memcpy + set_len bypass per-element init for trivial T=uint8_t }
+// Free function — kept outside the DSL block because the body's
+// `std::memcpy` over a `const void*` parameter isn't expressible in
+// inline-Rust today.
+inline void buffer_sink_write(BufferSink& self, const void* p, size_t n) {
+    if (n == 0) return;
+    const size_t old_len = self.bytes.len();
+    const size_t needed = old_len + n;
+    if (needed > self.bytes.capacity()) {
+        size_t new_cap = self.bytes.capacity() == 0 ? 64 : self.bytes.capacity() * 2;
+        while (new_cap < needed) new_cap *= 2;
+        self.bytes.reserve(new_cap);
+    }
+    std::memcpy(self.bytes.data() + old_len, p, n);
+    self.bytes.set_len(needed);
+}
+
+// @safe - Allow callers to reset between encodings without reallocating.
+inline void buffer_sink_clear(BufferSink& self) noexcept {
+    self.bytes.clear();
+}
 
 // In-memory byte source. Wraps a `const uint8_t*` view + length;
 // caller owns the underlying storage.
@@ -148,7 +172,7 @@ class BufferSinkAdapter : public SinkBase {
   BufferSink* sink_;
  public:
   explicit BufferSinkAdapter(BufferSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) override { sink_->write(p, n); }
+  void write(const void* p, size_t n) override { buffer_sink_write(*sink_, p, n); }
 };
 
 class BufferSourceAdapter : public SourceBase {
