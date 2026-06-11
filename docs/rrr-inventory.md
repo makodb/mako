@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 258  
-**Span across all decls (LOC):** 9005
+**Decl count (top-level class/struct/enum/union):** 257  
+**Span across all decls (LOC):** 8862
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 2 | 50 | 0.6% |
+| trivial | 1 | 20 | 0.2% |
 | trivial-blocked | 8 | 482 | 5.4% |
-| refactor-then-dsl | 32 | 2448 | 27.2% |
-| needs-transpiler | 44 | 4420 | 49.1% |
+| refactor-then-dsl | 30 | 2325 | 26.2% |
+| needs-transpiler | 44 | 4420 | 49.9% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 169 | 1488 | 16.5% |
+| already-dsl | 171 | 1498 | 16.9% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -42,7 +42,7 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 151 | `TimeoutALock` | needs-transpiler |
 | `rpc/tcp_channel.cpp` | 135 | `TcpConnection` | needs-transpiler |
-| `misc/alock.cpp` | 123 | `ALockGroup` | refactor-then-dsl |
+| `misc/alock.cpp` | 121 | `ALockGroup` | refactor-then-dsl |
 | `base/threading.cpp` | 113 | `SpinMutexGuard` | needs-transpiler |
 
 ## Per-file LOC (manual decls only, top 15)
@@ -51,7 +51,7 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|
 | `rpc/client.cpp` | 1768 |
 | `reactor/reactor.cpp` | 1010 |
-| `misc/alock.cpp` | 720 |
+| `misc/alock.cpp` | 718 |
 | `misc/serializable.cpp` | 591 |
 | `rpc/tcp_channel.cpp` | 350 |
 | `misc/cpuinfo.cpp` | 253 |
@@ -70,8 +70,8 @@ from the repo root to regenerate both this file and the CSV.
 | Blocker | Decls | LOC |
 |---|---:|---:|
 | custom dtor | 19 | 3388 |
-| user ctor | 12 | 1722 |
-| default arg in member fn | 8 | 1151 |
+| user ctor | 10 | 1599 |
+| default arg in member fn | 7 | 1099 |
 | template | 25 | 1032 |
 | operator overload | 4 | 851 |
 | virtual / inheritance | 20 | 726 |
@@ -81,9 +81,9 @@ from the repo root to regenerate both this file and the CSV.
 | nested struct/class | 1 | 194 |
 | name flagged as boundary in plan | 3 | 117 |
 | std::shared_ptr field | 2 | 56 |
-| POD-shaped | 2 | 50 |
 | va_list | 1 | 42 |
 | C-style array param | 1 | 20 |
+| POD-shaped | 1 | 20 |
 
 ## Caveats
 
