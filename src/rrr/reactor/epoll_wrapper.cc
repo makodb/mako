@@ -42,20 +42,51 @@ namespace PollReady {
     inline constexpr int ERROR = 0x4;
 }
 
+// `Pollable` — abstract base for things that the epoll/kqueue wrapper
+// polls (concrete subclasses live in tests; production code uses the
+// higher-level `PollableBase` trait). Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block as a virtual `class Pollable`. Same pattern as SinkBase /
+// SourceBase / Job / Service.
+#if RUSTYCPP_RUST
+pub trait Pollable {
+    fn fd(&self) -> i32;
+    fn poll_mode(&self) -> i32;
+    fn content_size(&mut self) -> usize;
+    fn handle_read(&mut self) -> bool;
+    fn handle_write(&mut self) -> i32;
+    fn handle_error(&mut self);
+    fn close(&mut self);
+    fn check_pending_write_update(&self) -> bool;
+    fn is_closed(&self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.pollable version=1 rust_sha256=b44240c03518247bd1a865f3626ed5a43ffc80c6c0b604e97608cc215ebbce7c*/
 class Pollable {
 public:
-    virtual ~Pollable() = default;
-
-    virtual int fd() const = 0;
-    virtual int poll_mode() const = 0;
+    virtual ~Pollable() noexcept(false) {}
+    virtual int32_t fd() const = 0;
+    virtual int32_t poll_mode() const = 0;
     virtual size_t content_size() = 0;
     virtual bool handle_read() = 0;
-    virtual int handle_write() = 0;
+    virtual int32_t handle_write() = 0;
     virtual void handle_error() = 0;
     virtual void close() = 0;
     virtual bool check_pending_write_update() const = 0;
     virtual bool is_closed() const = 0;
+    Pollable(const Pollable&) = delete;
+    Pollable& operator=(const Pollable&) = delete;
+    Pollable(Pollable&&) = delete;
+    Pollable& operator=(Pollable&&) = delete;
+protected:
+    Pollable() = default;
 };
+
+template <class U> class PollableAdapter;
+template <class U> class PollableAdapterRef;
+template <class U> class PollableAdapterRefMut;
+/*RUSTYCPP:GEN-END id=epoll_wrapper.pollable*/
 
 
 class Epoll {
