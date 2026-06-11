@@ -31,12 +31,12 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    5  | 145 |    1.5%  |
+| trivial           |    3  |  90 |    1.0%  |
 | trivial-blocked   |    8  | 442 |    4.8%  |
-| refactor-then-dsl |   36  |1,766|   19.0%  |
-| needs-transpiler  |   44  |4,416|   48.5%  |
+| refactor-then-dsl |   35  |1,720|   18.5%  |
+| needs-transpiler  |   44  |4,416|   47.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  154  |1,375|   15.1%  |
+| already-dsl       |  160  |1,503|   16.2%  |
 
 The recent inventory-tool refinements (defaulted-dtor detection,
 empty-body-dtor detection, `= delete;` ctor/operator filtering with
@@ -45,11 +45,24 @@ a bounded-lookhead fix, blocker histogram) shifted 12 decls from
 `trivial-blocked` to `trivial`, giving a more honest picture of
 where the actual transpiler work is needed.
 
-The latest commit hoisted `InMemoryConnectionState::Inner` to
-namespace scope as `InMemoryConnectionStateInner`, clearing the
-nested-struct blocker. Both InMemoryConnectionState (7 LOC) and
-InMemoryConnectionStateInner (38 LOC) now sit in `trivial` and are
-candidates for the next DSL aggregate migration.
+Followed up with the inmemory-channel POD sweep, clearing both
+nested-struct blockers and migrating the four POD aggregates:
+
+  - `InMemoryConnectionState::Inner` hoisted to namespace scope as
+    `InMemoryConnectionStateInner`.
+  - `InMemoryConnectionStateInner` migrated to DSL (16-field POD;
+    strings + callbacks + bool/i32/ChannelError counters).
+  - `InMemoryConnectionState` migrated to DSL (dropped the `mutable`
+    qualifier on `inner` — every caller already routes through
+    `mut_state()` const_cast).
+  - `InMemoryListener::InnerState` hoisted similarly.
+  - `InMemoryListenerInnerState` migrated to DSL (4-field POD).
+
+The remaining `trivial` items (`AnyMessageRegistry`,
+`InMemorySwitchboard`, `ReconnectPolicy`) need bigger restructuring
+than a 1-iteration migration permits: static-only class shape,
+load-bearing `mutable` + `const` method pattern, and a policy-manual
+decision respectively.
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
 or trivial-blocked and added two to already-dsl as DSL + GEN regions).
