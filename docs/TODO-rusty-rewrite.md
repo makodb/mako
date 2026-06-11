@@ -31,12 +31,25 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    2  |  50 |    0.5%  |
-| trivial-blocked   |    9  | 487 |    5.3%  |
-| refactor-then-dsl |   34  |1,649|   17.9%  |
-| needs-transpiler  |   47  |5,265|   57.2%  |
+| trivial           |    5  | 145 |    1.5%  |
+| trivial-blocked   |    8  | 442 |    4.8%  |
+| refactor-then-dsl |   36  |1,766|   19.0%  |
+| needs-transpiler  |   44  |4,416|   48.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  156  |1,470|   16.0%  |
+| already-dsl       |  154  |1,375|   15.1%  |
+
+The recent inventory-tool refinements (defaulted-dtor detection,
+empty-body-dtor detection, `= delete;` ctor/operator filtering with
+a bounded-lookhead fix, blocker histogram) shifted 12 decls from
+`needs-transpiler` to `refactor-then-dsl` and several from
+`trivial-blocked` to `trivial`, giving a more honest picture of
+where the actual transpiler work is needed.
+
+The latest commit hoisted `InMemoryConnectionState::Inner` to
+namespace scope as `InMemoryConnectionStateInner`, clearing the
+nested-struct blocker. Both InMemoryConnectionState (7 LOC) and
+InMemoryConnectionStateInner (38 LOC) now sit in `trivial` and are
+candidates for the next DSL aggregate migration.
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
 or trivial-blocked and added two to already-dsl as DSL + GEN regions).
