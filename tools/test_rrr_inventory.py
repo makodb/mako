@@ -374,6 +374,22 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
 
+    def test_deleted_copy_ctor_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    Foo(const Foo&) = delete;
+                    Foo& operator=(const Foo&) = delete;
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # Disabling implicit copy doesn't add migration burden — the
+        # DSL aggregate would implicitly delete the same operations
+        # when fields are non-copyable.
+        self.assertEqual(rows[0]["bucket"], "trivial")
+
     def test_real_user_dtor_still_blocks(self):
         rows = self.run_script({
             "foo.cpp": fake_source("""
