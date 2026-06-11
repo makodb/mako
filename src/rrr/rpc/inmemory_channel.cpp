@@ -353,17 +353,16 @@ struct InMemoryListenerInnerState {
  * switchboard. On `close()`, it unregisters and refuses further
  * accepts. Existing accepted connections are unaffected.
  */
-class InMemoryListener {
- public:
-    explicit InMemoryListener(rusty::Arc<InMemorySwitchboard> switchboard)
-        : switchboard_(std::move(switchboard)) {}
-
-    ~InMemoryListener() = default;
-
-    InMemoryListener(const InMemoryListener&)            = delete;
-    InMemoryListener& operator=(const InMemoryListener&) = delete;
-    InMemoryListener(InMemoryListener&&)                 = delete;
-    InMemoryListener& operator=(InMemoryListener&&)      = delete;
+// InMemoryListener is now an aggregate (public fields, no user ctors,
+// no `= delete`) — same shape as TcpFactory / InMemoryFactory. The
+// `rusty::Arc<InMemorySwitchboard>` field carries the non-copyability
+// contract implicitly. The `mutable SpinMutex<...> inner_` qualifier
+// stays because `is_closed() const` and `local_address() const` call
+// `inner_.lock()` directly (no `mut_listener()` const_cast wrapper).
+struct InMemoryListener {
+    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
+    // pattern.
+    static InMemoryListener new_(rusty::Arc<InMemorySwitchboard> switchboard);
 
     // ChannelListenerBase methods.
     ChannelError listen(std::string_view addr);
@@ -386,7 +385,6 @@ class InMemoryListener {
         self_weak_ = std::move(w);
     }
 
- private:
     // Fields outside the SpinMutex: switchboard_ is set once at
     // construction (immutable Arc), self_weak_ is set once via
     // set_self_weak() before any concurrent listener access.
@@ -395,6 +393,12 @@ class InMemoryListener {
 
     mutable SpinMutex<InMemoryListenerInnerState> inner_;
 };
+
+// @safe - aggregate-init builds the struct in place; the
+// `self_weak_{rusty::None}` and default-init `inner_` carry over.
+inline InMemoryListener InMemoryListener::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
+    return InMemoryListener{.switchboard_ = std::move(switchboard)};
+}
 
 // Adapter wrapping `Arc<InMemoryListener>` for the listener-proxy
 // facade. Mirrors `TcpListenerChannelAdapter` (equivalent in spirit).
@@ -973,7 +977,7 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
 // @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
 // wire `self_weak_` before publishing the listener.
 rusty::Option<ChannelListenerProxy> InMemoryFactory::make_listener() {
-    auto listener = rusty::Arc<InMemoryListener>::make(switchboard_);
+    auto listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(switchboard_));
     // Wire the self-weak so the listener can register itself in the
     // switchboard. Mirrors TcpFactory::make_listener.
     {
