@@ -135,32 +135,79 @@ inline void buffer_sink_clear(BufferSink& self) noexcept {
 //
 // Returns the number of bytes actually copied. At EOF (pos_ == len_)
 // returns 0; partial reads at the tail are allowed (not aborted).
-class BufferSource {
-  const uint8_t* data_;
-  size_t         len_;
-  size_t         pos_;
- public:
-  BufferSource(const void* data, size_t len) noexcept
-      : data_(static_cast<const uint8_t*>(data)), len_(len), pos_(0) {}
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// `read(void*, size_t)` lives OUTSIDE the DSL block as a free function
+// `buffer_source_read` — the body's `void*` parameter and `memcpy`
+// aren't expressible in inline-Rust today. The existing 2-arg
+// paren-init form `BufferSource src(data, len)` keeps working via
+// C++20 aggregate paren-init; callers can also use the DSL `fn new`
+// factory directly (`BufferSource::new_(data, len)`).
+#if RUSTYCPP_RUST
+struct BufferSource {
+    data_: *const u8,
+    len_: usize,
+    pos_: usize,
+}
 
-  // @unsafe - raw pointer read.
-  size_t read(void* p, size_t n) {
-    // @unsafe { memcpy from data_ + pos_ }
-    {
-      size_t avail = len_ - pos_;
-      size_t take  = (n < avail) ? n : avail;
-      if (take > 0) {
-        std::memcpy(p, data_ + pos_, take);
-        pos_ += take;
-      }
-      return take;
+impl BufferSource {
+    fn new(data: *const u8, len: usize) -> BufferSource {
+        BufferSource {
+            data_: data as *const u8,
+            len_: len,
+            pos_: 0usize,
+        }
     }
-  }
 
-  size_t pos()       const noexcept { return pos_; }
-  size_t remaining() const noexcept { return len_ - pos_; }
-  bool   eof()       const noexcept { return pos_ >= len_; }
+    fn pos(&self) -> usize { self.pos_ }
+    fn remaining(&self) -> usize { self.len_ - self.pos_ }
+    fn eof(&self) -> bool { self.pos_ >= self.len_ }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_source version=1 rust_sha256=9a7076bfe7f5e959e1a1dc59a529c2937001f10193aa5b6318798160e2aac2c5*/
+struct BufferSource;
+
+struct BufferSource {
+    const uint8_t* data_;
+    size_t len_;
+    size_t pos_;
+
+    static BufferSource new_(const uint8_t* data, size_t len);
+    size_t pos() const;
+    size_t remaining() const;
+    bool eof() const;
 };
+
+
+BufferSource BufferSource::new_(const uint8_t* data, size_t len) {
+    return BufferSource{.data_ = reinterpret_cast<const uint8_t*>(data), .len_ = std::move(len), .pos_ = static_cast<size_t>(0)};
+}
+
+size_t BufferSource::pos() const {
+    return this->pos_;
+}
+
+size_t BufferSource::remaining() const {
+    return rusty::detail::deref_if_pointer_like(this->len_) - rusty::detail::deref_if_pointer_like(this->pos_);
+}
+
+bool BufferSource::eof() const {
+    return rusty::detail::deref_if_pointer_like(this->pos_) >= rusty::detail::deref_if_pointer_like(this->len_);
+}
+/*RUSTYCPP:GEN-END id=serializable.buffer_source*/
+
+// @unsafe - raw pointer read; memcpy from data_ + pos_.
+inline size_t buffer_source_read(BufferSource& self, void* p, size_t n) {
+    size_t avail = self.len_ - self.pos_;
+    size_t take  = (n < avail) ? n : avail;
+    if (take > 0) {
+        std::memcpy(p, self.data_ + self.pos_, take);
+        self.pos_ += take;
+    }
+    return take;
+}
 
 // Adapter wrappers for the SinkBase / SourceBase virtual bases.
 //
@@ -179,7 +226,7 @@ class BufferSourceAdapter : public SourceBase {
   BufferSource* source_;
  public:
   explicit BufferSourceAdapter(BufferSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) override { return source_->read(p, n); }
+  size_t read(void* p, size_t n) override { return buffer_source_read(*source_, p, n); }
 };
 
 inline SinkProxy make_sink_proxy(BufferSink* sink) {
