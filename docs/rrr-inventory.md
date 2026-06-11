@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 253  
-**Span across all decls (LOC):** 8682
+**Decl count (top-level class/struct/enum/union):** 256  
+**Span across all decls (LOC):** 8741
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
 | trivial | 1 | 20 | 0.2% |
-| trivial-blocked | 8 | 482 | 5.6% |
-| refactor-then-dsl | 28 | 2198 | 25.3% |
-| needs-transpiler | 42 | 4367 | 50.3% |
+| trivial-blocked | 8 | 482 | 5.5% |
+| refactor-then-dsl | 29 | 2204 | 25.2% |
+| needs-transpiler | 44 | 4420 | 50.6% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 171 | 1498 | 17.3% |
+| already-dsl | 171 | 1498 | 17.1% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -69,8 +69,8 @@ from the repo root to regenerate both this file and the CSV.
 
 | Blocker | Decls | LOC |
 |---|---:|---:|
-| custom dtor | 17 | 3335 |
-| user ctor | 8 | 1472 |
+| custom dtor | 19 | 3388 |
+| user ctor | 9 | 1478 |
 | template | 25 | 1032 |
 | default arg in member fn | 6 | 978 |
 | operator overload | 4 | 851 |
