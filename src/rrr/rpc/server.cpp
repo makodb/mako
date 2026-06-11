@@ -1870,8 +1870,8 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
 
     // auto-install default TcpFactory if the caller hasn't bound one.
     if (!self.is_channel_factory_bound()) {
-        auto tcp_factory = rusty::Arc<TcpFactory>::make(
-            self.poll_thread_field.as_ref().unwrap().clone());
+        auto tcp_factory = rusty::Arc<TcpFactory>::new_(TcpFactory::new_(
+            self.poll_thread_field.as_ref().unwrap().clone()));
         self.set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
     }
 
