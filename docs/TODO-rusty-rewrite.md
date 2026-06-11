@@ -31,7 +31,7 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    2  |  50 |    0.5%  |
+| trivial           |    1  |  20 |    0.2%  |
 | trivial-blocked   |    8  | 442 |    4.8%  |
 | refactor-then-dsl |   31  |1,593|   17.1%  |
 | needs-transpiler  |   44  |4,416|   47.5%  |
@@ -100,17 +100,18 @@ The inmemory-channel DSL sweep is complete: all 4 channel-adjacent
 aggregates (Switchboard, Listener, Factory, Channel) + both Inner
 POD aggregates + the TcpFactory peer are now `already-dsl`.
 
-Remaining `trivial` items genuinely need bigger restructuring than
-a 1-iteration free-fn extraction permits:
+Remaining `trivial` item:
 
-  - `AnyMessageRegistry` — static-only class with no fields; 7
-    static methods using `std::type_index` and rusty::Function
-    params (cleanest migration would convert the whole thing to a
-    namespace + free functions, but that's an invasive 15-caller
-    rename across src/).
   - `ReconnectPolicy` — policy-manual (documented decision to keep
     hand-written so the `Policy p; p.x = ...` customize idiom stays
     transparent).
+
+`AnyMessageRegistry` was previously listed here; it has now been
+converted from a static-only class to `namespace any_message_registry`
+(14 in-file callsite renames + 9 body-definition headers). The class
+shape was always a namespace in spirit — no fields, only static
+methods + a `Factory` typedef. It no longer appears in the inventory
+at all (the tool scans for `class`/`struct` decls).
 
 Other base-trait migration done in the same window:
 
@@ -142,10 +143,10 @@ cleared every Sink / Source POD wrapper:
 | FdSink + FdSource          |  47 | refactor-then-dsl  | DSL fd-wrapper aggregates; `::read`/`::write` syscall loops live in `fd_*_read`/`fd_*_write` free fns. |
 | SinkBase + SourceBase      |  10 | refactor-then-dsl  | DSL `pub trait`; methods renamed `write`→`write_bytes`/`read`→`read_bytes` (`write` is in rusty-cpp's `escape_cpp_keyword` list). 12 BinaryWriteArchive + BinaryReadArchive call sites + 6 adapter overrides updated. |
 
-The remaining trivial items are ReconnectPolicy (policy-manual; ~20
-callers rely on `Policy p; p.x = ...;` customize idiom) and
-AnyMessageRegistry (templated dispatch siblings — needs transpiler
-template-method support).
+The remaining trivial item is ReconnectPolicy (policy-manual; ~20
+callers rely on `Policy p; p.x = ...;` customize idiom).
+AnyMessageRegistry has been converted to a namespace and no longer
+appears in the inventory.
 
 The refactor-then-dsl bucket is now dominated by virtual-inheritance
 subclasses that need transpiler `impl Trait for Type` support before
@@ -207,7 +208,7 @@ The `trivial` bucket has 6 decls totaling 178 LOC. The 2 newcomers (`BufferSink`
 | `ReconnectPolicy` (20 LOC)        | Source comment documents an explicit decision to keep hand-written — ~20 callers rely on the `Policy p; p.x = ...;` mutate-and-customize idiom, which the DSL's aggregate emit doesn't preserve as transparently.                                                            |
 | `TestMgr` (20 LOC)                | Field is `rusty::Vec<TestCase*>`; method bodies live out-of-class and take raw `int argc, char* argv[]`. Migrating means co-migrating ~50 lines of impl bodies and managing the `OnceCell<TestMgr>` singleton init dance.                                                     |
 | `BufferSink` (21 LOC)             | Methods take `const void* p, size_t n` — DSL grammar doesn't yet accept `const void*`. Migration first needs a `&[u8]` reshape across the SinkBase/SourceBase hierarchy (call out as a Phase 4 precondition: see `Phase 4 — Marshal / Cursor`).                                  |
-| `AnyMessageRegistry` (30 LOC)     | Internal state is a `SpinMutex<HashMap<...>>` of factory callbacks; the `is_a<T>()`, `pack<T>()`, `unpack<T>()` API on `AnyMessage` is templated and inlines the registry lookup. Migrating one without the other fragments the type system.                                  |
+| ~~`AnyMessageRegistry`~~ (was 30 LOC) | Converted to `namespace any_message_registry` — was a static-only class with no fields. The bookkeeping moved into the namespace's anon-namespace `SpinMutex<AnyMessageRegistryMap>` helper. No longer in the inventory.                                                       |
 | `Log` (42 LOC)                    | Wraps `std::cerr` / `printf`-style logging with thread-local context. The bodies live out-of-class and the file already opts into per-method `@unsafe { std::cerr is not borrow-checked }` blocks; the class shape is fine but the bodies are where the work is.            |
 | `CachedResponse` (45 LOC)         | POD-ish (4 fields, all defaulted ctors/ops). `set_response_data(const Marshal&)` does `m.peek(...)` + `const_cast<Marshal&>`; `get_response_data(Marshal*)` does `out->write(...)`. Methods are doable in DSL once a `Marshal` reference type works (Phase 4 prereq).             |
 
