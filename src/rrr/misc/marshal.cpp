@@ -418,7 +418,6 @@ class MarshalSinkAdapter : public SinkBase {
  public:
   explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
   void write_bytes(const uint8_t* p, size_t n) override { marshal_sink_write(*sink_, p, n); }
-  MarshalSink* sink() const noexcept { return sink_; }
 };
 
 class MarshalSourceAdapter : public SourceBase {
@@ -426,7 +425,6 @@ class MarshalSourceAdapter : public SourceBase {
  public:
   explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
   size_t read_bytes(uint8_t* p, size_t n) override { return marshal_source_read(*source_, p, n); }
-  MarshalSource* source() const noexcept { return source_; }
 };
 
 inline SinkProxy make_sink_proxy(MarshalSink* sink) {
