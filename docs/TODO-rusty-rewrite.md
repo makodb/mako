@@ -33,10 +33,10 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 |-------------------|------:|----:|---------:|
 | trivial           |    2  |  50 |    0.5%  |
 | trivial-blocked   |    9  | 487 |    5.3%  |
-| refactor-then-dsl |   24  |1,629|   17.7%  |
-| needs-transpiler  |   59  |5,376|   58.4%  |
+| refactor-then-dsl |   34  |1,649|   17.9%  |
+| needs-transpiler  |   47  |5,265|   57.2%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  152  |1,427|   15.5%  |
+| already-dsl       |  156  |1,470|   16.0%  |
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
 or trivial-blocked and added two to already-dsl as DSL + GEN regions).
@@ -57,6 +57,7 @@ cleared every Sink / Source POD wrapper:
 | MarshalSink + MarshalSource|  23 | refactor-then-dsl  | Same free-fn-extraction pattern for `write`/`read`; adapters + 2 deptran call sites unchanged.         |
 | BufferSource               |  26 | refactor-then-dsl  | DSL `new(*const u8, usize)`; ctor's prior `static_cast<const uint8_t*>(const void*)` is now no-op.     |
 | FdSink + FdSource          |  47 | refactor-then-dsl  | DSL fd-wrapper aggregates; `::read`/`::write` syscall loops live in `fd_*_read`/`fd_*_write` free fns. |
+| SinkBase + SourceBase      |  10 | refactor-then-dsl  | DSL `pub trait`; methods renamed `write`→`write_bytes`/`read`→`read_bytes` (`write` is in rusty-cpp's `escape_cpp_keyword` list). 12 BinaryWriteArchive + BinaryReadArchive call sites + 6 adapter overrides updated. |
 
 The remaining trivial items are ReconnectPolicy (policy-manual; ~20
 callers rely on `Policy p; p.x = ...;` customize idiom) and
@@ -64,13 +65,30 @@ AnyMessageRegistry (templated dispatch siblings — needs transpiler
 template-method support).
 
 The refactor-then-dsl bucket is now dominated by virtual-inheritance
-adapter classes (10 of them: `BufferSinkAdapter`, `BufferSourceAdapter`,
-`FdSinkAdapter`, `FdSourceAdapter`, `MarshalSinkAdapter`,
-`MarshalSourceAdapter`, plus 4 Event subclasses), plus a handful of
-larger value classes (`IdempotencyCache`, `CompletionTracker`,
-`RequestQueue`, `BinaryReadArchive`, `BinaryWriteArchive`) whose
-migration cascades through the `void*`-typed `SinkBase`/`SourceBase`
-trait surface (the Phase 4 reshape we deferred).
+subclasses that need transpiler `impl Trait for Type` support before
+migration:
+
+  - 6 Sink/Source adapters (`BufferSinkAdapter`, `BufferSourceAdapter`,
+    `FdSinkAdapter`, `FdSourceAdapter`, `MarshalSinkAdapter`,
+    `MarshalSourceAdapter`) override the now-DSL `SinkBase` /
+    `SourceBase` traits — but the DSL grammar doesn't accept the
+    `impl Trait for Type` form yet.
+  - 4 Event subclasses (`NeverEvent`, `TimeoutEvent`, `WaitAny`,
+    `WaitN`, `SingleRPCEvent`, `DispatchEvent`, `IntEvent`) inherit a
+    still-non-DSL `Event` class.
+
+Plus a handful of larger value classes (`IdempotencyCache`,
+`CompletionTracker`, `RequestQueue`, `BinaryReadArchive`,
+`BinaryWriteArchive`) whose migration cascades through `void*` →
+`uint8_t*` (the BinaryArchive callers were already reshaped, but the
+templated `operator>>` / `operator<<` overloads still block them on
+template-method support).
+
+The `needs-transpiler` bucket dropped from 59 to 47 after the
+inventory tool learned to treat `virtual ~Foo() = default;` as
+non-blocking (defaulted dtors don't need `impl Drop` emit) — 12
+classes shifted into `refactor-then-dsl`, reflecting that their real
+blocker is `pub trait`-implementor support, not Drop.
 
 (Counts after OwnedFrame's Phase 1 migration, Phase 1c body-scan
 refinements, and Service's Phase 2 trait migration. Phase 1c added
