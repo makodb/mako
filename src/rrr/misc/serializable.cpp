@@ -257,70 +257,130 @@ inline SourceProxy make_source_proxy(BufferSource* source) {
 // concurrent access (e.g. via SpinMutex around the Sink) if shared.
 // ---------------------------------------------------------------------------
 
-class FdSink {
-  int fd_;
- public:
-  explicit FdSink(int fd) noexcept : fd_(fd) {}
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// `write(const void*, size_t)` / `read(void*, size_t)` live OUTSIDE
+// the DSL block as `fd_sink_write` / `fd_source_read` — the body's
+// `::write`/`::read` libc syscalls take `const void*`/`void*` and
+// the loop's `static_cast<const uint8_t*>` aren't expressible in
+// inline-Rust today. The DSL `fn new(fd: i32)` factory keeps the
+// existing 1-arg paren-init form working via C++20 aggregate
+// paren-init.
+#if RUSTYCPP_RUST
+struct FdSink {
+    fd_: i32,
+}
 
-  int fd() const noexcept { return fd_; }
+impl FdSink {
+    fn new(fd: i32) -> FdSink {
+        FdSink { fd_: fd }
+    }
 
-  // @safe - the only raw-pointer op is ::write itself, which is
-  // annotated below.
-  void write(const void* p, size_t n) {
+    fn fd(&self) -> i32 { self.fd_ }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_sink version=1 rust_sha256=f0580141a4e53d5ac7d20829ded7c3f91e7df4608218527e95a5b09534c6b10b*/
+struct FdSink;
+
+struct FdSink {
+    int32_t fd_;
+
+    static FdSink new_(int32_t fd);
+    int32_t fd() const;
+};
+
+
+FdSink FdSink::new_(int32_t fd) {
+    return FdSink{.fd_ = std::move(fd)};
+}
+
+int32_t FdSink::fd() const {
+    return this->fd_;
+}
+/*RUSTYCPP:GEN-END id=serializable.fd_sink*/
+
+// @safe - The only raw-pointer op is ::write itself, annotated below.
+inline void fd_sink_write(FdSink& self, const void* p, size_t n) {
     if (n == 0) return;
     const auto* b = static_cast<const uint8_t*>(p);
     size_t written = 0;
     while (written < n) {
-      // @unsafe { ::write — raw libc syscall on a fd we don't own }
-      ssize_t r = ::write(fd_, b + written, n - written);
-      if (r < 0) {
-        if (errno == EINTR) continue;
-        verify(false);
-      }
-      verify(r > 0);
-      written += static_cast<size_t>(r);
+        // @unsafe { ::write — raw libc syscall on a fd we don't own }
+        ssize_t r = ::write(self.fd_, b + written, n - written);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            verify(false);
+        }
+        verify(r > 0);
+        written += static_cast<size_t>(r);
     }
-  }
+}
+
+#if RUSTYCPP_RUST
+struct FdSource {
+    fd_: i32,
+}
+
+impl FdSource {
+    fn new(fd: i32) -> FdSource {
+        FdSource { fd_: fd }
+    }
+
+    fn fd(&self) -> i32 { self.fd_ }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_source version=1 rust_sha256=e9dd98e194041b805004992203639fd45763bc4a1d7e90cd29abec5f1dc0eb38*/
+struct FdSource;
+
+struct FdSource {
+    int32_t fd_;
+
+    static FdSource new_(int32_t fd);
+    int32_t fd() const;
 };
 
-class FdSource {
-  int fd_;
- public:
-  explicit FdSource(int fd) noexcept : fd_(fd) {}
 
-  int fd() const noexcept { return fd_; }
+FdSource FdSource::new_(int32_t fd) {
+    return FdSource{.fd_ = std::move(fd)};
+}
 
-  // @safe - the only raw-pointer op is ::read itself, annotated below.
-  size_t read(void* p, size_t n) {
+int32_t FdSource::fd() const {
+    return this->fd_;
+}
+/*RUSTYCPP:GEN-END id=serializable.fd_source*/
+
+// @safe - The only raw-pointer op is ::read itself, annotated below.
+inline size_t fd_source_read(FdSource& self, void* p, size_t n) {
     if (n == 0) return 0;
     auto* b = static_cast<uint8_t*>(p);
     size_t got = 0;
     while (got < n) {
-      // @unsafe { ::read — raw libc syscall on a fd we don't own }
-      ssize_t r = ::read(fd_, b + got, n - got);
-      if (r < 0) {
-        if (errno == EINTR) continue;
-        verify(false);
-      }
-      if (r == 0) break;  // EOF — return short read.
-      got += static_cast<size_t>(r);
+        // @unsafe { ::read — raw libc syscall on a fd we don't own }
+        ssize_t r = ::read(self.fd_, b + got, n - got);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            verify(false);
+        }
+        if (r == 0) break;  // EOF — return short read.
+        got += static_cast<size_t>(r);
     }
     return got;
-  }
-};
+}
 
 class FdSinkAdapter : public SinkBase {
   FdSink* sink_;
  public:
   explicit FdSinkAdapter(FdSink* s) noexcept : sink_(s) {}
-  void write(const void* p, size_t n) override { sink_->write(p, n); }
+  void write(const void* p, size_t n) override { fd_sink_write(*sink_, p, n); }
 };
 
 class FdSourceAdapter : public SourceBase {
   FdSource* source_;
  public:
   explicit FdSourceAdapter(FdSource* s) noexcept : source_(s) {}
-  size_t read(void* p, size_t n) override { return source_->read(p, n); }
+  size_t read(void* p, size_t n) override { return fd_source_read(*source_, p, n); }
 };
 
 inline SinkProxy make_sink_proxy(FdSink* sink) {
