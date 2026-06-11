@@ -58,11 +58,34 @@ nested-struct blockers and migrating the four POD aggregates:
   - `InMemoryListener::InnerState` hoisted similarly.
   - `InMemoryListenerInnerState` migrated to DSL (4-field POD).
 
-The remaining `trivial` items (`AnyMessageRegistry`,
-`InMemorySwitchboard`, `ReconnectPolicy`) need bigger restructuring
-than a 1-iteration migration permits: static-only class shape,
-load-bearing `mutable` + `const` method pattern, and a policy-manual
-decision respectively.
+Recent ctor-refactor sweep on both `ChannelFactoryBase` implementors:
+
+  - `TcpFactory`: dropped the `explicit TcpFactory(Arc<PollThread>)`
+    user ctor and the redundant `= delete` copy/move set, converted
+    to a `struct` with public fields, added
+    `static TcpFactory new_(Arc<PollThread>)`. Three call sites in
+    client.cpp / server.cpp flipped from `Arc::make` to
+    `Arc::new_(TcpFactory::new_(...))`.
+  - `InMemoryFactory`: same shape refactor. Two test call sites
+    flipped. Both factories are now aggregate-init-ready DSL
+    candidates; full DSL migration is deferred because each has
+    method bodies (`connect` / `make_listener` ~ 100+ LOC each)
+    that the DSL grammar doesn't translate today — they would need
+    free-function extraction across the adapter boundary, same
+    pattern as the Sink/Source POD sweep.
+
+The remaining `trivial` items needing bigger restructuring:
+  - `AnyMessageRegistry` — static-only class shape (no fields); the
+    methods take `std::type_index` and `rusty::Function<...>` and
+    have substantial bodies.
+  - `InMemorySwitchboard` — load-bearing `mutable` + `const`-method
+    pattern; dropping `mutable` cascades through the `Arc<T>::
+    operator*` → `const T&` access path.
+  - `ReconnectPolicy` — policy-manual (documented decision to keep
+    hand-written so the `Policy p; p.x = ...;` customize idiom
+    stays transparent).
+  - `TcpFactory` / `InMemoryFactory` (above) — full DSL migration
+    blocked on free-function extraction.
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
 or trivial-blocked and added two to already-dsl as DSL + GEN regions).
