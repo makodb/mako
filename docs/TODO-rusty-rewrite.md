@@ -33,11 +33,11 @@ Headline buckets for top-level decls (post-DragonBall deletion,
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
 | trivial           |    1  |  20 |    0.2%  |
-| trivial-blocked   |    8  | 482 |    5.4%  |
-| refactor-then-dsl |   30  |2,325|   26.2%  |
-| needs-transpiler  |   44  |4,420|   49.9%  |
+| trivial-blocked   |    8  | 482 |    5.5%  |
+| refactor-then-dsl |   29  |2,204|   25.2%  |
+| needs-transpiler  |   44  |4,420|   50.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  171  |1,498|   16.9%  |
+| already-dsl       |  171  |1,498|   17.1%  |
 
 The recent inventory-tool refinements (defaulted-dtor detection,
 empty-body-dtor detection, `= delete;` ctor/operator filtering with
