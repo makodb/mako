@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 257  
-**Span across all decls (LOC):** 8862
+**Decl count (top-level class/struct/enum/union):** 256  
+**Span across all decls (LOC):** 8741
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
 | trivial | 1 | 20 | 0.2% |
-| trivial-blocked | 8 | 482 | 5.4% |
-| refactor-then-dsl | 30 | 2325 | 26.2% |
-| needs-transpiler | 44 | 4420 | 49.9% |
+| trivial-blocked | 8 | 482 | 5.5% |
+| refactor-then-dsl | 29 | 2204 | 25.2% |
+| needs-transpiler | 44 | 4420 | 50.6% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 171 | 1498 | 16.9% |
+| already-dsl | 171 | 1498 | 17.1% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -42,8 +42,8 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 151 | `TimeoutALock` | needs-transpiler |
 | `rpc/tcp_channel.cpp` | 135 | `TcpConnection` | needs-transpiler |
-| `misc/alock.cpp` | 121 | `ALockGroup` | refactor-then-dsl |
 | `base/threading.cpp` | 113 | `SpinMutexGuard` | needs-transpiler |
+| `reactor/reactor.cpp` | 102 | `PollThreadWorker` | refactor-then-dsl |
 
 ## Per-file LOC (manual decls only, top 15)
 
@@ -51,7 +51,7 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|
 | `rpc/client.cpp` | 1768 |
 | `reactor/reactor.cpp` | 1010 |
-| `misc/alock.cpp` | 718 |
+| `misc/alock.cpp` | 597 |
 | `misc/serializable.cpp` | 591 |
 | `rpc/tcp_channel.cpp` | 350 |
 | `misc/cpuinfo.cpp` | 253 |
@@ -70,9 +70,9 @@ from the repo root to regenerate both this file and the CSV.
 | Blocker | Decls | LOC |
 |---|---:|---:|
 | custom dtor | 19 | 3388 |
-| user ctor | 10 | 1599 |
-| default arg in member fn | 7 | 1099 |
+| user ctor | 9 | 1478 |
 | template | 25 | 1032 |
+| default arg in member fn | 6 | 978 |
 | operator overload | 4 | 851 |
 | virtual / inheritance | 20 | 726 |
 | template method | 7 | 719 |
