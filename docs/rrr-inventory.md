@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 242  
-**Span across all decls (LOC):** 9177
+**Decl count (top-level class/struct/enum/union):** 249  
+**Span across all decls (LOC):** 9083
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 3 | 95 | 1.0% |
-| trivial-blocked | 10 | 548 | 6.0% |
-| refactor-then-dsl | 29 | 1774 | 19.3% |
-| needs-transpiler | 59 | 5361 | 58.4% |
+| trivial | 2 | 50 | 0.6% |
+| trivial-blocked | 9 | 527 | 5.8% |
+| refactor-then-dsl | 24 | 1675 | 18.4% |
+| needs-transpiler | 59 | 5361 | 59.0% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 138 | 1282 | 14.0% |
+| already-dsl | 152 | 1353 | 14.9% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -52,14 +52,14 @@ from the repo root to regenerate both this file and the CSV.
 | `rpc/client.cpp` | 1768 |
 | `reactor/reactor.cpp` | 1010 |
 | `misc/alock.cpp` | 720 |
-| `misc/serializable.cpp` | 704 |
+| `misc/serializable.cpp` | 607 |
 | `rpc/tcp_channel.cpp` | 376 |
 | `rpc/inmemory_channel.cpp` | 300 |
-| `rpc/idempotency.cpp` | 296 |
 | `misc/cpuinfo.cpp` | 253 |
-| `misc/marshal.cpp` | 251 |
+| `rpc/idempotency.cpp` | 251 |
 | `rpc/server.cpp` | 240 |
 | `reactor/epoll_wrapper.cc` | 240 |
+| `misc/marshal.cpp` | 228 |
 | `rpc/completion_tracker.cpp` | 222 |
 | `rpc/request_queue.cpp` | 216 |
 | `misc/serializable_envelope.cpp` | 207 |
