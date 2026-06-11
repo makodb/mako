@@ -317,16 +317,33 @@ inline ChannelConnectionProxy make_inmemory_channel_proxy(
 // ---------------------------------------------------------------------------
 
 // SpinMutex-owned mutable state for InMemoryListener (rusty-style
-// "data inside the mutex"). Hoisted to namespace scope so
-// `InMemoryListener` no longer has a nested struct (the inventory
-// tool's nested-struct DSL blocker keeps that pattern out of
-// `trivial`).
+// "data inside the mutex"). Sister type to InMemoryConnectionStateInner.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. Drops the `closed = false`
+// NSDMI default — value-init via the aggregate path zero-inits bool
+// to false. The OnXCallback default ctors build empty Arcs that
+// surface as `operator bool() == false`, matching the previous
+// behavior.
+#if RUSTYCPP_RUST
 struct InMemoryListenerInnerState {
-    std::string        local_address;
-    bool               closed = false;
-    OnAcceptCallback   on_accept;
-    OnErrorCallback    on_error;
+    local_address: std::string,
+    closed: bool,
+    on_accept: OnAcceptCallback,
+    on_error: OnErrorCallback,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener_inner version=1 rust_sha256=0e307ba7a4052691b887fdbea7ab0ac6ba244d9fac30cc6c3f2ca3824c1028cb*/
+struct InMemoryListenerInnerState;
+
+struct InMemoryListenerInnerState {
+    std::string local_address;
+    bool closed;
+    OnAcceptCallback on_accept;
+    OnErrorCallback on_error;
 };
+/*RUSTYCPP:GEN-END id=inmemory_channel.listener_inner*/
 
 /**
  * In-memory accept-side listener. Implements the
