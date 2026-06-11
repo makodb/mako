@@ -316,6 +316,18 @@ inline ChannelConnectionProxy make_inmemory_channel_proxy(
 // InMemoryListener
 // ---------------------------------------------------------------------------
 
+// SpinMutex-owned mutable state for InMemoryListener (rusty-style
+// "data inside the mutex"). Hoisted to namespace scope so
+// `InMemoryListener` no longer has a nested struct (the inventory
+// tool's nested-struct DSL blocker keeps that pattern out of
+// `trivial`).
+struct InMemoryListenerInnerState {
+    std::string        local_address;
+    bool               closed = false;
+    OnAcceptCallback   on_accept;
+    OnErrorCallback    on_error;
+};
+
 /**
  * In-memory accept-side listener. Implements the
  * `ChannelListenerBase` contract.
@@ -364,14 +376,7 @@ class InMemoryListener {
     rusty::Arc<InMemorySwitchboard> switchboard_;
     rusty::Option<rusty::sync::Weak<InMemoryListener>> self_weak_{rusty::None};
 
-    // SpinMutex-owned mutable state (rusty-style "data inside the mutex").
-    struct InnerState {
-        std::string        local_address;
-        bool               closed = false;
-        OnAcceptCallback   on_accept;
-        OnErrorCallback    on_error;
-    };
-    mutable SpinMutex<InnerState> inner_;
+    mutable SpinMutex<InMemoryListenerInnerState> inner_;
 };
 
 // Adapter wrapping `Arc<InMemoryListener>` for the listener-proxy
