@@ -96,8 +96,8 @@ class InMemoryE2ETest : public ::testing::Test {
     // switchboard. Each call returns a new proxy (proxies are
     // move-only, so callers consume them).
     ChannelFactoryProxy make_factory() {
-        auto factory_arc = rusty::Arc<InMemoryFactory>::make(
-            switchboard_.as_ref().unwrap().clone());
+        auto factory_arc = rusty::Arc<InMemoryFactory>::new_(InMemoryFactory::new_(
+            switchboard_.as_ref().unwrap().clone()));
         return make_inmemory_factory_proxy(std::move(factory_arc));
     }
 
