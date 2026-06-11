@@ -33,10 +33,10 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 |-------------------|------:|----:|---------:|
 | trivial           |    2  |  50 |    0.5%  |
 | trivial-blocked   |    8  | 442 |    4.8%  |
-| refactor-then-dsl |   32  |1,654|   17.8%  |
+| refactor-then-dsl |   31  |1,593|   17.1%  |
 | needs-transpiler  |   44  |4,416|   47.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  169  |1,503|   16.2%  |
+| already-dsl       |  171  |1,503|   16.2%  |
 
 The recent inventory-tool refinements (defaulted-dtor detection,
 empty-body-dtor detection, `= delete;` ctor/operator filtering with
@@ -85,8 +85,20 @@ extraction pattern as the Sink/Source POD sweep:
     `mutable listeners_`): extracted as `inmemory_switchboard_*`
     free fns; 3 caller sites (now-already-DSL free fns) wrap with
     `const_cast<InMemorySwitchboard&>(*sb.get())`.
+  - `InMemoryChannel` (61 LOC, 11 methods including the 80-LOC
+    `send_frame`): extracted as `inmemory_channel_*` free fns. The
+    legacy `mut_state()` helper is inlined at each call site as
+    `const_cast<InMemoryConnectionState&>(*self.state_.get())`. The
+    adapter's `const` overrides for is_closed / peer_address wrap
+    via `const_cast<Adapter*>(this)->mut_conn()`. `flush()` was
+    inline empty in the legacy struct; it gets a proper free-fn
+    body (`(void)self;`) to mirror the trait dispatch shape.
 
-Net effect across this session: `trivial` 6→2, `already-dsl` 161→169.
+Net effect across this session: `trivial` 6→2, `already-dsl` 161→171.
+
+The inmemory-channel DSL sweep is complete: all 4 channel-adjacent
+aggregates (Switchboard, Listener, Factory, Channel) + both Inner
+POD aggregates + the TcpFactory peer are now `already-dsl`.
 
 Remaining `trivial` items genuinely need bigger restructuring than
 a 1-iteration free-fn extraction permits:
