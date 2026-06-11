@@ -2288,7 +2288,7 @@ impl Client {
         mut_conn.set_reconnect_policy(self.pending_reconnect_policy_field.get());
 
         if !self.has_pending_channel_factory() {
-            let tcp_factory: Arc<TcpFactory> = Arc::<TcpFactory>::make(self.poll_thread_worker_field.clone());
+            let tcp_factory: Arc<TcpFactory> = Arc::<TcpFactory>::new_(TcpFactory::new(self.poll_thread_worker_field.clone()));
             self.set_channel_factory(make_tcp_factory_proxy(tcp_factory));
         }
 
@@ -2585,7 +2585,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=419cfbbb62533f14c766e88fb3d3d55ace8863557b7f10439799d176948764b9*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=86639c0ee98fe75994366254889e0f3c1bae251c0a27d891d34bf488613f7798*/
 struct Client;
 
 struct Client {
@@ -2772,7 +2772,7 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
     mut_conn.set_circuit_breaker_config(this->pending_circuit_breaker_config_field.get());
     mut_conn.set_reconnect_policy(rusty::detail::deref_if_pointer_like(this->pending_reconnect_policy_field.get()));
     if (!this->has_pending_channel_factory()) {
-        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::make(rusty::clone(this->poll_thread_worker_field));
+        const rusty::Arc<TcpFactory> tcp_factory = rusty::Arc<TcpFactory>::new_(TcpFactory::new_(rusty::clone(this->poll_thread_worker_field)));
         this->set_channel_factory(make_tcp_factory_proxy(std::move(tcp_factory)));
     }
     {

@@ -532,15 +532,16 @@ inline PollableProxy make_tcp_listener_pollable_proxy(
  * registration is sent to the poll thread asynchronously via the
  * MPSC command channel, matching `PollThread::add_proxy` semantics.
  */
-class TcpFactory {
- public:
-    explicit TcpFactory(rusty::Arc<PollThread> poll_thread);
-    ~TcpFactory() = default;
-
-    TcpFactory(const TcpFactory&)            = delete;
-    TcpFactory& operator=(const TcpFactory&) = delete;
-    TcpFactory(TcpFactory&&)                 = delete;
-    TcpFactory& operator=(TcpFactory&&)      = delete;
+// TcpFactory is now an aggregate (public fields, no user ctors, no
+// = delete) — same shape as the rrr DSL-style aggregates emitted by
+// rusty-cpp. Non-copyability falls out implicitly because the
+// `rusty::Arc<PollThread>` field is itself non-copyable. Callers
+// build via `Arc<TcpFactory>::new_(TcpFactory::new_(arg))`.
+struct TcpFactory {
+    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
+    // pattern. Designated-init the struct in place; the
+    // `connect_timeout_ms_ = 5000` default supplies the second field.
+    static TcpFactory new_(rusty::Arc<PollThread> poll_thread);
 
     // ChannelFactoryBase methods.
     ConnectResult                       connect(std::string_view addr);
@@ -552,7 +553,6 @@ class TcpFactory {
     // unreachable destinations. Set to 0 for blocking behavior.
     void set_connect_timeout_ms(int timeout_ms) { connect_timeout_ms_ = timeout_ms; }
 
- private:
     static ChannelError connect_errno_to_channel_error(int err);
 
     rusty::Arc<PollThread> poll_thread_;
@@ -1350,8 +1350,11 @@ ChannelError TcpListener::listen_errno_to_channel_error(int err) {
 // TcpFactory
 // ===========================================================================
 
-TcpFactory::TcpFactory(rusty::Arc<PollThread> poll_thread)
-    : poll_thread_(std::move(poll_thread)) {}
+// @safe - aggregate-init builds the struct in place; the per-field
+// NSDMI default on connect_timeout_ms_ (5000) carries over.
+TcpFactory TcpFactory::new_(rusty::Arc<PollThread> poll_thread) {
+    return TcpFactory{.poll_thread_ = std::move(poll_thread)};
+}
 
 // @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
 // + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
