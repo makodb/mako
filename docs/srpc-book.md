@@ -417,18 +417,27 @@ if (event->status_ == Event::TIMEOUT) {
 
 ### Pollable Interface
 
-Legacy path: objects can still implement `Pollable` directly:
+Legacy path: objects can still implement `Pollable` directly. The
+trait now lives as an inline-DSL `pub trait` in
+`src/rrr/reactor/epoll_wrapper.cc`:
 
-```cpp srpc-no-compile
-class Pollable {
-    virtual int fd() const = 0;             // File descriptor
-    virtual int poll_mode() const = 0;      // READ, WRITE, or both
-    virtual bool handle_read() = 0;         // Called when FD is readable
-    virtual int handle_write() = 0;         // Called when FD is writable
-    virtual void handle_error() = 0;        // Called on error
-    virtual void close() = 0;              // Cleanup
-};
+```rust srpc-no-compile
+#[cfg(rusty_cpp_rust)]
+pub trait Pollable {
+    fn fd(&self) -> i32;
+    fn poll_mode(&self) -> i32;
+    fn content_size(&mut self) -> usize;
+    fn handle_read(&mut self) -> bool;
+    fn handle_write(&mut self) -> i32;
+    fn handle_error(&mut self);
+    fn close(&mut self);
+    fn check_pending_write_update(&self) -> bool;
+    fn is_closed(&self) -> bool;
+}
 ```
+
+The rusty-cpp transpiler emits the matching `class Pollable { ...
+virtual ... = 0; }` GEN block into the same file at build time.
 
 Migration note: proxy scaffolding for `Pollable` now lives in `src/rrr/rpc/pollable_proxy.h`
 (`PollableFacade` and typed-arc adapter support). Poll-thread
