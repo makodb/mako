@@ -104,50 +104,56 @@ class InMemorySwitchboard {
  * sides observe `is_closed() == true`) as soon as either side has
  * called `close()`.
  */
+// Per-channel callback table + fault-injection knobs that live inside
+// `InMemoryConnectionState::inner`'s SpinMutex. Hoisted to namespace
+// scope so `InMemoryConnectionState` itself is no longer a class with
+// a nested struct (the inventory tool's nested-struct DSL blocker
+// keeps that pattern out of `trivial`).
+struct InMemoryConnectionStateInner {
+    // A-side state.  `OnXCallback` is the Arc<Function const>-
+    // backed wrapper from channel.hpp; default-construction holds
+    // an Arc wrapping an empty inner Function, which the wrapper
+    // surfaces as `operator bool() == false` (the unset-callback
+    // state).
+    std::string       a_peer_address;
+    OnFrameCallback   a_on_frame;
+    OnClosedCallback  a_on_closed;
+    OnErrorCallback   a_on_error;
+    bool              a_closed = false;
+
+    // B-side state
+    std::string       b_peer_address;
+    OnFrameCallback   b_on_frame;
+    OnClosedCallback  b_on_closed;
+    OnErrorCallback   b_on_error;
+    bool              b_closed = false;
+
+    // 6c — Fault injection state. Per-side knobs decide whether
+    // each upcoming `send_frame` should:
+    //   * be silently dropped (returns `ChannelError::None`, peer
+    //     gets nothing), OR
+    //   * return a specific `ChannelError`, OR
+    //   * proceed normally.
+    //
+    // Counters tick down on each `send_frame` call from the
+    // corresponding side; when zero, the channel returns to normal
+    // delivery. Drop counters take precedence — when both are set
+    // the drop fires first while its counter is positive, then the
+    // error injection takes over.
+    int               drop_next_sends_a  = 0;
+    int               drop_next_sends_b  = 0;
+    int               send_error_count_a = 0;
+    int               send_error_count_b = 0;
+    ChannelError      send_error_a       = ChannelError::None;
+    ChannelError      send_error_b       = ChannelError::None;
+};
+
 struct InMemoryConnectionState {
     // SpinMutex-owned inner state (rusty-style "data inside the mutex").
     // All per-side callbacks, closed flags, and fault-injection knobs
-    // live here; access through `inner.lock().unwrap()->...`.
-    struct Inner {
-        // A-side state.  `OnXCallback` is the Arc<Function const>-
-        // backed wrapper from channel.hpp; default-construction holds
-        // an Arc wrapping an empty inner Function, which the wrapper
-        // surfaces as `operator bool() == false` (the unset-callback
-        // state).
-        std::string       a_peer_address;
-        OnFrameCallback   a_on_frame;
-        OnClosedCallback  a_on_closed;
-        OnErrorCallback   a_on_error;
-        bool              a_closed = false;
-
-        // B-side state
-        std::string       b_peer_address;
-        OnFrameCallback   b_on_frame;
-        OnClosedCallback  b_on_closed;
-        OnErrorCallback   b_on_error;
-        bool              b_closed = false;
-
-        // 6c — Fault injection state. Per-side knobs decide whether
-        // each upcoming `send_frame` should:
-        //   * be silently dropped (returns `ChannelError::None`, peer
-        //     gets nothing), OR
-        //   * return a specific `ChannelError`, OR
-        //   * proceed normally.
-        //
-        // Counters tick down on each `send_frame` call from the
-        // corresponding side; when zero, the channel returns to normal
-        // delivery. Drop counters take precedence — when both are set
-        // the drop fires first while its counter is positive, then the
-        // error injection takes over.
-        int               drop_next_sends_a  = 0;
-        int               drop_next_sends_b  = 0;
-        int               send_error_count_a = 0;
-        int               send_error_count_b = 0;
-        ChannelError      send_error_a       = ChannelError::None;
-        ChannelError      send_error_b       = ChannelError::None;
-    };
-
-    mutable SpinMutex<Inner> inner;
+    // live in `InMemoryConnectionStateInner`; access through
+    // `inner.lock().unwrap()->...`.
+    mutable SpinMutex<InMemoryConnectionStateInner> inner;
 };
 
 // ---------------------------------------------------------------------------
