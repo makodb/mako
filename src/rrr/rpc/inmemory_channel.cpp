@@ -167,14 +167,29 @@ struct InMemoryConnectionStateInner {
 };
 /*RUSTYCPP:GEN-END id=inmemory_channel.inner*/
 
+// SpinMutex-owned inner state (rusty-style "data inside the mutex").
+// All per-side callbacks, closed flags, and fault-injection knobs
+// live in `InMemoryConnectionStateInner`; access through
+// `inner.lock().unwrap()->...`. The legacy `mutable` qualifier on the
+// field is gone — every caller already routes through
+// `InMemoryChannel::mut_state()` (a const_cast wrapper), so the
+// mutable shortcut was redundant.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
 struct InMemoryConnectionState {
-    // SpinMutex-owned inner state (rusty-style "data inside the mutex").
-    // All per-side callbacks, closed flags, and fault-injection knobs
-    // live in `InMemoryConnectionStateInner`; access through
-    // `inner.lock().unwrap()->...`. Stays hand-written because the
-    // `mutable` qualifier on the field isn't expressible in the DSL.
-    mutable SpinMutex<InMemoryConnectionStateInner> inner;
+    inner: SpinMutex<InMemoryConnectionStateInner>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.state version=1 rust_sha256=aeb65d317f31a48e1aa021975b7e4d2dd8a348a4f325cfb725e4a93778f0e56e*/
+struct InMemoryConnectionState;
+
+struct InMemoryConnectionState {
+    SpinMutex<InMemoryConnectionStateInner> inner;
 };
+/*RUSTYCPP:GEN-END id=inmemory_channel.state*/
 
 // ---------------------------------------------------------------------------
 // InMemoryChannel
