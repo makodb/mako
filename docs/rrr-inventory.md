@@ -7,16 +7,16 @@ a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
 **Decl count (top-level class/struct/enum/union):** 249  
-**Span across all decls (LOC):** 9103
+**Span across all decls (LOC):** 9087
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 2 | 50 | 0.5% |
+| trivial | 2 | 50 | 0.6% |
 | trivial-blocked | 9 | 527 | 5.8% |
-| refactor-then-dsl | 37 | 2618 | 28.8% |
-| needs-transpiler | 44 | 4416 | 48.5% |
+| refactor-then-dsl | 37 | 2602 | 28.6% |
+| needs-transpiler | 44 | 4416 | 48.6% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 154 | 1375 | 15.1% |
 
@@ -25,9 +25,9 @@ from the repo root to regenerate both this file and the CSV.
 | File | Lines | Name | Bucket |
 |---|---:|---|---|
 | `rpc/client.cpp` | 1309 | `ClientConnection` | needs-transpiler |
-| `misc/serializable.cpp` | 256 | `BinaryReadArchive` | refactor-then-dsl |
 | `misc/cpuinfo.cpp` | 253 | `CPUInfo` | trivial-blocked |
 | `rpc/idempotency.cpp` | 251 | `IdempotencyCache` | refactor-then-dsl |
+| `misc/serializable.cpp` | 250 | `BinaryReadArchive` | refactor-then-dsl |
 | `reactor/reactor.cpp` | 243 | `Reactor` | needs-transpiler |
 | `reactor/epoll_wrapper.cc` | 226 | `Epoll` | needs-transpiler |
 | `rpc/completion_tracker.cpp` | 222 | `CompletionTracker` | refactor-then-dsl |
@@ -35,9 +35,9 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/marshal.cpp` | 214 | `Marshal` | refactor-then-dsl |
 | `misc/serializable_envelope.cpp` | 207 | `SerializableEnvelope` | needs-transpiler |
 | `rpc/server.cpp` | 202 | `ServerConnection` | needs-transpiler |
-| `misc/serializable.cpp` | 199 | `BinaryWriteArchive` | refactor-then-dsl |
 | `rpc/client.cpp` | 195 | `ClientPool` | needs-transpiler |
 | `rpc/client.cpp` | 194 | `Future` | refactor-then-dsl |
+| `misc/serializable.cpp` | 191 | `BinaryWriteArchive` | refactor-then-dsl |
 | `misc/alock.cpp` | 189 | `WaitDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 151 | `TimeoutALock` | needs-transpiler |
@@ -52,18 +52,38 @@ from the repo root to regenerate both this file and the CSV.
 | `rpc/client.cpp` | 1768 |
 | `reactor/reactor.cpp` | 1010 |
 | `misc/alock.cpp` | 720 |
-| `misc/serializable.cpp` | 605 |
+| `misc/serializable.cpp` | 591 |
 | `rpc/tcp_channel.cpp` | 376 |
 | `rpc/inmemory_channel.cpp` | 300 |
 | `misc/cpuinfo.cpp` | 253 |
 | `rpc/idempotency.cpp` | 251 |
 | `rpc/server.cpp` | 240 |
 | `reactor/epoll_wrapper.cc` | 240 |
-| `misc/marshal.cpp` | 228 |
+| `misc/marshal.cpp` | 226 |
 | `rpc/completion_tracker.cpp` | 222 |
 | `rpc/request_queue.cpp` | 216 |
 | `misc/serializable_envelope.cpp` | 207 |
 | `base/threading.cpp` | 192 |
+
+## Blocker histogram (manual decls, all buckets)
+
+| Blocker | Decls | LOC |
+|---|---:|---:|
+| custom dtor | 19 | 3388 |
+| user ctor | 16 | 1862 |
+| operator overload | 11 | 1214 |
+| default arg in member fn | 8 | 1151 |
+| template | 25 | 1028 |
+| virtual / inheritance | 21 | 740 |
+| template method | 7 | 719 |
+| void* in param | 3 | 468 |
+| nested struct/class | 3 | 288 |
+| preprocessor branches in body (#if/#ifdef) | 2 | 280 |
+| name flagged as boundary in plan | 3 | 117 |
+| std::shared_ptr field | 2 | 56 |
+| POD-shaped | 2 | 50 |
+| va_list | 1 | 42 |
+| C-style array param | 1 | 20 |
 
 ## Caveats
 

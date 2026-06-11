@@ -637,6 +637,37 @@ def write_summary(decls: list[Decl], out_path: Path) -> None:
         for fname, loc in sorted(per_file.items(), key=lambda kv: -kv[1])[:15]:
             relfile = fname.split("src/rrr/", 1)[-1]
             f.write(f"| `{relfile}` | {loc} |\n")
+        # Blocker histogram across non-already-dsl manual decls.
+        # The note text is the unit; each decl can carry multiple notes
+        # (e.g. user-ctor + operator-overload + void*-param), so the
+        # counts here sum higher than the bucket-decl counts. Useful
+        # for prioritizing which transpiler features have the most
+        # leverage.
+        f.write("\n## Blocker histogram (manual decls, all buckets)\n\n")
+        from collections import Counter
+        blocker_loc: Counter[str] = Counter()
+        blocker_count: Counter[str] = Counter()
+        for d in manual:
+            if d.bucket == "already-dsl":
+                continue
+            for note in d.notes:
+                # Trim long blocker notes to their leading phrase so the
+                # histogram aggregates "user ctor — needs ::new() factory
+                # refactor first" and "user ctor — …" together.
+                key = note.split("—")[0].strip().rstrip(";").strip()
+                if not key:
+                    key = note.strip()
+                blocker_count[key] += 1
+                blocker_loc[key] += d.loc
+        if blocker_count:
+            f.write("| Blocker | Decls | LOC |\n")
+            f.write("|---|---:|---:|\n")
+            ordered = sorted(
+                blocker_count.items(),
+                key=lambda kv: (-blocker_loc[kv[0]], -kv[1], kv[0]),
+            )
+            for key, n in ordered:
+                f.write(f"| {key} | {n} | {blocker_loc[key]} |\n")
         f.write(
             "\n## Caveats\n\n"
             "- The decl span is a brace-counted heuristic, not a full C++\n"
