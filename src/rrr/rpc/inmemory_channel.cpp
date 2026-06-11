@@ -353,52 +353,64 @@ struct InMemoryListenerInnerState {
  * switchboard. On `close()`, it unregisters and refuses further
  * accepts. Existing accepted connections are unaffected.
  */
-// InMemoryListener is now an aggregate (public fields, no user ctors,
-// no `= delete`) — same shape as TcpFactory / InMemoryFactory. The
-// `rusty::Arc<InMemorySwitchboard>` field carries the non-copyability
-// contract implicitly. The `mutable SpinMutex<...> inner_` qualifier
-// stays because `is_closed() const` and `local_address() const` call
-// `inner_.lock()` directly (no `mut_listener()` const_cast wrapper).
+// Authored as inline Rust DSL. The 6 ChannelListenerBase methods +
+// accept_for_connect stay as free functions (defined further down in
+// the file) — their bodies do non-trivial inner_.lock() routines +
+// switchboard registration that don't translate to the DSL grammar.
+// Because all methods now route through the adapter's mut_listener()
+// const_cast (or are extracted free fns taking InMemoryListener&),
+// the `mutable` qualifier on `inner_` is no longer needed.
+#if RUSTYCPP_RUST
 struct InMemoryListener {
-    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
-    // pattern.
-    static InMemoryListener new_(rusty::Arc<InMemorySwitchboard> switchboard);
+    switchboard_: Arc<InMemorySwitchboard>,
+    self_weak_: rusty::Option<rusty::sync::Weak<InMemoryListener>>,
+    inner_: SpinMutex<InMemoryListenerInnerState>,
+}
 
-    // ChannelListenerBase methods.
-    ChannelError listen(std::string_view addr);
-    void         close();
-    bool         is_closed() const;
-    std::string  local_address() const;
-    void set_on_accept(OnAcceptCallback cb);
-    void set_on_error (OnErrorCallback  cb);
-
-    // Internal — invoked by InMemoryFactory::connect(). Builds a
-    // paired connection state, fires `on_accept` with the server
-    // half, and returns the client half. Returns nullptr-equivalent
-    // (default-constructed proxy) if `closed_`.
-    rusty::Option<rusty::Arc<InMemoryChannel>> accept_for_connect(
-        const std::string& client_address);
-
-    /// Test-only: set the self-weak so the switchboard can upgrade
-    /// to an Arc when looking up listeners.
-    void set_self_weak(rusty::sync::Weak<InMemoryListener> w) {
-        self_weak_ = std::move(w);
+impl InMemoryListener {
+    fn new(switchboard: Arc<InMemorySwitchboard>) -> InMemoryListener {
+        InMemoryListener {
+            switchboard_: switchboard,
+            self_weak_: rusty::None,
+            inner_: SpinMutex::<InMemoryListenerInnerState>::new(InMemoryListenerInnerState{}),
+        }
     }
 
-    // Fields outside the SpinMutex: switchboard_ is set once at
-    // construction (immutable Arc), self_weak_ is set once via
-    // set_self_weak() before any concurrent listener access.
-    rusty::Arc<InMemorySwitchboard> switchboard_;
-    rusty::Option<rusty::sync::Weak<InMemoryListener>> self_weak_{rusty::None};
+    fn set_self_weak(&mut self, w: rusty::sync::Weak<InMemoryListener>) {
+        self.self_weak_ = rusty::Some(w);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=e690807d639187c541b00b32764ae78b9c9c0fb7fd80b7785596aa01f1030250*/
+struct InMemoryListener;
 
-    mutable SpinMutex<InMemoryListenerInnerState> inner_;
+struct InMemoryListener {
+    rusty::Arc<InMemorySwitchboard> switchboard_;
+    rusty::Option<rusty::sync::Weak<InMemoryListener>> self_weak_;
+    SpinMutex<InMemoryListenerInnerState> inner_;
+
+    static InMemoryListener new_(rusty::Arc<InMemorySwitchboard> switchboard);
+    void set_self_weak(rusty::sync::Weak<InMemoryListener> w);
 };
 
-// @safe - aggregate-init builds the struct in place; the
-// `self_weak_{rusty::None}` and default-init `inner_` carry over.
-inline InMemoryListener InMemoryListener::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
-    return InMemoryListener{.switchboard_ = std::move(switchboard)};
+
+InMemoryListener InMemoryListener::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
+    return InMemoryListener{.switchboard_ = std::move(switchboard), .self_weak_ = rusty::None, .inner_ = SpinMutex<InMemoryListenerInnerState>::new_(InMemoryListenerInnerState{})};
 }
+
+void InMemoryListener::set_self_weak(rusty::sync::Weak<InMemoryListener> w) {
+    this->self_weak_ = rusty::Option<rusty::sync::Weak<InMemoryListener>>(std::move(w));
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.listener*/
+
+// Free functions (non-DSL) — see definitions further down.
+ChannelError inmemory_listener_listen(InMemoryListener& self, std::string_view addr);
+void         inmemory_listener_close(InMemoryListener& self);
+bool         inmemory_listener_is_closed(InMemoryListener& self);
+std::string  inmemory_listener_local_address(InMemoryListener& self);
+void         inmemory_listener_set_on_accept(InMemoryListener& self, OnAcceptCallback cb);
+void         inmemory_listener_set_on_error(InMemoryListener& self, OnErrorCallback cb);
+rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(InMemoryListener& self, const std::string& client_address);
 
 // Adapter wrapping `Arc<InMemoryListener>` for the listener-proxy
 // facade. Mirrors `TcpListenerChannelAdapter` (equivalent in spirit).
@@ -408,15 +420,19 @@ class InMemoryListenerAdapter : public ChannelListenerBase {
         : listener_(std::move(listener)) {}
 
     // @unsafe - forwards through mut_listener() const_cast.
-    ChannelError listen(std::string_view addr) override { return mut_listener().listen(addr); }
+    ChannelError listen(std::string_view addr) override { return inmemory_listener_listen(mut_listener(), addr); }
     // @unsafe - forwards through mut_listener() const_cast.
-    void         close() override              { mut_listener().close(); }
-    bool         is_closed() const override    { return listener_->is_closed(); }
-    std::string  local_address() const override { return listener_->local_address(); }
+    void         close() override              { inmemory_listener_close(mut_listener()); }
+    // @unsafe - forwards through mut_listener() const_cast (is_closed
+    // mutates inner_ via lock() — the const wrapper on the adapter
+    // matches the trait signature).
+    bool         is_closed() const override    { return inmemory_listener_is_closed(const_cast<InMemoryListenerAdapter*>(this)->mut_listener()); }
     // @unsafe - forwards through mut_listener() const_cast.
-    void set_on_accept(OnAcceptCallback cb) override { mut_listener().set_on_accept(std::move(cb)); }
+    std::string  local_address() const override { return inmemory_listener_local_address(const_cast<InMemoryListenerAdapter*>(this)->mut_listener()); }
     // @unsafe - forwards through mut_listener() const_cast.
-    void set_on_error (OnErrorCallback  cb) override { mut_listener().set_on_error (std::move(cb)); }
+    void set_on_accept(OnAcceptCallback cb) override { inmemory_listener_set_on_accept(mut_listener(), std::move(cb)); }
+    // @unsafe - forwards through mut_listener() const_cast.
+    void set_on_error (OnErrorCallback  cb) override { inmemory_listener_set_on_error(mut_listener(), std::move(cb)); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().
@@ -817,10 +833,10 @@ void InMemoryChannel::set_on_error(OnErrorCallback cb) {
 // InMemoryListener
 // ---------------------------------------------------------------------------
 
-ChannelError InMemoryListener::listen(std::string_view addr) {
+ChannelError inmemory_listener_listen(InMemoryListener& self, std::string_view addr) {
     rusty::sync::Weak<InMemoryListener> w;
     {
-        auto guard = inner_.lock().unwrap();
+        auto guard = self.inner_.lock().unwrap();
         if (guard->closed) {
             return ChannelError::Internal;
         }
@@ -831,53 +847,53 @@ ChannelError InMemoryListener::listen(std::string_view addr) {
             }
             return ChannelError::AddressInUse;
         }
-        if (self_weak_.is_none()) {
+        if (self.self_weak_.is_none()) {
             Log_error("rrr::InMemoryListener::listen: self_weak_ not set "
                       "(caller must call set_self_weak before listen)");
             return ChannelError::Internal;
         }
         guard->local_address = std::string(addr);
-        w = self_weak_.as_ref().unwrap().clone();
+        w = self.self_weak_.as_ref().unwrap().clone();
     }
-    if (!switchboard_->register_listener(std::string(addr), std::move(w))) {
+    if (!self.switchboard_->register_listener(std::string(addr), std::move(w))) {
         // Address already taken in the switchboard.
-        auto guard = inner_.lock().unwrap();
+        auto guard = self.inner_.lock().unwrap();
         guard->local_address.clear();
         return ChannelError::AddressInUse;
     }
     return ChannelError::None;
 }
 
-void InMemoryListener::close() {
+void inmemory_listener_close(InMemoryListener& self) {
     std::string addr_to_unregister;
     {
-        auto guard = inner_.lock().unwrap();
+        auto guard = self.inner_.lock().unwrap();
         if (guard->closed) return;
         guard->closed = true;
         addr_to_unregister = guard->local_address;
     }
     if (!addr_to_unregister.empty()) {
-        switchboard_->unregister_listener(addr_to_unregister);
+        self.switchboard_->unregister_listener(addr_to_unregister);
     }
 }
 
-bool InMemoryListener::is_closed() const {
-    auto guard = inner_.lock().unwrap();
+bool inmemory_listener_is_closed(InMemoryListener& self) {
+    auto guard = self.inner_.lock().unwrap();
     return guard->closed;
 }
 
-std::string InMemoryListener::local_address() const {
-    auto guard = inner_.lock().unwrap();
+std::string inmemory_listener_local_address(InMemoryListener& self) {
+    auto guard = self.inner_.lock().unwrap();
     return guard->local_address;
 }
 
-void InMemoryListener::set_on_accept(OnAcceptCallback cb) {
-    auto guard = inner_.lock().unwrap();
+void inmemory_listener_set_on_accept(InMemoryListener& self, OnAcceptCallback cb) {
+    auto guard = self.inner_.lock().unwrap();
     guard->on_accept = std::move(cb);
 }
 
-void InMemoryListener::set_on_error(OnErrorCallback cb) {
-    auto guard = inner_.lock().unwrap();
+void inmemory_listener_set_on_error(InMemoryListener& self, OnErrorCallback cb) {
+    auto guard = self.inner_.lock().unwrap();
     guard->on_error = std::move(cb);
 }
 
@@ -885,11 +901,11 @@ void InMemoryListener::set_on_error(OnErrorCallback cb) {
 // to bootstrap the shared connection state before the per-side Arcs
 // are constructed.
 rusty::Option<rusty::Arc<InMemoryChannel>>
-InMemoryListener::accept_for_connect(const std::string& client_address) {
+inmemory_listener_accept_for_connect(InMemoryListener& self, const std::string& client_address) {
     OnAcceptCallback cb_to_fire;
     std::string server_address;
     {
-        auto guard = inner_.lock().unwrap();
+        auto guard = self.inner_.lock().unwrap();
         if (guard->closed || guard->local_address.empty()) {
             return rusty::None;
         }
@@ -964,7 +980,7 @@ ConnectResult inmemory_factory_connect(InMemoryFactory& self, std::string_view a
 
     // @unsafe - const_cast through Arc::get for accept_for_connect.
     auto& mut_listener = const_cast<InMemoryListener&>(*listener.get());
-    auto client_opt = mut_listener.accept_for_connect(client_address);
+    auto client_opt = inmemory_listener_accept_for_connect(mut_listener, client_address);
     if (client_opt.is_none()) {
         return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
