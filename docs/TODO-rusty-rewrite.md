@@ -31,15 +31,18 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    3  |  95 |    1.0%  |
-| trivial-blocked   |   10  | 503 |    5.5%  |
-| refactor-then-dsl |   29  |1,777|   19.3%  |
+| trivial           |    2  |  50 |    0.5%  |
+| trivial-blocked   |    9  | 487 |    5.3%  |
+| refactor-then-dsl |   24  |1,629|   17.7%  |
 | needs-transpiler  |   59  |5,376|   58.4%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  138  |1,335|   14.5%  |
+| already-dsl       |  152  |1,427|   15.5%  |
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
-or trivial-blocked and added two to already-dsl as DSL + GEN regions):
+or trivial-blocked and added two to already-dsl as DSL + GEN regions).
+The free-function-extraction pattern (struct in DSL, void*-using
+bodies pulled out as sibling free functions like `buffer_sink_write`)
+cleared every Sink / Source POD wrapper:
 
 | Decl                       | LOC | Source bucket      | Notes                                                                                                |
 |----------------------------|----:|--------------------|------------------------------------------------------------------------------------------------------|
@@ -49,10 +52,25 @@ or trivial-blocked and added two to already-dsl as DSL + GEN regions):
 | fiber_yield_t              |   8 | refactor-then-dsl  | `operator()` renamed to `yield_now`, then extracted to free fn `fiber_yield_invoke` to clear raw-deref. |
 | IdempotencyKeyHash         |  15 | trivial-blocked    | `operator()` dropped (only test caller); DSL `impl::hash_one` formula matches the original.            |
 | StacklessProfileCounters   |  10 | trivial-blocked    | Pure POD; CAS lives in a sibling free fn so the struct itself is now a DSL aggregate.                  |
+| CachedResponse             |  45 | trivial            | DSL aggregate + `is_expired` impl; `cached_response_set`/`get` are free fns (Marshal API).             |
+| BufferSink                 |  21 | trivial-blocked    | `void* write` extracted as `buffer_sink_write`; aggregate paren-init keeps existing callers.           |
+| MarshalSink + MarshalSource|  23 | refactor-then-dsl  | Same free-fn-extraction pattern for `write`/`read`; adapters + 2 deptran call sites unchanged.         |
+| BufferSource               |  26 | refactor-then-dsl  | DSL `new(*const u8, usize)`; ctor's prior `static_cast<const uint8_t*>(const void*)` is now no-op.     |
+| FdSink + FdSource          |  47 | refactor-then-dsl  | DSL fd-wrapper aggregates; `::read`/`::write` syscall loops live in `fd_*_read`/`fd_*_write` free fns. |
 
-The remaining 3 trivial items are ReconnectPolicy (policy-manual),
-AnyMessageRegistry (templated dispatch siblings), and CachedResponse
-(Marshal-references that need Phase 4's reshape).
+The remaining trivial items are ReconnectPolicy (policy-manual; ~20
+callers rely on `Policy p; p.x = ...;` customize idiom) and
+AnyMessageRegistry (templated dispatch siblings — needs transpiler
+template-method support).
+
+The refactor-then-dsl bucket is now dominated by virtual-inheritance
+adapter classes (10 of them: `BufferSinkAdapter`, `BufferSourceAdapter`,
+`FdSinkAdapter`, `FdSourceAdapter`, `MarshalSinkAdapter`,
+`MarshalSourceAdapter`, plus 4 Event subclasses), plus a handful of
+larger value classes (`IdempotencyCache`, `CompletionTracker`,
+`RequestQueue`, `BinaryReadArchive`, `BinaryWriteArchive`) whose
+migration cascades through the `void*`-typed `SinkBase`/`SourceBase`
+trait surface (the Phase 4 reshape we deferred).
 
 (Counts after OwnedFrame's Phase 1 migration, Phase 1c body-scan
 refinements, and Service's Phase 2 trait migration. Phase 1c added
