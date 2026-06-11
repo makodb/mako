@@ -31,12 +31,12 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    6  | 144 |    1.6%  |
+| trivial           |    2  |  50 |    0.5%  |
 | trivial-blocked   |    8  | 442 |    4.8%  |
 | refactor-then-dsl |   32  |1,654|   17.8%  |
 | needs-transpiler  |   44  |4,416|   47.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  161  |1,503|   16.2%  |
+| already-dsl       |  169  |1,503|   16.2%  |
 
 The recent inventory-tool refinements (defaulted-dtor detection,
 empty-body-dtor detection, `= delete;` ctor/operator filtering with
@@ -58,29 +58,47 @@ nested-struct blockers and migrating the four POD aggregates:
   - `InMemoryListener::InnerState` hoisted similarly.
   - `InMemoryListenerInnerState` migrated to DSL (4-field POD).
 
-Recent ctor-refactor sweep on the three `ChannelFactoryBase` /
-`ChannelListenerBase` aggregates:
+Followed through to full DSL migration of all three
+`ChannelFactoryBase`/`ChannelListenerBase` aggregates + the
+`InMemorySwitchboard` registry, using the same free-function
+extraction pattern as the Sink/Source POD sweep:
 
-  - `TcpFactory`: dropped the `explicit TcpFactory(Arc<PollThread>)`
-    user ctor and the redundant `= delete` copy/move set, converted
-    to a `struct` with public fields, added
-    `static TcpFactory new_(Arc<PollThread>)`. Three call sites in
-    client.cpp / server.cpp flipped from `Arc::make` to
-    `Arc::new_(TcpFactory::new_(...))`.
-  - `InMemoryFactory`: same shape refactor. Two test call sites
-    flipped. Both factories are now aggregate-init-ready DSL
-    candidates; full DSL migration is deferred because each has
-    method bodies (`connect` / `make_listener` ~ 100+ LOC each)
-    that the DSL grammar doesn't translate today — they would need
-    free-function extraction across the adapter boundary, same
-    pattern as the Sink/Source POD sweep.
-  - `InMemoryListener`: same shape refactor. One caller flipped
-    (InMemoryFactory::make_listener). The `mutable
-    SpinMutex<InMemoryListenerInnerState> inner_` qualifier stays
-    because `is_closed() const` and `local_address() const` call
-    `inner_.lock()` directly, with no `mut_listener()` const_cast
-    wrapper — different from InMemoryConnectionState which routes
-    all inner.lock() access through mut_state().
+  - `TcpFactory` (tcp_channel.cpp): `connect` (~100 LOC syscall
+    body) + `make_listener` extracted as `tcp_factory_*` free fns,
+    `connect_errno_to_channel_error` moved to file-static anon
+    namespace. DSL struct expresses fields + `new_` +
+    `backend_name` + `set_connect_timeout_ms`. 2 adapter call sites
+    updated.
+  - `InMemoryFactory` (inmemory_channel.cpp): `connect` (~25 LOC) +
+    `make_listener` extracted as `inmemory_factory_*` free fns; the
+    dead `switchboard()` accessor dropped. DSL struct: fields +
+    `new_` + `backend_name`.
+  - `InMemoryListener`: 7 methods (listen, close, is_closed,
+    local_address, set_on_accept, set_on_error, accept_for_connect)
+    extracted as `inmemory_listener_*` free fns; `mutable` qualifier
+    on `inner_` is gone. Adapter's `const` overrides for is_closed /
+    local_address wrap via `const_cast<Adapter*>(this)->
+    mut_listener()`. DSL fn new uses turbofish
+    (`SpinMutex::<T>::new(...)`) because angle-bracket syntax is
+    parsed as chained comparison by the DSL parser.
+  - `InMemorySwitchboard` (40 LOC, 3 `const` methods +
+    `mutable listeners_`): extracted as `inmemory_switchboard_*`
+    free fns; 3 caller sites (now-already-DSL free fns) wrap with
+    `const_cast<InMemorySwitchboard&>(*sb.get())`.
+
+Net effect across this session: `trivial` 6→2, `already-dsl` 161→169.
+
+Remaining `trivial` items genuinely need bigger restructuring than
+a 1-iteration free-fn extraction permits:
+
+  - `AnyMessageRegistry` — static-only class with no fields; 7
+    static methods using `std::type_index` and rusty::Function
+    params (cleanest migration would convert the whole thing to a
+    namespace + free functions, but that's an invasive 15-caller
+    rename across src/).
+  - `ReconnectPolicy` — policy-manual (documented decision to keep
+    hand-written so the `Policy p; p.x = ...` customize idiom stays
+    transparent).
 
 Other base-trait migration done in the same window:
 
@@ -90,18 +108,6 @@ Other base-trait migration done in the same window:
     subclasses keep their `int fd() const override` signatures
     intact — no test changes needed.
 
-The remaining `trivial` items needing bigger restructuring:
-  - `AnyMessageRegistry` — static-only class shape (no fields); the
-    methods take `std::type_index` and `rusty::Function<...>` and
-    have substantial bodies.
-  - `InMemorySwitchboard` — load-bearing `mutable` + `const`-method
-    pattern; dropping `mutable` cascades through the `Arc<T>::
-    operator*` → `const T&` access path.
-  - `ReconnectPolicy` — policy-manual (documented decision to keep
-    hand-written so the `Policy p; p.x = ...;` customize idiom
-    stays transparent).
-  - `TcpFactory` / `InMemoryFactory` (above) — full DSL migration
-    blocked on free-function extraction.
 
 Recent DSL migrations (each removed one entry from refactor-then-dsl
 or trivial-blocked and added two to already-dsl as DSL + GEN regions).
