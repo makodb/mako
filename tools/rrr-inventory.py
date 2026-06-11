@@ -307,15 +307,24 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         if body_re_dtor and body_re_dtor.search(ln):
             # A `~Name() = default;` (or `=default;`) declaration is
             # the implicit-dtor sugar — no Drop logic to migrate, the
-            # DSL aggregate's implicit drop handles it. Only count
-            # "real" user dtors; defaulted ones don't gate trivial
-            # classification. Look at the matched line plus the next
-            # 2 lines (covers `~Name() noexcept(false) = default;`
-            # and other multi-line defaulted-dtor declarations).
+            # DSL aggregate's implicit drop handles it. Same for an
+            # empty inline body `~Name() {}` (and modifiers like
+            # `~Name() noexcept(false) {}`) — both are equivalent to
+            # the implicit default destructor. Only count "real" user
+            # dtors with actual body logic. Look at the matched line
+            # plus the next 2 lines (covers multi-line declarations).
             tail = ln
             for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
                 tail += " " + lines[k]
-            if not re.search(r"=\s*default\s*;", tail):
+            is_defaulted = re.search(r"=\s*default\s*;", tail)
+            # Empty-body dtor: `{}` or `{ }` (just whitespace inside).
+            # The regex picks up everything from `~Name` to the body,
+            # ignoring modifiers like `noexcept(false)`.
+            is_empty_body = re.search(
+                rf"~{re.escape(name)}\s*\([^)]*\)\s*(?:noexcept[^{{]*)?\s*\{{\s*\}}",
+                tail,
+            )
+            if not is_defaulted and not is_empty_body:
                 has_user_dtor = True
         if body_re_ctor and body_re_ctor.search(ln):
             # A `Name(...) = default;` (or `=default;`) line is the

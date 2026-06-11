@@ -15,8 +15,8 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|---:|---:|
 | trivial | 2 | 50 | 0.5% |
 | trivial-blocked | 9 | 527 | 5.8% |
-| refactor-then-dsl | 34 | 2428 | 26.7% |
-| needs-transpiler | 47 | 4606 | 50.6% |
+| refactor-then-dsl | 37 | 2618 | 28.8% |
+| needs-transpiler | 44 | 4416 | 48.5% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 154 | 1375 | 15.1% |
 
@@ -42,7 +42,7 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 151 | `TimeoutALock` | needs-transpiler |
 | `rpc/tcp_channel.cpp` | 135 | `TcpConnection` | needs-transpiler |
-| `misc/alock.cpp` | 123 | `ALockGroup` | needs-transpiler |
+| `misc/alock.cpp` | 123 | `ALockGroup` | refactor-then-dsl |
 | `base/threading.cpp` | 113 | `SpinMutexGuard` | needs-transpiler |
 
 ## Per-file LOC (manual decls only, top 15)

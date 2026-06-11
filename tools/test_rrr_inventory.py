@@ -378,7 +378,7 @@ class InventoryTest(unittest.TestCase):
         rows = self.run_script({
             "foo.cpp": fake_source("""
                 struct Foo {
-                    ~Foo() { /* free something */ }
+                    ~Foo() { free_something(); }
                     int x;
                 };
             """),
@@ -386,6 +386,33 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         # Genuine custom dtor → needs impl Drop emit.
         self.assertEqual(rows[0]["bucket"], "needs-transpiler")
+
+    def test_empty_body_dtor_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    virtual ~Foo() {}
+                    virtual void run() = 0;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # `~Foo() {}` is functionally equivalent to `= default;` — no
+        # Drop body to translate. The class still has `virtual` so it
+        # lands in refactor-then-dsl via the inheritance gate.
+        self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
+
+    def test_empty_body_dtor_with_modifier_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    virtual ~Foo() noexcept(false) {}
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
 
     def test_double_equals_in_body_not_default_arg(self):
         rows = self.run_script({
