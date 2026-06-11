@@ -31,12 +31,12 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
-| trivial           |    3  |  90 |    1.0%  |
+| trivial           |    6  | 144 |    1.6%  |
 | trivial-blocked   |    8  | 442 |    4.8%  |
-| refactor-then-dsl |   35  |1,720|   18.5%  |
+| refactor-then-dsl |   32  |1,654|   17.8%  |
 | needs-transpiler  |   44  |4,416|   47.5%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  160  |1,503|   16.2%  |
+| already-dsl       |  161  |1,503|   16.2%  |
 
 The recent inventory-tool refinements (defaulted-dtor detection,
 empty-body-dtor detection, `= delete;` ctor/operator filtering with
@@ -58,7 +58,8 @@ nested-struct blockers and migrating the four POD aggregates:
   - `InMemoryListener::InnerState` hoisted similarly.
   - `InMemoryListenerInnerState` migrated to DSL (4-field POD).
 
-Recent ctor-refactor sweep on both `ChannelFactoryBase` implementors:
+Recent ctor-refactor sweep on the three `ChannelFactoryBase` /
+`ChannelListenerBase` aggregates:
 
   - `TcpFactory`: dropped the `explicit TcpFactory(Arc<PollThread>)`
     user ctor and the redundant `= delete` copy/move set, converted
@@ -73,6 +74,21 @@ Recent ctor-refactor sweep on both `ChannelFactoryBase` implementors:
     that the DSL grammar doesn't translate today — they would need
     free-function extraction across the adapter boundary, same
     pattern as the Sink/Source POD sweep.
+  - `InMemoryListener`: same shape refactor. One caller flipped
+    (InMemoryFactory::make_listener). The `mutable
+    SpinMutex<InMemoryListenerInnerState> inner_` qualifier stays
+    because `is_closed() const` and `local_address() const` call
+    `inner_.lock()` directly, with no `mut_listener()` const_cast
+    wrapper — different from InMemoryConnectionState which routes
+    all inner.lock() access through mut_state().
+
+Other base-trait migration done in the same window:
+
+  - `Pollable` (epoll_wrapper.cc, 14 LOC, 9 pure-virtual methods):
+    migrated to DSL `pub trait`. The C++ GEN emit's `int32_t` is
+    typedef-equivalent to `int` on x86_64, so the 4 test-side
+    subclasses keep their `int fd() const override` signatures
+    intact — no test changes needed.
 
 The remaining `trivial` items needing bigger restructuring:
   - `AnyMessageRegistry` — static-only class shape (no fields); the
