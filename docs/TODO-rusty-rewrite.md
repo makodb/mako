@@ -32,19 +32,27 @@ Headline buckets for top-level decls (237 total, 9,203 LOC across declarations):
 | Bucket            | Decls | LOC | % of LOC |
 |-------------------|------:|----:|---------:|
 | trivial           |    3  |  95 |    1.0%  |
-| trivial-blocked   |   12  | 527 |    5.7%  |
-| refactor-then-dsl |   31  |1,817|   19.7%  |
+| trivial-blocked   |   10  | 503 |    5.5%  |
+| refactor-then-dsl |   29  |1,777|   19.3%  |
 | needs-transpiler  |   59  |5,376|   58.4%  |
 | boundary          |    3  | 117 |    1.3%  |
-| already-dsl       |  130  |1,225|   13.3%  |
+| already-dsl       |  138  |1,335|   14.5%  |
 
-(Phase 1d added `void *` / `va_list` / C-style array-param detection to
-the body scan, correctly demoting three more decls out of `trivial`:
-BufferSink (`const void*` in `write`), Log (`va_list` in `Log_v`), and
-TestMgr (`char* argv[]` in `parse_args`/`run`). The remaining 3 trivial
-items are ReconnectPolicy (policy-manual), AnyMessageRegistry
-(templated dispatch siblings), and CachedResponse (Marshal-references
-that need Phase 4's reshape).)
+Recent DSL migrations (each removed one entry from refactor-then-dsl
+or trivial-blocked and added two to already-dsl as DSL + GEN regions):
+
+| Decl                       | LOC | Source bucket      | Notes                                                                                                |
+|----------------------------|----:|--------------------|------------------------------------------------------------------------------------------------------|
+| OwnedFrame                 |   3 | trivial-blocked    | `std::vector<u8>` → `Vec<u8>`; one call site flipped from `.assign` to `reserve+memcpy+set_len`.       |
+| Service                    |   2 | refactor-then-dsl  | DSL `pub trait`; the noop `__get_service__()` default impl + override dropped, callback uses `**guard`. |
+| RpcServiceContext          |  35 | refactor-then-dsl  | 7-arg ctor → `fn new` factory; 6 `Arc::make(args)` callers flipped to `Arc::new_(T::new_(args))`.       |
+| fiber_yield_t              |   8 | refactor-then-dsl  | `operator()` renamed to `yield_now`, then extracted to free fn `fiber_yield_invoke` to clear raw-deref. |
+| IdempotencyKeyHash         |  15 | trivial-blocked    | `operator()` dropped (only test caller); DSL `impl::hash_one` formula matches the original.            |
+| StacklessProfileCounters   |  10 | trivial-blocked    | Pure POD; CAS lives in a sibling free fn so the struct itself is now a DSL aggregate.                  |
+
+The remaining 3 trivial items are ReconnectPolicy (policy-manual),
+AnyMessageRegistry (templated dispatch siblings), and CachedResponse
+(Marshal-references that need Phase 4's reshape).
 
 (Counts after OwnedFrame's Phase 1 migration, Phase 1c body-scan
 refinements, and Service's Phase 2 trait migration. Phase 1c added
