@@ -4,8 +4,6 @@
 
 namespace janus {
 
-using rrr::ALockGroup;
-
 class Tx2pl: public TxClassic {
  public:
   vector<std::pair<ALock*, uint64_t>> locked_locks_ = {};

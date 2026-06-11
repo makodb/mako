@@ -31,12 +31,11 @@ import rrr.reactor;
 import rrr.threading;
 
 // @safe - ALock async queued lock + WaitDieALock / WoundDieALock /
-// TimeoutALock variants + ALockGroup. The big request-queue methods
+// TimeoutALock variants. The big request-queue methods
 // (vlock, abort, wait_die, wound_die, lock_all, sanity_check,
 // read_acquire-over-vec) carry per-method `// @unsafe` because they
-// iterate raw `std::list<lock_req_t>` iterators, invoke external
-// callbacks, and (in ALockGroup) keep raw `ALock*` BTreeMap keys —
-// the Phase 3 ALock* → Weak<ALock> refactor stays blocked. The trivial
+// iterate raw `std::list<lock_req_t>` iterators and invoke external
+// callbacks — the Phase 3 ALock* → Weak<ALock> refactor stays blocked. The trivial
 // accessors (cas_status, get_status, set_status, ctors, get_next_id,
 // write_acquire/read_acquire scalar overload) inherit class @safe.
 // ===========================================================================
@@ -671,132 +670,6 @@ class TimeoutALock: public ALock {
 
 };
 
-// @safe - see file header. ALockGroup keeps raw `ALock*` BTreeMap
-// keys (the Phase 3 → Weak<ALock> refactor stays blocked), so
-// methods that iterate those maps or take a raw `ALock*` parameter
-// carry per-method `// @unsafe`.
-class ALockGroup {
- public:
-
-  enum status_t { INIT, WAIT, LOCK, TIMEOUT, UNLOCK };
-
-  // both `std::recursive_mutex mtx_locks_` and
-  // `std::mutex mtx_` were dead — every uncommented use site of
-  // either was already inside `//` comments (see git blame for the
-  // historical `mtx_locks_.lock()` and `mtx_.lock_guard` blocks that
-  // were commented out before this point).  Removed.  Same forward-
-  // looking guidance as TimeoutALock above: future re-introduction
-  // of concurrency should use SpinMutex<Inner>, not a separate
-  // std::mutex.
-
-  // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
-  // unresolved transpiler bugs (see reactor.cpp / alarm.cpp comments).
-  // ALockGroup only needs ordered map-of-pointer-keys; std::map suffices.
-  std::map<ALock *, uint64_t> locked_;
-  std::map<ALock *, ALock::type_t> tolock_;
-
-  uint64_t priority_;
-  ALockWoundCallback wound_callback_;
-
-
-  // INIT->WAIT->LOCK->UNLOCK
-  // INIT->WAIT->TIMEOUT
-  // TODO: LOCK->WAIT->LOCK->WAIT->LOCK
-  // TODO: LOCK->WAIT->TIMEOUT
-  status_t status_;
-
-  ALockNotifyCallback yes_callback_;
-  ALockNotifyCallback no_callback_;
-
-  uint64_t n_locked_ = 0;
-  uint64_t n_tolock_ = 0;
-
-  ALockGroup(int64_t priority = 0,
-             const ALockWoundCallback &wound_callback
-             = ALockWoundCallback()) :
-      priority_(priority),
-      wound_callback_(wound_callback),
-      status_(INIT) {
-  }
-
-  bool cas_status(status_t c, status_t s) {
-    //        std::lock_guard<std::mutex> guard(mtx_);
-    if (status_ == c) {
-      status_ = s;
-      return true;
-    }
-    return false;
-  }
-
-  void set_status(status_t s) {
-    //        std::lock_guard<std::mutex> guard(mtx_);
-    status_ = s;
-  }
-
-  // @safe
-  status_t get_status() {
-    //        std::lock_guard<std::mutex> guard(mtx_);
-    return status_;
-  }
-
-  // @unsafe
-  void add(ALock *alock, ALock::type_t type = ALock::WLOCK) {
-
-
-    auto status = get_status();
-    if (status == INIT ||
-        status == LOCK) {
-
-      //	    mtx_locks_.lock();
-      //	    tolock_.insert(std::pair<ALock*, uint64_t>(&alock, 0));
-      //	    tolock_.insert(std::pair<ALock*, ALock::type_t>(&alock, type));
-      tolock_.emplace(alock, type);  // std::map::emplace (was BTreeMap::insert)
-      //	    mtx_locks_.unlock();
-    } else {
-      verify(0);
-    }
-  }
-
-  void abort_all_locked() {
-    //        mtx_locks_.lock();
-    // rusty::BTreeMap iter `operator*()` returns
-    // `std::tuple<const K&, V&>` (post-2026-04 API). Use structured
-    // bindings to keep the same `alock`/`areq_id` names.
-    for (auto&& [alock, areq_id] : locked_) {
-      if (areq_id != 0) {
-        alock->abort(areq_id);
-      }
-    }
-    //        mtx_locks_.unlock();
-  }
-
-  // After calling this, this group can be freed.
-  void abort_all() {
-
-    if (cas_status(LOCK, UNLOCK)) {
-      abort_all_locked();
-    } else {
-      // TODO: what if this still waiting!!!???
-      verify(0);
-    }
-  }
-
-  void lock_all(const ALockNotifyCallback &yes_cb,
-                const ALockNotifyCallback &no_cb);
-
-  void unlock_all() {
-
-    verify(cas_status(LOCK, UNLOCK));
-    // abort all the locks.
-    this->abort_all_locked();
-  }
-
-  ~ALockGroup() {
-
-  }
-
-};
-
 }  // export namespace rrr
 
 // ===========================================================================
@@ -805,8 +678,7 @@ class ALockGroup {
 // @safe - impl namespace. Out-of-class definitions of vlock / abort /
 // wound_die / lock_all and the two ALock::lock_sync overloads all
 // carry per-method `// @unsafe` because they iterate raw
-// `std::list<lock_req_t>` iterators, dispatch external callbacks,
-// and (in ALockGroup) traverse raw `ALock*` BTreeMap keys.
+// `std::list<lock_req_t>` iterators and dispatch external callbacks.
 namespace rrr {
 
 ALock::ALock()
@@ -1508,58 +1380,6 @@ TimeoutALock::~TimeoutALock() {
     }
 
     //        lock_.unlock();
-}
-
-
-void ALockGroup::lock_all(const ALockNotifyCallback& yes_cb,
-        const ALockNotifyCallback& no_cb) {
-//    verify(cas_status(INIT, WAIT) || cas_status(LOCK, WAIT));
-//
-//    yes_callback_ = yes_cb;
-//    no_callback_ = no_cb;
-//
-//    db_ = new DragonBall(tolock_.size(), [this] () {
-//            if (this->cas_status(WAIT, LOCK)) {
-//            this->yes_callback_();
-//            } else {
-//            verify(this->get_status() == TIMEOUT);
-//            this->no_callback_();
-//            this->abort_all_locked();
-//            }
-//            });
-//
-//    decltype(tolock_) tmp;
-//
-//    swap(tmp, tolock_);
-//
-//    for(auto &p: tmp) {
-//        auto &alock = p.first;
-//        auto &type = p.second;
-
-//        auto y_cb = [this, alock] (uint64_t id) {
-//            //		this->mtx_locks_.lock();
-//            this->locked_[alock] = id;
-//            //		this->mtx_locks_.unlock();
-//            this->db_->trigger();
-//        };
-//
-//        auto n_cb = [this] () {
-//            this->set_status(TIMEOUT);
-//            this->db_->trigger();
-//        };
-
-//        auto _wound_callback = [this, alock] () -> int {
-//            int ret = wound_callback_();
-//            if (ret == 0)
-//                locked_.erase(alock);
-//            return ret;
-//        };
-
-        /*auto areq_id = */
-//        alock->lock(0, y_cb, n_cb, type, priority_, _wound_callback);
-        //            alocks_[alock] = areq_id;
-//    }
-    //        mtx_locks_.unlock();
 }
 
 
