@@ -346,6 +346,47 @@ class InventoryTest(unittest.TestCase):
         # Defaulted op= must not trigger "operator overload" blocker.
         self.assertEqual(rows[0]["bucket"], "trivial")
 
+    def test_defaulted_dtor_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    virtual ~Foo() = default;
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # Defaulted dtor doesn't need impl Drop. (Foo has `virtual`,
+        # so it lands in refactor-then-dsl via the inheritance gate,
+        # not needs-transpiler via the dtor gate.)
+        self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
+
+    def test_defaulted_dtor_multiline_does_not_block(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    virtual ~Foo() noexcept(false)
+                        = default;
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "refactor-then-dsl")
+
+    def test_real_user_dtor_still_blocks(self):
+        rows = self.run_script({
+            "foo.cpp": fake_source("""
+                struct Foo {
+                    ~Foo() { /* free something */ }
+                    int x;
+                };
+            """),
+        })
+        self.assertEqual(len(rows), 1)
+        # Genuine custom dtor → needs impl Drop emit.
+        self.assertEqual(rows[0]["bucket"], "needs-transpiler")
+
     def test_double_equals_in_body_not_default_arg(self):
         rows = self.run_script({
             "foo.cpp": fake_source("""

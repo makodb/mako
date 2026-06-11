@@ -15,8 +15,8 @@ from the repo root to regenerate both this file and the CSV.
 |---|---:|---:|---:|
 | trivial | 2 | 50 | 0.6% |
 | trivial-blocked | 9 | 527 | 5.8% |
-| refactor-then-dsl | 24 | 1675 | 18.4% |
-| needs-transpiler | 59 | 5361 | 59.0% |
+| refactor-then-dsl | 36 | 2430 | 26.8% |
+| needs-transpiler | 47 | 4606 | 50.7% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 152 | 1353 | 14.9% |
 
@@ -32,11 +32,11 @@ from the repo root to regenerate both this file and the CSV.
 | `reactor/epoll_wrapper.cc` | 226 | `Epoll` | needs-transpiler |
 | `rpc/completion_tracker.cpp` | 222 | `CompletionTracker` | refactor-then-dsl |
 | `rpc/request_queue.cpp` | 216 | `RequestQueue` | refactor-then-dsl |
-| `misc/marshal.cpp` | 214 | `Marshal` | needs-transpiler |
+| `misc/marshal.cpp` | 214 | `Marshal` | refactor-then-dsl |
 | `misc/serializable_envelope.cpp` | 207 | `SerializableEnvelope` | needs-transpiler |
 | `rpc/server.cpp` | 202 | `ServerConnection` | needs-transpiler |
 | `rpc/client.cpp` | 195 | `ClientPool` | needs-transpiler |
-| `rpc/client.cpp` | 194 | `Future` | needs-transpiler |
+| `rpc/client.cpp` | 194 | `Future` | refactor-then-dsl |
 | `misc/serializable.cpp` | 191 | `BinaryWriteArchive` | refactor-then-dsl |
 | `misc/alock.cpp` | 189 | `WaitDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
