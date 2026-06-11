@@ -199,72 +199,56 @@ struct InMemoryConnectionState {
 // via `set_on_frame` etc., so the captured `this` is the heap
 // address regardless of which T value flowed through new_() into
 // the Arc allocation. Implicit movability of T is safe here.
+// Authored as inline Rust DSL. The 11 ChannelConnectionBase /
+// fault-injection methods stay as free functions (defined further
+// down in the file) — their bodies do non-trivial state mutation,
+// callback dispatch under the SpinMutex, and raw byte slicing that
+// don't translate to the DSL grammar. Same free-fn extraction
+// pattern as InMemoryListener / InMemorySwitchboard.
+#if RUSTYCPP_RUST
 struct InMemoryChannel {
-    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
-    // pattern.
-    static InMemoryChannel new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side);
+    state_: Arc<InMemoryConnectionState>,
+    is_a_side_: bool,
+}
 
-    // ChannelConnectionBase methods.
-    ChannelError send_frame(const ChannelFrame& f);
-    void         flush()              {}
-    void         close();
-    bool         is_closed() const;
-    std::string  peer_address() const;
-
-    void set_on_frame (OnFrameCallback  cb);
-    void set_on_closed(OnClosedCallback cb);
-    void set_on_error (OnErrorCallback  cb);
-
-    // ---- 6c: fault injection (test-only). ------------------------
-    /**
-     * Drop the next `count` calls to `send_frame` on this side.
-     * Each dropped call returns `ChannelError::None` (so the sender
-     * doesn't notice the drop) but the bytes never reach the peer's
-     * `on_frame`. After the counter hits zero, `send_frame`
-     * resumes normal delivery.
-     *
-     * Setting `count` to 0 explicitly clears the drop counter.
-     * Calling this multiple times overwrites the previous value
-     * (it does NOT add).
-     *
-     * Drop counters take precedence over error counters: if both
-     * are set, drops fire first while the drop counter is positive.
-     */
-    void inject_drop_next_sends(int count);
-
-    /**
-     * Make the next `count` calls to `send_frame` on this side
-     * return `err` instead of delivering. After the counter hits
-     * zero, `send_frame` resumes normal delivery.
-     *
-     * Use `count == 0` to clear (the value of `err` is ignored).
-     * Calling this multiple times overwrites the previous value
-     * (it does NOT add).
-     */
-    void inject_send_error(ChannelError err, int count);
-
-    /**
-     * Reset all fault-injection state on this side (drop counter,
-     * error counter, error code).
-     */
-    void clear_fault_injection();
-
-    // The state is held by Arc; both halves of the pair share it.
-    // Arc::operator-> returns a const-pointer, so all mutation goes
-    // through `mut_state()` which const_casts to a mutable reference.
-    // @unsafe - const_cast through Arc::get<T*>().
-    InMemoryConnectionState& mut_state() const {
-        return const_cast<InMemoryConnectionState&>(*state_.get());
+impl InMemoryChannel {
+    fn new(state: Arc<InMemoryConnectionState>, is_a_side: bool) -> InMemoryChannel {
+        InMemoryChannel { state_: state, is_a_side_: is_a_side }
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=d5ed8f28c062383ebf7d4f75138c9be7c48b2db10c06d58c3107bcbceb7cacc1*/
+struct InMemoryChannel;
 
+struct InMemoryChannel {
     rusty::Arc<InMemoryConnectionState> state_;
     bool is_a_side_;
+
+    static InMemoryChannel new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side);
 };
 
-// @safe - aggregate-init builds the struct in place.
-inline InMemoryChannel InMemoryChannel::new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side) {
-    return InMemoryChannel{.state_ = std::move(state), .is_a_side_ = is_a_side};
+
+InMemoryChannel InMemoryChannel::new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side) {
+    return InMemoryChannel{.state_ = std::move(state), .is_a_side_ = std::move(is_a_side)};
 }
+/*RUSTYCPP:GEN-END id=inmemory_channel.channel*/
+
+// Free functions (non-DSL) — see definitions further down. Each
+// inlines the `const_cast<InMemoryConnectionState&>(*self.state_.
+// get())` pattern that the legacy `const_cast<InMemoryConnectionState&>(*self.state_.get())` helper performed.
+// ChannelConnectionBase methods.
+ChannelError inmemory_channel_send_frame(InMemoryChannel& self, const ChannelFrame& f);
+void         inmemory_channel_flush(InMemoryChannel& self);
+void         inmemory_channel_close(InMemoryChannel& self);
+bool         inmemory_channel_is_closed(InMemoryChannel& self);
+std::string  inmemory_channel_peer_address(InMemoryChannel& self);
+void         inmemory_channel_set_on_frame (InMemoryChannel& self, OnFrameCallback  cb);
+void         inmemory_channel_set_on_closed(InMemoryChannel& self, OnClosedCallback cb);
+void         inmemory_channel_set_on_error (InMemoryChannel& self, OnErrorCallback  cb);
+// Fault injection (test-only).
+void         inmemory_channel_inject_drop_next_sends(InMemoryChannel& self, int count);
+void         inmemory_channel_inject_send_error(InMemoryChannel& self, ChannelError err, int count);
+void         inmemory_channel_clear_fault_injection(InMemoryChannel& self);
 
 // Adapter wrapping `Arc<InMemoryChannel>` for the channel virtual
 // base. Mirrors `TcpConnectionChannelAdapter`.
@@ -274,21 +258,21 @@ class InMemoryChannelAdapter : public ChannelConnectionBase {
         : conn_(std::move(conn)) {}
 
     // @unsafe - forwards through mut_conn() const_cast.
-    ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
+    ChannelError send_frame(const ChannelFrame& f) override { return inmemory_channel_send_frame(mut_conn(), f); }
     // @unsafe - forwards through mut_conn() const_cast.
-    void         flush() override              { mut_conn().flush(); }
+    void         flush() override              { inmemory_channel_flush(mut_conn()); }
     // @unsafe - forwards through mut_conn() const_cast.
-    void         close() override              { mut_conn().close(); }
-    // @unsafe - forwards through conn_-> to InMemoryChannel::is_closed which calls mut_state.
-    bool         is_closed() const override    { return conn_->is_closed(); }
-    // @unsafe - forwards through conn_-> to InMemoryChannel::peer_address which calls mut_state.
-    std::string  peer_address() const override { return conn_->peer_address(); }
+    void         close() override              { inmemory_channel_close(mut_conn()); }
+    // @unsafe - forwards through mut_conn() const_cast (const wrapper matches trait signature).
+    bool         is_closed() const override    { return inmemory_channel_is_closed(const_cast<InMemoryChannelAdapter*>(this)->mut_conn()); }
     // @unsafe - forwards through mut_conn() const_cast.
-    void         set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
+    std::string  peer_address() const override { return inmemory_channel_peer_address(const_cast<InMemoryChannelAdapter*>(this)->mut_conn()); }
     // @unsafe - forwards through mut_conn() const_cast.
-    void         set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
+    void         set_on_frame (OnFrameCallback  cb) override { inmemory_channel_set_on_frame (mut_conn(), std::move(cb)); }
     // @unsafe - forwards through mut_conn() const_cast.
-    void         set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
+    void         set_on_closed(OnClosedCallback cb) override { inmemory_channel_set_on_closed(mut_conn(), std::move(cb)); }
+    // @unsafe - forwards through mut_conn() const_cast.
+    void         set_on_error (OnErrorCallback  cb) override { inmemory_channel_set_on_error (mut_conn(), std::move(cb)); }
 
  private:
     // @unsafe - const_cast through Arc::get<T*>().
@@ -557,7 +541,7 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr);
 
 // @safe - impl namespace. InMemorySwitchboard methods are pure
 // SpinMutex + HashMap + Weak::upgrade and inherit @safe. InMemoryChannel
-// out-of-class defs route through mut_state() (@unsafe) so each carries
+// out-of-class defs route through const_cast<InMemoryConnectionState&>(*self.state_.get()) (@unsafe) so each carries
 // a per-method `// @unsafe`. InMemoryListener::accept_for_connect,
 // InMemoryFactory::connect/make_listener, and the test helper
 // make_channel_pair_for_testing const_cast inline and are `// @unsafe`.
@@ -610,9 +594,9 @@ inmemory_switchboard_find_listener(InMemorySwitchboard& self, const std::string&
 // InMemoryChannel
 // ---------------------------------------------------------------------------
 
-// @unsafe - mut_state() const_cast + raw `uint8_t*` byte slicing
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast + raw `uint8_t*` byte slicing
 // (`bytes.assign(f.payload, f.payload + f.size)` then `bytes.data()`).
-ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
+ChannelError inmemory_channel_send_frame(InMemoryChannel& self, const ChannelFrame& f) {
     // Default-constructed wrapper: Arc holds an empty Function; we'll
     // either reassign (wrapper copy = Arc clone, atomic refcount bump)
     // or leave it empty.
@@ -633,8 +617,8 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
     // counter — if both are set, drops fire first while the drop
     // counter is positive.
     {
-        auto guard = mut_state().inner.lock().unwrap();
-        if (is_a_side_) {
+        auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+        if (self.is_a_side_) {
             self_already_closed = guard->a_closed;
             peer_already_closed = guard->b_closed;
             peer_on_frame       = guard->b_on_frame;
@@ -694,20 +678,20 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) {
 // 6c: fault injection methods (test-only).
 // ---------------------------------------------------------------------------
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::inject_drop_next_sends(int count) {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) {
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_inject_drop_next_sends(InMemoryChannel& self, int count) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) {
         guard->drop_next_sends_a = count;
     } else {
         guard->drop_next_sends_b = count;
     }
 }
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::inject_send_error(ChannelError err, int count) {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) {
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_inject_send_error(InMemoryChannel& self, ChannelError err, int count) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) {
         guard->send_error_a       = err;
         guard->send_error_count_a = count;
     } else {
@@ -716,10 +700,10 @@ void InMemoryChannel::inject_send_error(ChannelError err, int count) {
     }
 }
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::clear_fault_injection() {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) {
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_clear_fault_injection(InMemoryChannel& self) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) {
         guard->drop_next_sends_a  = 0;
         guard->send_error_count_a = 0;
         guard->send_error_a       = ChannelError::None;
@@ -750,14 +734,21 @@ void InMemoryChannel::clear_fault_injection() {
 // `send_frame` already returns `ChannelError::ConnectionReset` if
 // either side is closed, so once close() returns the connection is
 // observably dead in both directions (verified by the
+// @safe - in-memory channel has no buffered output to drain (peer
+// callbacks fire synchronously inside send_frame). Stays a free fn
+// just to mirror the trait dispatch shape.
+void inmemory_channel_flush(InMemoryChannel& self) {
+    (void)self;
+}
+
 // `SendFrameAfterPeerCloseReturnsReset` test).
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::close() {
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_close(InMemoryChannel& self) {
     OnClosedCallback peer_on_closed;
     bool fire_peer_closed = false;
     {
-        auto guard = mut_state().inner.lock().unwrap();
-        if (is_a_side_) {
+        auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+        if (self.is_a_side_) {
             if (guard->a_closed) return;  // idempotent
             guard->a_closed = true;
             // Notify peer if it's not already closed.
@@ -779,8 +770,8 @@ void InMemoryChannel::close() {
     }
 }
 
-// @unsafe - mut_state() const_cast.
-bool InMemoryChannel::is_closed() const {
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+bool inmemory_channel_is_closed(InMemoryChannel& self) {
     // 6b: report closed if EITHER side has been closed. This matches
     // the TCP backend's behavior — once the peer disconnects, the
     // connection is unusable and `send_frame` will return
@@ -790,34 +781,34 @@ bool InMemoryChannel::is_closed() const {
     //    a non-None error..."
     // Reporting joint state (a_closed || b_closed) ensures the
     // implication holds in both directions.
-    auto guard = mut_state().inner.lock().unwrap();
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
     return guard->a_closed || guard->b_closed;
 }
 
-// @unsafe - mut_state() const_cast.
-std::string InMemoryChannel::peer_address() const {
-    auto guard = mut_state().inner.lock().unwrap();
-    return is_a_side_ ? guard->b_peer_address : guard->a_peer_address;
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+std::string inmemory_channel_peer_address(InMemoryChannel& self) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    return self.is_a_side_ ? guard->b_peer_address : guard->a_peer_address;
 }
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::set_on_frame(OnFrameCallback cb) {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) guard->a_on_frame  = std::move(cb);
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_set_on_frame(InMemoryChannel& self, OnFrameCallback cb) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) guard->a_on_frame  = std::move(cb);
     else            guard->b_on_frame  = std::move(cb);
 }
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::set_on_closed(OnClosedCallback cb) {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) guard->a_on_closed = std::move(cb);
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_set_on_closed(InMemoryChannel& self, OnClosedCallback cb) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) guard->a_on_closed = std::move(cb);
     else            guard->b_on_closed = std::move(cb);
 }
 
-// @unsafe - mut_state() const_cast.
-void InMemoryChannel::set_on_error(OnErrorCallback cb) {
-    auto guard = mut_state().inner.lock().unwrap();
-    if (is_a_side_) guard->a_on_error  = std::move(cb);
+// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
+void inmemory_channel_set_on_error(InMemoryChannel& self, OnErrorCallback cb) {
+    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+    if (self.is_a_side_) guard->a_on_error  = std::move(cb);
     else            guard->b_on_error  = std::move(cb);
 }
 
