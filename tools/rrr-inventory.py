@@ -446,12 +446,27 @@ def classify(decl: Decl) -> tuple[str, list[str]]:
     if decl.has_user_dtor:
         notes.append("custom dtor — needs `impl Drop` emit")
         return "needs-transpiler", notes
-    # Virtual hierarchy
+    # Virtual hierarchy. Two cases:
+    #   1. Has `virtual` keyword and no base clause → it's a trait base.
+    #      Migrate as DSL `pub trait` (Service, SinkBase, SourceBase
+    #      pattern). Works today.
+    #   2. Has a base clause → it's a trait implementor. The DSL syntax
+    #      `impl Trait for Type` parses but rusty-cpp's current emit
+    #      drops the `: public Trait` inheritance clause and the
+    #      `override` modifier — the GEN block becomes a plain struct
+    #      that won't satisfy polymorphic call sites. Needs a transpiler
+    #      fix before these can migrate.
     if decl.has_virtual or decl.base_clause:
-        notes.append(
-            "virtual / inheritance — migrate as DSL `pub trait` after the "
-            "base-class pass"
-        )
+        if decl.base_clause:
+            notes.append(
+                "virtual / inheritance — trait implementor; blocked on "
+                "rusty-cpp emitting `: public Trait` + `override` for "
+                "`impl Trait for Type` DSL"
+            )
+        else:
+            notes.append(
+                "virtual / inheritance — migrate as DSL `pub trait`"
+            )
         return "refactor-then-dsl", notes
     # User-defined ctor (needs static ::new() refactor first).
     # Also append any body-scan blockers so the full migration picture
