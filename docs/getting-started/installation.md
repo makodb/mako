@@ -143,10 +143,13 @@ The build process will:
 
 ### Step 5: Verify Installation
 
-Run the test suite to verify everything works:
+Run the Docker-backed full GA/CI matrix to verify everything works:
 
 ```bash
-# Run all integration tests
+# Run the full GA/CI matrix
+./docker_build.sh ci all
+
+# Or use the local host-build shortcut
 ./ci/ci.sh all
 
 # Or run specific tests

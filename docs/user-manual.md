@@ -116,7 +116,13 @@ Fast sanity checks:
 ./ci/ci.sh shardNoReplication
 ```
 
-Full Paxos CI suite:
+Full GA/CI matrix:
+
+```bash
+./docker_build.sh ci all
+```
+
+Local Paxos CI shortcut:
 
 ```bash
 ./ci/ci.sh all
