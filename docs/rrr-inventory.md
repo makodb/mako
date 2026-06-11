@@ -6,15 +6,15 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 249  
+**Decl count (top-level class/struct/enum/union):** 250  
 **Span across all decls (LOC):** 9087
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 3 | 90 | 1.0% |
-| trivial-blocked | 9 | 527 | 5.8% |
+| trivial | 5 | 135 | 1.5% |
+| trivial-blocked | 8 | 482 | 5.3% |
 | refactor-then-dsl | 36 | 2562 | 28.2% |
 | needs-transpiler | 44 | 4416 | 48.6% |
 | boundary | 3 | 117 | 1.3% |
@@ -77,10 +77,10 @@ from the repo root to regenerate both this file and the CSV.
 | virtual / inheritance | 21 | 740 |
 | template method | 7 | 719 |
 | void* in param | 3 | 468 |
-| nested struct/class | 3 | 288 |
 | preprocessor branches in body (#if/#ifdef) | 2 | 280 |
+| nested struct/class | 2 | 243 |
+| POD-shaped | 5 | 135 |
 | name flagged as boundary in plan | 3 | 117 |
-| POD-shaped | 3 | 90 |
 | std::shared_ptr field | 2 | 56 |
 | va_list | 1 | 42 |
 | C-style array param | 1 | 20 |
