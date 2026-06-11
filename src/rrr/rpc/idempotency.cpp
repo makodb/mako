@@ -250,51 +250,92 @@ IdempotencyConfig IdempotencyConfig::disabled() {
  *
  * Uses rusty::Vec<char> for response data since Marshal is non-copyable.
  */
+// The DSL lowers `char` to Rust's `char32_t` (Unicode codepoint); for
+// the C++ byte-buffer use here we want plain C++ `char` (signed
+// byte). The typedef hides the distinction from the DSL grammar — the
+// transpiler emits `Vec<CachedResponseByte>` verbatim, matching the
+// previous `Vec<char>` layout exactly.
+using CachedResponseByte = char;
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// The fields drop their NSDMI defaults — `CachedResponse{}` still
+// zero-initializes everything (the aggregate-init route the DSL
+// emits): `IdempotencyKey{0, 0}` matches the previous
+// `IdempotencyKey::empty()`, `i32 = 0`, `Vec` is an empty
+// default, `u64 = 0`. The defaulted move ctor / assignment are
+// implicit on the aggregate.
+//
+// `is_expired` lives in the DSL impl (pure arithmetic + short-circuit
+// on `ttl_ms == 0`). The two Marshal-touching methods
+// (`set_response_data` / `get_response_data`) live OUTSIDE the DSL
+// block as free functions (`cached_response_set` /
+// `cached_response_get`) because their bodies use Marshal's
+// `peek`/`write` API + a `const_cast<Marshal&>`, which the rusty-cpp
+// transpiler doesn't yet translate; that was the previous
+// "trivial-blocked (needs Phase 4 reshape)" classification.
+#if RUSTYCPP_RUST
 struct CachedResponse {
-    // `IdempotencyKey` is DSL-emitted and no longer carries in-class
-    // default initializers; default it to the explicit empty key
-    // (`{0, 0}`) so `CachedResponse{}` stays zero-init like before.
-    IdempotencyKey key = IdempotencyKey::empty();
-    int32_t error_code = 0;             // Response error code
-    rusty::Vec<char> response_data;    // Serialized response payload
-    uint64_t timestamp_ms = 0;          // When the response was cached
+    key: IdempotencyKey,
+    error_code: i32,
+    response_data: Vec<CachedResponseByte>,
+    timestamp_ms: u64,
+}
 
-    // @safe - Default constructor
-    CachedResponse() = default;
-
-    // @safe - Move constructor
-    CachedResponse(CachedResponse&&) = default;
-
-    // @safe - Move assignment
-    CachedResponse& operator=(CachedResponse&&) = default;
-
-    // @safe - Check if entry has expired
-    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
-    }
-
-    // @unsafe - Copy response data from Marshal
-    void set_response_data(const Marshal& m) {
-        const size_t size = m.content_size();
-        response_data.clear();
-        response_data.reserve(size);
-        if (size > 0) {
-            response_data.set_len(size);
-            // Use Marshal's peek method to copy data without consuming
-            // peek takes T& which we cast from char* to char& for raw access
-            Marshal& non_const_m = const_cast<Marshal&>(m);
-            non_const_m.peek(response_data[0], size);
+impl CachedResponse {
+    fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+        if ttl_ms == 0u64 {
+            return false;
         }
+        current_time_ms > self.timestamp_ms + ttl_ms
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cached_response version=1 rust_sha256=729aa0ac0438f31ca571d7f4da5296043e1a6cea4bcc0d145e8b3e0c8843c507*/
+struct CachedResponse;
 
-    // @unsafe - Copy response data to Marshal
-    void get_response_data(Marshal* out) const {
-        if (out && !response_data.is_empty()) {
-            out->write(response_data.data(), response_data.len());
-        }
-    }
+struct CachedResponse {
+    IdempotencyKey key;
+    int32_t error_code;
+    rusty::Vec<CachedResponseByte> response_data;
+    uint64_t timestamp_ms;
+
+    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
 };
+
+
+bool CachedResponse::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(this->timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+/*RUSTYCPP:GEN-END id=idempotency.cached_response*/
+
+// @unsafe - Copy response data from Marshal. Free function — kept
+// outside the DSL block because the body's `m.peek` + `const_cast`
+// dance isn't expressible in inline-Rust today.
+inline void cached_response_set(CachedResponse& self, const Marshal& m) {
+    const size_t size = m.content_size();
+    self.response_data.clear();
+    self.response_data.reserve(size);
+    if (size > 0) {
+        self.response_data.set_len(size);
+        // Use Marshal's peek method to copy data without consuming;
+        // peek takes T& which we cast from char* to char& for raw access.
+        Marshal& non_const_m = const_cast<Marshal&>(m);
+        non_const_m.peek(self.response_data[0], size);
+    }
+}
+
+// @unsafe - Copy response data to Marshal. Same rationale as above.
+inline void cached_response_get(const CachedResponse& self, Marshal* out) {
+    if (out && !self.response_data.is_empty()) {
+        out->write(self.response_data.data(), self.response_data.len());
+    }
+}
 
 // ===========================================================================
 // IdempotencyKeyGenerator
@@ -506,7 +547,7 @@ public:
         }
         if (out_response) {
             // Copy the cached response data
-            entry.get_response_data(out_response);
+            cached_response_get(entry, out_response);
         }
 
         hits_.set(hits_.get() + 1);
@@ -539,7 +580,7 @@ public:
             // Update existing entry
             auto& entry = *list_it;
             entry.error_code = error_code;
-            entry.set_response_data(response);
+            cached_response_set(entry, response);
             entry.timestamp_ms = current_time_ms;
             // Move to front
             list_guard->splice(list_guard->begin(), *list_guard, list_it);
@@ -558,7 +599,7 @@ public:
         CachedResponse entry;
         entry.key = key;
         entry.error_code = error_code;
-        entry.set_response_data(response);
+        cached_response_set(entry, response);
         entry.timestamp_ms = current_time_ms;
 
         // Insert at front
