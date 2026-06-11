@@ -189,19 +189,20 @@ struct InMemoryConnectionState {
  * to (its own) and which set it dispatches into when the peer's
  * `send_frame` fires (the other side's). The state object is shared.
  */
-class InMemoryChannel {
- public:
-    InMemoryChannel(rusty::Arc<InMemoryConnectionState> state, bool is_a_side)
-        : state_(std::move(state)), is_a_side_(is_a_side) {}
-
-    ~InMemoryChannel() = default;
-
-    InMemoryChannel(const InMemoryChannel&)            = delete;
-    InMemoryChannel& operator=(const InMemoryChannel&) = delete;
-    // Non-movable — InMemoryConnectionState's callbacks may capture
-    // pointers into this object. Ownership is via Arc.
-    InMemoryChannel(InMemoryChannel&&)                 = delete;
-    InMemoryChannel& operator=(InMemoryChannel&&)      = delete;
+// InMemoryChannel is now an aggregate (public fields, no user ctors,
+// no `= delete`) — same shape as TcpFactory / InMemoryFactory /
+// InMemoryListener. `rusty::Arc<InMemoryConnectionState>` carries
+// the non-copyability contract implicitly; the `bool is_a_side_`
+// field is trivially copyable. The legacy "non-movable — callbacks
+// may capture pointers into this object" guard was overly
+// conservative: callbacks are set on the *Arc-allocated heap copy*
+// via `set_on_frame` etc., so the captured `this` is the heap
+// address regardless of which T value flowed through new_() into
+// the Arc allocation. Implicit movability of T is safe here.
+struct InMemoryChannel {
+    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
+    // pattern.
+    static InMemoryChannel new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side);
 
     // ChannelConnectionBase methods.
     ChannelError send_frame(const ChannelFrame& f);
@@ -248,7 +249,6 @@ class InMemoryChannel {
      */
     void clear_fault_injection();
 
- private:
     // The state is held by Arc; both halves of the pair share it.
     // Arc::operator-> returns a const-pointer, so all mutation goes
     // through `mut_state()` which const_casts to a mutable reference.
@@ -260,6 +260,11 @@ class InMemoryChannel {
     rusty::Arc<InMemoryConnectionState> state_;
     bool is_a_side_;
 };
+
+// @safe - aggregate-init builds the struct in place.
+inline InMemoryChannel InMemoryChannel::new_(rusty::Arc<InMemoryConnectionState> state, bool is_a_side) {
+    return InMemoryChannel{.state_ = std::move(state), .is_a_side_ = is_a_side};
+}
 
 // Adapter wrapping `Arc<InMemoryChannel>` for the channel virtual
 // base. Mirrors `TcpConnectionChannelAdapter`.
@@ -931,10 +936,10 @@ inmemory_listener_accept_for_connect(InMemoryListener& self, const std::string& 
         guard->a_peer_address = client_address;  // A is the client
         guard->b_peer_address = server_address;  // B is the server
     }
-    auto client_side = rusty::Arc<InMemoryChannel>::make(state.clone(),
-                                                          /*is_a_side=*/true);
-    auto server_side = rusty::Arc<InMemoryChannel>::make(state.clone(),
-                                                          /*is_a_side=*/false);
+    auto client_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(),
+                                                          /*is_a_side=*/true));
+    auto server_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(),
+                                                          /*is_a_side=*/false));
 
     // Hand the server-side proxy to the on_accept callback. The
     // callback typically wires server-side handlers (set_on_frame
@@ -993,8 +998,8 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
         guard->a_peer_address = std::move(a_addr);
         guard->b_peer_address = std::move(b_addr);
     }
-    auto a_side = rusty::Arc<InMemoryChannel>::make(state.clone(), /*is_a_side=*/true);
-    auto b_side = rusty::Arc<InMemoryChannel>::make(state.clone(), /*is_a_side=*/false);
+    auto a_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/true));
+    auto b_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/false));
     return {std::move(a_side), std::move(b_side)};
 }
 
