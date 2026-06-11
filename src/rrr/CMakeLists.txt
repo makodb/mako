@@ -29,7 +29,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp
@@ -145,7 +144,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/dball.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/rand.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/serializable.cpp

@@ -36,7 +36,6 @@ import rrr.client;
 import rrr.connection_metrics;
 import rrr.connection_state;
 import rrr.cpuinfo;
-import rrr.dball;
 import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.errors;

@@ -71,7 +71,6 @@ using rrr::i16;
 using rrr::i32;
 using rrr::i64;
 using rrr::Future;
-using rrr::DragonBall;
 using rrr::RandomGenerator;
 // removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
