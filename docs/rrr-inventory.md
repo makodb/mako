@@ -7,18 +7,18 @@ a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
 **Decl count (top-level class/struct/enum/union):** 249  
-**Span across all decls (LOC):** 9083
+**Span across all decls (LOC):** 9103
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 2 | 50 | 0.6% |
+| trivial | 2 | 50 | 0.5% |
 | trivial-blocked | 9 | 527 | 5.8% |
-| refactor-then-dsl | 36 | 2430 | 26.8% |
-| needs-transpiler | 47 | 4606 | 50.7% |
+| refactor-then-dsl | 34 | 2428 | 26.7% |
+| needs-transpiler | 47 | 4606 | 50.6% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 152 | 1353 | 14.9% |
+| already-dsl | 154 | 1375 | 15.1% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -35,9 +35,9 @@ from the repo root to regenerate both this file and the CSV.
 | `misc/marshal.cpp` | 214 | `Marshal` | refactor-then-dsl |
 | `misc/serializable_envelope.cpp` | 207 | `SerializableEnvelope` | needs-transpiler |
 | `rpc/server.cpp` | 202 | `ServerConnection` | needs-transpiler |
+| `misc/serializable.cpp` | 199 | `BinaryWriteArchive` | refactor-then-dsl |
 | `rpc/client.cpp` | 195 | `ClientPool` | needs-transpiler |
 | `rpc/client.cpp` | 194 | `Future` | refactor-then-dsl |
-| `misc/serializable.cpp` | 191 | `BinaryWriteArchive` | refactor-then-dsl |
 | `misc/alock.cpp` | 189 | `WaitDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 189 | `WoundDieALock` | needs-transpiler |
 | `misc/alock.cpp` | 151 | `TimeoutALock` | needs-transpiler |
@@ -52,7 +52,7 @@ from the repo root to regenerate both this file and the CSV.
 | `rpc/client.cpp` | 1768 |
 | `reactor/reactor.cpp` | 1010 |
 | `misc/alock.cpp` | 720 |
-| `misc/serializable.cpp` | 607 |
+| `misc/serializable.cpp` | 605 |
 | `rpc/tcp_channel.cpp` | 376 |
 | `rpc/inmemory_channel.cpp` | 300 |
 | `misc/cpuinfo.cpp` | 253 |
