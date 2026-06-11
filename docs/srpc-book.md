@@ -1792,6 +1792,71 @@ Events hold weak references to fibers to avoid reference cycles:
 // If the fiber is destroyed, the weak ref expires gracefully
 ```
 
+### Inline Rust DSL
+
+Most newly-migrated rrr types are authored as inline Rust DSL blocks
+that the `rusty-cpp-transpiler` (third-party/rusty-cpp) regenerates
+into C++ at build time. The pattern:
+
+```cpp srpc-no-compile
+// 1. Source-of-truth Rust block, guarded so a stock C++ compiler skips it.
+#if RUSTYCPP_RUST
+struct MyConfig {
+    timeout_ms: i32,
+    retries: i32,
+}
+
+impl MyConfig {
+    fn new(timeout_ms: i32, retries: i32) -> MyConfig {
+        MyConfig { timeout_ms, retries }
+    }
+}
+#endif
+
+// 2. Transpiler-emitted C++ inside a GEN region. The `rust_sha256`
+//    field captures the Rust block's hash so stale GEN output is
+//    detectable.
+/*RUSTYCPP:GEN-BEGIN id=mymod.myconfig version=1 rust_sha256=...*/
+struct MyConfig {
+    int32_t timeout_ms;
+    int32_t retries;
+
+    static MyConfig new_(int32_t timeout_ms, int32_t retries);
+};
+
+inline MyConfig MyConfig::new_(int32_t timeout_ms, int32_t retries) {
+    return MyConfig{.timeout_ms = timeout_ms, .retries = retries};
+}
+/*RUSTYCPP:GEN-END id=mymod.myconfig*/
+```
+
+Regenerate after editing the Rust block:
+
+```bash srpc-no-compile
+third-party/rusty-cpp/target/release/rusty-cpp-transpiler \
+    inline-rust --rewrite --files src/rrr/path/to/file.cpp
+```
+
+What the DSL currently expresses, in rough order of usage:
+
+- **Plain structs / POD aggregates** — fields plus an `impl T { fn new(...) -> T { T { ... } } }` static factory.
+- **`pub trait T { fn method(&self) -> ...; }`** — emits a C++ abstract base class (pure virtual, virtual dtor, copy/move disabled) so concrete C++ implementors keep working unchanged. Examples: `Pollable`, `PollableBase`, `SerializableBase`, `Service`, `Job`, `Alarm`, `SinkBase`, `SourceBase`.
+- **Concrete classes with state + methods** — `Client`, `Server`, `CircuitBreaker`, `HeartbeatManager`, etc. The DSL impl block carries the method bodies; large method bodies stay in out-of-class `T::method(...) { ... }` C++ definitions because the DSL doesn't translate complex syscall / cast-heavy code yet.
+
+Constructs the DSL grammar does **not** accept (these stay manual C++ and show up as `needs-transpiler` or `trivial-blocked` in `docs/rrr-inventory.md`):
+
+- `void*` / `va_list` / C-style array params
+- Template methods (and class templates beyond a couple of pilot shapes)
+- Default-argument syntax on member functions
+- Operator overloading
+- Custom destructors that aren't trivially-defaulted
+- `impl Trait for Type` — parses but the emitter does not yet write `: public Trait` + `override` for the implementor, so trait *implementors* stay manual C++ while the *trait base* migrates cleanly.
+
+The `tools/rrr-inventory.py` script scans `src/rrr` and produces a
+per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /
+needs-transpiler / boundary / already-dsl) along with a blocker
+histogram — see `docs/rrr-inventory.md`.
+
 ---
 
 ## 15. Performance Tuning
