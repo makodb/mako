@@ -329,14 +329,26 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
         if body_re_ctor and body_re_ctor.search(ln):
             # A `Name(...) = default;` (or `=default;`) line is the
             # implicit-ctor sugar — no real logic to migrate, the DSL
-            # aggregate behaves the same. Only count "real" user ctors;
-            # defaulted ones don't block trivial classification.
-            # Look at the matched line plus the next 2 lines (covers
-            # multi-line defaulted-ctor declarations).
+            # aggregate behaves the same.
+            # Same for `Name(...) = delete;` — disabling an implicit
+            # ctor doesn't add migration burden; the DSL aggregate
+            # would implicitly delete the same ctor when fields are
+            # non-copyable / non-movable (e.g. Arc, SpinMutex).
+            # Only count "real" user ctors with logic to translate.
+            #
+            # The lookhead is bounded by the FIRST `;` we see — once
+            # we hit it the current declaration is complete and any
+            # subsequent `= default` belongs to a sibling decl (e.g.
+            # the dtor on the next line). Without this bound, a
+            # decl like `TcpFactory(Arc<...>); ~TcpFactory() = default;`
+            # would incorrectly match the dtor's `= default`.
             tail = ln
-            for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
-                tail += " " + lines[k]
-            if not re.search(r"=\s*default\s*;", tail):
+            if ";" not in ln:
+                for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
+                    tail += " " + lines[k]
+                    if ";" in lines[k]:
+                        break
+            if not re.search(r"=\s*(?:default|delete)\s*;", tail):
                 has_user_ctor = True
         if i > start_idx:
             if body_re_preproc.match(ln):
@@ -346,11 +358,19 @@ def scan_body(lines: list[str], start_idx: int, end_line: int) -> dict:
                 # Also filter `operator=(...) = default;` — the DSL aggregate
                 # supplies the implicit assignment operator, so a defaulted
                 # operator overload carries no logic to migrate.
+                # Same for `operator=(...) = delete;` — disabling an
+                # implicit assignment is ABI hygiene, not a migratable
+                # operator overload.
+                # Lookhead is bounded by the FIRST `;` so we don't
+                # match a sibling decl's `= default` on the next line.
                 tail = ln
-                for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
-                    tail += " " + lines[k]
+                if ";" not in ln:
+                    for k in range(i + 1, min(i + 3, min(end_line, len(lines)))):
+                        tail += " " + lines[k]
+                        if ";" in lines[k]:
+                            break
                 if ("// " not in ln.split("operator", 1)[0][-40:]
-                        and not re.search(r"=\s*default\s*;", tail)):
+                        and not re.search(r"=\s*(?:default|delete)\s*;", tail)):
                     found_operator = True
             if body_re_default_arg.search(ln):
                 found_default_arg = True

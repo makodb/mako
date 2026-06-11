@@ -13,9 +13,9 @@ from the repo root to regenerate both this file and the CSV.
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 2 | 50 | 0.6% |
+| trivial | 3 | 90 | 1.0% |
 | trivial-blocked | 9 | 527 | 5.8% |
-| refactor-then-dsl | 37 | 2602 | 28.6% |
+| refactor-then-dsl | 36 | 2562 | 28.2% |
 | needs-transpiler | 44 | 4416 | 48.6% |
 | boundary | 3 | 117 | 1.3% |
 | already-dsl | 154 | 1375 | 15.1% |
@@ -70,18 +70,18 @@ from the repo root to regenerate both this file and the CSV.
 | Blocker | Decls | LOC |
 |---|---:|---:|
 | custom dtor | 19 | 3388 |
-| user ctor | 16 | 1862 |
-| operator overload | 11 | 1214 |
+| user ctor | 15 | 1822 |
 | default arg in member fn | 8 | 1151 |
 | template | 25 | 1028 |
+| operator overload | 4 | 851 |
 | virtual / inheritance | 21 | 740 |
 | template method | 7 | 719 |
 | void* in param | 3 | 468 |
 | nested struct/class | 3 | 288 |
 | preprocessor branches in body (#if/#ifdef) | 2 | 280 |
 | name flagged as boundary in plan | 3 | 117 |
+| POD-shaped | 3 | 90 |
 | std::shared_ptr field | 2 | 56 |
-| POD-shaped | 2 | 50 |
 | va_list | 1 | 42 |
 | C-style array param | 1 | 20 |
 
