@@ -6,19 +6,19 @@ The per-decl CSV (`docs/rrr-inventory.csv`) is `.gitignore`d as
 a build artifact — re-run `python3 tools/rrr-inventory.py`
 from the repo root to regenerate both this file and the CSV.
 
-**Decl count (top-level class/struct/enum/union):** 250  
-**Span across all decls (LOC):** 9087
+**Decl count (top-level class/struct/enum/union):** 254  
+**Span across all decls (LOC):** 9076
 
 ## Buckets
 
 | Bucket | Decls | LOC | % of LOC |
 |---|---:|---:|---:|
-| trivial | 5 | 135 | 1.5% |
+| trivial | 5 | 128 | 1.4% |
 | trivial-blocked | 8 | 482 | 5.3% |
-| refactor-then-dsl | 36 | 2562 | 28.2% |
-| needs-transpiler | 44 | 4416 | 48.6% |
+| refactor-then-dsl | 34 | 2504 | 27.6% |
+| needs-transpiler | 44 | 4416 | 48.7% |
 | boundary | 3 | 117 | 1.3% |
-| already-dsl | 154 | 1375 | 15.1% |
+| already-dsl | 160 | 1429 | 15.7% |
 
 ## Top 20 largest manual decls by LOC
 
@@ -53,11 +53,11 @@ from the repo root to regenerate both this file and the CSV.
 | `reactor/reactor.cpp` | 1010 |
 | `misc/alock.cpp` | 720 |
 | `misc/serializable.cpp` | 591 |
-| `rpc/tcp_channel.cpp` | 376 |
-| `rpc/inmemory_channel.cpp` | 300 |
+| `rpc/tcp_channel.cpp` | 371 |
 | `misc/cpuinfo.cpp` | 253 |
 | `rpc/idempotency.cpp` | 251 |
 | `rpc/server.cpp` | 240 |
+| `rpc/inmemory_channel.cpp` | 240 |
 | `reactor/epoll_wrapper.cc` | 240 |
 | `misc/marshal.cpp` | 226 |
 | `rpc/completion_tracker.cpp` | 222 |
@@ -70,7 +70,7 @@ from the repo root to regenerate both this file and the CSV.
 | Blocker | Decls | LOC |
 |---|---:|---:|
 | custom dtor | 19 | 3388 |
-| user ctor | 15 | 1822 |
+| user ctor | 13 | 1764 |
 | default arg in member fn | 8 | 1151 |
 | template | 25 | 1028 |
 | operator overload | 4 | 851 |
@@ -78,8 +78,8 @@ from the repo root to regenerate both this file and the CSV.
 | template method | 7 | 719 |
 | void* in param | 3 | 468 |
 | preprocessor branches in body (#if/#ifdef) | 2 | 280 |
-| nested struct/class | 2 | 243 |
-| POD-shaped | 5 | 135 |
+| nested struct/class | 1 | 194 |
+| POD-shaped | 5 | 128 |
 | name flagged as boundary in plan | 3 | 117 |
 | std::shared_ptr field | 2 | 56 |
 | va_list | 1 | 42 |
