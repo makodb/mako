@@ -454,28 +454,49 @@ inline ChannelListenerProxy make_inmemory_listener_proxy(
 // aggregates. Non-copyability falls out implicitly because the
 // `rusty::Arc<InMemorySwitchboard>` field is itself non-copyable.
 // Callers build via `Arc<InMemoryFactory>::new_(InMemoryFactory::new_(arg))`.
+// Authored as inline Rust DSL. `connect` and `make_listener` stay as
+// free functions (defined further down in the file) — their bodies
+// hold socket-free in-memory pairing logic that doesn't translate to
+// the DSL grammar today. The dead `switchboard()` accessor was
+// removed in the same pass.
+#if RUSTYCPP_RUST
 struct InMemoryFactory {
-    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
-    // pattern.
-    static InMemoryFactory new_(rusty::Arc<InMemorySwitchboard> switchboard);
+    switchboard_: Arc<InMemorySwitchboard>,
+}
 
-    // ChannelFactoryBase methods.
-    ConnectResult                       connect(std::string_view addr);
-    rusty::Option<ChannelListenerProxy> make_listener();
-    std::string                         backend_name() const { return "inmemory"; }
-
-    // Switchboard accessor (test introspection).
-    const rusty::Arc<InMemorySwitchboard>& switchboard() const {
-        return switchboard_;
+impl InMemoryFactory {
+    fn new(switchboard: Arc<InMemorySwitchboard>) -> InMemoryFactory {
+        InMemoryFactory { switchboard_: switchboard }
     }
 
+    fn backend_name(&self) -> std::string {
+        std::string("inmemory")
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.factory version=1 rust_sha256=77e1d650978cb4e87a40744ffef09024ba831ff54a9f7024a905dffee28721ec*/
+struct InMemoryFactory;
+
+struct InMemoryFactory {
     rusty::Arc<InMemorySwitchboard> switchboard_;
+
+    static InMemoryFactory new_(rusty::Arc<InMemorySwitchboard> switchboard);
+    std::string backend_name() const;
 };
 
-// @safe - aggregate-init builds the struct in place.
-inline InMemoryFactory InMemoryFactory::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
+
+InMemoryFactory InMemoryFactory::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
     return InMemoryFactory{.switchboard_ = std::move(switchboard)};
 }
+
+std::string InMemoryFactory::backend_name() const {
+    return std::string("inmemory");
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.factory*/
+
+// Free functions (non-DSL) — see definitions further down.
+ConnectResult                       inmemory_factory_connect(InMemoryFactory& self, std::string_view addr);
+rusty::Option<ChannelListenerProxy> inmemory_factory_make_listener(InMemoryFactory& self);
 
 class InMemoryFactoryAdapter : public ChannelFactoryBase {
  public:
@@ -483,9 +504,9 @@ class InMemoryFactoryAdapter : public ChannelFactoryBase {
         : factory_(std::move(factory)) {}
 
     // @unsafe - forwards through mut_factory() const_cast.
-    ConnectResult                       connect(std::string_view addr) override { return mut_factory().connect(addr); }
+    ConnectResult                       connect(std::string_view addr) override { return inmemory_factory_connect(mut_factory(), addr); }
     // @unsafe - forwards through mut_factory() const_cast.
-    rusty::Option<ChannelListenerProxy> make_listener() override                { return mut_factory().make_listener(); }
+    rusty::Option<ChannelListenerProxy> make_listener() override                { return inmemory_factory_make_listener(mut_factory()); }
     std::string                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
@@ -927,9 +948,9 @@ InMemoryListener::accept_for_connect(const std::string& client_address) {
 // @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
 // invoke accept_for_connect on the listener pulled out of the
 // switchboard.
-ConnectResult InMemoryFactory::connect(std::string_view addr) {
+ConnectResult inmemory_factory_connect(InMemoryFactory& self, std::string_view addr) {
     std::string addr_str(addr);
-    auto listener_opt = switchboard_->find_listener(addr_str);
+    auto listener_opt = self.switchboard_->find_listener(addr_str);
     if (listener_opt.is_none()) {
         return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
@@ -976,8 +997,8 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
 
 // @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
 // wire `self_weak_` before publishing the listener.
-rusty::Option<ChannelListenerProxy> InMemoryFactory::make_listener() {
-    auto listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(switchboard_));
+rusty::Option<ChannelListenerProxy> inmemory_factory_make_listener(InMemoryFactory& self) {
+    auto listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(self.switchboard_));
     // Wire the self-weak so the listener can register itself in the
     // switchboard. Mirrors TcpFactory::make_listener.
     {
