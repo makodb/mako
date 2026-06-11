@@ -445,17 +445,15 @@ inline ChannelListenerProxy make_inmemory_listener_proxy(
  * the switchboard. The listener self-registers when `listen(addr)`
  * is called.
  */
-class InMemoryFactory {
- public:
-    explicit InMemoryFactory(rusty::Arc<InMemorySwitchboard> switchboard)
-        : switchboard_(std::move(switchboard)) {}
-
-    ~InMemoryFactory() = default;
-
-    InMemoryFactory(const InMemoryFactory&)            = delete;
-    InMemoryFactory& operator=(const InMemoryFactory&) = delete;
-    InMemoryFactory(InMemoryFactory&&)                 = delete;
-    InMemoryFactory& operator=(InMemoryFactory&&)      = delete;
+// InMemoryFactory is now an aggregate (public fields, no user ctors,
+// no `= delete`) — same shape as TcpFactory and the rrr DSL-style
+// aggregates. Non-copyability falls out implicitly because the
+// `rusty::Arc<InMemorySwitchboard>` field is itself non-copyable.
+// Callers build via `Arc<InMemoryFactory>::new_(InMemoryFactory::new_(arg))`.
+struct InMemoryFactory {
+    // @safe - static factory matching the rrr DSL `fn new(arg) -> Self`
+    // pattern.
+    static InMemoryFactory new_(rusty::Arc<InMemorySwitchboard> switchboard);
 
     // ChannelFactoryBase methods.
     ConnectResult                       connect(std::string_view addr);
@@ -467,9 +465,13 @@ class InMemoryFactory {
         return switchboard_;
     }
 
- private:
     rusty::Arc<InMemorySwitchboard> switchboard_;
 };
+
+// @safe - aggregate-init builds the struct in place.
+inline InMemoryFactory InMemoryFactory::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
+    return InMemoryFactory{.switchboard_ = std::move(switchboard)};
+}
 
 class InMemoryFactoryAdapter : public ChannelFactoryBase {
  public:
