@@ -105,54 +105,74 @@ class InMemorySwitchboard {
  * called `close()`.
  */
 // Per-channel callback table + fault-injection knobs that live inside
-// `InMemoryConnectionState::inner`'s SpinMutex. Hoisted to namespace
-// scope so `InMemoryConnectionState` itself is no longer a class with
-// a nested struct (the inventory tool's nested-struct DSL blocker
-// keeps that pattern out of `trivial`).
+// `InMemoryConnectionState::inner`'s SpinMutex.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Drops the per-field NSDMI defaults — DSL aggregates rely on
+// implicit value-init for zero-equivalent defaults:
+//   * `bool` zero-inits to false (matches `a_closed = false`)
+//   * `i32` zero-inits to 0 (matches `drop_next_sends_a = 0` etc.)
+//   * `ChannelError` zero-inits to its first enumerator,
+//     `ChannelError::None == 0` (matches the previous default)
+//   * `std::string` default-inits to "" (the previous behavior)
+//   * `OnXCallback` is an Arc<Function const>-backed wrapper; its
+//     default ctor builds an empty Arc that surfaces as
+//     `operator bool() == false` — same "unset callback" state as
+//     before.
+// Aggregate `InMemoryConnectionStateInner{}` thus preserves the
+// original per-field defaults.
+#if RUSTYCPP_RUST
 struct InMemoryConnectionStateInner {
-    // A-side state.  `OnXCallback` is the Arc<Function const>-
-    // backed wrapper from channel.hpp; default-construction holds
-    // an Arc wrapping an empty inner Function, which the wrapper
-    // surfaces as `operator bool() == false` (the unset-callback
-    // state).
-    std::string       a_peer_address;
-    OnFrameCallback   a_on_frame;
-    OnClosedCallback  a_on_closed;
-    OnErrorCallback   a_on_error;
-    bool              a_closed = false;
+    a_peer_address: std::string,
+    a_on_frame: OnFrameCallback,
+    a_on_closed: OnClosedCallback,
+    a_on_error: OnErrorCallback,
+    a_closed: bool,
+    b_peer_address: std::string,
+    b_on_frame: OnFrameCallback,
+    b_on_closed: OnClosedCallback,
+    b_on_error: OnErrorCallback,
+    b_closed: bool,
+    drop_next_sends_a: i32,
+    drop_next_sends_b: i32,
+    send_error_count_a: i32,
+    send_error_count_b: i32,
+    send_error_a: ChannelError,
+    send_error_b: ChannelError,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.inner version=1 rust_sha256=02b49f4f03431f720d1cb5ad65ad56b8c65fb0946cf1e354a239dea4999cc9a7*/
+struct InMemoryConnectionStateInner;
 
-    // B-side state
-    std::string       b_peer_address;
-    OnFrameCallback   b_on_frame;
-    OnClosedCallback  b_on_closed;
-    OnErrorCallback   b_on_error;
-    bool              b_closed = false;
-
-    // 6c — Fault injection state. Per-side knobs decide whether
-    // each upcoming `send_frame` should:
-    //   * be silently dropped (returns `ChannelError::None`, peer
-    //     gets nothing), OR
-    //   * return a specific `ChannelError`, OR
-    //   * proceed normally.
-    //
-    // Counters tick down on each `send_frame` call from the
-    // corresponding side; when zero, the channel returns to normal
-    // delivery. Drop counters take precedence — when both are set
-    // the drop fires first while its counter is positive, then the
-    // error injection takes over.
-    int               drop_next_sends_a  = 0;
-    int               drop_next_sends_b  = 0;
-    int               send_error_count_a = 0;
-    int               send_error_count_b = 0;
-    ChannelError      send_error_a       = ChannelError::None;
-    ChannelError      send_error_b       = ChannelError::None;
+struct InMemoryConnectionStateInner {
+    std::string a_peer_address;
+    OnFrameCallback a_on_frame;
+    OnClosedCallback a_on_closed;
+    OnErrorCallback a_on_error;
+    bool a_closed;
+    std::string b_peer_address;
+    OnFrameCallback b_on_frame;
+    OnClosedCallback b_on_closed;
+    OnErrorCallback b_on_error;
+    bool b_closed;
+    int32_t drop_next_sends_a;
+    int32_t drop_next_sends_b;
+    int32_t send_error_count_a;
+    int32_t send_error_count_b;
+    ChannelError send_error_a;
+    ChannelError send_error_b;
 };
+/*RUSTYCPP:GEN-END id=inmemory_channel.inner*/
 
 struct InMemoryConnectionState {
     // SpinMutex-owned inner state (rusty-style "data inside the mutex").
     // All per-side callbacks, closed flags, and fault-injection knobs
     // live in `InMemoryConnectionStateInner`; access through
-    // `inner.lock().unwrap()->...`.
+    // `inner.lock().unwrap()->...`. Stays hand-written because the
+    // `mutable` qualifier on the field isn't expressible in the DSL.
     mutable SpinMutex<InMemoryConnectionStateInner> inner;
 };
 
