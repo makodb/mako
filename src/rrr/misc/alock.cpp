@@ -24,7 +24,6 @@ import rusty;
 import rrr.alarm;
 import rrr.basetypes;
 import rrr.callback_wrapper;
-import rrr.dball;
 import rrr.debugging;
 import rrr.logging;
 import rrr.misc;
@@ -36,9 +35,8 @@ import rrr.threading;
 // (vlock, abort, wait_die, wound_die, lock_all, sanity_check,
 // read_acquire-over-vec) carry per-method `// @unsafe` because they
 // iterate raw `std::list<lock_req_t>` iterators, invoke external
-// callbacks, dispatch through DragonBall heap pointers, and (in
-// ALockGroup) keep raw `ALock*` BTreeMap keys — the
-// Phase 3 ALock* → Weak<ALock> refactor stays blocked. The trivial
+// callbacks, and (in ALockGroup) keep raw `ALock*` BTreeMap keys —
+// the Phase 3 ALock* → Weak<ALock> refactor stays blocked. The trivial
 // accessors (cas_status, get_status, set_status, ctors, get_next_id,
 // write_acquire/read_acquire scalar overload) inherit class @safe.
 // ===========================================================================
@@ -712,8 +710,6 @@ class ALockGroup {
 
   uint64_t n_locked_ = 0;
   uint64_t n_tolock_ = 0;
-
-  DragonBall *db_;
 
   ALockGroup(int64_t priority = 0,
              const ALockWoundCallback &wound_callback
