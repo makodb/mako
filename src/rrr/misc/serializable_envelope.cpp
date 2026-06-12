@@ -284,19 +284,17 @@ template<typename TypeList>
 inline Marshal& operator<<(Marshal& m,
                            const SerializableEnvelope<TypeList>& env) {
   verify(env.has_value());
-  MarshalSink sink(&m);
-  BinaryWriteArchive ar(make_sink_proxy(&sink));
+  BinaryWriteArchive ar(make_sink_proxy(&m));
   env.save(ar);
   return m;
 }
 
-// @unsafe - constructs MarshalSource + BinaryReadArchive and drives a
-// Marshal operator>> chain via `env.load(ar)`.
+// @unsafe - constructs BinaryReadArchive and drives a Marshal
+// operator>> chain via `env.load(ar)`.
 template<typename TypeList>
 inline Marshal& operator>>(Marshal& m,
                            SerializableEnvelope<TypeList>& env) {
-  MarshalSource source(&m);
-  BinaryReadArchive ar(make_source_proxy(&source));
+  BinaryReadArchive ar(make_source_proxy(&m));
   env.load(ar);
   return m;
 }

@@ -302,136 +302,36 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// Marshal ↔ Archive bridges (relocated from serializable.hpp).
-//
-// MarshalSink wraps an `rrr::Marshal*` and forwards `write(p, n)` to
-// `Marshal::write(p, n)`, so new `BinaryWriteArchive`-based code can
-// emit bytes directly into an existing `Marshal` buffer without the
-// caller having to allocate a separate `BufferSink` and copy.
-//
-// MarshalSource is the dual: wraps a `Marshal*` and forwards
-// `read(p, n)` to `Marshal::read(p, n)`.
-//
-// Lifetime: non-owning. Caller owns the underlying `Marshal` and must
-// keep it alive for the lifetime of the Sink/Source.
-//
-// Defined inline here (with Marshal's full class def in scope) to
-// avoid the impl-side cycle that originally forced these into
-// serializable.cpp.
+// Marshal ↔ Archive bridges (Phase 1 of marshal-serde-split).
+// MarshalSinkAdapter / MarshalSourceAdapter wrap a borrowed Marshal*
+// directly; the legacy MarshalSink / MarshalSource wrapper structs and
+// marshal_sink_write / marshal_source_read free functions are retired.
 // ---------------------------------------------------------------------------
 
-// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
-// the source of truth; the transpiler regenerates the matching
-// `RUSTYCPP:GEN-BEGIN ... END` block.
-//
-// `write(const void*, size_t)` and `read(void*, size_t)` live OUTSIDE
-// the DSL block as free functions (`marshal_sink_write` /
-// `marshal_source_read`) — the bodies' `void*` parameter isn't
-// expressible in inline-Rust today. The `fn marshal(&self)`
-// accessor returns the raw Marshal pointer for downstream code that
-// drives Marshal's own API directly. The DSL `fn new` factory keeps
-// the existing 1-arg paren-init form working via C++20 aggregate
-// paren-init rules.
-#if RUSTYCPP_RUST
-struct MarshalSink {
-    m_: *mut Marshal,
-}
-
-impl MarshalSink {
-    fn new(m: *mut Marshal) -> MarshalSink {
-        MarshalSink { m_: m as *mut Marshal }
-    }
-
-    fn marshal(&self) -> *mut Marshal {
-        self.m_
-    }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=marshal.sink version=1 rust_sha256=fdb6a6556d0ae770840f46cf0e26f7e29b41668e39a2d3b94a9acd83c168c38a*/
-struct MarshalSink;
-
-struct MarshalSink {
-    Marshal* m_;
-
-    static MarshalSink new_(Marshal* m);
-    Marshal* marshal() const;
-};
-
-
-MarshalSink MarshalSink::new_(Marshal* m) {
-    return MarshalSink{.m_ = const_cast<Marshal*>(reinterpret_cast<const Marshal*>(m))};
-}
-
-Marshal* MarshalSink::marshal() const {
-    return this->m_;
-}
-/*RUSTYCPP:GEN-END id=marshal.sink*/
-
-// @unsafe { Marshal::write through raw pointer + verify }
-inline void marshal_sink_write(MarshalSink& self, const void* p, size_t n) {
-    size_t actual = self.m_->write(p, n);
-    verify(actual == n);
-}
-
-#if RUSTYCPP_RUST
-struct MarshalSource {
-    m_: *mut Marshal,
-}
-
-impl MarshalSource {
-    fn new(m: *mut Marshal) -> MarshalSource {
-        MarshalSource { m_: m as *mut Marshal }
-    }
-
-    fn marshal(&self) -> *mut Marshal {
-        self.m_
-    }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=marshal.source version=1 rust_sha256=5af7a973d3b8d88d285fca4d0459cd8a5a3cd0bbef06401dd5f3854497e46442*/
-struct MarshalSource;
-
-struct MarshalSource {
-    Marshal* m_;
-
-    static MarshalSource new_(Marshal* m);
-    Marshal* marshal() const;
-};
-
-
-MarshalSource MarshalSource::new_(Marshal* m) {
-    return MarshalSource{.m_ = const_cast<Marshal*>(reinterpret_cast<const Marshal*>(m))};
-}
-
-Marshal* MarshalSource::marshal() const {
-    return this->m_;
-}
-/*RUSTYCPP:GEN-END id=marshal.source*/
-
-// @unsafe { Marshal::read through raw pointer }
-inline size_t marshal_source_read(MarshalSource& self, void* p, size_t n) {
-    return self.m_->read(p, n);
-}
-
 class MarshalSinkAdapter : public SinkBase {
-  MarshalSink* sink_;
+  Marshal* m_;
  public:
-  explicit MarshalSinkAdapter(MarshalSink* s) noexcept : sink_(s) {}
-  void write_bytes(const uint8_t* p, size_t n) override { marshal_sink_write(*sink_, p, n); }
+  explicit MarshalSinkAdapter(Marshal* m) noexcept : m_(m) {}
+  // @unsafe { Marshal::write through borrowed pointer + verify }
+  void write_bytes(const uint8_t* p, size_t n) override {
+    size_t actual = m_->write(p, n);
+    verify(actual == n);
+  }
 };
 
 class MarshalSourceAdapter : public SourceBase {
-  MarshalSource* source_;
+  Marshal* m_;
  public:
-  explicit MarshalSourceAdapter(MarshalSource* s) noexcept : source_(s) {}
-  size_t read_bytes(uint8_t* p, size_t n) override { return marshal_source_read(*source_, p, n); }
+  explicit MarshalSourceAdapter(Marshal* m) noexcept : m_(m) {}
+  // @unsafe { Marshal::read through borrowed pointer }
+  size_t read_bytes(uint8_t* p, size_t n) override { return m_->read(p, n); }
 };
 
-inline SinkProxy make_sink_proxy(MarshalSink* sink) {
-  return rusty::make_box<MarshalSinkAdapter>(sink);
+inline SinkProxy make_sink_proxy(Marshal* m) {
+  return rusty::make_box<MarshalSinkAdapter>(m);
 }
-inline SourceProxy make_source_proxy(MarshalSource* source) {
-  return rusty::make_box<MarshalSourceAdapter>(source);
+inline SourceProxy make_source_proxy(Marshal* m) {
+  return rusty::make_box<MarshalSourceAdapter>(m);
 }
 
 // @safe

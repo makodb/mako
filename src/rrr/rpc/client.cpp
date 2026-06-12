@@ -70,16 +70,14 @@ export namespace rrr {
 // (`fu->get_reply() >> a >> b >> c`) all hit this same overload.
 template<typename U>
 rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
-    rrr::MarshalSource src(&*guard);
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
     ar >> value;
     return guard;
 }
 
 template<typename U>
 rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
-    rrr::MarshalSource src(&*guard);
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&src));
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
     ar >> value;
     return std::move(guard);
 }
@@ -1866,8 +1864,7 @@ public:
         Marshal serialized_args;
         static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                       "request_with_options write_fn must accept BinaryWriteArchive&");
-        MarshalSink sink(&serialized_args);
-        BinaryWriteArchive ar(make_sink_proxy(&sink));
+        BinaryWriteArchive ar(make_sink_proxy(&serialized_args));
         write_fn(ar);
         std::string args_bytes;
         size_t args_size = serialized_args.content_size();
