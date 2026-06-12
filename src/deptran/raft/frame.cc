@@ -10,6 +10,12 @@
 #include "test.h"
 // #include "../kv/server.h"
 
+// rusty::Rc lives in the rusty module only (the legacy <rusty/rc.hpp>
+// header was retired). Pull it in here so the file-scope
+// raft_test_fiber_ below can name rusty::Option<rusty::Rc<Fiber>>.
+// Per libc++'s textual-then-module ordering, imports follow #includes.
+import rusty;
+
 // @external: {
 //   Log_info: [safe, (...) -> void]
 //   Log_debug: [safe, (...) -> void]
@@ -40,7 +46,11 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-rusty::Option<rusty::Rc<Fiber>> RaftFrame::raft_test_fiber_;
+// File-scope static (used to be RaftFrame::raft_test_fiber_; demoted
+// because rusty::Rc is module-only and frame.h can't reach it). All
+// references below resolve via namespace lookup once the class member
+// is gone.
+static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
