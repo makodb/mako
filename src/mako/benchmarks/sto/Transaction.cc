@@ -776,8 +776,8 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         // FIX me: merge the logs from helper threads instead of a separate log
         add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size); // the partitionID for the helper thread
 
-#ifndef DISABLE_DISK
-        // Asynchronously persist to RocksDB
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
+        // Asynchronously append to the local disk log
         auto& persistence = mako::RocksDBPersistence::getInstance();
         uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
 
@@ -798,14 +798,14 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
                     uint64_t count = per_partition_success[partition_id].fetch_add(1, std::memory_order_relaxed) + 1;
                     // Log every successful persist
                     if (count % 100 == 0) {
-                        std::cout << "[RocksDB Helper] par_id=" << partition_id
+                        std::cout << "[LocalLog Helper] par_id=" << partition_id
                                       << ", success=" << count
                                       << ", failed=" << per_partition_fail[partition_id].load()
                                       << std::endl;
                     }
                 } else {
                     uint64_t fail_count = per_partition_fail[partition_id].fetch_add(1, std::memory_order_relaxed) + 1;
-                    std::cerr << "[RocksDB Helper] Persist FAILED: par_id=" << partition_id
+                    std::cerr << "[LocalLog Helper] Persist FAILED: par_id=" << partition_id
                               << ", total_failures=" << fail_count << std::endl;
                 }
             });

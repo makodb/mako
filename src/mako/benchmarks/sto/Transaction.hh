@@ -137,8 +137,8 @@ class StringAllocator{
         //Warning("Paxos log cleanup!max_bytes_size:%d",max_bytes_size);
         add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size);
 
-#ifndef DISABLE_DISK
-        // Asynchronously persist to RocksDB
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
+        // Asynchronously append to the local disk log
         auto& persistence = mako::RocksDBPersistence::getInstance();
         uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
         static std::atomic<uint64_t> persist_success_count{0};
@@ -148,12 +148,12 @@ class StringAllocator{
                 if (success) {
                     persist_success_count.fetch_add(1, std::memory_order_relaxed);
                     if (persist_success_count % 1000 == 0) {
-                        std::cout << "[RocksDB] Persisted " << persist_success_count.load()
+                        std::cout << "[LocalLog] Persisted " << persist_success_count.load()
                                   << " transaction logs to disk" << std::endl;
                     }
                 } else {
                     persist_fail_count.fetch_add(1, std::memory_order_relaxed);
-                    std::cerr << "[RocksDB] Failed to persist log (total failures: "
+                    std::cerr << "[LocalLog] Failed to persist log (total failures: "
                               << persist_fail_count.load() << ")" << std::endl;
                 }
             });

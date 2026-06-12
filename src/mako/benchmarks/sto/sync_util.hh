@@ -16,7 +16,7 @@ namespace sync_util {
         // latest timestamp for each local Paxos stream
         // Please, we can keep this as vector
         static vector<std::atomic<uint32_t>> local_timestamp_; // timestamp*10+epoch
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
         // latest timestamp for disk persistence per partition
         static vector<std::atomic<uint32_t>> disk_timestamp_; // timestamp*10+epoch
 #endif
@@ -51,7 +51,7 @@ namespace sync_util {
                          transport::Configuration *config_X) {
             for (int i = 0; i < nthreads_X; i++) {
                 local_timestamp_[i].store(0, memory_order_relaxed);
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
                 disk_timestamp_[i].store(0, memory_order_relaxed);
 #endif
             }
@@ -87,7 +87,7 @@ namespace sync_util {
         static void reset() {
            for (int i = 0; i < nthreads; i++) {
               local_timestamp_[i].store(0, memory_order_relaxed);
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
               disk_timestamp_[i].store(0, memory_order_relaxed);
 #endif
            }
@@ -120,7 +120,7 @@ namespace sync_util {
             for (int i=0; i<nthreads; i++) {
                 // Take minimum of replication and disk timestamps for each partition
                 auto repl_ts = local_timestamp_[i].load(memory_order_acquire);
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
                 auto disk_ts = disk_timestamp_[i].load(memory_order_acquire);
                 // Use the minimum of replication and disk timestamp for this partition
                 auto partition_min = min(repl_ts, disk_ts);
@@ -169,7 +169,7 @@ namespace sync_util {
             std::cout<<"start the advancer thread..."<<std::endl;
             for (int i=0; i<nthreads; i++) {
                 local_timestamp_[i].store(0, memory_order_release);
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
                 disk_timestamp_[i].store(0, memory_order_release);
 #endif
             }
@@ -198,7 +198,7 @@ namespace sync_util {
            return single_watermark_.load(memory_order_relaxed);  // timestamp*10+epoch
         }
 
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
         // Update disk persistence timestamp for a partition
         static void updateDiskTimestamp(int partition_id, uint32_t timestamp) {
             if (partition_id >= 0 && partition_id < nthreads) {
@@ -217,7 +217,7 @@ namespace sync_util {
                 for (int i=0;i<nthreads;i++) {
                     // Take minimum of replication and disk timestamps for each partition
                     auto repl_ts = local_timestamp_[i].load(memory_order_acquire);
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
                     auto disk_ts = disk_timestamp_[i].load(memory_order_acquire);
                     // Use the minimum of replication and disk timestamp for this partition
                     auto partition_min = min(repl_ts, disk_ts);

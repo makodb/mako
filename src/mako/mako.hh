@@ -36,6 +36,9 @@
 #include "lib/server.h"
 #include "lib/rust_wrapper.h"
 
+#ifndef DISK_PATH
+#define DISK_PATH "/tmp/"
+#endif
 
 // Initialize Rust wrapper: communicate with rust-based redis client
 static void initialize_rust_wrapper()
@@ -234,7 +237,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
       // update the timestamp for this Paxos stream so that not blocking other Paxos streams
       uint32_t min_so_far = numeric_limits<uint32_t>::max();
       sync_util::sync_logger::local_timestamp_[par_id].store(min_so_far, memory_order_release) ;
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
       sync_util::sync_logger::disk_timestamp_[par_id].store(min_so_far, memory_order_release) ;
 #endif
       benchConfig.incrementEndReceived();
@@ -277,7 +280,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         CommitInfo commit_info = get_latest_commit_info((char *) log, len);
         timestamp = commit_info.timestamp;  // Store for return value encoding
         sync_util::sync_logger::local_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
         // Followers don't persist to disk, so immediately update disk_timestamp_ too
         sync_util::sync_logger::disk_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
 #endif
@@ -390,7 +393,7 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
       Warning("Recieved a zero length log");
       uint32_t min_so_far = numeric_limits<uint32_t>::max();
       sync_util::sync_logger::local_timestamp_[par_id].store(min_so_far, memory_order_release) ;
-#ifndef DISABLE_DISK
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
       sync_util::sync_logger::disk_timestamp_[par_id].store(min_so_far, memory_order_release) ;
 #endif
       benchConfig.incrementEndReceivedLeader();
@@ -786,25 +789,25 @@ static void init_env() {
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
     
-#ifndef DISABLE_DISK
-    // Initialize RocksDB persistence layer ONLY on the leader
-    // Followers and learners don't need RocksDB since they only replay, not generate logs
+#if defined(DISABLE_DISK) && DISABLE_DISK == 0
+    // Initialize disk persistence ONLY on the leader
+    // Followers and learners only replay and do not generate logs
     if (benchConfig.getIsReplicated() && benchConfig.getLeaderConfig()) {
       auto& persistence = mako::RocksDBPersistence::getInstance();
       // Add username prefix to avoid conflicts when multiple users run on the same server
       const char* username = getenv("USER");
       if (!username) username = "unknown";
-      std::string db_path = "/tmp/" + std::string(username) + "_mako_rocksdb_shard" + std::to_string(benchConfig.getShardIndex())
+      std::string db_path = std::string(DISK_PATH) + std::string(username) + "_mako_rocksdb_shard" + std::to_string(benchConfig.getShardIndex())
                             + "_leader_pid" + std::to_string(getpid());
       size_t num_partitions = benchConfig.getNthreads();
       size_t num_threads = num_partitions;
       uint32_t shard_id = benchConfig.getShardIndex();
       uint32_t num_shards = benchConfig.getNshards();
 
-      fprintf(stderr, "Leader initializing RocksDB at path: %s with %zu partitions and %zu worker threads\n",
+      fprintf(stderr, "Leader initializing local disk log at path: %s with %zu partitions and %zu worker threads\n",
               db_path.c_str(), num_partitions, num_threads);
       if (!persistence.initialize(db_path, num_partitions, num_threads, shard_id, num_shards)) {
-          fprintf(stderr, "WARNING: RocksDB initialization failed for %s\n", db_path.c_str());
+          fprintf(stderr, "WARNING: disk persistence initialization failed for %s\n", db_path.c_str());
       } else {
           // Write initial metadata and set epoch
           persistence.writeMetadata(shard_id, num_shards);

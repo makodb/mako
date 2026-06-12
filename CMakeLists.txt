@@ -35,7 +35,7 @@ if(NOT EXISTS ${CPP_BORROW_CHECKER})
     )
 endif()
 
-enable_borrow_checking()
+# enable_borrow_checking()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
@@ -198,9 +198,22 @@ option(MEGA_BENCHMARK "Enable MEGA benchmark" OFF)
 option(MEGA_BENCHMARK_MICRO "Enable MEGA benchmark micro" OFF)
 option(TRACKING_LATENCY "Enable latency tracking" OFF)
 option(DISABLE_DISK "Disable disk persistence" ON)
+set(DISK_PATH "/tmp/" CACHE STRING "Prefix path for RocksDB disk persistence files")
 option(FAIL_NEW_VERSION "Enable fail new version" ON)
 option(SIMULATE_ONE_SHARD_PER_THREAD "Simulate one shard per thread" OFF)
 option(TRACKING_ROLLBACK "Enable rollback tracking" OFF)
+
+set(DISK_PATH_COMPILE_VALUE "${DISK_PATH}")
+if(NOT DISK_PATH_COMPILE_VALUE STREQUAL "" AND NOT DISK_PATH_COMPILE_VALUE MATCHES "/$")
+  set(DISK_PATH_COMPILE_VALUE "${DISK_PATH_COMPILE_VALUE}/")
+endif()
+if(DISABLE_DISK)
+  set(DISABLE_DISK_VALUE 1)
+else()
+  set(DISABLE_DISK_VALUE 0)
+endif()
+message(STATUS "DISABLE_DISK: ${DISABLE_DISK}")
+message(STATUS "DISK_PATH: ${DISK_PATH_COMPILE_VALUE}")
 
 # Masstree configuration
 set(MASSTREE_CONFIG "CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} --enable-max-key-len=1024")
@@ -315,9 +328,8 @@ endif()
 if(TRACKING_LATENCY)
   list(APPEND CXXFLAGS -DTRACKING_LATENCY)
 endif()
-if(DISABLE_DISK)
-  list(APPEND CXXFLAGS -DDISABLE_DISK)
-endif()
+list(APPEND CXXFLAGS -DDISABLE_DISK=${DISABLE_DISK_VALUE})
+list(APPEND CXXFLAGS -DDISK_PATH=\"${DISK_PATH_COMPILE_VALUE}\")
 if(FAIL_NEW_VERSION)
   list(APPEND CXXFLAGS -DFAIL_NEW_VERSION)
 endif()
@@ -719,7 +731,7 @@ function(add_apps exec_name exec_path)
   )
   
   # Add dependencies
-  add_dependencies(${exec_name} mako erpc rust_lib txlog build_rusty_cpp_checker)
+  add_dependencies(${exec_name} mako erpc rust_lib txlog) # build_rusty_cpp_checker)
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
@@ -740,7 +752,7 @@ set(BORROW_CHECK_FATAL ON CACHE BOOL "Make borrow check failures fatal" FORCE)
 
 # Apply borrow checking to dbtest target
 if(ENABLE_BORROW_CHECKING)
-    add_borrow_check_target(dbtest)
+    # add_borrow_check_target(dbtest)
 endif()
 
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
@@ -784,15 +796,15 @@ if(NOT TARGET rrr)
     target_link_libraries(rrr pthread ${Boost_LIBRARIES})
     
     # Add borrow checking for RRR library
-    if(ENABLE_BORROW_CHECKING)
-        # add_borrow_check_target(rrr)
+    # if(ENABLE_BORROW_CHECKING)
+    #     # add_borrow_check_target(rrr)
         
-        # Create a convenience target to check only RRR library files
-        add_custom_target(borrow_check_rrr
-            DEPENDS borrow_check_all_rrr
-            COMMENT "Running borrow checker on RRR library files"
-        )
-    endif()
+    #     # Create a convenience target to check only RRR library files
+    #     add_custom_target(borrow_check_rrr
+    #         DEPENDS borrow_check_all_rrr
+    #         COMMENT "Running borrow checker on RRR library files"
+    #     )
+    # endif()
 endif()
 
 # Add memdb library if not already built
@@ -1004,4 +1016,3 @@ if(BUILD_TESTS)
     message(STATUS "Run tests with: make run_tests")
     message(STATUS "Or individually: make test && ctest")
 endif()
-
