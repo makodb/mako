@@ -32,7 +32,6 @@
 
 #include <gtest/gtest.h>
 
-#include <rusty/btreemap.hpp>
 #include <rusty/option.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
@@ -42,6 +41,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 volatile mrcu_epoch_type globalepoch = 1;
 

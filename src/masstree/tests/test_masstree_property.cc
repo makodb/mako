@@ -16,13 +16,13 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/btreemap.hpp>
 #include <rusty/vec.hpp>
 
 #include "mako/masstree_btree.h"
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 using TestTree = single_threaded_btree;
 
