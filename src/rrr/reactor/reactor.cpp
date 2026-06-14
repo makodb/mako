@@ -215,13 +215,13 @@ struct IntEvent : public Event {
 
 IntEvent::IntEvent()
     : Event()
-    , value_(0)
-    , target_(1)
+    , value_(static_cast<int32_t>(0))
+    , target_(static_cast<int32_t>(1))
 {}
 
 IntEvent::IntEvent(int32_t tar)
     : Event()
-    , value_(0)
+    , value_(static_cast<int32_t>(0))
     , target_(tar)
 {}
 

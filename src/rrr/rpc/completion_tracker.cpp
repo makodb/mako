@@ -187,232 +187,397 @@ bool CompletedEntry::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
  *
  * Can be used standalone or integrated with IdempotencyCache.
  */
-// @safe - LRU completion-XID tracker backed by rusty::Mutex<std::list> and
-// rusty::Mutex<HashSet>. All public methods are pure rusty operations
-// (Cell get/set, Mutex lock, HashSet/list mutations). No raw pointers,
-// syscalls, or operator-overload chains.
-class CompletionTracker {
-    // Configuration
-    rusty::Cell<CompletionTrackerConfig> config_;
+// `CompletionTracker` — server-side LRU tracker of completed request XIDs with
+// TTL-based expiry, thread-safe via rusty::Mutex. Authored as inline-Rust DSL:
+// the whole class (struct + two #[cpp_ctor] factories + all methods) is the
+// source of truth; the transpiler regenerates the matching GEN block. The
+// config / entry / status / query-result types are already DSL (above).
+//
+// Two ctors via #[cpp_ctor]: `new()` (uses CompletionTrackerConfig::defaults()
+// — the test's `CompletionTracker tracker_;` default-constructs) and
+// `with_config(config)`. The LRU storage is a rusty::VecDeque<CompletedEntry>
+// (front = most recent; push_front / pop_back); mid-list removal in
+// is_completed / remove / evict_expired uses the VecDeque port's
+// `remove(index)`. All bodies are pure rusty (Cell get/set, Mutex guard,
+// HashSet + VecDeque ops, index loops) — no raw pointers, syscalls, iterators,
+// or operator-overload chains.
+#if RUSTYCPP_RUST
+struct CompletionTracker {
+    config_: Cell<CompletionTrackerConfig>,
+    lru_list_: Mutex<VecDeque<CompletedEntry>>,
+    completed_set_: Mutex<HashSet<i64>>,
+    total_tracked_: Cell<u64>,
+    queries_: Cell<u64>,
+    query_hits_: Cell<u64>,
+    evictions_: Cell<u64>,
+}
 
-    // LRU list of completed XIDs (front = most recent)
-    using LruList = std::list<CompletedEntry>;
-    rusty::Mutex<LruList> lru_list_;
-
-    // Set for O(1) lookup
-    rusty::Mutex<rusty::HashSet<int64_t>> completed_set_;
-
-    // Statistics
-    rusty::Cell<uint64_t> total_tracked_{0};
-    rusty::Cell<uint64_t> queries_{0};
-    rusty::Cell<uint64_t> query_hits_{0};
-    rusty::Cell<uint64_t> evictions_{0};
-
-public:
-    // @safe - Constructor
-    explicit CompletionTracker(const CompletionTrackerConfig& config = CompletionTrackerConfig::defaults())
-        : config_(config), lru_list_(LruList{}), completed_set_(rusty::HashSet<int64_t>{}) {}
-
-    // @safe - Check if tracking is enabled
-    bool enabled() const {
-        return config_.get().enabled;
+impl CompletionTracker {
+    #[cpp_ctor] fn new() -> CompletionTracker {
+        CompletionTracker {
+            config_: Cell::new(CompletionTrackerConfig::defaults()),
+            lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
+            completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
+            total_tracked_: Cell::new(0u64),
+            queries_: Cell::new(0u64),
+            query_hits_: Cell::new(0u64),
+            evictions_: Cell::new(0u64),
+        }
     }
 
-    // @safe - Get configuration
-    CompletionTrackerConfig config() const {
-        return config_.get();
+    #[cpp_ctor] fn with_config(config: CompletionTrackerConfig) -> CompletionTracker {
+        CompletionTracker {
+            config_: Cell::new(config),
+            lru_list_: Mutex::<VecDeque<CompletedEntry>>::new(VecDeque::<CompletedEntry>::new()),
+            completed_set_: Mutex::<HashSet<i64>>::new(HashSet::<i64>::new()),
+            total_tracked_: Cell::new(0u64),
+            queries_: Cell::new(0u64),
+            query_hits_: Cell::new(0u64),
+            evictions_: Cell::new(0u64),
+        }
     }
 
-    // @safe - Update configuration
-    void set_config(const CompletionTrackerConfig& config) {
-        config_.set(config);
+    fn enabled(&self) -> bool {
+        self.config_.get().enabled
     }
 
-    /**
-     * @unsafe - Mark a request as completed
-     *
-     * @param xid The request XID that completed
-     * @param current_time_ms Current timestamp for TTL tracking
-     */
-    void mark_completed(int64_t xid, uint64_t current_time_ms) {
-        auto cfg = config_.get();
-        if (!cfg.enabled) {
+    fn config(&self) -> CompletionTrackerConfig {
+        self.config_.get()
+    }
+
+    fn set_config(&mut self, config: CompletionTrackerConfig) {
+        self.config_.set(config);
+    }
+
+    fn mark_completed(&mut self, xid: i64, current_time_ms: u64) {
+        let cfg = self.config_.get();
+        if !cfg.enabled {
             return;
         }
-
-        auto set_guard = completed_set_.lock().unwrap();
-
-        // Skip if already tracked
-        if (set_guard->contains(xid)) {
+        let set_guard = self.completed_set_.lock().unwrap();
+        if set_guard.contains(xid) {
             return;
         }
-
-        auto list_guard = lru_list_.lock().unwrap();
-
-        // Evict if at capacity
-        while (list_guard->size() >= cfg.max_entries && !list_guard->empty()) {
-            auto& oldest = list_guard->back();
-            set_guard->remove(oldest.xid);
-            list_guard->pop_back();
-            evictions_.set(evictions_.get() + 1);
+        let list_guard = self.lru_list_.lock().unwrap();
+        while list_guard.len() >= cfg.max_entries && list_guard.len() > 0usize {
+            let oldest_xid: i64 = list_guard.back().xid;
+            set_guard.remove(oldest_xid);
+            list_guard.pop_back();
+            self.evictions_.set(self.evictions_.get() + 1u64);
         }
-
-        // Add new entry
-        list_guard->push_front(CompletedEntry::new_(xid, current_time_ms));
-        set_guard->insert(xid);
-        total_tracked_.set(total_tracked_.get() + 1);
+        list_guard.push_front(CompletedEntry::new(xid, current_time_ms));
+        set_guard.insert(xid);
+        self.total_tracked_.set(self.total_tracked_.get() + 1u64);
     }
 
-    /**
-     * @unsafe - Check if a request XID was completed
-     *
-     * @param xid The request XID to check
-     * @param current_time_ms Current timestamp for TTL check
-     * @return true if the request was completed and entry hasn't expired
-     */
-    bool is_completed(int64_t xid, uint64_t current_time_ms) {
-        auto cfg = config_.get();
-        queries_.set(queries_.get() + 1);
-
-        if (!cfg.enabled) {
+    fn is_completed(&mut self, xid: i64, current_time_ms: u64) -> bool {
+        let cfg = self.config_.get();
+        self.queries_.set(self.queries_.get() + 1u64);
+        if !cfg.enabled {
             return false;
         }
-
-        auto set_guard = completed_set_.lock().unwrap();
-
-        // Quick check if XID exists
-        if (!set_guard->contains(xid)) {
+        let set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(xid) {
             return false;
         }
-
-        // Need to check TTL by finding the entry
-        auto list_guard = lru_list_.lock().unwrap();
-
-        for (auto it = list_guard->begin(); it != list_guard->end(); ++it) {
-            if (it->xid == xid) {
-                if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
-                    // Expired - remove it
-                    set_guard->remove(xid);
-                    list_guard->erase(it);
+        let list_guard = self.lru_list_.lock().unwrap();
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].xid == xid {
+                if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                    set_guard.remove(xid);
+                    list_guard.remove(i);
                     return false;
                 }
-                query_hits_.set(query_hits_.get() + 1);
+                self.query_hits_.set(self.query_hits_.get() + 1u64);
                 return true;
             }
+            i += 1usize;
         }
-
-        // Should not happen if set is in sync with list
-        return false;
+        false
     }
 
-    /**
-     * @unsafe - Remove a completed entry (for invalidation)
-     */
-    bool remove(int64_t xid) {
-        auto set_guard = completed_set_.lock().unwrap();
-
-        if (!set_guard->contains(xid)) {
+    fn remove(&mut self, xid: i64) -> bool {
+        let set_guard = self.completed_set_.lock().unwrap();
+        if !set_guard.contains(xid) {
             return false;
         }
-
-        set_guard->remove(xid);
-
-        auto list_guard = lru_list_.lock().unwrap();
-        for (auto it = list_guard->begin(); it != list_guard->end(); ++it) {
-            if (it->xid == xid) {
-                list_guard->erase(it);
-                break;
+        set_guard.remove(xid);
+        let list_guard = self.lru_list_.lock().unwrap();
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].xid == xid {
+                list_guard.remove(i);
+                return true;
             }
+            i += 1usize;
         }
-
-        return true;
+        true
     }
 
-    /**
-     * @safe - Clear all tracked completions
-     */
-    void clear() {
-        auto set_guard = completed_set_.lock().unwrap();
-        auto list_guard = lru_list_.lock().unwrap();
-
-        set_guard->clear();
-        list_guard->clear();
+    fn clear(&mut self) {
+        let set_guard = self.completed_set_.lock().unwrap();
+        let list_guard = self.lru_list_.lock().unwrap();
+        set_guard.clear();
+        list_guard.clear();
     }
 
-    // === Statistics ===
-
-    // @safe - Get number of currently tracked XIDs
-    size_t size() const {
-        auto guard = completed_set_.lock().unwrap();
-        return guard->len();
+    fn size(&self) -> usize {
+        let guard = self.completed_set_.lock().unwrap();
+        guard.len()
     }
 
-    // @safe - Get total XIDs ever tracked
-    uint64_t total_tracked() const {
-        return total_tracked_.get();
+    fn total_tracked(&self) -> u64 {
+        self.total_tracked_.get()
     }
 
-    // @safe - Get number of queries
-    uint64_t queries() const {
-        return queries_.get();
+    fn queries(&self) -> u64 {
+        self.queries_.get()
     }
 
-    // @safe - Get number of query hits
-    uint64_t query_hits() const {
-        return query_hits_.get();
+    fn query_hits(&self) -> u64 {
+        self.query_hits_.get()
     }
 
-    // @safe - Get hit rate (0.0 to 1.0)
-    double hit_rate() const {
-        uint64_t q = queries_.get();
-        if (q == 0) return 0.0;
-        return static_cast<double>(query_hits_.get()) / static_cast<double>(q);
-    }
-
-    // @safe - Get eviction count
-    uint64_t evictions() const {
-        return evictions_.get();
-    }
-
-    // @safe - Reset statistics
-    void reset_stats() {
-        total_tracked_.set(0);
-        queries_.set(0);
-        query_hits_.set(0);
-        evictions_.set(0);
-    }
-
-    /**
-     * @unsafe - Evict expired entries
-     *
-     * Call periodically to clean up stale entries.
-     * Returns number of entries evicted.
-     */
-    size_t evict_expired(uint64_t current_time_ms) {
-        auto cfg = config_.get();
-        if (!cfg.enabled || cfg.ttl_ms == 0) {
-            return 0;
+    fn hit_rate(&self) -> f64 {
+        let q: u64 = self.queries_.get();
+        if q == 0u64 {
+            return 0.0f64;
         }
+        (self.query_hits_.get() as f64) / (q as f64)
+    }
 
-        auto set_guard = completed_set_.lock().unwrap();
-        auto list_guard = lru_list_.lock().unwrap();
+    fn evictions(&self) -> u64 {
+        self.evictions_.get()
+    }
 
-        size_t evicted = 0;
-        auto it = list_guard->begin();
-        while (it != list_guard->end()) {
-            if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
-                set_guard->remove(it->xid);
-                it = list_guard->erase(it);
-                evicted++;
+    fn reset_stats(&mut self) {
+        self.total_tracked_.set(0u64);
+        self.queries_.set(0u64);
+        self.query_hits_.set(0u64);
+        self.evictions_.set(0u64);
+    }
+
+    fn evict_expired(&mut self, current_time_ms: u64) -> usize {
+        let cfg = self.config_.get();
+        if !cfg.enabled || cfg.ttl_ms == 0u64 {
+            return 0usize;
+        }
+        let set_guard = self.completed_set_.lock().unwrap();
+        let list_guard = self.lru_list_.lock().unwrap();
+        let mut evicted: usize = 0;
+        let mut i: usize = 0;
+        while i < list_guard.len() {
+            if list_guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                let xid: i64 = list_guard[i].xid;
+                set_guard.remove(xid);
+                list_guard.remove(i);
+                evicted += 1usize;
             } else {
-                ++it;
+                i += 1usize;
             }
         }
-
-        evictions_.set(evictions_.get() + evicted);
-        return evicted;
+        self.evictions_.set(self.evictions_.get() + (evicted as u64));
+        evicted
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.tracker version=1 rust_sha256=e0228c274c10531fd46b2b942e217eeef711e71805f5a18c8f3cc03d1c763b55*/
+struct CompletionTracker;
+
+struct CompletionTracker {
+    rusty::Cell<CompletionTrackerConfig> config_;
+    rusty::Mutex<rusty::VecDeque<CompletedEntry>> lru_list_;
+    rusty::Mutex<rusty::HashSet<int64_t>> completed_set_;
+    rusty::Cell<uint64_t> total_tracked_;
+    rusty::Cell<uint64_t> queries_;
+    rusty::Cell<uint64_t> query_hits_;
+    rusty::Cell<uint64_t> evictions_;
+
+    CompletionTracker();
+    CompletionTracker(CompletionTrackerConfig config);
+    bool enabled() const;
+    CompletionTrackerConfig config() const;
+    void set_config(CompletionTrackerConfig config);
+    void mark_completed(int64_t xid, uint64_t current_time_ms);
+    bool is_completed(int64_t xid, uint64_t current_time_ms);
+    bool remove(int64_t xid);
+    void clear();
+    size_t size() const;
+    uint64_t total_tracked() const;
+    uint64_t queries() const;
+    uint64_t query_hits() const;
+    double hit_rate() const;
+    uint64_t evictions() const;
+    void reset_stats();
+    size_t evict_expired(uint64_t current_time_ms);
 };
+
+
+CompletionTracker::CompletionTracker()
+    : config_(rusty::Cell<CompletionTrackerConfig>::new_(CompletionTrackerConfig::defaults()))
+    , lru_list_(rusty::Mutex<rusty::VecDeque<CompletedEntry>>::new_(rusty::VecDeque<CompletedEntry>::new_()))
+    , completed_set_(rusty::Mutex<rusty::HashSet<int64_t>>::new_(rusty::HashSet<int64_t>::new_()))
+    , total_tracked_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , queries_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , query_hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+{}
+
+CompletionTracker::CompletionTracker(CompletionTrackerConfig config)
+    : config_(rusty::Cell<CompletionTrackerConfig>::new_(std::move(config)))
+    , lru_list_(rusty::Mutex<rusty::VecDeque<CompletedEntry>>::new_(rusty::VecDeque<CompletedEntry>::new_()))
+    , completed_set_(rusty::Mutex<rusty::HashSet<int64_t>>::new_(rusty::HashSet<int64_t>::new_()))
+    , total_tracked_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , queries_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , query_hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+{}
+
+bool CompletionTracker::enabled() const {
+    return this->config_.get().enabled;
+}
+
+CompletionTrackerConfig CompletionTracker::config() const {
+    return this->config_.get();
+}
+
+void CompletionTracker::set_config(CompletionTrackerConfig config) {
+    this->config_.set(std::move(config));
+}
+
+void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
+    const auto cfg = this->config_.get();
+    if (!cfg.enabled) {
+        return;
+    }
+    auto set_guard = this->completed_set_.lock().unwrap();
+    if (rusty::contains(set_guard, std::move(xid))) {
+        return;
+    }
+    auto list_guard = this->lru_list_.lock().unwrap();
+    while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like(cfg.max_entries)) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
+        int64_t oldest_xid = list_guard->back().xid;
+        set_guard->remove(std::move(oldest_xid));
+        list_guard->pop_back();
+        this->evictions_.set(this->evictions_.get() + static_cast<uint64_t>(1));
+    }
+    list_guard->push_front(CompletedEntry::new_(std::move(xid), std::move(current_time_ms)));
+    set_guard->insert(std::move(xid));
+    this->total_tracked_.set(this->total_tracked_.get() + static_cast<uint64_t>(1));
+}
+
+bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
+    const auto cfg = this->config_.get();
+    this->queries_.set(this->queries_.get() + static_cast<uint64_t>(1));
+    if (!cfg.enabled) {
+        return false;
+    }
+    auto set_guard = this->completed_set_.lock().unwrap();
+    if (!rusty::contains(set_guard, std::move(xid))) {
+        return false;
+    }
+    auto list_guard = this->lru_list_.lock().unwrap();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
+        if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
+            if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
+                set_guard->remove(std::move(xid));
+                list_guard->remove(std::move(i));
+                return false;
+            }
+            this->query_hits_.set(this->query_hits_.get() + static_cast<uint64_t>(1));
+            return true;
+        }
+        i += static_cast<size_t>(1);
+    }
+    return false;
+}
+
+bool CompletionTracker::remove(int64_t xid) {
+    auto set_guard = this->completed_set_.lock().unwrap();
+    if (!rusty::contains(set_guard, std::move(xid))) {
+        return false;
+    }
+    set_guard->remove(std::move(xid));
+    auto list_guard = this->lru_list_.lock().unwrap();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
+        if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
+            list_guard->remove(std::move(i));
+            return true;
+        }
+        i += static_cast<size_t>(1);
+    }
+    return true;
+}
+
+void CompletionTracker::clear() {
+    auto set_guard = this->completed_set_.lock().unwrap();
+    auto list_guard = this->lru_list_.lock().unwrap();
+    set_guard->clear();
+    list_guard->clear();
+}
+
+size_t CompletionTracker::size() const {
+    auto guard = this->completed_set_.lock().unwrap();
+    return rusty::len(guard);
+}
+
+uint64_t CompletionTracker::total_tracked() const {
+    return this->total_tracked_.get();
+}
+
+uint64_t CompletionTracker::queries() const {
+    return this->queries_.get();
+}
+
+uint64_t CompletionTracker::query_hits() const {
+    return this->query_hits_.get();
+}
+
+double CompletionTracker::hit_rate() const {
+    const uint64_t q = this->queries_.get();
+    if (rusty::detail::deref_if_pointer_like(q) == static_cast<uint64_t>(0)) {
+        return 0.0;
+    }
+    return ((static_cast<double>(this->query_hits_.get()))) / ((static_cast<double>(q)));
+}
+
+uint64_t CompletionTracker::evictions() const {
+    return this->evictions_.get();
+}
+
+void CompletionTracker::reset_stats() {
+    this->total_tracked_.set(static_cast<uint64_t>(0));
+    this->queries_.set(static_cast<uint64_t>(0));
+    this->query_hits_.set(static_cast<uint64_t>(0));
+    this->evictions_.set(static_cast<uint64_t>(0));
+}
+
+size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
+    const auto cfg = this->config_.get();
+    if (!cfg.enabled || (rusty::detail::deref_if_pointer_like(cfg.ttl_ms) == static_cast<uint64_t>(0))) {
+        return static_cast<size_t>(0);
+    }
+    auto set_guard = this->completed_set_.lock().unwrap();
+    auto list_guard = this->lru_list_.lock().unwrap();
+    size_t evicted = static_cast<size_t>(0);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
+        if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
+            int64_t xid = list_guard[i].xid;
+            set_guard->remove(std::move(xid));
+            list_guard->remove(std::move(i));
+            evicted += static_cast<size_t>(1);
+        } else {
+            i += static_cast<size_t>(1);
+        }
+    }
+    this->evictions_.set(this->evictions_.get() + ((static_cast<uint64_t>(evicted))));
+    return std::move(evicted);
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.tracker*/
 
 // ===========================================================================
 // CompletionQueryResult
