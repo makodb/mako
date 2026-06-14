@@ -218,12 +218,38 @@ class SharedIntEvent {
 };
 
 
-class NeverEvent: public Event {
- public:
-  bool is_ready() override {
-    return false;
-  }
+// `NeverEvent` — an Event that is never ready, used as a pure timeout/yield
+// handle (`create_sp_event<NeverEvent>()->wait(us)`). Authored as inline-Rust
+// DSL via `#[cpp_inherit]`: direct C++ inheritance from the hand-written
+// stateful `Event` base. Event is intentionally NOT trait-ified (it carries
+// data fields + non-pure default-bodied virtuals), so the subclass inherits
+// it via the cross-block bare-name fallback. NeverEvent adds no fields and
+// overrides only `is_ready()`; the transpiler synthesizes the default + move
+// ctors — the default ctor is what `make_shared<NeverEvent>()` (inside
+// `Reactor::create_sp_event`) needs.
+#if RUSTYCPP_RUST
+struct NeverEvent {}
+#[cpp_inherit]
+impl Event for NeverEvent {
+    fn is_ready(&mut self) -> bool { false }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=0a4d6c09e15124644c2ed49566855ea0267df4ed1cf1667534a95f02c78d7be7*/
+struct NeverEvent;
+
+struct NeverEvent : public Event {
+    NeverEvent() : Event() {}
+    NeverEvent(NeverEvent&& other) noexcept : Event() {}
+
+
+    bool is_ready();
 };
+
+
+bool NeverEvent::is_ready() {
+    return false;
+}
+/*RUSTYCPP:GEN-END id=reactor.never_event*/
 
 class TimeoutEvent : public Event {
  public:
