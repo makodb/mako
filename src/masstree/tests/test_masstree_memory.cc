@@ -26,6 +26,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 volatile mrcu_epoch_type globalepoch = 1;
 

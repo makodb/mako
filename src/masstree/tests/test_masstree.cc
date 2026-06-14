@@ -10,6 +10,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 using TestTree = single_threaded_btree;
 

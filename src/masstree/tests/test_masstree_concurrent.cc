@@ -23,6 +23,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 // Required by Masstree's RCU machinery when concurrent_btree is used.
 volatile mrcu_epoch_type globalepoch = 1;

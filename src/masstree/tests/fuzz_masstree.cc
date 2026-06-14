@@ -71,7 +71,7 @@ class ByteStream {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   TestTree tree;
-  rusty::BTreeMap<std::string, uint64_t> oracle;
+  auto oracle = rusty::BTreeMap<std::string, uint64_t>::new_();
   // Heap-backed value storage so the pointers Masstree retains stay
   // alive until tree destruction. libFuzzer creates a fresh
   // (tree, oracle) per invocation, so growth is bounded by the input
@@ -153,7 +153,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   if (cb.seen.len() != oracle.len()) Diverge("scan.size");
   size_t i = 0;
-  for (const auto& [k, v] : oracle) {
+  auto scan_it = oracle.iter();
+  while (true) {
+    auto scan_e = scan_it.next();
+    if (scan_e.is_none()) break;
+    auto [k, v] = scan_e.unwrap();
     if (cb.seen[i].first != k) Diverge("scan.key");
     if (cb.seen[i].second != v) Diverge("scan.value");
     ++i;

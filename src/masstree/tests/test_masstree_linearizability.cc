@@ -252,7 +252,7 @@ void RunLinearizabilitySession(uint64_t seed) {
   for (auto& th : threads) { auto _ = th.join(); }
 
   // Bucket ops by key.
-  rusty::BTreeMap<uint64_t, rusty::Vec<Op>> per_key;
+  auto per_key = rusty::BTreeMap<uint64_t, rusty::Vec<Op>>::new_();
   for (auto& pt : per_thread) {
     for (auto& op : pt) {
       if (!per_key.contains_key(op.key)) {
@@ -262,8 +262,18 @@ void RunLinearizabilitySession(uint64_t seed) {
     }
   }
 
-  for (auto entry : per_key) {
-    auto& [k, ops] = entry;
+  rusty::Vec<uint64_t> keys;
+  {
+    auto key_it = per_key.iter();
+    while (true) {
+      auto key_e = key_it.next();
+      if (key_e.is_none()) break;
+      keys.push(std::get<0>(key_e.unwrap()));
+    }
+  }
+  for (size_t ki = 0; ki < keys.len(); ++ki) {
+    const uint64_t k = keys[ki];
+    rusty::Vec<Op>& ops = per_key.get_mut(k).unwrap();
     const bool ok = CheckPerKeyLinearizability(ops);
     ASSERT_TRUE(ok)
         << "non-linearizable history at key=" << k
