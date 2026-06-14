@@ -410,7 +410,7 @@ PoolConfig PoolConfig::no_health_check() {
 }
 /*RUSTYCPP:GEN-END id=client.0b*/
 
-class Future;
+struct Future;
 // @unsafe - Forward declarations
 class Client;
 class ClientConnection;
@@ -466,204 +466,314 @@ FutureAttr FutureAttr::new_(FutureCallback cb) {
 }
 /*RUSTYCPP:GEN-END id=client.0c*/
 
-// @safe - Methods that genuinely cross into unsafe ops (network I/O,
-// std::chrono use, etc.) carry their own `// @unsafe` overrides; the
-// rest of the class is now analyzed as @safe by default.
-// Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
-class Future {
-    friend class rusty::Arc<Future>;  // Allow Arc to construct/destroy
-    friend class Client;              // Client needs to call private constructor and set error
-    friend class ClientConnection;    // ClientConnection needs access to set error and notify
+// @safe - Future is the async result handle for one RPC. Its state is all
+// rusty interior-mutability primitives (Cell / RefCell / Mutex / Condvar),
+// so it analyzes @safe; the Condvar / std::chrono / callback-dispatch bodies
+// (wait / timed_wait / notify_ready / get_reply / get_error_code /
+// wait_with_options) live in `fut_*` free fns the DSL methods delegate to.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is the source
+// of truth; the transpiler regenerates the matching GEN block. The former
+// private ctor/dtor + `friend Arc/Client/ClientConnection` are gone — the
+// DSL emits a public struct, and Client/ClientConnection reach the (now
+// public) fields directly. The lifecycle invariant (constructed only via
+// `create()` / `Arc::make`, held only through Arc) is unchanged by
+// convention. `safe_release` collapses to a single no-op `Arc<Future>`
+// overload (the dead `Future*` overload is dropped; the `FutureResult`
+// callers now `(void)`-discard).
 
-    struct State {
-        bool ready = false;
-        bool timed_out = false;
-        rusty::Vec<rusty::Function<void()>> completion_callbacks;
-    };
+// CompletionFn: the DSL can't parse `Function<void()>` as a generic type
+// argument, so alias it (mirrors OnFrameCallback / QueuedRequestCallback).
+using CompletionFn = rusty::Function<void()>;
 
-    i64 xid_;
-    rusty::Cell<i32> error_code_;  // Cell for interior mutability of Copy type
+// Free-fn implementations of the Condvar / std::chrono / callback-heavy
+// methods; the DSL methods below delegate to these. Defined in the Future
+// implementation section further down. `self` is `const Future&` — every
+// mutation goes through interior mutability, so const is correct.
+void                   fut_wait(const Future& self);
+void                   fut_timed_wait(const Future& self, double sec);
+bool                   fut_wait_with_options(const Future& self);
+rusty::RefMut<Marshal> fut_get_reply(const Future& self);
+i32                    fut_get_error_code(const Future& self);
+void                   fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc);
 
-    FutureAttr attr_;
-    rusty::RefCell<Marshal> reply_;  // RefCell for interior mutability with runtime borrow checking
+#if RUSTYCPP_RUST
+struct FutureState {
+    ready: bool,
+    timed_out: bool,
+    completion_callbacks: Vec<CompletionFn>,
+}
 
-    uint64_t timeout_{1000000}; // default timeout 1s (jetpack)
-    rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
-    rusty::Condvar ready_cond_;  // Uses interior mutability (const methods like Rust's &self)
-
-    // Retry support
-    rusty::Cell<RequestOptions> options_{RequestOptions::defaults()};  // Request options (timeout, retry config)
-    rusty::Cell<TimeoutType> timeout_type_{TimeoutType::NONE};  // Type of timeout that occurred
-    rusty::Cell<uint16_t> retry_count_{0};    // Number of retries attempted
-
-    // @safe - Uses rusty::Mutex and rusty::Condvar together (Rust-like pattern)
-    // Takes Arc<Future> self parameter for callback safety
-    void notify_ready(rusty::Arc<Future> self) const;
-
-    // Private destructor - only Arc can delete
-    // @safe - RAII destructors handle cleanup automatically
-    ~Future() = default;
-
-    // Private constructor - only Arc factory can create
-    // @safe - Default initialization with RAII primitives
-    Future(i64 xid, const FutureAttr& attr = FutureAttr())
-            : xid_(xid), error_code_(0), attr_(attr), reply_(), state_(State{}),
-              ready_cond_() {
+impl FutureState {
+    fn new() -> FutureState {
+        FutureState { ready: false, timed_out: false, completion_callbacks: Vec::<CompletionFn>::new() }
     }
+}
 
-public:
+struct Future {
+    xid_: i64,
+    error_code_: Cell<i32>,
+    attr_: FutureAttr,
+    reply_: RefCell<Marshal>,
+    timeout_: u64,
+    state_: Mutex<FutureState>,
+    ready_cond_: Condvar,
+    options_: Cell<RequestOptions>,
+    timeout_type_: Cell<TimeoutType>,
+    retry_count_: Cell<u16>,
+}
 
-    // Factory method for Arc creation
-    // @safe - Arc::make is @safe in the library.
-    static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        return rusty::Arc<Future>::make(xid, attr);
-    }
-
-    // @safe - rusty::Mutex::lock / Result::unwrap / MutexGuard::operator* are
-    // all @safe in the library.
-    bool ready() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).ready;
-    }
-
-    // @safe - Uses rusty::Mutex and rusty::Condvar together
-    void wait() const;
-
-    // @safe - Uses rusty::Mutex and rusty::Condvar together
-    void timed_wait(double sec) const;
-
-    // @unsafe - rusty-cpp false positive: sec IS initialized
-    // Wait using configured options timeout
-    // Returns true if ready, false if timed out
-    bool wait_with_options() const {
-        auto opts = options_.get();
-        if (opts.timeout_ms == 0) {
-            wait();  // No timeout
-            return ready();
+impl Future {
+    #[cpp_ctor] fn new(xid: i64, attr: FutureAttr) -> Future {
+        Future {
+            xid_: xid,
+            error_code_: Cell::new(0i32),
+            attr_: attr,
+            reply_: RefCell::<Marshal>::new(Marshal::new()),
+            timeout_: 1000000u64,
+            state_: Mutex::<FutureState>::new(FutureState::new()),
+            ready_cond_: rusty::Condvar::new(),
+            options_: Cell::new(RequestOptions::defaults()),
+            timeout_type_: Cell::new(TimeoutType::NONE),
+            retry_count_: Cell::new(0u16),
         }
-        double sec = static_cast<double>(opts.timeout_ms) / 1000.0;
-        timed_wait(sec);
-        return ready() && !timed_out();
     }
 
-    // @safe - rusty::Mutex::lock + MutexGuard ops are @safe.
-    bool timed_out() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).timed_out;
+    fn create(xid: i64, attr: FutureAttr) -> Arc<Future> {
+        Arc::<Future>::make(xid, attr)
     }
 
-    // @safe - rusty::Mutex::lock + rusty::Vec::push + rusty::Function move
-    // are @safe. unwrap() on poisoned mutex intentionally panics, matching
-    // existing policy.
-    bool add_completion_callback(rusty::Function<void()> callback) const {
-        auto guard = state_.lock().unwrap();
-        if (guard->ready || guard->timed_out) {
+    fn ready(&self) -> bool {
+        let guard = self.state_.lock().unwrap();
+        guard.ready
+    }
+
+    fn wait(&self) {
+        fut_wait(self)
+    }
+
+    fn timed_wait(&self, sec: f64) {
+        fut_timed_wait(self, sec)
+    }
+
+    fn wait_with_options(&self) -> bool {
+        fut_wait_with_options(self)
+    }
+
+    fn timed_out(&self) -> bool {
+        let guard = self.state_.lock().unwrap();
+        guard.timed_out
+    }
+
+    fn add_completion_callback(&self, callback: CompletionFn) -> bool {
+        let guard = self.state_.lock().unwrap();
+        if guard.ready || guard.timed_out {
             return false;
         }
-        guard->completion_callbacks.push(std::move(callback));
-        return true;
+        guard.completion_callbacks.push(callback);
+        true
     }
 
-    // @safe - rusty::RefCell::borrow_mut is @safe (RefCell namespace).
-    // Caller holds the guard, ensuring the reference can't outlive it.
-    rusty::RefMut<Marshal> get_reply() const {
-        wait();
-        return reply_.borrow_mut();
+    fn get_reply(&self) -> rusty::RefMut<Marshal> {
+        fut_get_reply(self)
     }
 
-    // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
-    i32 get_error_code() const {
-        if (timeout_ > 0) {
-            double x = timeout_;
-            x = x / 1000000;
-            // @unsafe
-            { timed_wait(x); }
-        } else {
-            wait();
-        }
-        return error_code_.get();
+    fn get_error_code(&self) -> i32 {
+        fut_get_error_code(self)
     }
 
-    // @safe - Simple getter
-    i64 get_xid() const {
-        return xid_;
+    fn get_xid(&self) -> i64 {
+        self.xid_
     }
 
-    // =========================================================================
-    // Retry Support Accessors
-    // =========================================================================
-
-    // @safe - Get request options
-    RequestOptions get_options() const {
-        return options_.get();
+    fn get_options(&self) -> RequestOptions {
+        self.options_.get()
     }
 
-    // @safe - Set request options
-    void set_options(const RequestOptions& opts) const {
-        options_.set(opts);
+    fn set_options(&self, opts: &RequestOptions) {
+        self.options_.set(opts)
     }
 
-    // @safe - Get timeout type that occurred
-    TimeoutType get_timeout_type() const {
-        return timeout_type_.get();
+    fn get_timeout_type(&self) -> TimeoutType {
+        self.timeout_type_.get()
     }
 
-    // @safe - Set timeout type
-    void set_timeout_type(TimeoutType type) {
-        timeout_type_.set(type);
+    fn set_timeout_type(&mut self, type_: TimeoutType) {
+        self.timeout_type_.set(type_)
     }
 
-    // @safe - Get current retry count
-    uint16_t get_retry_count() const {
-        return retry_count_.get();
+    fn get_retry_count(&self) -> u16 {
+        self.retry_count_.get()
     }
 
-    // @safe - Increment retry count and return new value
-    uint16_t increment_retry_count() {
-        uint16_t current = retry_count_.get();
-        retry_count_.set(current + 1);
-        return current + 1;
+    fn increment_retry_count(&mut self) -> u16 {
+        let current = self.retry_count_.get();
+        self.retry_count_.set(current + 1u16);
+        current + 1u16
     }
 
-    // @safe - Check if should retry based on options and current state
-    bool should_retry() const {
-        auto opts = options_.get();
-        return opts.can_retry(retry_count_.get());
+    fn should_retry(&self) -> bool {
+        let opts = self.options_.get();
+        opts.can_retry(self.retry_count_.get())
     }
 
-    // =========================================================================
-    // Compatibility shim for legacy code that calls Future::safe_release()
-    // =========================================================================
-    // With rusty::Arc, manual release is no longer needed - Arc automatically
-    // cleans up when the last reference goes out of scope. These are NO-OP
-    // functions that exist solely for backward compatibility with existing
-    // call sites (raft/macros.h, fpga_raft/commo.cc, paxos/commo.cc, etc.)
-    //
-    // Old pattern (raw pointer):
-    //   Future* fu = proxy->async_Something(fuattr);
-    //   Future::safe_release(fu);  // Manual cleanup required
-    //
-    // New pattern (Arc):
-    //   auto fu = proxy->async_Something(fuattr);
-    //   // No cleanup needed - Arc handles it automatically when fu goes out of scope
-    //   Future::safe_release(fu);  // NO-OP, just for compatibility
-    // =========================================================================
-
-    // @safe - NO-OP: Arc automatically releases when dropped
-    static inline void safe_release(rusty::Arc<Future> fu) {
-        (void)fu;  // Intentionally empty - Arc handles cleanup
+    fn notify_ready(&self, self_arc: Arc<Future>) {
+        fut_notify_ready(self, self_arc)
     }
 
-    // @safe - NO-OP: Legacy overload for any remaining raw pointer usage in old code paths
-    static inline void safe_release(Future* fu) {
-        (void)fu;  // Intentionally empty - should not be called in new code
+    fn safe_release(fu: Arc<Future>) {
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=01b516b1a7c1ea038fb5c31219e5cae9fc48f09aa582d4f1a1bba9eb851f769d*/
+struct FutureState;
+struct Future;
 
-    // @safe - NO-OP: Overload for FutureResult (Result<Arc<Future>, i32>) - jetpack compatibility
-    static inline void safe_release(FutureResult fu_result) {
-        (void)fu_result;  // Intentionally empty - Arc handles cleanup
-    }
+struct FutureState {
+    bool ready;
+    bool timed_out;
+    rusty::Vec<CompletionFn> completion_callbacks;
+
+    static FutureState new_();
 };
+
+struct Future {
+    int64_t xid_;
+    rusty::Cell<int32_t> error_code_;
+    FutureAttr attr_;
+    rusty::RefCell<Marshal> reply_;
+    uint64_t timeout_;
+    rusty::Mutex<FutureState> state_;
+    rusty::Condvar ready_cond_;
+    rusty::Cell<RequestOptions> options_;
+    rusty::Cell<TimeoutType> timeout_type_;
+    rusty::Cell<uint16_t> retry_count_;
+
+    Future(int64_t xid, FutureAttr attr);
+    static rusty::Arc<Future> create(int64_t xid, FutureAttr attr);
+    bool ready() const;
+    void wait() const;
+    void timed_wait(double sec) const;
+    bool wait_with_options() const;
+    bool timed_out() const;
+    bool add_completion_callback(CompletionFn callback) const;
+    rusty::RefMut<Marshal> get_reply() const;
+    int32_t get_error_code() const;
+    int64_t get_xid() const;
+    RequestOptions get_options() const;
+    void set_options(const RequestOptions& opts) const;
+    TimeoutType get_timeout_type() const;
+    void set_timeout_type(TimeoutType type_);
+    uint16_t get_retry_count() const;
+    uint16_t increment_retry_count();
+    bool should_retry() const;
+    void notify_ready(rusty::Arc<Future> self_arc) const;
+    static void safe_release(rusty::Arc<Future> fu);
+};
+
+
+FutureState FutureState::new_() {
+    return FutureState{.ready = false, .timed_out = false, .completion_callbacks = rusty::Vec<CompletionFn>::new_()};
+}
+
+Future::Future(int64_t xid, FutureAttr attr)
+    : xid_(xid)
+    , error_code_(rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)))
+    , attr_(attr)
+    , reply_(rusty::RefCell<Marshal>::new_(Marshal::new_()))
+    , timeout_(static_cast<uint64_t>(1000000))
+    , state_(rusty::Mutex<FutureState>::new_(FutureState::new_()))
+    , ready_cond_(rusty::Condvar::new_())
+    , options_(rusty::Cell<RequestOptions>::new_(RequestOptions::defaults()))
+    , timeout_type_(rusty::Cell<TimeoutType>::new_(rusty::clone(rusty::clone(TimeoutType::NONE))))
+    , retry_count_(rusty::Cell<uint16_t>::new_(static_cast<uint16_t>(0)))
+{}
+
+rusty::Arc<Future> Future::create(int64_t xid, FutureAttr attr) {
+    return rusty::Arc<Future>::make(std::move(xid), std::move(attr));
+}
+
+bool Future::ready() const {
+    auto guard = this->state_.lock().unwrap();
+    return std::move((*guard).ready);
+}
+
+void Future::wait() const {
+    fut_wait((*this));
+}
+
+void Future::timed_wait(double sec) const {
+    fut_timed_wait((*this), std::move(sec));
+}
+
+bool Future::wait_with_options() const {
+    return fut_wait_with_options((*this));
+}
+
+bool Future::timed_out() const {
+    auto guard = this->state_.lock().unwrap();
+    return std::move((*guard).timed_out);
+}
+
+bool Future::add_completion_callback(CompletionFn callback) const {
+    auto guard = this->state_.lock().unwrap();
+    if (rusty::detail::deref_if_pointer_like((*guard).ready) || rusty::detail::deref_if_pointer_like((*guard).timed_out)) {
+        return false;
+    }
+    (*guard).completion_callbacks.push(std::move(callback));
+    return true;
+}
+
+rusty::RefMut<Marshal> Future::get_reply() const {
+    return fut_get_reply((*this));
+}
+
+int32_t Future::get_error_code() const {
+    return fut_get_error_code((*this));
+}
+
+int64_t Future::get_xid() const {
+    return this->xid_;
+}
+
+RequestOptions Future::get_options() const {
+    return this->options_.get();
+}
+
+void Future::set_options(const RequestOptions& opts) const {
+    this->options_.set(std::move(opts));
+}
+
+TimeoutType Future::get_timeout_type() const {
+    return this->timeout_type_.get();
+}
+
+void Future::set_timeout_type(TimeoutType type_) {
+    this->timeout_type_.set(std::move(type_));
+}
+
+uint16_t Future::get_retry_count() const {
+    return this->retry_count_.get();
+}
+
+uint16_t Future::increment_retry_count() {
+    const auto current = this->retry_count_.get();
+    this->retry_count_.set(rusty::detail::deref_if_pointer_like(current) + static_cast<uint16_t>(1));
+    return rusty::detail::deref_if_pointer_like(current) + static_cast<uint16_t>(1);
+}
+
+bool Future::should_retry() const {
+    const auto opts = this->options_.get();
+    return opts.can_retry(this->retry_count_.get());
+}
+
+void Future::notify_ready(rusty::Arc<Future> self_arc) const {
+    fut_notify_ready((*this), std::move(self_arc));
+}
+
+void Future::safe_release(rusty::Arc<Future> fu) {
+}
+/*RUSTYCPP:GEN-END id=client.future*/
 
 // @safe - Awaiter for generated typed RPC futures.
 // co_await returns the same typed resolve() result as sync wrappers.
@@ -3289,29 +3399,34 @@ static uint64_t current_time_ms() {
 // Future implementation
 // ============================================================================
 
-// @unsafe - Uses rusty::Mutex and rusty::Condvar together
-void Future::wait() const {
-  auto guard = state_.lock().unwrap();
+// The DSL `struct Future` declares the data + delegating methods; these
+// `fut_*` free fns hold the Condvar / std::chrono / callback-dispatch
+// bodies. `self` is `const Future&` — all mutation is through interior
+// mutability (Cell / RefCell / Mutex / Condvar).
+
+// @unsafe - rusty::Mutex + rusty::Condvar::wait_while.
+void fut_wait(const Future& self) {
+  auto guard = self.state_.lock().unwrap();
   // wait_while: waits WHILE condition is TRUE, stops when FALSE
   // We want to wait while NOT ready and NOT timed_out
-  guard = ready_cond_.wait_while(std::move(guard), [](State& s) {
+  guard = self.ready_cond_.wait_while(std::move(guard), [](FutureState& s) {
     return !s.ready && !s.timed_out;
   }).unwrap();
 }
 
-// @safe - SpinMutex::lock + Condvar::wait_timeout_while are @safe;
-// the only escape is the `std::chrono::duration<double>` ctor.
-void Future::timed_wait(double sec) const {
-  auto guard = state_.lock().unwrap();
+// @safe - Mutex::lock + Condvar::wait_timeout_while are @safe; the only
+// escape is the `std::chrono::duration<double>` ctor.
+void fut_timed_wait(const Future& self, double sec) {
+  auto guard = self.state_.lock().unwrap();
   std::chrono::duration<double> duration;
   // @unsafe { std::chrono::duration ctor is not borrow-checked }
   { duration = std::chrono::duration<double>(sec); }
   // wait_timeout_while: waits WHILE condition is TRUE
   // Returns pair<Guard, bool> where bool = true if condition became false
-  auto result = ready_cond_.wait_timeout_while(
+  auto result = self.ready_cond_.wait_timeout_while(
     std::move(guard),
     duration,
-    [](State& s) { return !s.ready && !s.timed_out; }
+    [](FutureState& s) { return !s.ready && !s.timed_out; }
   ).unwrap();
   guard = std::move(result.first);
   bool condition_became_false = result.second;
@@ -3319,17 +3434,49 @@ void Future::timed_wait(double sec) const {
   // If condition is still true (timed out while still waiting)
   if (!condition_became_false && !guard->ready) {
     guard->timed_out = true;
-    error_code_.set(ETIMEDOUT);
-    timeout_type_.set(TimeoutType::RESPONSE_TIMEOUT);
+    self.error_code_.set(ETIMEDOUT);
+    self.timeout_type_.set(TimeoutType::RESPONSE_TIMEOUT);
   }
 }
 
-// @unsafe - rusty-cpp false positive: should_callback IS initialized
-void Future::notify_ready(rusty::Arc<Future> self) const {
+// @unsafe - drives timed_wait (std::chrono); pure flow control otherwise.
+bool fut_wait_with_options(const Future& self) {
+  auto opts = self.get_options();
+  if (opts.timeout_ms == 0) {
+    self.wait();  // No timeout
+    return self.ready();
+  }
+  double sec = static_cast<double>(opts.timeout_ms) / 1000.0;
+  self.timed_wait(sec);
+  return self.ready() && !self.timed_out();
+}
+
+// @safe - waits, then hands out a RefMut into the reply buffer. The caller
+// holds the guard, so the reference can't outlive it.
+rusty::RefMut<Marshal> fut_get_reply(const Future& self) {
+  self.wait();
+  return self.reply_.borrow_mut();
+}
+
+// @unsafe - drives timed_wait (std::chrono) on the configured timeout.
+i32 fut_get_error_code(const Future& self) {
+  if (self.timeout_ > 0) {
+    double x = self.timeout_;
+    x = x / 1000000;
+    // @unsafe
+    { self.timed_wait(x); }
+  } else {
+    self.wait();
+  }
+  return self.error_code_.get();
+}
+
+// @unsafe - Condvar::notify_all + user callback dispatch outside the lock.
+void fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc) {
   bool should_callback = false;  // Initialized here
   rusty::Vec<rusty::Function<void()>> completion_callbacks;
   {
-    auto guard = state_.lock().unwrap();
+    auto guard = self.state_.lock().unwrap();
     if (!guard->timed_out) {
       guard->ready = true;
     }
@@ -3337,7 +3484,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
     completion_callbacks = std::move(guard->completion_callbacks);
   }  // Guard dropped here, releasing lock before notify
 
-  ready_cond_.notify_all();
+  self.ready_cond_.notify_all();
 
   // rusty::Function::operator bool() reports presence; iterate by
   // mutable ref so we can call non-const operator().
@@ -3351,9 +3498,9 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
   // copyable (Arc clone = refcount++); we hold a local copy `x` so the
   // user callable stays alive across the invocation even if the
   // FutureAttr field is dropped concurrently.
-  if (should_callback && attr_.callback) {
-    auto x = attr_.callback;
-    x(self);
+  if (should_callback && self.attr_.callback) {
+    auto x = self.attr_.callback;
+    x(self_arc);
   }
 }
 
