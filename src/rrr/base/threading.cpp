@@ -400,6 +400,31 @@ public:
         }
     }
 
+    // Transparent forwarding so the inline-Rust DSL's container operations on a
+    // guarded collection resolve through to the inner value: the DSL lowers
+    // `guard.len()` -> `rusty::len(guard)`, `guard.contains(k)` ->
+    // `rusty::contains(guard, k)`, and `guard[i]` -> `guard[i]`, none of which
+    // the bare guard otherwise satisfies. Each is SFINAE-gated on the inner T
+    // actually supporting the op, so a SpinMutexGuard over a non-container T is
+    // unaffected. (Plain `guard.size()`/`guard.pop_front()`/etc. already work
+    // through `operator->`.)
+    // @safe
+    template<typename U = T>
+    auto len() const -> decltype(std::declval<const U&>().len()) { return (**this).len(); }
+    // @safe
+    template<typename K, typename U = T>
+    auto contains(const K& key) const -> decltype(std::declval<const U&>().contains(key)) {
+        return (**this).contains(key);
+    }
+    // @safe
+    template<typename I, typename U = T>
+    auto operator[](I index) -> decltype(std::declval<U&>()[index]) { return (**this)[index]; }
+    // @safe
+    template<typename I, typename U = T>
+    auto operator[](I index) const -> decltype(std::declval<const U&>()[index]) {
+        return (**this)[index];
+    }
+
     // @safe - Get raw pointer through UnsafeCell
     // @lifetime: (&'a) -> &'a
     T* get() {

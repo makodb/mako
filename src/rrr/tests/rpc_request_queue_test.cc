@@ -392,7 +392,7 @@ TEST(RequestQueueTest, ClearAll) {
 
     EXPECT_EQ(queue.size(), 5u);
 
-    queue.clear_all();
+    queue.clear_all(-3);  // was clear_all() with a default arg; DSL drops defaults
 
     EXPECT_TRUE(queue.empty());
     EXPECT_EQ(queue.size(), 0u);
