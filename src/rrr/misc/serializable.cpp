@@ -385,6 +385,8 @@ inline SourceProxy make_source_proxy(BufferSource* source) {
 // inline-Rust today. The DSL `fn new(fd: i32)` factory keeps the
 // existing 1-arg paren-init form working via C++20 aggregate
 // paren-init.
+struct FdSink;
+inline void fd_sink_write(FdSink& self, const void* p, size_t n);
 #if RUSTYCPP_RUST
 struct FdSink {
     fd_: i32,
@@ -397,8 +399,14 @@ impl FdSink {
 
     fn fd(&self) -> i32 { self.fd_ }
 }
+
+impl SinkBase for FdSink {
+    fn write_bytes(&mut self, p: *const u8, n: usize) {
+        fd_sink_write(self, p, n);
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.fd_sink version=1 rust_sha256=f0580141a4e53d5ac7d20829ded7c3f91e7df4608218527e95a5b09534c6b10b*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_sink version=1 rust_sha256=9e2ba62c1d8eaa1ce731c1fb3782ff92affefcbd880c0e97221e86f52f88f303*/
 struct FdSink;
 
 struct FdSink {
@@ -406,6 +414,7 @@ struct FdSink {
 
     static FdSink new_(int32_t fd);
     int32_t fd() const;
+    void write_bytes(const uint8_t* p, size_t n);
 };
 
 
@@ -416,6 +425,40 @@ FdSink FdSink::new_(int32_t fd) {
 int32_t FdSink::fd() const {
     return this->fd_;
 }
+
+void FdSink::write_bytes(const uint8_t* p, size_t n) {
+    fd_sink_write((*this), p, std::move(n));
+}
+
+template <>
+class SinkBaseAdapter<FdSink> final : public SinkBase {
+    FdSink value_;
+public:
+    explicit SinkBaseAdapter(FdSink v) : value_(std::move(v)) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        value_.write_bytes(p, n);
+    }
+};
+
+template <>
+class SinkBaseAdapterRef<FdSink> final : public SinkBase {
+    const FdSink& value_;
+public:
+    explicit SinkBaseAdapterRef(const FdSink& u) : value_(u) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class SinkBaseAdapterRefMut<FdSink> final : public SinkBase {
+    FdSink& value_;
+public:
+    explicit SinkBaseAdapterRefMut(FdSink& u) : value_(u) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        value_.write_bytes(p, n);
+    }
+};
 /*RUSTYCPP:GEN-END id=serializable.fd_sink*/
 
 // @safe - The only raw-pointer op is ::write itself, annotated below.
@@ -435,6 +478,8 @@ inline void fd_sink_write(FdSink& self, const void* p, size_t n) {
     }
 }
 
+struct FdSource;
+inline size_t fd_source_read(FdSource& self, void* p, size_t n);
 #if RUSTYCPP_RUST
 struct FdSource {
     fd_: i32,
@@ -447,8 +492,14 @@ impl FdSource {
 
     fn fd(&self) -> i32 { self.fd_ }
 }
+
+impl SourceBase for FdSource {
+    fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {
+        fd_source_read(self, p, n)
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.fd_source version=1 rust_sha256=e9dd98e194041b805004992203639fd45763bc4a1d7e90cd29abec5f1dc0eb38*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.fd_source version=1 rust_sha256=cc6fa226d5fe2f963b8915313a0153781c32b65b563261cdfb5924ab7540bfd3*/
 struct FdSource;
 
 struct FdSource {
@@ -456,6 +507,7 @@ struct FdSource {
 
     static FdSource new_(int32_t fd);
     int32_t fd() const;
+    size_t read_bytes(uint8_t* p, size_t n);
 };
 
 
@@ -466,6 +518,40 @@ FdSource FdSource::new_(int32_t fd) {
 int32_t FdSource::fd() const {
     return this->fd_;
 }
+
+size_t FdSource::read_bytes(uint8_t* p, size_t n) {
+    return fd_source_read((*this), p, std::move(n));
+}
+
+template <>
+class SourceBaseAdapter<FdSource> final : public SourceBase {
+    FdSource value_;
+public:
+    explicit SourceBaseAdapter(FdSource v) : value_(std::move(v)) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        return value_.read_bytes(p, n);
+    }
+};
+
+template <>
+class SourceBaseAdapterRef<FdSource> final : public SourceBase {
+    const FdSource& value_;
+public:
+    explicit SourceBaseAdapterRef(const FdSource& u) : value_(u) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class SourceBaseAdapterRefMut<FdSource> final : public SourceBase {
+    FdSource& value_;
+public:
+    explicit SourceBaseAdapterRefMut(FdSource& u) : value_(u) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        return value_.read_bytes(p, n);
+    }
+};
 /*RUSTYCPP:GEN-END id=serializable.fd_source*/
 
 // @safe - The only raw-pointer op is ::read itself, annotated below.
@@ -486,25 +572,11 @@ inline size_t fd_source_read(FdSource& self, void* p, size_t n) {
     return got;
 }
 
-class FdSinkAdapter : public SinkBase {
-  FdSink* sink_;
- public:
-  explicit FdSinkAdapter(FdSink* s) noexcept : sink_(s) {}
-  void write_bytes(const uint8_t* p, size_t n) override { fd_sink_write(*sink_, p, n); }
-};
-
-class FdSourceAdapter : public SourceBase {
-  FdSource* source_;
- public:
-  explicit FdSourceAdapter(FdSource* s) noexcept : source_(s) {}
-  size_t read_bytes(uint8_t* p, size_t n) override { return fd_source_read(*source_, p, n); }
-};
-
 inline SinkProxy make_sink_proxy(FdSink* sink) {
-  return rusty::make_box<FdSinkAdapter>(sink);
+  return rusty::make_box<SinkBaseAdapterRefMut<FdSink>>(*sink);
 }
 inline SourceProxy make_source_proxy(FdSource* source) {
-  return rusty::make_box<FdSourceAdapter>(source);
+  return rusty::make_box<SourceBaseAdapterRefMut<FdSource>>(*source);
 }
 
 // ---------------------------------------------------------------------------
