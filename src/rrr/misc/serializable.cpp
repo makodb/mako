@@ -144,16 +144,60 @@ using SourceProxy = rusty::Box<SourceBase>;
 // "trivial-blocked (void* in param)" classification. Callers that
 // need to reset just touch the field directly via `sink.bytes.clear()`
 // (the legacy `clear()` method had zero callers).
+struct BufferSink;
+inline void buffer_sink_write(BufferSink& self, const void* p, size_t n);
 #if RUSTYCPP_RUST
 struct BufferSink {
     bytes: Vec<u8>,
 }
+impl SinkBase for BufferSink {
+    fn write_bytes(&mut self, p: *const u8, n: usize) {
+        buffer_sink_write(self, p, n);
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=1ef4ae34716fe7653a7128bd0e275e5a3455ac22e32d18a2cd69a94ba30515db*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=227637d9171f91f5238e1c5a35a9f22536242cba0d954607c090dd07dbe7baeb*/
 struct BufferSink;
 
 struct BufferSink {
     rusty::Vec<uint8_t> bytes;
+
+    void write_bytes(const uint8_t* p, size_t n);
+};
+
+
+void BufferSink::write_bytes(const uint8_t* p, size_t n) {
+    buffer_sink_write((*this), p, std::move(n));
+}
+
+template <>
+class SinkBaseAdapter<BufferSink> final : public SinkBase {
+    BufferSink value_;
+public:
+    explicit SinkBaseAdapter(BufferSink v) : value_(std::move(v)) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        value_.write_bytes(p, n);
+    }
+};
+
+template <>
+class SinkBaseAdapterRef<BufferSink> final : public SinkBase {
+    const BufferSink& value_;
+public:
+    explicit SinkBaseAdapterRef(const BufferSink& u) : value_(u) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class SinkBaseAdapterRefMut<BufferSink> final : public SinkBase {
+    BufferSink& value_;
+public:
+    explicit SinkBaseAdapterRefMut(BufferSink& u) : value_(u) {}
+    void write_bytes(const uint8_t* p, size_t n) override {
+        value_.write_bytes(p, n);
+    }
 };
 /*RUSTYCPP:GEN-END id=serializable.buffer_sink*/
 
@@ -189,6 +233,8 @@ inline void buffer_sink_write(BufferSink& self, const void* p, size_t n) {
 // paren-init form `BufferSource src(data, len)` keeps working via
 // C++20 aggregate paren-init; callers can also use the DSL `fn new`
 // factory directly (`BufferSource::new_(data, len)`).
+struct BufferSource;
+inline size_t buffer_source_read(BufferSource& self, void* p, size_t n);
 #if RUSTYCPP_RUST
 struct BufferSource {
     data_: *const u8,
@@ -209,8 +255,14 @@ impl BufferSource {
     fn remaining(&self) -> usize { self.len_ - self.pos_ }
     fn eof(&self) -> bool { self.pos_ >= self.len_ }
 }
+
+impl SourceBase for BufferSource {
+    fn read_bytes(&mut self, p: *mut u8, n: usize) -> usize {
+        buffer_source_read(self, p, n)
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_source version=1 rust_sha256=9a7076bfe7f5e959e1a1dc59a529c2937001f10193aa5b6318798160e2aac2c5*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_source version=1 rust_sha256=8f444f57cba3be172b7b75830a7f3568b8a1158b3f63353db1fb2bf3b141cd79*/
 struct BufferSource;
 
 struct BufferSource {
@@ -222,6 +274,7 @@ struct BufferSource {
     size_t pos() const;
     size_t remaining() const;
     bool eof() const;
+    size_t read_bytes(uint8_t* p, size_t n);
 };
 
 
@@ -240,6 +293,40 @@ size_t BufferSource::remaining() const {
 bool BufferSource::eof() const {
     return rusty::detail::deref_if_pointer_like(this->pos_) >= rusty::detail::deref_if_pointer_like(this->len_);
 }
+
+size_t BufferSource::read_bytes(uint8_t* p, size_t n) {
+    return buffer_source_read((*this), p, std::move(n));
+}
+
+template <>
+class SourceBaseAdapter<BufferSource> final : public SourceBase {
+    BufferSource value_;
+public:
+    explicit SourceBaseAdapter(BufferSource v) : value_(std::move(v)) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        return value_.read_bytes(p, n);
+    }
+};
+
+template <>
+class SourceBaseAdapterRef<BufferSource> final : public SourceBase {
+    const BufferSource& value_;
+public:
+    explicit SourceBaseAdapterRef(const BufferSource& u) : value_(u) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class SourceBaseAdapterRefMut<BufferSource> final : public SourceBase {
+    BufferSource& value_;
+public:
+    explicit SourceBaseAdapterRefMut(BufferSource& u) : value_(u) {}
+    size_t read_bytes(uint8_t* p, size_t n) override {
+        return value_.read_bytes(p, n);
+    }
+};
 /*RUSTYCPP:GEN-END id=serializable.buffer_source*/
 
 // @unsafe - raw pointer read; memcpy from data_ + pos_.
@@ -259,25 +346,11 @@ inline size_t buffer_source_read(BufferSource& self, void* p, size_t n) {
 // and forward `write` / `read` through it.
 //
 // Lifetime: the proxy must not outlive `*sink` / `*source`.
-class BufferSinkAdapter : public SinkBase {
-  BufferSink* sink_;
- public:
-  explicit BufferSinkAdapter(BufferSink* s) noexcept : sink_(s) {}
-  void write_bytes(const uint8_t* p, size_t n) override { buffer_sink_write(*sink_, p, n); }
-};
-
-class BufferSourceAdapter : public SourceBase {
-  BufferSource* source_;
- public:
-  explicit BufferSourceAdapter(BufferSource* s) noexcept : source_(s) {}
-  size_t read_bytes(uint8_t* p, size_t n) override { return buffer_source_read(*source_, p, n); }
-};
-
 inline SinkProxy make_sink_proxy(BufferSink* sink) {
-  return rusty::make_box<BufferSinkAdapter>(sink);
+  return rusty::make_box<SinkBaseAdapterRefMut<BufferSink>>(*sink);
 }
 inline SourceProxy make_source_proxy(BufferSource* source) {
-  return rusty::make_box<BufferSourceAdapter>(source);
+  return rusty::make_box<SourceBaseAdapterRefMut<BufferSource>>(*source);
 }
 
 // ---------------------------------------------------------------------------
