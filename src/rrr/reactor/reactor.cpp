@@ -303,23 +303,71 @@ bool NeverEvent::is_ready() {
 }
 /*RUSTYCPP:GEN-END id=reactor.never_event*/
 
-class TimeoutEvent : public Event {
- public:
-  uint64_t wakeup_time_{0};
-  uint64_t wait_us_{0};
-  TimeoutEvent(uint64_t wait_us)
-      : wakeup_time_{Time::now(true) + wait_us}, wait_us_(wait_us) {}
+// `TimeoutEvent` — an Event that becomes ready once `wait_us_` microseconds
+// have elapsed past construction. Authored as inline-Rust DSL: the struct, its
+// single computed-init ctor, and `is_ready()` are DSL; `#[cpp_inherit] impl
+// Event for TimeoutEvent` gives direct inheritance from the hand-written Event
+// base (so the `shared_ptr<TimeoutEvent>` -> Event upcast and the many
+// `create_sp_event<TimeoutEvent>(us)` sites in rrr + deptran keep compiling).
+// The ctor is emitted via `#[cpp_ctor]` composed with `#[cpp_inherit]`:
+// `TimeoutEvent(uint64_t wait_us)` with the computed `wakeup_time_ =
+// Time::now(true) + wait_us` (the expression lowers directly in the ctor
+// init-list) plus the `Event()` base init. No default ctor is needed (every
+// site passes the microsecond arg). The `wait()` method calls the inherited
+// `Event::wait(wait_us_)` (a final virtual) which isn't expressible in
+// inline-Rust, so it lives outside the DSL block as the `timeout_event_wait`
+// free function.
+struct TimeoutEvent;
+inline void timeout_event_wait(TimeoutEvent& self);
+#if RUSTYCPP_RUST
+struct TimeoutEvent {
+    wakeup_time_: u64,
+    wait_us_: u64,
+}
+impl TimeoutEvent {
+    #[cpp_ctor] fn new(wait_us: u64) -> TimeoutEvent {
+        TimeoutEvent { wakeup_time_: Time::now(true) + wait_us, wait_us_: wait_us }
+    }
+    fn wait(&mut self) { timeout_event_wait(self) }
+}
+#[cpp_inherit]
+impl Event for TimeoutEvent {
+    fn is_ready(&mut self) -> bool { Time::now(true) > self.wakeup_time_ }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=1acca07669bed738d46a526d81266d15bcbe3a49dd43a24c4a2f386b5e06a3bd*/
+struct TimeoutEvent;
 
-  bool is_ready() override {
-//    Log_debug("test timeout");
-    return (Time::now(true) > wakeup_time_);
-  }
+struct TimeoutEvent : public Event {
+    uint64_t wakeup_time_;
+    uint64_t wait_us_;
 
-  // @unsafe
-  void wait() {
-    Event::wait(wait_us_);
-  }
+    TimeoutEvent(uint64_t wait_us);
+    void wait();
+    bool is_ready();
 };
+
+
+TimeoutEvent::TimeoutEvent(uint64_t wait_us)
+    : Event()
+    , wakeup_time_(Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us))
+    , wait_us_(wait_us)
+{}
+
+void TimeoutEvent::wait() {
+    timeout_event_wait((*this));
+}
+
+bool TimeoutEvent::is_ready() {
+    return Time::now(true) > rusty::detail::deref_if_pointer_like(this->wakeup_time_);
+}
+/*RUSTYCPP:GEN-END id=reactor.timeout_event*/
+
+// @safe - blocks up to wait_us_ via the inherited Event::wait (final virtual).
+inline void timeout_event_wait(TimeoutEvent& self) {
+  // @unsafe { Event::wait — inherited final virtual dispatch }
+  self.Event::wait(self.wait_us_);
+}
 
 class WaitAny : public Event {
  public:
