@@ -164,47 +164,99 @@ class BoxEvent : public Event {
   }
 };
 
-class IntEvent : public Event {
+// `IntEvent` — an Event that fires when value_ reaches target_ (or a custom
+// inherited `test_` predicate passes). Authored as inline-Rust DSL: the struct,
+// its two ctors, and the own-field methods are DSL; `#[cpp_inherit] impl Event
+// for IntEvent` gives direct inheritance from the hand-written Event base, so
+// the `Arc<IntEvent>`/`shared_ptr<IntEvent>` -> `Event` upcasts and the many
+// `create_sp_event<IntEvent>()` / `make_shared<IntEvent>(n)` sites (rrr +
+// deptran, incl. deptran's MessageEvent : public IntEvent base-init) keep
+// compiling unchanged. The two ctors are emitted via `#[cpp_ctor]` composed
+// with `#[cpp_inherit]`: `IntEvent()` (value_=0,target_=1) and
+// `IntEvent(int tar)` (value_=0,target_=tar) — the lone synthesized fieldwise
+// ctor couldn't supply both. Bodies that read INHERITED Event state (set()
+// runs the inherited test(); is_ready() reads the inherited test_) live OUTSIDE
+// the DSL block as free fns — the DSL struct only declares IntEvent's own
+// fields. The dead `test_trigger()` (sole caller commented out) and the unused
+// `IntEvent::new_` factory are dropped.
+struct IntEvent;
+inline int int_event_set(IntEvent& self, int n);
+inline bool int_event_is_ready(IntEvent& self);
+#if RUSTYCPP_RUST
+struct IntEvent {
+    value_: i32,
+    target_: i32,
+}
+impl IntEvent {
+    #[cpp_ctor] fn new() -> IntEvent { IntEvent { value_: 0, target_: 1 } }
+    #[cpp_ctor] fn with_target(tar: i32) -> IntEvent { IntEvent { value_: 0, target_: tar } }
+    fn get(&self) -> i32 { self.value_ }
+    fn set(&mut self, n: i32) -> i32 { int_event_set(self, n) }
+}
+#[cpp_inherit]
+impl Event for IntEvent {
+    fn is_ready(&mut self) -> bool { int_event_is_ready(self) }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=ce15c44326d3c7a97c05595f9a302f86ce57d18940137cb45ed672bf08ee56e2*/
+struct IntEvent;
 
- public:
-  // Legacy ctors kept for deptran call sites (`IntEvent()` as base init
-  // in derived classes, `Reactor::create_sp_event<IntEvent>(n)` which
-  // forwards to `IntEvent(int)`). New rrr code should prefer
-  // `IntEvent::new_(tar)` which matches the inline-Rust DSL form.
-  IntEvent() {}
-  IntEvent(int tar) :target_(tar) {}
-  int value_{0};
-  int target_{1};
+struct IntEvent : public Event {
+    int32_t value_;
+    int32_t target_;
 
-  // @safe - factory matching the DSL `fn new(tar) -> Self` form.
-  static IntEvent new_(int tar) {
-    return IntEvent(tar);
-  }
-
-
-  bool test_trigger();
-
-  int get() {
-    return value_;
-  }
-
-  // @safe - integer assignment + virtual `test()` (itself @safe).
-  int set(int n) {
-    int t = value_;
-    value_ = n;
-    // test_trigger();
-    test();
-    return t;
-  };
-
-  bool is_ready() override {
-    if (test_) {
-      return test_(value_);
-    } else {
-      return (value_ >= target_);
-    }
-  }
+    IntEvent();
+    IntEvent(int32_t tar);
+    int32_t get() const;
+    int32_t set(int32_t n);
+    bool is_ready();
 };
+
+
+IntEvent::IntEvent()
+    : Event()
+    , value_(0)
+    , target_(1)
+{}
+
+IntEvent::IntEvent(int32_t tar)
+    : Event()
+    , value_(0)
+    , target_(tar)
+{}
+
+int32_t IntEvent::get() const {
+    return this->value_;
+}
+
+int32_t IntEvent::set(int32_t n) {
+    return int_event_set((*this), std::move(n));
+}
+
+bool IntEvent::is_ready() {
+    return int_event_is_ready((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.int_event*/
+
+// @safe - sets value_ and runs the readiness test() (inherited virtual);
+// returns the previous value.
+inline int int_event_set(IntEvent& self, int n) {
+  int t = self.value_;
+  self.value_ = n;
+  // @unsafe { Event::test() — inherited virtual dispatch }
+  self.test();
+  return t;
+}
+
+// @safe - readiness: a custom inherited `test_` predicate if set, else
+// value_ >= target_.
+inline bool int_event_is_ready(IntEvent& self) {
+  // @unsafe { reads inherited Event::test_ (rusty::Function<bool(int)>) }
+  if (self.test_) {
+    return self.test_(self.value_);
+  }
+  return self.value_ >= self.target_;
+}
 
 class SharedIntEvent {
  public:
@@ -1602,22 +1654,6 @@ Event::Event() {
     wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
   // Otherwise wp_fiber_ stays as default empty weak pointer
-}
-
-bool IntEvent::test_trigger() {
-  verify(status_.get() <= WAIT);
-  if (value_ == target_) {
-    if (status_.get() == INIT) {
-      // do nothing until wait happens.
-      status_.set(DONE);
-    } else if (status_.get() == WAIT) {
-      status_.set(READY);
-    } else {
-      verify(0);
-    }
-    return true;
-  }
-  return false;
 }
 
 int SharedIntEvent::set(const int& v) {
