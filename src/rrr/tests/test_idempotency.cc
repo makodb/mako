@@ -199,7 +199,7 @@ TEST_F(IdempotencyConfigTest, DisabledPreset) {
 class CachedResponseTest : public ::testing::Test {};
 
 TEST_F(CachedResponseTest, DefaultConstruction) {
-    CachedResponse response;
+    CachedResponse response{};  // value-init: DSL aggregate has no default member initializers
 
     EXPECT_FALSE(response.key.is_valid());
     EXPECT_EQ(response.error_code, 0);
@@ -207,7 +207,7 @@ TEST_F(CachedResponseTest, DefaultConstruction) {
 }
 
 TEST_F(CachedResponseTest, IsExpired) {
-    CachedResponse response;
+    CachedResponse response{};  // value-init: DSL aggregate has no default member initializers
     response.timestamp_ms = 1000;
 
     // Not expired yet
@@ -262,7 +262,7 @@ TEST_F(IdempotencyCacheTest, StoreAndLookup) {
     // Lookup
     int32_t error_code = -1;
     Marshal out_response;
-    bool found = cache_.lookup(key, now, &error_code, &out_response);
+    bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_TRUE(found);
     EXPECT_EQ(error_code, 0);
@@ -275,7 +275,7 @@ TEST_F(IdempotencyCacheTest, LookupMiss) {
 
     int32_t error_code = -1;
     Marshal out_response;
-    bool found = cache_.lookup(key, now, &error_code, &out_response);
+    bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_FALSE(found);
     EXPECT_EQ(cache_.misses(), 1);
@@ -287,7 +287,7 @@ TEST_F(IdempotencyCacheTest, LookupInvalidKey) {
 
     int32_t error_code = -1;
     Marshal out_response;
-    bool found = cache_.lookup(key, now, &error_code, &out_response);
+    bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_FALSE(found);
     EXPECT_EQ(cache_.misses(), 1);
@@ -308,10 +308,10 @@ TEST_F(IdempotencyCacheTest, TTLExpiration) {
     // Should find immediately
     int32_t error_code;
     Marshal out_response;
-    EXPECT_TRUE(cache_.lookup(key, now, &error_code, &out_response));
+    EXPECT_TRUE(cache_.lookup(key, now, error_code, out_response));
 
     // Should not find after TTL
-    EXPECT_FALSE(cache_.lookup(key, now + 200, &error_code, &out_response));
+    EXPECT_FALSE(cache_.lookup(key, now + 200, error_code, out_response));
 }
 
 TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
@@ -337,12 +337,12 @@ TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
     // Key 1 should be evicted
     int32_t error_code;
     Marshal out_response;
-    EXPECT_FALSE(cache_.lookup(IdempotencyKey(1, 1), now, &error_code, &out_response));
+    EXPECT_FALSE(cache_.lookup(IdempotencyKey(1, 1), now, error_code, out_response));
 
     // Keys 2, 3, 4 should exist
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 2), now, &error_code, &out_response));
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 3), now, &error_code, &out_response));
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 4), now, &error_code, &out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 2), now, error_code, out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 3), now, error_code, out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 4), now, error_code, out_response));
 }
 
 TEST_F(IdempotencyCacheTest, LRUOrdering) {
@@ -363,7 +363,7 @@ TEST_F(IdempotencyCacheTest, LRUOrdering) {
     // Access key 1 to make it most recently used
     int32_t error_code;
     Marshal out_response;
-    cache_.lookup(IdempotencyKey(1, 1), now, &error_code, &out_response);
+    cache_.lookup(IdempotencyKey(1, 1), now, error_code, out_response);
 
     // Add key 4 - should evict key 2 (least recently used after accessing key 1)
     IdempotencyKey key4(1, 4);
@@ -371,12 +371,12 @@ TEST_F(IdempotencyCacheTest, LRUOrdering) {
     cache_.store(key4, 0, response4, now);
 
     // Key 2 should be evicted
-    EXPECT_FALSE(cache_.lookup(IdempotencyKey(1, 2), now, &error_code, &out_response));
+    EXPECT_FALSE(cache_.lookup(IdempotencyKey(1, 2), now, error_code, out_response));
 
     // Keys 1, 3, 4 should exist
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 1), now, &error_code, &out_response));
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 3), now, &error_code, &out_response));
-    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 4), now, &error_code, &out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 1), now, error_code, out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 3), now, error_code, out_response));
+    EXPECT_TRUE(cache_.lookup(IdempotencyKey(1, 4), now, error_code, out_response));
 }
 
 TEST_F(IdempotencyCacheTest, Remove) {
@@ -423,7 +423,7 @@ TEST_F(IdempotencyCacheTest, DisabledCacheDoesNotStore) {
 
     int32_t error_code;
     Marshal out_response;
-    EXPECT_FALSE(cache_.lookup(key, now, &error_code, &out_response));
+    EXPECT_FALSE(cache_.lookup(key, now, error_code, out_response));
 }
 
 TEST_F(IdempotencyCacheTest, UpdateExistingEntry) {
@@ -446,7 +446,7 @@ TEST_F(IdempotencyCacheTest, UpdateExistingEntry) {
     // Should get updated values
     int32_t error_code;
     Marshal out_response;
-    EXPECT_TRUE(cache_.lookup(key, now + 1000, &error_code, &out_response));
+    EXPECT_TRUE(cache_.lookup(key, now + 1000, error_code, out_response));
     EXPECT_EQ(error_code, 42);
 }
 
@@ -461,11 +461,11 @@ TEST_F(IdempotencyCacheTest, HitRateCalculation) {
     Marshal out_response;
 
     // 2 hits
-    cache_.lookup(key, now, &error_code, &out_response);
-    cache_.lookup(key, now, &error_code, &out_response);
+    cache_.lookup(key, now, error_code, out_response);
+    cache_.lookup(key, now, error_code, out_response);
 
     // 1 miss
-    cache_.lookup(IdempotencyKey(1, 99), now, &error_code, &out_response);
+    cache_.lookup(IdempotencyKey(1, 99), now, error_code, out_response);
 
     EXPECT_EQ(cache_.hits(), 2);
     EXPECT_EQ(cache_.misses(), 1);
@@ -481,8 +481,8 @@ TEST_F(IdempotencyCacheTest, ResetStats) {
 
     int32_t error_code;
     Marshal out_response;
-    cache_.lookup(key, now, &error_code, &out_response);
-    cache_.lookup(IdempotencyKey(1, 99), now, &error_code, &out_response);
+    cache_.lookup(key, now, error_code, out_response);
+    cache_.lookup(IdempotencyKey(1, 99), now, error_code, out_response);
 
     EXPECT_GT(cache_.hits(), 0);
     EXPECT_GT(cache_.misses(), 0);
@@ -541,7 +541,7 @@ TEST_F(IdempotencyCacheTest, ThreadSafety) {
 
             int32_t error_code;
             Marshal out_response;
-            cache_.lookup(key, now, &error_code, &out_response);
+            cache_.lookup(key, now, error_code, out_response);
         }
 
         completed++;
