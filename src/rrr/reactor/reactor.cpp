@@ -488,46 +488,6 @@ class WaitN : public Event {
   }
 };
 
-class DispatchEvent: public Event{
-  public:
-    uint32_t n_dispatch_;
-    uint32_t n_dispatch_ack_ = 0;
-    // std::map (not rusty::BTreeMap) — the transpiled BTreeMap port has
-    // a chain of unresolved transpiler bugs in btree_internal that
-    // surface when iter() / clone() are instantiated. std::map is
-    // semantically equivalent for this use (ordered K→V) and ships in
-    // libc++. Migrate back to rusty::BTreeMap once the upstream bugs
-    // are patched.
-    std::map<uint32_t, bool> dispatch_acks_ = {};
-    bool aborted_ = false;
-    bool more = false;
-
-    DispatchEvent() : Event(){
-
-    }
-
-    bool is_ready() override{
-      if(n_dispatch_ == n_dispatch_ack_){
-        if(aborted_){
-          return true;
-        }
-        else{
-          for (const auto& [_, acked] : dispatch_acks_) {
-            if (!acked) {
-              return false;
-            }
-          }
-          return true;
-        }
-      }
-      else if(more){
-        return true;
-      }
-      return false;
-    }
-
-};
-
 class SingleRPCEvent: public Event{
   public:
     uint32_t cli_id_;
