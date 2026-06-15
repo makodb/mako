@@ -369,33 +369,78 @@ inline void timeout_event_wait(TimeoutEvent& self) {
   self.Event::wait(self.wait_us_);
 }
 
-// DSL-prep reshape: the variadic template ctor + recursive add_event() are not
-// expressible in inline-Rust. Every live construction site
-// (Reactor::create_sp_event<WaitAny>(a, b)) passes exactly two events, so a
-// fixed 2-arg ctor (taking shared_ptr<Event>; subclass shared_ptrs upcast)
-// satisfies them all with no call-site change. The next commit migrates this
-// to the DSL.
-class WaitAny : public Event {
- public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
-
-  WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b) : Event() {
-    events_.push(std::move(a));
-    events_.push(std::move(b));
-  }
-
-  bool is_ready() override {
-    for (const auto& e : events_) {
-      if (e && e->is_ready()) {
-        return true;
-      }
+// `WaitAny` — a composite Event that is ready as soon as ANY of its child
+// events is ready (polled in the reactor loop via `is_composite_event()`).
+// Authored as inline-Rust DSL: the struct (its own `events_` vector) and the
+// fixed 2-arg ctor are DSL; `#[cpp_inherit] impl Event for WaitAny` gives
+// direct inheritance from the hand-written Event base, so the
+// `shared_ptr<WaitAny>` -> Event upcast and the `create_sp_event<WaitAny>(a,b)`
+// sites keep compiling. The `is_ready()` body iterates `events_` calling each
+// child's inherited virtual `is_ready()`, which isn't inline-Rust-expressible,
+// so it lives outside the DSL block as `wait_any_is_ready`; `wait_any_make`
+// builds the 2-element vector for the ctor field-init.
+struct WaitAny;
+inline rusty::Vec<std::shared_ptr<Event>> wait_any_make(std::shared_ptr<Event> a, std::shared_ptr<Event> b);
+inline bool wait_any_is_ready(WaitAny& self);
+#if RUSTYCPP_RUST
+struct WaitAny {
+    events_: Vec<std::shared_ptr<Event>>,
+}
+impl WaitAny {
+    #[cpp_ctor] fn new(a: std::shared_ptr<Event>, b: std::shared_ptr<Event>) -> WaitAny {
+        WaitAny { events_: wait_any_make(a, b) }
     }
-    return false;
-  }
+}
+#[cpp_inherit]
+impl Event for WaitAny {
+    fn is_ready(&mut self) -> bool { wait_any_is_ready(self) }
+    fn is_composite_event(&mut self) -> bool { true }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_any version=1 rust_sha256=6cd01f1f7edb9918a6f8d469ff4fab6e2197c14f9314031da8e9976316519613*/
+struct WaitAny;
 
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
+struct WaitAny : public Event {
+    rusty::Vec<std::shared_ptr<Event>> events_;
+
+    WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b);
+    bool is_ready();
+    bool is_composite_event();
 };
+
+
+WaitAny::WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b)
+    : Event()
+    , events_(wait_any_make(std::move(a), std::move(b)))
+{}
+
+bool WaitAny::is_ready() {
+    return wait_any_is_ready((*this));
+}
+
+bool WaitAny::is_composite_event() {
+    return true;
+}
+/*RUSTYCPP:GEN-END id=reactor.wait_any*/
+
+// @safe - builds the 2-element child-event vector for the WaitAny ctor.
+inline rusty::Vec<std::shared_ptr<Event>> wait_any_make(std::shared_ptr<Event> a, std::shared_ptr<Event> b) {
+  rusty::Vec<std::shared_ptr<Event>> v;
+  v.push(std::move(a));
+  v.push(std::move(b));
+  return v;
+}
+
+// @safe - ready as soon as any child event is ready.
+inline bool wait_any_is_ready(WaitAny& self) {
+  for (const auto& e : self.events_) {
+    // @unsafe { Event::is_ready — child virtual dispatch }
+    if (e && e->is_ready()) {
+      return true;
+    }
+  }
+  return false;
+}
 
 class WaitAll : public Event {
  public:
