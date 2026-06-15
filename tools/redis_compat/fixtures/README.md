@@ -15,12 +15,33 @@ Local smoke only:
 MAKO_G2_ALLOW_SINGLE_SHARD=1 python3 tools/redis_compat/run_bank_transfer.py
 ```
 
+Local multi-shard Redis-facing fixture:
+
+```bash
+MAKO_G2_USE_LOCAL_FIXTURE=1 python3 tools/redis_compat/run_bank_transfer.py
+```
+
+This starts one `makoCon` process with `MAKO_NUM_SHARDS=3` and
+`MAKO_LOCAL_SHARDS=0,1,2`, so the Redis endpoint routes keys across multiple
+local Mako shard tables in one process. It validates the Redis transaction
+surface over Mako's sharded table routing. It is not a multi-process failover
+fixture.
+
 Redis Cluster comparison fixture:
 
 ```bash
 bash tools/redis_compat/fixtures/redis_cluster.sh start
 bash tools/redis_compat/fixtures/redis_cluster.sh stop
 ```
+
+Side-by-side Phase 12 capture:
+
+```bash
+G2_DEMO_START_REDIS_CLUSTER=1 python3 tools/redis_compat/run_cross_shard_demo.py
+```
+
+This records Redis Cluster's cross-slot transaction rejection and the Mako bank
+invariant in `docs/cross_shard_atomicity_demo.md`.
 
 ## G3 Failover Durability
 
@@ -36,6 +57,20 @@ python3 tools/redis_compat/run_failover_durability.py
 
 The default Redis binary in this PR does not enable replication, so the harness
 is `N/A` until a real replicated fixture is supplied.
+
+Local restart smoke hook:
+
+```bash
+MAKO_G3_USE_LOCAL_RESTART_FIXTURE=1 \
+MAKO_G3_ALLOW_RESTART_SMOKE=1 \
+python3 tools/redis_compat/run_failover_durability.py
+```
+
+This starts one local `makoCon`, kills it with `SIGKILL`, restarts it, and runs
+the acknowledged-write oracle. It is useful for exercising the hook contract,
+but it is not the replicated failover durability claim. A real G3 PASS still
+requires a replicated Redis-facing Mako deployment and hooks that kill/recover
+the current leader while clients reconnect to a live service.
 
 ## G4 Serializable Isolation
 

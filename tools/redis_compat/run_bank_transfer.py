@@ -3,12 +3,29 @@ from __future__ import annotations
 
 import os
 import random
+import subprocess
 import threading
 import time
+from pathlib import Path
 
 import redis
 
 from harness_common import connect, env_int, main_guard, na
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+# Reference workload:
+# - CockroachDB runs roachtests named `copy/bank/rows=...,nodes=...,txn=true`
+#   for transactional bank-table validation on distributed clusters.
+#   Example public issue: https://github.com/cockroachdb/cockroach/issues/134402
+# - The reusable part for Mako is the oracle, not the SQL implementation:
+#   concurrent transfers must preserve the total account balance exactly.
+
+
+def run_fixture(action: str) -> None:
+    script = ROOT_DIR / "tools" / "redis_compat" / "fixtures" / "makocon_multishard.sh"
+    subprocess.run(["bash", str(script), action], check=True)
 
 
 def run_local_bank_transfer() -> None:
@@ -77,9 +94,19 @@ def run_local_bank_transfer() -> None:
 
 
 def main() -> None:
+    started_fixture = False
+    if os.environ.get("MAKO_G2_USE_LOCAL_FIXTURE") == "1":
+        run_fixture("start")
+        started_fixture = True
+        os.environ["MAKO_G2_MULTI_SHARD"] = "1"
+
     if os.environ.get("MAKO_G2_MULTI_SHARD") != "1" and os.environ.get("MAKO_G2_ALLOW_SINGLE_SHARD") != "1":
         na("requires MAKO_G2_MULTI_SHARD=1 fixture; set MAKO_G2_ALLOW_SINGLE_SHARD=1 for local smoke")
-    run_local_bank_transfer()
+    try:
+        run_local_bank_transfer()
+    finally:
+        if started_fixture and os.environ.get("MAKO_G2_KEEP_FIXTURE") != "1":
+            run_fixture("stop")
 
 
 if __name__ == "__main__":

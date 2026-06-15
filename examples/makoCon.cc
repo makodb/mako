@@ -16,6 +16,9 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <fstream>
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
@@ -41,6 +44,78 @@ thread_local std::string tl_txn_buf;
 thread_local std::string tl_key_buf;
 thread_local std::string tl_val_buf;
 thread_local bool tl_initialized = false;
+
+// @safe - Parse a positive integer from an environment variable.
+static bool parse_env_int(const char* name, int default_value, int min_value, int max_value, int& out) {
+    const char* raw = getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        out = default_value;
+        return true;
+    }
+    try {
+        size_t pos = 0;
+        int parsed = std::stoi(raw, &pos);
+        if (pos != std::strlen(raw) || parsed < min_value || parsed > max_value) {
+            std::cerr << name << " must be between " << min_value << " and " << max_value << std::endl;
+            return false;
+        }
+        out = parsed;
+        return true;
+    } catch (...) {
+        std::cerr << "Invalid " << name << " value: " << raw << std::endl;
+        return false;
+    }
+}
+
+// @safe - Parse comma-separated shard indices for local multi-shard smoke fixtures.
+static bool parse_local_shards(const char* raw, int nshards, std::vector<int>& local_shards) {
+    local_shards.clear();
+    if (raw == nullptr || raw[0] == '\0') {
+        return true;
+    }
+    std::string input(raw);
+    size_t start = 0;
+    while (start <= input.size()) {
+        size_t comma = input.find(',', start);
+        std::string token = input.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        if (token.empty()) {
+            std::cerr << "MAKO_LOCAL_SHARDS contains an empty shard id" << std::endl;
+            return false;
+        }
+        try {
+            size_t pos = 0;
+            int shard = std::stoi(token, &pos);
+            if (pos != token.size() || shard < 0 || shard >= nshards) {
+                std::cerr << "Invalid MAKO_LOCAL_SHARDS shard id: " << token << std::endl;
+                return false;
+            }
+            local_shards.push_back(shard);
+        } catch (...) {
+            std::cerr << "Invalid MAKO_LOCAL_SHARDS shard id: " << token << std::endl;
+            return false;
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    std::sort(local_shards.begin(), local_shards.end());
+    local_shards.erase(std::unique(local_shards.begin(), local_shards.end()), local_shards.end());
+    return true;
+}
+
+// @safe - Parse a boolean environment variable using common true values.
+static bool env_enabled(const char* name) {
+    const char* raw = getenv(name);
+    if (raw == nullptr) {
+        return false;
+    }
+    std::string value(raw);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value == "1" || value == "true" || value == "yes" || value == "on";
+}
 
 // Initialize thread-local state for database operations
 void ensure_thread_info() {
@@ -3284,33 +3359,48 @@ extern "C" {
 int main() {
     std::cout << "=== makoCon: Redis-compatible server with mako::DB ===" << std::endl;
 
-    // Configuration parameters (single shard, no replication)
+    // Configuration parameters. Defaults remain one local shard with no replication.
     int nshards = 1;
     int shard_index = 0;
     int nthreads = 32;
-    if (const char* mako_redis_threads = getenv("MAKO_REDIS_THREADS")) {
-        try {
-            nthreads = std::stoi(mako_redis_threads);
-        } catch (...) {
-            std::cerr << "Invalid MAKO_REDIS_THREADS value: " << mako_redis_threads << std::endl;
-            return 1;
-        }
-        if (nthreads < 1 || nthreads > 32) {
-            std::cerr << "MAKO_REDIS_THREADS must be between 1 and 32" << std::endl;
-            return 1;
-        }
+    if (!parse_env_int("MAKO_REDIS_THREADS", 32, 1, 32, nthreads) ||
+        !parse_env_int("MAKO_NUM_SHARDS", 1, 1, 10, nshards) ||
+        !parse_env_int("MAKO_SHARD_INDEX", 0, 0, nshards - 1, shard_index)) {
+        return 1;
     }
+    std::vector<int> local_shards;
+    if (!parse_local_shards(getenv("MAKO_LOCAL_SHARDS"), nshards, local_shards)) {
+        return 1;
+    }
+
     const char* mako_paxos_proc_name = getenv("MAKO_PAXOS_PROC_NAME");
     std::string paxos_proc_name =
             mako_paxos_proc_name ? mako_paxos_proc_name : "localhost";  // Leader by default
+    bool replication_enabled = env_enabled("MAKO_REPLICATION_ENABLED");
+    bool is_leader = paxos_proc_name == "localhost";
 
     // Build config path (same pattern as simpleTransactionRep.cc)
     std::string config_path = get_current_absolute_path()
             + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
+    if (const char* mako_config = getenv("MAKO_SHARD_CONFIG")) {
+        if (mako_config[0] != '\0') {
+            config_path = mako_config;
+        }
+    }
+    // @unsafe { std::ifstream probes the filesystem for fixture configuration validation. }
+    std::ifstream config_probe(config_path);
+    if (!config_probe.good()) {
+        std::cerr << "Shard config not found: " << config_path << std::endl;
+        return 1;
+    }
 
     // Create transport configuration
     auto transport_config = new transport::Configuration(config_path);
+    if (!local_shards.empty()) {
+        transport_config->local_shard_indices = local_shards;
+        transport_config->multi_shard_mode = local_shards.size() > 1;
+    }
 
     // Configure mako::Options (following simpleTransactionRep.cc pattern)
     mako::Options options;
@@ -3318,9 +3408,37 @@ int main() {
     options.shard_index = shard_index;
     options.num_threads = nthreads;
     options.paxos_proc_name = paxos_proc_name;
-    options.replication.enabled = false;  // No replication for simplicity
-    options.replication.is_leader = true;
+    options.replication.enabled = replication_enabled;
+    options.replication.is_leader = is_leader;
     options.transport_config = transport_config;
+    if (replication_enabled) {
+        if (const char* replication_config = getenv("MAKO_REPLICATION_CONFIG")) {
+            if (replication_config[0] != '\0') {
+                options.paxos_config_files.push_back(replication_config);
+            }
+        }
+        if (const char* occ_config = getenv("MAKO_OCC_CONFIG")) {
+            if (occ_config[0] != '\0') {
+                options.paxos_config_files.push_back(occ_config);
+            }
+        }
+    }
+    std::cout << "makoCon config: shards=" << nshards
+              << " shard_index=" << shard_index
+              << " threads=" << nthreads
+              << " local_shards=";
+    if (local_shards.empty()) {
+        std::cout << "<default>";
+    } else {
+        for (size_t i = 0; i < local_shards.size(); ++i) {
+            if (i != 0) {
+                std::cout << ",";
+            }
+            std::cout << local_shards[i];
+        }
+    }
+    std::cout << " replication=" << (replication_enabled ? "enabled" : "disabled")
+              << " paxos_proc=" << paxos_proc_name << std::endl;
 
     // Open the database using mako::DB interface
     // mako::DB::Open() internally configures BenchmarkConfig

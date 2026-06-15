@@ -39,7 +39,7 @@ EOF
     for port in ${PORTS}; do
         nodes+=("${HOST}:${port}")
     done
-    yes yes | redis-cli --cluster create "${nodes[@]}" --cluster-replicas 1 >/dev/null
+    printf 'yes\n' | redis-cli --cluster create "${nodes[@]}" --cluster-replicas 1 >/dev/null
     echo "Redis Cluster started ports=${PORTS}"
 }
 

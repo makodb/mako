@@ -116,19 +116,36 @@ run_info_guard() {
     fi
 }
 
+run_soak_guard() {
+    if ! redis_ready; then
+        line "Soak guard" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
+        return
+    fi
+    run_optional_script "Soak guard" "tools/redis_compat/run_soak.sh" bash tools/redis_compat/run_soak.sh
+}
+
+run_resp_fuzz_guard() {
+    if ! redis_ready; then
+        line "RESP fuzz guard" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
+        return
+    fi
+    run_optional_script "RESP fuzz guard" "tools/redis_compat/run_fuzz.sh" bash tools/redis_compat/run_fuzz.sh
+}
+
 {
     run_pytest_g1
     run_optional_script "G2 bank transfer" "tools/redis_compat/run_bank_transfer.py" python3 tools/redis_compat/run_bank_transfer.py
+    run_optional_script "G2 cross-shard demo" "tools/redis_compat/run_cross_shard_demo.py" python3 tools/redis_compat/run_cross_shard_demo.py
     run_optional_script "G3 failover durability" "tools/redis_compat/run_failover_durability.py" python3 tools/redis_compat/run_failover_durability.py
     run_optional_script "G4 Elle isolation" "tools/redis_compat/run_elle_isolation.py" python3 tools/redis_compat/run_elle_isolation.py
     run_throughput_guard
     run_memtier_guard
     run_optional_script "TCL semantic guard" "tools/redis_compat/run_tcl_suite.sh" bash tools/redis_compat/run_tcl_suite.sh
     run_info_guard
-    run_optional_script "Soak guard" "tools/redis_compat/run_soak.sh" bash tools/redis_compat/run_soak.sh
+    run_soak_guard
     run_optional_script "Restart durability guard" "tools/redis_compat/run_restart_durability.py" python3 tools/redis_compat/run_restart_durability.py
     run_optional_script "Client failover guard" "tools/redis_compat/run_client_failover.py" python3 tools/redis_compat/run_client_failover.py
-    run_optional_script "RESP fuzz guard" "tools/redis_compat/run_fuzz.sh" bash tools/redis_compat/run_fuzz.sh
+    run_resp_fuzz_guard
 } | tee "${OUT_FILE}"
 
 echo "Saved acceptance artifact: ${OUT_FILE}" >&2

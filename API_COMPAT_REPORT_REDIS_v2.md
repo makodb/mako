@@ -72,10 +72,14 @@ Phase 12 acceptance is not yet a clean release gate.
 Latest artifact:
 `tools/redis_compat/acceptance/ACCEPTANCE_20260609_134456_11fa4764.txt`
 
+Latest G2-focused artifact:
+`tools/redis_compat/acceptance/ACCEPTANCE_20260612_194706_8cacf577.txt`
+
 | Acceptance line | Status | Detail |
 |---|---|---|
 | G1 wire compatibility | PASS | 90 passed, 1 xfailed |
-| G2 bank transfer | N/A | requires `MAKO_G2_MULTI_SHARD=1` fixture; local smoke is opt-in |
+| G2 bank transfer | PASS with local multi-shard fixture | `MAKO_G2_USE_LOCAL_FIXTURE=1` preserves the bank invariant over `MAKO_LOCAL_SHARDS=0,1,2` |
+| G2 cross-shard demo | PASS when opted in | `G2_DEMO_START_REDIS_CLUSTER=1` captures Redis Cluster cross-slot rejection beside the Mako bank invariant |
 | G3 failover durability | N/A | requires replicated Mako start/kill/recover hooks |
 | G4 Elle isolation | N/A | requires Elle jar/history; built-in RMW smoke is opt-in |
 | Throughput guard | PASS | 29,411.76 req/s, p50 0.311 ms |
@@ -96,21 +100,26 @@ The harnesses now include external fixture hooks:
 
 - `tools/redis_compat/fixtures/makocon_local.sh` starts/stops one local
   `makoCon` for smoke and restart-hook testing.
+- `tools/redis_compat/fixtures/makocon_multishard.sh` starts/stops one local
+  Redis-facing `makoCon` with three local shard tables for the G2 bank
+  transfer fixture.
 - `tools/redis_compat/fixtures/redis_cluster.sh` starts a local Redis Cluster
   comparison fixture.
+- `tools/redis_compat/run_cross_shard_demo.py` captures the Phase 12 G2
+  side-by-side result in `docs/cross_shard_atomicity_demo.md`.
 - `tools/redis_compat/bootstrap_redis_tests.sh` links or fetches Redis TCL
   tests when explicitly requested.
 - `tools/redis_compat/fixtures/README.md` lists the environment variables for
   G2, G3, G4, TCL, restart durability, and client failover.
 
-These hooks do not change the current claim status. A local single-shard
-`makoCon` run remains a smoke test, not proof of cross-shard atomicity,
-replicated failover durability, or Elle-checked serializability.
+These hooks change the G2 local-fixture status only. A local single-shard
+`makoCon` run remains a smoke test, and the local multi-shard process is still
+not proof of replicated failover durability or Elle-checked serializability.
 
-G2 follow-up checked: simply running `makoCon` with multiple local shards is
-not sufficient. Remote shard RPCs require long-lived backing shard servers; the
-existing `bash/shard.sh` / `dbtest` path is a benchmark runner and does not
-provide a stable Redis backing-shard fixture.
+G2 follow-up checked: the checked-in `makoCon` env knobs can run a Redis-facing
+process with multiple local shard tables. Remote shard RPCs still require
+long-lived backing shard servers; the existing `bash/shard.sh` / `dbtest` path
+is a benchmark runner and does not provide a stable Redis backing-shard fixture.
 
 Validation note: the fuzz guard now uses deterministic bytes and delayed
 liveness checks. During manual validation, a longer-tail post-fuzz server exit
