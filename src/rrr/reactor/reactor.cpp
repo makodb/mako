@@ -1025,7 +1025,7 @@ class Reactor {
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
   // @safe - Continues execution of a paused fiber
-  void continue_fiber(rusty::Rc<Fiber> fiber) const;
+  void continue_fiber(const rusty::Rc<Fiber>& fiber) const;
   void recycle(rusty::Rc<Fiber>& fiber) const;
   void display_waiting_ev() const;
   // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
@@ -2487,8 +2487,13 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
   } while (looping_.get());
 }
 
-// @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls
-void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
+// @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls.
+// Takes the Rc by const reference: passing by value would invoke the port
+// Rc's defaulted (shallow, non-incrementing) copy constructor, creating an
+// uncounted alias that double-decrements the strong count on destruction and
+// frees a still-referenced fiber. We clone() internally where ownership is
+// actually needed.
+void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
   // Save current running fiber for nesting support
   rusty::Option<rusty::Rc<Fiber>> old_fiber;
   // @unsafe { RefCell::borrow, Option operator=, unwrap are not borrow-checked }
