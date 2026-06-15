@@ -495,39 +495,6 @@ class WaitAll : public Event {
   bool is_composite_event() override { return true; }
 };
 
-class SingleRPCEvent: public Event{
-  public:
-    uint32_t cli_id_;
-    uint32_t coo_id_;
-    int32_t& res_;
-    std::string log_file = "logs.txt";
-    rusty::HashSet<int> dep{};
-    SingleRPCEvent(uint32_t cli_id, int32_t res): Event(),
-                                                   cli_id_(cli_id),
-                                                   res_(res){
-    }
-    void add_dep(int tgtId){
-      if (!dep.contains(tgtId)) {
-        dep.insert(tgtId);
-      }
-    }
-    void log() override {
-      std::ofstream of(log_file, std::fstream::app);
-      //of << "hello\n";
-      of << "{ " << cli_id_ << ": ";
-      for(auto it = dep.begin(); it != dep.end(); ++it){
-        of << *it << " ";
-      }
-      of << "}\n";
-      of.close();
-    }
-    bool is_ready() override{
-      // SUCCESS=0, REJECT=-10 (macros removed to avoid conflict with mako ErrorCode)
-      return res_ == 0 || res_ == -10;
-    }
-};
-
-
 // --- from fiber_impl.h ---------------------------------------------------
 
 // Forward declaration

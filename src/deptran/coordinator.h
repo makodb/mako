@@ -51,7 +51,6 @@ class Coordinator {
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
 
-  std::shared_ptr<SingleRPCEvent> rpc_event;
 	std::vector<shared_ptr<QuorumEvent>> quorum_events_;
   std::shared_ptr<QuorumEvent> sp_quorum_event;
   std::shared_ptr<IntEvent> sp_int_event;
