@@ -499,95 +499,228 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
 // out-of-class definitions; `close()` is now @safe — it just
 // move-assigns an empty OwnedFd, whose destructor handles the
 // ::close().
-class TcpListener {
- public:
-    TcpListener();
-    ~TcpListener();
+// Free-fn implementations of the syscall-/lock-heavy TcpListener methods;
+// the DSL methods delegate to these (same pattern as TcpConnection above).
+// Each carries its own `// @unsafe` at the definition site.
+struct TcpListener;  // defined by the GEN block below
+ChannelError tcplistener_listen(TcpListener& self, std::string_view addr);
+void         tcplistener_close(TcpListener& self);
+std::string  tcplistener_local_address(const TcpListener& self);
+void         tcplistener_set_on_accept(TcpListener& self, OnAcceptCallback cb);
+void         tcplistener_set_on_error(TcpListener& self, OnErrorCallback cb);
+int          tcplistener_fd(const TcpListener& self);
+bool         tcplistener_handle_read(TcpListener& self);
+void         tcplistener_handle_error(TcpListener& self);
 
-    TcpListener(const TcpListener&)            = delete;
-    TcpListener& operator=(const TcpListener&) = delete;
-    TcpListener(TcpListener&&)                 = delete;
-    TcpListener& operator=(TcpListener&&)      = delete;
+// Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
+// rusty::net::TcpListener / std::string / On*Callback inline).
+inline rusty::net::TcpListener tcplistener_default_net()    { return rusty::net::TcpListener(); }
+inline std::string             tcplistener_empty_addr()     { return std::string(); }
+inline OnAcceptCallback        tcplistener_default_on_accept() { return OnAcceptCallback{}; }
+inline OnErrorCallback         tcplistener_default_on_error()  { return OnErrorCallback{}; }
 
-    // -----------------------------------------------------------------------
-    // ChannelListenerBase methods
-    // -----------------------------------------------------------------------
+// Server-side TCP listener — owns a `rusty::net::TcpListener` (RAII-closes
+// the listen fd on drop) + an accept loop. All fields are already rusty
+// (net::TcpListener / Cell / Option / SpinMutex), so the struct is
+// borrow-checked; the bind / accept-loop / callback bodies live in the
+// `tcplistener_*` free fns the methods delegate to. Held only via
+// Arc<TcpListener> (stable storage), so no explicit move-deletion is needed.
+// Structural twin of the migrated TcpConnection. The dead
+// `listen_errno_to_channel_error` static (never called — `listen`/
+// `handle_read` use `io_kind_to_channel_error`) is dropped.
+//
+// @safe - delegating methods forward to the `tcplistener_*` free fns,
+// which carry their own `// @unsafe`.
+#if RUSTYCPP_RUST
+struct TcpListener {
+    listener_: rusty::net::TcpListener,
+    bound_address_: std::string,
+    closed_: Cell<bool>,
+    listened_: Cell<bool>,
+    poll_thread_: Option<Arc<PollThread>>,
+    self_weak_: Option<rusty::sync::Weak<TcpListener>>,
+    on_accept_: SpinMutex<OnAcceptCallback>,
+    on_error_: SpinMutex<OnErrorCallback>,
+}
 
-    /**
-     * Bind and start listening on `addr` (format: `"host:port"`,
-     * e.g., `"127.0.0.1:0"`, `"0.0.0.0:8080"`). Returns
-     * `ChannelError::None` on success; on failure the listener is
-     * left in a closed state and `local_address()` returns `""`.
-     *
-     * If `listen` is called more than once on the same listener, the
-     * second call returns `ChannelError::AddressInUse` — listeners
-     * are single-use. The factory / RPC layer above can construct a
-     * fresh listener if it needs to rebind.
-     */
-    ChannelError listen(std::string_view addr);
-    void         close();
-    bool         is_closed() const;
-    std::string  local_address() const;
+impl TcpListener {
+    #[cpp_ctor] fn new() -> TcpListener {
+        TcpListener {
+            listener_: tcplistener_default_net(),
+            bound_address_: tcplistener_empty_addr(),
+            closed_: Cell::new(false),
+            listened_: Cell::new(false),
+            poll_thread_: None,
+            self_weak_: None,
+            on_accept_: SpinMutex::<OnAcceptCallback>::new(tcplistener_default_on_accept()),
+            on_error_: SpinMutex::<OnErrorCallback>::new(tcplistener_default_on_error()),
+        }
+    }
 
-    void set_on_accept(OnAcceptCallback cb);
-    void set_on_error (OnErrorCallback  cb);
+    fn listen(&mut self, addr: std::string_view) -> ChannelError {
+        tcplistener_listen(self, addr)
+    }
 
-    // -----------------------------------------------------------------------
-    // Pollable methods
-    // -----------------------------------------------------------------------
+    fn close(&mut self) {
+        tcplistener_close(self)
+    }
 
-    int    fd() const;
-    int    poll_mode() const;
-    std::size_t content_size();
-    bool   handle_read();
-    int    handle_write();
-    void   handle_error();
-    bool   check_pending_write_update() const;
+    fn is_closed(&self) -> bool {
+        self.closed_.get()
+    }
 
-    // -----------------------------------------------------------------------
-    // Auto-registration with a PollThread (used by `TcpFactory`).
-    // -----------------------------------------------------------------------
+    fn local_address(&self) -> std::string {
+        tcplistener_local_address(self)
+    }
 
-    /**
-     * Configure auto-registration with a poll thread. Must be called
-     * BEFORE `listen()` for it to take effect. When set, a successful
-     * `listen(addr)` registers this listener with the poll thread,
-     * and each `handle_read`-accepted `TcpConnection` is also
-     * registered automatically.
-     *
-     * `self_weak` must be a weak reference to the same `Arc` that
-     * owns this listener; the factory wires it up after Arc creation
-     * because `Arc` does not expose `enable_shared_from_this`-style
-     * access.
-     */
-    void set_poll_thread(rusty::Arc<PollThread> pt);
-    void set_self_weak(rusty::sync::Weak<TcpListener> self_weak);
+    fn set_on_accept(&mut self, cb: OnAcceptCallback) {
+        tcplistener_set_on_accept(self, cb)
+    }
 
- private:
-    // Translate a POSIX errno from a listening syscall into a
-    // ChannelError.
-    static ChannelError listen_errno_to_channel_error(int err);
+    fn set_on_error(&mut self, cb: OnErrorCallback) {
+        tcplistener_set_on_error(self, cb)
+    }
 
-    // -----------------------------------------------------------------------
-    // State
-    // -----------------------------------------------------------------------
+    fn fd(&self) -> i32 {
+        tcplistener_fd(self)
+    }
 
-    // Owned rusty::net::TcpListener — wraps the socket/bind/listen
-    // syscalls and RAII-closes the listen fd on drop. Move-only;
-    // default-constructed (`!listener_.is_bound()`) means we haven't
-    // called listen() yet.
+    fn poll_mode(&self) -> i32 {
+        PollMode::READ
+    }
+
+    fn content_size(&mut self) -> usize {
+        0usize
+    }
+
+    fn handle_read(&mut self) -> bool {
+        tcplistener_handle_read(self)
+    }
+
+    fn handle_write(&mut self) -> i32 {
+        PollMode::NO_CHANGE
+    }
+
+    fn handle_error(&mut self) {
+        tcplistener_handle_error(self)
+    }
+
+    fn check_pending_write_update(&self) -> bool {
+        false
+    }
+
+    fn set_poll_thread(&mut self, pt: Arc<PollThread>) {
+        self.poll_thread_ = Some(pt);
+    }
+
+    fn set_self_weak(&mut self, self_weak: rusty::sync::Weak<TcpListener>) {
+        self.self_weak_ = Some(self_weak);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=e70facc59412ba1aadacf2dcf6cb070c97c2faa6289a53255c0bc6c93dbe2fe8*/
+struct TcpListener;
+
+struct TcpListener {
     rusty::net::TcpListener listener_;
     std::string bound_address_;
+    rusty::Cell<bool> closed_;
+    rusty::Cell<bool> listened_;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_;
+    rusty::Option<rusty::sync::Weak<TcpListener>> self_weak_;
+    SpinMutex<OnAcceptCallback> on_accept_;
+    SpinMutex<OnErrorCallback> on_error_;
 
-    rusty::Cell<bool> closed_{false};
-    rusty::Cell<bool> listened_{false};
-
-    rusty::Option<rusty::Arc<PollThread>>      poll_thread_{rusty::None};
-    rusty::Option<rusty::sync::Weak<TcpListener>> self_weak_{rusty::None};
-
-    SpinMutex<OnAcceptCallback> on_accept_{OnAcceptCallback{}};
-    SpinMutex<OnErrorCallback>  on_error_ {OnErrorCallback{}};
+    TcpListener();
+    ChannelError listen(std::string_view addr);
+    void close();
+    bool is_closed() const;
+    std::string local_address() const;
+    void set_on_accept(OnAcceptCallback cb);
+    void set_on_error(OnErrorCallback cb);
+    int32_t fd() const;
+    int32_t poll_mode() const;
+    size_t content_size();
+    bool handle_read();
+    int32_t handle_write();
+    void handle_error();
+    bool check_pending_write_update() const;
+    void set_poll_thread(rusty::Arc<PollThread> pt);
+    void set_self_weak(rusty::sync::Weak<TcpListener> self_weak);
 };
+
+
+TcpListener::TcpListener()
+    : listener_(tcplistener_default_net())
+    , bound_address_(tcplistener_empty_addr())
+    , closed_(rusty::Cell<bool>::new_(false))
+    , listened_(rusty::Cell<bool>::new_(false))
+    , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
+    , self_weak_(rusty::Option<rusty::sync::Weak<TcpListener>>{rusty::None})
+    , on_accept_(SpinMutex<OnAcceptCallback>::new_(tcplistener_default_on_accept()))
+    , on_error_(SpinMutex<OnErrorCallback>::new_(tcplistener_default_on_error()))
+{}
+
+ChannelError TcpListener::listen(std::string_view addr) {
+    return tcplistener_listen((*this), std::move(addr));
+}
+
+void TcpListener::close() {
+    tcplistener_close((*this));
+}
+
+bool TcpListener::is_closed() const {
+    return this->closed_.get();
+}
+
+std::string TcpListener::local_address() const {
+    return tcplistener_local_address((*this));
+}
+
+void TcpListener::set_on_accept(OnAcceptCallback cb) {
+    tcplistener_set_on_accept((*this), std::move(cb));
+}
+
+void TcpListener::set_on_error(OnErrorCallback cb) {
+    tcplistener_set_on_error((*this), std::move(cb));
+}
+
+int32_t TcpListener::fd() const {
+    return tcplistener_fd((*this));
+}
+
+int32_t TcpListener::poll_mode() const {
+    return PollMode::READ;
+}
+
+size_t TcpListener::content_size() {
+    return static_cast<size_t>(0);
+}
+
+bool TcpListener::handle_read() {
+    return tcplistener_handle_read((*this));
+}
+
+int32_t TcpListener::handle_write() {
+    return PollMode::NO_CHANGE;
+}
+
+void TcpListener::handle_error() {
+    tcplistener_handle_error((*this));
+}
+
+bool TcpListener::check_pending_write_update() const {
+    return false;
+}
+
+void TcpListener::set_poll_thread(rusty::Arc<PollThread> pt) {
+    this->poll_thread_ = rusty::Option<rusty::Arc<PollThread>>(std::move(pt));
+}
+
+void TcpListener::set_self_weak(rusty::sync::Weak<TcpListener> self_weak) {
+    this->self_weak_ = rusty::Option<rusty::sync::Weak<TcpListener>>(std::move(self_weak));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.listener*/
 
 class TcpListenerChannelAdapter : public ChannelListenerBase {
  public:
@@ -1250,20 +1383,19 @@ int set_nonblocking_fd(int fd) {
 
 }  // namespace
 
-TcpListener::TcpListener() = default;
+// TcpListener method implementations (free fns the DSL methods delegate
+// to). The ctor (#[cpp_ctor]) + the trivial methods (is_closed / poll_mode
+// / content_size / handle_write / check_pending_write_update /
+// set_poll_thread / set_self_weak) now live in the DSL block; the dead
+// `listen_errno_to_channel_error` static is dropped.
 
-TcpListener::~TcpListener() = default;  // rusty::net::TcpListener RAII-closes
-
-// @safe - listen path now delegates to `rusty::net::TcpListener::bind`
-// (which encapsulates socket / setsockopt(SO_REUSEADDR) / bind / listen),
-// `socket_addr_v4_from_str` for address parsing, and `set_nonblocking`
-// for the F_GETFL/F_SETFL fcntl pair. All libc calls live behind the
-// wrapper boundary; this body is pure flow control over Result types.
-ChannelError TcpListener::listen(std::string_view addr) {
-    if (closed_.get()) {
+// @safe - bind path delegates to rusty::net::TcpListener::bind +
+// socket_addr_v4_from_str + set_nonblocking; pure flow control over Results.
+ChannelError tcplistener_listen(TcpListener& self, std::string_view addr) {
+    if (self.closed_.get()) {
         return ChannelError::AddressInUse;
     }
-    if (listened_.get()) {
+    if (self.listened_.get()) {
         return ChannelError::AddressInUse;
     }
 
@@ -1275,88 +1407,69 @@ ChannelError TcpListener::listen(std::string_view addr) {
     if (bind_result.is_err()) {
         return io_kind_to_channel_error(bind_result.unwrap_err().kind());
     }
-    listener_ = bind_result.unwrap();
+    self.listener_ = bind_result.unwrap();
 
-    auto nonblock_result = listener_.set_nonblocking(true);
+    auto nonblock_result = self.listener_.set_nonblocking(true);
     if (nonblock_result.is_err()) {
         ChannelError ch = io_kind_to_channel_error(
             nonblock_result.unwrap_err().kind());
-        listener_ = rusty::net::TcpListener{};  // RAII close
+        self.listener_ = rusty::net::TcpListener{};  // RAII close
         return ch;
     }
 
     // Discover actual bound address (port may have been 0).
-    auto local_result = listener_.local_addr();
+    auto local_result = self.listener_.local_addr();
     if (local_result.is_ok()) {
-        bound_address_ = rusty::net::socket_addr_v4_to_string(
+        self.bound_address_ = rusty::net::socket_addr_v4_to_string(
             local_result.unwrap());
     } else {
-        bound_address_ = std::string(addr);
+        self.bound_address_ = std::string(addr);
     }
 
-    listened_.set(true);
+    self.listened_.set(true);
 
     // Auto-register with the poll thread if the factory wired one in.
     // The factory pre-installs `poll_thread_` and a weak self-ref
     // before handing the listener proxy to the user; we upgrade the
     // weak ref and hand a `PollableProxy` clone to the poll thread.
-    if (poll_thread_.is_some() && self_weak_.is_some()) {
-        auto self_opt = self_weak_.as_ref().unwrap().upgrade();
+    if (self.poll_thread_.is_some() && self.self_weak_.is_some()) {
+        auto self_opt = self.self_weak_.as_ref().unwrap().upgrade();
         if (self_opt.is_some()) {
-            poll_thread_.as_ref().unwrap()->add_proxy(
+            self.poll_thread_.as_ref().unwrap()->add_proxy(
                 make_tcp_listener_pollable_proxy(self_opt.unwrap()));
         }
     }
     return ChannelError::None;
 }
 
-void TcpListener::set_poll_thread(rusty::Arc<PollThread> pt) {
-    poll_thread_ = rusty::Some(std::move(pt));
+// @safe - sets the closed latch and drops the owned listener (RAII close).
+void tcplistener_close(TcpListener& self) {
+    if (self.closed_.get()) return;
+    self.closed_.set(true);
+
+    self.listener_ = rusty::net::TcpListener{};  // RAII close
 }
 
-void TcpListener::set_self_weak(rusty::sync::Weak<TcpListener> self_weak) {
-    self_weak_ = rusty::Some(std::move(self_weak));
+// @safe - returns a copy of the bound-address label.
+std::string tcplistener_local_address(const TcpListener& self) {
+    return self.bound_address_;
 }
 
-void TcpListener::close() {
-    if (closed_.get()) return;
-    closed_.set(true);
-
-    listener_ = rusty::net::TcpListener{};  // RAII close
-}
-
-bool TcpListener::is_closed() const {
-    return closed_.get();
-}
-
-// @safe - returns a copy of the const std::string member.
-std::string TcpListener::local_address() const {
-    return bound_address_;
-}
-
-// @safe - SpinMutex::lock and CallbackWrapper move-assign are both
-// @safe via the rusty namespace / class annotations.
-void TcpListener::set_on_accept(OnAcceptCallback cb) {
-    auto guard = on_accept_.lock().unwrap();
+// @unsafe - last-writer-wins callback store under the spinlock.
+void tcplistener_set_on_accept(TcpListener& self, OnAcceptCallback cb) {
+    auto guard = self.on_accept_.lock().unwrap();
     *guard = std::move(cb);
 }
 
-// @safe - same shape as set_on_accept.
-void TcpListener::set_on_error(OnErrorCallback cb) {
-    auto guard = on_error_.lock().unwrap();
+// @unsafe - same shape as set_on_accept.
+void tcplistener_set_on_error(TcpListener& self, OnErrorCallback cb) {
+    auto guard = self.on_error_.lock().unwrap();
     *guard = std::move(cb);
 }
 
-int TcpListener::fd() const {
-    return listener_.as_owned_fd().as_raw_fd();
-}
-
-int TcpListener::poll_mode() const {
-    return PollMode::READ;
-}
-
-std::size_t TcpListener::content_size() {
-    return 0;
+// @unsafe - reads the raw listen fd off the owned net::TcpListener.
+int tcplistener_fd(const TcpListener& self) {
+    return self.listener_.as_owned_fd().as_raw_fd();
 }
 
 // @safe - accept loop now delegates to `rusty::net::TcpListener::accept`
@@ -1365,13 +1478,16 @@ std::size_t TcpListener::content_size() {
 // runs through the new TcpStream wrapper; the only remaining inline
 // `// @unsafe { }` here is the macOS-specific setsockopt(SO_NOSIGPIPE)
 // — Linux uses MSG_NOSIGNAL on send() and doesn't need it.
-bool TcpListener::handle_read() {
-    if (closed_.get()) return false;
-    if (!listener_.is_bound()) return false;
+// @unsafe - accept loop: rusty::net::TcpListener::accept + per-accept
+// setsockopt(macOS) + TcpConnection construction + on_accept/on_error
+// callback dispatch under the spinlock.
+bool tcplistener_handle_read(TcpListener& self) {
+    if (self.closed_.get()) return false;
+    if (!self.listener_.is_bound()) return false;
 
     bool any_progress = false;
     while (true) {
-        auto accept_result = listener_.accept();
+        auto accept_result = self.listener_.accept();
         if (accept_result.is_err()) {
             auto err = accept_result.unwrap_err();
             auto kind = err.kind();
@@ -1384,7 +1500,7 @@ bool TcpListener::handle_read() {
             // Non-recoverable failure.
             const ChannelError ch = io_kind_to_channel_error(kind);
             {
-                auto guard = on_error_.lock().unwrap();
+                auto guard = self.on_error_.lock().unwrap();
                 if (*guard) {
                     (*guard)(ch, err.to_string());
                 }
@@ -1393,7 +1509,7 @@ bool TcpListener::handle_read() {
             // is still functional once a fd is freed up. Use the
             // io::Error::Kind that maps to those (currently we have no
             // dedicated Kind, so we close on everything else).
-            close();
+            tcplistener_close(self);
             return any_progress;
         }
 
@@ -1421,7 +1537,7 @@ bool TcpListener::handle_read() {
         // channel layer's expectations.
         auto nonblock_result = stream.set_nonblocking(true);
         if (nonblock_result.is_err()) {
-            auto guard = on_error_.lock().unwrap();
+            auto guard = self.on_error_.lock().unwrap();
             if (*guard) {
                 (*guard)(io_kind_to_channel_error(
                              nonblock_result.unwrap_err().kind()),
@@ -1448,23 +1564,23 @@ bool TcpListener::handle_read() {
         auto conn = rusty::Arc<TcpConnection>::make(
             conn_fd, std::move(peer_addr_str));
 
-        if (poll_thread_.is_some()) {
+        if (self.poll_thread_.is_some()) {
             // wire the poll thread into
             // the accepted connection BEFORE registering its pollable
             // proxy, so non-poll-thread `send_frame` callers on the
             // server side can also post `update_mode` actively.
             {
                 auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
-                mut_conn.set_poll_thread(poll_thread_.as_ref().unwrap().clone());
+                mut_conn.set_poll_thread(self.poll_thread_.as_ref().unwrap().clone());
             }
-            poll_thread_.as_ref().unwrap()->add_proxy(
+            self.poll_thread_.as_ref().unwrap()->add_proxy(
                 make_tcp_connection_pollable_proxy(conn.clone()));
         }
 
         ChannelConnectionProxy proxy =
             make_tcp_connection_channel_proxy(std::move(conn));
 
-        auto guard = on_accept_.lock().unwrap();
+        auto guard = self.on_accept_.lock().unwrap();
         if (*guard) {
             (*guard)(std::move(proxy));
         }
@@ -1474,39 +1590,16 @@ bool TcpListener::handle_read() {
     return any_progress;
 }
 
-// @safe - Pollable interface stub: never fires for a listener.
-int TcpListener::handle_write() {
-    return PollMode::NO_CHANGE;
-}
-
-// @unsafe - Drives on_error callback after listen_fd_ failure.
-void TcpListener::handle_error() {
-    if (closed_.get()) return;
+// @unsafe - drives the on_error callback then closes the listener.
+void tcplistener_handle_error(TcpListener& self) {
+    if (self.closed_.get()) return;
     {
-        auto guard = on_error_.lock().unwrap();
+        auto guard = self.on_error_.lock().unwrap();
         if (*guard) {
             (*guard)(ChannelError::Internal, "epoll/poll signaled error");
         }
     }
-    close();
-}
-
-// @safe - Pollable interface stub: never fires for a listener.
-bool TcpListener::check_pending_write_update() const {
-    return false;
-}
-
-ChannelError TcpListener::listen_errno_to_channel_error(int err) {
-    switch (err) {
-        case EADDRINUSE:    return ChannelError::AddressInUse;
-        case EADDRNOTAVAIL: return ChannelError::AddressInvalid;
-        case EACCES:
-        case EPERM:         return ChannelError::PermissionDenied;
-        case EMFILE:
-        case ENFILE:        return ChannelError::TooManyOpenFiles;
-        case ECONNRESET:    return ChannelError::ConnectionReset;
-        default:            return ChannelError::Internal;
-    }
+    tcplistener_close(self);
 }
 
 // ===========================================================================
