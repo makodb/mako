@@ -1351,7 +1351,7 @@ public:
      * @return 0 on success (reconnection started), error code on failure
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
-    int reconnect(rusty::Function<void(bool)> on_complete = nullptr);
+    int reconnect(rusty::Function<void(bool)> on_complete);
 
     // @unsafe - Const facade over the non-const `reconnect`. Lets
     // Client::reconnect — itself const through Arc<Client> — delegate
@@ -1405,7 +1405,7 @@ public:
 
     // @safe - RequestQueue::clear_all is @safe.
     // Note: const because pending_queue_ is mutable
-    void clear_pending_requests(int error_code = ECONNABORTED) const {
+    void clear_pending_requests(int error_code) const {
         pending_queue_.clear_all(error_code);
     }
 
@@ -4527,7 +4527,7 @@ void ClientConnection::on_channel_closed_fan_out() {
             "rrr::ClientConnection: channel-mode auto-reconnect (legacy) "
             "triggered after on_closed");
         // @unsafe - reconnect mutates socket/state and performs network I/O.
-        mut_conn->reconnect();
+        mut_conn->reconnect(nullptr);
       }
     }).detach();
   }
@@ -4725,7 +4725,7 @@ void ClientConnection::handle_error() const {
           // @unsafe - reconnect mutates socket/state and performs network I/O.
           auto* mut_conn = const_cast<ClientConnection*>(conn.get());
           if (mut_conn != nullptr) {
-            mut_conn->reconnect();
+            mut_conn->reconnect(nullptr);
           }
         }
       }).detach();

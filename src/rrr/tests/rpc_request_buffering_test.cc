@@ -177,7 +177,7 @@ TEST_F(RequestBufferingTest, DISABLED_ClearPendingRequests) {
     EXPECT_EQ(conn->pending_request_count(), 3u);
 
     // Clear all pending
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
 
     EXPECT_EQ(conn->pending_request_count(), 0u);
 }
@@ -256,7 +256,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
     EXPECT_EQ(conn->pending_request_count(), 3u);
     EXPECT_EQ(conn->pending_future_count(), 3u);
 
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
     EXPECT_EQ(conn->pending_request_count(), 0u);
     EXPECT_EQ(conn->pending_future_count(), 0u);
 }
@@ -489,7 +489,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
     // Clearer thread continuously drains pending queue while producers run.
     std::thread clearer([&conn, &stop_clearer]() {
         while (!stop_clearer.load()) {
-            conn->clear_pending_requests();
+            conn->clear_pending_requests(ECONNABORTED);
             std::this_thread::yield();
         }
     });
@@ -524,7 +524,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
     clearer.join();
 
     // Final sweep to ensure queue is drained and callbacks fired.
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
 
     // Wait briefly for pending map to settle to zero under concurrent callbacks.
     for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {
