@@ -146,7 +146,7 @@ void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakSer
             });
             delete output_m;
         } else {
-            const_cast<ServerConnection&>(*sconn).reply(*req, error_code);
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [](BinaryWriteArchive&){});
         }
     } else {
         if (output_m != NULL) {

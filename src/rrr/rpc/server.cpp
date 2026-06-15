@@ -380,208 +380,185 @@ RpcServiceContext RpcServiceContext::new_(rusty::HashMap<int32_t, size_t> rpc_ma
 // method dispatch) carry their own `// @unsafe` overrides; the rest of the
 // class is analyzed as @safe by default. Mirrors the Tier-4 flip on `Server`.
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
-class ServerConnection {
-    // Handles individual client connections
-    // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
+// Aliases for the reply / run_async callback types (the DSL parser can't
+// take `Function<Sig>` as a generic type argument).
+using ServerReplyFn = rusty::Function<void(BinaryWriteArchive&)>;
+using ServerRunAsyncFn = rusty::Function<void()>;
 
-    friend class Server;
-    // 5g1: ServerListener class deleted; the friend declaration is
-    // retired along with it.
+// Free-fn implementations of the channel-dispatch / Marshal-operator /
+// fiber / closure-heavy methods; the DSL methods below delegate to these.
+// The private decode/dispatch helpers take raw `const std::uint8_t*`
+// (not DSL-emittable as struct methods) and are pure free fns called only
+// from the others. All defined in the impl namespace at the bottom of the
+// file; each carries its own `// @unsafe` at the definition site.
+void sconn_reply(const ServerConnection& self, const Request& req,
+                 i32 error_code, ServerReplyFn write_fn);
+void sconn_close(ServerConnection& self);
+void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy);
+int  sconn_run_async(const ServerConnection& self, ServerRunAsyncFn f);
+void sconn_decode_request_and_dispatch(ServerConnection& self,
+                                       const std::uint8_t* bytes, std::size_t size);
+void sconn_dispatch_response_frame_via_channel(const ServerConnection& self,
+                                               const std::uint8_t* bytes, std::size_t size);
 
-    // 5g2: legacy fd-path fields removed:
-    //   - `Marshal in_` (read buffer)
-    //   - `SpinMutex<Marshal> out_` (write buffer)
-    //   - `int socket_` (fd; channel layer's TcpConnection owns it)
-    //   - `Cell<bool> pending_write_update_` (was poll-loop write
-    //     mode flag — TcpConnection manages its own equivalent now)
+// Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
+// Weak or a typed `None` Option inline).
+inline WeakServerConnection sconn_default_weak() { return WeakServerConnection(); }
+inline rusty::Option<ChannelConnectionProxy> sconn_no_proxy() {
+    return rusty::Option<ChannelConnectionProxy>(rusty::None);
+}
 
-    rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
+// ServerConnection — one client connection's server-side state. All fields
+// are already rusty (Arc / SpinMutex / Cell / Weak), so the struct is
+// borrow-checked. The reply/dispatch/decode/close/bind bodies (Marshal
+// operators, fiber spawns, channel proxy dispatch, closures) live in the
+// `sconn_*` free fns the DSL methods delegate to.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is the source
+// of truth; the transpiler regenerates the matching GEN block. The former
+// private fields + `friend class Server` are gone — the DSL emits a public
+// struct, and Server reaches the (now public) fields directly. The former
+// templated `reply<F>` is de-templated to a single `reply(req, code,
+// ServerReplyFn)`: Function has SBO, so the `[&]` reply lambdas stay inline
+// (no per-reply alloc). The static `rpc_id_missing_s` is hoisted to a
+// file-scope global in the impl namespace.
+//
+// @safe - the delegating methods forward to the `sconn_*` free fns, which
+// carry their own `// @unsafe`.
+#if RUSTYCPP_RUST
+enum ServerConnStatus {
+    CONNECTED,
+    CLOSED,
+}
 
-    enum {
-        CONNECTED, CLOSED
-    } status_;
+struct ServerConnection {
+    ctx_: Arc<RpcServiceContext>,
+    status_: ServerConnStatus,
+    weak_self_: WeakServerConnection,
+    channel_proxy_: SpinMutex<Option<ChannelConnectionProxy>>,
+    channel_mode_: Cell<bool>,
+    count: i32,
+}
 
-    // Weak pointer to self, initialized after creation
-    // Used to pass weak reference to async handlers
-    WeakServerConnection weak_self_;
-
-    // outbound reply through the
-    // channel layer.
-    //
-    // When `bind_channel(...)` is called with a non-null
-    // `ChannelConnectionProxy`, `channel_proxy_` owns it and
-    // `channel_mode_` flips to true. From that point on, `reply(...)`
-    // builds the response body in a temporary `Marshal`, extracts
-    // the bytes, and dispatches via `proxy->send_frame(...)`. The
-    // legacy `out_` Marshal-as-syscall-buffer + `pending_write_update_`
-    // poll-loop write plumbing is bypassed.
-    //
-    // Mutable + SpinMutex so the const `reply<F>` template path can
-    // lock it briefly to dispatch a frame from any thread (mirrors
-    // the client-side `direct_channel_` discipline).
-    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>>
-        channel_proxy_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
-    rusty::Cell<bool> channel_mode_{false};
-
-public:
-    /**
-     * Closes the connection and cleans up resources.
-     * Called by:
-     * 1: PollThreadWorker::do_close_pollable() for thread-safe close
-     * 2: handle_error() for error handling
-     */
-    // @unsafe - Calls Log_debug then tears down the channel proxy via a
-    // raw-pointer deref. The inner deref is inside a `// @unsafe { }` block
-    // in the definition, but the @unsafe-block scope doesn't reach into
-    // rusty-cpp's null-safety pass for nested if-bodies. Treat the whole
-    // method as unsafe to match the definition.
-    void close();
-
-private:
-    // used to surpress multiple "no handler for rpc_id=..." errro
-    // SpinMutex provides thread-safe interior mutability
-    static SpinMutex<rusty::HashSet<i32>> rpc_id_missing_s;
-
-public:
-    // Jetpack-specific member
-    int count = 0;
-
-    // Public destructor - Arc prevents premature destruction
-    // @safe - Simple destructor
-    ~ServerConnection();
-
-    // @safe - Initializes connection. The `socket` parameter is
-    // retained for source-compatibility with existing call sites
-    // (e.g. `Server::start`'s on_accept hook still passes -1) but is
-    // no longer stored — the channel layer's `TcpConnection` owns
-    // the fd. New callers should pass -1.
-    ServerConnection(rusty::Arc<RpcServiceContext> ctx, int /*socket*/);
-
-    // Test-only: install the self-pointer before code paths that need
-    // to upgrade it (e.g., the on_frame callback installed in
-    // `bind_channel`). Production wires `weak_self_` via the listener
-    // accept path. Tests that construct `ServerConnection` directly
-    // via `Arc::make` must call this before any channel-mode code
-    // path that captures the weak.
-    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
-    // Callers must guarantee the weak refers to the same Arc that owns this object.
-    void install_self_weak_for_testing(WeakServerConnection weak) {
-        weak_self_ = std::move(weak);
+impl ServerConnection {
+    #[cpp_ctor] fn new(ctx: Arc<RpcServiceContext>, socket: i32) -> ServerConnection {
+        ServerConnection {
+            ctx_: ctx,
+            status_: ServerConnStatus::CONNECTED,
+            weak_self_: sconn_default_weak(),
+            channel_proxy_: SpinMutex::<Option<ChannelConnectionProxy>>::new(sconn_no_proxy()),
+            channel_mode_: Cell::new(false),
+            count: 0i32,
+        }
     }
 
-    /**
-     * bind a `ChannelConnectionProxy`
-     * to this connection.
-     *
-     * Once bound, outbound `reply(...)` calls route through
-     * `proxy->send_frame(...)` and skip the legacy `out_` Marshal +
-     * `pending_write_update_` poll-loop write plumbing.
-     *
-     * Calling with a default-constructed (null) proxy is a no-op.
-     * Calling more than once replaces the previously-bound proxy.
-     */
-    // @unsafe - Records the proxy under SpinMutex interior storage.
-    void bind_channel(ChannelConnectionProxy proxy);
-
-    // @safe - True if `bind_channel` has been called with a non-null proxy.
-    bool is_channel_mode() const { return channel_mode_.get(); }
-
-    // @safe - Simple status check
-    bool connected() {
-      return status_ == CONNECTED;
+    fn install_self_weak_for_testing(&mut self, weak: WeakServerConnection) {
+        self.weak_self_ = weak;
     }
 
-    /**
-     * Send a reply message with callback-based marshaling.
-     *
-     * Reply message format:
-     * <size> <xid> <error_code> [<server_instance_id>] <ret1> <ret2> ... <retN>
-     * NOTE: size does not include size itself (<xid>..<retN>).
-     * If the size high-bit flag is set, <server_instance_id> is present.
-     *
-     * The write_fn callback receives a Marshal& to write <ret1>..<retN>.
-     *
-     * Currently used errno:
-     * 0: everything is fine
-     * ENOENT: method not found
-     * EINVAL: invalid packet (field missing)
-     */
-    // @safe - Sends reply with callback for marshaling response data.
-    //
-    // 5g2: legacy `out_` Marshal-as-syscall-buffer branch deleted.
-    // Channel mode is the only path. The body's wire layout is
-    // `[xid:v64][error_code:v32][server_instance_id:v64][reply_data]`
-    // — the channel layer prepends the 4-byte size header on the
-    // wire. The legacy fd path's high-bit "extended-header" flag is
-    // implicit (server always emits the instance id; the client
-    // always reads it).
-    //
-    // Tests that construct a ServerConnection without calling
-    // `bind_channel(...)` will silently drop replies (the channel
-    // proxy is unbound — `dispatch_response_frame_via_channel` logs
-    // a warning and returns). Production paths via Server::start
-    // always bind_channel before any reply.
-    template<typename F>
-    void reply(const Request& req, i32 error_code, F&& write_fn) const {
-        // Build response body directly into a contiguous `BufferSink`.
-        // Header (`v64 xid`, `v32 error_code`,
-        // `v64 server_instance_id`) and the user payload accumulate
-        // in `body_sink.bytes`; passed straight to the channel layer
-        // with no `Marshal` chunks and no intermediate `body_bytes`
-        // copy.  Mirrors the same simplification on the client send
-        // path.
-        BufferSink body_sink;
-        BinaryWriteArchive ar(&body_sink);
-        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                      "reply write_fn must accept BinaryWriteArchive&");
-        ar << v64(req.xid);
-        ar << v32(error_code);
-        ar << v64(static_cast<i64>(ctx_->server_instance_id));
-        write_fn(ar);
-        dispatch_response_frame_via_channel(body_sink.bytes.data(),
-                                            body_sink.bytes.len());
+    fn is_channel_mode(&self) -> bool {
+        self.channel_mode_.get()
     }
 
-    // @safe - Sends empty reply
-    void reply(const Request& req, i32 error_code = 0) const {
-        reply(req, error_code, [](BinaryWriteArchive&) {});
+    fn connected(&self) -> bool {
+        self.status_ == ServerConnStatus::CONNECTED
     }
 
-    // @unsafe - Invokes the caller-supplied `rusty::Function<void()>` callback
-    // inline. The callback's body is opaque to the borrow checker; treating
-    // the wrapper as @unsafe matches the out-of-line definition.
-    // Takes callback by value to avoid const-propagation issues in rusty-cpp.
-    int run_async(rusty::Function<void()> f);
-
-    // @safe - Check if connection was closed
-    // Called by poll loop to detect and remove closed connections
-    bool is_closed() const {
-        return status_ == CLOSED;
+    fn is_closed(&self) -> bool {
+        self.status_ == ServerConnStatus::CLOSED
     }
 
-private:
-    // 5b: extracted reply dispatch path, kept out of the templated
-    // `reply<F>` body so the implementation can sit in `server.cpp`.
-    // Locks the `channel_proxy_` SpinMutex briefly to call
-    // `proxy->send_frame({bytes, size})`. Errors from `send_frame`
-    // (`ChannelError::WouldBlock`, `ConnectionReset`, ...) are
-    // observable via the proxy's `on_error` / `on_closed` callbacks
-    // — the reply-side return value is intentionally discarded.
-    // @unsafe - SpinMutex::lock + ChannelConnectionProxy method dispatch.
-    void dispatch_response_frame_via_channel(const std::uint8_t* bytes,
-                                             std::size_t size) const;
+    fn reply(&self, req: &Request, error_code: i32, write_fn: ServerReplyFn) {
+        sconn_reply(self, req, error_code, write_fn)
+    }
 
-    // 5c: channel-mode inbound demux. Parses one decoded frame
-    // (`[xid:v64][rpc_id:i32][user-args]` — the channel layer has
-    // already stripped the 4-byte size prefix) and routes to the
-    // service registered for that rpc_id, mirroring the per-packet
-    // body of `handle_read` minus the size-framed I/O loop. Called
-    // from the `on_frame` callback installed by `bind_channel(...)`.
-    // @unsafe - Drives Marshal / Box<Request> / Service dispatch.
-    void decode_request_and_dispatch(const std::uint8_t* bytes,
-                                     std::size_t size);
+    fn close(&mut self) {
+        sconn_close(self)
+    }
 
+    fn bind_channel(&mut self, proxy: ChannelConnectionProxy) {
+        sconn_bind_channel(self, proxy)
+    }
+
+    fn run_async(&self, f: ServerRunAsyncFn) -> i32 {
+        sconn_run_async(self, f)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=22b13a8056e52cac568b564f9d3abe2881d1d540817fb67af1892d38ac2520b8*/
+enum class ServerConnStatus;
+constexpr ServerConnStatus ServerConnStatus_CONNECTED();
+constexpr ServerConnStatus ServerConnStatus_CLOSED();
+struct ServerConnection;
+
+enum class ServerConnStatus {
+    CONNECTED,
+    CLOSED
 };
+inline constexpr ServerConnStatus ServerConnStatus_CONNECTED() { return ServerConnStatus::CONNECTED; }
+inline constexpr ServerConnStatus ServerConnStatus_CLOSED() { return ServerConnStatus::CLOSED; }
+
+struct ServerConnection {
+    rusty::Arc<RpcServiceContext> ctx_;
+    ServerConnStatus status_;
+    WeakServerConnection weak_self_;
+    SpinMutex<rusty::Option<ChannelConnectionProxy>> channel_proxy_;
+    rusty::Cell<bool> channel_mode_;
+    int32_t count;
+
+    ServerConnection(rusty::Arc<RpcServiceContext> ctx, int32_t socket);
+    void install_self_weak_for_testing(WeakServerConnection weak);
+    bool is_channel_mode() const;
+    bool connected() const;
+    bool is_closed() const;
+    void reply(const Request& req, int32_t error_code, ServerReplyFn write_fn) const;
+    void close();
+    void bind_channel(ChannelConnectionProxy proxy);
+    int32_t run_async(ServerRunAsyncFn f) const;
+};
+
+
+ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int32_t socket)
+    : ctx_(ctx)
+    , status_(rusty::clone(ServerConnStatus_CONNECTED()))
+    , weak_self_(sconn_default_weak())
+    , channel_proxy_(SpinMutex<rusty::Option<ChannelConnectionProxy>>::new_(sconn_no_proxy()))
+    , channel_mode_(rusty::Cell<bool>::new_(false))
+    , count(static_cast<int32_t>(0))
+{}
+
+void ServerConnection::install_self_weak_for_testing(WeakServerConnection weak) {
+    this->weak_self_ = std::move(weak);
+}
+
+bool ServerConnection::is_channel_mode() const {
+    return this->channel_mode_.get();
+}
+
+bool ServerConnection::connected() const {
+    return rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CONNECTED());
+}
+
+bool ServerConnection::is_closed() const {
+    return rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CLOSED());
+}
+
+void ServerConnection::reply(const Request& req, int32_t error_code, ServerReplyFn write_fn) const {
+    sconn_reply((*this), req, std::move(error_code), std::move(write_fn));
+}
+
+void ServerConnection::close() {
+    sconn_close((*this));
+}
+
+void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
+    sconn_bind_channel((*this), std::move(proxy));
+}
+
+int32_t ServerConnection::run_async(ServerRunAsyncFn f) const {
+    return sconn_run_async((*this), std::move(f));
+}
+/*RUSTYCPP:GEN-END id=server.server_connection*/
 
 }  // export namespace rrr
 
@@ -1549,20 +1526,28 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 
 // Static member definitions for missing RPC ID tracking
 // SpinMutex wraps the unordered_set for thread-safe access
-SpinMutex<rusty::HashSet<i32>> ServerConnection::rpc_id_missing_s{rusty::HashSet<i32>()};
+// Hoisted out of ServerConnection (the DSL struct can't carry a static
+// data member): the "no handler for rpc_id" warning-dedup set.
+static SpinMutex<rusty::HashSet<i32>> g_rpc_id_missing{rusty::HashSet<i32>()};
 
-
-// @safe - Initializes connection. 5g2: `socket_` field deleted;
-// `socket` parameter is ignored (kept on the signature for source
-// compatibility with existing call sites).
-ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx,
-                                   int /*socket*/)
-        : ctx_(std::move(ctx)), status_(CONNECTED) {
-}
-
-// @safe - Arc prevents premature destruction of RpcServiceContext
-ServerConnection::~ServerConnection() {
-    // Arc reference to RpcServiceContext is automatically released
+// @unsafe - Build the reply body (header + user payload) into a BufferSink
+// and dispatch through the bound channel proxy via BinaryWriteArchive
+// operators + raw byte pointers. (Was the templated `reply<F>`; de-templated
+// to a `ServerReplyFn` — Function SBO keeps the `[&]` reply lambdas inline,
+// no per-reply alloc.) An empty `write_fn` (the former 2-arg empty-reply
+// overload) writes just the header.
+void sconn_reply(const ServerConnection& self, const Request& req,
+                 i32 error_code, ServerReplyFn write_fn) {
+    BufferSink body_sink;
+    BinaryWriteArchive ar(&body_sink);
+    ar << v64(req.xid);
+    ar << v32(error_code);
+    ar << v64(static_cast<i64>(self.ctx_->server_instance_id));
+    if (write_fn) {
+        write_fn(ar);
+    }
+    sconn_dispatch_response_frame_via_channel(self, body_sink.bytes.data(),
+                                              body_sink.bytes.len());
 }
 
 // @unsafe - 5b/5c/5d: bind a channel proxy and flip the channel-mode latch.
@@ -1581,13 +1566,13 @@ ServerConnection::~ServerConnection() {
 // fails and the callback short-circuits). The accept path in
 // subsequent leaves (5e) wires `weak_self_` immediately after
 // construction.
-void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
+void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
     if (!proxy) return;
 
     // Install callbacks BEFORE moving the proxy into the slot, so
     // the callbacks can capture a Weak<ServerConnection> without
     // holding the SpinMutex.
-    WeakServerConnection weak_self = weak_self_;
+    WeakServerConnection weak_self = self.weak_self_;
 
     // @unsafe - lambda capture, channel proxy mutator
     proxy->set_on_frame([weak_self](const ChannelFrame& f) {
@@ -1595,7 +1580,7 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        mut_sconn->decode_request_and_dispatch(f.payload, f.size);
+        sconn_decode_request_and_dispatch(*mut_sconn, f.payload, f.size);
     });
     // 5d: on_closed runs the existing close path so the connection
     // transitions to CLOSED. The channel-layer contract guarantees
@@ -1606,7 +1591,7 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        mut_sconn->close();
+        sconn_close(*mut_sconn);
     });
     // 5d: on_error logs and force-closes. Per the channel-layer
     // contract, fatal errors are followed by on_closed, so the
@@ -1620,15 +1605,15 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
                  channel_error_to_string(err),
                  static_cast<int>(message.size()), message.data());
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        mut_sconn->close();
+        sconn_close(*mut_sconn);
     });
 
     // @unsafe { SpinMutex::lock + ChannelConnectionProxy move }
     {
-        auto guard = channel_proxy_.lock().unwrap();
+        auto guard = self.channel_proxy_.lock().unwrap();
         *guard = rusty::Some(std::move(proxy));
     }
-    channel_mode_.set(true);
+    self.channel_mode_.set(true);
 }
 
 // @unsafe - 5c: decode one channel-mode request frame and dispatch.
@@ -1636,9 +1621,9 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
 // Mirrors the per-packet body of `handle_read` minus the size-framed
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
-void ServerConnection::decode_request_and_dispatch(
-        const std::uint8_t* bytes, std::size_t size) {
-    if (status_ == CLOSED) {
+void sconn_decode_request_and_dispatch(
+        ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
+    if (self.status_ == ServerConnStatus::CLOSED) {
         return;
     }
 
@@ -1664,10 +1649,10 @@ void ServerConnection::decode_request_and_dispatch(
     v64 v_xid;
     req.m >> v_xid;
     req.xid = v_xid.get();
-    req.attach_pending_guard(ctx_->pending_requests);
+    req.attach_pending_guard(self.ctx_->pending_requests);
 
     if (req.m.content_size() < sizeof(i32)) {
-        reply(req, EINVAL);
+        sconn_reply(self, req, EINVAL, ServerReplyFn{});
         return;
     }
 
@@ -1675,8 +1660,8 @@ void ServerConnection::decode_request_and_dispatch(
     req.m >> rpc_id;
     if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
         // @unsafe - std::atomic::load
-        if (!ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
-            reply(req, 0);
+        if (!self.ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
+            sconn_reply(self, req, 0, ServerReplyFn{});
         }
         return;
     }
@@ -1685,11 +1670,11 @@ void ServerConnection::decode_request_and_dispatch(
     stat_server_rpc_counting(rpc_id);
 #endif // RPC_STATISTICS
 
-    auto svc_index_opt = ctx_->rpc_to_service.get(rpc_id);
+    auto svc_index_opt = self.ctx_->rpc_to_service.get(rpc_id);
     if (svc_index_opt.is_none()) {
         bool surpress_warning = false;
         {
-            auto guard = rpc_id_missing_s.lock().unwrap();
+            auto guard = g_rpc_id_missing.lock().unwrap();
             if (!guard->contains(rpc_id)) {
                 guard->insert(rpc_id);
             } else {
@@ -1700,22 +1685,22 @@ void ServerConnection::decode_request_and_dispatch(
             Log_warn("rrr::ServerConnection: no handler for rpc_id = %d "
                      "(channel-mode dispatch)", rpc_id);
         }
-        reply(req, ENOENT);
+        sconn_reply(self, req, ENOENT, ServerReplyFn{});
         return;
     }
 
     size_t svc_index = svc_index_opt.unwrap();
-    auto weak_this = weak_self_;
-    if (ctx_->fast_rpc_ids.contains(rpc_id)) {
+    auto weak_this = self.weak_self_;
+    if (self.ctx_->fast_rpc_ids.contains(rpc_id)) {
         // Fast inline dispatch — no fiber spawn.
-        auto guard = ctx_->services[svc_index].borrow_mut();
+        auto guard = self.ctx_->services[svc_index].borrow_mut();
         (*guard)->__dispatch__(rpc_id, std::move(req_box), weak_this);
     } else {
         // Slow path — spawn a fiber so the handler can yield (e.g.
         // for nested RPC calls). Capture an Arc<RpcServiceContext>
         // clone so the fiber stays valid even if the connection is
         // closed mid-flight.
-        auto ctx = ctx_.clone();
+        auto ctx = self.ctx_.clone();
         Fiber::create_run([ctx, svc_index, rpc_id,
                            req = std::move(req_box),
                            weak_this]() mutable {
@@ -1735,12 +1720,12 @@ void ServerConnection::decode_request_and_dispatch(
 // value is intentionally discarded — the RPC layer mirrors the
 // legacy fd path's behavior of not surfacing send-side errors from
 // `reply()`.
-void ServerConnection::dispatch_response_frame_via_channel(
-        const std::uint8_t* bytes, std::size_t size) const {
+void sconn_dispatch_response_frame_via_channel(
+        const ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
     ChannelConnectionBase* conn = nullptr;
     // @unsafe { SpinMutex::lock + Box::get + raw pointer extraction }
     {
-        auto guard = channel_proxy_.lock().unwrap();
+        auto guard = self.channel_proxy_.lock().unwrap();
         if (guard->is_none()) {
             Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: "
                      "channel mode flipped on but proxy is unbound (race?). "
@@ -1755,7 +1740,8 @@ void ServerConnection::dispatch_response_frame_via_channel(
 }
 
 // @unsafe - Executes callback inline for API compatibility.
-int ServerConnection::run_async(rusty::Function<void()> f) {
+int sconn_run_async(const ServerConnection& self, ServerRunAsyncFn f) {
+  (void)self;
   if (!f) {
     Log_warn("rrr::ServerConnection::run_async called with empty callback");
     return EINVAL;
@@ -1773,15 +1759,15 @@ int ServerConnection::run_async(rusty::Function<void()> f) {
 // recursive entry: close() may be called from `on_closed` which 5d
 // installs, and 5d's on_closed → close() → proxy.close() →
 // (idempotent) on_closed re-fires without effect.
-void ServerConnection::close() {
-    if (status_ == CONNECTED) {
-        status_ = CLOSED;
+void sconn_close(ServerConnection& self) {
+    if (self.status_ == ServerConnStatus::CONNECTED) {
+        self.status_ = ServerConnStatus::CLOSED;
         Log_debug("server@%s close ServerConnection",
-                  ctx_->addr.c_str());
+                  self.ctx_->addr.c_str());
         // Tear down the channel proxy. Idempotent per channel-layer contract.
         // @unsafe { SpinMutex::lock + Box::get + virtual dispatch }
         {
-            auto guard = channel_proxy_.lock().unwrap();
+            auto guard = self.channel_proxy_.lock().unwrap();
             if (guard->is_some()) {
                 auto* conn = guard->as_ref().unwrap().get();
                 conn->close();
@@ -1826,7 +1812,7 @@ void deferred_reply_dispatch_reply_error(DeferredReply& self, i32 error_code) {
     auto sconn_opt = self.weak_sconn_field.upgrade();
     if (sconn_opt.is_some()) {
         auto sconn = sconn_opt.unwrap();
-        sconn->reply(*self.req_field, error_code);
+        sconn->reply(*self.req_field, error_code, ServerReplyFn{});
     } else {
         Log_debug("Connection closed before error reply sent, dropping reply");
     }

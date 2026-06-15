@@ -55,7 +55,7 @@ void MakoClientService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> r
             // Send error response
             auto sconn_opt = sconn.upgrade();
             if (sconn_opt.is_some()) {
-                sconn_opt.unwrap()->reply(*req, ENOENT);
+                sconn_opt.unwrap()->reply(*req, ENOENT, [](rrr::BinaryWriteArchive&){});
             }
             break;
     }
