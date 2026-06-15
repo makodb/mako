@@ -369,23 +369,19 @@ inline void timeout_event_wait(TimeoutEvent& self) {
   self.Event::wait(self.wait_us_);
 }
 
+// DSL-prep reshape: the variadic template ctor + recursive add_event() are not
+// expressible in inline-Rust. Every live construction site
+// (Reactor::create_sp_event<WaitAny>(a, b)) passes exactly two events, so a
+// fixed 2-arg ctor (taking shared_ptr<Event>; subclass shared_ptrs upcast)
+// satisfies them all with no call-site change. The next commit migrates this
+// to the DSL.
 class WaitAny : public Event {
  public:
   rusty::Vec<std::shared_ptr<Event>> events_;
 
-  void add_event() {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename X, typename... Args>
-  void add_event(X& x, Args&... rest) {
-    events_.push(x);
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitAny(Args&&... args) {
-    add_event(args...);
+  WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b) : Event() {
+    events_.push(std::move(a));
+    events_.push(std::move(b));
   }
 
   bool is_ready() override {
