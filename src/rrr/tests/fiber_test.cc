@@ -45,11 +45,6 @@ TEST_F(FiberTest, WaitAnyIsDefined) {
     static_assert(sizeof(WaitAny) > 0, "WaitAny must be a defined class");
 }
 
-TEST_F(FiberTest, WaitNIsDefined) {
-    // Verify WaitN class is defined and usable
-    static_assert(sizeof(WaitN) > 0, "WaitN must be a defined class");
-}
-
 // =============================================================================
 // this_fiber::get_id() Tests
 // =============================================================================

@@ -495,40 +495,6 @@ class WaitAll : public Event {
   bool is_composite_event() override { return true; }
 };
 
-class WaitN : public Event {
- public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
-  int number;
-
-  void add_event() {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename... Args>
-  void add_event(std::shared_ptr<Event> x, Args... rest) {
-    events_.push(std::move(x));
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitN(std::shared_ptr<Event> first, Args... rest) {
-    add_event(std::move(first), rest...);
-  }
-
-  bool is_ready() override {
-    int count = 0;
-    for(auto index = events_.begin(); index != events_.end(); index++){
-      if((*index)->is_ready()){
-        count++;
-        if(count == number){
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-};
-
 class SingleRPCEvent: public Event{
   public:
     uint32_t cli_id_;
