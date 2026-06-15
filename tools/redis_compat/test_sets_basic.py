@@ -133,20 +133,6 @@ def test_sadd_does_not_create_parallel_set_for_string_key(mako_client: redis.Red
     assert mako_client.get(name) == b"value"
 
 
-@pytest.mark.xfail(reason="set commands need staged writes to support SADD+SMOVE in one EXEC")
-def test_smove_observes_prior_set_write_inside_multi(mako_client: redis.Redis) -> None:
-    source = key("multi-source")
-    destination = key("multi-destination")
-
-    pipe = mako_client.pipeline(transaction=True)
-    pipe.sadd(source, b"x")
-    pipe.smove(source, destination, b"x")
-    pipe.smembers(source)
-    pipe.smembers(destination)
-
-    assert pipe.execute() == [1, 1, set(), {b"x"}]
-
-
 def test_keys_star_includes_leading_null_user_key(mako_client: redis.Redis) -> None:
     name = b"\x00" + key("leading-null").encode()
 

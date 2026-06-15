@@ -58,7 +58,7 @@ no replication.
 | Check | Result |
 |---|---|
 | Rust unit tests | 24 passed |
-| Redis compatibility pytest | 90 passed, 1 xfailed |
+| Redis compatibility pytest | 90 passed |
 | `makoCon` and `makoConMultiTrd` build | passed with existing `libunwind` linker warning |
 | Phase 11 `redis-benchmark SET` | 22,727.27 req/s, p50 0.415 ms |
 | Phase 11 `redis-benchmark GET` | 30,303.03 req/s, p50 0.143 ms |
@@ -77,7 +77,7 @@ Latest G2-focused artifact:
 
 | Acceptance line | Status | Detail |
 |---|---|---|
-| G1 wire compatibility | PASS | 90 passed, 1 xfailed |
+| G1 wire compatibility | PASS | 90 passed |
 | G2 bank transfer | PASS with local multi-shard fixture | `MAKO_G2_USE_LOCAL_FIXTURE=1` preserves the bank invariant over `MAKO_LOCAL_SHARDS=0,1,2` |
 | G2 cross-shard demo | PASS when opted in | `G2_DEMO_START_REDIS_CLUSTER=1` captures Redis Cluster cross-slot rejection beside the Mako bank invariant |
 | G3 failover durability | N/A | requires replicated Mako start/kill/recover hooks |

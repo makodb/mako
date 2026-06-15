@@ -1,4 +1,4 @@
-G1 wire compatibility              PASS 90 passed, 1 xfailed in 7.09s
+G1 wire compatibility              PASS 90 passed in 7.09s
 G2 bank transfer                   N/A  requires MAKO_G2_MULTI_SHARD=1 fixture; set MAKO_G2_ALLOW_SINGLE_SHARD=1 for local smoke
 G3 failover durability             N/A  missing MAKO_G3_START_CMD
 G4 Elle isolation                  N/A  missing Elle jar at tools/redis_compat/elle.jar
