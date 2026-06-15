@@ -290,7 +290,7 @@ struct TcpConnection {
 
 TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     : fd_(rusty::os::fd::OwnedFd::from_raw_fd(std::move(fd)))
-    , peer_address_(peer_address)
+    , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
     , outbound_(SpinMutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
     , inbound_(tcpconn_default_inbound())

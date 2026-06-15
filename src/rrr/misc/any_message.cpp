@@ -251,7 +251,7 @@ struct AnyMessageRegistryMap {
     name_by_type_hash: rusty::HashMap<usize, std::string>,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.1 version=1 rust_sha256=1f01bc9771042fc5f5717fefe3b0d38fe50e88870888ff5601cffc712958a545*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.1 version=1 rust_sha256=f0e25eabe80e818d24f9dadec699373e8c69ffb0471bf45f49fd33840ee8923c*/
 struct AnyMessageRegistryMap;
 
 struct AnyMessageRegistryMap {

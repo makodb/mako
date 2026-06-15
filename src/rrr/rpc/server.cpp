@@ -519,7 +519,7 @@ struct ServerConnection {
 
 
 ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int32_t socket)
-    : ctx_(ctx)
+    : ctx_(std::move(ctx))
     , status_(rusty::clone(ServerConnStatus_CONNECTED()))
     , weak_self_(sconn_default_weak())
     , channel_proxy_(SpinMutex<rusty::Option<ChannelConnectionProxy>>::new_(sconn_no_proxy()))

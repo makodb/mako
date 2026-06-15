@@ -222,7 +222,7 @@ IntEvent::IntEvent()
 IntEvent::IntEvent(int32_t tar)
     : Event()
     , value_(static_cast<int32_t>(0))
-    , target_(tar)
+    , target_(std::move(tar))
 {}
 
 int32_t IntEvent::get() const {
@@ -351,7 +351,7 @@ struct TimeoutEvent : public Event {
 TimeoutEvent::TimeoutEvent(uint64_t wait_us)
     : Event()
     , wakeup_time_(Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us))
-    , wait_us_(wait_us)
+    , wait_us_(std::move(wait_us))
 {}
 
 void TimeoutEvent::wait() {

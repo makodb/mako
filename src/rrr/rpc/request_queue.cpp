@@ -442,7 +442,7 @@ RequestQueue::RequestQueue()
 {}
 
 RequestQueue::RequestQueue(RequestQueueConfig config)
-    : config_(config)
+    : config_(std::move(config))
     , queue_(SpinMutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 

@@ -677,9 +677,9 @@ FutureState FutureState::new_() {
 }
 
 Future::Future(int64_t xid, FutureAttr attr)
-    : xid_(xid)
+    : xid_(std::move(xid))
     , error_code_(rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)))
-    , attr_(attr)
+    , attr_(std::move(attr))
     , reply_(rusty::RefCell<Marshal>::new_(Marshal::new_()))
     , timeout_(static_cast<uint64_t>(1000000))
     , state_(rusty::Mutex<FutureState>::new_(FutureState::new_()))
