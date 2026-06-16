@@ -138,6 +138,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // sorted order with matching values.
   class Cb : public TestTree::search_range_callback {
    public:
+    ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
     rusty::Vec<std::pair<std::string, uint64_t>> seen;
     bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
       seen.push(std::pair<std::string, uint64_t>(

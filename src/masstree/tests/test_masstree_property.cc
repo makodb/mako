@@ -84,6 +84,7 @@ struct PropertyState {
   void FullScanMatchesOracle(uint64_t seed, size_t step) const {
     class Cb : public TestTree::search_range_callback {
      public:
+      ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
       rusty::Vec<std::pair<std::string, uint64_t>> seen;
       bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
         seen.push(std::pair<std::string, uint64_t>(
@@ -177,6 +178,7 @@ void RunPropertySession(uint64_t seed, size_t iterations) {
 
       class CollectAll : public TestTree::search_range_callback {
        public:
+        ~CollectAll() noexcept {}  // rusty::Vec member -> force noexcept dtor
         rusty::Vec<std::string> seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
           seen.push(std::string(k.data(), k.length()));

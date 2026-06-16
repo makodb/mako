@@ -163,6 +163,7 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   // for len 0, 'a'..'f' for the rest).
   class Cb : public TestTree::search_range_callback {
    public:
+    ~Cb() noexcept {}  // rusty::Vec member -> force noexcept dtor
     rusty::Vec<std::string> keys;
     bool invoke(const TestTree::string_type& k, TestTree::value_type) override {
       keys.push(std::string(k.data(), k.length()));

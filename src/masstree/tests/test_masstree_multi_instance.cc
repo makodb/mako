@@ -94,6 +94,7 @@ inline bool pure_search(const PureTable& t, threadinfo& ti,
 
 class MasstreeMultiInstanceTest : public ::testing::Test {
 protected:
+    ~MasstreeMultiInstanceTest() noexcept {}  // rusty::Vec member -> force noexcept dtor
     void SetUp() override {
         // Create two separate contexts
         ctx1_ = MasstreeContext::Create();

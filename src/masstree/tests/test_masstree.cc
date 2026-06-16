@@ -24,12 +24,14 @@ inline varkey vk(const std::string& s) {
 
 class MasstreeTest : public ::testing::Test {
  protected:
+  // Explicit noexcept destructor. rusty::Vec's destructor is now
+  // unconditionally noexcept(false) (it used to be conditional on T's
+  // noexcept-ness), so the implicit ~MasstreeTest() would be noexcept(false) —
+  // more lax than ::testing::Test's noexcept virtual destructor. Forcing
+  // noexcept keeps the override well-formed; the Vec destructors never throw.
+  ~MasstreeTest() noexcept {}
+
   TestTree tree_;
-  // Possible thanks to the rusty::Vec destructor being conditional
-  // on T's noexcept-ness — uint64_t and rusty::Box<uint64_t> are
-  // both noexcept-destructible, so Vec<Box<uint64_t>> is too, and
-  // MasstreeTest's implicit ~MasstreeTest() remains noexcept and
-  // does not violate ::testing::Test's noexcept virtual destructor.
   rusty::Vec<rusty::Box<uint64_t>> storage_;
 
   TestTree::value_type MakeValue(uint64_t v) {
@@ -89,6 +91,7 @@ TEST_F(MasstreeTest, RangeScanReturnsSortedKeys) {
 
   class CollectCallback : public TestTree::search_range_callback {
    public:
+    ~CollectCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     bool invoke(const TestTree::string_type& key, TestTree::value_type) override {
       results.push(std::string(key.data(), key.length()));
       return true;
@@ -124,8 +127,10 @@ class MasstreeKeyShape
 
 namespace {
 
-rusty::Vec<KeyShape> AllShapes() {
-  return rusty::Vec<KeyShape>({
+// Returns std::vector (not rusty::Vec) so gtest's ValuesIn can deduce the
+// element type — rusty::Vec has no STL value_type/array shape.
+std::vector<KeyShape> AllShapes() {
+  return std::vector<KeyShape>({
       {"1byte",         "x"},
       {"7byte",         "1234567"},
       {"8byte_boundary","12345678"},
@@ -342,6 +347,7 @@ namespace {
 
 class Collect : public TestTree::search_range_callback {
  public:
+  ~Collect() noexcept {}  // rusty::Vec members -> force noexcept dtor
   rusty::Vec<std::string> keys;
   rusty::Vec<uint64_t> values;
   size_t limit = std::numeric_limits<size_t>::max();
@@ -495,6 +501,7 @@ TEST_F(MasstreeTest, InsertDuringScanIsWeaklyConsistent) {
 
   class MutatingCallback : public TestTree::search_range_callback {
    public:
+    ~MutatingCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     TestTree* tree;
     const rusty::Vec<u64_varkey>* keys;
     const rusty::Vec<TestTree::value_type>* vals;
@@ -540,6 +547,7 @@ TEST_F(MasstreeTest, RemoveDuringScanIsWeaklyConsistent) {
   }
   class RemovingCallback : public TestTree::search_range_callback {
    public:
+    ~RemovingCallback() noexcept {}  // rusty::Vec member -> force noexcept dtor
     TestTree* tree;
     const rusty::Vec<u64_varkey>* keys;
     rusty::Vec<std::string> observed;
