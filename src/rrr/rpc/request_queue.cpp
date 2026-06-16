@@ -326,10 +326,10 @@ RequestQueueConfig RequestQueueConfig::disabled() {
 // dropped (callers pass it explicitly; the one 0-arg test call is updated).
 struct RequestQueue;
 inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
-inline bool rq_enqueue(RequestQueue& self, QueuedRequest request);
-inline size_t rq_expire_stale(RequestQueue& self);
-inline void rq_clear_all(RequestQueue& self, int error_code);
-inline void rq_update_config(RequestQueue& self, const RequestQueueConfig& config);
+inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
+inline size_t rq_expire_stale(const RequestQueue& self);
+inline void rq_clear_all(const RequestQueue& self, int error_code);
+inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config);
 #if RUSTYCPP_RUST
 struct RequestQueue {
     config_: RequestQueueConfig,
@@ -351,7 +351,7 @@ impl RequestQueue {
         }
     }
 
-    fn enqueue(&mut self, request: QueuedRequest) -> bool {
+    fn enqueue(&self, request: QueuedRequest) -> bool {
         rq_enqueue(self, request)
     }
 
@@ -363,16 +363,16 @@ impl RequestQueue {
         Some(guard.pop_front())
     }
 
-    fn expire_stale(&mut self) -> usize {
+    fn expire_stale(&self) -> usize {
         rq_expire_stale(self)
     }
 
-    fn size(&mut self) -> usize {
+    fn size(&self) -> usize {
         let guard = self.queue_.lock().unwrap();
         guard.size()
     }
 
-    fn empty(&mut self) -> bool {
+    fn empty(&self) -> bool {
         let guard = self.queue_.lock().unwrap();
         guard.size() == 0usize
     }
@@ -391,7 +391,7 @@ impl RequestQueue {
         }
     }
 
-    fn clear_all(&mut self, error_code: i32) {
+    fn clear_all(&self, error_code: i32) {
         rq_clear_all(self, error_code)
     }
 
@@ -407,12 +407,12 @@ impl RequestQueue {
         self.config_.max_size
     }
 
-    fn update_config(&mut self, config: RequestQueueConfig) {
+    fn update_config(&self, config: RequestQueueConfig) {
         rq_update_config(self, config)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=cb15ac0fb9bd59eb2f35928501b4e55e4826c4100d456988f2e113a8cb6c5096*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=cc0f9d67e2d9ec1c9d1a7c0d9f09c6a0d482194a0343189ff374bbd4efae77ee*/
 struct RequestQueue;
 
 struct RequestQueue {
@@ -421,18 +421,18 @@ struct RequestQueue {
 
     RequestQueue();
     RequestQueue(RequestQueueConfig config);
-    bool enqueue(QueuedRequest request);
+    bool enqueue(QueuedRequest request) const;
     rusty::Option<QueuedRequest> dequeue();
-    size_t expire_stale();
-    size_t size();
-    bool empty();
+    size_t expire_stale() const;
+    size_t size() const;
+    bool empty() const;
     bool full();
     size_t remaining_capacity();
-    void clear_all(int32_t error_code);
+    void clear_all(int32_t error_code) const;
     RequestQueueConfig config() const;
     bool enabled() const;
     size_t max_size() const;
-    void update_config(RequestQueueConfig config);
+    void update_config(RequestQueueConfig config) const;
 };
 
 
@@ -446,7 +446,7 @@ RequestQueue::RequestQueue(RequestQueueConfig config)
     , queue_(SpinMutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 
-bool RequestQueue::enqueue(QueuedRequest request) {
+bool RequestQueue::enqueue(QueuedRequest request) const {
     return rq_enqueue((*this), std::move(request));
 }
 
@@ -458,16 +458,16 @@ rusty::Option<QueuedRequest> RequestQueue::dequeue() {
     return rusty::Option<QueuedRequest>(guard->pop_front());
 }
 
-size_t RequestQueue::expire_stale() {
+size_t RequestQueue::expire_stale() const {
     return rq_expire_stale((*this));
 }
 
-size_t RequestQueue::size() {
+size_t RequestQueue::size() const {
     auto guard = this->queue_.lock().unwrap();
     return guard->size();
 }
 
-bool RequestQueue::empty() {
+bool RequestQueue::empty() const {
     auto guard = this->queue_.lock().unwrap();
     return guard->size() == static_cast<size_t>(0);
 }
@@ -486,7 +486,7 @@ size_t RequestQueue::remaining_capacity() {
     }
 }
 
-void RequestQueue::clear_all(int32_t error_code) {
+void RequestQueue::clear_all(int32_t error_code) const {
     rq_clear_all((*this), std::move(error_code));
 }
 
@@ -502,7 +502,7 @@ size_t RequestQueue::max_size() const {
     return this->config_.max_size;
 }
 
-void RequestQueue::update_config(RequestQueueConfig config) {
+void RequestQueue::update_config(RequestQueueConfig config) const {
     rq_update_config((*this), std::move(config));
 }
 /*RUSTYCPP:GEN-END id=request_queue.queue*/
@@ -519,7 +519,7 @@ inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err) {
 
 // @unsafe - enqueue: overflow policy + try/catch callback invocation (the
 // try/catch and the interleaved rejection callbacks are not DSL-expressible).
-inline bool rq_enqueue(RequestQueue& self, QueuedRequest request) {
+inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
     if (!self.config_.enabled) {
         rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
         return false;
@@ -548,7 +548,7 @@ inline bool rq_enqueue(RequestQueue& self, QueuedRequest request) {
 
 // @unsafe - expire_stale: extract_if + drain callbacks outside the lock with
 // try/catch (the try/catch is not DSL-expressible).
-inline size_t rq_expire_stale(RequestQueue& self) {
+inline size_t rq_expire_stale(const RequestQueue& self) {
     rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
     size_t removed = 0;
     {
@@ -573,7 +573,7 @@ inline size_t rq_expire_stale(RequestQueue& self) {
 
 // @unsafe - clear_all: drain callbacks (range-for over the guarded deque) +
 // clear, invoke outside the lock with try/catch.
-inline void rq_clear_all(RequestQueue& self, int error_code) {
+inline void rq_clear_all(const RequestQueue& self, int error_code) {
     rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
     {
         auto guard = self.queue_.lock().unwrap();
@@ -593,10 +593,12 @@ inline void rq_clear_all(RequestQueue& self, int error_code) {
 // @safe - update_config: lock to serialize with in-flight enqueue/dequeue, then
 // assign the POD config. (The lock-for-side-effect `(void)guard` reads cleaner
 // as a free fn than in the DSL.)
-inline void rq_update_config(RequestQueue& self, const RequestQueueConfig& config) {
+inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config) {
     auto guard = self.queue_.lock().unwrap();
     (void)guard;
-    self.config_ = config;
+    // config_ is a plain (non-interior-mut) field; const_cast under the queue
+    // lock matches the prior `mutable RequestQueue` access pattern. @unsafe.
+    const_cast<RequestQueue&>(self).config_ = config;
 }
 
 // @safe - Convert overflow strategy to string
