@@ -30,13 +30,20 @@ private:
     mutable rusty::Function<void()> error_handler_;  // mutable handler
 
 public:
-    // No user-declared destructor: Pollable's `virtual ~Pollable() = default;`
-    // covers polymorphic deletion, and omitting our own destructor keeps
-    // the implicit move constructor / move assignment available — required
-    // since `read_handler_` / `write_handler_` / `error_handler_` are
-    // move-only (`rusty::Function` is non-copyable).
+    // `Pollable` is a `pub trait`; its generated base DELETES copy AND move
+    // (with only a protected default ctor), so TestPollable's implicit move
+    // ctor is deleted too. `Arc<TestPollable>::new_(TestPollable(...))`
+    // move-constructs into the control block, so provide an explicit move ctor
+    // that default-constructs the Pollable base and moves the move-only
+    // `rusty::Function` handlers.
     explicit TestPollable(int fd, int mode = PollMode::READ)
         : fd_(fd), mode_(mode) {}
+
+    TestPollable(TestPollable&& o) noexcept
+        : Pollable(), fd_(o.fd_), mode_(o.mode_),
+          read_handler_(std::move(o.read_handler_)),
+          write_handler_(std::move(o.write_handler_)),
+          error_handler_(std::move(o.error_handler_)) {}
 
     int fd() const override {
         return fd_;
