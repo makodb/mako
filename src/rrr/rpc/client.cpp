@@ -967,6 +967,12 @@ class ClientConnection {
     friend void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel);
     friend void clientconn_bind_channel_via_poll_thread(ClientConnection& self, ChannelConnectionProxy channel);
     friend void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionProxy channel);
+    template<typename F>
+    friend FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
+    // (clientconn_request_async friended below, after the
+    // AsyncReplyCallback typedef it references)
+    template<typename F>
+    friend FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F&& write_fn);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -1075,6 +1081,8 @@ class ClientConnection {
 public:
     using AsyncReplyCallback = rusty::Function<
         void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
+    template<typename F>
+    friend rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& self, i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply);
 private:
     mutable SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>>
         pending_cb_slots_;
@@ -1753,130 +1761,15 @@ private:
      * handles the lifecycle from there (sub-leaves 4d / 4e wire the
      * close / on_error callbacks).
      */
-    // @unsafe - Counter::next, Marshal operators, channel proxy dispatch
+    // @unsafe - one-line delegator to the friend free-fn template
+    // (extraction step toward the DSL flip; marshaling/void* body lives
+    // in the free fn).
     template<typename F>
     FutureResult request_via_channel(i32 rpc_id,
                                      const FutureAttr& attr,
                                      F&& write_fn) const {
-        if (!allow_request_with_circuit_metrics()) {
-            return FutureResult::Err(EBUSY);
-        }
-
-        // Lazy expiration sweep: keeps the queued-request TTL contract
-        // honored without a background timer. Callbacks installed
-        // below resolve the corresponding Future with
-        // kRequestQueueExpiredError and bump `queue_dropped_requests`.
-        pending_queue_.expire_stale();
-
-        // Channel-mode connection state is owned by the channel
-        // wrapper; if it reports closed, fail-fast. We also short-
-        // circuit on the legacy state machine before reaching the
-        // channel proxy: `Client::close` schedules the proxy close
-        // asynchronously on the poll thread, so for a brief window
-        // the proxy still reports `is_closed() == false` while the
-        // state machine has transitioned out of CONNECTED. Requests
-        // landing in that window would otherwise succeed against a
-        // closing channel; consulting the state machine first
-        // guarantees the rejection (and the circuit-breaker
-        // transition) the integration tests assert on.
-        // 4g1c: check both bindings — direct_channel_ takes
-        // precedence over fiber_channel_ when both are present
-        // (in practice only one is bound per ClientConnection
-        // lifecycle).
-        if (!state_machine_.is_connected()) {
-            // Buffering: when the user enabled QUEUE behavior we
-            // accept the request, park a Future in the pending
-            // queue, and let `expire_stale()` or a future
-            // replay-on-reconnect path resolve it. The queue's
-            // overflow policy (DROP_OLDEST / DROP_NEWEST /
-            // FAIL_FAST) decides which entry to drop when
-            // `max_pending` is reached.
-            if (buffering_config_.enabled &&
-                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
-                auto fu = Future::create(xid_counter_.next(1), attr);
-                auto fu_for_cb = fu;  // Arc clone for the callback.
-                auto qr = QueuedRequest::new_();
-                qr.xid     = fu->xid_;
-                qr.rpc_id  = rpc_id;
-                qr.ttl_ms  = buffering_config_.default_ttl_ms;
-                qr.callback = rusty::Function<void(int)>(
-                    [fu_for_cb, this](int err) mutable {
-                        // Queue overflow / TTL expiry both count
-                        // toward `queue_dropped_requests`. The
-                        // future resolves with the queue error
-                        // code so callers can distinguish from
-                        // ENOTCONN if they care.
-                        metrics_.record_queue_drop();
-                        fu_for_cb->error_code_.set(err);
-                        fu_for_cb->notify_ready(fu_for_cb);
-                    });
-                if (pending_queue_.enqueue(std::move(qr))) {
-                    return FutureResult::Ok(std::move(fu));
-                }
-                // The queue's overflow callback already fired,
-                // resolving the rejected future and bumping the
-                // metric. Surface the error to the caller.
-                return FutureResult::Err(kRequestQueueRejectedError);
-            }
-            record_circuit_result(ENOTCONN);
-            return FutureResult::Err(ENOTCONN);
-        }
-        {
-            auto direct_guard = direct_channel_.lock().unwrap();
-            if (direct_guard->is_some()) {
-                auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy.is_closed()) {
-                    record_circuit_result(ENOTCONN);
-                    return FutureResult::Err(ENOTCONN);
-                }
-            } else {
-                auto guard = fiber_channel_.lock().unwrap();
-                if (guard->is_none() ||
-                    guard->as_ref().unwrap()->is_closed()) {
-                    record_circuit_result(ENOTCONN);
-                    return FutureResult::Err(ENOTCONN);
-                }
-            }
-        }
-
-        // @unsafe { Counter::next }
-        auto fu = Future::create(xid_counter_.next(1), attr);
-
-        {
-            auto pending_guard = pending_fu_.lock().unwrap();
-            pending_guard->insert(fu->xid_, fu);
-        }
-
-        // Build frame body directly into a contiguous `BufferSink`.
-        // Header (`v64 xid`, `i32 rpc_id`) plus user payload (via
-        // `write_fn`) accumulate in `body_sink.bytes`
-        // (`rusty::Vec<uint8_t>`) and are passed straight to the
-        // channel layer — no `Marshal` chunk allocations and no
-        // intermediate `body_bytes` copy.  Eliminates one heap
-        // allocation + one memcpy per outbound RPC.
-        BufferSink body_sink;
-        BinaryWriteArchive ar(&body_sink);
-        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                      "request write_fn must accept BinaryWriteArchive&");
-        ar << v64(fu->xid_);
-        ar << rpc_id;
-        write_fn(ar);
-
-        const ChannelError ch_err =
-            dispatch_frame_via_channel(body_sink.bytes.data(),
-                                       body_sink.bytes.len());
-        if (ch_err != ChannelError::None) {
-            {
-                auto pending_guard = pending_fu_.lock().unwrap();
-                pending_guard->remove(fu->xid_);
-            }
-            record_circuit_result(EIO);
-            return FutureResult::Err(EIO);
-        }
-
-        metrics_.record_request_sent();
-        on_request_dispatched(body_sink.bytes.len());
-        return FutureResult::Ok(fu);
+        return clientconn_request_via_channel(*this, rpc_id, attr,
+                                              std::forward<F>(write_fn));
     }
 
     // ------------------------------------------------------------------
@@ -1898,77 +1791,14 @@ private:
     //   - Ok() if the frame was queued for send.
     //   - Err(error_code) on send-time failure (no callback fires).
 public:
+    // @unsafe - one-line delegator to the friend free-fn template
+    // (extraction step toward the DSL flip).
     template<typename F>
     rusty::Result<rusty::Unit, i32> request_async(
         i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply) const {
-        if (!allow_request_with_circuit_metrics()) {
-            return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
-        }
-        // Liveness check (mirrors request_via_channel). The state-
-        // machine check runs first to close the
-        // `Client::close()`-schedules-async-proxy-close race; see the
-        // explanatory comment in `request_via_channel`.
-        if (!state_machine_.is_connected()) {
-            record_circuit_result(ENOTCONN);
-            return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
-        }
-        {
-            auto direct_guard = direct_channel_.lock().unwrap();
-            if (direct_guard->is_some()) {
-                auto& proxy = *direct_guard->as_ref().unwrap();
-                if (proxy.is_closed()) {
-                    record_circuit_result(ENOTCONN);
-                    return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
-                }
-            } else {
-                auto guard = fiber_channel_.lock().unwrap();
-                if (guard->is_none() ||
-                    guard->as_ref().unwrap()->is_closed()) {
-                    record_circuit_result(ENOTCONN);
-                    return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
-                }
-            }
-        }
-
-        const i64 xid = xid_counter_.next(1);
-        const size_t slot = static_cast<size_t>(xid) % kAsyncSlotCount;
-
-        // Insert callback into the slim slot.  Collision should be
-        // impossible at typical in-flight depths (xid % 16384 unique
-        // for in-flight count < 16384).
-        {
-            auto guard = pending_cb_slots_.lock().unwrap();
-            if ((*guard)[slot].is_some()) {
-                // Slot collision — caller must drop request and retry,
-                // or fall back to `request(...)` (HashMap path).
-                record_circuit_result(EBUSY);
-                return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
-            }
-            (*guard)[slot] = rusty::Some(std::move(on_reply));
-        }
-
-        // Build frame body — same shape as request_via_channel.
-        BufferSink body_sink;
-        BinaryWriteArchive ar(&body_sink);
-        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                      "request_async write_fn must accept BinaryWriteArchive&");
-        ar << v64(xid);
-        ar << rpc_id;
-        write_fn(ar);
-
-        const ChannelError ch_err =
-            dispatch_frame_via_channel(body_sink.bytes.data(),
-                                       body_sink.bytes.len());
-        if (ch_err != ChannelError::None) {
-            // Cleanup: remove the slot (no callback should fire).
-            auto guard = pending_cb_slots_.lock().unwrap();
-            (*guard)[slot] = rusty::None;
-            record_circuit_result(EIO);
-            return rusty::Result<rusty::Unit, i32>::Err(EIO);
-        }
-        metrics_.record_request_sent();
-        on_request_dispatched(body_sink.bytes.len());
-        return rusty::Result<rusty::Unit, i32>::Ok(rusty::Unit{});
+        return clientconn_request_async(*this, rpc_id,
+                                        std::forward<F>(write_fn),
+                                        std::move(on_reply));
     }
 
 private:
@@ -2011,170 +1841,14 @@ public:
      * @param write_fn Lambda to write request arguments
      * @return Result<Arc<Future>, i32>
      */
-    // @unsafe - Same as request(), plus sets options
+    // @unsafe - one-line delegator to the friend free-fn template
+    // (extraction step toward the DSL flip; serialize + retry-spawn body
+    // lives in the free fn).
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        // Serialize args once so retries can replay identical payload safely.
-        // write_fn is exclusively
-        // BinaryWriteArchive&-shaped now (Marshal& branch removed).
-        Marshal serialized_args;
-        static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
-                      "request_with_options write_fn must accept BinaryWriteArchive&");
-        BinaryWriteArchive ar(make_sink_proxy(&serialized_args));
-        write_fn(ar);
-        std::string args_bytes;
-        size_t args_size = serialized_args.content_size();
-        if (args_size > 0) {
-            args_bytes.resize(args_size);
-            verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
-        }
-
-        // Non-idempotent operations must never be retried even if max_retries is set.
-        RequestOptions effective_options = options;
-        if (!effective_options.idempotent) {
-            effective_options.max_retries = 0;
-        }
-
-        // Return a coordinator future immediately; internal attempts run async.
-        auto final_fu = Future::create(xid_counter_.next(1), attr);
-        RequestOptions waiter_options = effective_options;
-        waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
-        final_fu->set_options(waiter_options);
-
-        auto weak_conn = weak_self_;
-        rusty::thread::spawn([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
-            auto start_time = std::chrono::steady_clock::now();
-            uint16_t retry_count = 0;
-
-            auto classify_request_failure = [](int err) -> TimeoutType {
-                if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
-                    err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
-                    return TimeoutType::CONNECT_TIMEOUT;
-                }
-                if (err == ETIMEDOUT || err == EAGAIN
-#if EWOULDBLOCK != EAGAIN
-                    || err == EWOULDBLOCK
-#endif
-                ) {
-                    return TimeoutType::REQUEST_TIMEOUT;
-                }
-                return TimeoutType::NONE;
-            };
-
-            auto finish_terminal = [&](int err, TimeoutType timeout_type) {
-                auto conn_opt = weak_conn.upgrade();
-                if (conn_opt.is_some()) {
-                    auto conn = conn_opt.unwrap();
-                    if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
-                        timeout_type == TimeoutType::REQUEST_TIMEOUT ||
-                        timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
-                        timeout_type == TimeoutType::TOTAL_TIMEOUT) {
-                        conn->metrics_.record_request_timeout();
-                    } else if (err != 0) {
-                        conn->metrics_.record_request_failed();
-                    }
-                }
-                if (timeout_type != TimeoutType::NONE) {
-                    auto state_guard = final_fu->state_.lock().unwrap();
-                    state_guard->timed_out = true;
-                }
-                final_fu->error_code_.set(err);
-                final_fu->timeout_type_.set(timeout_type);
-                final_fu->retry_count_.set(retry_count);
-                final_fu->notify_ready(final_fu);
-            };
-
-            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
-                finish_terminal(ETIMEDOUT, timeout_type);
-            };
-
-            while (true) {
-                auto now = std::chrono::steady_clock::now();
-                uint64_t elapsed_ms = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
-                if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
-                    set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
-                    return;
-                }
-
-                auto conn_opt = weak_conn.upgrade();
-                if (conn_opt.is_none()) {
-                    finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
-                    return;
-                }
-
-                auto conn = conn_opt.unwrap();
-                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](BinaryWriteArchive& m) {
-                    if (!args_bytes.empty()) {
-                        m.write_bytes(args_bytes.data(), args_bytes.size());
-                    }
-                });
-                if (attempt_result.is_err()) {
-                    int err = attempt_result.unwrap_err();
-                    finish_terminal(err, classify_request_failure(err));
-                    return;
-                }
-
-                auto attempt_fu = attempt_result.unwrap();
-                RequestOptions attempt_options = effective_options;
-                if (effective_options.total_timeout_ms > 0) {
-                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
-                    if (remaining_ms == 0) {
-                        conn->handle_free(attempt_fu->xid_);
-                        set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
-                        return;
-                    }
-                    if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
-                        attempt_options.timeout_ms = remaining_ms;
-                    }
-                }
-                attempt_fu->set_options(attempt_options);
-                if (attempt_fu->wait_with_options()) {
-                    final_fu->error_code_.set(attempt_fu->error_code_.get());
-                    final_fu->retry_count_.set(retry_count);
-                    if (attempt_fu->error_code_.get() == 0) {
-                        auto attempt_reply = attempt_fu->reply_.borrow_mut();
-                        size_t reply_size = attempt_reply->content_size();
-                        if (reply_size > 0) {
-                            final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
-                        }
-                    }
-                    final_fu->notify_ready(final_fu);
-                    return;
-                }
-
-                // Timed-out attempts are no longer useful; release pending map slot.
-                conn->handle_free(attempt_fu->xid_);
-
-                if (!effective_options.can_retry(retry_count)) {
-                    set_terminal_timeout(attempt_fu->get_timeout_type());
-                    return;
-                }
-
-                conn->metrics_.record_retry_attempt();
-                uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
-                if (backoff_delay_ms > 0) {
-                    if (effective_options.total_timeout_ms > 0) {
-                        auto before_sleep = std::chrono::steady_clock::now();
-                        uint64_t elapsed_before_sleep = static_cast<uint64_t>(
-                            std::chrono::duration_cast<std::chrono::milliseconds>(
-                                before_sleep - start_time).count());
-                        uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
-                        if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
-                            set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
-                            return;
-                        }
-                    }
-                    rusty::thread::sleep(std::chrono::milliseconds(backoff_delay_ms));
-                }
-
-                retry_count++;
-                final_fu->retry_count_.set(retry_count);
-            }
-        }).detach();
-
-        return FutureResult::Ok(final_fu);
+        return clientconn_request_with_options(*this, rpc_id, options, attr,
+                                               std::forward<F>(write_fn));
     }
 
     // @safe - Convenience overload without FutureAttr; delegates to
@@ -4005,6 +3679,324 @@ CircuitBreakerConfig ClientConnection::circuit_breaker_config() const { return c
 // the dequeue count, which is 0 by construction now.
 size_t ClientConnection::replay_pending_requests() {
   return 0;
+}
+
+// @unsafe - Counter::next, Marshal operators, channel proxy dispatch.
+// Channel-mode counterpart of request(): marshals [v64 xid][i32 rpc_id]
+// [user args] into a contiguous BufferSink and dispatches through the
+// bound proxy. Extracted from the inline request_via_channel template
+// method; the DSL flip's generic method delegates here.
+template<typename F>
+FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id,
+                                            const FutureAttr& attr, F&& write_fn) {
+    if (!self.allow_request_with_circuit_metrics()) {
+        return FutureResult::Err(EBUSY);
+    }
+    self.pending_queue_.expire_stale();
+    if (!self.state_machine_.is_connected()) {
+        if (self.buffering_config_.enabled &&
+            self.buffering_config_.behavior == DisconnectBehavior::QUEUE) {
+            auto fu = Future::create(self.xid_counter_.next(1), attr);
+            auto fu_for_cb = fu;  // Arc clone for the callback.
+            auto qr = QueuedRequest::new_();
+            qr.xid     = fu->xid_;
+            qr.rpc_id  = rpc_id;
+            qr.ttl_ms  = self.buffering_config_.default_ttl_ms;
+            // Capture an explicit self-pointer (== the old [this]); the
+            // callback outlives this call but not the connection.
+            const ClientConnection* self_ptr = &self;
+            qr.callback = rusty::Function<void(int)>(
+                [fu_for_cb, self_ptr](int err) mutable {
+                    self_ptr->metrics_.record_queue_drop();
+                    fu_for_cb->error_code_.set(err);
+                    fu_for_cb->notify_ready(fu_for_cb);
+                });
+            if (self.pending_queue_.enqueue(std::move(qr))) {
+                return FutureResult::Ok(std::move(fu));
+            }
+            return FutureResult::Err(kRequestQueueRejectedError);
+        }
+        self.record_circuit_result(ENOTCONN);
+        return FutureResult::Err(ENOTCONN);
+    }
+    {
+        auto direct_guard = self.direct_channel_.lock().unwrap();
+        if (direct_guard->is_some()) {
+            auto& proxy = *direct_guard->as_ref().unwrap();
+            if (proxy.is_closed()) {
+                self.record_circuit_result(ENOTCONN);
+                return FutureResult::Err(ENOTCONN);
+            }
+        } else {
+            auto guard = self.fiber_channel_.lock().unwrap();
+            if (guard->is_none() ||
+                guard->as_ref().unwrap()->is_closed()) {
+                self.record_circuit_result(ENOTCONN);
+                return FutureResult::Err(ENOTCONN);
+            }
+        }
+    }
+
+    auto fu = Future::create(self.xid_counter_.next(1), attr);
+    {
+        auto pending_guard = self.pending_fu_.lock().unwrap();
+        pending_guard->insert(fu->xid_, fu);
+    }
+
+    BufferSink body_sink;
+    BinaryWriteArchive ar(&body_sink);
+    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                  "request write_fn must accept BinaryWriteArchive&");
+    ar << v64(fu->xid_);
+    ar << rpc_id;
+    write_fn(ar);
+
+    const ChannelError ch_err =
+        self.dispatch_frame_via_channel(body_sink.bytes.data(),
+                                        body_sink.bytes.len());
+    if (ch_err != ChannelError::None) {
+        {
+            auto pending_guard = self.pending_fu_.lock().unwrap();
+            pending_guard->remove(fu->xid_);
+        }
+        self.record_circuit_result(EIO);
+        return FutureResult::Err(EIO);
+    }
+
+    self.metrics_.record_request_sent();
+    self.on_request_dispatched(body_sink.bytes.len());
+    return FutureResult::Ok(fu);
+}
+
+// @unsafe - Slim async-callback request (no Arc<Future>, no HashMap node).
+// Extracted from the inline request_async template method.
+template<typename F>
+rusty::Result<rusty::Unit, i32> clientconn_request_async(
+    const ClientConnection& self, i32 rpc_id, F&& write_fn,
+    ClientConnection::AsyncReplyCallback on_reply) {
+    if (!self.allow_request_with_circuit_metrics()) {
+        return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
+    }
+    if (!self.state_machine_.is_connected()) {
+        self.record_circuit_result(ENOTCONN);
+        return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+    }
+    {
+        auto direct_guard = self.direct_channel_.lock().unwrap();
+        if (direct_guard->is_some()) {
+            auto& proxy = *direct_guard->as_ref().unwrap();
+            if (proxy.is_closed()) {
+                self.record_circuit_result(ENOTCONN);
+                return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+            }
+        } else {
+            auto guard = self.fiber_channel_.lock().unwrap();
+            if (guard->is_none() ||
+                guard->as_ref().unwrap()->is_closed()) {
+                self.record_circuit_result(ENOTCONN);
+                return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
+            }
+        }
+    }
+
+    const i64 xid = self.xid_counter_.next(1);
+    const size_t slot = static_cast<size_t>(xid) % kAsyncSlotCount;
+    {
+        auto guard = self.pending_cb_slots_.lock().unwrap();
+        if ((*guard)[slot].is_some()) {
+            self.record_circuit_result(EBUSY);
+            return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
+        }
+        (*guard)[slot] = rusty::Some(std::move(on_reply));
+    }
+
+    BufferSink body_sink;
+    BinaryWriteArchive ar(&body_sink);
+    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                  "request_async write_fn must accept BinaryWriteArchive&");
+    ar << v64(xid);
+    ar << rpc_id;
+    write_fn(ar);
+
+    const ChannelError ch_err =
+        self.dispatch_frame_via_channel(body_sink.bytes.data(),
+                                        body_sink.bytes.len());
+    if (ch_err != ChannelError::None) {
+        auto guard = self.pending_cb_slots_.lock().unwrap();
+        (*guard)[slot] = rusty::None;
+        self.record_circuit_result(EIO);
+        return rusty::Result<rusty::Unit, i32>::Err(EIO);
+    }
+    self.metrics_.record_request_sent();
+    self.on_request_dispatched(body_sink.bytes.len());
+    return rusty::Result<rusty::Unit, i32>::Ok(rusty::Unit{});
+}
+
+// @unsafe - Same as request_via_channel, plus serialize-once for safe
+// retry replay + an async retry/backoff spawn. Extracted from the inline
+// request_with_options(rpc_id, options, attr, write_fn) template method.
+template<typename F>
+FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id,
+                                             const RequestOptions& options,
+                                             const FutureAttr& attr, F&& write_fn) {
+    // Serialize args once so retries can replay identical payload safely.
+    Marshal serialized_args;
+    static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
+                  "request_with_options write_fn must accept BinaryWriteArchive&");
+    BinaryWriteArchive ar(make_sink_proxy(&serialized_args));
+    write_fn(ar);
+    std::string args_bytes;
+    size_t args_size = serialized_args.content_size();
+    if (args_size > 0) {
+        args_bytes.resize(args_size);
+        verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
+    }
+
+    // Non-idempotent operations must never be retried even if max_retries is set.
+    RequestOptions effective_options = options;
+    if (!effective_options.idempotent) {
+        effective_options.max_retries = 0;
+    }
+
+    // Return a coordinator future immediately; internal attempts run async.
+    auto final_fu = Future::create(self.xid_counter_.next(1), attr);
+    RequestOptions waiter_options = effective_options;
+    waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
+    final_fu->set_options(waiter_options);
+
+    auto weak_conn = self.weak_self_;
+    rusty::thread::spawn([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+        auto start_time = std::chrono::steady_clock::now();
+        uint16_t retry_count = 0;
+
+        auto classify_request_failure = [](int err) -> TimeoutType {
+            if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
+                err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
+                return TimeoutType::CONNECT_TIMEOUT;
+            }
+            if (err == ETIMEDOUT || err == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+                || err == EWOULDBLOCK
+#endif
+            ) {
+                return TimeoutType::REQUEST_TIMEOUT;
+            }
+            return TimeoutType::NONE;
+        };
+
+        auto finish_terminal = [&](int err, TimeoutType timeout_type) {
+            auto conn_opt = weak_conn.upgrade();
+            if (conn_opt.is_some()) {
+                auto conn = conn_opt.unwrap();
+                if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
+                    timeout_type == TimeoutType::REQUEST_TIMEOUT ||
+                    timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
+                    timeout_type == TimeoutType::TOTAL_TIMEOUT) {
+                    conn->metrics_.record_request_timeout();
+                } else if (err != 0) {
+                    conn->metrics_.record_request_failed();
+                }
+            }
+            if (timeout_type != TimeoutType::NONE) {
+                auto state_guard = final_fu->state_.lock().unwrap();
+                state_guard->timed_out = true;
+            }
+            final_fu->error_code_.set(err);
+            final_fu->timeout_type_.set(timeout_type);
+            final_fu->retry_count_.set(retry_count);
+            final_fu->notify_ready(final_fu);
+        };
+
+        auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+            finish_terminal(ETIMEDOUT, timeout_type);
+        };
+
+        while (true) {
+            auto now = std::chrono::steady_clock::now();
+            uint64_t elapsed_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+            if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
+                set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                return;
+            }
+
+            auto conn_opt = weak_conn.upgrade();
+            if (conn_opt.is_none()) {
+                finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
+                return;
+            }
+
+            auto conn = conn_opt.unwrap();
+            auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](BinaryWriteArchive& m) {
+                if (!args_bytes.empty()) {
+                    m.write_bytes(args_bytes.data(), args_bytes.size());
+                }
+            });
+            if (attempt_result.is_err()) {
+                int err = attempt_result.unwrap_err();
+                finish_terminal(err, classify_request_failure(err));
+                return;
+            }
+
+            auto attempt_fu = attempt_result.unwrap();
+            RequestOptions attempt_options = effective_options;
+            if (effective_options.total_timeout_ms > 0) {
+                uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
+                if (remaining_ms == 0) {
+                    conn->handle_free(attempt_fu->xid_);
+                    set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                    return;
+                }
+                if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
+                    attempt_options.timeout_ms = remaining_ms;
+                }
+            }
+            attempt_fu->set_options(attempt_options);
+            if (attempt_fu->wait_with_options()) {
+                final_fu->error_code_.set(attempt_fu->error_code_.get());
+                final_fu->retry_count_.set(retry_count);
+                if (attempt_fu->error_code_.get() == 0) {
+                    auto attempt_reply = attempt_fu->reply_.borrow_mut();
+                    size_t reply_size = attempt_reply->content_size();
+                    if (reply_size > 0) {
+                        final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
+                    }
+                }
+                final_fu->notify_ready(final_fu);
+                return;
+            }
+
+            // Timed-out attempts are no longer useful; release pending map slot.
+            conn->handle_free(attempt_fu->xid_);
+
+            if (!effective_options.can_retry(retry_count)) {
+                set_terminal_timeout(attempt_fu->get_timeout_type());
+                return;
+            }
+
+            conn->metrics_.record_retry_attempt();
+            uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
+            if (backoff_delay_ms > 0) {
+                if (effective_options.total_timeout_ms > 0) {
+                    auto before_sleep = std::chrono::steady_clock::now();
+                    uint64_t elapsed_before_sleep = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            before_sleep - start_time).count());
+                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
+                    if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
+                        set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                        return;
+                    }
+                }
+                rusty::thread::sleep(std::chrono::milliseconds(backoff_delay_ms));
+            }
+
+            retry_count++;
+            final_fu->retry_count_.set(retry_count);
+        }
+    }).detach();
+
+    return FutureResult::Ok(final_fu);
 }
 
 // @unsafe - Dispatch one frame body through the bound channel proxy.
