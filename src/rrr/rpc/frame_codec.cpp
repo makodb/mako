@@ -4,22 +4,25 @@ module;
 #include <string.h>
 
 #include <rusty/rusty.hpp>
+#include <rusty/io.hpp>
 
 export module rrr.frame_codec;
 
 import std;
 import rrr.internal_protocol;
 
-// @safe - wire-protocol frame codec. The free codec functions and the
-// FrameStreamReader methods that take or compute on raw `uint8_t*` /
-// `const uint8_t*` (write_header / peek_header / encode_into /
-// FrameStreamReader::append / next_frame / consume_frame /
-// compact_if_needed) carry per-method `// @unsafe` because they do
-// raw pointer arithmetic + std::memcpy / std::memmove on the
-// transport hot path. The trivial accessors (reset, buffered_bytes,
-// empty) and the POD structs inherit namespace @safe.
-// SP-5 follow-up: rewrite this codec on top of `rusty::io::Cursor`
-// once perf benchmarks of the cursor path are in.
+// @safe - wire-protocol frame codec. The free codec functions
+// (write_header / peek_header / encode_into) still carry per-method
+// `// @unsafe` for raw `uint8_t*` arithmetic + std::memcpy. The POD
+// structs and trivial accessors inherit namespace @safe.
+// SP-5 DONE: FrameStreamReader is now built on `rusty::io::Cursor`.
+// The buffer + read offset live in `cursor_`; the unread bytes are
+// peeked via `cursor_.fill_buf()` (a `std::span`) and dropped via
+// `cursor_.consume(n)`, so `next_frame` / `consume_frame` no longer do
+// raw `buf_.data() + read_pos_` arithmetic and `compact_if_needed` no
+// longer does `std::memmove` (it copies the unread tail off the span).
+// The only residual @unsafe are inherent boundaries: `append` (raw
+// transport pointer in) and the zero-copy FrameView payload pointer.
 export namespace rrr {
 
 
@@ -320,8 +323,14 @@ class FrameStreamReader {
  private:
     void compact_if_needed();
 
-    std::vector<std::uint8_t> buf_;
-    std::size_t               read_pos_ = 0;
+    // SP-5: the buffer + read offset are owned by a `rusty::io::Cursor`.
+    // `cursor_.position()` is the read offset (old `read_pos_`);
+    // `cursor_.get_ref()` is the backing vector (old `buf_`). The unread
+    // bytes are peeked via `cursor_.fill_buf()` (a `std::span`, no raw
+    // `buf_.data() + read_pos_` arithmetic) and dropped via
+    // `cursor_.consume(n)`.
+    rusty::io::Cursor<std::vector<std::uint8_t>> cursor_{
+        std::vector<std::uint8_t>{}};
 };
 
 
@@ -392,73 +401,81 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
 FrameStreamReader::FrameStreamReader() = default;
 FrameStreamReader::~FrameStreamReader() = default;
 
-// @unsafe - takes raw `const uint8_t*` data + size pair from transport.
+// @unsafe - takes raw `const uint8_t*` data + size pair from transport
+// (an inherent boundary). The buffer growth itself is via the Cursor's
+// owned vector.
 void FrameStreamReader::append(const std::uint8_t* data, std::size_t size) {
     if (size == 0) return;
-    buf_.insert(buf_.end(), data, data + size);
+    auto& buf = cursor_.get_mut();
+    buf.insert(buf.end(), data, data + size);
 }
 
-// @unsafe - `buf_.data() + read_pos_` arithmetic; stores a raw
-// `const uint8_t*` payload pointer into the out FrameView.
+// @safe-ish - peeks the unread bytes via `cursor_.fill_buf()` (a span,
+// no `buf_.data() + read_pos_` arithmetic). The lone @unsafe is storing
+// the zero-copy `span.data() + kFrameHeaderSize` payload pointer into the
+// out FrameView (inherent to FrameView being a view, not an owner).
 FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
-    const std::size_t available = buffered_bytes();
-    const std::uint8_t* head = buf_.data() + read_pos_;
+    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
 
     FrameHeader header;
     const FrameDecodeStatus header_status =
-        frame_codec_peek_header(head, available, header);
+        frame_codec_peek_header(rem.data(), rem.size(), header);
     if (header_status != FrameDecodeStatus::Complete) {
         return header_status;
     }
 
     const std::size_t total = static_cast<std::size_t>(header.total_frame_size());
-    if (available < total) {
+    if (rem.size() < total) {
         return FrameDecodeStatus::NeedMoreBytes;
     }
 
     out_view.header       = header;
-    out_view.payload      = head + kFrameHeaderSize;
+    // @unsafe { zero-copy view: span -> raw payload pointer }
+    out_view.payload      = rem.data() + kFrameHeaderSize;
     out_view.payload_size = static_cast<std::size_t>(header.payload_size);
     return FrameDecodeStatus::Complete;
 }
 
-// @unsafe - re-peeks the header via raw `buf_.data() + read_pos_`.
+// @safe-ish - peeks via `cursor_.fill_buf()` (span); advances the read
+// offset via `cursor_.consume(total)` instead of `read_pos_ += total`.
 void FrameStreamReader::consume_frame() {
-    const std::size_t available = buffered_bytes();
-    if (available < kFrameHeaderSize) return;
+    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
+    if (rem.size() < kFrameHeaderSize) return;
 
     FrameHeader header;
-    if (frame_codec_peek_header(buf_.data() + read_pos_, available, header)
+    if (frame_codec_peek_header(rem.data(), rem.size(), header)
         != FrameDecodeStatus::Complete) {
         return;
     }
     const std::size_t total = static_cast<std::size_t>(header.total_frame_size());
-    if (available < total) return;
+    if (rem.size() < total) return;
 
-    read_pos_ += total;
+    cursor_.consume(total);
     compact_if_needed();
 }
 
 void FrameStreamReader::reset() {
-    buf_.clear();
-    read_pos_ = 0;
+    cursor_.get_mut().clear();
+    cursor_.set_position(0);
 }
 
 std::size_t FrameStreamReader::buffered_bytes() const {
-    return buf_.size() - read_pos_;
+    return cursor_.remaining_len();
 }
 
-// @unsafe - `std::memmove` from `buf_.data() + read_pos_` to `buf_.data()`.
+// @safe - compacts by copying the unread tail (via `cursor_.fill_buf()`
+// span) into a fresh buffer and re-seating the Cursor — no `std::memmove`
+// + raw `buf_.data() + read_pos_` arithmetic. Rare path (only past the
+// 64 KiB compaction threshold), so the one alloc is well amortized.
 void FrameStreamReader::compact_if_needed() {
-    if (read_pos_ == 0) return;
-    if (read_pos_ < kCompactThresholdBytes) return;
+    const std::size_t read_pos = cursor_.position();
+    if (read_pos == 0) return;
+    if (read_pos < kCompactThresholdBytes) return;
 
-    const std::size_t remaining = buf_.size() - read_pos_;
-    if (remaining > 0) {
-        std::memmove(buf_.data(), buf_.data() + read_pos_, remaining);
-    }
-    buf_.resize(remaining);
-    read_pos_ = 0;
+    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
+    std::vector<std::uint8_t> compacted(rem.begin(), rem.end());
+    cursor_ = rusty::io::Cursor<std::vector<std::uint8_t>>::new_(
+        std::move(compacted));
 }
 
 
