@@ -890,6 +890,22 @@ const kAsyncSlotCount: usize = 16384;
 constexpr size_t kAsyncSlotCount = static_cast<size_t>(16384);
 /*RUSTYCPP:GEN-END id=client.async_slot_count*/
 
+// Hand-written sub-struct holding ClientConnection's reconnect-coordination
+// atomics. CAS + acquire/release ordering cannot be modeled by rusty::Cell
+// (single-thread, Copy-only), so these stay std::atomic; ClientConnection
+// holds this by value (as a `mutable` member, so const methods can drive the
+// atomics — atomic semantics make it race-free), and the eventual DSL struct
+// declares it as an opaque field. The recv/reconnect machinery accesses the
+// atomics directly via `reconnect_.<field>`.
+struct ReconnectState {
+  std::atomic<bool> reconnecting_{false};
+  std::atomic<bool> reconnect_abort_{false};
+  // auto-reconnect attempt counter — incremented before the reconnect-thread
+  // spawn in on_channel_closed_fan_out; tests inspect it to verify the
+  // fan-out reached the reconnect-policy branch.
+  std::atomic<uint64_t> channel_reconnect_attempts_{0};
+};
+
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
 // chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
@@ -1015,12 +1031,10 @@ private:
 
     // Reconnection policy and state
     mutable ReconnectPolicy reconnect_policy_;  // mutable for const set_reconnect_policy()
-    // mutable: std::atomic::store / .load are interior-mutable in
-    // semantics but std::atomic::store is not declared `const` (it has
-    // `volatile` overloads only). Mark mutable so const methods can
-    // legally call store() — atomic semantics make this race-free.
-    mutable std::atomic<bool> reconnecting_{false};
-    mutable std::atomic<bool> reconnect_abort_{false};
+    // Reconnect-coordination atomics (CAS + memory ordering), carved into a
+    // hand-written sub-struct (see ReconnectState above). `mutable` so const
+    // methods can drive the atomics.
+    mutable ReconnectState reconnect_;
     std::string reconnect_address_;  // Address to reconnect to
 
     // Request buffering during disconnection. The DSL-emitted
@@ -1115,13 +1129,7 @@ private:
     void reset_channel_mode_for_reconnect();
 
     // observable counter for channel-mode
-    // auto-reconnect attempts. Incremented before the reconnect
-    // thread spawn in `on_channel_closed_fan_out`. Tests inspect
-    // this to verify the fan-out reached the reconnect-policy branch
-    // without having to drive a real reconnect (sub-leaf 4e wires
-    // the factory-based reconnect that supersedes the legacy fd
-    // path).
-    std::atomic<uint64_t> channel_reconnect_attempts_{0};
+    // channel_reconnect_attempts_ lives in reconnect_ (ReconnectState) above.
 
 public:
     /**
@@ -1281,7 +1289,7 @@ public:
     // pre/post a synthesized `on_closed`.
     // @safe - Atomic load.
     uint64_t channel_reconnect_attempts_count() const {
-        return channel_reconnect_attempts_.load(std::memory_order_acquire);
+        return reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire);
     }
 
     // Test-only: seed the reconnect-target address. Production wires
@@ -1299,7 +1307,7 @@ public:
     // spawned thread itself aborts immediately.
     // @safe - Atomic store.
     void abort_reconnect() {
-        reconnect_abort_.store(true, std::memory_order_release);
+        reconnect_.reconnect_abort_.store(true, std::memory_order_release);
     }
 
     // @safe - Simple status check using state machine
@@ -1340,7 +1348,7 @@ public:
 
     // @safe - Check if a reconnection attempt is in progress
     bool is_reconnecting() const {
-        return reconnecting_.load(std::memory_order_acquire);
+        return reconnect_.reconnecting_.load(std::memory_order_acquire);
     }
 
     /**
@@ -1361,7 +1369,7 @@ public:
     // tests like rpc_metrics_test::QueueDropCounter... see a stale
     // abort=true left over from a prior close() and reconnect bails.
     int reconnect(rusty::Function<void(bool)> on_complete) const {
-        reconnect_abort_.store(false, std::memory_order_release);
+        reconnect_.reconnect_abort_.store(false, std::memory_order_release);
         // @unsafe { const_cast<ClientConnection*>(this) — see decl }
         { return const_cast<ClientConnection*>(this)->reconnect(std::move(on_complete)); }
     }
@@ -3528,8 +3536,8 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
 
 // @safe - Simple destructor
 ClientConnection::~ClientConnection() {
-  reconnect_abort_.store(true, std::memory_order_release);
-  reconnecting_.store(false, std::memory_order_release);
+  reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+  reconnect_.reconnecting_.store(false, std::memory_order_release);
   invalidate_pending_futures();
 }
 
@@ -3656,7 +3664,7 @@ void ClientConnection::close() const {
 void ClientConnection::mark_closing() const {
   // @unsafe { std::atomic::store + invalidate_pending_futures (still @unsafe) }
   {
-    reconnect_abort_.store(true, std::memory_order_release);
+    reconnect_.reconnect_abort_.store(true, std::memory_order_release);
     if (state_machine_.is_connected()) {
       // Mark as in-progress close, but do not enter terminal state yet.
       // The poll-thread close callback performs the actual fd close and final state transition.
@@ -3718,13 +3726,13 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
     return result;
   };
 
-  if (reconnect_abort_.load(std::memory_order_acquire)) {
+  if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     return complete_callback(ECANCELED);
   }
 
   auto wait_for_inflight_reconnect = [&]() -> int {
-    while (reconnecting_.load(std::memory_order_acquire)) {
-      if (reconnect_abort_.load(std::memory_order_acquire)) {
+    while (reconnect_.reconnecting_.load(std::memory_order_acquire)) {
+      if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
         return ECANCELED;
       }
       if (state_machine_.is_connected()) {
@@ -3739,7 +3747,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
     return INT_MIN;
   };
 
-  if (reconnecting_.load(std::memory_order_acquire)) {
+  if (reconnect_.reconnecting_.load(std::memory_order_acquire)) {
     int waited = wait_for_inflight_reconnect();
     if (waited != INT_MIN) {
       return complete_callback(waited);
@@ -3761,7 +3769,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
 
   while (true) {
     bool expected = false;
-    if (reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    if (reconnect_.reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       break;
     }
 
@@ -3773,7 +3781,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   invoke_reconnecting_callback();
 
   auto complete_reconnect = [&](bool success, int result) -> int {
-    reconnecting_.store(false, std::memory_order_release);
+    reconnect_.reconnecting_.store(false, std::memory_order_release);
     invoke_reconnected_callback(success);
 
     if (success) {
@@ -3802,7 +3810,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   };
 
   auto reconnect_once = [&]() -> int {
-    if (reconnect_abort_.load(std::memory_order_acquire)) {
+    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return ECANCELED;
     }
     // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
@@ -3812,7 +3820,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
     return connect(reconnect_address_.c_str());
   };
 
-  if (reconnect_abort_.load(std::memory_order_acquire)) {
+  if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     return complete_reconnect(false, ECANCELED);
   }
 
@@ -3835,7 +3843,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   // Follow configured backoff/retry policy for subsequent attempts.
   auto calc = ReconnectCalculator::new_(reconnect_policy_);
   while (calc.should_retry()) {
-    if (reconnect_abort_.load(std::memory_order_acquire)) {
+    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return complete_reconnect(false, ECANCELED);
     }
 
@@ -3844,7 +3852,7 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
       rusty::thread::sleep(std::chrono::milliseconds(delay_ms));
     }
 
-    if (reconnect_abort_.load(std::memory_order_acquire)) {
+    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return complete_reconnect(false, ECANCELED);
     }
 
@@ -4446,7 +4454,7 @@ void ClientConnection::on_channel_closed_fan_out() {
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
       prev_state == ConnectionState::DISCONNECTED ||
-      reconnect_abort_.load(std::memory_order_acquire);
+      reconnect_.reconnect_abort_.load(std::memory_order_acquire);
 
   if (!user_initiated_closing) {
     invoke_error_callback(ECONNRESET, "channel closed");
@@ -4473,9 +4481,9 @@ void ClientConnection::on_channel_closed_fan_out() {
   if (reconnect_policy_.auto_reconnect &&
       // std::string::empty() is a pure const accessor, safe in @safe code.
       !reconnect_address_.empty()) {
-    channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
+    reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
 
-    if (reconnect_abort_.load(std::memory_order_acquire)) {
+    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       // Caller requested no reconnect (typically: connection
       // tearing down). Counter is still bumped for observability.
       return;
@@ -4488,7 +4496,7 @@ void ClientConnection::on_channel_closed_fan_out() {
       }
       auto conn = conn_opt.unwrap();
       if (!conn->reconnect_policy_.auto_reconnect ||
-          conn->reconnect_abort_.load(std::memory_order_acquire)) {
+          conn->reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
         return;
       }
       auto state = conn->connection_state();
@@ -4684,7 +4692,7 @@ void ClientConnection::handle_error() const {
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
       prev_state == ConnectionState::DISCONNECTED ||
-      reconnect_abort_.load(std::memory_order_acquire);
+      reconnect_.reconnect_abort_.load(std::memory_order_acquire);
 
   if (!user_initiated_closing) {
     invoke_error_callback(ECONNRESET, "connection error");
@@ -4701,7 +4709,7 @@ void ClientConnection::handle_error() const {
 
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
-      !reconnect_abort_.load(std::memory_order_acquire)) {
+      !reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     // std::string::empty() is a pure const accessor; safe in @safe code.
     if (reconnect_address_.empty()) {
       return;
@@ -4715,7 +4723,7 @@ void ClientConnection::handle_error() const {
 
         auto conn = conn_opt.unwrap();
         if (!conn->reconnect_policy_.auto_reconnect ||
-            conn->reconnect_abort_.load(std::memory_order_acquire)) {
+            conn->reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
           return;
         }
 
