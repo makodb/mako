@@ -921,6 +921,14 @@ struct ReconnectState {
   ReconnectState& operator=(ReconnectState&&) = delete;
 };
 
+// Async-callback type for request_async. Hoisted from a nested
+// ClientConnection typedef to namespace scope so the DSL struct (Phase 5
+// flip) can reference it as a field type — the DSL parser rejects an
+// in-struct `using` alias, but a namespace-scope alias resolves fine as a
+// field/param type.
+using AsyncReplyCallback = rusty::Function<
+    void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
+
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
 // chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
@@ -1079,8 +1087,10 @@ class ClientConnection {
     SpinMutex<rusty::HashMap<i64, rusty::Arc<Future>>> pending_fu_{rusty::HashMap<i64, rusty::Arc<Future>>()};
 
 public:
-    using AsyncReplyCallback = rusty::Function<
-        void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
+    // AsyncReplyCallback is now a namespace-scope alias (declared above the
+    // class); the friend-template decl that references it can move back
+    // into the main friend block once the nested typedef is gone, but is
+    // kept here for minimal churn.
     template<typename F>
     friend rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& self, i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply);
 private:
@@ -2087,7 +2097,7 @@ impl Client {
         guard.as_ref().unwrap().request_with_options(rpc_id, options, FutureAttr {}, write_fn)
     }
 
-    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: ClientConnection::AsyncReplyCallback) -> Result<(), i32> {
+    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: AsyncReplyCallback) -> Result<(), i32> {
         let guard = self.connection_field.borrow();
         if guard.is_none() {
             return Result::<(), i32>::Err(ENOTCONN);
@@ -2413,7 +2423,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=86639c0ee98fe75994366254889e0f3c1bae251c0a27d891d34bf488613f7798*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=48960830d95ab8a4decd3d92680bb90a285d41fedc7ab2083ca48656f9ebf566*/
 struct Client;
 
 struct Client {
@@ -2465,7 +2475,7 @@ struct Client {
     template<typename F>
     FutureResult request_with_options(int32_t rpc_id, const RequestOptions& options, F write_fn) const;
     template<typename F>
-    auto request_async(int32_t rpc_id, F write_fn, ClientConnection::AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t>;
+    auto request_async(int32_t rpc_id, F write_fn, AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t>;
     void set_valid(bool _valid) const;
     int32_t connect(const int8_t* addr, bool client) const;
     void close() const;
@@ -2574,7 +2584,7 @@ FutureResult Client::request_with_options(int32_t rpc_id, const RequestOptions& 
 }
 
 template<typename F>
-auto Client::request_async(int32_t rpc_id, F write_fn, ClientConnection::AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t> {
+auto Client::request_async(int32_t rpc_id, F write_fn, AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t> {
     const auto guard = this->connection_field.borrow();
     if (guard->is_none()) {
         return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
@@ -3270,7 +3280,7 @@ void clientconn_invalidate_pending_futures(const ClientConnection& self) {
   // Drain the slim async-callback slots first.  Move callbacks out
   // under the lock, then fire them outside the lock with ENOTCONN +
   // null reply view.
-  rusty::Vec<ClientConnection::AsyncReplyCallback> drained_callbacks;
+  rusty::Vec<AsyncReplyCallback> drained_callbacks;
   {
     auto cb_guard = self.pending_cb_slots_.lock().unwrap();
     for (size_t i = 0; i < cb_guard->len(); ++i) {
@@ -3773,7 +3783,7 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
 template<typename F>
 rusty::Result<rusty::Unit, i32> clientconn_request_async(
     const ClientConnection& self, i32 rpc_id, F&& write_fn,
-    ClientConnection::AsyncReplyCallback on_reply) {
+    AsyncReplyCallback on_reply) {
     if (!self.allow_request_with_circuit_metrics()) {
         return rusty::Result<rusty::Unit, i32>::Err(EBUSY);
     }
@@ -4454,7 +4464,7 @@ void clientconn_decode_response_and_notify(ClientConnection& self, const std::ui
   {
     const size_t slot = static_cast<size_t>(v_reply_xid.get())
                           % kAsyncSlotCount;
-    rusty::Option<ClientConnection::AsyncReplyCallback> cb_opt = rusty::None;
+    rusty::Option<AsyncReplyCallback> cb_opt = rusty::None;
     {
       auto guard = self.pending_cb_slots_.lock().unwrap();
       if ((*guard)[slot].is_some()) {
