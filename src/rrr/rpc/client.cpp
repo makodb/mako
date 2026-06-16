@@ -944,6 +944,13 @@ class ClientConnection {
     friend void clientconn_invoke_reconnecting_callback(const ClientConnection& self);
     friend void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success);
     friend void clientconn_invoke_connected_callback(const ClientConnection& self);
+    friend void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config);
+    friend void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
+    friend HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self);
+    friend void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config);
+    friend CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self);
+    friend void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
+    friend void clientconn_handle_free(const ClientConnection& self, i64 xid);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -3622,10 +3629,10 @@ void ClientConnection::invalidate_pending_futures() const {
 
 // @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
 // LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
-void ClientConnection::fail_pending_future(i64 xid, int err) const {
+void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err) {
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
-    auto pending_guard = pending_fu_.lock().unwrap();
+    auto pending_guard = self.pending_fu_.lock().unwrap();
     auto fu_ptr = pending_guard->get(xid);
     if (fu_ptr.is_some()) {
       fu_opt = rusty::Some(fu_ptr.unwrap().clone());
@@ -3635,12 +3642,14 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
 
   if (fu_opt.is_some()) {
     auto fu = fu_opt.unwrap();
-    metrics_.record_request_dropped();
+    self.metrics_.record_request_dropped();
     fu->error_code_.set(err);
     // @unsafe - Future::notify_ready uses interior mutability + callback execution.
     { fu->notify_ready(fu); }
   }
 }
+
+void ClientConnection::fail_pending_future(i64 xid, int err) const { clientconn_fail_pending_future(*this, xid, err); }
 
 // @unsafe - Drives channel proxy close + invalidates futures.
 //
@@ -3715,14 +3724,16 @@ void clientconn_mark_closing(const ClientConnection& self) {
 void ClientConnection::mark_closing() const { clientconn_mark_closing(*this); }
 
 // @safe - SpinMutex::lock + HashMap::remove + Counter::record are all @safe.
-void ClientConnection::handle_free(i64 xid) const {
-  auto guard = pending_fu_.lock().unwrap();
+void clientconn_handle_free(const ClientConnection& self, i64 xid) {
+  auto guard = self.pending_fu_.lock().unwrap();
   if (guard->remove(xid).is_some()) {
-    metrics_.record_request_dropped();
+    self.metrics_.record_request_dropped();
     // Arc auto-released when removed from map
   }
   // Guard dropped here, releasing lock
 }
+
+void ClientConnection::handle_free(i64 xid) const { clientconn_handle_free(*this, xid); }
 
 // @unsafe - Establishes TCP/IPC connection to server
 // Contains syscalls, raw pointers, and other unsafe operations
@@ -3917,30 +3928,25 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
 }
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)
-void ClientConnection::set_buffering_config(const BufferingConfig& config) const {
-  // @unsafe - struct assignment operator
-  { buffering_config_ = config; }
-
-  // Clear any pending requests since config changed
-  // Note: We can't recreate the queue (mutex not movable), so just clear
-  // @unsafe - const propagation through mutable member
-  {
-    if (!pending_queue_.empty()) {
-      pending_queue_.clear_all(ECONNABORTED);
-    }
-
-    // Update the queue's internal config to match
-    pending_queue_.update_config(config.to_queue_config());
+void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config) {
+  self.buffering_config_ = config;
+  // Clear any pending requests since config changed (queue's mutex is not
+  // movable, so we clear rather than recreate).
+  if (!self.pending_queue_.empty()) {
+    self.pending_queue_.clear_all(ECONNABORTED);
   }
+  self.pending_queue_.update_config(config.to_queue_config());
 }
+
+void ClientConnection::set_buffering_config(const BufferingConfig& config) const { clientconn_set_buffering_config(*this, config); }
 
 // @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
 // lambda body only calls @safe methods + Log_warn (a @safe template shim).
 // One inner @unsafe block remains for the const_cast.
-void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
-  heartbeat_manager_.set_config(config);
-  WeakClientConnection weak_conn = weak_self_;
-  heartbeat_manager_.set_on_timeout([weak_conn]() {
+void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config) {
+  self.heartbeat_manager_.set_config(config);
+  WeakClientConnection weak_conn = self.weak_self_;
+  self.heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
       return;
@@ -3956,20 +3962,25 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
   });
 }
 
+void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const { clientconn_set_heartbeat_config(*this, config); }
+
 // @safe - HeartbeatManager class is @safe; config() returns by value.
-HeartbeatConfig ClientConnection::heartbeat_config() const {
-  return heartbeat_manager_.config();
+HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self) {
+  return self.heartbeat_manager_.config();
 }
+HeartbeatConfig ClientConnection::heartbeat_config() const { return clientconn_heartbeat_config(*this); }
 
 // @safe - CircuitBreaker class is @safe; set_config is @safe.
-void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
-  circuit_breaker_.set_config(config);
+void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config) {
+  self.circuit_breaker_.set_config(config);
 }
+void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const { clientconn_set_circuit_breaker_config(*this, config); }
 
 // @safe - CircuitBreaker class is @safe; config() returns by value.
-CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
-  return circuit_breaker_.config();
+CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self) {
+  return self.circuit_breaker_.config();
 }
+CircuitBreakerConfig ClientConnection::circuit_breaker_config() const { return clientconn_circuit_breaker_config(*this); }
 
 // @safe - No-op stub returning a constant. (The RequestQueue methods
 // it nominally documents are themselves @safe in Tier 2 anyway.)
