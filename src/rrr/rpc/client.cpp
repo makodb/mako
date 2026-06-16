@@ -932,6 +932,11 @@ class ClientConnection {
     // Drop body extracted as a free fn so the DSL `impl Drop` (Phase 5) can
     // delegate to it; friend now, public once the struct is DSL-migrated.
     friend void clientconn_drop(const ClientConnection& self);
+    // Phase 5: gnarly method bodies extracted to friend free fns (clientconn_*)
+    // so the eventual DSL methods can delegate to them; friend now, public-
+    // struct free-fn calls at the flip.
+    friend void clientconn_mark_closing(const ClientConnection& self);
+    friend void clientconn_record_circuit_result(const ClientConnection& self, i32 err);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -3688,18 +3693,19 @@ void ClientConnection::close() const {
 // into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
 // const: state_machine_, reconnect_abort_, and invalidate_pending_futures
 // are all const-callable.
-void ClientConnection::mark_closing() const {
-  // @unsafe { std::atomic::store + invalidate_pending_futures (still @unsafe) }
-  {
-    reconnect_.reconnect_abort_.store(true, std::memory_order_release);
-    if (state_machine_.is_connected()) {
-      // Mark as in-progress close, but do not enter terminal state yet.
-      // The poll-thread close callback performs the actual fd close and final state transition.
-      state_machine_.transition_to(ConnectionState::DISCONNECTING);
-    }
-    invalidate_pending_futures();
+// @unsafe - mark_closing body (extracted as a free fn for the DSL method to
+// delegate to). std::atomic::store + invalidate_pending_futures.
+void clientconn_mark_closing(const ClientConnection& self) {
+  self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+  if (self.state_machine_.is_connected()) {
+    // Mark as in-progress close, but do not enter terminal state yet.
+    // The poll-thread close callback performs the actual fd close and final state transition.
+    self.state_machine_.transition_to(ConnectionState::DISCONNECTING);
   }
+  self.invalidate_pending_futures();
 }
+
+void ClientConnection::mark_closing() const { clientconn_mark_closing(*this); }
 
 // @safe - SpinMutex::lock + HashMap::remove + Counter::record are all @safe.
 void ClientConnection::handle_free(i64 xid) const {
@@ -4625,16 +4631,18 @@ void ClientConnection::record_circuit_state_transition(
 
 // @safe - CircuitBreaker is @safe; should_trip_circuit_for_error is @safe;
 // record_circuit_state_transition is @safe.
-void ClientConnection::record_circuit_result(i32 err) const {
-  CircuitState before = circuit_breaker_.state();
+void clientconn_record_circuit_result(const ClientConnection& self, i32 err) {
+  CircuitState before = self.circuit_breaker_.state();
   if (err == 0) {
-    circuit_breaker_.record_success();
-  } else if (should_trip_circuit_for_error(err)) {
-    circuit_breaker_.record_failure();
+    self.circuit_breaker_.record_success();
+  } else if (self.should_trip_circuit_for_error(err)) {
+    self.circuit_breaker_.record_failure();
   }
-  CircuitState after = circuit_breaker_.state();
-  record_circuit_state_transition(before, after);
+  CircuitState after = self.circuit_breaker_.state();
+  self.record_circuit_state_transition(before, after);
 }
+
+void ClientConnection::record_circuit_result(i32 err) const { clientconn_record_circuit_result(*this, err); }
 
 // @safe - Maps errno-style errors into structured RpcError categories.
 RpcError ClientConnection::map_system_error(i32 err) {
