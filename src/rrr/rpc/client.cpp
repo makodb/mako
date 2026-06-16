@@ -961,6 +961,12 @@ class ClientConnection {
     friend void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
     friend void clientconn_on_channel_closed_fan_out(ClientConnection& self);
     friend ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
+    friend int clientconn_connect(ClientConnection& self, const char* addr);
+    friend int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_complete);
+    friend int clientconn_connect_via_factory(ClientConnection& self, const char* addr);
+    friend void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel);
+    friend void clientconn_bind_channel_via_poll_thread(ClientConnection& self, ChannelConnectionProxy channel);
+    friend void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionProxy channel);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -3737,14 +3743,14 @@ void ClientConnection::handle_free(i64 xid) const { clientconn_handle_free(*this
 
 // @unsafe - Establishes TCP/IPC connection to server
 // Contains syscalls, raw pointers, and other unsafe operations
-int ClientConnection::connect(const char* addr) {
-  verify(!state_machine_.is_connected());
+int clientconn_connect(ClientConnection& self, const char* addr) {
+  verify(!self.state_machine_.is_connected());
 
   // Transition to CONNECTING state
-  if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
+  if (!self.state_machine_.transition_to(ConnectionState::CONNECTING)) {
     Log_error("rrr::ClientConnection: cannot connect from state %s",
-              connection_state_to_string(state_machine_.state()));
-    invoke_error_callback(EINVAL, "invalid state for connect");
+              connection_state_to_string(self.state_machine_.state()));
+    self.invoke_error_callback(EINVAL, "invalid state for connect");
     return EINVAL;
   }
 
@@ -3758,47 +3764,49 @@ int ClientConnection::connect(const char* addr) {
   // `connect_via_factory` issues `factory->connect(addr)`, hands the
   // returned proxy to `bind_channel_direct(...)`, and records
   // `reconnect_address_` for the close-side reconnect spawn.
-  if (!is_factory_bound()) {
+  if (!self.is_factory_bound()) {
     Log_error("rrr::ClientConnection::connect: factory not bound. "
               "Channel mode requires a ChannelFactoryProxy installed via "
               "Client::set_channel_factory(...) or auto-installed by "
               "Client::connect (the latter happens unconditionally now).");
-    state_machine_.transition_to(ConnectionState::FAILED);
-    invoke_error_callback(EINVAL, "no channel factory bound");
+    self.state_machine_.transition_to(ConnectionState::FAILED);
+    self.invoke_error_callback(EINVAL, "no channel factory bound");
     return EINVAL;
   }
-  return connect_via_factory(addr);
+  return self.connect_via_factory(addr);
 }
 
+int ClientConnection::connect(const char* addr) { return clientconn_connect(*this, addr); }
+
 // @unsafe - Attempts to reconnect to the last connected address
-int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
+int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_complete) {
   auto complete_callback = [&](int result) -> int {
     if (on_complete) on_complete(result == 0);
     return result;
   };
 
-  if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+  if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     return complete_callback(ECANCELED);
   }
 
   auto wait_for_inflight_reconnect = [&]() -> int {
-    while (reconnect_.reconnecting_.load(std::memory_order_acquire)) {
-      if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+    while (self.reconnect_.reconnecting_.load(std::memory_order_acquire)) {
+      if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
         return ECANCELED;
       }
-      if (state_machine_.is_connected()) {
+      if (self.state_machine_.is_connected()) {
         return 0;
       }
       rusty::thread::sleep(std::chrono::milliseconds(5));
     }
 
-    if (state_machine_.is_connected()) {
+    if (self.state_machine_.is_connected()) {
       return 0;
     }
     return INT_MIN;
   };
 
-  if (reconnect_.reconnecting_.load(std::memory_order_acquire)) {
+  if (self.reconnect_.reconnecting_.load(std::memory_order_acquire)) {
     int waited = wait_for_inflight_reconnect();
     if (waited != INT_MIN) {
       return complete_callback(waited);
@@ -3806,21 +3814,21 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   }
 
   // Check if we have an address to reconnect to
-  if (reconnect_address_.empty()) {
+  if (self.reconnect_address_.empty()) {
     Log_error("rrr::ClientConnection: no address to reconnect to");
     return complete_callback(EINVAL);
   }
 
   // Can only reconnect from FAILED or DISCONNECTED state
-  if (!state_machine_.can_connect()) {
+  if (!self.state_machine_.can_connect()) {
     Log_error("rrr::ClientConnection: cannot reconnect from state %s",
-              connection_state_to_string(state_machine_.state()));
+              connection_state_to_string(self.state_machine_.state()));
     return complete_callback(EINVAL);
   }
 
   while (true) {
     bool expected = false;
-    if (reconnect_.reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    if (self.reconnect_.reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
       break;
     }
 
@@ -3829,59 +3837,59 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
       return complete_callback(waited);
     }
   }
-  invoke_reconnecting_callback();
+  self.invoke_reconnecting_callback();
 
   auto complete_reconnect = [&](bool success, int result) -> int {
-    reconnect_.reconnecting_.store(false, std::memory_order_release);
-    invoke_reconnected_callback(success);
+    self.reconnect_.reconnecting_.store(false, std::memory_order_release);
+    self.invoke_reconnected_callback(success);
 
     if (success) {
-      Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+      Log_info("rrr::ClientConnection: reconnected to %s", self.reconnect_address_.c_str());
 
       // Record reconnection in metrics
-      metrics_.record_reconnect();
+      self.metrics_.record_reconnect();
 
       // Sweep the disconnect-buffering queue. Entries that ran past
       // their TTL while the connection was down resolve their
       // futures with `kRequestQueueExpiredError` and bump
       // `queue_dropped_requests`. Non-stale entries remain in the
       // queue for a future replay path.
-      pending_queue_.expire_stale();
+      self.pending_queue_.expire_stale();
       return complete_callback(0);
     } else {
       if (result == ECANCELED) {
         Log_debug("rrr::ClientConnection: reconnect cancelled for %s",
-                  reconnect_address_.c_str());
+                  self.reconnect_address_.c_str());
       } else {
         Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
-                  reconnect_address_.c_str(), result);
+                  self.reconnect_address_.c_str(), result);
       }
       return complete_callback(result);
     }
   };
 
   auto reconnect_once = [&]() -> int {
-    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+    if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return ECANCELED;
     }
     // 4g3c2: `socket_ = -1` reset removed. socket_ is unused in
     // channel mode (the channel proxy's TcpConnection owns the fd);
     // the `connect()` call below routes through `connect_via_factory`
     // which produces a fresh proxy + fresh fd internally.
-    return connect(reconnect_address_.c_str());
+    return self.connect(self.reconnect_address_.c_str());
   };
 
-  if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+  if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     return complete_reconnect(false, ECANCELED);
   }
 
   // Another reconnect attempt can complete between the pre-CAS state check and
   // this thread acquiring reconnect ownership.
-  if (state_machine_.is_connected()) {
+  if (self.state_machine_.is_connected()) {
     return complete_reconnect(true, 0);
   }
 
-  if (!state_machine_.can_connect()) {
+  if (!self.state_machine_.can_connect()) {
     return complete_reconnect(false, EINVAL);
   }
 
@@ -3892,9 +3900,9 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   }
 
   // Follow configured backoff/retry policy for subsequent attempts.
-  auto calc = ReconnectCalculator::new_(reconnect_policy_);
+  auto calc = ReconnectCalculator::new_(self.reconnect_policy_);
   while (calc.should_retry()) {
-    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+    if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return complete_reconnect(false, ECANCELED);
     }
 
@@ -3903,21 +3911,21 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
       rusty::thread::sleep(std::chrono::milliseconds(delay_ms));
     }
 
-    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+    if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       return complete_reconnect(false, ECANCELED);
     }
 
     // Another path may have re-established connection while sleeping.
-    if (state_machine_.is_connected()) {
+    if (self.state_machine_.is_connected()) {
       return complete_reconnect(true, 0);
     }
 
-    if (!state_machine_.can_connect()) {
+    if (!self.state_machine_.can_connect()) {
       return complete_reconnect(false, EINVAL);
     }
 
     Log_debug("rrr::ClientConnection: reconnect retry #%u to %s",
-              calc.retry_count(), reconnect_address_.c_str());
+              calc.retry_count(), self.reconnect_address_.c_str());
     result = reconnect_once();
     if (result == 0) {
       return complete_reconnect(true, 0);
@@ -3925,6 +3933,10 @@ int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
   }
 
   return complete_reconnect(false, result);
+}
+
+int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
+  return clientconn_reconnect(*this, std::move(on_complete));
 }
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)
@@ -4075,7 +4087,7 @@ void ClientConnection::reset_channel_mode_for_reconnect() { clientconn_reset_cha
 // usual `invoke_error_callback` path. Caller is `connect(addr)`,
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
-int ClientConnection::connect_via_factory(const char* addr) {
+int clientconn_connect_via_factory(ClientConnection& self, const char* addr) {
   // Take a *clone* of the bound factory so we can call `connect` on
   // it without holding the RefCell guard across what may be a
   // blocking syscall (TCP handshake, address resolution). The
@@ -4086,13 +4098,13 @@ int ClientConnection::connect_via_factory(const char* addr) {
   // through the Box wrapper while the SpinMutex guard is held.
   // @unsafe { SpinMutex::lock + ChannelFactoryProxy copy }
   {
-    auto guard = factory_.lock().unwrap();
+    auto guard = self.factory_.lock().unwrap();
     if (guard->is_none()) {
       Log_error(
           "rrr::ClientConnection::connect_via_factory: factory unbound at "
           "the moment of connect (race against bind_factory)");
-      state_machine_.transition_to(ConnectionState::FAILED);
-      invoke_error_callback(ENOTCONN, "factory unbound");
+      self.state_machine_.transition_to(ConnectionState::FAILED);
+      self.invoke_error_callback(ENOTCONN, "factory unbound");
       return ENOTCONN;
     }
     // The proxy (rusty::Box<ChannelFactoryBase>) is move-only; we
@@ -4111,7 +4123,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
       const auto err_str = std::string("factory connect failed: ")
           + channel_error_to_string(result.error);
       Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
-      state_machine_.transition_to(ConnectionState::FAILED);
+      self.state_machine_.transition_to(ConnectionState::FAILED);
       // Map the channel error onto an errno-shaped value the legacy
       // call sites expect.
       const int rc = (result.error == ChannelError::ConnectionRefused)
@@ -4119,7 +4131,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
                      : (result.error == ChannelError::AddressInvalid)
                        ? EINVAL
                        : ENOTCONN;
-      invoke_error_callback(rc, err_str);
+      self.invoke_error_callback(rc, err_str);
       return rc;
     }
     // Sub-leaf 4g1c: bypass FiberChannel + recv-loop fiber entirely.
@@ -4128,21 +4140,21 @@ int ClientConnection::connect_via_factory(const char* addr) {
     // layer fires it) and calls decode_response_and_notify inline —
     // no IntEvent, no fiber yield, no waiting_events_ churn. This
     // works around the deeper reactor/fiber wedge documented in 4g1b.
-    bind_channel_direct(result.connection.unwrap());
+    self.bind_channel_direct(result.connection.unwrap());
   }
 
   // Record address for the close fan-out's reconnect spawn — it
   // re-runs the factory connect with the same target. std::string
   // assignment from a const char* is benign in @safe code.
-  reconnect_address_ = addr;
+  self.reconnect_address_ = addr;
 
   // Mirror the fd path's terminal transition: the channel layer's
   // own state (proxy.is_closed()) becomes the source of truth, but
   // we still drive the legacy state machine through CONNECTED so
   // existing health-check / metric APIs (`connected()`,
   // `connection_state()`) keep working.
-  if (!state_machine_.transition_to(ConnectionState::CONNECTED)) {
-    state_machine_.force_state(ConnectionState::CONNECTED);
+  if (!self.state_machine_.transition_to(ConnectionState::CONNECTED)) {
+    self.state_machine_.force_state(ConnectionState::CONNECTED);
   }
   // Record connect timestamp so `metrics_.connect_time_ms()` is
   // non-zero from the moment a request can be issued. The metric
@@ -4150,14 +4162,18 @@ int ClientConnection::connect_via_factory(const char* addr) {
   // is informational.
   {
     uint64_t now = current_time_ms();
-    metrics_.record_connect(now);
+    self.metrics_.record_connect(now);
     // Seed `last_activity_time_` so `is_idle()` measures time since
     // connect (or since the most recent send/recv) rather than
     // returning false forever because no I/O has happened yet.
-    update_last_activity(now);
+    self.update_last_activity(now);
   }
-  invoke_connected_callback();
+  self.invoke_connected_callback();
   return 0;
+}
+
+int ClientConnection::connect_via_factory(const char* addr) {
+  return clientconn_connect_via_factory(*this, addr);
 }
 
 // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
@@ -4176,7 +4192,7 @@ int ClientConnection::connect_via_factory(const char* addr) {
 // path. Cross-thread scheduling of the spawn is sub-leaf 4e's
 // concern; for 4c2 we document the constraint and rely on the
 // caller.
-void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
+void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel) {
   if (!channel) return;
 
   // Move the proxy into a heap-allocated `FiberChannel` so the
@@ -4186,7 +4202,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   // in-place via perfect-forwarded `new` rather than moving.
   // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
-    auto guard = fiber_channel_.lock().unwrap();
+    auto guard = self.fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
     // The FiberChannel ctor only inits fields; bind_callbacks wires
     // the [this]-capturing on_frame/on_closed/on_error lambdas onto
@@ -4195,12 +4211,12 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
     // pinned).
     guard->as_ref().unwrap()->bind_callbacks();
   }
-  channel_mode_.set(true);
+  self.channel_mode_.set(true);
 
   // Capture a Weak<> so the parked fiber doesn't extend the
   // connection's lifetime (which would create a cycle via
   // `fiber_channel_` ownership).
-  WeakClientConnection weak_self = weak_self_;
+  WeakClientConnection weak_self = self.weak_self_;
 
   // Spawn the recv-loop fiber on the *current* thread's reactor.
   // Per the channel-layer threading contract, the recv-loop fiber
@@ -4228,6 +4244,10 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
   }, __FILE__, __LINE__);
 }
 
+void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
+  clientconn_bind_channel(*this, std::move(channel));
+}
+
 // @unsafe - Channel-mode bind that schedules the recv-loop fiber
 // spawn onto the *poll thread*.
 //
@@ -4237,8 +4257,8 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
 // callbacks fire on. Submits a `OneTimeJob` whose `Work()` runs
 // `run_recv_loop()` from a fiber that the poll thread's
 // `trigger_job` spawns on its own reactor.
-void ClientConnection::bind_channel_via_poll_thread(
-    ChannelConnectionProxy channel) {
+void clientconn_bind_channel_via_poll_thread(
+    ClientConnection& self, ChannelConnectionProxy channel) {
   if (!channel) return;
 
   // Move the proxy into the heap-allocated FiberChannel and flip
@@ -4247,16 +4267,16 @@ void ClientConnection::bind_channel_via_poll_thread(
   // after we submit the OneTimeJob below.
   // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
   {
-    auto guard = fiber_channel_.lock().unwrap();
+    auto guard = self.fiber_channel_.lock().unwrap();
     *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
     // Wire up the on_frame/on_closed/on_error lambdas on the just-
     // installed FiberChannel (see comment in the make_box site above
     // — bind_callbacks() runs after the Box address is final).
     guard->as_ref().unwrap()->bind_callbacks();
   }
-  channel_mode_.set(true);
+  self.channel_mode_.set(true);
 
-  WeakClientConnection weak_self = weak_self_;
+  WeakClientConnection weak_self = self.weak_self_;
 
   // Schedule the recv-loop fiber spawn onto the poll thread. The
   // poll thread's `trigger_job` calls `Fiber::create_run` from
@@ -4273,7 +4293,12 @@ void ClientConnection::bind_channel_via_poll_thread(
   }));
   // Upcast Arc<OneTimeJob> -> Arc<Job> for the PollThread queue.
   auto recv_job_base = rusty::Arc<Job>(recv_job);
-  poll_thread_worker_->add(std::move(recv_job_base));
+  self.poll_thread_worker_->add(std::move(recv_job_base));
+}
+
+void ClientConnection::bind_channel_via_poll_thread(
+    ChannelConnectionProxy channel) {
+  clientconn_bind_channel_via_poll_thread(*this, std::move(channel));
 }
 
 // @unsafe - Direct on_frame / on_closed callback binding.
@@ -4300,13 +4325,13 @@ void ClientConnection::bind_channel_via_poll_thread(
 // callbacks, so any in-flight callback dispatch from the channel
 // layer must complete before drop is allowed (this matches the
 // FiberChannel destructor's contract).
-void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
+void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionProxy channel) {
   if (!channel) return;
 
   // Capture a weak ref so the proxy's installed callbacks don't
   // extend the ClientConnection's lifetime (avoids a refcount cycle
   // through `direct_channel_` + the callbacks).
-  WeakClientConnection weak_self = weak_self_;
+  WeakClientConnection weak_self = self.weak_self_;
 
   // Install callbacks BEFORE moving the proxy into the slot. After
   // the move, the proxy lives in `direct_channel_`; the lambdas
@@ -4334,10 +4359,14 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
   // Move the proxy into the slot and flip the channel-mode latch.
   // SpinMutex::lock + Option::operator= are both @safe.
   {
-    auto guard = direct_channel_.lock().unwrap();
+    auto guard = self.direct_channel_.lock().unwrap();
     *guard = rusty::Some(std::move(channel));
   }
-  channel_mode_.set(true);
+  self.channel_mode_.set(true);
+}
+
+void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
+  clientconn_bind_channel_direct(*this, std::move(channel));
 }
 
 // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
