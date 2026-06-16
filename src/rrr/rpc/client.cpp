@@ -958,6 +958,8 @@ class ClientConnection {
     friend void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
     friend void clientconn_run_recv_loop(ClientConnection& self);
     friend void clientconn_handle_error(const ClientConnection& self);
+    friend void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
+    friend void clientconn_on_channel_closed_fan_out(ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -4386,12 +4388,12 @@ void ClientConnection::run_recv_loop() { clientconn_run_recv_loop(*this); }
 // reads the instance ID. Sub-leaf 4f's migration switch / parity
 // pass will revisit if a legacy-server interop path needs the bit
 // surfaced through `ChannelFrame`.
-void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
+void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes,
                                                   std::size_t size) {
   // Account for every inbound frame body byte and bump the activity
   // clock so `metrics_.bytes_received()` and `is_idle()` reflect real
   // I/O regardless of which dispatch slot the reply maps onto.
-  on_response_received(size);
+  self.on_response_received(size);
   // parse the response header directly from
   // the input bytes via BufferSource + BinaryReadArchive — no
   // intermediate `Marshal body` allocation.  The payload tail (if
@@ -4410,11 +4412,11 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
   // always emits the extended form (matches `server.hpp` today).
   v64 v_server_instance_id;
   ar >> v_reply_xid >> v_error_code >> v_server_instance_id;
-  check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+  self.check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
 
   size_t parsed_header_size = src.pos();
   size_t response_payload_bytes = size - parsed_header_size;
-  heartbeat_manager_.on_pong_received();
+  self.heartbeat_manager_.on_pong_received();
 
   // Fast path: slim async-callback slot (request_async users).
   // Check first — for callback-only callers this is the dominant
@@ -4422,9 +4424,9 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
   {
     const size_t slot = static_cast<size_t>(v_reply_xid.get())
                           % kAsyncSlotCount;
-    rusty::Option<AsyncReplyCallback> cb_opt = rusty::None;
+    rusty::Option<ClientConnection::AsyncReplyCallback> cb_opt = rusty::None;
     {
-      auto guard = pending_cb_slots_.lock().unwrap();
+      auto guard = self.pending_cb_slots_.lock().unwrap();
       if ((*guard)[slot].is_some()) {
         cb_opt = std::move((*guard)[slot]);
         (*guard)[slot] = rusty::None;
@@ -4434,11 +4436,11 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
       auto cb = std::move(cb_opt.unwrap());
       const i32 err_code = static_cast<i32>(v_error_code.get());
       if (err_code == 0) {
-        metrics_.record_request_completed();
+        self.metrics_.record_request_completed();
       } else {
-        metrics_.record_request_failed();
+        self.metrics_.record_request_failed();
       }
-      record_circuit_result(err_code);
+      self.record_circuit_result(err_code);
       cb(err_code, bytes + parsed_header_size, response_payload_bytes);
       return;
     }
@@ -4446,7 +4448,7 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
 
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
-    auto guard = pending_fu_.lock().unwrap();
+    auto guard = self.pending_fu_.lock().unwrap();
     auto fu_ptr = guard->get(v_reply_xid.get());
     if (fu_ptr.is_some()) {
       fu_opt = rusty::Some(fu_ptr.unwrap().clone());
@@ -4464,11 +4466,11 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
     }
 
     if (v_error_code.get() == 0) {
-      metrics_.record_request_completed();
+      self.metrics_.record_request_completed();
     } else {
-      metrics_.record_request_failed();
+      self.metrics_.record_request_failed();
     }
-    record_circuit_result(v_error_code.get());
+    self.record_circuit_result(v_error_code.get());
 
     fu->notify_ready(fu);
   }
@@ -4477,6 +4479,13 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
   // to keep its chunk list balanced, but that was an idiom of the
   // legacy fd reader; with channel-mode framing the input bytes are
   // owned by the caller and freed on return — nothing to drain.
+}
+
+// @unsafe - one-line delegator to the friend free fn (extraction
+// step toward the DSL flip).
+void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
+                                                  std::size_t size) {
+  clientconn_decode_response_and_notify(*this, bytes, size);
 }
 
 // @unsafe - Channel-mode close fan-out.
@@ -4507,23 +4516,23 @@ void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
 // state transitions through DISCONNECTING) — channel mode never
 // owned the fd, and the channel layer has already torn down its
 // underlying transport.
-void ClientConnection::on_channel_closed_fan_out() {
-  ConnectionState prev_state = state_machine_.state();
+void clientconn_on_channel_closed_fan_out(ClientConnection& self) {
+  ConnectionState prev_state = self.state_machine_.state();
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
       prev_state == ConnectionState::DISCONNECTED ||
-      reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+      self.reconnect_.reconnect_abort_.load(std::memory_order_acquire);
 
   if (!user_initiated_closing) {
-    invoke_error_callback(ECONNRESET, "channel closed");
-    state_machine_.force_state(ConnectionState::FAILED);
+    self.invoke_error_callback(ECONNRESET, "channel closed");
+    self.state_machine_.force_state(ConnectionState::FAILED);
   }
 
-  heartbeat_manager_.reset();
-  invalidate_pending_futures();
+  self.heartbeat_manager_.reset();
+  self.invalidate_pending_futures();
 
   if (!user_initiated_closing) {
-    invoke_disconnected_callback();
+    self.invoke_disconnected_callback();
   }
 
   // Trigger auto-reconnect if the policy allows. Channel-mode
@@ -4536,17 +4545,17 @@ void ClientConnection::on_channel_closed_fan_out() {
   // actually calling `reconnect()`). Production callers that want
   // a real reconnect leave the abort flag false and rely on the
   // spawn.
-  if (reconnect_policy_.auto_reconnect &&
+  if (self.reconnect_policy_.auto_reconnect &&
       // std::string::empty() is a pure const accessor, safe in @safe code.
-      !reconnect_address_.empty()) {
-    reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
+      !self.reconnect_address_.empty()) {
+    self.reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
 
-    if (reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+    if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
       // Caller requested no reconnect (typically: connection
       // tearing down). Counter is still bumped for observability.
       return;
     }
-    auto weak_conn = weak_self_;
+    auto weak_conn = self.weak_self_;
     rusty::thread::spawn([weak_conn]() {
       auto conn_opt = weak_conn.upgrade();
       if (conn_opt.is_none()) {
@@ -4597,6 +4606,12 @@ void ClientConnection::on_channel_closed_fan_out() {
       }
     }).detach();
   }
+}
+
+// @unsafe - one-line delegator to the friend free fn (extraction
+// step toward the DSL flip).
+void ClientConnection::on_channel_closed_fan_out() {
+  clientconn_on_channel_closed_fan_out(*this);
 }
 
 // @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
