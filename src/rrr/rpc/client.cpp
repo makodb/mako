@@ -929,6 +929,20 @@ struct ReconnectState {
 using AsyncReplyCallback = rusty::Function<
     void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
+// @unsafe - Build the pre-filled async-callback slot vector
+// (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
+// Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
+// no loop-capable body — it field-inits pending_cb_slots_ via
+// `SpinMutex::new(make_prefilled_cb_slots())`.
+inline rusty::Vec<rusty::Option<AsyncReplyCallback>> make_prefilled_cb_slots() {
+  rusty::Vec<rusty::Option<AsyncReplyCallback>> slots;
+  slots.reserve(kAsyncSlotCount);
+  for (size_t i = 0; i < kAsyncSlotCount; ++i) {
+    slots.push(rusty::None);
+  }
+  return slots;
+}
+
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
 // chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
@@ -3225,18 +3239,16 @@ void fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc) {
 // State machine defaults to NEW state
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
+      // Pre-fill the async-callback slot array with `None`s so
+      // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.
+      // The pre-fill lives in make_prefilled_cb_slots() so the Phase 5 DSL
+      // #[cpp_ctor] can field-init this the same way (no loop body needed).
+      pending_cb_slots_(make_prefilled_cb_slots()),
       state_machine_(ConnectionStateMachine::new_()),
       heartbeat_manager_(HeartbeatManager::new_(HeartbeatConfig::disabled())),
       circuit_breaker_(CircuitBreaker::new_(CircuitBreakerConfig::disabled())),
       callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_())),
       pending_queue_(buffering_config_.to_queue_config()) {
-  // Pre-fill the async-callback slot array with `None`s so
-  // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.
-  auto guard = pending_cb_slots_.lock().unwrap();
-  guard->reserve(kAsyncSlotCount);
-  for (size_t i = 0; i < kAsyncSlotCount; ++i) {
-    guard->push(rusty::None);
-  }
 }
 
 // @safe - Simple destructor
