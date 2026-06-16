@@ -453,7 +453,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -477,7 +477,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -501,7 +501,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -524,11 +524,11 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
@@ -546,7 +546,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -569,7 +569,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -593,7 +593,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -617,7 +617,7 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -640,11 +640,11 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
@@ -665,11 +665,11 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         (void)__typed_resp__;
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, rrr::ServerReplyFn{});
                     }
                 }
             });
@@ -687,11 +687,11 @@ private:
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
                 if (__typed_result__.is_err()) {
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                 } else {
                     auto __typed_resp__ = __typed_result__.unwrap();
                     (void)__typed_resp__;
-                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+                    const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
                 }
             }
             // req automatically cleaned up by rusty::Box
