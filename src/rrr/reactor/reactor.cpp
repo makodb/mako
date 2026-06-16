@@ -199,98 +199,39 @@ class BoxEvent : public Event {
 };
 
 // `IntEvent` — an Event that fires when value_ reaches target_ (or a custom
-// inherited `test_` predicate passes). Authored as inline-Rust DSL: the struct,
-// its two ctors, and the own-field methods are DSL; `#[cpp_inherit] impl Event
-// for IntEvent` gives direct inheritance from the hand-written Event base, so
-// the `Arc<IntEvent>`/`shared_ptr<IntEvent>` -> `Event` upcasts and the many
-// `create_sp_event<IntEvent>()` / `make_shared<IntEvent>(n)` sites (rrr +
-// deptran, incl. deptran's MessageEvent : public IntEvent base-init) keep
-// compiling unchanged. The two ctors are emitted via `#[cpp_ctor]` composed
-// with `#[cpp_inherit]`: `IntEvent()` (value_=0,target_=1) and
-// `IntEvent(int tar)` (value_=0,target_=tar) — the lone synthesized fieldwise
-// ctor couldn't supply both. Bodies that read INHERITED Event state (set()
-// runs the inherited test(); is_ready() reads the inherited test_) live OUTSIDE
-// the DSL block as free fns — the DSL struct only declares IntEvent's own
-// fields. The dead `test_trigger()` (sole caller commented out) and the unused
-// `IntEvent::new_` factory are dropped.
-struct IntEvent;
-inline int int_event_set(IntEvent& self, int n);
-inline bool int_event_is_ready(IntEvent& self);
-#if RUSTYCPP_RUST
-struct IntEvent {
-    value_: i32,
-    target_: i32,
-}
-impl IntEvent {
-    #[cpp_ctor] fn new() -> IntEvent { IntEvent { value_: 0, target_: 1 } }
-    #[cpp_ctor] fn with_target(tar: i32) -> IntEvent { IntEvent { value_: 0, target_: tar } }
-    fn get(&self) -> i32 { self.value_ }
-    fn set(&mut self, n: i32) -> i32 { int_event_set(self, n) }
-}
-#[cpp_inherit]
-impl Event for IntEvent {
-    fn is_ready(&mut self) -> bool { int_event_is_ready(self) }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=ce15c44326d3c7a97c05595f9a302f86ce57d18940137cb45ed672bf08ee56e2*/
-struct IntEvent;
+// inherited `test_` predicate passes). Hand-written subclass of the stateful
+// `Event` base (Event is intentionally not trait-ified — it carries data fields
+// and non-pure default-bodied virtuals).
+class IntEvent : public Event {
+ public:
+  int32_t value_{0};
+  int32_t target_{1};
 
-struct IntEvent : public Event {
-    int32_t value_;
-    int32_t target_;
+  IntEvent() = default;
+  IntEvent(int32_t tar) : value_(0), target_(tar) {}
 
-    IntEvent();
-    IntEvent(int32_t tar);
-    int32_t get() const;
-    int32_t set(int32_t n);
-    bool is_ready();
-};
+  int32_t get() const { return value_; }
 
-
-IntEvent::IntEvent()
-    : Event()
-    , value_(static_cast<int32_t>(0))
-    , target_(static_cast<int32_t>(1))
-{}
-
-IntEvent::IntEvent(int32_t tar)
-    : Event()
-    , value_(static_cast<int32_t>(0))
-    , target_(std::move(tar))
-{}
-
-int32_t IntEvent::get() const {
-    return this->value_;
-}
-
-int32_t IntEvent::set(int32_t n) {
-    return int_event_set((*this), std::move(n));
-}
-
-bool IntEvent::is_ready() {
-    return int_event_is_ready((*this));
-}
-/*RUSTYCPP:GEN-END id=reactor.int_event*/
-
-// @safe - sets value_ and runs the readiness test() (inherited virtual);
-// returns the previous value.
-inline int int_event_set(IntEvent& self, int n) {
-  int t = self.value_;
-  self.value_ = n;
-  // @unsafe { Event::test() — inherited virtual dispatch }
-  self.test();
-  return t;
-}
-
-// @safe - readiness: a custom inherited `test_` predicate if set, else
-// value_ >= target_.
-inline bool int_event_is_ready(IntEvent& self) {
-  // @unsafe { reads inherited Event::state_.test_ (rusty::Function<bool(int)>) }
-  if (self.state_.test_) {
-    return self.state_.test_(self.value_);
+  // @safe - sets value_ and runs the readiness test() (inherited virtual);
+  // returns the previous value.
+  int32_t set(int32_t n) {
+    int32_t t = value_;
+    value_ = n;
+    // @unsafe { Event::test() — inherited virtual dispatch }
+    test();
+    return t;
   }
-  return self.value_ >= self.target_;
-}
+
+  // @safe - readiness: a custom inherited `test_` predicate if set, else
+  // value_ >= target_.
+  bool is_ready() override {
+    // @unsafe { reads inherited Event::state_.test_ (rusty::Function<bool(int)>) }
+    if (state_.test_) {
+      return state_.test_(value_);
+    }
+    return value_ >= target_;
+  }
+};
 
 class SharedIntEvent {
  public:
@@ -305,176 +246,61 @@ class SharedIntEvent {
 
 
 // `NeverEvent` — an Event that is never ready, used as a pure timeout/yield
-// handle (`create_sp_event<NeverEvent>()->wait(us)`). Authored as inline-Rust
-// DSL via `#[cpp_inherit]`: direct C++ inheritance from the hand-written
-// stateful `Event` base. Event is intentionally NOT trait-ified (it carries
-// data fields + non-pure default-bodied virtuals), so the subclass inherits
-// it via the cross-block bare-name fallback. NeverEvent adds no fields and
-// overrides only `is_ready()`; the transpiler synthesizes the default + move
-// ctors — the default ctor is what `make_shared<NeverEvent>()` (inside
-// `Reactor::create_sp_event`) needs.
-#if RUSTYCPP_RUST
-struct NeverEvent {}
-#[cpp_inherit]
-impl Event for NeverEvent {
-    fn is_ready(&mut self) -> bool { false }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=0a4d6c09e15124644c2ed49566855ea0267df4ed1cf1667534a95f02c78d7be7*/
-struct NeverEvent;
-
-struct NeverEvent : public Event {
-    NeverEvent() : Event() {}
-    NeverEvent(NeverEvent&& other) noexcept : Event() {}
-
-
-    bool is_ready();
+// handle (`create_sp_event<NeverEvent>()->wait(us)`). Hand-written subclass of
+// the stateful `Event` base; adds no fields and overrides only `is_ready()`.
+class NeverEvent : public Event {
+ public:
+  bool is_ready() override { return false; }
 };
-
-
-bool NeverEvent::is_ready() {
-    return false;
-}
-/*RUSTYCPP:GEN-END id=reactor.never_event*/
 
 // `TimeoutEvent` — an Event that becomes ready once `wait_us_` microseconds
-// have elapsed past construction. Authored as inline-Rust DSL: the struct, its
-// single computed-init ctor, and `is_ready()` are DSL; `#[cpp_inherit] impl
-// Event for TimeoutEvent` gives direct inheritance from the hand-written Event
-// base (so the `shared_ptr<TimeoutEvent>` -> Event upcast and the many
-// `create_sp_event<TimeoutEvent>(us)` sites in rrr + deptran keep compiling).
-// The ctor is emitted via `#[cpp_ctor]` composed with `#[cpp_inherit]`:
-// `TimeoutEvent(uint64_t wait_us)` with the computed `wakeup_time_ =
-// Time::now(true) + wait_us` (the expression lowers directly in the ctor
-// init-list) plus the `Event()` base init. No default ctor is needed (every
-// site passes the microsecond arg). The `wait()` method calls the inherited
-// `Event::wait(wait_us_)` (a final virtual) which isn't expressible in
-// inline-Rust, so it lives outside the DSL block as the `timeout_event_wait`
-// free function.
-struct TimeoutEvent;
-inline void timeout_event_wait(TimeoutEvent& self);
-#if RUSTYCPP_RUST
-struct TimeoutEvent {
-    wakeup_time_: u64,
-    wait_us_: u64,
-}
-impl TimeoutEvent {
-    #[cpp_ctor] fn new(wait_us: u64) -> TimeoutEvent {
-        TimeoutEvent { wakeup_time_: Time::now(true) + wait_us, wait_us_: wait_us }
-    }
-    fn wait(&mut self) { timeout_event_wait(self) }
-}
-#[cpp_inherit]
-impl Event for TimeoutEvent {
-    fn is_ready(&mut self) -> bool { Time::now(true) > self.wakeup_time_ }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=1acca07669bed738d46a526d81266d15bcbe3a49dd43a24c4a2f386b5e06a3bd*/
-struct TimeoutEvent;
+// have elapsed past construction. Hand-written subclass of the stateful `Event`
+// base. `wakeup_time_` is TimeoutEvent's own field (distinct from the base's
+// `state_.wakeup_time_`).
+class TimeoutEvent : public Event {
+ public:
+  uint64_t wakeup_time_;
+  uint64_t wait_us_;
 
-struct TimeoutEvent : public Event {
-    uint64_t wakeup_time_;
-    uint64_t wait_us_;
+  TimeoutEvent(uint64_t wait_us)
+      : wakeup_time_(Time::now(true) + wait_us), wait_us_(wait_us) {}
 
-    TimeoutEvent(uint64_t wait_us);
-    void wait();
-    bool is_ready();
+  // @safe - blocks up to wait_us_ via the inherited Event::wait (final virtual).
+  void wait() {
+    // @unsafe { Event::wait — inherited final virtual dispatch }
+    Event::wait(wait_us_);
+  }
+
+  bool is_ready() override {
+    return Time::now(true) > wakeup_time_;
+  }
 };
-
-
-TimeoutEvent::TimeoutEvent(uint64_t wait_us)
-    : Event()
-    , wakeup_time_(Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us))
-    , wait_us_(std::move(wait_us))
-{}
-
-void TimeoutEvent::wait() {
-    timeout_event_wait((*this));
-}
-
-bool TimeoutEvent::is_ready() {
-    return Time::now(true) > rusty::detail::deref_if_pointer_like(this->wakeup_time_);
-}
-/*RUSTYCPP:GEN-END id=reactor.timeout_event*/
-
-// @safe - blocks up to wait_us_ via the inherited Event::wait (final virtual).
-inline void timeout_event_wait(TimeoutEvent& self) {
-  // @unsafe { Event::wait — inherited final virtual dispatch }
-  self.Event::wait(self.wait_us_);
-}
 
 // `WaitAny` — a composite Event that is ready as soon as ANY of its child
 // events is ready (polled in the reactor loop via `is_composite_event()`).
-// Authored as inline-Rust DSL: the struct (its own `events_` vector) and the
-// fixed 2-arg ctor are DSL; `#[cpp_inherit] impl Event for WaitAny` gives
-// direct inheritance from the hand-written Event base, so the
-// `shared_ptr<WaitAny>` -> Event upcast and the `create_sp_event<WaitAny>(a,b)`
-// sites keep compiling. The `is_ready()` body iterates `events_` calling each
-// child's inherited virtual `is_ready()`, which isn't inline-Rust-expressible,
-// so it lives outside the DSL block as `wait_any_is_ready`; `wait_any_make`
-// builds the 2-element vector for the ctor field-init.
-struct WaitAny;
-inline rusty::Vec<std::shared_ptr<Event>> wait_any_make(std::shared_ptr<Event> a, std::shared_ptr<Event> b);
-inline bool wait_any_is_ready(WaitAny& self);
-#if RUSTYCPP_RUST
-struct WaitAny {
-    events_: Vec<std::shared_ptr<Event>>,
-}
-impl WaitAny {
-    #[cpp_ctor] fn new(a: std::shared_ptr<Event>, b: std::shared_ptr<Event>) -> WaitAny {
-        WaitAny { events_: wait_any_make(a, b) }
-    }
-}
-#[cpp_inherit]
-impl Event for WaitAny {
-    fn is_ready(&mut self) -> bool { wait_any_is_ready(self) }
-    fn is_composite_event(&mut self) -> bool { true }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.wait_any version=1 rust_sha256=6cd01f1f7edb9918a6f8d469ff4fab6e2197c14f9314031da8e9976316519613*/
-struct WaitAny;
+// Hand-written subclass of the stateful `Event` base.
+class WaitAny : public Event {
+ public:
+  rusty::Vec<std::shared_ptr<Event>> events_;
 
-struct WaitAny : public Event {
-    rusty::Vec<std::shared_ptr<Event>> events_;
-
-    WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b);
-    bool is_ready();
-    bool is_composite_event();
-};
-
-
-WaitAny::WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b)
-    : Event()
-    , events_(wait_any_make(std::move(a), std::move(b)))
-{}
-
-bool WaitAny::is_ready() {
-    return wait_any_is_ready((*this));
-}
-
-bool WaitAny::is_composite_event() {
-    return true;
-}
-/*RUSTYCPP:GEN-END id=reactor.wait_any*/
-
-// @safe - builds the 2-element child-event vector for the WaitAny ctor.
-inline rusty::Vec<std::shared_ptr<Event>> wait_any_make(std::shared_ptr<Event> a, std::shared_ptr<Event> b) {
-  rusty::Vec<std::shared_ptr<Event>> v;
-  v.push(std::move(a));
-  v.push(std::move(b));
-  return v;
-}
-
-// @safe - ready as soon as any child event is ready.
-inline bool wait_any_is_ready(WaitAny& self) {
-  for (const auto& e : self.events_) {
-    // @unsafe { Event::is_ready — child virtual dispatch }
-    if (e && e->is_ready()) {
-      return true;
-    }
+  WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b) {
+    events_.push(std::move(a));
+    events_.push(std::move(b));
   }
-  return false;
-}
+
+  // @safe - ready as soon as any child event is ready.
+  bool is_ready() override {
+    for (const auto& e : events_) {
+      // @unsafe { Event::is_ready — child virtual dispatch }
+      if (e && e->is_ready()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool is_composite_event() override { return true; }
+};
 
 class WaitAll : public Event {
  public:

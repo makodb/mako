@@ -113,95 +113,44 @@ template <class U> class JobAdapterRef;
 template <class U> class JobAdapterRefMut;
 /*RUSTYCPP:GEN-END id=job.0*/
 
-// `OneTimeJob` — a `Job` that runs a callback exactly once. Authored as
-// inline-Rust DSL: the `#if RUSTYCPP_RUST` block is the source of truth;
-// the transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
-// block. The `#[cpp_inherit]` on `impl Job for OneTimeJob` opts into
-// direct C++ inheritance, so the transpiler emits
-// `struct OneTimeJob : public Job { ... }` (overriding Ready/Work/Done)
-// plus a synthesized fieldwise + move ctor — NOT the default
-// `JobAdapter<OneTimeJob>` wrapper. Direct inheritance preserves the
-// existing `Arc<OneTimeJob>` -> `Arc<Job>` upcast call sites (client.cpp)
-// and the PollThread `Arc<Job>` submission boundary unchanged.
-//
-// `func_` is a `rusty::Function<void()>`; the DSL grammar can't parse the
-// `Function<void()>` function-type template arg directly, so it is aliased
-// to the opaque `OneTimeJobFn` (same workaround as `HeartbeatTimeoutCallback`
-// in heartbeat.cpp). The body (the `func_()` invocation of a stored
-// `Function` isn't expressible in inline-Rust) lives OUTSIDE the DSL block
-// as the `one_time_job_run` free function.
-//
-// The hand-written explicit move ctor (previously needed because the
-// DSL-emitted `Job` base deletes its move) is now synthesized by the
-// transpiler's `#[cpp_inherit]` path. The legacy 1-arg
-// `OneTimeJob(Function)` value ctor is dropped — no direct-ctor call sites
-// remain anywhere (all construction goes through `OneTimeJob::new_`).
+// `OneTimeJob` — a `Job` that runs a callback exactly once. Hand-written
+// subclass of the `Job` interface. `Job` is a DSL `pub trait` (an abstract
+// base class); this is plain C++ inheritance from that base, NOT the
+// `#[cpp_inherit]` attribute. `func_` is a `rusty::Function<void()>`, aliased
+// to the opaque `OneTimeJobFn` (the `Function<void()>` template arg is kept in
+// the alias for readability). `Job` deletes its move ctor, so an explicit move
+// ctor is provided for the by-value `Arc<OneTimeJob>::new_(...)` path. Both the
+// 1-arg ctor (`OneTimeJob(func)` — used directly by deptran) and the static
+// `new_` factory (used by rrr's client/server) are provided.
 using OneTimeJobFn = rusty::Function<void()>;
-struct OneTimeJob;
-inline void one_time_job_run(OneTimeJob& self);
-#if RUSTYCPP_RUST
-struct OneTimeJob {
-    done_: bool,
-    ready_: bool,
-    func_: OneTimeJobFn,
-}
-impl OneTimeJob {
-    fn new(func: OneTimeJobFn) -> OneTimeJob {
-        OneTimeJob { done_: false, ready_: true, func_: func }
-    }
-}
-#[cpp_inherit]
-impl Job for OneTimeJob {
-    fn Ready(&mut self) -> bool { self.ready_ }
-    fn Done(&mut self) -> bool { self.done_ }
-    fn Work(&mut self) {
-        one_time_job_run(self);
-    }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=job.one_time_job version=1 rust_sha256=d36199f66ab5269ddd0f00c75ba47c03cbb6515cfba4994e74a8f8b360100ee4*/
-struct OneTimeJob;
+class OneTimeJob : public Job {
+ public:
+  bool done_;
+  bool ready_;
+  OneTimeJobFn func_;
 
-struct OneTimeJob : public Job {
-    bool done_;
-    bool ready_;
-    OneTimeJobFn func_;
-    OneTimeJob(bool done__init, bool ready__init, OneTimeJobFn func__init) : Job(), done_(std::move(done__init)), ready_(std::move(ready__init)), func_(std::move(func__init)) {}
-    OneTimeJob(OneTimeJob&& other) noexcept : Job(), done_(std::move(other.done_)), ready_(std::move(other.ready_)), func_(std::move(other.func_)) {}
+  OneTimeJob(OneTimeJobFn func)
+      : done_(false), ready_(true), func_(std::move(func)) {}
 
+  OneTimeJob(OneTimeJob&& other) noexcept
+      : Job(), done_(other.done_), ready_(other.ready_),
+        func_(std::move(other.func_)) {}
 
-    static OneTimeJob new_(OneTimeJobFn func);
-    bool Ready();
-    bool Done();
-    void Work();
+  static OneTimeJob new_(OneTimeJobFn func) {
+    return OneTimeJob(std::move(func));
+  }
+
+  bool Ready() override { return ready_; }
+  bool Done() override { return done_; }
+
+  // @safe - runs the one-shot callback exactly once.
+  void Work() override {
+    ready_ = false;
+    // @unsafe { invoking a stored rusty::Function<void()> through this }
+    func_();
+    done_ = true;
+  }
 };
-
-
-OneTimeJob OneTimeJob::new_(OneTimeJobFn func) {
-    return OneTimeJob(false, true, std::move(func));
-}
-
-bool OneTimeJob::Ready() {
-    return this->ready_;
-}
-
-bool OneTimeJob::Done() {
-    return this->done_;
-}
-
-void OneTimeJob::Work() {
-    one_time_job_run((*this));
-}
-/*RUSTYCPP:GEN-END id=job.one_time_job*/
-
-// @safe - Runs the one-shot callback. Invoking the stored
-// `rusty::Function<void()>` is the only step not expressible in inline-Rust.
-inline void one_time_job_run(OneTimeJob& self) {
-  self.ready_ = false;
-  // @unsafe { invoking a stored rusty::Function<void()> through &mut self }
-  self.func_();
-  self.done_ = true;
-}
 
 } // export namespace rrr
 
