@@ -78,6 +78,47 @@ export namespace rrr {
 
 class Reactor;
 class Fiber;
+
+// `EventState` — the cleanly-DSL-able portion of an Event's data, factored out
+// of the hand-written `class Event` into an inline-Rust struct. These nine
+// fields are pure rusty/POD types with no interior-mutability or vtable
+// constraint, so they transpile to a plain aggregate composed onto Event as
+// the member `state_`. The fields that must stay hand-written remain directly
+// on Event: `status_` (rusty::Cell), the `EventStatus` enum, `self_`
+// (std::weak_ptr), the `_dbg_p_scheduler_` void*, and the
+// `#ifdef EVENT_TIMEOUT_CHECK __debug_timeout_`.
+// `wp_fiber_` is a weak ref because an Event usually lives on a fiber stack and
+// must not keep its owning fiber alive.
+using EventTestFn = rusty::Function<bool(int)>;
+#if RUSTYCPP_RUST
+struct EventState {
+    __debug_creator: i32,
+    type_: u64,
+    test_: EventTestFn,
+    needs_finalize_: bool,
+    wakeup_time_: u64,
+    rcd_wait_: bool,
+    wait_place_: std::string,
+    in_waiting_list_: bool,
+    wp_fiber_: rusty::rc::Weak<Fiber>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.event_state version=1 rust_sha256=a61b589dc9a0952efdb13bb78ce0da43a4dd72c8cbcd787ac63d501686ab9090*/
+struct EventState;
+
+struct EventState {
+    int32_t __debug_creator;
+    uint64_t type_;
+    EventTestFn test_;
+    bool needs_finalize_;
+    uint64_t wakeup_time_;
+    bool rcd_wait_;
+    std::string wait_place_;
+    bool in_waiting_list_;
+    rusty::rc::Weak<Fiber> wp_fiber_;
+};
+/*RUSTYCPP:GEN-END id=reactor.event_state*/
+
 class Event {
  protected:
   // Self-reference for adding to queues (using weak_ptr for shared ownership)
@@ -85,7 +126,6 @@ class Event {
   std::weak_ptr<Event> self_;
 //class Event {
  public:
-  int __debug_creator{0};
   enum EventStatus { INIT = 0, WAIT = 1, READY = 2,
       DONE = 3, TIMEOUT = 4, DEBUG};
 
@@ -94,26 +134,20 @@ class Event {
 #endif
   rusty::Cell<EventStatus> status_{INIT};
   void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
-  uint64_t type_{0};
-  rusty::Function<bool(int)> test_{};
-	bool needs_finalize_{false};
-  uint64_t wakeup_time_; // calculated by timeout, unit: microsecond
-  bool rcd_wait_ = false;
-  std::string wait_place_{"not recorded"};
-  bool in_waiting_list_{false};
 
-  // An event is usually allocated on a fiber stack, thus it cannot own a
-  //   shared_ptr to the fiber it is.
-  // In this case there is no shared pointer to the event.
-  // When the stack that contains the event frees, the event frees.
-  // Weak reference to a fiber using rusty::rc::Weak with proper reference counting
-  rusty::rc::Weak<Fiber> wp_fiber_{};
+  // The nine relocated data fields live in a composed inline-Rust struct (see
+  // `EventState` above). Value-initialized so primitives zero and the rusty
+  // members default-construct, matching the original in-class initializers;
+  // `wait_place_`'s "not recorded" seed is restored in Event::Event().
+  EventState state_{};
+  const EventState& state() const { return state_; }
+  EventState& state_mut() { return state_; }
 
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
 
   void wait(rusty::Function<bool(int)> f) {
-    test_ = std::move(f);
+    state_.test_ = std::move(f);
     wait();
   }
 
@@ -125,8 +159,8 @@ class Event {
   virtual bool test();
   virtual bool is_slow();
   virtual bool is_ready() {
-    if (!test_) return false;
-    return test_(0);
+    if (!state_.test_) return false;
+    return state_.test_(0);
   }
 
   // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
@@ -251,9 +285,9 @@ inline int int_event_set(IntEvent& self, int n) {
 // @safe - readiness: a custom inherited `test_` predicate if set, else
 // value_ >= target_.
 inline bool int_event_is_ready(IntEvent& self) {
-  // @unsafe { reads inherited Event::test_ (rusty::Function<bool(int)>) }
-  if (self.test_) {
-    return self.test_(self.value_);
+  // @unsafe { reads inherited Event::state_.test_ (rusty::Function<bool(int)>) }
+  if (self.state_.test_) {
+    return self.state_.test_(self.value_);
   }
   return self.value_ >= self.target_;
 }
@@ -1040,7 +1074,7 @@ class Reactor {
   template <typename Ev, typename... Args>
   static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
     auto ev = std::make_shared<Ev>(args...);
-    ev->__debug_creator = 1;
+    ev->state_.__debug_creator = 1;
     // Set self-reference for cross-thread signaling (uses raw pointer now)
     ev->set_self(ev);
     // Store in all_events_ using RefCell borrow_mut()
@@ -1554,7 +1588,7 @@ void Event::wait(uint64_t timeout) {
 #endif
     if (timeout > 0) {
       auto now = Time::now(true);
-      wakeup_time_ = now + timeout;
+      state_.wakeup_time_ = now + timeout;
       //Log_info("WAITING: %p", get_self().get());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
       reactor_rc->timeout_events_.borrow_mut()->push_back(get_self());
@@ -1575,7 +1609,7 @@ void Event::wait(uint64_t timeout) {
     // Transpiled Weak has no implicit Rc→Weak conversion / op= — use
     // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
     // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
-    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
+    state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
     status_.set(WAIT);
     auto fiber_status = fiber->status_.get();
     verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
@@ -1592,19 +1626,19 @@ void Event::wait(uint64_t timeout) {
 void Event::record_place(const char* file, int line) {
   char buff[200];
   sprintf(buff, "%s:%d", file, line);
-  wait_place_ += std::string(buff);
-  rcd_wait_ = true;
+  state_.wait_place_ += std::string(buff);
+  state_.rcd_wait_ = true;
 }
 
 // @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
 // and Log_debug are all @safe.
 bool Event::test() {
-  verify(__debug_creator);
+  verify(state_.__debug_creator);
   if (is_ready()) {
     if (status_.get() == INIT) {
       status_.set(DONE);
     } else if (status_.get() == WAIT) {
-      auto option_fiber = wp_fiber_.upgrade();
+      auto option_fiber = state_.wp_fiber_.upgrade();
       verify(option_fiber.is_some());
       verify(status_.get() != DEBUG);
       status_.set(READY);
@@ -1627,13 +1661,14 @@ bool Event::test() {
 }
 
 Event::Event() {
+  state_.wait_place_ = "not recorded";
   auto fiber_opt = Fiber::current_fiber();
   // It's OK if no fiber is running - event might be created outside a fiber
   // and Wait() called later from within one
   if (fiber_opt.is_some()) {
     // Same Rc→Weak conversion fix as above.
     auto rc_fiber = fiber_opt.unwrap();
-    wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
+    state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
   // Otherwise wp_fiber_ stays as default empty weak pointer
 }
@@ -1681,7 +1716,7 @@ void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
-  ev->test_ = std::move(f);
+  ev->state_.test_ = std::move(f);
   events_.push(ev);
 //  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
@@ -2274,7 +2309,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     Event& event = *sp;
     auto status = event.status_.get();
     if (status == Event::WAIT) {
-      const auto& wakeup_time = event.wakeup_time_;
+      const auto& wakeup_time = event.state_.wakeup_time_;
       verify(wakeup_time > 0);
       if (time_now >= wakeup_time) {
         if (event.is_ready()) {
@@ -2395,7 +2430,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           if (ev->status_.get() == Event::DONE) {
             continue;
           }
-          auto option_fiber = ev->wp_fiber_.upgrade();
+          auto option_fiber = ev->state_.wp_fiber_.upgrade();
           if (option_fiber.is_none()) {
             continue;
           }
@@ -3139,7 +3174,7 @@ using rrr::verify;
 QuorumEvent::QuorumEvent(int n_total, int quorum)
     : Event(), n_total_(n_total), quorum_(quorum) {
   finalize_event_ = std::make_shared<IntEvent>(n_total_);
-  finalize_event_->__debug_creator = 1;
+  finalize_event_->state_.__debug_creator = 1;
   begin_timestamp_ = Time::now(true);
 }
 
