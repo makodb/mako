@@ -1,4 +1,5 @@
 // @safe - RRR RPC client proxy implementation for Mako client API
+#include <std_compat.hpp>  // textual STL before `import std` (mixed with module → abi_tag clash)
 #include "client_proxy.h"
 
 namespace mako {

@@ -17,6 +17,7 @@
 #include "RW_command.h"
 
 import std;
+import rusty;  // names rusty::Vec directly (clients_.insert below); <rusty/vec.hpp> is an empty shim
 
 namespace janus {
 

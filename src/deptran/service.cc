@@ -478,7 +478,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   auto sched = (SchedulerClassic*) dtxn_sched_;
   int ret = sched->OnCommit(tid, dep_id, SUCCESS);
 
-  std::vector<double> result = rrr::CPUInfo::cpu_stat();
+  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
   *profile = {result[0], result[1], result[2], result[3]};
   //*profile = {0.0, 0.0, 0.0, 0.0};
   //Log_info("slow2: %d", sched->slow_);
@@ -524,7 +524,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   sched->OnCommit(tid, dep_id, REJECT);
-  std::vector<double> result = rrr::CPUInfo::cpu_stat();
+  auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
   *profile = {result[0], result[1], result[2]};
   Log_info("slow3: %d", sched->slow_);
   *slow = sched->slow_;

@@ -1,4 +1,5 @@
 // @safe - RRR RPC service implementation for Mako client API
+#include <std_compat.hpp>  // textual STL before `import std` (mixed with module → abi_tag clash)
 #include "client_service.h"
 #include "lib/common.h"
 #include "rrr/rrr.hpp"

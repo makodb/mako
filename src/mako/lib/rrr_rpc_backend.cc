@@ -6,6 +6,7 @@
  *
  **********************************************************************/
 
+#include <std_compat.hpp>  // textual STL before `import std` (mixed with module → abi_tag clash)
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
