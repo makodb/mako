@@ -914,6 +914,9 @@ struct ReconnectState {
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
 class ClientConnection {
     friend class Client;
+    // Drop body extracted as a free fn so the DSL `impl Drop` (Phase 5) can
+    // delegate to it; friend now, public once the struct is DSL-migrated.
+    friend void clientconn_drop(const ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -3535,10 +3538,19 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
 }
 
 // @safe - Simple destructor
+// @unsafe - ClientConnection drop body, extracted as a free fn so the DSL
+// `impl Drop for ClientConnection` (Phase 5) maps to it. Aborts any in-flight
+// reconnect (atomics in the carved ReconnectState), then cancels all pending
+// futures/callbacks. `reconnect_` is mutable + invalidate_pending_futures is
+// const, so a const self suffices.
+void clientconn_drop(const ClientConnection& self) {
+  self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+  self.reconnect_.reconnecting_.store(false, std::memory_order_release);
+  self.invalidate_pending_futures();
+}
+
 ClientConnection::~ClientConnection() {
-  reconnect_.reconnect_abort_.store(true, std::memory_order_release);
-  reconnect_.reconnecting_.store(false, std::memory_order_release);
-  invalidate_pending_futures();
+  clientconn_drop(*this);
 }
 
 // @unsafe - Cancels all pending futures with error, protected by SpinMutex.
