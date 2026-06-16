@@ -937,6 +937,13 @@ class ClientConnection {
     // struct free-fn calls at the flip.
     friend void clientconn_mark_closing(const ClientConnection& self);
     friend void clientconn_record_circuit_result(const ClientConnection& self, i32 err);
+    friend bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self);
+    friend void clientconn_record_circuit_state_transition(const ClientConnection& self, CircuitState before, CircuitState after);
+    friend void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, const std::string& message);
+    friend void clientconn_invoke_disconnected_callback(const ClientConnection& self);
+    friend void clientconn_invoke_reconnecting_callback(const ClientConnection& self);
+    friend void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success);
+    friend void clientconn_invoke_connected_callback(const ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -4576,19 +4583,21 @@ void ClientConnection::on_channel_closed_fan_out() {
 
 // @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
 // record_circuit_state_transition is @safe.
-bool ClientConnection::allow_request_with_circuit_metrics() const {
-  CircuitState before = circuit_breaker_.state();
-  bool allowed = circuit_breaker_.allow_request();
-  CircuitState after = circuit_breaker_.state();
-  record_circuit_state_transition(before, after);
+bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self) {
+  CircuitState before = self.circuit_breaker_.state();
+  bool allowed = self.circuit_breaker_.allow_request();
+  CircuitState after = self.circuit_breaker_.state();
+  self.record_circuit_state_transition(before, after);
   if (!allowed) {
-    metrics_.record_circuit_open_rejection();
+    self.metrics_.record_circuit_open_rejection();
   }
   return allowed;
 }
 
+bool ClientConnection::allow_request_with_circuit_metrics() const { return clientconn_allow_request_with_circuit_metrics(*this); }
+
 // @safe - Checks whether an error should contribute to circuit tripping.
-bool ClientConnection::should_trip_circuit_for_error(i32 err) {
+bool clientconn_should_trip_circuit_for_error(i32 err) {
   switch (err) {
     case 0:
       return false;
@@ -4606,27 +4615,33 @@ bool ClientConnection::should_trip_circuit_for_error(i32 err) {
   }
 }
 
+bool ClientConnection::should_trip_circuit_for_error(i32 err) { return clientconn_should_trip_circuit_for_error(err); }
+
 // @safe - Track circuit breaker state transitions in metrics.
-void ClientConnection::record_circuit_state_transition(
+void clientconn_record_circuit_state_transition(const ClientConnection& self,
     CircuitState before,
-    CircuitState after) const {
+    CircuitState after) {
   if (before == after) {
     return;
   }
 
   switch (after) {
     case CircuitState::OPEN:
-      metrics_.record_circuit_open_transition();
+      self.metrics_.record_circuit_open_transition();
       break;
     case CircuitState::HALF_OPEN:
-      metrics_.record_circuit_half_open_transition();
+      self.metrics_.record_circuit_half_open_transition();
       break;
     case CircuitState::CLOSED:
-      metrics_.record_circuit_closed_transition();
+      self.metrics_.record_circuit_closed_transition();
       break;
     default:
       break;
   }
+}
+
+void ClientConnection::record_circuit_state_transition(CircuitState before, CircuitState after) const {
+  clientconn_record_circuit_state_transition(*this, before, after);
 }
 
 // @safe - CircuitBreaker is @safe; should_trip_circuit_for_error is @safe;
@@ -4645,7 +4660,7 @@ void clientconn_record_circuit_result(const ClientConnection& self, i32 err) {
 void ClientConnection::record_circuit_result(i32 err) const { clientconn_record_circuit_result(*this, err); }
 
 // @safe - Maps errno-style errors into structured RpcError categories.
-RpcError ClientConnection::map_system_error(i32 err) {
+RpcError clientconn_map_system_error(i32 err) {
   switch (err) {
     case 0:
       return RpcError::OK;
@@ -4678,46 +4693,53 @@ RpcError ClientConnection::map_system_error(i32 err) {
   }
 }
 
+RpcError ClientConnection::map_system_error(i32 err) { return clientconn_map_system_error(err); }
+
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe;
 // map_system_error is @safe.
-void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
-  if (!callback_manager_) {
+void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, const std::string& message) {
+  if (!self.callback_manager_) {
     return;
   }
-  callback_manager_->invoke_on_error(map_system_error(err), message);
+  self.callback_manager_->invoke_on_error(self.map_system_error(err), message);
 }
+void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const { clientconn_invoke_error_callback(*this, err, message); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
-void ClientConnection::invoke_disconnected_callback() const {
-  if (!callback_manager_) {
+void clientconn_invoke_disconnected_callback(const ClientConnection& self) {
+  if (!self.callback_manager_) {
     return;
   }
-  callback_manager_->invoke_on_disconnected();
+  self.callback_manager_->invoke_on_disconnected();
 }
+void ClientConnection::invoke_disconnected_callback() const { clientconn_invoke_disconnected_callback(*this); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
-void ClientConnection::invoke_reconnecting_callback() const {
-  if (!callback_manager_) {
+void clientconn_invoke_reconnecting_callback(const ClientConnection& self) {
+  if (!self.callback_manager_) {
     return;
   }
-  callback_manager_->invoke_on_reconnecting();
+  self.callback_manager_->invoke_on_reconnecting();
 }
+void ClientConnection::invoke_reconnecting_callback() const { clientconn_invoke_reconnecting_callback(*this); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
-void ClientConnection::invoke_reconnected_callback(bool success) const {
-  if (!callback_manager_) {
+void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success) {
+  if (!self.callback_manager_) {
     return;
   }
-  callback_manager_->invoke_on_reconnected(success);
+  self.callback_manager_->invoke_on_reconnected(success);
 }
+void ClientConnection::invoke_reconnected_callback(bool success) const { clientconn_invoke_reconnected_callback(*this, success); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
-void ClientConnection::invoke_connected_callback() const {
-  if (!callback_manager_) {
+void clientconn_invoke_connected_callback(const ClientConnection& self) {
+  if (!self.callback_manager_) {
     return;
   }
-  callback_manager_->invoke_on_connected();
+  self.callback_manager_->invoke_on_connected();
 }
+void ClientConnection::invoke_connected_callback() const { clientconn_invoke_connected_callback(*this); }
 
 // @unsafe - Error handler - transitions to FAILED state.
 // const: state_machine_, atomics (mutable), close/invoke_*_callback,
