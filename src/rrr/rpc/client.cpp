@@ -898,12 +898,12 @@ constexpr size_t kAsyncSlotCount = static_cast<size_t>(16384);
 // declares it as an opaque field. The recv/reconnect machinery accesses the
 // atomics directly via `reconnect_.<field>`.
 struct ReconnectState {
-  std::atomic<bool> reconnecting_{false};
-  std::atomic<bool> reconnect_abort_{false};
+  mutable std::atomic<bool> reconnecting_{false};
+  mutable std::atomic<bool> reconnect_abort_{false};
   // auto-reconnect attempt counter — incremented before the reconnect-thread
   // spawn in on_channel_closed_fan_out; tests inspect it to verify the
   // fan-out reached the reconnect-policy branch.
-  std::atomic<uint64_t> channel_reconnect_attempts_{0};
+  mutable std::atomic<uint64_t> channel_reconnect_attempts_{0};
 
   ReconnectState() = default;
   // std::atomic is not movable, but the DSL-emitted move ctor of the owning
@@ -943,990 +943,751 @@ inline rusty::Vec<rusty::Option<AsyncReplyCallback>> make_prefilled_cb_slots() {
   return slots;
 }
 
+// Hoisted above the ClientConnection DSL struct (Phase 5 flip): the DSL
+// parser rejects a `rusty::Function<void(...)>` field/param type.
+using OnReconnectCompleteCallbackFn = rusty::Function<void(bool)>;
+using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;
+
+// Forward declarations of the clientconn_* free fns the DSL struct's
+// generated out-of-line method defs delegate to (the friend decls that
+// previously provided visibility are gone with the class).
+struct ClientConnection;
+inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
+void clientconn_drop(const ClientConnection& self);
+void clientconn_mark_closing(const ClientConnection& self);
+void clientconn_record_circuit_result(const ClientConnection& self, i32 err);
+bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self);
+void clientconn_record_circuit_state_transition(const ClientConnection& self, CircuitState before, CircuitState after);
+void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, const std::string& message);
+void clientconn_invoke_disconnected_callback(const ClientConnection& self);
+void clientconn_invoke_reconnecting_callback(const ClientConnection& self);
+void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success);
+void clientconn_invoke_connected_callback(const ClientConnection& self);
+void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config);
+void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
+HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self);
+void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config);
+CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self);
+void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
+void clientconn_handle_free(const ClientConnection& self, i64 xid);
+void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
+bool clientconn_check_pending_write_update(const ClientConnection& self);
+void clientconn_invalidate_pending_futures(const ClientConnection& self);
+void clientconn_close(const ClientConnection& self);
+void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
+void clientconn_run_recv_loop(ClientConnection& self);
+void clientconn_handle_error(const ClientConnection& self);
+void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
+void clientconn_on_channel_closed_fan_out(ClientConnection& self);
+ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
+int clientconn_connect(ClientConnection& self, const int8_t* addr);
+int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
+int clientconn_connect_via_factory(ClientConnection& self, const int8_t* addr);
+void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel);
+void clientconn_bind_channel_via_poll_thread(ClientConnection& self, ChannelConnectionProxy channel);
+void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionProxy channel);
+bool clientconn_should_trip_circuit_for_error(i32 err);
+RpcError clientconn_map_system_error(i32 err);
+void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory);
+bool clientconn_is_factory_bound(const ClientConnection& self);
+uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& self);
+void clientconn_abort_reconnect(ClientConnection& self);
+bool clientconn_is_reconnecting(const ClientConnection& self);
+void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy);
+size_t clientconn_pending_future_count(const ClientConnection& self);
+size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self);
+void clientconn_update_pending_queue_config_for_test(const ClientConnection& self, const RequestQueueConfig& config);
+void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback);
+bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new_id);
+void clientconn_set_keepalive(const ClientConnection& self, const KeepaliveConfig& config);
+void clientconn_on_request_dispatched(const ClientConnection& self, size_t bytes);
+void clientconn_on_response_received(const ClientConnection& self, size_t bytes);
+void clientconn_set_callback_manager(ClientConnection& self, const rusty::Arc<CallbackManager>& callback_manager);
+std::string clientconn_host(const ClientConnection& self);
+uint64_t clientconn_monotonic_ms_now();
+template<typename F>
+FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
+template<typename F>
+FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F&& write_fn);
+template<typename F>
+rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& self, i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply);
+bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs);
+
 // @safe - Client-side socket handler exposed to poll loop via Pollable
 // proxy facade.  Methods that genuinely cross socket I/O, Marshal byte
 // chains, fiber dispatch, cross-thread queues, or raw pointer ops carry
 // per-method `// @unsafe` overrides; the rest inherit `@safe` from this
 // class umbrella.
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership.
-class ClientConnection {
-    friend class Client;
-    // Drop body extracted as a free fn so the DSL `impl Drop` (Phase 5) can
-    // delegate to it; friend now, public once the struct is DSL-migrated.
-    friend void clientconn_drop(const ClientConnection& self);
-    // Phase 5: gnarly method bodies extracted to friend free fns (clientconn_*)
-    // so the eventual DSL methods can delegate to them; friend now, public-
-    // struct free-fn calls at the flip.
-    friend void clientconn_mark_closing(const ClientConnection& self);
-    friend void clientconn_record_circuit_result(const ClientConnection& self, i32 err);
-    friend bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self);
-    friend void clientconn_record_circuit_state_transition(const ClientConnection& self, CircuitState before, CircuitState after);
-    friend void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, const std::string& message);
-    friend void clientconn_invoke_disconnected_callback(const ClientConnection& self);
-    friend void clientconn_invoke_reconnecting_callback(const ClientConnection& self);
-    friend void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success);
-    friend void clientconn_invoke_connected_callback(const ClientConnection& self);
-    friend void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config);
-    friend void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
-    friend HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self);
-    friend void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config);
-    friend CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self);
-    friend void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
-    friend void clientconn_handle_free(const ClientConnection& self, i64 xid);
-    friend void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
-    friend bool clientconn_check_pending_write_update(const ClientConnection& self);
-    friend void clientconn_invalidate_pending_futures(const ClientConnection& self);
-    friend void clientconn_close(const ClientConnection& self);
-    friend void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
-    friend void clientconn_run_recv_loop(ClientConnection& self);
-    friend void clientconn_handle_error(const ClientConnection& self);
-    friend void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
-    friend void clientconn_on_channel_closed_fan_out(ClientConnection& self);
-    friend ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
-    friend int clientconn_connect(ClientConnection& self, const char* addr);
-    friend int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
-    friend int clientconn_connect_via_factory(ClientConnection& self, const char* addr);
-    friend void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel);
-    friend void clientconn_bind_channel_via_poll_thread(ClientConnection& self, ChannelConnectionProxy channel);
-    friend void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionProxy channel);
-    template<typename F>
-    friend FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
-    // (clientconn_request_async friended below, after the
-    // AsyncReplyCallback typedef it references)
-    template<typename F>
-    friend FutureResult clientconn_request_with_options(const ClientConnection& self, i32 rpc_id, const RequestOptions& options, const FutureAttr& attr, F&& write_fn);
-    friend class ClientPool;
+#if RUSTYCPP_RUST
+struct ClientConnection {
+    poll_thread_worker_: Arc<PollThread>,
+    fiber_channel_: SpinMutex<Option<Box<FiberChannel>>>,
+    direct_channel_: SpinMutex<Option<ChannelConnectionProxy>>,
+    channel_mode_: Cell<bool>,
+    factory_: SpinMutex<Option<ChannelFactoryProxy>>,
+    xid_counter_: Counter,
+    pending_fu_: SpinMutex<HashMap<i64, Arc<Future>>>,
+    pending_cb_slots_: SpinMutex<Vec<Option<AsyncReplyCallback>>>,
+    state_machine_: ConnectionStateMachine,
+    reconnect_policy_: ReconnectPolicy,
+    reconnect_: ReconnectState,
+    reconnect_address_: std::string,
+    buffering_config_: BufferingConfig,
+    pending_queue_: RequestQueue,
+    server_instance_id_: Cell<u64>,
+    on_server_restart_: OnServerRestartCallbackFn,
+    keepalive_config_: Cell<KeepaliveConfig>,
+    heartbeat_manager_: HeartbeatManager,
+    circuit_breaker_: CircuitBreaker,
+    callback_manager_: Arc<CallbackManager>,
+    last_activity_time_: Cell<u64>,
+    metrics_: ConnectionMetrics,
+    weak_self_: WeakClientConnection,
+    host_: std::string,
+    packets_: u64,
+    paused_: Cell<bool>,
+    is_client_mode_: bool,
+}
 
-    // Shared reference to PollThread for async communication.
-    // 4g3c3: ClientConnection no longer owns an fd or in/out Marshal
-    // buffers; the channel layer's `TcpConnection` owns the fd and
-    // drives the read/write loop. The `poll_thread_worker_` field
-    // remains because tests construct `ClientConnection` directly
-    // with an Arc<PollThread> and the channel-factory production
-    // path still routes through it for thread affinity.
-    rusty::Arc<PollThread> poll_thread_worker_;
+impl Drop for ClientConnection {
+    fn drop(&mut self) { clientconn_drop(self); }
+}
 
-    //
-    // When the client is in channel mode, `fiber_channel_` owns a
-    // `FiberChannel` wrapper around the `ChannelConnectionProxy`; the
-    // wrapper exposes blocking `send_frame` / `recv_frame` so that the
-    // recv-loop fiber spawned in `bind_channel` can drive response
-    // demux top-to-bottom (no callback unrolling). The proxy itself is
-    // moved into the wrapper, so this field is the single owner of the
-    // channel-side state. `socket_` becomes irrelevant in channel mode
-    // and the inherited `Pollable` I/O methods (`handle_read`,
-    // `handle_write`) short-circuit to no-ops.
-    //
-    // `channel_mode_` is the opt-in latch flipped by `bind_channel` so
-    // the routing logic can branch without inspecting the Option (and
-    // without touching the FiberChannel from threads that don't own
-    // it).
-    //
-    // SpinMutex<Option<Box<>>> shape:
-    //   - SpinMutex — thread-safe interior mutability so `request(...)`
-    //     const paths can lock the wrapper to send outbound frames
-    //     concurrently from many user threads while the poll thread's
-    //     recv-loop fiber briefly locks to extract the FiberChannel
-    //     pointer. (Sub-leaf 4g1 swapped this from `RefCell` because
-    //     RefCell's non-atomic borrow_state corrupts under multi-thread
-    //     access — observed in `RPCTest.MultiThreadedStressTest` with
-    //     100 user threads.)
-    //   - Option   — None until `bind_channel` is called; Some after.
-    //   - Box      — stable address: the recv-loop fiber holds a raw
-    //     pointer to the wrapper (not the connection itself, which
-    //     could move under it via Arc clones).
-    //
-    // Lifetime: a parked recv-loop fiber holds a `Weak<ClientConnection>`
-    // and the FiberChannel pointer (the FiberChannel outlives the
-    // fiber as long as the wrapper sits in this field). Full close /
-    // reconnect cleanup is wired in sub-leaves 4d/4e — for 4c2, the
-    // fiber simply exits when the proxy's `on_closed` fires (the only
-    // way to break out of `recv_frame` other than process exit).
-    mutable SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_{rusty::Option<rusty::Box<FiberChannel>>(rusty::None)};
-
-    // direct-callback channel binding.
-    //
-    // When `bind_channel_direct(...)` is called instead of
-    // `bind_channel*(...)`, this slot owns the channel proxy and
-    // installs `on_frame` / `on_closed` callbacks directly on it.
-    // No `FiberChannel`, no recv-loop fiber, no `IntEvent` per
-    // received frame — `on_frame` invokes `decode_response_and_notify`
-    // inline on whichever thread the channel layer fires it on
-    // (typically the poll thread for TCP). Closer to the legacy
-    // fd-path's `handle_read → notify_ready` flow that scales to
-    // 200+ threads on a shared poll thread.
-    //
-    // Bypasses the deeper reactor/fiber wedge documented in 4g1b.
-    // The legacy `fiber_channel_` slot stays for unit-test
-    // compatibility (those tests use `bind_channel(...)` and drive
-    // FakeChannelStub::deliver() from the test thread).
-    //
-    // Box-wrapped to retain the same indirection shape used by
-    // `fiber_channel_` and `factory_` (the alias is already a
-    // `rusty::Box<ChannelConnectionBase>`; the outer Box keeps the
-    // Option's value-type uniform across slots).
-    mutable SpinMutex<rusty::Option<ChannelConnectionProxy>> direct_channel_{rusty::Option<ChannelConnectionProxy>(rusty::None)};
-
-    rusty::Cell<bool> channel_mode_{false};
-
-    // channel-mode factory.
-    //
-    // When a `ChannelFactoryProxy` is bound via `bind_factory()`,
-    // `connect(addr)` and the close fan-out's reconnect path route
-    // through `factory_->connect(addr)` instead of issuing a raw
-    // socket(2) + connect(2) + register-pollable sequence. The
-    // factory's returned proxy is then handed to `bind_channel(...)`
-    // automatically, so the connection enters channel mode without
-    // a separate caller-driven setup step.
-    //
-    // Default-constructed (`None`) means "no factory bound" — the
-    // legacy fd path stays in use. Sub-leaf 4f adds the migration
-    // switch that selects between the two paths; sub-leaf 4g removes
-    // the legacy fd path entirely.
-    //
-    // Boxed to retain the same indirection shape as `fiber_channel_`
-    // (the alias is already a `rusty::Box<ChannelFactoryBase>`; the
-    // outer Box keeps the Option's value-type uniform across slots).
-    // SpinMutex (not RefCell) for the same reason as `fiber_channel_`:
-    // the close fan-out's reconnect spawn calls `connect_via_factory`
-    // from a separate thread, which can race against user-thread
-    // accessors like `is_factory_bound()` (sub-leaf 4g1).
-    mutable SpinMutex<rusty::Option<ChannelFactoryProxy>> factory_{rusty::Option<ChannelFactoryProxy>(rusty::None)};
-
-    // Transaction ID counter for RPC requests
-    // mutable because Counter uses atomics internally for thread-safe interior mutability
-    mutable Counter xid_counter_ = Counter::new_(0);
-
-    // Map of pending futures awaiting responses (protected by SpinMutex)
-    SpinMutex<rusty::HashMap<i64, rusty::Arc<Future>>> pending_fu_{rusty::HashMap<i64, rusty::Arc<Future>>()};
-
-public:
-    // AsyncReplyCallback is now a namespace-scope alias (declared above the
-    // class); the friend-template decl that references it can move back
-    // into the main friend block once the nested typedef is gone, but is
-    // kept here for minimal churn.
-    template<typename F>
-    friend rusty::Result<rusty::Unit, i32> clientconn_request_async(const ClientConnection& self, i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply);
-private:
-    mutable SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>>
-        pending_cb_slots_;
-
-    // Connection state machine for lifecycle management
-    ConnectionStateMachine state_machine_{ConnectionStateMachine::new_()};
-
-    // Reconnection policy and state
-    mutable ReconnectPolicy reconnect_policy_;  // mutable for const set_reconnect_policy()
-    // Reconnect-coordination atomics (CAS + memory ordering), carved into a
-    // hand-written sub-struct (see ReconnectState above). `mutable` so const
-    // methods can drive the atomics.
-    mutable ReconnectState reconnect_;
-    std::string reconnect_address_;  // Address to reconnect to
-
-    // Request buffering during disconnection. The DSL-emitted
-    // BufferingConfig no longer carries in-class default initializers,
-    // so use the explicit `defaults()` factory to match the pre-DSL
-    // behaviour (enabled=true, behavior=QUEUE).
-    mutable BufferingConfig buffering_config_ = BufferingConfig::defaults();
-    mutable RequestQueue pending_queue_;  // mutable for const request() access
-
-    // Server restart detection: tracks server instance ID
-    // 0 means no ID received yet (initial state)
-    rusty::Cell<uint64_t> server_instance_id_{0};
-
-    // Callback invoked when server restart is detected (ID changes).
-    // Parameters: (old_id, new_id).  rusty::Function is move-only;
-    // the setter takes the callback by value-with-move and the
-    // callsite below invokes it by reference (no copy).
-    mutable rusty::Function<void(uint64_t, uint64_t)> on_server_restart_;
-
-    // TCP Keepalive configuration for connection health monitoring (Cell for interior mutability)
-    rusty::Cell<KeepaliveConfig> keepalive_config_;
-    // Heartbeat manager integrated into poll loop write/read lifecycle.
-    mutable HeartbeatManager heartbeat_manager_;
-    // Circuit breaker integrated into live request dispatch.
-    mutable CircuitBreaker circuit_breaker_;
-    // Lifecycle callback hooks shared with Client facade.
-    rusty::Arc<CallbackManager> callback_manager_;
-
-    // Last activity timestamp for idle detection (milliseconds since epoch)
-    // Updated on send/receive operations
-    rusty::Cell<uint64_t> last_activity_time_{0};
-
-    // Connection health metrics
-    ConnectionMetrics metrics_{ConnectionMetrics::new_()};
-
-    // Weak pointer to self, initialized after creation
-    // Used to pass weak reference for poll thread registration
-    WeakClientConnection weak_self_;
-
-    // Jetpack-specific members
-    std::string host_;
-    uint64_t packets_{0};
-    rusty::Cell<bool> paused_{false};  // Cell for interior mutability
-    bool is_client_mode_{false};  // Jetpack: distinguishes client vs server mode
-
-    // @safe - Cancels all pending futures (has internal @unsafe blocks)
-    // SAFETY: Protected by spinlock
-    void invalidate_pending_futures() const;
-
-    // @safe - Fail one pending future by xid if it still exists.
-    // Safe to call repeatedly; only first call for a given xid has effect.
-    void fail_pending_future(i64 xid, int err) const;
-
-    // channel-mode response demux
-    // and close-side fan-out.
-    //
-    // `run_recv_loop` blocks the calling fiber on
-    // `FiberChannel::recv_frame` and dispatches each decoded response
-    // body to the matching pending future. On `recv_frame` returning
-    // None (channel closed), it calls `on_channel_closed_fan_out`
-    // before exiting so the connection's reliability layer (error
-    // callback, pending-future cancellation, reconnect attempt) sees
-    // the close.
-    //
-    // `decode_response_and_notify` is the single-frame helper called
-    // by the loop on each iteration; it parses the body and resolves
-    // / drops the matching future.
-    // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
-    void run_recv_loop();
-    // @unsafe - Same body, factored for testability.
-    void decode_response_and_notify(const std::uint8_t* bytes,
-                                    std::size_t size);
-    // @unsafe - Channel-mode close fan-out: error/disconnected
-    // callbacks, pending-future cancellation, reconnect spawn.
-    void on_channel_closed_fan_out();
-
-    // @unsafe - Channel-factory connect helper (sub-leaf 4e). Calls
-    // `factory_->connect(addr)` and routes the returned proxy
-    // through `bind_channel(...)`. Caller is `connect(addr)` which
-    // already verified the factory is bound.
-    int connect_via_factory(const char* addr);
-
-    // @unsafe - Reset channel-mode state so a subsequent `connect`
-    // call can re-bind. Used by the factory-driven reconnect path
-    // in `on_channel_closed_fan_out` (sub-leaf 4e). Drops the stale
-    // `FiberChannel` (its proxy is closed by definition at this
-    // point), clears the `channel_mode_` latch, and forces the
-    // state machine to DISCONNECTED so `connect`'s
-    // `verify(!is_connected())` passes. The recv-loop fiber from
-    // the old binding has already exited (recv_frame returned None
-    // before the fan-out ran).
-    void reset_channel_mode_for_reconnect();
-
-    // observable counter for channel-mode
-    // channel_reconnect_attempts_ lives in reconnect_ (ReconnectState) above.
-
-public:
-    /**
-     * Closes the connection and cleans up resources.
-     * Called by:
-     * 1: PollThreadWorker::do_close_pollable() for thread-safe close
-     * 2: handle_error() for error handling
-     */
-    // @safe - Closes connection and cleans up
-    // SAFETY: Thread-safe cleanup sequence
-    void close() const;
-
-    /**
-     * Mark connection as closing without closing the socket.
-     * Used by Client::close() to update state before poll thread closes socket.
-     * This avoids race conditions with pending CmdAddPollable commands.
-     */
-    // @safe - Just updates state machine
-    void mark_closing() const;
-
-    // Public destructor for Arc compatibility
-    // @safe - Simple destructor
-    ~ClientConnection();
-
-    // @safe - Initializes connection (only stores references)
-    ClientConnection(rusty::Arc<PollThread> poll_thread_worker);
-
-    /**
-     * Bind a `ChannelConnectionProxy` to this connection
-     *.
-     *
-     * Once bound, the connection enters "channel mode": outbound frames
-     * are routed through the channel via `request_via_channel`, and a
-     * recv-loop fiber is spawned to drive inbound response demux on
-     * top of a `FiberChannel` wrapper around the proxy.
-     *
-     * **Threading**: the recv-loop fiber is spawned on the *current*
-     * thread's reactor via `Fiber::create_run`. For the channel-layer
-     * threading contract to hold (callbacks fire on the same reactor
-     * the fiber lives on), `bind_channel` must be called from the
-     * thread that owns the proxy's callback dispatch — typically the
-     * poll thread for production, the test thread for fakes. Cross-
-     * thread scheduling of the fiber spawn is sub-leaf 4e's concern.
-     *
-     * Calling this more than once is undefined for now (subsequent
-     * leaves may relax that). Calling it with a default-constructed
-     * (null) proxy is a no-op.
-     */
-    // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
-    void bind_channel(ChannelConnectionProxy channel);
-
-    /**
-     * bind that schedules the recv-loop
-     * fiber spawn onto the poll thread.
-     *
-     * Used by production code paths (factory-driven `connect` /
-     * reconnect) that run on the user thread but need the
-     * recv-loop fiber on the poll thread — same reactor that fires
-     * the channel proxy's callbacks (e.g. `TcpConnection::handle_read`'s
-     * `on_frame`). Submits a `OneTimeJob` to the poll thread whose
-     * `Work()` calls `run_recv_loop()` from a fiber that the
-     * `trigger_job` body spawns on its own reactor.
-     *
-     * Use `bind_channel(...)` (above) when the calling thread is
-     * also the thread that fires the proxy's callbacks
-     * (single-threaded fake-channel unit tests).
-     */
-    // @unsafe - Submits a OneTimeJob across thread boundary.
-    void bind_channel_via_poll_thread(ChannelConnectionProxy channel);
-
-    /**
-     * direct on_frame callback.
-     *
-     * Bind the channel without `FiberChannel` and without the
-     * recv-loop fiber. Installs `on_frame` and `on_closed` callbacks
-     * directly on the channel proxy; on_frame calls
-     * `decode_response_and_notify` inline; on_closed calls
-     * `on_channel_closed_fan_out` inline. Both fire on whichever
-     * thread the channel layer drives them on (typically the poll
-     * thread for TCP). No `IntEvent` allocation per frame, no
-     * fiber yield, no `waiting_events_` churn.
-     *
-     * Used by `connect_via_factory(...)` for production TCP. The
-     * legacy `bind_channel(...)` / `bind_channel_via_poll_thread(...)`
-     * paths stay for unit-test compatibility (they use FiberChannel
-     * + recv-loop fiber, which works fine in single-threaded test
-     * contexts).
-     *
-     * After this call, `is_channel_mode()` returns true. The
-     * `direct_channel_` slot owns the proxy.
-     */
-    // @unsafe - Captures Weak<ClientConnection> in proxy callbacks.
-    void bind_channel_direct(ChannelConnectionProxy channel);
-
-    // @safe - True if `bind_channel` has been called with a non-null proxy.
-    bool is_channel_mode() const { return channel_mode_.get(); }
-
-    /**
-     * Bind a `ChannelFactoryProxy` to this connection
-     *.
-     *
-     * Once bound, `connect(addr)` and the close fan-out's reconnect
-     * spawn route through `factory->connect(addr)` instead of the
-     * legacy socket(2) + connect(2) + register-pollable sequence.
-     * The factory's returned proxy is automatically handed to
-     * `bind_channel(...)` on success — callers don't need to wire
-     * channel mode manually.
-     *
-     * Calling with a default-constructed (null) proxy is a no-op.
-     * Calling more than once replaces the previously-bound factory;
-     * an in-flight reconnect that already grabbed the old factory
-     * will complete with the old factory.
-     */
-    // @unsafe - Records the factory under SpinMutex interior mutability.
-    void bind_factory(ChannelFactoryProxy factory) {
-        if (!factory) return;
-        // SpinMutex::lock + Box move-assign are both @safe.
-        {
-            auto guard = factory_.lock().unwrap();
-            *guard = rusty::Some(std::move(factory));
+impl ClientConnection {
+    #[cpp_ctor]
+    fn new(poll_thread_worker: Arc<PollThread>) -> ClientConnection {
+        ClientConnection {
+            poll_thread_worker_: poll_thread_worker,
+            fiber_channel_: SpinMutex::<Option<Box<FiberChannel>>>::new(Option::<Box<FiberChannel>>(None)),
+            direct_channel_: SpinMutex::<Option<ChannelConnectionProxy>>::new(Option::<ChannelConnectionProxy>(None)),
+            channel_mode_: Cell::<bool>::new(false),
+            factory_: SpinMutex::<Option<ChannelFactoryProxy>>::new(Option::<ChannelFactoryProxy>(None)),
+            xid_counter_: Counter::new(0i64),
+            pending_fu_: SpinMutex::<HashMap<i64, Arc<Future>>>::new(HashMap::<i64, Arc<Future>>::new()),
+            pending_cb_slots_: SpinMutex::<Vec<Option<AsyncReplyCallback>>>::new(make_prefilled_cb_slots()),
+            state_machine_: ConnectionStateMachine::new(),
+            reconnect_policy_: ReconnectPolicy {},
+            reconnect_: ReconnectState {},
+            reconnect_address_: std::string {},
+            buffering_config_: BufferingConfig::defaults(),
+            pending_queue_: make_pending_queue(BufferingConfig::defaults().to_queue_config()),
+            server_instance_id_: Cell::<u64>::new(0u64),
+            on_server_restart_: OnServerRestartCallbackFn {},
+            keepalive_config_: Cell::<KeepaliveConfig>::new(KeepaliveConfig {}),
+            heartbeat_manager_: HeartbeatManager::new(HeartbeatConfig::disabled()),
+            circuit_breaker_: CircuitBreaker::new(CircuitBreakerConfig::disabled()),
+            callback_manager_: Arc::<CallbackManager>::new(CallbackManager::new()),
+            last_activity_time_: Cell::<u64>::new(0u64),
+            metrics_: ConnectionMetrics::new(),
+            weak_self_: WeakClientConnection {},
+            host_: std::string {},
+            packets_: 0u64,
+            paused_: Cell::<bool>::new(false),
+            is_client_mode_: false,
         }
     }
 
-    // @safe - SpinMutex::lock and Option::is_some are both @safe.
-    bool is_factory_bound() const {
-        auto guard = factory_.lock().unwrap();
-        return guard->is_some();
+    // --- delegating methods (&mut self → non-const free fns) ---
+    fn run_recv_loop(&mut self) { clientconn_run_recv_loop(self); }
+    fn decode_response_and_notify(&mut self, bytes: *const u8, size: usize) { clientconn_decode_response_and_notify(self, bytes, size); }
+    fn on_channel_closed_fan_out(&mut self) { clientconn_on_channel_closed_fan_out(self); }
+    fn connect_via_factory(&mut self, addr: *const i8) -> i32 { clientconn_connect_via_factory(self, addr) }
+    fn reset_channel_mode_for_reconnect(&mut self) { clientconn_reset_channel_mode_for_reconnect(self); }
+    fn connect(&mut self, addr: *const i8) -> i32 { clientconn_connect(self, addr) }
+    fn bind_channel(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel(self, channel); }
+    fn bind_channel_via_poll_thread(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel_via_poll_thread(self, channel); }
+    fn bind_channel_direct(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
+    fn bind_factory(&mut self, factory: ChannelFactoryProxy) { clientconn_bind_factory(self, factory); }
+    fn abort_reconnect(&mut self) { clientconn_abort_reconnect(self); }
+    fn set_callback_manager(&mut self, callback_manager: &Arc<CallbackManager>) { clientconn_set_callback_manager(self, callback_manager); }
+
+    // --- delegating methods (&self → const free fns) ---
+    fn invalidate_pending_futures(&self) { clientconn_invalidate_pending_futures(self); }
+    fn fail_pending_future(&self, xid: i64, err: i32) { clientconn_fail_pending_future(self, xid, err); }
+    fn close(&self) { clientconn_close(self); }
+    fn mark_closing(&self) { clientconn_mark_closing(self); }
+    fn reconnect(&self, on_complete: OnReconnectCompleteCallbackFn) -> i32 { clientconn_reconnect(self, on_complete) }
+    fn set_buffering_config(&self, config: &BufferingConfig) { clientconn_set_buffering_config(self, config); }
+    fn set_heartbeat_config(&self, config: &HeartbeatConfig) { clientconn_set_heartbeat_config(self, config); }
+    fn heartbeat_config(&self) -> HeartbeatConfig { clientconn_heartbeat_config(self) }
+    fn set_circuit_breaker_config(&self, config: &CircuitBreakerConfig) { clientconn_set_circuit_breaker_config(self, config); }
+    fn circuit_breaker_config(&self) -> CircuitBreakerConfig { clientconn_circuit_breaker_config(self) }
+    fn enqueue_heartbeat_probe(&self) { clientconn_enqueue_heartbeat_probe(self); }
+    fn allow_request_with_circuit_metrics(&self) -> bool { clientconn_allow_request_with_circuit_metrics(self) }
+    fn record_circuit_state_transition(&self, before: CircuitState, after: CircuitState) { clientconn_record_circuit_state_transition(self, before, after); }
+    fn record_circuit_result(&self, err: i32) { clientconn_record_circuit_result(self, err); }
+    fn invoke_error_callback(&self, err: i32, message: &std::string) { clientconn_invoke_error_callback(self, err, message); }
+    fn invoke_disconnected_callback(&self) { clientconn_invoke_disconnected_callback(self); }
+    fn invoke_reconnecting_callback(&self) { clientconn_invoke_reconnecting_callback(self); }
+    fn invoke_reconnected_callback(&self, success: bool) { clientconn_invoke_reconnected_callback(self, success); }
+    fn invoke_connected_callback(&self) { clientconn_invoke_connected_callback(self); }
+    fn dispatch_frame_via_channel(&self, body_bytes: *const u8, body_size: usize) -> ChannelError { clientconn_dispatch_frame_via_channel(self, body_bytes, body_size) }
+    fn handle_error(&self) { clientconn_handle_error(self); }
+    fn check_pending_write_update(&self) -> bool { clientconn_check_pending_write_update(self) }
+    fn handle_free(&self, xid: i64) { clientconn_handle_free(self, xid); }
+    fn is_factory_bound(&self) -> bool { clientconn_is_factory_bound(self) }
+    fn channel_reconnect_attempts_count(&self) -> u64 { clientconn_channel_reconnect_attempts_count(self) }
+    fn set_reconnect_policy(&self, policy: &ReconnectPolicy) { clientconn_set_reconnect_policy(self, policy); }
+    fn is_reconnecting(&self) -> bool { clientconn_is_reconnecting(self) }
+    fn pending_future_count(&self) -> usize { clientconn_pending_future_count(self) }
+    fn replay_pending_requests_for_test(&self) -> usize { clientconn_replay_pending_requests_for_test(self) }
+    fn update_pending_queue_config_for_test(&self, config: &RequestQueueConfig) { clientconn_update_pending_queue_config_for_test(self, config); }
+    fn set_on_server_restart(&self, callback: OnServerRestartCallbackFn) { clientconn_set_on_server_restart(self, callback); }
+    fn check_server_instance(&self, new_id: u64) -> bool { clientconn_check_server_instance(self, new_id) }
+    fn set_keepalive(&self, config: &KeepaliveConfig) { clientconn_set_keepalive(self, config); }
+    fn on_request_dispatched(&self, bytes: usize) { clientconn_on_request_dispatched(self, bytes); }
+    fn on_response_received(&self, bytes: usize) { clientconn_on_response_received(self, bytes); }
+    fn host(&self) -> std::string { clientconn_host(self) }
+
+    // --- static delegators ---
+    fn should_trip_circuit_for_error(err: i32) -> bool { clientconn_should_trip_circuit_for_error(err) }
+    fn map_system_error(err: i32) -> RpcError { clientconn_map_system_error(err) }
+
+    // --- generic request trio ---
+    fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult { clientconn_request_via_channel(self, rpc_id, attr, write_fn) }
+    fn request_with_options<F>(&self, rpc_id: i32, options: &RequestOptions, attr: &FutureAttr, write_fn: F) -> FutureResult { clientconn_request_with_options(self, rpc_id, options, attr, write_fn) }
+    fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: AsyncReplyCallback) -> rusty::Result<rusty::Unit, i32> { clientconn_request_async(self, rpc_id, write_fn, on_reply) }
+
+    // --- trivial inline accessors ---
+    fn is_channel_mode(&self) -> bool { self.channel_mode_.get() }
+    fn install_self_weak_for_testing(&mut self, weak: WeakClientConnection) { self.weak_self_ = weak; }
+    fn force_connected_for_testing(&mut self) { self.state_machine_.force_state(ConnectionState::CONNECTED); }
+    fn set_reconnect_address_for_testing(&mut self, addr: std::string) { self.reconnect_address_ = addr; }
+    fn connected(&self) -> bool { self.state_machine_.is_connected() }
+    fn connection_state(&self) -> ConnectionState { self.state_machine_.state() }
+    fn reconnect_policy(&self) -> &ReconnectPolicy { &self.reconnect_policy_ }
+    fn buffering_config(&self) -> &BufferingConfig { &self.buffering_config_ }
+    fn pending_request_count(&self) -> usize { self.pending_queue_.size() }
+    fn clear_pending_requests(&self, error_code: i32) { self.pending_queue_.clear_all(error_code); }
+    fn server_instance_id(&self) -> u64 { self.server_instance_id_.get() }
+    fn keepalive_config(&self) -> KeepaliveConfig { self.keepalive_config_.get() }
+    fn circuit_breaker_state(&self) -> CircuitState { self.circuit_breaker_.state() }
+    fn update_last_activity(&self, current_time_ms: u64) { self.last_activity_time_.set(current_time_ms); }
+    fn last_activity_time(&self) -> u64 { self.last_activity_time_.get() }
+    fn is_idle(&self, idle_ms: u64, current_time_ms: u64) -> bool {
+        let last: u64 = self.last_activity_time_.get();
+        if last == 0u64 { return false; }
+        (current_time_ms - last) > idle_ms
     }
-
-    // Test-only: install the self-pointer before code paths that need
-    // to upgrade it (e.g., the recv-loop fiber spawned in
-    // `bind_channel`). Production code goes through `Client::connect`,
-    // which wires `weak_self_` automatically as part of the
-    // freshly-constructed-Arc init dance. Tests that construct
-    // `ClientConnection` directly via `Arc::make` must call this
-    // before any channel-mode code path that captures the weak.
-    // @safe - Direct field assignment; rusty::sync::Weak move-assign is now @safe.
-    // Callers must guarantee the weak refers to the same Arc that owns this object.
-    void install_self_weak_for_testing(WeakClientConnection weak) {
-        weak_self_ = std::move(weak);
-    }
-
-    // Test-only: drive the state machine to `CONNECTED`. Production
-    // gets here via `connect(addr)` after the channel is bound; tests
-    // that construct a `ClientConnection` + `bind_channel(stub)`
-    // directly (without going through `Client::connect`) need this so
-    // the `request_via_channel` state-machine gate doesn't short-
-    // circuit them with ENOTCONN.
-    // @unsafe - state-machine mutation outside the connect() lifecycle.
-    void force_connected_for_testing() {
-        state_machine_.force_state(ConnectionState::CONNECTED);
-    }
-
-    // observable counter for
-    // channel-mode close fan-out's reconnect spawn. Tests verify the
-    // fan-out reached the reconnect branch by checking this counter
-    // pre/post a synthesized `on_closed`.
-    // @safe - Atomic load.
-    uint64_t channel_reconnect_attempts_count() const {
-        return reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire);
-    }
-
-    // Test-only: seed the reconnect-target address. Production wires
-    // this through `connect(addr)`. Channel-mode tests that want to
-    // verify the close fan-out's reconnect-policy branch check this
-    // before the synthesized `on_closed`.
-    // @safe - single std::string move-assign on a non-shared field.
-    void set_reconnect_address_for_testing(std::string addr) {
-        reconnect_address_ = std::move(addr);
-    }
-
-    // Test-only: short-circuit the reconnect spawn body before it
-    // reaches the legacy fd `reconnect()` path. Tests rely on the
-    // close fan-out's counter bumping *before* the spawn, while the
-    // spawned thread itself aborts immediately.
-    // @safe - Atomic store.
-    void abort_reconnect() {
-        reconnect_.reconnect_abort_.store(true, std::memory_order_release);
-    }
-
-    // @safe - Simple status check using state machine
-    bool connected() const {
-        return state_machine_.is_connected();
-    }
-
-    // @safe - Get current connection state
-    ConnectionState connection_state() const {
-        return state_machine_.state();
-    }
-
-    /**
-     * Establish TCP connection to remote server.
-     * Returns 0 on success, error code on failure.
-     */
-    // @unsafe - Establishes TCP connection
-    // SAFETY: Proper socket creation and error handling
-    int connect(const char* addr);
-
-    /**
-     * Set the reconnection policy for this connection.
-     * The policy controls automatic reconnection behavior after failures.
-     */
-    // @safe - Sets reconnection policy. Const because the field is `mutable`
-    // (interior-mutability sleeve so Client::set_reconnect_policy — which
-    // is itself const-callable through Arc<Client> — can delegate here).
-    void set_reconnect_policy(const ReconnectPolicy& policy) const {
-        // @unsafe - struct assignment operator not annotated
-        { reconnect_policy_ = policy; }
-    }
-
-    // @safe - Get the current reconnection policy
-    // @lifetime: (&'a) -> &'a
-    const ReconnectPolicy& reconnect_policy() const {
-        return reconnect_policy_;
-    }
-
-    // @safe - Check if a reconnection attempt is in progress
-    bool is_reconnecting() const {
-        return reconnect_.reconnecting_.load(std::memory_order_acquire);
-    }
-
-    /**
-     * Attempt to reconnect to the last connected address.
-     * Can only be called when connection is in FAILED or DISCONNECTED state.
-     *
-     * @param on_complete Optional callback called with success/failure result
-     * @return 0 on success (reconnection started), error code on failure
-     */
-    // @unsafe - Attempts reconnection (calls connect which has socket
-    // operations). A single const facade: clientconn_reconnect takes
-    // const self, resets the mutable reconnect_abort_ latch, and
-    // const_casts internally for the non-const connect call. Both the
-    // const Client::reconnect path (Arc<Client>) and the non-const
-    // close-fan-out spawn (`mut_conn->reconnect`) bind here. (The former
-    // separate non-const overload was merged away — the DSL flip allows
-    // one method per name.)
-    int reconnect(rusty::Function<void(bool)> on_complete) const {
-        return clientconn_reconnect(*this, std::move(on_complete));
-    }
-
-    /**
-     * Set the buffering configuration for this connection.
-     * Controls whether requests are queued during disconnection.
-     * Note: const because internal state is mutable.
-     */
-    // @safe - Sets buffering configuration
-    void set_buffering_config(const BufferingConfig& config) const;
-
-    // @safe - Get the current buffering configuration
-    // @lifetime: (&'a) -> &'a
-    const BufferingConfig& buffering_config() const {
-        return buffering_config_;
-    }
-
-    // @safe - RequestQueue::size is @safe (lock + VecDeque::size).
-    size_t pending_request_count() const {
-        return pending_queue_.size();
-    }
-
-    // @unsafe - Uses SpinMutex + rusty::HashMap access
-    size_t pending_future_count() const {
-        auto pending_guard = pending_fu_.lock().unwrap();
-        return pending_guard->len();
-    }
-
-#ifdef RPC_TEST_HOOKS
-    // @unsafe - Test hook: replays queue through non-const internal method.
-    size_t replay_pending_requests_for_test() const {
-        return const_cast<ClientConnection*>(this)->replay_pending_requests();
-    }
-
-    // @safe - Test hook: update queue policy without clearing current queue.
-    void update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
-        pending_queue_.update_config(config);
-    }
+    fn validate_connection(&self) -> bool { self.state_machine_.is_connected() }
+    fn metrics(&self) -> &ConnectionMetrics { &self.metrics_ }
+    fn replay_pending_requests(&self) -> usize { 0usize }
+    fn apply_keepalive_options(&mut self) {}
+    fn fd(&self) -> i32 { -1 }
+    fn pause(&self) { self.paused_.set(true); }
+    fn resume(&self) { self.paused_.set(false); }
+    fn poll_mode(&self) -> i32 { PollMode::READ }
+    fn content_size(&self) -> usize { 0usize }
+    fn handle_write(&mut self) -> i32 { PollMode::NO_CHANGE }
+    fn handle_read(&mut self) -> bool { false }
+    fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
+}
 #endif
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3f6c4fed926471e5329fe17ba3dc6576053b451b2ca4e103a5a8ec0926a294c1*/
+struct ClientConnection;
 
-    // @safe - RequestQueue::clear_all is @safe.
-    // Note: const because pending_queue_ is mutable
-    void clear_pending_requests(int error_code) const {
-        pending_queue_.clear_all(error_code);
+struct ClientConnection {
+    rusty::Arc<PollThread> poll_thread_worker_;
+    SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel_;
+    SpinMutex<rusty::Option<ChannelConnectionProxy>> direct_channel_;
+    rusty::Cell<bool> channel_mode_;
+    SpinMutex<rusty::Option<ChannelFactoryProxy>> factory_;
+    Counter xid_counter_;
+    SpinMutex<rusty::HashMap<int64_t, rusty::Arc<Future>>> pending_fu_;
+    SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>> pending_cb_slots_;
+    ConnectionStateMachine state_machine_;
+    ReconnectPolicy reconnect_policy_;
+    ReconnectState reconnect_;
+    std::string reconnect_address_;
+    BufferingConfig buffering_config_;
+    RequestQueue pending_queue_;
+    rusty::Cell<uint64_t> server_instance_id_;
+    OnServerRestartCallbackFn on_server_restart_;
+    rusty::Cell<KeepaliveConfig> keepalive_config_;
+    HeartbeatManager heartbeat_manager_;
+    CircuitBreaker circuit_breaker_;
+    rusty::Arc<CallbackManager> callback_manager_;
+    rusty::Cell<uint64_t> last_activity_time_;
+    ConnectionMetrics metrics_;
+    WeakClientConnection weak_self_;
+    std::string host_;
+    uint64_t packets_;
+    rusty::Cell<bool> paused_;
+    bool is_client_mode_;
+    mutable bool _rusty_forgotten = false;
+    ClientConnection(rusty::Arc<PollThread> poll_thread_worker__init, SpinMutex<rusty::Option<rusty::Box<FiberChannel>>> fiber_channel__init, SpinMutex<rusty::Option<ChannelConnectionProxy>> direct_channel__init, rusty::Cell<bool> channel_mode__init, SpinMutex<rusty::Option<ChannelFactoryProxy>> factory__init, Counter xid_counter__init, SpinMutex<rusty::HashMap<int64_t, rusty::Arc<Future>>> pending_fu__init, SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>> pending_cb_slots__init, ConnectionStateMachine state_machine__init, ReconnectPolicy reconnect_policy__init, ReconnectState reconnect__init, std::string reconnect_address__init, BufferingConfig buffering_config__init, RequestQueue pending_queue__init, rusty::Cell<uint64_t> server_instance_id__init, OnServerRestartCallbackFn on_server_restart__init, rusty::Cell<KeepaliveConfig> keepalive_config__init, HeartbeatManager heartbeat_manager__init, CircuitBreaker circuit_breaker__init, rusty::Arc<CallbackManager> callback_manager__init, rusty::Cell<uint64_t> last_activity_time__init, ConnectionMetrics metrics__init, WeakClientConnection weak_self__init, std::string host__init, uint64_t packets__init, rusty::Cell<bool> paused__init, bool is_client_mode__init) : poll_thread_worker_(std::move(poll_thread_worker__init)), fiber_channel_(std::move(fiber_channel__init)), direct_channel_(std::move(direct_channel__init)), channel_mode_(std::move(channel_mode__init)), factory_(std::move(factory__init)), xid_counter_(std::move(xid_counter__init)), pending_fu_(std::move(pending_fu__init)), pending_cb_slots_(std::move(pending_cb_slots__init)), state_machine_(std::move(state_machine__init)), reconnect_policy_(std::move(reconnect_policy__init)), reconnect_(std::move(reconnect__init)), reconnect_address_(std::move(reconnect_address__init)), buffering_config_(std::move(buffering_config__init)), pending_queue_(std::move(pending_queue__init)), server_instance_id_(std::move(server_instance_id__init)), on_server_restart_(std::move(on_server_restart__init)), keepalive_config_(std::move(keepalive_config__init)), heartbeat_manager_(std::move(heartbeat_manager__init)), circuit_breaker_(std::move(circuit_breaker__init)), callback_manager_(std::move(callback_manager__init)), last_activity_time_(std::move(last_activity_time__init)), metrics_(std::move(metrics__init)), weak_self_(std::move(weak_self__init)), host_(std::move(host__init)), packets_(std::move(packets__init)), paused_(std::move(paused__init)), is_client_mode_(std::move(is_client_mode__init)) {}
+    ClientConnection(const ClientConnection&) = delete;
+    ClientConnection(ClientConnection&& other) noexcept : poll_thread_worker_(std::move(other.poll_thread_worker_)), fiber_channel_(std::move(other.fiber_channel_)), direct_channel_(std::move(other.direct_channel_)), channel_mode_(std::move(other.channel_mode_)), factory_(std::move(other.factory_)), xid_counter_(std::move(other.xid_counter_)), pending_fu_(std::move(other.pending_fu_)), pending_cb_slots_(std::move(other.pending_cb_slots_)), state_machine_(std::move(other.state_machine_)), reconnect_policy_(std::move(other.reconnect_policy_)), reconnect_(std::move(other.reconnect_)), reconnect_address_(std::move(other.reconnect_address_)), buffering_config_(std::move(other.buffering_config_)), pending_queue_(std::move(other.pending_queue_)), server_instance_id_(std::move(other.server_instance_id_)), on_server_restart_(std::move(other.on_server_restart_)), keepalive_config_(std::move(other.keepalive_config_)), heartbeat_manager_(std::move(other.heartbeat_manager_)), circuit_breaker_(std::move(other.circuit_breaker_)), callback_manager_(std::move(other.callback_manager_)), last_activity_time_(std::move(other.last_activity_time_)), metrics_(std::move(other.metrics_)), weak_self_(std::move(other.weak_self_)), host_(std::move(other.host_)), packets_(std::move(other.packets_)), paused_(std::move(other.paused_)), is_client_mode_(std::move(other.is_client_mode_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
     }
-
-    // === Server Restart Detection API ===
-
-    /**
-     * Get the last known server instance ID.
-     * Returns 0 if no ID has been set yet (initial state).
-     */
-    // @safe - Simple getter using Cell
-    uint64_t server_instance_id() const {
-        return server_instance_id_.get();
-    }
-
-    /**
-     * Set the callback to be invoked when server restart is detected.
-     * The callback receives (old_id, new_id) when the server's instance ID changes.
-     *
-     * @param callback Function to call on restart detection
-     */
-    // @safe - rusty::Function move-assign is @safe; interior mutability via
-    // mutable on_server_restart_ is sound because the assignment happens
-    // through a const method that owns the only thread-visible reference.
-    void set_on_server_restart(rusty::Function<void(uint64_t, uint64_t)> callback) const {
-        on_server_restart_ = std::move(callback);
-    }
-
-    /**
-     * Check and update the server instance ID.
-     * If the new ID differs from the stored ID (and stored ID was non-zero),
-     * the on_server_restart callback is invoked.
-     *
-     * @param new_id The new server instance ID
-     * @return true if server restart was detected, false otherwise
-     */
-    // @safe - rusty::Cell get/set + rusty::Function operator bool / call are
-    // @safe in the library; Log_info template shim is @safe.
-    bool check_server_instance(uint64_t new_id) const {
-        uint64_t old_id = server_instance_id_.get();
-
-        // Always update the stored ID
-        server_instance_id_.set(new_id);
-
-        // Detect restart: old ID was set (non-zero) and differs from new ID
-        if (old_id != 0 && old_id != new_id) {
-            Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
-            if (on_server_restart_) {
-                on_server_restart_(old_id, new_id);
-            }
-            return true;
+    ClientConnection& operator=(const ClientConnection&) = delete;
+    ClientConnection& operator=(ClientConnection&& other) noexcept {
+        if (this == &other) {
+            return *this;
         }
+        this->~ClientConnection();
+        new (this) ClientConnection(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
+    ~ClientConnection() noexcept(false);
+    ClientConnection(rusty::Arc<PollThread> poll_thread_worker);
+    void run_recv_loop();
+    void decode_response_and_notify(const uint8_t* bytes, size_t size);
+    void on_channel_closed_fan_out();
+    int32_t connect_via_factory(const int8_t* addr);
+    void reset_channel_mode_for_reconnect();
+    int32_t connect(const int8_t* addr);
+    void bind_channel(ChannelConnectionProxy channel);
+    void bind_channel_via_poll_thread(ChannelConnectionProxy channel);
+    void bind_channel_direct(ChannelConnectionProxy channel);
+    void bind_factory(ChannelFactoryProxy factory);
+    void abort_reconnect();
+    void set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager);
+    void invalidate_pending_futures() const;
+    void fail_pending_future(int64_t xid, int32_t err) const;
+    void close() const;
+    void mark_closing() const;
+    int32_t reconnect(OnReconnectCompleteCallbackFn on_complete) const;
+    void set_buffering_config(const BufferingConfig& config) const;
+    void set_heartbeat_config(const HeartbeatConfig& config) const;
+    HeartbeatConfig heartbeat_config() const;
+    void set_circuit_breaker_config(const CircuitBreakerConfig& config) const;
+    CircuitBreakerConfig circuit_breaker_config() const;
+    void enqueue_heartbeat_probe() const;
+    bool allow_request_with_circuit_metrics() const;
+    void record_circuit_state_transition(CircuitState before, CircuitState after) const;
+    void record_circuit_result(int32_t err) const;
+    void invoke_error_callback(int32_t err, const std::string& message) const;
+    void invoke_disconnected_callback() const;
+    void invoke_reconnecting_callback() const;
+    void invoke_reconnected_callback(bool success) const;
+    void invoke_connected_callback() const;
+    ChannelError dispatch_frame_via_channel(const uint8_t* body_bytes, size_t body_size) const;
+    void handle_error() const;
+    bool check_pending_write_update() const;
+    void handle_free(int64_t xid) const;
+    bool is_factory_bound() const;
+    uint64_t channel_reconnect_attempts_count() const;
+    void set_reconnect_policy(const ReconnectPolicy& policy) const;
+    bool is_reconnecting() const;
+    size_t pending_future_count() const;
+    size_t replay_pending_requests_for_test() const;
+    void update_pending_queue_config_for_test(const RequestQueueConfig& config) const;
+    void set_on_server_restart(OnServerRestartCallbackFn callback) const;
+    bool check_server_instance(uint64_t new_id) const;
+    void set_keepalive(const KeepaliveConfig& config) const;
+    void on_request_dispatched(size_t bytes) const;
+    void on_response_received(size_t bytes) const;
+    std::string host() const;
+    static bool should_trip_circuit_for_error(int32_t err);
+    static RpcError map_system_error(int32_t err);
+    template<typename F>
+    FutureResult request(int32_t rpc_id, const FutureAttr& attr, F write_fn) const;
+    template<typename F>
+    FutureResult request_with_options(int32_t rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn) const;
+    template<typename F>
+    auto request_async(int32_t rpc_id, F write_fn, AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t>;
+    bool is_channel_mode() const;
+    void install_self_weak_for_testing(WeakClientConnection weak);
+    void force_connected_for_testing();
+    void set_reconnect_address_for_testing(std::string addr);
+    bool connected() const;
+    ConnectionState connection_state() const;
+    const ReconnectPolicy& reconnect_policy() const;
+    const BufferingConfig& buffering_config() const;
+    size_t pending_request_count() const;
+    void clear_pending_requests(int32_t error_code) const;
+    uint64_t server_instance_id() const;
+    KeepaliveConfig keepalive_config() const;
+    CircuitState circuit_breaker_state() const;
+    void update_last_activity(uint64_t current_time_ms) const;
+    uint64_t last_activity_time() const;
+    bool is_idle(uint64_t idle_ms, uint64_t current_time_ms) const;
+    bool validate_connection() const;
+    const ConnectionMetrics& metrics() const;
+    size_t replay_pending_requests() const;
+    void apply_keepalive_options();
+    int32_t fd() const;
+    void pause() const;
+    void resume() const;
+    int32_t poll_mode() const;
+    size_t content_size() const;
+    int32_t handle_write();
+    bool handle_read();
+    bool is_closed() const;
+};
+
+
+ClientConnection::~ClientConnection() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    clientconn_drop((*this));
+}
+
+ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
+    : poll_thread_worker_(std::move(poll_thread_worker))
+    , fiber_channel_(SpinMutex<rusty::Option<rusty::Box<FiberChannel>>>::new_(rusty::Option<rusty::Box<FiberChannel>>(rusty::None)))
+    , direct_channel_(SpinMutex<rusty::Option<ChannelConnectionProxy>>::new_(rusty::Option<ChannelConnectionProxy>(rusty::None)))
+    , channel_mode_(rusty::Cell<bool>::new_(false))
+    , factory_(SpinMutex<rusty::Option<ChannelFactoryProxy>>::new_(rusty::Option<ChannelFactoryProxy>(rusty::None)))
+    , xid_counter_(Counter::new_(static_cast<int64_t>(0)))
+    , pending_fu_(SpinMutex<rusty::HashMap<int64_t, rusty::Arc<Future>>>::new_(rusty::HashMap<int64_t, rusty::Arc<Future>>()))
+    , pending_cb_slots_(SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>>::new_(make_prefilled_cb_slots()))
+    , state_machine_(ConnectionStateMachine::new_())
+    , reconnect_policy_(ReconnectPolicy{})
+    , reconnect_(ReconnectState{})
+    , reconnect_address_(std::string{})
+    , buffering_config_(BufferingConfig::defaults())
+    , pending_queue_(make_pending_queue(BufferingConfig::defaults().to_queue_config()))
+    , server_instance_id_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , on_server_restart_(OnServerRestartCallbackFn{})
+    , keepalive_config_(rusty::Cell<KeepaliveConfig>::new_(KeepaliveConfig{}))
+    , heartbeat_manager_(HeartbeatManager::new_(HeartbeatConfig::disabled()))
+    , circuit_breaker_(CircuitBreaker::new_(CircuitBreakerConfig::disabled()))
+    , callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()))
+    , last_activity_time_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , metrics_(ConnectionMetrics::new_())
+    , weak_self_(WeakClientConnection{})
+    , host_(std::string{})
+    , packets_(static_cast<uint64_t>(0))
+    , paused_(rusty::Cell<bool>::new_(false))
+    , is_client_mode_(false)
+{}
+
+void ClientConnection::run_recv_loop() {
+    clientconn_run_recv_loop((*this));
+}
+
+void ClientConnection::decode_response_and_notify(const uint8_t* bytes, size_t size) {
+    clientconn_decode_response_and_notify((*this), bytes, std::move(size));
+}
+
+void ClientConnection::on_channel_closed_fan_out() {
+    clientconn_on_channel_closed_fan_out((*this));
+}
+
+int32_t ClientConnection::connect_via_factory(const int8_t* addr) {
+    return clientconn_connect_via_factory((*this), addr);
+}
+
+void ClientConnection::reset_channel_mode_for_reconnect() {
+    clientconn_reset_channel_mode_for_reconnect((*this));
+}
+
+int32_t ClientConnection::connect(const int8_t* addr) {
+    return clientconn_connect((*this), addr);
+}
+
+void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
+    clientconn_bind_channel((*this), std::move(channel));
+}
+
+void ClientConnection::bind_channel_via_poll_thread(ChannelConnectionProxy channel) {
+    clientconn_bind_channel_via_poll_thread((*this), std::move(channel));
+}
+
+void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
+    clientconn_bind_channel_direct((*this), std::move(channel));
+}
+
+void ClientConnection::bind_factory(ChannelFactoryProxy factory) {
+    clientconn_bind_factory((*this), std::move(factory));
+}
+
+void ClientConnection::abort_reconnect() {
+    clientconn_abort_reconnect((*this));
+}
+
+void ClientConnection::set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager) {
+    clientconn_set_callback_manager((*this), callback_manager);
+}
+
+void ClientConnection::invalidate_pending_futures() const {
+    clientconn_invalidate_pending_futures((*this));
+}
+
+void ClientConnection::fail_pending_future(int64_t xid, int32_t err) const {
+    clientconn_fail_pending_future((*this), std::move(xid), std::move(err));
+}
+
+void ClientConnection::close() const {
+    clientconn_close((*this));
+}
+
+void ClientConnection::mark_closing() const {
+    clientconn_mark_closing((*this));
+}
+
+int32_t ClientConnection::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
+    return clientconn_reconnect((*this), std::move(on_complete));
+}
+
+void ClientConnection::set_buffering_config(const BufferingConfig& config) const {
+    clientconn_set_buffering_config((*this), config);
+}
+
+void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
+    clientconn_set_heartbeat_config((*this), config);
+}
+
+HeartbeatConfig ClientConnection::heartbeat_config() const {
+    return clientconn_heartbeat_config((*this));
+}
+
+void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
+    clientconn_set_circuit_breaker_config((*this), config);
+}
+
+CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
+    return clientconn_circuit_breaker_config((*this));
+}
+
+void ClientConnection::enqueue_heartbeat_probe() const {
+    clientconn_enqueue_heartbeat_probe((*this));
+}
+
+bool ClientConnection::allow_request_with_circuit_metrics() const {
+    return clientconn_allow_request_with_circuit_metrics((*this));
+}
+
+void ClientConnection::record_circuit_state_transition(CircuitState before, CircuitState after) const {
+    clientconn_record_circuit_state_transition((*this), std::move(before), std::move(after));
+}
+
+void ClientConnection::record_circuit_result(int32_t err) const {
+    clientconn_record_circuit_result((*this), std::move(err));
+}
+
+void ClientConnection::invoke_error_callback(int32_t err, const std::string& message) const {
+    clientconn_invoke_error_callback((*this), std::move(err), message);
+}
+
+void ClientConnection::invoke_disconnected_callback() const {
+    clientconn_invoke_disconnected_callback((*this));
+}
+
+void ClientConnection::invoke_reconnecting_callback() const {
+    clientconn_invoke_reconnecting_callback((*this));
+}
+
+void ClientConnection::invoke_reconnected_callback(bool success) const {
+    clientconn_invoke_reconnected_callback((*this), std::move(success));
+}
+
+void ClientConnection::invoke_connected_callback() const {
+    clientconn_invoke_connected_callback((*this));
+}
+
+ChannelError ClientConnection::dispatch_frame_via_channel(const uint8_t* body_bytes, size_t body_size) const {
+    return clientconn_dispatch_frame_via_channel((*this), body_bytes, std::move(body_size));
+}
+
+void ClientConnection::handle_error() const {
+    clientconn_handle_error((*this));
+}
+
+bool ClientConnection::check_pending_write_update() const {
+    return clientconn_check_pending_write_update((*this));
+}
+
+void ClientConnection::handle_free(int64_t xid) const {
+    clientconn_handle_free((*this), std::move(xid));
+}
+
+bool ClientConnection::is_factory_bound() const {
+    return clientconn_is_factory_bound((*this));
+}
+
+uint64_t ClientConnection::channel_reconnect_attempts_count() const {
+    return clientconn_channel_reconnect_attempts_count((*this));
+}
+
+void ClientConnection::set_reconnect_policy(const ReconnectPolicy& policy) const {
+    clientconn_set_reconnect_policy((*this), policy);
+}
+
+bool ClientConnection::is_reconnecting() const {
+    return clientconn_is_reconnecting((*this));
+}
+
+size_t ClientConnection::pending_future_count() const {
+    return clientconn_pending_future_count((*this));
+}
+
+size_t ClientConnection::replay_pending_requests_for_test() const {
+    return clientconn_replay_pending_requests_for_test((*this));
+}
+
+void ClientConnection::update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
+    clientconn_update_pending_queue_config_for_test((*this), config);
+}
+
+void ClientConnection::set_on_server_restart(OnServerRestartCallbackFn callback) const {
+    clientconn_set_on_server_restart((*this), std::move(callback));
+}
+
+bool ClientConnection::check_server_instance(uint64_t new_id) const {
+    return clientconn_check_server_instance((*this), std::move(new_id));
+}
+
+void ClientConnection::set_keepalive(const KeepaliveConfig& config) const {
+    clientconn_set_keepalive((*this), config);
+}
+
+void ClientConnection::on_request_dispatched(size_t bytes) const {
+    clientconn_on_request_dispatched((*this), std::move(bytes));
+}
+
+void ClientConnection::on_response_received(size_t bytes) const {
+    clientconn_on_response_received((*this), std::move(bytes));
+}
+
+std::string ClientConnection::host() const {
+    return clientconn_host((*this));
+}
+
+bool ClientConnection::should_trip_circuit_for_error(int32_t err) {
+    return clientconn_should_trip_circuit_for_error(std::move(err));
+}
+
+RpcError ClientConnection::map_system_error(int32_t err) {
+    return clientconn_map_system_error(std::move(err));
+}
+
+template<typename F>
+FutureResult ClientConnection::request(int32_t rpc_id, const FutureAttr& attr, F write_fn) const {
+    return clientconn_request_via_channel((*this), std::move(rpc_id), attr, std::move(write_fn));
+}
+
+template<typename F>
+FutureResult ClientConnection::request_with_options(int32_t rpc_id, const RequestOptions& options, const FutureAttr& attr, F write_fn) const {
+    return clientconn_request_with_options((*this), std::move(rpc_id), options, attr, std::move(write_fn));
+}
+
+template<typename F>
+auto ClientConnection::request_async(int32_t rpc_id, F write_fn, AsyncReplyCallback on_reply) const -> rusty::Result<rusty::Unit, int32_t> {
+    return clientconn_request_async((*this), std::move(rpc_id), std::move(write_fn), std::move(on_reply));
+}
+
+bool ClientConnection::is_channel_mode() const {
+    return this->channel_mode_.get();
+}
+
+void ClientConnection::install_self_weak_for_testing(WeakClientConnection weak) {
+    this->weak_self_ = std::move(weak);
+}
+
+void ClientConnection::force_connected_for_testing() {
+    this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::CONNECTED)));
+}
+
+void ClientConnection::set_reconnect_address_for_testing(std::string addr) {
+    this->reconnect_address_ = std::move(addr);
+}
+
+bool ClientConnection::connected() const {
+    return this->state_machine_.is_connected();
+}
+
+ConnectionState ClientConnection::connection_state() const {
+    return this->state_machine_.state();
+}
+
+const ReconnectPolicy& ClientConnection::reconnect_policy() const {
+    return this->reconnect_policy_;
+}
+
+const BufferingConfig& ClientConnection::buffering_config() const {
+    return this->buffering_config_;
+}
+
+size_t ClientConnection::pending_request_count() const {
+    return this->pending_queue_.size();
+}
+
+void ClientConnection::clear_pending_requests(int32_t error_code) const {
+    this->pending_queue_.clear_all(std::move(error_code));
+}
+
+uint64_t ClientConnection::server_instance_id() const {
+    return this->server_instance_id_.get();
+}
+
+KeepaliveConfig ClientConnection::keepalive_config() const {
+    return this->keepalive_config_.get();
+}
+
+CircuitState ClientConnection::circuit_breaker_state() const {
+    return this->circuit_breaker_.state();
+}
+
+void ClientConnection::update_last_activity(uint64_t current_time_ms) const {
+    this->last_activity_time_.set(std::move(current_time_ms));
+}
+
+uint64_t ClientConnection::last_activity_time() const {
+    return this->last_activity_time_.get();
+}
+
+bool ClientConnection::is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
+    const uint64_t last = this->last_activity_time_.get();
+    if (rusty::detail::deref_if_pointer_like(last) == static_cast<uint64_t>(0)) {
         return false;
     }
+    return ((rusty::detail::deref_if_pointer_like(current_time_ms) - rusty::detail::deref_if_pointer_like(last))) > rusty::detail::deref_if_pointer_like(idle_ms);
+}
 
-    // === Connection Validation API ===
+bool ClientConnection::validate_connection() const {
+    return this->state_machine_.is_connected();
+}
 
-    /**
-     * Configure TCP keepalive for the connection.
-     * Should be called before connect() or after reconnection.
-     *
-     * @param config The keepalive configuration to apply
-     */
-    // @safe - Uses Cell for interior mutability
-    void set_keepalive(const KeepaliveConfig& config) const {
-        keepalive_config_.set(config);
-    }
+const ConnectionMetrics& ClientConnection::metrics() const {
+    return this->metrics_;
+}
 
-    /**
-     * Get the current keepalive configuration.
-     */
-    // @safe - Returns copy via Cell::get()
-    KeepaliveConfig keepalive_config() const {
-        return keepalive_config_.get();
-    }
+size_t ClientConnection::replay_pending_requests() const {
+    return static_cast<size_t>(0);
+}
 
-    /**
-     * Configure connection-level heartbeat behavior.
-     * Heartbeat probes are emitted by the poll loop when enabled.
-     */
-    // @safe - Replaces heartbeat manager state/config
-    void set_heartbeat_config(const HeartbeatConfig& config) const;
+void ClientConnection::apply_keepalive_options() {
+}
 
-    // @safe - Get current heartbeat configuration
-    HeartbeatConfig heartbeat_config() const;
+int32_t ClientConnection::fd() const {
+    return -1;
+}
 
-    // @safe - Configure circuit breaker behavior
-    void set_circuit_breaker_config(const CircuitBreakerConfig& config) const;
+void ClientConnection::pause() const {
+    this->paused_.set(true);
+}
 
-    // @safe - Get current circuit breaker configuration
-    CircuitBreakerConfig circuit_breaker_config() const;
+void ClientConnection::resume() const {
+    this->paused_.set(false);
+}
 
-    // @safe - Get current circuit breaker state
-    CircuitState circuit_breaker_state() const {
-        return circuit_breaker_.state();
-    }
+int32_t ClientConnection::poll_mode() const {
+    return PollMode::READ;
+}
 
-    /**
-     * Update the last activity timestamp.
-     * Called on send/receive operations to track connection activity.
-     *
-     * @param current_time_ms Current time in milliseconds (e.g., from steady_clock)
-     */
-    // @safe - Stores timestamp in Cell
-    void update_last_activity(uint64_t current_time_ms) const {
-        last_activity_time_.set(current_time_ms);
-    }
+size_t ClientConnection::content_size() const {
+    return static_cast<size_t>(0);
+}
 
-    /// Monotonic millisecond clock used by the instrumentation hooks.
-    /// @safe - delegates to rusty::sys::time::clock_monotonic_us.
-    static uint64_t monotonic_ms_now() {
-        return rusty::sys::time::clock_monotonic_us() / 1000;
-    }
+int32_t ClientConnection::handle_write() {
+    return PollMode::NO_CHANGE;
+}
 
-    /// Record one outbound frame's body size + bump the activity clock.
-    /// Called from the send-side dispatch path so the metrics counters
-    /// and `is_idle()` reflect real I/O. `bytes` is the body length the
-    /// channel layer accepted (the 4-byte size prefix is excluded — it
-    /// is added by the channel and is constant per send).
-    void on_request_dispatched(size_t bytes) const {
-        metrics_.record_bytes_sent(static_cast<uint64_t>(bytes));
-        update_last_activity(monotonic_ms_now());
-    }
+bool ClientConnection::handle_read() {
+    return false;
+}
 
-    /// Record one inbound frame's body size + bump the activity clock.
-    /// Called from `decode_response_and_notify`; `bytes` is the body
-    /// length the framing layer delivered.
-    void on_response_received(size_t bytes) const {
-        metrics_.record_bytes_received(static_cast<uint64_t>(bytes));
-        update_last_activity(monotonic_ms_now());
-    }
-
-    /**
-     * Get the last activity timestamp (milliseconds since epoch).
-     */
-    // @safe - Simple getter using Cell
-    uint64_t last_activity_time() const {
-        return last_activity_time_.get();
-    }
-
-    /**
-     * Check if the connection is idle (no activity for idle_ms milliseconds).
-     *
-     * @param idle_ms Idle threshold in milliseconds
-     * @param current_time_ms Current time in milliseconds (e.g., from steady_clock)
-     * @return true if idle for longer than threshold, false otherwise
-     */
-    // @safe - Simple timestamp comparison
-    bool is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
-        auto last = last_activity_time_.get();
-        if (last == 0) return false;  // No activity recorded yet
-        return (current_time_ms - last) > idle_ms;
-    }
-
-    /**
-     * Validate the connection is still alive and healthy.
-     *
-     * Checks:
-     * 1. Connection state is CONNECTED
-     * 2. Socket is valid (fd >= 0)
-     * 3. Socket has no pending errors (getsockopt SO_ERROR)
-     *
-     * @return true if connection is healthy, false if it needs reconnection
-     */
-    // @unsafe - Uses getsockopt system call
-    bool validate_connection() const;
-
-    /**
-     * Get the connection metrics.
-     * Returns a const reference to the metrics for this connection.
-     */
-    // @safe - Simple getter
-    // @lifetime: (&'a) -> &'a
-    const ConnectionMetrics& metrics() const {
-        return metrics_;
-    }
-
-private:
-    // @safe - Replay queued requests after reconnection
-    // Returns number of requests replayed
-    size_t replay_pending_requests();
-
-    // @unsafe - Apply keepalive options to socket
-    // Called after socket creation in connect()
-    void apply_keepalive_options();
-    // @unsafe - Builds a Marshal body via operator<< (rusty-cpp treats
-    // operator overloads as @unsafe by default) and dispatches it through
-    // the channel proxy. The function is internally safe but its body uses
-    // patterns the analyzer flags; mark the wrapper @unsafe to match.
-    void enqueue_heartbeat_probe() const;
-    // @safe - Evaluate circuit breaker gate and update metrics.
-    bool allow_request_with_circuit_metrics() const;
-    // @safe - Whether an error should be counted as a circuit failure.
-    static bool should_trip_circuit_for_error(i32 err);
-    // @safe - Record circuit state transitions in metrics.
-    void record_circuit_state_transition(CircuitState before, CircuitState after) const;
-    // @safe - Record one request result in the circuit breaker.
-    void record_circuit_result(i32 err) const;
-    // @safe - Map system errno-style code into structured RPC error.
-    static RpcError map_system_error(i32 err);
-    // @safe - Invoke registered on_error callbacks.
-    void invoke_error_callback(i32 err, const std::string& message) const;
-    // @safe - Invoke registered on_disconnected callbacks.
-    void invoke_disconnected_callback() const;
-    // @safe - Invoke registered on_reconnecting callbacks.
-    void invoke_reconnecting_callback() const;
-    // @safe - Invoke registered on_reconnected callbacks.
-    void invoke_reconnected_callback(bool success) const;
-    // @safe - Invoke registered on_connected callbacks.
-    void invoke_connected_callback() const;
-
-public:
-    // @safe - Share callback manager with facade so pre-connect registrations persist.
-    void set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager) {
-        if (callback_manager.is_valid()) {
-            callback_manager_ = callback_manager.clone();
-        }
-    }
-
-
-    /**
-     * Send an RPC request with a lambda for writing arguments.
-     * Thread-safe: lock is acquired and released within this single call.
-     *
-     * The request packet format is: <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
-     * NOTE: size does not include the size itself (<xid>..<argN>).
-     *
-     * If disconnected and buffering is enabled (QUEUE behavior), the request
-     * is queued for replay after reconnection. The returned Future will be
-     * completed when the request is eventually sent and a response received.
-     *
-     * Returns Result<Arc<Future>, i32>:
-     *   - Ok(Arc<Future>) on success (or queued for later)
-     *   - Err(error_code) on failure (e.g., ENOTCONN if not connected and buffering disabled)
-     */
-    // @unsafe - Thread-safe RPC request with lambda for marshaling
-    // 4g3b: channel mode is the only path. Always dispatch through
-    // `request_via_channel(...)`. The legacy fd-path branch (with
-    // `out_.lock()`, state_machine gating, queue_request fallback)
-    // has been removed.
-    template<typename F>
-    FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        return request_via_channel(rpc_id, attr, std::forward<F>(write_fn));
-    }
-
-private:
-    // @unsafe - Dispatch a fully-marshaled frame body (without the
-    // 4-byte size prefix) through the bound channel's FiberChannel
-    // wrapper. The proxy's underlying TcpConnection (or in-memory
-    // backend) encodes the size prefix internally via
-    // `frame_codec_encode_into`.
-    //
-    // Used by `request_via_channel` and `enqueue_heartbeat_probe`
-    // when the client is in channel mode. Returns the channel's
-    // ChannelError; callers translate to errno where needed.
-    //
-    // SAFETY: both `direct_channel_` and `fiber_channel_` are
-    // protected by SpinMutex (sub-leaf 4g1). The underlying
-    // `send_frame` is non-suspending and the proxy's outbound queue
-    // is internally thread-safe.
-    // @unsafe - one-line delegator to the friend free fn (extraction
-    // step toward the DSL flip; void* param body lives in the free fn).
-    ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
-                                            std::size_t body_size) const {
-        return clientconn_dispatch_frame_via_channel(*this, body_bytes,
-                                                     body_size);
-    }
-
-    /**
-     * Channel-mode counterpart of `request`. Mirrors the legacy fd path's bookkeeping (state checks,
-     * `pending_fu_` insert, circuit-breaker accounting, metrics) but
-     * dispatches the outbound frame through the bound
-     * `ChannelConnectionProxy` instead of the legacy `out_` Marshal +
-     * `update_mode(WRITE)` plumbing.
-     *
-     * Frame body layout matches what the legacy path emits at the
-     * payload level — `[v64 xid][i32 rpc_id][user-marshaled args]` —
-     * so the on-the-wire bytes are identical once the channel layer
-     * prepends the 4-byte size header (via
-     * `frame_codec_encode_into` inside `TcpConnection::send_frame`).
-     *
-     * On `ChannelError::WouldBlock` / transport faults, the future
-     * is removed from `pending_fu_` and the call returns `EIO`. The
-     * RPC layer's existing reconnect / circuit-breaker policy
-     * handles the lifecycle from there (sub-leaves 4d / 4e wire the
-     * close / on_error callbacks).
-     */
-    // @unsafe - one-line delegator to the friend free-fn template
-    // (extraction step toward the DSL flip; marshaling/void* body lives
-    // in the free fn).
-    template<typename F>
-    FutureResult request_via_channel(i32 rpc_id,
-                                     const FutureAttr& attr,
-                                     F&& write_fn) const {
-        return clientconn_request_via_channel(*this, rpc_id, attr,
-                                              std::forward<F>(write_fn));
-    }
-
-    // ------------------------------------------------------------------
-    // Slim async-callback request — no `Arc<Future>`, no `Mutex<State>`,
-    // no `RefCell<Marshal>` reply buffer.  For callers that don't need
-    // to inspect/wait on the reply via a Future handle (the dominant
-    // pattern in high-throughput RPC), this shaves ~10% throughput vs
-    // `request(...)` by eliminating the Future allocation + HashMap
-    // node and replacing the pending-map lookup with a flat-array
-    // index.
-    //
-    // `on_reply` fires on the poll thread when the reply is demuxed
-    // (or on the channel's close path with `error_code = ENOTCONN`
-    // and reply pointer = nullptr).  The reply byte view is owned by
-    // the channel layer's frame buffer for the duration of the
-    // callback only — copy out anything you need before returning.
-    //
-    // Returns Result<void, i32>:
-    //   - Ok() if the frame was queued for send.
-    //   - Err(error_code) on send-time failure (no callback fires).
-public:
-    // @unsafe - one-line delegator to the friend free-fn template
-    // (extraction step toward the DSL flip).
-    template<typename F>
-    rusty::Result<rusty::Unit, i32> request_async(
-        i32 rpc_id, F&& write_fn, AsyncReplyCallback on_reply) const {
-        return clientconn_request_async(*this, rpc_id,
-                                        std::forward<F>(write_fn),
-                                        std::move(on_reply));
-    }
-
-private:
-    // 4g3b: queue_request<F> removed — it was the legacy
-    // disconnect-buffering replay helper invoked only by the
-    // pre-channel `request()` branch. Channel mode owns its own
-    // close-side fan-out (`on_channel_closed_fan_out`) and reconnect
-    // path (`reconnect_via_factory`).
-
-public:
-
-    // (Removed two dead `request` convenience overloads — the 2-arg
-    // `request(rpc_id, write_fn)` and the no-write_fn
-    // `request(rpc_id, attr=default)`. ClientConnection is rrr-internal and
-    // every caller uses the canonical 3-arg `request(rpc_id, attr, write_fn)`;
-    // the DSL flip allows only one `request` method, so the dead overloads go.)
-
-    // =========================================================================
-    // Request with Options (Timeout/Retry Support)
-    // =========================================================================
-
-    /**
-     * Send an RPC request with explicit options for timeout and retry.
-     * Sets the options on the returned Future for use with wait_with_options().
-     *
-     * @param rpc_id The RPC method ID
-     * @param options Request options (timeout, retry config)
-     * @param attr Future attributes (callback, etc.)
-     * @param write_fn Lambda to write request arguments
-     * @return Result<Arc<Future>, i32>
-     */
-    // @unsafe - one-line delegator to the friend free-fn template
-    // (extraction step toward the DSL flip; serialize + retry-spawn body
-    // lives in the free fn).
-    template<typename F>
-    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
-                                      const FutureAttr& attr, F&& write_fn) const {
-        return clientconn_request_with_options(*this, rpc_id, options, attr,
-                                               std::forward<F>(write_fn));
-    }
-
-    // (Removed the dead 3-arg `request_with_options(rpc_id, options, write_fn)`
-    // convenience overload — rrr-internal, no caller; the canonical 4-arg
-    // form above is the only one used. The DSL flip allows one method per name.)
-
-    // @safe - 4g3c3/4g3d: `ClientConnection` no longer owns an fd; the
-    // channel layer's `TcpConnection` does. This accessor always
-    // returns -1 and is retained ONLY for `PollableProxy` facade
-    // conformance — `PollableTypedArcAdapter<ClientConnection>::fd()`
-    // (in `pollable_proxy.h`) is instantiated by deptran's
-    // host-scoped retention map (`Reactor::clients_` —
-    // `src/deptran/communicator.cc`). Do not add new callers; use
-    // `host()` for a peer identifier.
-    int fd() const {
-        return -1;
-    }
-
-    // @safe - Returning std::string by value is a safe copy.
-    std::string host() const {
-        return host_;
-    }
-
-    // @safe - Jetpack: pause/resume for flow control (Cell for interior mutability)
-    void pause() const { paused_.set(true); }
-    // @safe
-    void resume() const { paused_.set(false); }
-
-    // @safe - Returns poll mode based on output buffer
-    int poll_mode() const;
-
-    // @safe - 4g3c3: in_/out_ Marshal buffers removed; the channel
-    // layer owns frame buffering. Returns 0 for ABI compatibility
-    // with the PollableProxy facade.
-    size_t content_size() {
-        return 0;
-    }
-
-    // @safe - Writes buffered data to socket
-    // SAFETY: Protected by output spinlock
-    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-    int handle_write();
-
-    // @safe - Reads and processes RPC responses
-    bool handle_read();
-
-    // @safe - Error handler
-    void handle_error() const;
-
-    // @safe - Check heartbeat tick and pending write update flag.
-    bool check_pending_write_update() const;
-
-    // @safe - Check if connection was closed
-    // Called by poll loop to detect and remove closed connections
-    bool is_closed() const {
-        return state_machine_.is_terminal();
-    }
-
-    // @safe - Jetpack: handle_free for explicit future cleanup
-    void handle_free(i64 xid) const;
-
-    // Comparison operator for container support
-    friend bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs) {
-        return lhs.get() == rhs.get();
-    }
-
-    // Hash function for containers
-    friend struct std::hash<rusty::Arc<ClientConnection>>;
-};
+bool ClientConnection::is_closed() const {
+    return this->state_machine_.is_terminal();
+}
+/*RUSTYCPP:GEN-END id=client.8*/
 
 }  // export namespace rrr
 
@@ -1964,12 +1725,10 @@ export namespace rrr {
 // methods consume. The `…Callback` aliases without `Fn` in
 // rrr/callbacks.cpp wrap the same Function shape in `rusty::Arc<…>`
 // (a shared, clone-friendly handle), so the two namespaces are distinct.
-using OnReconnectCompleteCallbackFn   = rusty::Function<void(bool)>;
 using OnConnectedCallbackFn           = rusty::Function<void() const>;
 using OnErrorCallbackFn               = rusty::Function<void(RpcError,
                                                              const std::string&) const>;
 using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
-using OnServerRestartCallbackFn       = rusty::Function<void(uint64_t, uint64_t)>;
 
 // @unsafe - reinterpret_cast<const char*> on the addr param. Lives
 // outside the DSL block so the inline-Rust grammar doesn't have to
@@ -2130,7 +1889,7 @@ impl Client {
             }
         }
 
-        let result: i32 = mut_conn.connect(client_dsl_addr_to_cstr(addr));
+        let result: i32 = mut_conn.connect(addr);
 
         if result == 0i32 {
             let store_guard = self.connection_field.borrow_mut();
@@ -2415,7 +2174,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=48960830d95ab8a4decd3d92680bb90a285d41fedc7ab2083ca48656f9ebf566*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=fe0df5f77fe22ebca4f3cc79429628d8da74d9dffa22ff5c22cf524c66fea5a4*/
 struct Client;
 
 struct Client {
@@ -2612,7 +2371,7 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
             mut_conn.bind_factory(std::move(moved));
         }
     }
-    int32_t result = mut_conn.connect(client_dsl_addr_to_cstr(addr));
+    int32_t result = mut_conn.connect(addr);
     if (rusty::detail::deref_if_pointer_like(result) == static_cast<int32_t>(0)) {
         auto store_guard = this->connection_field.borrow_mut();
         *store_guard = rusty::Option<rusty::Arc<ClientConnection>>(std::move(conn));
@@ -3233,19 +2992,6 @@ void fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc) {
 
 // @safe - Initializes connection (only stores references)
 // State machine defaults to NEW state
-ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
-    : poll_thread_worker_(poll_thread_worker),
-      // Pre-fill the async-callback slot array with `None`s so
-      // `pending_cb_slots_[xid % N]` is always a valid in-bounds slot.
-      // The pre-fill lives in make_prefilled_cb_slots() so the Phase 5 DSL
-      // #[cpp_ctor] can field-init this the same way (no loop body needed).
-      pending_cb_slots_(make_prefilled_cb_slots()),
-      state_machine_(ConnectionStateMachine::new_()),
-      heartbeat_manager_(HeartbeatManager::new_(HeartbeatConfig::disabled())),
-      circuit_breaker_(CircuitBreaker::new_(CircuitBreakerConfig::disabled())),
-      callback_manager_(rusty::Arc<CallbackManager>::new_(CallbackManager::new_())),
-      pending_queue_(buffering_config_.to_queue_config()) {
-}
 
 // @safe - Simple destructor
 // @unsafe - ClientConnection drop body, extracted as a free fn so the DSL
@@ -3253,15 +2999,113 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
 // reconnect (atomics in the carved ReconnectState), then cancels all pending
 // futures/callbacks. `reconnect_` is mutable + invalidate_pending_futures is
 // const, so a const self suffices.
+// ============================================================================
+// Phase 5 flip: free fns for trivial methods whose bodies aren't cleanly
+// DSL-inline. The all-public DSL struct needs no friend declarations.
+// ============================================================================
+// @safe - Container support for Arc<ClientConnection> (was an inline friend).
+bool operator==(const rusty::Arc<ClientConnection>& lhs, const rusty::Arc<ClientConnection>& rhs) {
+  return lhs.get() == rhs.get();
+}
+
+// @safe - ctor helper: RequestQueue has a config-taking ctor, not a new_().
+inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
+  return RequestQueue(c);
+}
+
+// @unsafe - Records the factory under SpinMutex interior mutability.
+void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory) {
+  if (!factory) return;
+  { auto guard = self.factory_.lock().unwrap(); *guard = rusty::Some(std::move(factory)); }
+}
+// @safe - SpinMutex::lock + Option::is_some.
+bool clientconn_is_factory_bound(const ClientConnection& self) {
+  auto guard = self.factory_.lock().unwrap();
+  return guard->is_some();
+}
+// @safe - Atomic load (acquire).
+uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& self) {
+  return self.reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire);
+}
+// @safe - Atomic store (release).
+void clientconn_abort_reconnect(ClientConnection& self) {
+  self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+}
+// @safe - Atomic load (acquire).
+bool clientconn_is_reconnecting(const ClientConnection& self) {
+  return self.reconnect_.reconnecting_.load(std::memory_order_acquire);
+}
+// @unsafe - reconnect_policy_ is a plain field; const_cast matches the prior
+// `mutable ReconnectPolicy` access pattern.
+void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy) {
+  const_cast<ClientConnection&>(self).reconnect_policy_ = policy;
+}
+// @unsafe - SpinMutex + rusty::HashMap len.
+size_t clientconn_pending_future_count(const ClientConnection& self) {
+  auto pending_guard = self.pending_fu_.lock().unwrap();
+  return pending_guard->len();
+}
+// @unsafe - Test hook: replays queue through the (now const) replay method.
+size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self) {
+  return self.replay_pending_requests();
+}
+// @safe - Test hook: update queue policy (RequestQueue::update_config is const).
+void clientconn_update_pending_queue_config_for_test(const ClientConnection& self, const RequestQueueConfig& config) {
+  self.pending_queue_.update_config(config);
+}
+// @unsafe - rusty::Function move-assign; on_server_restart_ is a plain field.
+void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback) {
+  const_cast<ClientConnection&>(self).on_server_restart_ = std::move(callback);
+}
+// @unsafe - Cell get/set + Function call; Log_info shim is @safe. The Function
+// invocation is non-const, hence the const_cast on the call.
+bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new_id) {
+  uint64_t old_id = self.server_instance_id_.get();
+  self.server_instance_id_.set(new_id);
+  if (old_id != 0 && old_id != new_id) {
+    Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
+    auto& s = const_cast<ClientConnection&>(self);
+    if (s.on_server_restart_) {
+      s.on_server_restart_(old_id, new_id);
+    }
+    return true;
+  }
+  return false;
+}
+// @safe - Cell set (keepalive_config_ interior mutability).
+void clientconn_set_keepalive(const ClientConnection& self, const KeepaliveConfig& config) {
+  self.keepalive_config_.set(config);
+}
+// @safe - delegates to rusty::sys::time::clock_monotonic_us.
+uint64_t clientconn_monotonic_ms_now() {
+  return rusty::sys::time::clock_monotonic_us() / 1000;
+}
+// @safe - Record one outbound frame's body size + bump the activity clock.
+void clientconn_on_request_dispatched(const ClientConnection& self, size_t bytes) {
+  self.metrics_.record_bytes_sent(static_cast<uint64_t>(bytes));
+  self.update_last_activity(clientconn_monotonic_ms_now());
+}
+// @safe - Record one inbound frame's body size + bump the activity clock.
+void clientconn_on_response_received(const ClientConnection& self, size_t bytes) {
+  self.metrics_.record_bytes_received(static_cast<uint64_t>(bytes));
+  self.update_last_activity(clientconn_monotonic_ms_now());
+}
+// @safe - Share callback manager with facade; Arc clone is @safe.
+void clientconn_set_callback_manager(ClientConnection& self, const rusty::Arc<CallbackManager>& callback_manager) {
+  if (callback_manager.is_valid()) {
+    self.callback_manager_ = callback_manager.clone();
+  }
+}
+// @safe - Returning std::string by value is a safe copy.
+std::string clientconn_host(const ClientConnection& self) {
+  return self.host_;
+}
 void clientconn_drop(const ClientConnection& self) {
   self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
   self.reconnect_.reconnecting_.store(false, std::memory_order_release);
   self.invalidate_pending_futures();
 }
 
-ClientConnection::~ClientConnection() {
-  clientconn_drop(*this);
-}
 
 // @unsafe - Cancels all pending futures with error, protected by SpinMutex.
 // const: every mutation goes through SpinMutex / Counter / Future's
@@ -3303,7 +3147,6 @@ void clientconn_invalidate_pending_futures(const ClientConnection& self) {
   }
 }
 
-void ClientConnection::invalidate_pending_futures() const { clientconn_invalidate_pending_futures(*this); }
 
 // @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
 // LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
@@ -3327,7 +3170,6 @@ void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int e
   }
 }
 
-void ClientConnection::fail_pending_future(i64 xid, int err) const { clientconn_fail_pending_future(*this, xid, err); }
 
 // @unsafe - Drives channel proxy close + invalidates futures.
 //
@@ -3383,7 +3225,6 @@ void clientconn_close(const ClientConnection& self) {
   }
 }
 
-void ClientConnection::close() const { clientconn_close(*this); }
 
 // @safe - StateMachine is @safe; only std::atomic::store and the call
 // into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
@@ -3401,7 +3242,6 @@ void clientconn_mark_closing(const ClientConnection& self) {
   self.invalidate_pending_futures();
 }
 
-void ClientConnection::mark_closing() const { clientconn_mark_closing(*this); }
 
 // @safe - SpinMutex::lock + HashMap::remove + Counter::record are all @safe.
 void clientconn_handle_free(const ClientConnection& self, i64 xid) {
@@ -3413,11 +3253,12 @@ void clientconn_handle_free(const ClientConnection& self, i64 xid) {
   // Guard dropped here, releasing lock
 }
 
-void ClientConnection::handle_free(i64 xid) const { clientconn_handle_free(*this, xid); }
 
 // @unsafe - Establishes TCP/IPC connection to server
 // Contains syscalls, raw pointers, and other unsafe operations
-int clientconn_connect(ClientConnection& self, const char* addr) {
+int clientconn_connect(ClientConnection& self, const int8_t* addr_i8) {
+  // DSL emits `const int8_t*` for `*const i8`; the legacy body uses char*.
+  const char* addr = reinterpret_cast<const char*>(addr_i8);
   verify(!self.state_machine_.is_connected());
 
   // Transition to CONNECTING state
@@ -3447,10 +3288,9 @@ int clientconn_connect(ClientConnection& self, const char* addr) {
     self.invoke_error_callback(EINVAL, "no channel factory bound");
     return EINVAL;
   }
-  return self.connect_via_factory(addr);
+  return self.connect_via_factory(addr_i8);
 }
 
-int ClientConnection::connect(const char* addr) { return clientconn_connect(*this, addr); }
 
 // @unsafe - Attempts to reconnect to the last connected address
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete) {
@@ -3558,7 +3398,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
     // which produces a fresh proxy + fresh fd internally.
     // @unsafe { const_cast — connect mutates state_machine_; reconnect is a
     // const facade over the non-const connect path }
-    return const_cast<ClientConnection&>(self).connect(self.reconnect_address_.c_str());
+    return const_cast<ClientConnection&>(self).connect(reinterpret_cast<const int8_t*>(self.reconnect_address_.c_str()));
   };
 
   if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
@@ -3620,7 +3460,10 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)
 void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config) {
-  self.buffering_config_ = config;
+  // buffering_config_ is a plain field; const_cast matches the prior
+  // `mutable BufferingConfig` access pattern. pending_queue_ ops are const
+  // (RequestQueue made const for the flip).
+  const_cast<ClientConnection&>(self).buffering_config_ = config;
   // Clear any pending requests since config changed (queue's mutex is not
   // movable, so we clear rather than recreate).
   if (!self.pending_queue_.empty()) {
@@ -3629,15 +3472,17 @@ void clientconn_set_buffering_config(const ClientConnection& self, const Bufferi
   self.pending_queue_.update_config(config.to_queue_config());
 }
 
-void ClientConnection::set_buffering_config(const BufferingConfig& config) const { clientconn_set_buffering_config(*this, config); }
 
 // @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
 // lambda body only calls @safe methods + Log_warn (a @safe template shim).
 // One inner @unsafe block remains for the const_cast.
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config) {
-  self.heartbeat_manager_.set_config(config);
+  // HeartbeatManager::set_config/set_on_timeout assign plain fields →
+  // non-const; const_cast matches the prior `mutable HeartbeatManager`.
+  auto& hb = const_cast<ClientConnection&>(self);
+  hb.heartbeat_manager_.set_config(config);
   WeakClientConnection weak_conn = self.weak_self_;
-  self.heartbeat_manager_.set_on_timeout([weak_conn]() {
+  hb.heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
       return;
@@ -3653,25 +3498,23 @@ void clientconn_set_heartbeat_config(const ClientConnection& self, const Heartbe
   });
 }
 
-void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const { clientconn_set_heartbeat_config(*this, config); }
 
 // @safe - HeartbeatManager class is @safe; config() returns by value.
 HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self) {
   return self.heartbeat_manager_.config();
 }
-HeartbeatConfig ClientConnection::heartbeat_config() const { return clientconn_heartbeat_config(*this); }
 
 // @safe - CircuitBreaker class is @safe; set_config is @safe.
 void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config) {
-  self.circuit_breaker_.set_config(config);
+  // CircuitBreaker::set_config assigns a plain config field → non-const;
+  // const_cast matches the prior `mutable CircuitBreaker` access pattern.
+  const_cast<ClientConnection&>(self).circuit_breaker_.set_config(config);
 }
-void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const { clientconn_set_circuit_breaker_config(*this, config); }
 
 // @safe - CircuitBreaker class is @safe; config() returns by value.
 CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self) {
   return self.circuit_breaker_.config();
 }
-CircuitBreakerConfig ClientConnection::circuit_breaker_config() const { return clientconn_circuit_breaker_config(*this); }
 
 // @safe - No-op stub returning a constant. (The RequestQueue methods
 // it nominally documents are themselves @safe in Tier 2 anyway.)
@@ -3682,9 +3525,6 @@ CircuitBreakerConfig ClientConnection::circuit_breaker_config() const { return c
 // `replay_pending_requests_for_test()` (used by 3 DISABLED_*
 // buffering tests as documentation of prior behavior). It returns
 // the dequeue count, which is 0 by construction now.
-size_t ClientConnection::replay_pending_requests() {
-  return 0;
-}
 
 // @unsafe - Counter::next, Marshal operators, channel proxy dispatch.
 // Channel-mode counterpart of request(): marshals [v64 xid][i32 rpc_id]
@@ -4048,7 +3888,6 @@ void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
   (void)self.dispatch_frame_via_channel(body_bytes.data(), body_size);
 }
 
-void ClientConnection::enqueue_heartbeat_probe() const { clientconn_enqueue_heartbeat_probe(*this); }
 
 // @unsafe - Reset channel-mode state for a factory-driven reconnect
 //. Drops the closed FiberChannel,
@@ -4072,7 +3911,6 @@ void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self) {
   self.state_machine_.force_state(ConnectionState::DISCONNECTED);
 }
 
-void ClientConnection::reset_channel_mode_for_reconnect() { clientconn_reset_channel_mode_for_reconnect(*this); }
 
 // @unsafe - Channel-factory connect path.
 //
@@ -4084,7 +3922,9 @@ void ClientConnection::reset_channel_mode_for_reconnect() { clientconn_reset_cha
 // usual `invoke_error_callback` path. Caller is `connect(addr)`,
 // which already transitioned the state to CONNECTING and verified
 // the factory binding.
-int clientconn_connect_via_factory(ClientConnection& self, const char* addr) {
+int clientconn_connect_via_factory(ClientConnection& self, const int8_t* addr_i8) {
+  // DSL emits `const int8_t*` for `*const i8`; the legacy body uses char*.
+  const char* addr = reinterpret_cast<const char*>(addr_i8);
   // Take a *clone* of the bound factory so we can call `connect` on
   // it without holding the RefCell guard across what may be a
   // blocking syscall (TCP handshake, address resolution). The
@@ -4169,9 +4009,6 @@ int clientconn_connect_via_factory(ClientConnection& self, const char* addr) {
   return 0;
 }
 
-int ClientConnection::connect_via_factory(const char* addr) {
-  return clientconn_connect_via_factory(*this, addr);
-}
 
 // @unsafe - Spawns recv-loop fiber, constructs FiberChannel wrapper.
 //
@@ -4241,9 +4078,6 @@ void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy chan
   }, __FILE__, __LINE__);
 }
 
-void ClientConnection::bind_channel(ChannelConnectionProxy channel) {
-  clientconn_bind_channel(*this, std::move(channel));
-}
 
 // @unsafe - Channel-mode bind that schedules the recv-loop fiber
 // spawn onto the *poll thread*.
@@ -4293,10 +4127,6 @@ void clientconn_bind_channel_via_poll_thread(
   self.poll_thread_worker_->add(std::move(recv_job_base));
 }
 
-void ClientConnection::bind_channel_via_poll_thread(
-    ChannelConnectionProxy channel) {
-  clientconn_bind_channel_via_poll_thread(*this, std::move(channel));
-}
 
 // @unsafe - Direct on_frame / on_closed callback binding.
 //
@@ -4362,9 +4192,6 @@ void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionPro
   self.channel_mode_.set(true);
 }
 
-void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
-  clientconn_bind_channel_direct(*this, std::move(channel));
-}
 
 // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
 //
@@ -4404,7 +4231,6 @@ void clientconn_run_recv_loop(ClientConnection& self) {
   }
 }
 
-void ClientConnection::run_recv_loop() { clientconn_run_recv_loop(*this); }
 
 // @unsafe - Marshal operators, Future::notify_ready, pending_fu_ map.
 //
@@ -4518,10 +4344,6 @@ void clientconn_decode_response_and_notify(ClientConnection& self, const std::ui
 
 // @unsafe - one-line delegator to the friend free fn (extraction
 // step toward the DSL flip).
-void ClientConnection::decode_response_and_notify(const std::uint8_t* bytes,
-                                                  std::size_t size) {
-  clientconn_decode_response_and_notify(*this, bytes, size);
-}
 
 // @unsafe - Channel-mode close fan-out.
 //
@@ -4630,7 +4452,7 @@ void clientconn_on_channel_closed_fan_out(ClientConnection& self) {
           mut_conn->reset_channel_mode_for_reconnect();
           // `connect` reads `reconnect_address_` itself (set by
           // the original connect call), so we just call it.
-          (void)mut_conn->connect(conn->reconnect_address_.c_str());
+          (void)mut_conn->connect(reinterpret_cast<const int8_t*>(conn->reconnect_address_.c_str()));
           return;
         }
         Log_info(
@@ -4645,9 +4467,6 @@ void clientconn_on_channel_closed_fan_out(ClientConnection& self) {
 
 // @unsafe - one-line delegator to the friend free fn (extraction
 // step toward the DSL flip).
-void ClientConnection::on_channel_closed_fan_out() {
-  clientconn_on_channel_closed_fan_out(*this);
-}
 
 // @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
 // record_circuit_state_transition is @safe.
@@ -4662,7 +4481,6 @@ bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self)
   return allowed;
 }
 
-bool ClientConnection::allow_request_with_circuit_metrics() const { return clientconn_allow_request_with_circuit_metrics(*this); }
 
 // @safe - Checks whether an error should contribute to circuit tripping.
 bool clientconn_should_trip_circuit_for_error(i32 err) {
@@ -4683,7 +4501,6 @@ bool clientconn_should_trip_circuit_for_error(i32 err) {
   }
 }
 
-bool ClientConnection::should_trip_circuit_for_error(i32 err) { return clientconn_should_trip_circuit_for_error(err); }
 
 // @safe - Track circuit breaker state transitions in metrics.
 void clientconn_record_circuit_state_transition(const ClientConnection& self,
@@ -4708,9 +4525,6 @@ void clientconn_record_circuit_state_transition(const ClientConnection& self,
   }
 }
 
-void ClientConnection::record_circuit_state_transition(CircuitState before, CircuitState after) const {
-  clientconn_record_circuit_state_transition(*this, before, after);
-}
 
 // @safe - CircuitBreaker is @safe; should_trip_circuit_for_error is @safe;
 // record_circuit_state_transition is @safe.
@@ -4725,7 +4539,6 @@ void clientconn_record_circuit_result(const ClientConnection& self, i32 err) {
   self.record_circuit_state_transition(before, after);
 }
 
-void ClientConnection::record_circuit_result(i32 err) const { clientconn_record_circuit_result(*this, err); }
 
 // @safe - Maps errno-style errors into structured RpcError categories.
 RpcError clientconn_map_system_error(i32 err) {
@@ -4761,7 +4574,6 @@ RpcError clientconn_map_system_error(i32 err) {
   }
 }
 
-RpcError ClientConnection::map_system_error(i32 err) { return clientconn_map_system_error(err); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe;
 // map_system_error is @safe.
@@ -4771,7 +4583,6 @@ void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, con
   }
   self.callback_manager_->invoke_on_error(self.map_system_error(err), message);
 }
-void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const { clientconn_invoke_error_callback(*this, err, message); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void clientconn_invoke_disconnected_callback(const ClientConnection& self) {
@@ -4780,7 +4591,6 @@ void clientconn_invoke_disconnected_callback(const ClientConnection& self) {
   }
   self.callback_manager_->invoke_on_disconnected();
 }
-void ClientConnection::invoke_disconnected_callback() const { clientconn_invoke_disconnected_callback(*this); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void clientconn_invoke_reconnecting_callback(const ClientConnection& self) {
@@ -4789,7 +4599,6 @@ void clientconn_invoke_reconnecting_callback(const ClientConnection& self) {
   }
   self.callback_manager_->invoke_on_reconnecting();
 }
-void ClientConnection::invoke_reconnecting_callback() const { clientconn_invoke_reconnecting_callback(*this); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool success) {
@@ -4798,7 +4607,6 @@ void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool s
   }
   self.callback_manager_->invoke_on_reconnected(success);
 }
-void ClientConnection::invoke_reconnected_callback(bool success) const { clientconn_invoke_reconnected_callback(*this, success); }
 
 // @safe - CallbackManager is @safe; Arc::operator bool is @safe.
 void clientconn_invoke_connected_callback(const ClientConnection& self) {
@@ -4807,7 +4615,6 @@ void clientconn_invoke_connected_callback(const ClientConnection& self) {
   }
   self.callback_manager_->invoke_on_connected();
 }
-void ClientConnection::invoke_connected_callback() const { clientconn_invoke_connected_callback(*this); }
 
 // @unsafe - Error handler - transitions to FAILED state.
 // const: state_machine_, atomics (mutable), close/invoke_*_callback,
@@ -4865,7 +4672,6 @@ void clientconn_handle_error(const ClientConnection& self) {
   }
 }
 
-void ClientConnection::handle_error() const { clientconn_handle_error(*this); }
 
 // @unsafe - Poll-loop heartbeat tick.
 //
@@ -4883,7 +4689,7 @@ void ClientConnection::handle_error() const { clientconn_handle_error(*this); }
 // owns internally.
 bool clientconn_check_pending_write_update(const ClientConnection& self) {
   if (self.state_machine_.is_connected() && !self.paused_.get()) {
-    if (self.heartbeat_manager_.check_timeout()) {
+    if (const_cast<ClientConnection&>(self).heartbeat_manager_.check_timeout()) {
       // Timeout callback already transitioned connection through error handling.
       return false;
     }
@@ -4896,24 +4702,14 @@ bool clientconn_check_pending_write_update(const ClientConnection& self) {
   return false;
 }
 
-bool ClientConnection::check_pending_write_update() const { return clientconn_check_pending_write_update(*this); }
 
 // 4g3c3: ClientConnection no longer implements the Pollable role.
 // The channel layer's TcpConnection owns the fd and the
 // handle_read/write/error duty. These overrides remain for ABI
 // compatibility (PollableProxy facade conformance via the templated
 // adapter) but their bodies are no-ops.
-int ClientConnection::handle_write() {
-  return PollMode::NO_CHANGE;
-}
 
-bool ClientConnection::handle_read() {
-  return false;
-}
 
-int ClientConnection::poll_mode() const {
-  return PollMode::READ;
-}
 
 // ============================================================================
 // ClientPool implementation
@@ -5435,9 +5231,6 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
 // not propagated (the channel layer reads its own defaults at
 // connect time). Tests that assert keepalive configuration belong
 // at the channel layer.
-void ClientConnection::apply_keepalive_options() {
-  // No-op in channel mode.
-}
 
 // @safe - Validate connection liveness via state machine alone.
 //
@@ -5446,8 +5239,5 @@ void ClientConnection::apply_keepalive_options() {
 // `on_error` / `on_closed`, which the connection's fan-out routes
 // into the state machine. So the state-machine check is the
 // authoritative liveness signal.
-bool ClientConnection::validate_connection() const {
-  return state_machine_.is_connected();
-}
 
 }  // namespace rrr
