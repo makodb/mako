@@ -953,6 +953,9 @@ class ClientConnection {
     friend void clientconn_handle_free(const ClientConnection& self, i64 xid);
     friend void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
     friend bool clientconn_check_pending_write_update(const ClientConnection& self);
+    friend void clientconn_invalidate_pending_futures(const ClientConnection& self);
+    friend void clientconn_close(const ClientConnection& self);
+    friend void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -3592,13 +3595,13 @@ ClientConnection::~ClientConnection() {
 // @unsafe - Cancels all pending futures with error, protected by SpinMutex.
 // const: every mutation goes through SpinMutex / Counter / Future's
 // own const-callable methods.
-void ClientConnection::invalidate_pending_futures() const {
+void clientconn_invalidate_pending_futures(const ClientConnection& self) {
   // Drain the slim async-callback slots first.  Move callbacks out
   // under the lock, then fire them outside the lock with ENOTCONN +
   // null reply view.
-  rusty::Vec<AsyncReplyCallback> drained_callbacks;
+  rusty::Vec<ClientConnection::AsyncReplyCallback> drained_callbacks;
   {
-    auto cb_guard = pending_cb_slots_.lock().unwrap();
+    auto cb_guard = self.pending_cb_slots_.lock().unwrap();
     for (size_t i = 0; i < cb_guard->len(); ++i) {
       if ((*cb_guard)[i].is_some()) {
         drained_callbacks.push(std::move((*cb_guard)[i].unwrap()));
@@ -3607,12 +3610,12 @@ void ClientConnection::invalidate_pending_futures() const {
     }
   }
   for (auto& cb: drained_callbacks) {
-    metrics_.record_request_dropped();
+    self.metrics_.record_request_dropped();
     cb(ENOTCONN, nullptr, 0);
   }
 
   list<rusty::Arc<Future>> futures;
-  auto guard = pending_fu_.lock().unwrap();
+  auto guard = self.pending_fu_.lock().unwrap();
   // HashMap's STL iterator yields std::tuple<const K&, V&>, not
   // std::pair, so the value is at std::get<1>(it), not it.second.
   for (auto it: *guard) {
@@ -3622,12 +3625,14 @@ void ClientConnection::invalidate_pending_futures() const {
   // Guard dropped here, releasing lock
 
   for (auto& fu: futures) {
-    metrics_.record_request_dropped();
+    self.metrics_.record_request_dropped();
     fu->error_code_.set(ENOTCONN);
     fu->notify_ready(fu);  // Pass Arc to self for callback safety
     // Arc auto-released when list destroyed
   }
 }
+
+void ClientConnection::invalidate_pending_futures() const { clientconn_invalidate_pending_futures(*this); }
 
 // @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
 // LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
@@ -3663,19 +3668,19 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const { clientconn_
 // `on_closed` after this method returns.
 // const: every mutation routes through SpinMutex / Cell / Function /
 // heartbeat_manager_ — all interior-mutable.
-void ClientConnection::close() const {
-  ConnectionState prev_state = state_machine_.state();
-  const bool was_connected = state_machine_.is_connected();
+void clientconn_close(const ClientConnection& self) {
+  ConnectionState prev_state = self.state_machine_.state();
+  const bool was_connected = self.state_machine_.is_connected();
   if (was_connected) {
     // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
-    state_machine_.transition_to(ConnectionState::DISCONNECTING);
+    self.state_machine_.transition_to(ConnectionState::DISCONNECTING);
   }
 
   // Tear down the channel proxy(ies). The channel layer's `close()`
   // is idempotent and thread-safe per the facade contract.
   // @unsafe { SpinMutex::lock + Box::get + proxy method dispatch }
   {
-    auto guard = direct_channel_.lock().unwrap();
+    auto guard = self.direct_channel_.lock().unwrap();
     if (guard->is_some()) {
       auto* conn = guard->as_ref().unwrap().get();
       conn->close();
@@ -3683,7 +3688,7 @@ void ClientConnection::close() const {
   }
   // @unsafe { SpinMutex::lock + FiberChannel::close }
   {
-    auto guard = fiber_channel_.lock().unwrap();
+    auto guard = self.fiber_channel_.lock().unwrap();
     if (guard->is_some()) {
       auto* fc = const_cast<FiberChannel*>(
           guard->as_ref().unwrap().get());
@@ -3693,19 +3698,21 @@ void ClientConnection::close() const {
 
   if (was_connected) {
     // Transition to DISCONNECTED state for clean shutdown.
-    state_machine_.transition_to(ConnectionState::DISCONNECTED);
-  } else if (!state_machine_.is_terminal()) {
+    self.state_machine_.transition_to(ConnectionState::DISCONNECTED);
+  } else if (!self.state_machine_.is_terminal()) {
     // If not connected and not already terminal, force to DISCONNECTED.
-    state_machine_.force_state(ConnectionState::DISCONNECTED);
+    self.state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
-  heartbeat_manager_.reset();
-  invalidate_pending_futures();
+  self.heartbeat_manager_.reset();
+  self.invalidate_pending_futures();
 
   if (prev_state == ConnectionState::CONNECTED ||
       prev_state == ConnectionState::DISCONNECTING) {
-    invoke_disconnected_callback();
+    self.invoke_disconnected_callback();
   }
 }
+
+void ClientConnection::close() const { clientconn_close(*this); }
 
 // @safe - StateMachine is @safe; only std::atomic::store and the call
 // into still-@unsafe invalidate_pending_futures need an @unsafe wrap.
@@ -4027,22 +4034,23 @@ void ClientConnection::enqueue_heartbeat_probe() const { clientconn_enqueue_hear
 // DISCONNECTED so `connect()`'s `verify(!is_connected())` passes.
 // Caller: the spawn body inside `on_channel_closed_fan_out` when a
 // factory is bound.
-void ClientConnection::reset_channel_mode_for_reconnect() {
+void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self) {
   // SpinMutex::lock + Option::take are both @safe.
   {
-    auto guard = fiber_channel_.lock().unwrap();
+    auto guard = self.fiber_channel_.lock().unwrap();
     *guard = rusty::None;
   }
   // 4g1c: also drop the direct-channel slot so reconnect can rebind
   // a fresh proxy with fresh callbacks.
-  // SpinMutex::lock + Option::take are both @safe.
   {
-    auto guard = direct_channel_.lock().unwrap();
+    auto guard = self.direct_channel_.lock().unwrap();
     *guard = rusty::None;
   }
-  channel_mode_.set(false);
-  state_machine_.force_state(ConnectionState::DISCONNECTED);
+  self.channel_mode_.set(false);
+  self.state_machine_.force_state(ConnectionState::DISCONNECTED);
 }
+
+void ClientConnection::reset_channel_mode_for_reconnect() { clientconn_reset_channel_mode_for_reconnect(*this); }
 
 // @unsafe - Channel-factory connect path.
 //
