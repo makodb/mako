@@ -951,6 +951,8 @@ class ClientConnection {
     friend CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self);
     friend void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
     friend void clientconn_handle_free(const ClientConnection& self, i64 xid);
+    friend void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
+    friend bool clientconn_check_pending_write_update(const ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -4002,14 +4004,10 @@ size_t ClientConnection::replay_pending_requests() {
 // `out_` Marshal that backed the fd path is gone. Callers (the
 // poll-loop tick) only fire heartbeats on connected clients, which
 // always have a bound channel by construction.
-void ClientConnection::enqueue_heartbeat_probe() const {
-  // Build the heartbeat frame body and dispatch through the channel
-  // proxy. The channel layer adds the 4-byte size prefix internally;
-  // the body bytes match what the legacy fd path's
-  // `set_bookmark` / `write_bookmark` produced, so the wire format
-  // is unchanged.
+void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
+  // Build the heartbeat frame body and dispatch through the channel proxy.
   Marshal body;
-  body << v64(xid_counter_.next(1));
+  body << v64(self.xid_counter_.next(1));
   body << static_cast<i32>(kInternalHeartbeatRpcId);
   const std::size_t body_size = body.content_size();
   std::vector<std::uint8_t> body_bytes;
@@ -4017,12 +4015,11 @@ void ClientConnection::enqueue_heartbeat_probe() const {
     body_bytes.resize(body_size);
     verify(body.read(body_bytes.data(), body_size) == body_size);
   }
-  // Errors here are observable via the `on_error` callback when
-  // sub-leaf 4d wires it; for now we ignore the return code, same
-  // as the legacy fd path which never surfaced send-side errors
-  // from the heartbeat probe.
-  (void)dispatch_frame_via_channel(body_bytes.data(), body_size);
+  // Send-side errors are ignored here (same as the legacy fd path).
+  (void)self.dispatch_frame_via_channel(body_bytes.data(), body_size);
 }
+
+void ClientConnection::enqueue_heartbeat_probe() const { clientconn_enqueue_heartbeat_probe(*this); }
 
 // @unsafe - Reset channel-mode state for a factory-driven reconnect
 //. Drops the closed FiberChannel,
@@ -4822,23 +4819,22 @@ void ClientConnection::handle_error() const {
 // `pending_write_update_` flag has been removed: it gated the
 // legacy fd-path's write-mode flip, which the channel layer now
 // owns internally.
-bool ClientConnection::check_pending_write_update() const {
-  if (state_machine_.is_connected() && !paused_.get()) {
-    if (heartbeat_manager_.check_timeout()) {
+bool clientconn_check_pending_write_update(const ClientConnection& self) {
+  if (self.state_machine_.is_connected() && !self.paused_.get()) {
+    if (self.heartbeat_manager_.check_timeout()) {
       // Timeout callback already transitioned connection through error handling.
       return false;
     }
-    if (heartbeat_manager_.should_send_heartbeat()) {
-      // @unsafe
-      {
-        enqueue_heartbeat_probe();
-      }
-      heartbeat_manager_.on_heartbeat_sent();
+    if (self.heartbeat_manager_.should_send_heartbeat()) {
+      self.enqueue_heartbeat_probe();
+      self.heartbeat_manager_.on_heartbeat_sent();
       return true;
     }
   }
   return false;
 }
+
+bool ClientConnection::check_pending_write_update() const { return clientconn_check_pending_write_update(*this); }
 
 // 4g3c3: ClientConnection no longer implements the Pollable role.
 // The channel layer's TcpConnection owns the fd and the
