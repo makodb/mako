@@ -1820,22 +1820,11 @@ private:
 
 public:
 
-    // @safe - Convenience overload; delegates to the @unsafe full request.
-    template<typename F>
-    FutureResult request(i32 rpc_id, F&& write_fn) const {
-        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
-        {
-            return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
-        }
-    }
-
-    // @safe - Convenience overload (no args); delegates to the @unsafe full request.
-    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        // @unsafe { delegate to @unsafe request(rpc_id, attr, write_fn) }
-        {
-            return request(rpc_id, attr, [](BinaryWriteArchive&) {});
-        }
-    }
+    // (Removed two dead `request` convenience overloads — the 2-arg
+    // `request(rpc_id, write_fn)` and the no-write_fn
+    // `request(rpc_id, attr=default)`. ClientConnection is rrr-internal and
+    // every caller uses the canonical 3-arg `request(rpc_id, attr, write_fn)`;
+    // the DSL flip allows only one `request` method, so the dead overloads go.)
 
     // =========================================================================
     // Request with Options (Timeout/Retry Support)
@@ -1861,16 +1850,9 @@ public:
                                                std::forward<F>(write_fn));
     }
 
-    // @safe - Convenience overload without FutureAttr; delegates to
-    // the @unsafe full request_with_options.
-    template<typename F>
-    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
-                                      F&& write_fn) const {
-        // @unsafe { delegate to @unsafe request_with_options(rpc_id, options, attr, write_fn) }
-        {
-            return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
-        }
-    }
+    // (Removed the dead 3-arg `request_with_options(rpc_id, options, write_fn)`
+    // convenience overload — rrr-internal, no caller; the canonical 4-arg
+    // form above is the only one used. The DSL flip allows one method per name.)
 
     // @safe - 4g3c3/4g3d: `ClientConnection` no longer owns an fd; the
     // channel layer's `TcpConnection` does. This accessor always
