@@ -2810,7 +2810,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2839,7 +2839,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2874,7 +2874,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2911,7 +2911,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2943,7 +2943,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2971,7 +2971,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -2999,7 +2999,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -3030,7 +3030,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -3059,7 +3059,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
@@ -3089,7 +3089,7 @@ private:
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();
                     if (__typed_result__.is_err()) {
-                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());
+                        const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {

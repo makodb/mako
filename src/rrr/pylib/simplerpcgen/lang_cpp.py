@@ -402,13 +402,13 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                                 f.writeln("auto sconn = sconn_opt.unwrap();")
                                 f.writeln("if (__typed_result__.is_err()) {")
                                 with f.indent():
-                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});")
                                 f.writeln("} else {")
                                 with f.indent():
                                     if len(output_fields) == 0:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                         f.writeln("(void)__typed_resp__;")
-                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__);")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, rrr::ServerReplyFn{});")
                                     else:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                         f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {")
@@ -442,13 +442,13 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                                 f.writeln("auto sconn = sconn_opt.unwrap();")
                                 f.writeln("if (__typed_result__.is_err()) {")
                                 with f.indent():
-                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err());")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});")
                                 f.writeln("} else {")
                                 with f.indent():
                                     if len(output_fields) == 0:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                         f.writeln("(void)__typed_resp__;")
-                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__);")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, rrr::ServerReplyFn{});")
                                     else:
                                         f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                         f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__async_req__, 0, [&](rrr::BinaryWriteArchive& m) {")
@@ -477,13 +477,13 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             f.writeln("auto sconn = sconn_opt.unwrap();")
                             f.writeln("if (__typed_result__.is_err()) {")
                             with f.indent():
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());")
+                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err(), rrr::ServerReplyFn{});")
                             f.writeln("} else {")
                             with f.indent():
                                 if len(output_fields) == 0:
                                     f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                     f.writeln("(void)__typed_resp__;")
-                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});")
                                 else:
                                     f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
                                     f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {")
