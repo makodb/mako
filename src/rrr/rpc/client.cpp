@@ -904,6 +904,21 @@ struct ReconnectState {
   // spawn in on_channel_closed_fan_out; tests inspect it to verify the
   // fan-out reached the reconnect-policy branch.
   std::atomic<uint64_t> channel_reconnect_attempts_{0};
+
+  ReconnectState() = default;
+  // std::atomic is not movable, but the DSL-emitted move ctor of the owning
+  // ClientConnection (impl Drop synthesizes one that std::moves every field)
+  // needs ReconnectState to be movable. Move the current atomic VALUES; the
+  // owning connection is never actually moved at runtime (held via Arc), so
+  // this only needs to compile.
+  ReconnectState(ReconnectState&& o) noexcept
+      : reconnecting_(o.reconnecting_.load(std::memory_order_relaxed)),
+        reconnect_abort_(o.reconnect_abort_.load(std::memory_order_relaxed)),
+        channel_reconnect_attempts_(
+            o.channel_reconnect_attempts_.load(std::memory_order_relaxed)) {}
+  ReconnectState(const ReconnectState&) = delete;
+  ReconnectState& operator=(const ReconnectState&) = delete;
+  ReconnectState& operator=(ReconnectState&&) = delete;
 };
 
 // @safe - Client-side socket handler exposed to poll loop via Pollable
