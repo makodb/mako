@@ -960,6 +960,7 @@ class ClientConnection {
     friend void clientconn_handle_error(const ClientConnection& self);
     friend void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
     friend void clientconn_on_channel_closed_fan_out(ClientConnection& self);
+    friend ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -1719,26 +1720,12 @@ private:
     // protected by SpinMutex (sub-leaf 4g1). The underlying
     // `send_frame` is non-suspending and the proxy's outbound queue
     // is internally thread-safe.
+    // @unsafe - one-line delegator to the friend free fn (extraction
+    // step toward the DSL flip; void* param body lives in the free fn).
     ChannelError dispatch_frame_via_channel(const std::uint8_t* body_bytes,
                                             std::size_t body_size) const {
-        if (!channel_mode_.get()) return ChannelError::ConnectionReset;
-        // 4g1c: direct-channel binding takes precedence over the
-        // FiberChannel binding (only one is bound at a time per
-        // ClientConnection lifecycle).
-        // @unsafe - SpinMutex::lock, Option::as_mut, Box deref
-        {
-            auto guard = direct_channel_.lock().unwrap();
-            if (guard->is_some()) {
-                auto& mut_proxy = *guard->as_mut().unwrap();
-                return mut_proxy.send_frame(
-                    ChannelFrame{body_bytes, body_size});
-            }
-        }
-        // @unsafe - SpinMutex::lock, Option::as_mut, Box deref
-        auto guard = fiber_channel_.lock().unwrap();
-        if (guard->is_none()) return ChannelError::ConnectionReset;
-        return guard->as_mut().unwrap()->send_frame(
-            ChannelFrame{body_bytes, body_size});
+        return clientconn_dispatch_frame_via_channel(*this, body_bytes,
+                                                     body_size);
     }
 
     /**
@@ -4006,6 +3993,28 @@ CircuitBreakerConfig ClientConnection::circuit_breaker_config() const { return c
 // the dequeue count, which is 0 by construction now.
 size_t ClientConnection::replay_pending_requests() {
   return 0;
+}
+
+// @unsafe - Dispatch one frame body through the bound channel proxy.
+//
+// 4g1c: direct-channel binding takes precedence over the FiberChannel
+// binding (only one is bound at a time per ClientConnection
+// lifecycle). SpinMutex::lock, Option::as_mut, Box deref.
+ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
+                                                   const std::uint8_t* body_bytes,
+                                                   std::size_t body_size) {
+  if (!self.channel_mode_.get()) return ChannelError::ConnectionReset;
+  {
+    auto guard = self.direct_channel_.lock().unwrap();
+    if (guard->is_some()) {
+      auto& mut_proxy = *guard->as_mut().unwrap();
+      return mut_proxy.send_frame(ChannelFrame{body_bytes, body_size});
+    }
+  }
+  auto guard = self.fiber_channel_.lock().unwrap();
+  if (guard->is_none()) return ChannelError::ConnectionReset;
+  return guard->as_mut().unwrap()->send_frame(
+      ChannelFrame{body_bytes, body_size});
 }
 
 // @unsafe - Enqueue one internal heartbeat probe through the bound
