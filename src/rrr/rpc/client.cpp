@@ -984,7 +984,7 @@ class ClientConnection {
     friend void clientconn_on_channel_closed_fan_out(ClientConnection& self);
     friend ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
     friend int clientconn_connect(ClientConnection& self, const char* addr);
-    friend int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_complete);
+    friend int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
     friend int clientconn_connect_via_factory(ClientConnection& self, const char* addr);
     friend void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy channel);
     friend void clientconn_bind_channel_via_poll_thread(ClientConnection& self, ChannelConnectionProxy channel);
@@ -1443,20 +1443,16 @@ public:
      * @param on_complete Optional callback called with success/failure result
      * @return 0 on success (reconnection started), error code on failure
      */
-    // @unsafe - Attempts reconnection (calls connect which has socket operations)
-    int reconnect(rusty::Function<void(bool)> on_complete);
-
-    // @unsafe - Const facade over the non-const `reconnect`. Lets
-    // Client::reconnect — itself const through Arc<Client> — delegate
-    // without surfacing the const_cast in the DSL. Also resets the
-    // mutable `reconnect_abort_` atomic before delegating — matches
-    // the legacy `Client::reconnect` body ordering. Without this reset
-    // tests like rpc_metrics_test::QueueDropCounter... see a stale
-    // abort=true left over from a prior close() and reconnect bails.
+    // @unsafe - Attempts reconnection (calls connect which has socket
+    // operations). A single const facade: clientconn_reconnect takes
+    // const self, resets the mutable reconnect_abort_ latch, and
+    // const_casts internally for the non-const connect call. Both the
+    // const Client::reconnect path (Arc<Client>) and the non-const
+    // close-fan-out spawn (`mut_conn->reconnect`) bind here. (The former
+    // separate non-const overload was merged away — the DSL flip allows
+    // one method per name.)
     int reconnect(rusty::Function<void(bool)> on_complete) const {
-        reconnect_.reconnect_abort_.store(false, std::memory_order_release);
-        // @unsafe { const_cast<ClientConnection*>(this) — see decl }
-        { return const_cast<ClientConnection*>(this)->reconnect(std::move(on_complete)); }
+        return clientconn_reconnect(*this, std::move(on_complete));
     }
 
     /**
@@ -3457,7 +3453,13 @@ int clientconn_connect(ClientConnection& self, const char* addr) {
 int ClientConnection::connect(const char* addr) { return clientconn_connect(*this, addr); }
 
 // @unsafe - Attempts to reconnect to the last connected address
-int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_complete) {
+int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete) {
+  // Reset the abort latch before delegating (folded in from the former
+  // const `reconnect` facade): the Client::reconnect path needs a stale
+  // abort=true from a prior close() cleared, and the close-fan-out spawn
+  // path only reaches here with abort already false, so the reset is a
+  // no-op there. `reconnect_` is a mutable atomic, so const self suffices.
+  self.reconnect_.reconnect_abort_.store(false, std::memory_order_release);
   auto complete_callback = [&](int result) -> int {
     if (on_complete) on_complete(result == 0);
     return result;
@@ -3554,7 +3556,9 @@ int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_
     // channel mode (the channel proxy's TcpConnection owns the fd);
     // the `connect()` call below routes through `connect_via_factory`
     // which produces a fresh proxy + fresh fd internally.
-    return self.connect(self.reconnect_address_.c_str());
+    // @unsafe { const_cast — connect mutates state_machine_; reconnect is a
+    // const facade over the non-const connect path }
+    return const_cast<ClientConnection&>(self).connect(self.reconnect_address_.c_str());
   };
 
   if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
@@ -3613,9 +3617,6 @@ int clientconn_reconnect(ClientConnection& self, rusty::Function<void(bool)> on_
   return complete_reconnect(false, result);
 }
 
-int ClientConnection::reconnect(rusty::Function<void(bool)> on_complete) {
-  return clientconn_reconnect(*this, std::move(on_complete));
-}
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)
 void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config) {
