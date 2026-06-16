@@ -956,6 +956,8 @@ class ClientConnection {
     friend void clientconn_invalidate_pending_futures(const ClientConnection& self);
     friend void clientconn_close(const ClientConnection& self);
     friend void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
+    friend void clientconn_run_recv_loop(ClientConnection& self);
+    friend void clientconn_handle_error(const ClientConnection& self);
     friend class ClientPool;
 
     // Shared reference to PollThread for async communication.
@@ -4342,10 +4344,10 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) {
 // raw pointer stays valid because the spawning lambda keeps an
 // `Arc<ClientConnection>` alive for the fiber's lifetime, and the
 // connection owns the `Box<FiberChannel>`.
-void ClientConnection::run_recv_loop() {
+void clientconn_run_recv_loop(ClientConnection& self) {
   FiberChannel* fc = nullptr;
   {
-    auto guard = fiber_channel_.lock().unwrap();
+    auto guard = self.fiber_channel_.lock().unwrap();
     if (guard->is_none()) return;
     // @unsafe { Box::get returns raw pointer }
     fc = const_cast<FiberChannel*>(guard->as_ref().unwrap().get());
@@ -4354,18 +4356,18 @@ void ClientConnection::run_recv_loop() {
     rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
     if (frame_opt.is_none()) {
       // Channel closed. Run the close-side fan-out (sub-leaf 4d):
-      // cancel pending futures with ENOTCONN, fire error /
-      // disconnected callbacks, and trigger auto-reconnect if the
-      // policy allows. The fiber then exits, dropping its
-      // Arc<ClientConnection> capture so the connection can finish
-      // teardown if no other strong refs remain.
-      on_channel_closed_fan_out();
+      // cancel pending futures with ENOTCONN, fire error / disconnected
+      // callbacks, and trigger auto-reconnect if the policy allows. The
+      // fiber then exits, dropping its Arc<ClientConnection> capture.
+      self.on_channel_closed_fan_out();
       return;
     }
     auto frame = std::move(frame_opt).unwrap();
-    decode_response_and_notify(frame.bytes.data(), frame.bytes.size());
+    self.decode_response_and_notify(frame.bytes.data(), frame.bytes.size());
   }
 }
+
+void ClientConnection::run_recv_loop() { clientconn_run_recv_loop(*this); }
 
 // @unsafe - Marshal operators, Future::notify_ready, pending_fu_ map.
 //
@@ -4760,34 +4762,34 @@ void ClientConnection::invoke_connected_callback() const { clientconn_invoke_con
 // @unsafe - Error handler - transitions to FAILED state.
 // const: state_machine_, atomics (mutable), close/invoke_*_callback,
 // and the reconnect spawn are all callable through a const ref.
-void ClientConnection::handle_error() const {
-  ConnectionState prev_state = state_machine_.state();
+void clientconn_handle_error(const ClientConnection& self) {
+  ConnectionState prev_state = self.state_machine_.state();
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
       prev_state == ConnectionState::DISCONNECTED ||
-      reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+      self.reconnect_.reconnect_abort_.load(std::memory_order_acquire);
 
   if (!user_initiated_closing) {
-    invoke_error_callback(ECONNRESET, "connection error");
+    self.invoke_error_callback(ECONNRESET, "connection error");
     // Force transition to FAILED state (from any state)
-    state_machine_.force_state(ConnectionState::FAILED);
+    self.state_machine_.force_state(ConnectionState::FAILED);
   }
   // @unsafe - calls close() which does system calls
-  { close(); }
+  { self.close(); }
 
   if (user_initiated_closing) {
     return;
   }
-  invoke_disconnected_callback();
+  self.invoke_disconnected_callback();
 
   // Trigger policy-driven reconnect automatically after transport failures.
-  if (reconnect_policy_.auto_reconnect &&
-      !reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
+  if (self.reconnect_policy_.auto_reconnect &&
+      !self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
     // std::string::empty() is a pure const accessor; safe in @safe code.
-    if (reconnect_address_.empty()) {
+    if (self.reconnect_address_.empty()) {
       return;
     }
-    auto weak_conn = weak_self_;
+    auto weak_conn = self.weak_self_;
     rusty::thread::spawn([weak_conn]() {
         auto conn_opt = weak_conn.upgrade();
         if (conn_opt.is_none()) {
@@ -4812,6 +4814,8 @@ void ClientConnection::handle_error() const {
       }).detach();
   }
 }
+
+void ClientConnection::handle_error() const { clientconn_handle_error(*this); }
 
 // @unsafe - Poll-loop heartbeat tick.
 //
