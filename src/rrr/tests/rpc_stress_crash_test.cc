@@ -650,7 +650,7 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
     int port = test_ports::get_port();
     std::string addr = make_addr(port);
 
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 5;
     cb_config.success_threshold = 3;
     cb_config.timeout_ms = 100;

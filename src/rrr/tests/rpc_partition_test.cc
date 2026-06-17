@@ -343,7 +343,7 @@ TEST_F(PartitionTest, LongPartition) {
 }
 
 TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
     cb_config.timeout_ms = 200;
     auto cb = CircuitBreaker::new_(cb_config);
