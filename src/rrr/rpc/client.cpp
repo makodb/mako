@@ -2888,6 +2888,16 @@ static uint64_t current_time_ms() {
 
 // @unsafe - rusty::Mutex + rusty::Condvar::wait_while.
 void fut_wait(const Future& self) {
+  // Respect the future's configured timeout so a lost / never-arriving reply
+  // can't wedge the caller forever. Mirrors fut_get_error_code: `timeout_` is
+  // in microseconds; a value of 0 means "no timeout" (caller explicitly opted
+  // out of bounding). Without this, a single dropped reply turns into a
+  // permanent hang (see the StressPipelined livelock investigation).
+  if (self.timeout_ > 0) {
+    double sec = static_cast<double>(self.timeout_) / 1000000.0;
+    fut_timed_wait(self, sec);
+    return;
+  }
   auto guard = self.state_.lock().unwrap();
   // wait_while: waits WHILE condition is TRUE, stops when FALSE
   // We want to wait while NOT ready and NOT timed_out

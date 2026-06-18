@@ -143,6 +143,17 @@ class Event {
   const EventState& state() const { return state_; }
   EventState& state_mut() { return state_; }
 
+  // When true (the default), the reactor's amortized prune may drop this event
+  // from `all_events_` once it is sole-owned (shared_ptr use_count()==1 — no
+  // fiber, waiter, or other shared_ptr references it). `create_event()` hands
+  // out a bare `Event&` kept alive ONLY by `all_events_`, so it clears this to
+  // keep such events retained. Cross-thread signalers reach an event via the
+  // weak_ptr `self_` (get_self()), so a pruned/freed event is observed as null
+  // rather than dangling — no use-after-free.
+  rusty::Cell<bool> prunable_{true};
+  bool prunable() const { return prunable_.get(); }
+  void set_prunable(bool v) { prunable_.set(v); }
+
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
 
@@ -816,6 +827,9 @@ class Reactor {
   }
 
  public:
+  // @safe - Amortized prune of finished events from all_events_ (drops events
+  // the list is the sole owner of; non-prunable events are retained).
+  void prune_finished_events() const;
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
   // @safe - Continues execution of a paused fiber
@@ -893,31 +907,40 @@ class Reactor {
 
   // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
   // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
-  //   1. shared_ptr is stored in all_events_ list (owned by reactor)
+  //   1. shared_ptr is stored in all_events_ list (an owner of the reactor)
+  //      while the event is live
   //   2. Reactor lives for entire program duration
-  //   3. Events are never removed from all_events_ until reactor destruction
-  // Cross-thread notification uses raw pointers (safe: reactor owns all events)
+  //   3. Finished events (sole-owned by all_events_, i.e. use_count()==1) are
+  //      pruned amortized via prune_finished_events(), so the list stays bounded
+  //      under sustained event churn (e.g. one IntEvent per recv_frame).
+  // Cross-thread notification reaches an event via its weak_ptr self-ref
+  // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
   template <typename Ev, typename... Args>
   static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
     auto ev = std::make_shared<Ev>(args...);
     ev->state_.__debug_creator = 1;
-    // Set self-reference for cross-thread signaling (uses raw pointer now)
+    // Set self-reference for cross-thread signaling (weak_ptr)
     ev->set_self(ev);
     // Store in all_events_ using RefCell borrow_mut()
     auto reactor = get_reactor();
     reactor->all_events_.borrow_mut()->push_back(ev);
+    // Clear out finished events the reactor is the sole owner of (bounded growth).
+    reactor->prune_finished_events();
     return ev;
   }
 
   // @unsafe - Creates event and returns reference to shared_ptr content
   // SAFETY: Returned reference is valid because:
   //   1. Event is created via create_sp_event and stored in all_events_
-  //   2. all_events_ is never cleared during reactor lifetime
+  //   2. The event is marked NON-prunable so all_events_ retains it (the
+  //      returned bare Event& is the caller's only handle — there is no
+  //      shared_ptr to keep it alive, so it must not be pruned)
   //   3. Returned reference points to heap-allocated Event managed by shared_ptr
   // Manual verification required: reference lifetime extends beyond function scope
   template <typename Ev, typename... Args>
   static Ev& create_event(Args&&... args) {  // @unsafe
     auto sp = create_sp_event<Ev>(args...);
+    sp->set_prunable(false);
     return *sp;
   }
 };
@@ -2166,6 +2189,26 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
           return sp->status_.get() != Event::DONE;
         }));
   }
+}
+
+// @unsafe - shared_ptr::use_count + rusty::Function in the retain predicate.
+// Amortized cleanup of `all_events_`: drop events the list is the sole owner of
+// (use_count()==1 → no fiber/waiter/other shared_ptr holds them, so they are
+// finished) and that opted into pruning. Throttled by a moving high-water mark
+// so the O(n) sweep runs ~O(1) amortized per create_sp_event. Runs on the
+// reactor thread (single-threaded ownership), and cross-thread signalers reach
+// events via the weak_ptr `self_`, so freeing a sole-owned event is safe.
+void Reactor::prune_finished_events() const {
+  static thread_local std::size_t prune_hwm = 64;
+  auto guard = all_events_.borrow_mut();
+  if (guard->len() < prune_hwm) {
+    return;
+  }
+  guard->retain(rusty::Function<bool(const std::shared_ptr<Event>&)>(
+    [](const std::shared_ptr<Event>& e) {
+      return e.use_count() > 1 || !e->prunable();
+    }));
+  prune_hwm = guard->len() * 2 + 64;
 }
 
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
