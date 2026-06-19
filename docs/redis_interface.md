@@ -22,9 +22,9 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `SADD`, `SMEMBERS`, `SISMEMBER`, `SREM`, `SCARD`, `SMOVE`, `SPOP`, `SRANDMEMBER`, `SSCAN` | Basic Redis set operations | Random member selection is deterministic first-member selection in this phase | Stores members as internal composite keys and maintains cardinality metadata transactionally |
 | `SINTER`, `SUNION`, `SDIFF`, `SINTERSTORE`, `SUNIONSTORE`, `SDIFFSTORE` | Set algebra and store variants | Implemented by scanning composite set members in the local transaction executor | Computes algebra in C++ and writes `*STORE` destinations inside the same OCC transaction |
 | `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE` | Basic non-blocking Redis list operations | Blocking pops are intentionally out of scope | Stores elements as internal composite keys and maintains head/tail metadata transactionally |
-| `LSET`, `LREM`, `LTRIM`, `LINSERT`, `LPUSHX`, `RPUSHX`, `LPOS`, `LMOVE`, `RPOPLPUSH` | Non-blocking list mutation and move operations | `LPOS` currently supports the basic key/element form | Rewrites affected logical list contents inside the same OCC transaction |
+| `LSET`, `LREM`, `LTRIM`, `LINSERT`, `LPUSHX`, `RPUSHX`, `LPOS`, `LMOVE`, `RPOPLPUSH` | Non-blocking list mutation and move operations | Blocking list commands are separate compatibility shims | Rewrites affected logical list contents inside the same OCC transaction; `LPOS` supports `RANK`, `COUNT`, and `MAXLEN` |
 | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`, `HINCRBYFLOAT`, `HRANDFIELD`, `HSCAN` | Core Redis hash operations | Random field selection is deterministic first-field selection in this phase | Stores fields as internal composite keys and maintains hash cardinality metadata transactionally |
-| `ZADD`, `ZSCORE`, `ZINCRBY`, `ZREM`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZPOPMIN`, `ZPOPMAX`, `ZSCAN` | Core sorted-set operations | Store/range-removal/lex variants are deferred | Stores member and score indexes transactionally and stages zset updates inside one `EXEC` |
+| `ZADD`, `ZSCORE`, `ZINCRBY`, `ZREM`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZRANGEBYLEX`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYRANK`, `ZREMRANGEBYLEX`, `ZRANGESTORE`, `ZUNION`/`ZINTER`/`ZDIFF` and store variants, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `ZRANDMEMBER`, `ZSCAN` | Sorted-set coverage is scoped to the standalone `makoCon` Redis target | Stores member and score indexes transactionally and stages zset updates inside one `EXEC` |
 | `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `PUBSUB CHANNELS/NUMSUB/NUMPAT` | In-memory Redis Pub/Sub | Process-local only; no persistence or delivery after disconnect | Adds Rust-side subscriber mode, channel registry, pattern matching, and outbound queues without touching Mako storage |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
 | `UNLINK key [key ...]` | Alias of `DEL` | No async free semantics | Provides client compatibility without adding background deletion machinery |
@@ -53,7 +53,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TXN_OP_SADD` through `TXN_OP_SET_ALGEBRA` | Phase 6 set operations | Local composite-key set storage only | Keeps set member updates, cardinality metadata, and set-store writes in one transaction |
 | `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/list/zset/hash/none | Keeps logical type expiry checks in C++ |
 | `TXN_OP_LPUSH` through `TXN_OP_LPOS` | Phase 7 list operations | Non-blocking list surface only | Keeps element writes, head/tail metadata, and list moves in one transaction |
-| `TXN_OP_ZADD` through `TXN_OP_ZSCAN` | Phase 8/10 sorted-set operations | Store/range-removal/lex variants are deferred | Keeps member index, score index, and zset metadata updates in one transaction; Rust owns scan cursor pagination |
+| `TXN_OP_ZADD` through `TXN_OP_ZRANDMEMBER` | Sorted-set operations, including lex ranges, range removal, range-store, algebra, pop, random-member, and scan | Standalone `makoCon` is the semantic target | Keeps member index, score index, and zset metadata updates in one transaction; Rust owns scan cursor pagination |
 | `TXN_OP_HSET` through `TXN_OP_HSCAN` | Core hash operations | Store/field-randomness is deterministic in this phase | Keeps field records and hash metadata updates in one transaction; Rust owns scan cursor pagination |
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
@@ -366,8 +366,6 @@ token owned by the Rust handler.
 
 Current limitations:
 
-- `ZRANGEBYLEX`, `ZREMRANGEBY*`, `ZRANGESTORE`, `ZUNIONSTORE`,
-  `ZINTERSTORE`, and `ZDIFFSTORE` are deferred.
 - `KEYS`, `SCAN`, and `DBSIZE` still do not expose sorted sets as logical keys.
 
 ---

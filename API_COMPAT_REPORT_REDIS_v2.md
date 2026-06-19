@@ -16,8 +16,9 @@ commands.
   `SRANDMEMBER`, `SINTER`, `SUNION`, `SDIFF`, and store variants.
 - Lists: non-blocking push/pop/range/mutation/move commands implemented in the
   Phase 7 scope.
-- Sorted sets: core add/score/remove/cardinality/range/rank/count/pop/scan
-  commands implemented in the Phase 8 scope.
+- Sorted sets: add/score/remove/cardinality/range/rank/count/pop/scan plus
+  lex ranges, range removals, range-store, algebra/store variants, multipop,
+  and random-member commands in the standalone `makoCon` target.
 - Pub/Sub: `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`,
   `PUBLISH`, `PUBSUB CHANNELS`, `PUBSUB NUMSUB`, `PUBSUB NUMPAT`.
 - Connection/setup: `PING`, `HELLO`, `CLIENT`, `COMMAND`, `CONFIG`,
@@ -46,8 +47,6 @@ The authoritative divergence list is
 - deterministic `SPOP`/`SRANDMEMBER` member choice;
 - collection logical keys not yet visible through `KEYS`/`SCAN`/`DBSIZE`;
 - `SADD` then `SMOVE` of the same newly-added member inside one `EXEC`;
-- basic `LPOS` only, without `RANK`/`COUNT`/`MAXLEN`;
-- deferred sorted-set store, lex, and range-removal variants;
 - `makoConMultiTrd.cc` extended-command semantic gap.
 
 ## Operational Characterization
