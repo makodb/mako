@@ -4,8 +4,21 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from pathlib import Path
 
 from harness_common import connect, env_int, fail, main_guard, require_env
+
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+# Reference workload:
+# - Jepsen's Redis-Raft suite validates a Redis-compatible Raft system under
+#   process crashes, pauses, partitions, clock skew, and membership changes:
+#   https://github.com/jepsen-io/redis
+# - The RedisRaft consistency claim is that acknowledged writes are committed
+#   and never lost:
+#   https://redis.io/blog/redisraft-new-strong-consistency-deployment-option/
+# - The reusable oracle for Mako is acknowledged-write survival after a fault.
 
 
 def run_shell(command: str) -> None:
@@ -13,6 +26,15 @@ def run_shell(command: str) -> None:
 
 
 def main() -> None:
+    if os.environ.get("MAKO_G3_USE_LOCAL_RESTART_FIXTURE") == "1":
+        if os.environ.get("MAKO_G3_ALLOW_RESTART_SMOKE") != "1":
+            from harness_common import na
+            na("local restart fixture is smoke only; set MAKO_G3_ALLOW_RESTART_SMOKE=1 to run it")
+        script = ROOT_DIR / "tools" / "redis_compat" / "fixtures" / "makocon_g3_local_restart.sh"
+        os.environ.setdefault("MAKO_G3_START_CMD", f"bash {script} start")
+        os.environ.setdefault("MAKO_G3_KILL_CMD", f"bash {script} kill")
+        os.environ.setdefault("MAKO_G3_RECOVER_CMD", f"bash {script} recover")
+
     start_cmd = require_env("MAKO_G3_START_CMD")
     kill_cmd = require_env("MAKO_G3_KILL_CMD")
     recover_cmd = require_env("MAKO_G3_RECOVER_CMD")

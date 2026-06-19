@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import uuid
 
-import pytest
 import redis
 
 
@@ -80,6 +79,25 @@ def test_dbsize_counts_user_visible_keys(mako_client: redis.Redis) -> None:
     assert mako_client.dbsize() >= before + 2
 
 
-def test_hscan_is_documented_as_blocked_on_hash_storage(mako_client: redis.Redis) -> None:
-    with pytest.raises(redis.ResponseError, match="hash command storage"):
-        mako_client.hscan("missing", 0)
+def test_flushdb_removes_visible_and_composite_keys(mako_client: redis.Redis) -> None:
+    p = prefix()
+    string_key = f"{p}string"
+    set_key = f"{p}set"
+    list_key = f"{p}list"
+    zset_key = f"{p}zset"
+    hash_key = f"{p}hash"
+
+    assert mako_client.set(string_key, b"value") is True
+    assert mako_client.sadd(set_key, b"a") == 1
+    assert mako_client.rpush(list_key, b"a") == 1
+    assert mako_client.zadd(zset_key, {b"a": 1.0}) == 1
+    assert mako_client.hset(hash_key, b"f", b"v") == 1
+
+    assert mako_client.execute_command("FLUSHDB") is True
+
+    assert mako_client.exists(string_key, set_key, list_key, zset_key, hash_key) == 0
+    assert mako_client.keys(f"{p}*") == []
+
+
+def test_hscan_missing_hash_returns_empty_result(mako_client: redis.Redis) -> None:
+    assert mako_client.hscan("missing", 0) == (0, {})

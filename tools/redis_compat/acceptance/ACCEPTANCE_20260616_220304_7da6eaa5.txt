@@ -1,0 +1,14 @@
+G1 wire compatibility              PASS 8 client/tool rows passed or skipped
+G2 bank transfer                   N/A  requires MAKO_G2_MULTI_SHARD=1 fixture; set MAKO_G2_ALLOW_SINGLE_SHARD=1 for local smoke
+G2 cross-shard demo                N/A  set G2_DEMO_START_REDIS_CLUSTER=1 or G2_DEMO_ASSUME_REDIS_CLUSTER=1
+G3 failover durability             N/A  missing MAKO_G3_START_CMD
+G4 Elle isolation                  PASS G4 built-in RMW smoke passed operations=800 history=tools/redis_compat/g4_history.json
+Throughput guard                   PASS GET acceptance:get: 40000.00 requests per second, p50=0.207 msec
+Memtier p99 guard                  N/A  missing /tmp/memtier-local/usr/bin/memtier_benchmark
+TCL semantic guard                 N/A  missing third-party/redis-tests/tests/test_helper.tcl
+INFO metrics guard                 PASS clients/server/mako metrics present
+Command probe guard                PASS probe results P0=31/31 P1=42/42 P2=16/28 out=/home/users/ssoumojit/mako-fork-pr/tools/redis_compat/probe_results.json
+Soak guard                         PASS soak completed ops=1030 rss=28148kB fds=11 threads=5
+Restart durability guard           N/A  missing MAKO_RESTART_STOP_CMD or MAKO_RESTART_START_CMD
+Client failover guard              N/A  missing MAKO_FAILOVER_TARGETS
+RESP fuzz guard                    PASS resp fuzz completed cases=80

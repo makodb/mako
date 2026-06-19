@@ -47,6 +47,20 @@ def test_expire_ttl_pttl_and_persist(mako_client: redis.Redis) -> None:
     assert mako_client.persist(name) is False
 
 
+def test_setex_and_psetex_alias_set_with_expiry(mako_client: redis.Redis) -> None:
+    setex_key = key("setex")
+    psetex_key = key("psetex")
+
+    assert mako_client.execute_command("SETEX", setex_key, 1, b"value") is True
+    assert mako_client.get(setex_key) == b"value"
+    assert 0 <= mako_client.ttl(setex_key) <= 1
+
+    assert mako_client.execute_command("PSETEX", psetex_key, 150, b"value") is True
+    assert mako_client.get(psetex_key) == b"value"
+    assert 0 < mako_client.pttl(psetex_key) <= 150
+    wait_until_missing(mako_client, psetex_key)
+
+
 def test_pexpire_zero_deletes_key_lazily(mako_client: redis.Redis) -> None:
     name = key("pexpire-zero")
 
@@ -71,6 +85,20 @@ def test_expireat_and_pexpireat(mako_client: redis.Redis) -> None:
     future_ms = int((time.time() + 0.15) * 1000)
     assert mako_client.pexpireat(pexpireat_key, future_ms) is True
     wait_until_missing(mako_client, pexpireat_key)
+
+
+def test_expiretime_and_pexpiretime_return_absolute_timestamps(mako_client: redis.Redis) -> None:
+    name = key("expiretime")
+    now = time.time()
+
+    assert mako_client.set(name, b"value") is True
+    assert mako_client.expire(name, 10) is True
+
+    expiretime = mako_client.execute_command("EXPIRETIME", name)
+    pexpiretime = mako_client.execute_command("PEXPIRETIME", name)
+
+    assert int(now) + 1 <= expiretime <= int(now) + 11
+    assert int(now * 1000) + 1 <= pexpiretime <= int((now + 11) * 1000)
 
 
 def test_ttl_commands_queue_inside_transaction(mako_client: redis.Redis) -> None:

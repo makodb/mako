@@ -24,16 +24,16 @@ redis_ready() {
         redis-cli -h "${HOST}" -p "${PORT}" PING >/dev/null 2>&1
 }
 
-run_pytest_g1() {
+run_client_g1() {
     if ! redis_ready; then
         line "G1 wire compatibility" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
         return
     fi
     local output
-    if output="$(cd "${ROOT_DIR}" && python3 -m pytest tools/redis_compat -q 2>&1)"; then
-        line "G1 wire compatibility" "PASS" "$(echo "${output}" | tail -n 1)"
+    if output="$(cd "${ROOT_DIR}" && MAKO_HOST="${HOST}" MAKO_PORT="${PORT}" bash tools/redis_compat/run_client_tests.sh 2>&1)"; then
+        line "G1 wire compatibility" "PASS" "$(echo "${output}" | grep -E '^(pytest|redis-cli|redis-py|node-clients|jedis|redis-rs|redis_exporter|fakeredis-py)' | wc -l) client/tool rows passed or skipped"
     else
-        line "G1 wire compatibility" "FAIL" "$(echo "${output}" | tail -n 1)"
+        line "G1 wire compatibility" "FAIL" "$(echo "${output}" | grep 'FAIL' | tail -n 1)"
     fi
 }
 
@@ -116,6 +116,14 @@ run_info_guard() {
     fi
 }
 
+run_probe_guard() {
+    if ! redis_ready; then
+        line "Command probe guard" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
+        return
+    fi
+    run_optional_script "Command probe guard" "tools/redis_compat/probe_commands.py" python3 tools/redis_compat/probe_commands.py
+}
+
 run_soak_guard() {
     if ! redis_ready; then
         line "Soak guard" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
@@ -133,7 +141,7 @@ run_resp_fuzz_guard() {
 }
 
 {
-    run_pytest_g1
+    run_client_g1
     run_optional_script "G2 bank transfer" "tools/redis_compat/run_bank_transfer.py" python3 tools/redis_compat/run_bank_transfer.py
     run_optional_script "G2 cross-shard demo" "tools/redis_compat/run_cross_shard_demo.py" python3 tools/redis_compat/run_cross_shard_demo.py
     run_optional_script "G3 failover durability" "tools/redis_compat/run_failover_durability.py" python3 tools/redis_compat/run_failover_durability.py
@@ -142,6 +150,7 @@ run_resp_fuzz_guard() {
     run_memtier_guard
     run_optional_script "TCL semantic guard" "tools/redis_compat/run_tcl_suite.sh" bash tools/redis_compat/run_tcl_suite.sh
     run_info_guard
+    run_probe_guard
     run_soak_guard
     run_optional_script "Restart durability guard" "tools/redis_compat/run_restart_durability.py" python3 tools/redis_compat/run_restart_durability.py
     run_optional_script "Client failover guard" "tools/redis_compat/run_client_failover.py" python3 tools/redis_compat/run_client_failover.py

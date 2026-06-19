@@ -1,6 +1,12 @@
 # Redis TCL Known Skips
 
-No per-test skips are checked in yet.
+# Exact stream-only tests skipped because the current Redis compatibility
+# plan does not include Redis Streams commands.
 
-If an in-scope TCL file needs skips, add exact test names here with one short
-reason each. Do not skip a whole in-scope file to hide an implementation gap.
+Blocking commands ignores the timeout
+COPY basic usage for stream
+COPY basic usage for stream-cgroups
+
+# Redis keyspace notification pubsub is not part of the current compatibility surface.
+/^Keyspace notifications:
+SMOVE only notify dstset when the addition is successful

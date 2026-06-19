@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 
+import pytest
 import redis
 
 
@@ -31,3 +32,20 @@ def test_wait_queues_inside_multi(mako_client: redis.Redis) -> None:
     pipe = mako_client.pipeline(transaction=True)
     pipe.execute_command("WAIT", 0, 0)
     assert pipe.execute() == [0]
+
+
+def test_time_returns_epoch_seconds_and_microseconds(mako_client: redis.Redis) -> None:
+    seconds, microseconds = mako_client.execute_command("TIME")
+
+    assert int(seconds) > 0
+    assert 0 <= int(microseconds) < 1_000_000
+
+
+def test_exec_aborts_after_queue_time_error(mako_client: redis.Redis) -> None:
+    assert mako_client.execute_command("MULTI") == b"OK"
+    with pytest.raises(redis.ResponseError):
+        mako_client.execute_command("SET", key("missing-value"))
+    with pytest.raises(redis.exceptions.ExecAbortError):
+        mako_client.execute_command("EXEC")
+
+    assert mako_client.ping() is True

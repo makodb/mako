@@ -16,13 +16,14 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `MGET`, `MSET`, `MSETNX` | Multi-key string reads and writes | `MSETNX` is scoped to one FFI request | Expands to per-key operations while returning one Redis reply |
 | `APPEND`, `STRLEN` | String append and length | String type only | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry for growing values |
 | `INCR`, `INCRBY`, `DECR`, `DECRBY`, `INCRBYFLOAT` | Counter updates | No integer overflow parity tests yet | Uses C++ read-modify-write inside one transaction with Rust-side bounded retry |
-| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `PERSIST` | Adds, reads, or removes key expiry metadata for strings, sets, and lists | No background expiry scanner | Stores absolute Unix millisecond expiry under an internal TTL key and checks it inside C++ transactions |
-| `KEYS pattern`, `SCAN cursor [MATCH p] [COUNT n] [TYPE string]`, `DBSIZE` | Enumerates user-visible string keys | Current `makoCon` single-shard path only; set keys are hidden until typed keyspace scan is added | Uses the sharded Masstree scan path with an opaque numeric cursor and Rust-side glob filtering |
-| `TYPE key` | Returns `string`, `set`, `list`, or `none` | No hash/zset type replies yet | Uses the logical-key FFI path so expired keys are hidden |
+| `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT`, `TTL`, `PTTL`, `PERSIST` | Adds, reads, or removes key expiry metadata for strings, sets, lists, zsets, and hashes | No background expiry scanner | Stores absolute Unix millisecond expiry under an internal TTL key and checks it inside C++ transactions |
+| `KEYS pattern`, `SCAN cursor [MATCH p] [COUNT n] [TYPE string]`, `DBSIZE` | Enumerates user-visible string keys | Current `makoCon` single-shard path only; collection keys are hidden until typed keyspace scan is added | Uses the sharded Masstree scan path with an opaque numeric cursor and Rust-side glob filtering |
+| `TYPE key` | Returns `string`, `set`, `list`, `zset`, `hash`, or `none` | No stream/module type surface | Uses the logical-key FFI path so expired keys are hidden |
 | `SADD`, `SMEMBERS`, `SISMEMBER`, `SREM`, `SCARD`, `SMOVE`, `SPOP`, `SRANDMEMBER`, `SSCAN` | Basic Redis set operations | Random member selection is deterministic first-member selection in this phase | Stores members as internal composite keys and maintains cardinality metadata transactionally |
 | `SINTER`, `SUNION`, `SDIFF`, `SINTERSTORE`, `SUNIONSTORE`, `SDIFFSTORE` | Set algebra and store variants | Implemented by scanning composite set members in the local transaction executor | Computes algebra in C++ and writes `*STORE` destinations inside the same OCC transaction |
 | `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LINDEX`, `LRANGE` | Basic non-blocking Redis list operations | Blocking pops are intentionally out of scope | Stores elements as internal composite keys and maintains head/tail metadata transactionally |
 | `LSET`, `LREM`, `LTRIM`, `LINSERT`, `LPUSHX`, `RPUSHX`, `LPOS`, `LMOVE`, `RPOPLPUSH` | Non-blocking list mutation and move operations | `LPOS` currently supports the basic key/element form | Rewrites affected logical list contents inside the same OCC transaction |
+| `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY`, `HINCRBYFLOAT`, `HRANDFIELD`, `HSCAN` | Core Redis hash operations | Random field selection is deterministic first-field selection in this phase | Stores fields as internal composite keys and maintains hash cardinality metadata transactionally |
 | `ZADD`, `ZSCORE`, `ZINCRBY`, `ZREM`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZPOPMIN`, `ZPOPMAX`, `ZSCAN` | Core sorted-set operations | Store/range-removal/lex variants are deferred | Stores member and score indexes transactionally and stages zset updates inside one `EXEC` |
 | `SUBSCRIBE`, `UNSUBSCRIBE`, `PSUBSCRIBE`, `PUNSUBSCRIBE`, `PUBLISH`, `PUBSUB CHANNELS/NUMSUB/NUMPAT` | In-memory Redis Pub/Sub | Process-local only; no persistence or delivery after disconnect | Adds Rust-side subscriber mode, channel registry, pattern matching, and outbound queues without touching Mako storage |
 | `DEL key [key ...]` | Deletes one or more keys and returns the count of keys that existed | No asynchronous deletion | Redis `UNLINK` aliases to this path because Phase 1 has no lazy-free subsystem |
@@ -48,11 +49,12 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 | `TXN_OP_EXISTS = 4` | Existence operation | No value bytes are returned | Existence needs presence, not value materialization |
 | `TXN_OP_APPEND`, `TXN_OP_STRLEN`, `TXN_OP_INCRBY`, `TXN_OP_INCRBYFLOAT` | Phase 3 string/counter operations | String-only command surface | Keeps read-modify-write logic in one C++ transaction |
 | `TXN_OP_EXPIRE`, `TXN_OP_TTL`, `TXN_OP_PERSIST` | Phase 4 TTL-family operations | No background expiry scanner | Keeps expiry decisions and lazy deletion inside one C++ transaction |
-| `TXN_OP_SCAN` | Phase 5 key enumeration and `DBSIZE` | Single local shard only; no hash field scan yet | Reuses the sharded Masstree scan path and returns cursor-key batches to Rust |
+| `TXN_OP_SCAN` | Phase 5 key enumeration and `DBSIZE` | Single local shard only | Reuses the sharded Masstree scan path and returns cursor-key batches to Rust |
 | `TXN_OP_SADD` through `TXN_OP_SET_ALGEBRA` | Phase 6 set operations | Local composite-key set storage only | Keeps set member updates, cardinality metadata, and set-store writes in one transaction |
-| `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/list/zset/none | Keeps string, set, list, and sorted-set expiry checks in C++ |
+| `TXN_OP_TYPE` | Logical key type lookup | Current replies are string/set/list/zset/hash/none | Keeps logical type expiry checks in C++ |
 | `TXN_OP_LPUSH` through `TXN_OP_LPOS` | Phase 7 list operations | Non-blocking list surface only | Keeps element writes, head/tail metadata, and list moves in one transaction |
 | `TXN_OP_ZADD` through `TXN_OP_ZSCAN` | Phase 8/10 sorted-set operations | Store/range-removal/lex variants are deferred | Keeps member index, score index, and zset metadata updates in one transaction; Rust owns scan cursor pagination |
+| `TXN_OP_HSET` through `TXN_OP_HSCAN` | Core hash operations | Store/field-randomness is deterministic in this phase | Keeps field records and hash metadata updates in one transaction; Rust owns scan cursor pagination |
 | `TxnOpResult::success` | Operation/backend success | Does not encode key presence | Separates backend failure from Redis nil / missing-key semantics |
 | `TxnOpResult::value_present` | Key presence bit | No value bytes by itself | Required to distinguish missing keys from existing empty bulk strings |
 | `TxnOpResult::data_ptr/data_len` | Returned value bytes for `GET` | Null for non-value operations | Keeps Redis bytes opaque to Rust while preserving empty-string correctness |
@@ -266,16 +268,12 @@ multi-shard Redis server must either add remote scan coordination or reject
 `SCAN`; returning one local shard as if it were global would be silently
 incomplete. That is a correctness limitation, not a Redis parser limitation.
 
-Set, list, and sorted-set keys use internal composite records outside the visible
+Set, list, sorted-set, and hash keys use internal composite records outside the visible
 `table_key_` namespace. That prevents leaking `\x01S:`, `\x01S#:`, `\x01L:`,
-`\x01L#:`, `\x01Z:`, `\x01ZS:`, and `\x01Z#:` records, but it means `KEYS`,
+`\x01L#:`, `\x01Z:`, `\x01ZS:`, `\x01Z#:`, `\x01H:`, and `\x01H#:` records, but it means `KEYS`,
 `SCAN`, and `DBSIZE` do not yet report collections as logical keys. Typed
 keyspace enumeration should be added with a shared logical key index rather than
 exposing composite storage details.
-
-`HSCAN` is not implemented yet because hash commands and hash field encoding
-are not in the current Redis surface. It should be added with the hash phase so
-field scan uses the same encoding as `HSET`/`HGET`.
 
 ---
 

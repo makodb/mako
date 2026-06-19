@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import random
 import subprocess
 import threading
@@ -17,6 +18,9 @@ def run_builtin_rmw_smoke() -> None:
     keys = [f"{prefix}:{i}" for i in range(env_int("MAKO_G4_KEYS", 10))]
     clients = env_int("MAKO_G4_CLIENTS", 8)
     iterations = env_int("MAKO_G4_ITERATIONS", 100)
+    history_path = Path(os.environ.get("MAKO_G4_HISTORY_OUT", "tools/redis_compat/g4_history.json"))
+    history_lock = threading.Lock()
+    history: list[dict[str, object]] = []
     for key in keys:
         client.set(key, 0)
 
@@ -31,8 +35,28 @@ def run_builtin_rmw_smoke() -> None:
                 txn = local.pipeline(transaction=True)
                 txn.incrby(key, 1)
                 txn.execute()
+                with history_lock:
+                    history.append(
+                        {
+                            "type": "ok",
+                            "process": seed,
+                            "f": "txn",
+                            "value": [["append", key, 1]],
+                            "time": time.time_ns(),
+                        }
+                    )
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
+            with history_lock:
+                history.append(
+                    {
+                        "type": "fail",
+                        "process": seed,
+                        "f": "txn",
+                        "value": str(exc),
+                        "time": time.time_ns(),
+                    }
+                )
         finally:
             local.close()
 
@@ -47,12 +71,14 @@ def run_builtin_rmw_smoke() -> None:
     values = [int(value) for value in client.mget(keys)]
     observed = sum(values)
     expected = clients * iterations
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(json.dumps(history, indent=2, sort_keys=True) + "\n")
     client.delete(*keys)
     client.close()
     if observed != expected:
-        print(f"G4 built-in RMW smoke failed observed={observed} expected={expected}")
+        print(f"G4 built-in RMW smoke failed observed={observed} expected={expected} history={history_path}")
         raise SystemExit(1)
-    print(f"G4 built-in RMW smoke passed operations={expected}")
+    print(f"G4 built-in RMW smoke passed operations={expected} history={history_path}")
 
 
 def main() -> None:

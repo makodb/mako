@@ -16,3 +16,4 @@ LPOS options :: mako-design-difference :: Phase 7 implements the basic LPOS key 
 KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Phase 8 hides composite sorted-set storage and does not yet expose sorted sets as logical keys through keyspace enumeration.
 Sorted-set store/range-removal/lex commands :: mako-design-difference :: Phase 8 implements core sorted-set commands; ZRANGEBYLEX, ZREMRANGEBY*, ZRANGESTORE, ZUNIONSTORE, ZINTERSTORE, and ZDIFFSTORE are deferred.
 makoConMultiTrd extended Redis commands :: mako-design-difference :: The alternate MultiTrd binary is ABI/link compatible only; Redis command correctness is claimed for examples/makoCon.cc.
+FLUSHDB/FLUSHALL :: mako-design-difference :: Exposed as admin/test compatibility commands backed by a real transactional delete-all implementation; Redis database selection is still single-DB only.

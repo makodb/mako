@@ -44,6 +44,26 @@ def test_zset_update_modifiers_rank_and_pop(mako_client: redis.Redis) -> None:
     assert mako_client.zcard(name) == 0
 
 
+def test_zadd_gt_lt_and_infinity_edge_cases(mako_client: redis.Redis) -> None:
+    name = key("gt-lt-inf")
+
+    assert mako_client.zadd(name, {b"foo": 10.0, b"x": 20.0, b"y": 30.0}) == 3
+    assert mako_client.execute_command("ZADD", name, "GT", "CH", 5, b"foo", 21, b"x", 29, b"z") == 2
+    assert mako_client.zscore(name, b"foo") == 10.0
+    assert mako_client.zscore(name, b"x") == 21.0
+    assert mako_client.zscore(name, b"z") == 29.0
+
+    assert mako_client.execute_command("ZADD", name, "LT", "CH", 9, b"foo", 22, b"x", 31, b"new") == 2
+    assert mako_client.zscore(name, b"foo") == 9.0
+    assert mako_client.zscore(name, b"x") == 21.0
+    assert mako_client.zscore(name, b"new") == 31.0
+
+    assert mako_client.execute_command("ZADD", name, "+inf", b"pinf", "-inf", b"ninf") == 2
+    assert mako_client.zrange(name, 0, 0) == [b"ninf"]
+    assert mako_client.zrevrange(name, 0, 0) == [b"pinf"]
+    assert mako_client.execute_command("ZADD", name, "LT", "INCR", 1, b"pinf") is None
+
+
 def test_zset_type_ttl_delete_and_scan(mako_client: redis.Redis) -> None:
     name = key("typed")
 

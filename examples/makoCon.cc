@@ -16,6 +16,7 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstring>
 #include <fstream>
@@ -37,6 +38,7 @@ static std::atomic<uint64_t> g_mako_txn_commits{0};
 static std::atomic<uint64_t> g_mako_txn_aborts{0};
 // Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
+static std::atomic<uint64_t> g_mako_random_counter{1};
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -239,6 +241,34 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return key;
     };
 
+    auto make_hash_field_prefix = [](const std::string& hash_key) {
+        std::string prefix;
+        prefix.reserve(sizeof("\x01H:") - 1 + 8 + hash_key.size());
+        prefix.append("\x01H:", sizeof("\x01H:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            prefix.push_back(static_cast<char>((static_cast<uint64_t>(hash_key.size()) >> shift) & 0xff));
+        }
+        prefix.append(hash_key);
+        return prefix;
+    };
+
+    auto make_hash_field_key = [&](const std::string& hash_key, const std::string& field) {
+        std::string key = make_hash_field_prefix(hash_key);
+        key.append(field);
+        return key;
+    };
+
+    auto make_hash_meta_key = [](const std::string& hash_key) {
+        std::string key;
+        key.reserve(sizeof("\x01H#:") - 1 + 8 + hash_key.size());
+        key.append("\x01H#:", sizeof("\x01H#:") - 1);
+        for (int shift = 0; shift < 64; shift += 8) {
+            key.push_back(static_cast<char>((static_cast<uint64_t>(hash_key.size()) >> shift) & 0xff));
+        }
+        key.append(hash_key);
+        return key;
+    };
+
     auto append_u64_be = [](std::string& out, uint64_t value) {
         for (int shift = 56; shift >= 0; shift -= 8) {
             out.push_back(static_cast<char>((value >> shift) & 0xff));
@@ -420,20 +450,17 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     };
 
     auto parse_int64 = [](const std::string& input, int64_t& out) {
-        if (input.empty()) {
+        if (input.empty() || std::isspace(static_cast<unsigned char>(input.front()))) {
             return false;
         }
-        size_t pos = 0;
-        try {
-            long long parsed = std::stoll(input, &pos, 10);
-            if (pos != input.size()) {
-                return false;
-            }
-            out = static_cast<int64_t>(parsed);
-            return true;
-        } catch (...) {
+        errno = 0;
+        char* end = nullptr;
+        long long parsed = std::strtoll(input.c_str(), &end, 10);
+        if (end == input.c_str() || end != input.c_str() + input.size() || errno == ERANGE) {
             return false;
         }
+        out = static_cast<int64_t>(parsed);
+        return true;
     };
 
     auto read_raw = [&](void* txn, const std::string& key, std::string& value, bool& exists) {
@@ -594,6 +621,14 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return make_set_meta_key(set_key);
     };
 
+    auto hash_field_storage_key = [&](const std::string& hash_key, const std::string& field) {
+        return make_hash_field_key(hash_key, field);
+    };
+
+    auto hash_meta_storage_key = [&](const std::string& hash_key) {
+        return make_hash_meta_key(hash_key);
+    };
+
     auto zset_member_storage_key = [&](const std::string& zset_key, const std::string& member) {
         return make_zset_member_key(zset_key, member);
     };
@@ -650,6 +685,51 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto read_hash_cardinality = [&](void* txn, const std::string& hash_key, int64_t& count) {
+        std::string meta_key = hash_meta_storage_key(hash_key);
+        auto batch_it = batch_exists.find(meta_key);
+        if (batch_it != batch_exists.end()) {
+            if (!batch_it->second) {
+                count = 0;
+                return mako::Status::OK();
+            }
+            auto value_it = batch_values.find(meta_key);
+            if (value_it != batch_values.end() && parse_int64(value_it->second, count)) {
+                return mako::Status::OK();
+            }
+        }
+        std::string value;
+        bool exists = false;
+        mako::Status s = read_raw(txn, meta_key, value, exists);
+        if (!s.ok()) {
+            return s;
+        }
+        if (!exists) {
+            count = 0;
+            return mako::Status::OK();
+        }
+        if (!parse_int64(value, count) || count < 0) {
+            count = 0;
+        }
+        return mako::Status::OK();
+    };
+
+    auto write_hash_cardinality = [&](void* txn, const std::string& hash_key, int64_t count) {
+        std::string meta_key = hash_meta_storage_key(hash_key);
+        if (count <= 0) {
+            batch_exists[meta_key] = false;
+            batch_values.erase(meta_key);
+            return delete_raw_if_exists(txn, meta_key);
+        }
+        std::string payload = std::to_string(count);
+        mako::Status s = put_raw(txn, meta_key, payload);
+        if (s.ok()) {
+            batch_exists[meta_key] = true;
+            batch_values[meta_key] = payload;
+        }
+        return s;
+    };
+
     auto read_internal_current = [&](void* txn, const std::string& key, std::string& value, bool& exists) {
         auto batch_it = batch_exists.find(key);
         if (batch_it != batch_exists.end()) {
@@ -671,17 +751,14 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (input.empty()) {
             return false;
         }
-        size_t pos = 0;
-        try {
-            double parsed = std::stod(input, &pos);
-            if (pos != input.size() || !std::isfinite(parsed)) {
-                return false;
-            }
-            out = parsed;
-            return true;
-        } catch (...) {
+        errno = 0;
+        char* end = nullptr;
+        double parsed = std::strtod(input.c_str(), &end);
+        if (end == input.c_str() || *end != '\0' || std::isnan(parsed)) {
             return false;
         }
+        out = parsed;
+        return true;
     };
 
     auto format_zset_score = [](double value) {
@@ -948,6 +1025,197 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return items;
     };
 
+    struct ZScoreBound {
+        double value = 0.0;
+        bool exclusive = false;
+    };
+
+    auto parse_zset_score_bound = [&](const std::string& raw, ZScoreBound& bound) {
+        std::string input = raw;
+        bound.exclusive = false;
+        if (!input.empty() && input[0] == '(') {
+            bound.exclusive = true;
+            input.erase(input.begin());
+        }
+        if (input == "-inf") {
+            bound.value = -std::numeric_limits<double>::infinity();
+            return true;
+        }
+        if (input == "+inf" || input == "inf") {
+            bound.value = std::numeric_limits<double>::infinity();
+            return true;
+        }
+        return parse_zset_score_value(input, bound.value);
+    };
+
+    struct ZLexBound {
+        int kind = 0; // -1 is -inf, 0 is value, 1 is +inf.
+        std::string value;
+        bool exclusive = false;
+    };
+
+    auto parse_zset_lex_bound = [](const std::string& raw, ZLexBound& bound) {
+        bound = ZLexBound{};
+        if (raw == "-") {
+            bound.kind = -1;
+            return true;
+        }
+        if (raw == "+") {
+            bound.kind = 1;
+            return true;
+        }
+        if (!raw.empty() && (raw[0] == '[' || raw[0] == '(')) {
+            bound.kind = 0;
+            bound.exclusive = raw[0] == '(';
+            bound.value = raw.substr(1);
+            return true;
+        }
+        return false;
+    };
+
+    auto zscore_in_range = [](double score, const ZScoreBound& min, const ZScoreBound& max) {
+        const bool above_min = min.exclusive ? score > min.value : score >= min.value;
+        const bool below_max = max.exclusive ? score < max.value : score <= max.value;
+        return above_min && below_max;
+    };
+
+    auto zlex_above_min = [](const std::string& member, const ZLexBound& min) {
+        if (min.kind < 0) {
+            return true;
+        }
+        if (min.kind > 0) {
+            return false;
+        }
+        const int cmp = member.compare(min.value);
+        return min.exclusive ? cmp > 0 : cmp >= 0;
+    };
+
+    auto zlex_below_max = [](const std::string& member, const ZLexBound& max) {
+        if (max.kind > 0) {
+            return true;
+        }
+        if (max.kind < 0) {
+            return false;
+        }
+        const int cmp = member.compare(max.value);
+        return max.exclusive ? cmp < 0 : cmp <= 0;
+    };
+
+    auto apply_zrange_limit = [&](std::vector<std::pair<std::string, double>>& selected,
+                                 const std::vector<std::string>& bounds) {
+        if (bounds.size() < 4) {
+            return true;
+        }
+        int64_t offset = 0;
+        int64_t count = 0;
+        if (!parse_int64(bounds[2], offset) || !parse_int64(bounds[3], count)) {
+            return false;
+        }
+        if (offset < 0 || count <= 0 || offset >= static_cast<int64_t>(selected.size())) {
+            selected.clear();
+            return true;
+        }
+        auto begin = selected.begin() + static_cast<size_t>(offset);
+        auto end = begin + std::min<size_t>(
+            static_cast<size_t>(count),
+            static_cast<size_t>(selected.end() - begin));
+        selected.assign(begin, end);
+        return true;
+    };
+
+    auto select_zset_rank_range = [&](const std::map<std::string, double>& values,
+                                      const std::vector<std::string>& bounds,
+                                      bool reverse,
+                                      std::vector<std::pair<std::string, double>>& selected) {
+        auto items = zset_ordered_items(values);
+        if (reverse) {
+            std::reverse(items.begin(), items.end());
+        }
+        int64_t start_index = 0;
+        int64_t stop_index = 0;
+        if (bounds.size() < 2 || !parse_int64(bounds[0], start_index) || !parse_int64(bounds[1], stop_index)) {
+            return false;
+        }
+        const int64_t length = static_cast<int64_t>(items.size());
+        if (start_index < 0) {
+            start_index += length;
+        }
+        if (stop_index < 0) {
+            stop_index += length;
+        }
+        start_index = std::max<int64_t>(0, start_index);
+        stop_index = std::min<int64_t>(length - 1, stop_index);
+        selected.clear();
+        if (length > 0 && start_index <= stop_index && start_index < length) {
+            selected.assign(
+                items.begin() + static_cast<size_t>(start_index),
+                items.begin() + static_cast<size_t>(stop_index + 1));
+        }
+        return true;
+    };
+
+    auto select_zset_score_range = [&](const std::map<std::string, double>& values,
+                                       const std::vector<std::string>& bounds,
+                                       bool reverse,
+                                       std::vector<std::pair<std::string, double>>& selected) {
+        if (bounds.size() < 2) {
+            return false;
+        }
+        ZScoreBound min_bound;
+        ZScoreBound max_bound;
+        if (!parse_zset_score_bound(bounds[0], min_bound) || !parse_zset_score_bound(bounds[1], max_bound)) {
+            return false;
+        }
+        selected.clear();
+        for (const auto& item : zset_ordered_items(values)) {
+            if (zscore_in_range(item.second, min_bound, max_bound)) {
+                selected.push_back(item);
+            }
+        }
+        if (reverse) {
+            std::reverse(selected.begin(), selected.end());
+        }
+        return apply_zrange_limit(selected, bounds);
+    };
+
+    auto select_zset_lex_range = [&](const std::map<std::string, double>& values,
+                                     const std::vector<std::string>& bounds,
+                                     bool reverse,
+                                     std::vector<std::pair<std::string, double>>& selected) {
+        if (bounds.size() < 2) {
+            return false;
+        }
+        ZLexBound min_bound;
+        ZLexBound max_bound;
+        if (!parse_zset_lex_bound(bounds[0], min_bound) || !parse_zset_lex_bound(bounds[1], max_bound)) {
+            return false;
+        }
+        selected.clear();
+        for (const auto& [member, score] : values) {
+            if (zlex_above_min(member, min_bound) && zlex_below_max(member, max_bound)) {
+                selected.emplace_back(member, score);
+            }
+        }
+        if (reverse) {
+            std::reverse(selected.begin(), selected.end());
+        }
+        return apply_zrange_limit(selected, bounds);
+    };
+
+    auto combine_zset_aggregate_score = [](double current, double incoming, int64_t aggregate) {
+        if (aggregate == 1) {
+            return std::min(current, incoming);
+        }
+        if (aggregate == 2) {
+            return std::max(current, incoming);
+        }
+        if (std::isinf(current) && std::isinf(incoming)
+            && std::signbit(current) != std::signbit(incoming)) {
+            return 0.0;
+        }
+        return current + incoming;
+    };
+
     auto delete_zset = [&](void* txn, const std::string& zset_key) {
         std::map<std::string, double> values;
         mako::Status s = collect_zset_values(txn, zset_key, values);
@@ -1086,6 +1354,74 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return mako::Status::OK();
     };
 
+    auto collect_hash_entries = [&](void* txn, const std::string& hash_key, std::map<std::string, std::string>& entries) {
+        entries.clear();
+        const std::string field_prefix = make_hash_field_prefix(hash_key);
+        std::optional<std::string> scan_end = storage_prefix_upper(field_prefix);
+        const std::string* scan_end_ptr = scan_end ? &*scan_end : nullptr;
+
+        class HashScanCallback : public abstract_ordered_index::scan_callback {
+        public:
+            HashScanCallback(
+                std::map<std::string, std::string>& entries,
+                std::string_view field_prefix,
+                size_t field_prefix_len)
+                : entries_(entries),
+                  field_prefix_(field_prefix),
+                  field_prefix_len_(field_prefix_len) {}
+
+            bool invoke(const char* keyp, size_t keylen, const std::string& value) override {
+                std::string_view storage_key(keyp, keylen);
+                if (storage_key.rfind(field_prefix_, 0) != 0) {
+                    return true;
+                }
+                entries_[std::string(storage_key.substr(field_prefix_len_))] = value;
+                return true;
+            }
+
+        private:
+            std::map<std::string, std::string>& entries_;
+            std::string_view field_prefix_;
+            size_t field_prefix_len_;
+        };
+
+        HashScanCallback callback(entries, field_prefix, field_prefix.size());
+        g_table->scan(txn, field_prefix, scan_end_ptr, callback, tl_arena);
+        for (const auto& [storage_key, exists] : batch_exists) {
+            if (storage_key.rfind(field_prefix, 0) != 0) {
+                continue;
+            }
+            std::string field = storage_key.substr(field_prefix.size());
+            if (!exists) {
+                entries.erase(field);
+                continue;
+            }
+            auto value_it = batch_values.find(storage_key);
+            if (value_it != batch_values.end()) {
+                entries[field] = value_it->second;
+            }
+        }
+        return mako::Status::OK();
+    };
+
+    auto delete_hash = [&](void* txn, const std::string& hash_key) {
+        std::map<std::string, std::string> entries;
+        mako::Status s = collect_hash_entries(txn, hash_key, entries);
+        if (!s.ok()) {
+            return s;
+        }
+        for (const auto& [field, _] : entries) {
+            std::string field_key = hash_field_storage_key(hash_key, field);
+            s = delete_raw_if_exists(txn, field_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[field_key] = false;
+            batch_values.erase(field_key);
+        }
+        return write_hash_cardinality(txn, hash_key, 0);
+    };
+
     auto delete_set = [&](void* txn, const std::string& set_key) {
         std::vector<std::string> members;
         mako::Status s = collect_set_members(txn, set_key, members);
@@ -1146,6 +1482,20 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto expire_hash_if_needed = [&](void* txn, const std::string& hash_key) {
+        int64_t expire_at_ms = 0;
+        bool ttl_exists = false;
+        mako::Status s = read_ttl_meta(txn, hash_key, expire_at_ms, ttl_exists);
+        if (!s.ok() || !ttl_exists || expire_at_ms > now_unix_ms()) {
+            return s;
+        }
+        s = delete_hash(txn, hash_key);
+        if (s.ok()) {
+            s = clear_ttl_meta(txn, hash_key);
+        }
+        return s;
+    };
+
     auto expire_logical_key_if_needed = [&](void* txn, const std::string& user_key, const std::string& storage_key) {
         int64_t expire_at_ms = 0;
         bool ttl_exists = false;
@@ -1165,6 +1515,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         }
         if (s.ok()) {
             s = delete_zset(txn, user_key);
+        }
+        if (s.ok()) {
+            s = delete_hash(txn, user_key);
         }
         if (s.ok()) {
             s = clear_ttl_meta(txn, user_key);
@@ -1196,6 +1549,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         s = read_set_cardinality(txn, user_key, set_cardinality);
         if (!s.ok() || set_cardinality > 0) {
             exists = set_cardinality > 0;
+            return s;
+        }
+        int64_t hash_count = 0;
+        s = read_hash_cardinality(txn, user_key, hash_count);
+        if (!s.ok() || hash_count > 0) {
+            exists = hash_count > 0;
             return s;
         }
         auto staged_it = staged_lists.find(user_key);
@@ -1251,7 +1610,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists && list_length == 0 && zset_count == 0;
+        int64_t hash_count = 0;
+        s = read_hash_cardinality(txn, set_key, hash_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && list_length == 0 && zset_count == 0 && hash_count == 0;
         if (!allowed) {
             result.success = false;
         }
@@ -1279,7 +1643,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists && set_cardinality == 0 && zset_count == 0;
+        int64_t hash_count = 0;
+        s = read_hash_cardinality(txn, list_key, hash_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0 && zset_count == 0 && hash_count == 0;
         if (!allowed) {
             result.success = false;
         }
@@ -1307,7 +1676,87 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         if (!s.ok()) {
             return s;
         }
-        allowed = !string_exists && set_cardinality == 0 && list_length == 0;
+        int64_t hash_count = 0;
+        s = read_hash_cardinality(txn, zset_key, hash_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0 && list_length == 0 && hash_count == 0;
+        if (!allowed) {
+            result.success = false;
+        }
+        return mako::Status::OK();
+    };
+
+    auto hash_key_allowed = [&](void* txn, const std::string& hash_key, TxnOpResult& result, bool& allowed) {
+        std::string string_storage_key = "table_key_" + hash_key;
+        mako::Status s = expire_logical_key_if_needed(txn, hash_key, string_storage_key);
+        if (!s.ok()) {
+            return s;
+        }
+        bool string_exists = false;
+        s = read_string_exists_no_expire(txn, string_storage_key, string_exists);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t set_cardinality = 0;
+        s = read_set_cardinality(txn, hash_key, set_cardinality);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t list_length = 0;
+        s = read_list_length(txn, hash_key, list_length);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t zset_count = 0;
+        s = read_zset_cardinality(txn, hash_key, zset_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = !string_exists && set_cardinality == 0 && list_length == 0 && zset_count == 0;
+        if (!allowed) {
+            result.success = false;
+        }
+        return mako::Status::OK();
+    };
+
+    auto string_key_allowed = [&](void* txn, const std::string& user_key, const std::string& storage_key, TxnOpResult& result, bool& allowed) {
+        mako::Status s = expire_logical_key_if_needed(txn, user_key, storage_key);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t set_cardinality = 0;
+        s = read_set_cardinality(txn, user_key, set_cardinality);
+        if (!s.ok()) {
+            return s;
+        }
+        int64_t list_length = 0;
+        auto staged_list_it = staged_lists.find(user_key);
+        if (staged_list_it != staged_lists.end()) {
+            list_length = static_cast<int64_t>(staged_list_it->second.size());
+        } else {
+            s = read_list_length(txn, user_key, list_length);
+            if (!s.ok()) {
+                return s;
+            }
+        }
+        int64_t zset_count = 0;
+        auto staged_zset_it = staged_zsets.find(user_key);
+        if (staged_zset_it != staged_zsets.end()) {
+            zset_count = static_cast<int64_t>(staged_zset_it->second.size());
+        } else {
+            s = read_zset_cardinality(txn, user_key, zset_count);
+            if (!s.ok()) {
+                return s;
+            }
+        }
+        int64_t hash_count = 0;
+        s = read_hash_cardinality(txn, user_key, hash_count);
+        if (!s.ok()) {
+            return s;
+        }
+        allowed = set_cardinality == 0 && list_length == 0 && zset_count == 0 && hash_count == 0;
         if (!allowed) {
             result.success = false;
         }
@@ -1412,20 +1861,17 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     };
 
     auto parse_float = [](const std::string& input, long double& out) {
-        if (input.empty()) {
+        if (input.empty() || std::isspace(static_cast<unsigned char>(input.front()))) {
             return false;
         }
-        size_t pos = 0;
-        try {
-            long double parsed = std::stold(input, &pos);
-            if (pos != input.size() || !std::isfinite(parsed)) {
-                return false;
-            }
-            out = parsed;
-            return true;
-        } catch (...) {
+        errno = 0;
+        char* end = nullptr;
+        long double parsed = std::strtold(input.c_str(), &end);
+        if (end == input.c_str() || end != input.c_str() + input.size() || !std::isfinite(parsed)) {
             return false;
         }
+        out = parsed;
+        return true;
     };
 
     auto format_float = [](long double value) {
@@ -1475,11 +1921,34 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_SET) {
                 std::string old_value;
-                bool existed = false;
-                mako::Status s = read_current(txn, user_key, tl_key_buf, old_value, existed);
+                bool string_existed = false;
+                bool logical_existed = false;
+                bool expired_for_set = false;
+                int64_t set_expire_at_ms = 0;
+                bool set_ttl_exists = false;
+                mako::Status s = read_ttl_meta(txn, user_key, set_expire_at_ms, set_ttl_exists);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
+                }
+                if (set_ttl_exists && set_expire_at_ms <= now_unix_ms()) {
+                    expired_for_set = true;
+                    s = clear_ttl_meta(txn, user_key);
+                    if (!s.ok()) {
+                        all_success = false;
+                        continue;
+                    }
+                } else {
+                    s = read_current(txn, user_key, tl_key_buf, old_value, string_existed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        continue;
+                    }
+                    s = read_logical_exists(txn, user_key, tl_key_buf, logical_existed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        continue;
+                    }
                 }
 
                 bool group_write = true;
@@ -1496,10 +1965,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                             std::string group_user_key(
                                 reinterpret_cast<const char*>(group_op.key_ptr),
                                 group_op.key_len);
-                            std::string group_value;
                             bool group_exists = false;
-                            mako::Status group_status = read_current(
-                                txn, group_user_key, group_key, group_value, group_exists);
+                            mako::Status group_status = read_logical_exists(
+                                txn, group_user_key, group_key, group_exists);
                             if (!group_status.ok()) {
                                 all_success = false;
                                 can_write = false;
@@ -1518,16 +1986,43 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
 
                 bool write_allowed = group_write;
-                if ((op.flags & TXN_FLAG_SET_NX) != 0 && existed) {
+                const bool absent_group =
+                    (op.flags & TXN_FLAG_SET_REQUIRE_ABSENT_GROUP) != 0 && op.group_id != 0;
+                if ((op.flags & TXN_FLAG_SET_RETURN_OLD) != 0 && logical_existed && !string_existed) {
+                    result.success = false;
+                    continue;
+                }
+                if ((op.flags & TXN_FLAG_SET_NX) != 0 && logical_existed && !absent_group) {
                     write_allowed = false;
                 }
-                if ((op.flags & TXN_FLAG_SET_XX) != 0 && !existed) {
+                if ((op.flags & TXN_FLAG_SET_XX) != 0 && !logical_existed) {
                     write_allowed = false;
                 }
 
                 result.success = true;
-                if ((op.flags & TXN_FLAG_SET_RETURN_OLD) != 0 && existed) {
+                if ((op.flags & TXN_FLAG_SET_RETURN_OLD) != 0 && string_existed) {
                     if (!copy_result_value(result, old_value)) {
+                        all_success = false;
+                        continue;
+                    }
+                }
+
+                if (!write_allowed && expired_for_set) {
+                    s = delete_raw_if_exists(txn, tl_key_buf);
+                    if (s.ok()) {
+                        s = delete_set(txn, user_key);
+                    }
+                    if (s.ok()) {
+                        s = delete_list(txn, user_key);
+                    }
+                    if (s.ok()) {
+                        s = delete_zset(txn, user_key);
+                    }
+                    if (s.ok()) {
+                        s = delete_hash(txn, user_key);
+                    }
+                    if (!s.ok()) {
+                        result.success = false;
                         all_success = false;
                         continue;
                     }
@@ -1548,6 +2043,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         continue;
                     }
                     s = delete_zset(txn, user_key);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                    s = delete_hash(txn, user_key);
                     if (!s.ok()) {
                         result.success = false;
                         all_success = false;
@@ -1621,6 +2122,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     zset_count = static_cast<int64_t>(staged_zset_it->second.size());
                 }
                 bool zset_exists = zset_count > 0;
+                int64_t hash_count = 0;
+                mako::Status hash_status = read_hash_cardinality(txn, user_key, hash_count);
+                if (!hash_status.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                bool hash_exists = hash_count > 0;
                 mako::Status s = mako::Status::OK();
                 if (set_exists) {
                     s = delete_set(txn, user_key);
@@ -1630,6 +2138,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 if (s.ok() && zset_exists) {
                     s = delete_zset(txn, user_key);
+                }
+                if (s.ok() && hash_exists) {
+                    s = delete_hash(txn, user_key);
                 }
                 if (s.ok() && string_exists) {
                     s = g_table->Delete(txn, tl_key_buf);
@@ -1686,6 +2197,132 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 result.int_value = exists ? static_cast<int64_t>(current.size()) : 0;
                 if (!s.ok()) {
                     all_success = false;
+                }
+            } else if (op.op == TXN_OP_SETBIT || op.op == TXN_OP_GETBIT) {
+                bool allowed = false;
+                mako::Status s = string_key_allowed(txn, user_key, tl_key_buf, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string current;
+                bool exists = false;
+                s = read_current(txn, user_key, tl_key_buf, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                const uint64_t bit_offset = static_cast<uint64_t>(op.expire_at_ms);
+                const size_t byte_index = static_cast<size_t>(bit_offset / 8);
+                const uint8_t mask = static_cast<uint8_t>(1u << (7 - (bit_offset % 8)));
+                const int64_t old_bit =
+                    exists && byte_index < current.size()
+                        ? ((static_cast<uint8_t>(current[byte_index]) & mask) != 0)
+                        : 0;
+                result.success = true;
+                result.value_present = true;
+                result.int_value = old_bit;
+                if (op.op == TXN_OP_SETBIT) {
+                    std::string bit_value(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                    const bool set_bit = bit_value == "1";
+                    if (current.size() <= byte_index) {
+                        current.resize(byte_index + 1, '\0');
+                    }
+                    uint8_t byte = static_cast<uint8_t>(current[byte_index]);
+                    if (set_bit) {
+                        byte |= mask;
+                    } else {
+                        byte &= static_cast<uint8_t>(~mask);
+                    }
+                    current[byte_index] = static_cast<char>(byte);
+                    s = put_raw(txn, tl_key_buf, current);
+                    if (!s.ok()) {
+                        result.success = false;
+                        all_success = false;
+                    } else {
+                        batch_exists[tl_key_buf] = true;
+                        batch_values[tl_key_buf] = current;
+                    }
+                }
+            } else if (op.op == TXN_OP_SETRANGE || op.op == TXN_OP_GETRANGE) {
+                bool allowed = false;
+                mako::Status s = string_key_allowed(txn, user_key, tl_key_buf, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string current;
+                bool exists = false;
+                s = read_current(txn, user_key, tl_key_buf, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (op.op == TXN_OP_SETRANGE) {
+                    std::string patch(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                    if (!exists && patch.empty()) {
+                        result.success = true;
+                        result.value_present = true;
+                        result.int_value = 0;
+                        continue;
+                    }
+                    const size_t offset = static_cast<size_t>(op.expire_at_ms);
+                    if (!patch.empty()) {
+                        const size_t needed = offset + patch.size();
+                        if (current.size() < needed) {
+                            current.resize(needed, '\0');
+                        }
+                        std::copy(patch.begin(), patch.end(), current.begin() + offset);
+                        s = put_raw(txn, tl_key_buf, current);
+                        if (!s.ok()) {
+                            result.success = false;
+                            all_success = false;
+                            continue;
+                        }
+                        batch_exists[tl_key_buf] = true;
+                        batch_values[tl_key_buf] = current;
+                    }
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = static_cast<int64_t>(current.size());
+                } else {
+                    std::vector<std::string> bounds;
+                    if (!unpack_bytes_list(op.val_ptr, op.val_len, bounds) || bounds.size() != 2) {
+                        all_success = false;
+                        continue;
+                    }
+                    int64_t start_index = 0;
+                    int64_t stop_index = 0;
+                    if (!parse_int64(bounds[0], start_index) || !parse_int64(bounds[1], stop_index)) {
+                        all_success = false;
+                        continue;
+                    }
+                    const int64_t length = exists ? static_cast<int64_t>(current.size()) : 0;
+                    if (start_index < 0) {
+                        start_index += length;
+                    }
+                    if (stop_index < 0) {
+                        stop_index += length;
+                    }
+                    start_index = std::max<int64_t>(0, start_index);
+                    stop_index = std::min<int64_t>(length - 1, stop_index);
+                    std::string selected;
+                    if (length > 0 && start_index <= stop_index && start_index < length) {
+                        selected.assign(
+                            current.begin() + static_cast<size_t>(start_index),
+                            current.begin() + static_cast<size_t>(stop_index + 1));
+                    }
+                    result.success = true;
+                    result.value_present = true;
+                    if (!copy_result_value(result, selected)) {
+                        all_success = false;
+                    }
                 }
             } else if (op.op == TXN_OP_INCRBY) {
                 std::string current;
@@ -1817,7 +2454,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                                     if (zset_status.ok() && zset_count > 0) {
                                         s = delete_zset(txn, user_key);
                                     } else {
-                                        s = delete_raw_if_exists(txn, tl_key_buf);
+                                        int64_t hash_count = 0;
+                                        mako::Status hash_status = read_hash_cardinality(txn, user_key, hash_count);
+                                        if (hash_status.ok() && hash_count > 0) {
+                                            s = delete_hash(txn, user_key);
+                                        } else {
+                                            s = delete_raw_if_exists(txn, tl_key_buf);
+                                        }
                                     }
                                 }
                             }
@@ -1896,7 +2539,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                                     if (zset_status.ok() && zset_count > 0) {
                                         s = delete_zset(txn, user_key);
                                     } else {
-                                        s = delete_raw_if_exists(txn, tl_key_buf);
+                                        int64_t hash_count = 0;
+                                        mako::Status hash_status = read_hash_cardinality(txn, user_key, hash_count);
+                                        if (hash_status.ok() && hash_count > 0) {
+                                            s = delete_hash(txn, user_key);
+                                        } else {
+                                            s = delete_raw_if_exists(txn, tl_key_buf);
+                                        }
                                     }
                                 }
                             }
@@ -1991,10 +2640,940 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 } else {
                     s = read_zset_cardinality(txn, user_key, zset_count);
                 }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                int64_t hash_count = 0;
+                s = read_hash_cardinality(txn, user_key, hash_count);
                 result.success = s.ok();
                 result.value_present = true;
-                result.int_value = string_exists ? 1 : (set_count > 0 ? 2 : (list_length > 0 ? 3 : (zset_count > 0 ? 4 : 0)));
+                result.int_value = string_exists ? 1
+                    : (set_count > 0 ? 2
+                    : (list_length > 0 ? 3
+                    : (zset_count > 0 ? 4
+                    : (hash_count > 0 ? 5 : 0))));
                 if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_RENAME) {
+                std::string destination(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                std::string source_storage_key = "table_key_" + user_key;
+                std::string destination_storage_key = "table_key_" + destination;
+                mako::Status s = expire_logical_key_if_needed(txn, user_key, source_storage_key);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+
+                bool string_exists = false;
+                s = read_string_exists_no_expire(txn, source_storage_key, string_exists);
+                int64_t set_cardinality = 0;
+                if (s.ok()) {
+                    s = read_set_cardinality(txn, user_key, set_cardinality);
+                }
+                int64_t list_length = 0;
+                if (s.ok()) {
+                    s = read_list_length(txn, user_key, list_length);
+                }
+                int64_t zset_count = 0;
+                if (s.ok()) {
+                    s = read_zset_cardinality(txn, user_key, zset_count);
+                }
+                int64_t hash_count = 0;
+                if (s.ok()) {
+                    s = read_hash_cardinality(txn, user_key, hash_count);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                if (!string_exists && set_cardinality == 0 && list_length == 0
+                    && zset_count == 0 && hash_count == 0) {
+                    result.success = false;
+                    result.int_value = -1;
+                    continue;
+                }
+                const bool rename_nx = op.expire_at_ms == 1;
+                if (user_key == destination) {
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = rename_nx ? 0 : 1;
+                    continue;
+                }
+                if (rename_nx) {
+                    mako::Status ds = expire_logical_key_if_needed(txn, destination, destination_storage_key);
+                    bool destination_string_exists = false;
+                    if (ds.ok()) {
+                        ds = read_string_exists_no_expire(txn, destination_storage_key, destination_string_exists);
+                    }
+                    int64_t destination_set_cardinality = 0;
+                    if (ds.ok()) {
+                        ds = read_set_cardinality(txn, destination, destination_set_cardinality);
+                    }
+                    int64_t destination_list_length = 0;
+                    if (ds.ok()) {
+                        ds = read_list_length(txn, destination, destination_list_length);
+                    }
+                    int64_t destination_zset_count = 0;
+                    if (ds.ok()) {
+                        ds = read_zset_cardinality(txn, destination, destination_zset_count);
+                    }
+                    int64_t destination_hash_count = 0;
+                    if (ds.ok()) {
+                        ds = read_hash_cardinality(txn, destination, destination_hash_count);
+                    }
+                    if (!ds.ok()) {
+                        result.success = false;
+                        all_success = false;
+                        continue;
+                    }
+                    if (destination_string_exists || destination_set_cardinality > 0
+                        || destination_list_length > 0 || destination_zset_count > 0
+                        || destination_hash_count > 0) {
+                        result.success = true;
+                        result.value_present = true;
+                        result.int_value = 0;
+                        continue;
+                    }
+                }
+
+                std::string string_value;
+                std::vector<std::string> set_members;
+                std::vector<std::string> list_values;
+                std::map<std::string, double> zset_values;
+                std::map<std::string, std::string> hash_entries;
+                if (string_exists) {
+                    bool exists = false;
+                    s = read_internal_current(txn, source_storage_key, string_value, exists);
+                    if (s.ok() && !exists) {
+                        result.success = false;
+                        result.int_value = -1;
+                        continue;
+                    }
+                } else if (set_cardinality > 0) {
+                    s = read_set_members(txn, user_key, set_members);
+                } else if (list_length > 0) {
+                    s = read_list_values(txn, user_key, list_values);
+                } else if (zset_count > 0) {
+                    s = collect_zset_values(txn, user_key, zset_values);
+                } else {
+                    s = collect_hash_entries(txn, user_key, hash_entries);
+                }
+                int64_t source_expire_at_ms = -1;
+                bool source_ttl_exists = false;
+                if (s.ok()) {
+                    s = read_ttl_meta(txn, user_key, source_expire_at_ms, source_ttl_exists);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+
+                auto delete_logical_key_for_rename = [&](const std::string& logical_key, bool keep_string_value = false) {
+                    std::string storage_key = "table_key_" + logical_key;
+                    mako::Status ds = mako::Status::OK();
+                    if (!keep_string_value) {
+                        ds = delete_raw_if_exists(txn, storage_key);
+                        if (!ds.ok()) {
+                            return ds;
+                        }
+                        batch_exists[storage_key] = false;
+                        batch_values.erase(storage_key);
+                    }
+                    ds = delete_set(txn, logical_key);
+                    if (ds.ok()) {
+                        ds = delete_list(txn, logical_key);
+                    }
+                    if (ds.ok()) {
+                        ds = delete_zset(txn, logical_key);
+                    }
+                    if (ds.ok()) {
+                        ds = delete_hash(txn, logical_key);
+                    }
+                    if (ds.ok()) {
+                        ds = clear_ttl_meta(txn, logical_key);
+                    }
+                    return ds;
+                };
+
+                s = delete_logical_key_for_rename(destination, string_exists);
+                if (s.ok() && string_exists) {
+                    s = put_raw(txn, destination_storage_key, string_value);
+                    if (s.ok()) {
+                        batch_exists[destination_storage_key] = true;
+                        batch_values[destination_storage_key] = string_value;
+                    }
+                } else if (s.ok() && !set_members.empty()) {
+                    for (const auto& member : set_members) {
+                        std::string member_key = set_storage_key(destination, member);
+                        s = put_raw(txn, member_key, "1");
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[member_key] = true;
+                        batch_values[member_key] = "1";
+                    }
+                    if (s.ok()) {
+                        s = write_set_cardinality(txn, destination, static_cast<int64_t>(set_members.size()));
+                    }
+                } else if (s.ok() && !list_values.empty()) {
+                    s = rewrite_list_values(txn, destination, list_values);
+                } else if (s.ok() && !zset_values.empty()) {
+                    for (const auto& [member, score] : zset_values) {
+                        std::string member_key = zset_member_storage_key(destination, member);
+                        std::string score_payload = std::to_string(score);
+                        s = put_raw(txn, member_key, score_payload);
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[member_key] = true;
+                        batch_values[member_key] = score_payload;
+                        std::string score_key = zset_score_storage_key(destination, score, member);
+                        s = put_raw(txn, score_key, "1");
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[score_key] = true;
+                        batch_values[score_key] = "1";
+                    }
+                    if (s.ok()) {
+                        s = write_zset_cardinality(txn, destination, static_cast<int64_t>(zset_values.size()));
+                    }
+                } else if (s.ok()) {
+                    for (const auto& [field, value] : hash_entries) {
+                        std::string field_key = hash_field_storage_key(destination, field);
+                        s = put_raw(txn, field_key, value);
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[field_key] = true;
+                        batch_values[field_key] = value;
+                    }
+                    if (s.ok()) {
+                        s = write_hash_cardinality(txn, destination, static_cast<int64_t>(hash_entries.size()));
+                    }
+                }
+                if (s.ok() && source_ttl_exists) {
+                    s = write_ttl_meta(txn, destination, source_expire_at_ms);
+                }
+                if (s.ok()) {
+                    s = delete_logical_key_for_rename(user_key);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = rename_nx ? 1 : 0;
+            } else if (op.op == TXN_OP_COPY) {
+                std::string destination(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                std::string source_storage_key = "table_key_" + user_key;
+                std::string destination_storage_key = "table_key_" + destination;
+                mako::Status s = expire_logical_key_if_needed(txn, user_key, source_storage_key);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+
+                bool string_exists = false;
+                s = read_string_exists_no_expire(txn, source_storage_key, string_exists);
+                int64_t set_cardinality = 0;
+                if (s.ok()) {
+                    s = read_set_cardinality(txn, user_key, set_cardinality);
+                }
+                int64_t list_length = 0;
+                if (s.ok()) {
+                    s = read_list_length(txn, user_key, list_length);
+                }
+                int64_t zset_count = 0;
+                if (s.ok()) {
+                    s = read_zset_cardinality(txn, user_key, zset_count);
+                }
+                int64_t hash_count = 0;
+                if (s.ok()) {
+                    s = read_hash_cardinality(txn, user_key, hash_count);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                if (!string_exists && set_cardinality == 0 && list_length == 0
+                    && zset_count == 0 && hash_count == 0) {
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = 0;
+                    continue;
+                }
+                const bool replace = op.expire_at_ms == 1;
+                if (user_key == destination) {
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = 1;
+                    continue;
+                }
+
+                bool destination_string_exists = false;
+                mako::Status ds = expire_logical_key_if_needed(txn, destination, destination_storage_key);
+                if (ds.ok()) {
+                    ds = read_string_exists_no_expire(txn, destination_storage_key, destination_string_exists);
+                }
+                int64_t destination_set_cardinality = 0;
+                if (ds.ok()) {
+                    ds = read_set_cardinality(txn, destination, destination_set_cardinality);
+                }
+                int64_t destination_list_length = 0;
+                if (ds.ok()) {
+                    ds = read_list_length(txn, destination, destination_list_length);
+                }
+                int64_t destination_zset_count = 0;
+                if (ds.ok()) {
+                    ds = read_zset_cardinality(txn, destination, destination_zset_count);
+                }
+                int64_t destination_hash_count = 0;
+                if (ds.ok()) {
+                    ds = read_hash_cardinality(txn, destination, destination_hash_count);
+                }
+                if (!ds.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                const bool destination_exists = destination_string_exists
+                    || destination_set_cardinality > 0 || destination_list_length > 0
+                    || destination_zset_count > 0 || destination_hash_count > 0;
+                if (destination_exists && !replace) {
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = 0;
+                    continue;
+                }
+
+                std::string string_value;
+                std::vector<std::string> set_members;
+                std::vector<std::string> list_values;
+                std::map<std::string, double> zset_values;
+                std::map<std::string, std::string> hash_entries;
+                if (string_exists) {
+                    bool exists = false;
+                    s = read_internal_current(txn, source_storage_key, string_value, exists);
+                    if (s.ok() && !exists) {
+                        result.success = true;
+                        result.value_present = true;
+                        result.int_value = 0;
+                        continue;
+                    }
+                } else if (set_cardinality > 0) {
+                    s = read_set_members(txn, user_key, set_members);
+                } else if (list_length > 0) {
+                    s = read_list_values(txn, user_key, list_values);
+                } else if (zset_count > 0) {
+                    s = collect_zset_values(txn, user_key, zset_values);
+                } else {
+                    s = collect_hash_entries(txn, user_key, hash_entries);
+                }
+                int64_t source_expire_at_ms = -1;
+                bool source_ttl_exists = false;
+                if (s.ok()) {
+                    s = read_ttl_meta(txn, user_key, source_expire_at_ms, source_ttl_exists);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+
+                auto delete_logical_key_for_copy = [&](const std::string& logical_key, bool keep_string_value = false) {
+                    std::string storage_key = "table_key_" + logical_key;
+                    mako::Status delete_status = mako::Status::OK();
+                    if (!keep_string_value) {
+                        delete_status = delete_raw_if_exists(txn, storage_key);
+                        if (!delete_status.ok()) {
+                            return delete_status;
+                        }
+                        batch_exists[storage_key] = false;
+                        batch_values.erase(storage_key);
+                    }
+                    delete_status = delete_set(txn, logical_key);
+                    if (delete_status.ok()) {
+                        delete_status = delete_list(txn, logical_key);
+                    }
+                    if (delete_status.ok()) {
+                        delete_status = delete_zset(txn, logical_key);
+                    }
+                    if (delete_status.ok()) {
+                        delete_status = delete_hash(txn, logical_key);
+                    }
+                    if (delete_status.ok()) {
+                        delete_status = clear_ttl_meta(txn, logical_key);
+                    }
+                    return delete_status;
+                };
+
+                s = delete_logical_key_for_copy(destination, string_exists);
+                if (s.ok() && string_exists) {
+                    s = put_raw(txn, destination_storage_key, string_value);
+                    if (s.ok()) {
+                        batch_exists[destination_storage_key] = true;
+                        batch_values[destination_storage_key] = string_value;
+                    }
+                } else if (s.ok() && !set_members.empty()) {
+                    for (const auto& member : set_members) {
+                        std::string member_key = set_storage_key(destination, member);
+                        s = put_raw(txn, member_key, "1");
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[member_key] = true;
+                        batch_values[member_key] = "1";
+                    }
+                    if (s.ok()) {
+                        s = write_set_cardinality(txn, destination, static_cast<int64_t>(set_members.size()));
+                    }
+                } else if (s.ok() && !list_values.empty()) {
+                    s = rewrite_list_values(txn, destination, list_values);
+                } else if (s.ok() && !zset_values.empty()) {
+                    s = rewrite_zset_values(txn, destination, zset_values);
+                } else if (s.ok()) {
+                    for (const auto& [field, value] : hash_entries) {
+                        std::string field_key = hash_field_storage_key(destination, field);
+                        s = put_raw(txn, field_key, value);
+                        if (!s.ok()) {
+                            break;
+                        }
+                        batch_exists[field_key] = true;
+                        batch_values[field_key] = value;
+                    }
+                    if (s.ok()) {
+                        s = write_hash_cardinality(txn, destination, static_cast<int64_t>(hash_entries.size()));
+                    }
+                }
+                if (s.ok() && source_ttl_exists) {
+                    s = write_ttl_meta(txn, destination, source_expire_at_ms);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = 1;
+            } else if (op.op == TXN_OP_DUMP) {
+                mako::Status s = expire_logical_key_if_needed(txn, user_key, tl_key_buf);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                bool string_exists = false;
+                s = read_string_exists_no_expire(txn, tl_key_buf, string_exists);
+                int64_t list_length = 0;
+                if (s.ok()) {
+                    s = read_list_length(txn, user_key, list_length);
+                }
+                int64_t hash_count = 0;
+                if (s.ok()) {
+                    s = read_hash_cardinality(txn, user_key, hash_count);
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                std::string payload;
+                if (string_exists) {
+                    std::string value;
+                    bool exists = false;
+                    s = read_internal_current(txn, tl_key_buf, value, exists);
+                    if (s.ok() && exists) {
+                        payload = std::string("MAKO_STRING_DUMP\0", 17) + value;
+                    }
+                } else if (list_length > 0) {
+                    std::vector<std::string> values;
+                    s = read_list_values(txn, user_key, values);
+                    if (s.ok()) {
+                        payload = std::string("MAKO_LIST_DUMP\0", 15) + pack_bytes_list(values);
+                    }
+                } else if (hash_count > 0) {
+                    std::map<std::string, std::string> entries;
+                    s = collect_hash_entries(txn, user_key, entries);
+                    if (s.ok()) {
+                        std::vector<std::string> fields;
+                        fields.reserve(entries.size() * 2);
+                        for (const auto& [field, value] : entries) {
+                            fields.push_back(field);
+                            fields.push_back(value);
+                        }
+                        payload = std::string("MAKO_HASH_DUMP\0", 15) + pack_bytes_list(fields);
+                    }
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = !payload.empty();
+                if (result.value_present && !copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_RESTORE_LIST) {
+                std::vector<std::string> values;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, values)) {
+                    all_success = false;
+                    continue;
+                }
+                auto delete_logical_key_for_restore = [&](const std::string& logical_key) {
+                    std::string storage_key = "table_key_" + logical_key;
+                    mako::Status ds = delete_raw_if_exists(txn, storage_key);
+                    if (!ds.ok()) {
+                        return ds;
+                    }
+                    batch_exists[storage_key] = false;
+                    batch_values.erase(storage_key);
+                    ds = delete_set(txn, logical_key);
+                    if (ds.ok()) {
+                        ds = delete_zset(txn, logical_key);
+                    }
+                    if (ds.ok()) {
+                        ds = delete_hash(txn, logical_key);
+                    }
+                    if (ds.ok()) {
+                        ds = clear_ttl_meta(txn, logical_key);
+                    }
+                    return ds;
+                };
+                mako::Status s = delete_logical_key_for_restore(user_key);
+                if (s.ok() && !values.empty()) {
+                    s = rewrite_list_values(txn, user_key, values);
+                }
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                result.success = true;
+                result.value_present = true;
+            } else if (op.op == TXN_OP_SORT) {
+                std::vector<std::string> options;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, options) || options.size() < 3) {
+                    all_success = false;
+                    continue;
+                }
+                const std::string& destination = options[0];
+                const bool alpha = options[1] == "1";
+                const bool desc = options[2] == "1";
+
+                bool allowed = false;
+                mako::Status s = load_list_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::vector<std::string> sorted = staged_lists[user_key];
+                if (alpha) {
+                    std::sort(sorted.begin(), sorted.end());
+                } else {
+                    bool numeric_ok = true;
+                    std::sort(sorted.begin(), sorted.end(), [&](const std::string& lhs, const std::string& rhs) {
+                        char* lhs_end = nullptr;
+                        char* rhs_end = nullptr;
+                        double lhs_value = std::strtod(lhs.c_str(), &lhs_end);
+                        double rhs_value = std::strtod(rhs.c_str(), &rhs_end);
+                        if (lhs_end == lhs.c_str() || *lhs_end != '\0'
+                            || rhs_end == rhs.c_str() || *rhs_end != '\0') {
+                            numeric_ok = false;
+                            return lhs < rhs;
+                        }
+                        if (lhs_value == rhs_value) {
+                            return lhs < rhs;
+                        }
+                        return lhs_value < rhs_value;
+                    });
+                    if (!numeric_ok) {
+                        result.success = false;
+                        continue;
+                    }
+                }
+                if (desc) {
+                    std::reverse(sorted.begin(), sorted.end());
+                }
+
+                if (!destination.empty()) {
+                    auto delete_logical_key_for_sort = [&](const std::string& logical_key) {
+                        std::string storage_key = "table_key_" + logical_key;
+                        mako::Status ds = delete_raw_if_exists(txn, storage_key);
+                        if (!ds.ok()) {
+                            return ds;
+                        }
+                        batch_exists[storage_key] = false;
+                        batch_values.erase(storage_key);
+                        ds = delete_set(txn, logical_key);
+                        if (ds.ok()) {
+                            ds = delete_list(txn, logical_key);
+                        }
+                        if (ds.ok()) {
+                            ds = delete_zset(txn, logical_key);
+                        }
+                        if (ds.ok()) {
+                            ds = delete_hash(txn, logical_key);
+                        }
+                        if (ds.ok()) {
+                            ds = clear_ttl_meta(txn, logical_key);
+                        }
+                        return ds;
+                    };
+                    s = delete_logical_key_for_sort(destination);
+                    if (s.ok() && !sorted.empty()) {
+                        s = rewrite_list_values(txn, destination, sorted);
+                    }
+                    if (!s.ok()) {
+                        all_success = false;
+                        continue;
+                    }
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = static_cast<int64_t>(sorted.size());
+                } else {
+                    result.success = true;
+                    result.value_present = true;
+                    std::string payload = pack_bytes_list(sorted);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                }
+            } else if (op.op == TXN_OP_HSET) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts) || parts.size() % 2 != 0) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                int64_t cardinality = 0;
+                s = read_hash_cardinality(txn, user_key, cardinality);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t added = 0;
+                for (size_t part_index = 0; part_index < parts.size(); part_index += 2) {
+                    const std::string& field = parts[part_index];
+                    const std::string& value = parts[part_index + 1];
+                    std::string field_key = hash_field_storage_key(user_key, field);
+                    std::string current;
+                    bool exists = false;
+                    s = read_internal_current(txn, field_key, current, exists);
+                    if (!s.ok()) {
+                        break;
+                    }
+                    if ((op.flags & TXN_FLAG_SET_NX) != 0 && exists) {
+                        continue;
+                    }
+                    s = put_raw(txn, field_key, value);
+                    if (!s.ok()) {
+                        break;
+                    }
+                    batch_exists[field_key] = true;
+                    batch_values[field_key] = value;
+                    if (!exists) {
+                        ++added;
+                        ++cardinality;
+                    }
+                }
+                if (s.ok()) {
+                    s = write_hash_cardinality(txn, user_key, cardinality);
+                }
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = added;
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HGET) {
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string field(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                std::string value;
+                bool exists = false;
+                s = read_internal_current(txn, hash_field_storage_key(user_key, field), value, exists);
+                result.success = s.ok();
+                result.value_present = exists;
+                if (!s.ok()) {
+                    all_success = false;
+                } else if (exists && !copy_result_value(result, value)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HMGET) {
+                std::vector<std::string> fields;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, fields)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::vector<std::string> payload_items;
+                payload_items.reserve(fields.size() * 2);
+                for (const auto& field : fields) {
+                    std::string value;
+                    bool exists = false;
+                    s = read_internal_current(txn, hash_field_storage_key(user_key, field), value, exists);
+                    if (!s.ok()) {
+                        break;
+                    }
+                    payload_items.push_back(exists ? "1" : "0");
+                    payload_items.push_back(exists ? value : std::string());
+                }
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                std::string payload = pack_bytes_list(payload_items);
+                result.success = true;
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HGETALL || op.op == TXN_OP_HKEYS || op.op == TXN_OP_HVALS || op.op == TXN_OP_HSCAN) {
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::map<std::string, std::string> entries;
+                s = collect_hash_entries(txn, user_key, entries);
+                if (!s.ok()) {
+                    result.success = false;
+                    all_success = false;
+                    continue;
+                }
+                std::vector<std::string> payload_items;
+                if (op.op == TXN_OP_HKEYS) {
+                    payload_items.reserve(entries.size());
+                    for (const auto& [field, _] : entries) {
+                        payload_items.push_back(field);
+                    }
+                } else if (op.op == TXN_OP_HVALS) {
+                    payload_items.reserve(entries.size());
+                    for (const auto& [_, value] : entries) {
+                        payload_items.push_back(value);
+                    }
+                } else {
+                    payload_items.reserve(entries.size() * 2);
+                    for (const auto& [field, value] : entries) {
+                        payload_items.push_back(field);
+                        payload_items.push_back(value);
+                    }
+                }
+                std::string payload = pack_bytes_list(payload_items);
+                result.success = true;
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HDEL) {
+                std::vector<std::string> fields;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, fields)) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                int64_t cardinality = 0;
+                s = read_hash_cardinality(txn, user_key, cardinality);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t removed = 0;
+                for (const auto& field : fields) {
+                    std::string field_key = hash_field_storage_key(user_key, field);
+                    std::string value;
+                    bool exists = false;
+                    s = read_internal_current(txn, field_key, value, exists);
+                    if (!s.ok()) {
+                        break;
+                    }
+                    if (!exists) {
+                        continue;
+                    }
+                    s = delete_raw_if_exists(txn, field_key);
+                    if (!s.ok()) {
+                        break;
+                    }
+                    batch_exists[field_key] = false;
+                    batch_values.erase(field_key);
+                    ++removed;
+                    --cardinality;
+                }
+                if (s.ok()) {
+                    s = write_hash_cardinality(txn, user_key, cardinality);
+                }
+                if (s.ok() && cardinality <= 0) {
+                    s = clear_ttl_meta(txn, user_key);
+                }
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = removed;
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HEXISTS || op.op == TXN_OP_HSTRLEN) {
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::string field(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                std::string value;
+                bool exists = false;
+                s = read_internal_current(txn, hash_field_storage_key(user_key, field), value, exists);
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = op.op == TXN_OP_HEXISTS
+                    ? (exists ? 1 : 0)
+                    : (exists ? static_cast<int64_t>(value.size()) : 0);
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HLEN) {
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                int64_t cardinality = 0;
+                s = read_hash_cardinality(txn, user_key, cardinality);
+                result.success = s.ok();
+                result.value_present = true;
+                result.int_value = s.ok() ? cardinality : 0;
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_HINCRBY || op.op == TXN_OP_HINCRBYFLOAT) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts) || parts.size() != 2) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = hash_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                const std::string& field = parts[0];
+                std::string field_key = hash_field_storage_key(user_key, field);
+                std::string current;
+                bool exists = false;
+                s = read_internal_current(txn, field_key, current, exists);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                std::string next_str;
+                if (op.op == TXN_OP_HINCRBY) {
+                    int64_t base = 0;
+                    int64_t delta = 0;
+                    int64_t next = 0;
+                    if ((exists && !parse_int64(current, base)) || !parse_int64(parts[1], delta)) {
+                        result.success = false;
+                        result.int_value = -1;
+                        continue;
+                    }
+                    if (!add_int64(base, delta, next)) {
+                        result.success = false;
+                        result.int_value = -2;
+                        continue;
+                    }
+                    next_str = std::to_string(next);
+                    result.int_value = next;
+                } else {
+                    long double base = 0;
+                    long double delta = 0;
+                    if ((exists && !parse_float(current, base)) || !parse_float(parts[1], delta)) {
+                        result.success = false;
+                        result.int_value = -3;
+                        continue;
+                    }
+                    long double next = base + delta;
+                    if (!std::isfinite(next)) {
+                        result.success = false;
+                        result.int_value = -3;
+                        continue;
+                    }
+                    next_str = format_float(next);
+                }
+                s = put_raw(txn, field_key, next_str);
+                if (s.ok()) {
+                    batch_exists[field_key] = true;
+                    batch_values[field_key] = next_str;
+                    if (!exists) {
+                        int64_t cardinality = 0;
+                        s = read_hash_cardinality(txn, user_key, cardinality);
+                        if (s.ok()) {
+                            s = write_hash_cardinality(txn, user_key, cardinality + 1);
+                        }
+                    }
+                }
+                result.success = s.ok();
+                result.value_present = true;
+                if (!s.ok()) {
+                    all_success = false;
+                } else if (op.op == TXN_OP_HINCRBYFLOAT && !copy_result_value(result, next_str)) {
                     all_success = false;
                 }
             } else if (op.op == TXN_OP_SADD) {
@@ -2061,7 +3640,16 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     all_success = false;
                     continue;
                 }
-                mako::Status s = expire_set_if_needed(txn, user_key);
+                bool allowed = false;
+                mako::Status s = set_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                s = expire_set_if_needed(txn, user_key);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -2114,7 +3702,16 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
             } else if (op.op == TXN_OP_SISMEMBER) {
                 std::string member(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
-                mako::Status s = expire_set_if_needed(txn, user_key);
+                bool allowed = false;
+                mako::Status s = set_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                s = expire_set_if_needed(txn, user_key);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -2135,7 +3732,16 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     all_success = false;
                 }
             } else if (op.op == TXN_OP_SCARD) {
-                mako::Status s = expire_set_if_needed(txn, user_key);
+                bool allowed = false;
+                mako::Status s = set_key_allowed(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                s = expire_set_if_needed(txn, user_key);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -2153,7 +3759,6 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 mako::Status s = read_set_members(txn, user_key, members);
                 result.success = s.ok();
                 if (!s.ok()) {
-                    all_success = false;
                     continue;
                 }
                 std::string payload = pack_bytes_list(members);
@@ -2168,7 +3773,27 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 const std::string& destination = parts[0];
                 const std::string& member = parts[1];
-                mako::Status s = expire_set_if_needed(txn, user_key);
+                bool source_allowed = false;
+                mako::Status s = set_key_allowed(txn, user_key, result, source_allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!source_allowed) {
+                    continue;
+                }
+                bool destination_allowed = false;
+                TxnOpResult destination_result{};
+                s = set_key_allowed(txn, destination, destination_result, destination_allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!destination_allowed) {
+                    result.success = false;
+                    continue;
+                }
+                s = expire_set_if_needed(txn, user_key);
                 if (s.ok()) {
                     s = expire_set_if_needed(txn, destination);
                 }
@@ -2239,7 +3864,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 std::vector<std::string> members;
                 mako::Status s = read_set_members(txn, user_key, members);
                 if (!s.ok()) {
-                    all_success = false;
+                    result.success = false;
                     continue;
                 }
                 const bool count_given = (op.flags & TXN_FLAG_SET_COUNT_GIVEN) != 0;
@@ -2250,14 +3875,20 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 std::vector<std::string> selected;
                 if (!members.empty() && requested > 0) {
+                    const size_t start = op.op == TXN_OP_SRANDMEMBER
+                        ? static_cast<size_t>(g_mako_random_counter.fetch_add(1, std::memory_order_relaxed) % members.size())
+                        : 0;
                     if (allow_duplicates) {
                         selected.reserve(static_cast<size_t>(requested));
                         for (int64_t idx = 0; idx < requested; ++idx) {
-                            selected.push_back(members[static_cast<size_t>(idx) % members.size()]);
+                            selected.push_back(members[(start + static_cast<size_t>(idx)) % members.size()]);
                         }
                     } else {
                         const size_t take = std::min<size_t>(members.size(), static_cast<size_t>(requested));
-                        selected.insert(selected.end(), members.begin(), members.begin() + take);
+                        selected.reserve(take);
+                        for (size_t idx = 0; idx < take; ++idx) {
+                            selected.push_back(members[(start + idx) % members.size()]);
+                        }
                     }
                 }
                 if (op.op == TXN_OP_SPOP && !selected.empty()) {
@@ -2308,12 +3939,12 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     std::vector<std::string> members;
                     mako::Status s = read_set_members(txn, set_key, members);
                     if (!s.ok()) {
-                        all_success = false;
+                        result.success = false;
                         break;
                     }
                     sets.emplace_back(members.begin(), members.end());
                 }
-                if (!all_success) {
+                if (!result.success && sets.size() != set_keys.size()) {
                     continue;
                 }
                 std::unordered_set<std::string> result_set;
@@ -2344,11 +3975,32 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 std::vector<std::string> items(result_set.begin(), result_set.end());
                 std::sort(items.begin(), items.end());
                 if ((op.flags & TXN_FLAG_SET_ALGEBRA_STORE) != 0) {
+                    bool string_exists = false;
+                    mako::Status s = read_string_exists_no_expire(txn, tl_key_buf, string_exists);
+                    if (s.ok() && string_exists) {
+                        s = g_table->Delete(txn, tl_key_buf);
+                    }
+                    if (s.ok() && string_exists) {
+                        batch_exists[tl_key_buf] = false;
+                        batch_values.erase(tl_key_buf);
+                    }
                     std::vector<std::string> existing_members;
-                    mako::Status s = read_set_members(txn, user_key, existing_members);
-                    if (!s.ok()) {
-                        all_success = false;
-                        continue;
+                    bool existing_set = false;
+                    if (s.ok() && !string_exists) {
+                        s = read_set_members(txn, user_key, existing_members);
+                        existing_set = s.ok();
+                        if (!s.ok()) {
+                            s = mako::Status::OK();
+                        }
+                    }
+                    if (s.ok() && !existing_set) {
+                        s = delete_list(txn, user_key);
+                    }
+                    if (s.ok() && !existing_set) {
+                        s = delete_zset(txn, user_key);
+                    }
+                    if (s.ok() && !existing_set) {
+                        s = delete_hash(txn, user_key);
                     }
                     std::unordered_set<std::string> desired(items.begin(), items.end());
                     std::unordered_set<std::string> existing(existing_members.begin(), existing_members.end());
@@ -2364,9 +4016,6 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         }
                         batch_exists[member_key] = false;
                         batch_values.erase(member_key);
-                    }
-                    if (!all_success) {
-                        continue;
                     }
                     for (const auto& member : items) {
                         if (existing.find(member) != existing.end()) {
@@ -2464,10 +4113,59 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     dirty_lists.insert(user_key);
                 }
                 result.success = true;
-                result.value_present = !selected.empty();
+                result.value_present = !selected.empty() || available > 0;
+                if (!result.value_present) {
+                    continue;
+                }
                 std::string payload = pack_bytes_list(selected);
                 if (!copy_result_value(result, payload)) {
                     all_success = false;
+                }
+            } else if (op.op == TXN_OP_BPOP) {
+                std::vector<std::string> keys;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, keys)) {
+                    all_success = false;
+                    continue;
+                }
+                const bool pop_left = (op.flags & TXN_FLAG_LIST_SOURCE_LEFT) != 0;
+                const int64_t requested = std::max<int64_t>(1, op.expire_at_ms);
+                result.success = true;
+                result.value_present = false;
+                for (const auto& candidate_key : keys) {
+                    bool allowed = false;
+                    mako::Status s = load_list_stage(txn, candidate_key, result, allowed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        break;
+                    }
+                    if (!allowed) {
+                        break;
+                    }
+                    auto& staged = staged_lists[candidate_key];
+                    if (staged.empty()) {
+                        continue;
+                    }
+                    std::vector<std::string> payload_items;
+                    payload_items.push_back(candidate_key);
+                    const int64_t pop_count =
+                        std::min<int64_t>(requested, static_cast<int64_t>(staged.size()));
+                    for (int64_t n = 0; n < pop_count; ++n) {
+                        if (pop_left) {
+                            payload_items.push_back(staged.front());
+                            staged.erase(staged.begin());
+                        } else {
+                            payload_items.push_back(staged.back());
+                            staged.pop_back();
+                        }
+                    }
+                    dirty_lists.insert(candidate_key);
+                    result.success = true;
+                    result.value_present = true;
+                    std::string payload = pack_bytes_list(payload_items);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                    break;
                 }
             } else if (op.op == TXN_OP_LLEN) {
                 bool allowed = false;
@@ -2586,6 +4284,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     }
                     if (index < 0 || index >= static_cast<int64_t>(values.size())) {
                         result.success = false;
+                        result.int_value = values.empty() ? -1 : -2;
                         continue;
                     }
                     values[static_cast<size_t>(index)] = parts[1];
@@ -2727,12 +4426,66 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 auto& values = staged_lists[user_key];
                 result.success = true;
                 result.value_present = false;
-                std::string needle(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
-                for (size_t idx = 0; idx < values.size(); ++idx) {
-                    if (values[idx] == needle) {
+                std::vector<std::string> parts;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, parts) || parts.size() != 4) {
+                    all_success = false;
+                    continue;
+                }
+                const std::string& needle = parts[0];
+                int64_t rank = 1;
+                int64_t count = -1;
+                int64_t maxlen = 0;
+                if (!parse_int64(parts[1], rank) || !parse_int64(parts[2], count) || !parse_int64(parts[3], maxlen)) {
+                    all_success = false;
+                    continue;
+                }
+                const bool reverse = rank < 0;
+                int64_t remaining_rank = std::llabs(rank);
+                int64_t inspected = 0;
+                std::vector<std::string> positions;
+                auto visit_match = [&](size_t idx) {
+                    if (values[idx] != needle) {
+                        return false;
+                    }
+                    --remaining_rank;
+                    if (remaining_rank > 0) {
+                        return false;
+                    }
+                    if (count < 0) {
                         result.value_present = true;
                         result.int_value = static_cast<int64_t>(idx);
-                        break;
+                        return true;
+                    }
+                    positions.push_back(std::to_string(idx));
+                    return count > 0 && static_cast<int64_t>(positions.size()) >= count;
+                };
+                if (reverse) {
+                    for (size_t offset = 0; offset < values.size(); ++offset) {
+                        if (maxlen > 0 && inspected >= maxlen) {
+                            break;
+                        }
+                        size_t idx = values.size() - 1 - offset;
+                        ++inspected;
+                        if (visit_match(idx)) {
+                            break;
+                        }
+                    }
+                } else {
+                    for (size_t idx = 0; idx < values.size(); ++idx) {
+                        if (maxlen > 0 && inspected >= maxlen) {
+                            break;
+                        }
+                        ++inspected;
+                        if (visit_match(idx)) {
+                            break;
+                        }
+                    }
+                }
+                if (count >= 0) {
+                    result.value_present = true;
+                    std::string payload = pack_bytes_list(positions);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
                     }
                 }
             } else if (op.op == TXN_OP_ZADD) {
@@ -2760,6 +4513,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 int64_t added = 0;
                 int64_t changed = 0;
                 std::optional<double> increment_result;
+                bool score_nan_error = false;
                 for (size_t part_idx = 0; part_idx < parts.size(); part_idx += 2) {
                     double score = 0.0;
                     if (!parse_zset_score_value(parts[part_idx], score)) {
@@ -2781,9 +4535,23 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                             continue;
                         }
                         double next_score = (exists ? current_it->second : 0.0) + score;
-                        if (!std::isfinite(next_score)) {
-                            all_success = false;
+                        if (std::isnan(next_score)) {
+                            result.success = false;
+                            result.int_value = -3;
+                            score_nan_error = true;
                             break;
+                        }
+                        bool should_write = true;
+                        if (gt && exists && next_score <= current_it->second) {
+                            should_write = false;
+                        }
+                        if (lt && exists && next_score >= current_it->second) {
+                            should_write = false;
+                        }
+                        if (!should_write) {
+                            result.success = true;
+                            result.value_present = false;
+                            continue;
                         }
                         values[member] = next_score;
                         increment_result = next_score;
@@ -2803,10 +4571,10 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     if (xx && !exists) {
                         should_write = false;
                     }
-                    if (gt && (!exists || score <= current_it->second)) {
+                    if (gt && exists && score <= current_it->second) {
                         should_write = false;
                     }
-                    if (lt && (!exists || score >= current_it->second)) {
+                    if (lt && exists && score >= current_it->second) {
                         should_write = false;
                     }
                     if (!should_write) {
@@ -2820,6 +4588,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     }
                     values[member] = score;
                     dirty_zsets.insert(user_key);
+                }
+                if (score_nan_error) {
+                    continue;
                 }
                 if (!all_success) {
                     continue;
@@ -2920,10 +4691,16 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     if (items[idx].first == member) {
                         result.value_present = true;
                         result.int_value = static_cast<int64_t>(idx);
+                        if ((op.flags & TXN_FLAG_Z_WITHSCORES) != 0) {
+                            std::string score = format_zset_score(items[idx].second);
+                            if (!copy_result_value(result, score)) {
+                                all_success = false;
+                            }
+                        }
                         break;
                     }
                 }
-            } else if (op.op == TXN_OP_ZRANGE || op.op == TXN_OP_ZCOUNT) {
+            } else if (op.op == TXN_OP_ZRANGE || op.op == TXN_OP_ZRANGEBYLEX || op.op == TXN_OP_ZCOUNT || op.op == TXN_OP_ZLEXCOUNT) {
                 std::vector<std::string> bounds;
                 if (!unpack_bytes_list(op.val_ptr, op.val_len, bounds) || bounds.size() < 2) {
                     all_success = false;
@@ -2938,96 +4715,34 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!allowed) {
                     continue;
                 }
-                auto parse_score_bound = [](const std::string& raw, double& score, bool& exclusive) {
-                    std::string input = raw;
-                    exclusive = false;
-                    if (!input.empty() && input[0] == '(') {
-                        exclusive = true;
-                        input.erase(input.begin());
-                    }
-                    if (input == "-inf") {
-                        score = -std::numeric_limits<double>::infinity();
-                        return true;
-                    }
-                    if (input == "+inf" || input == "inf") {
-                        score = std::numeric_limits<double>::infinity();
-                        return true;
-                    }
-                    size_t pos = 0;
-                    try {
-                        score = std::stod(input, &pos);
-                        return pos == input.size() && !std::isnan(score);
-                    } catch (...) {
-                        return false;
-                    }
-                };
-                auto items = zset_ordered_items(staged_zsets[user_key]);
                 std::vector<std::pair<std::string, double>> selected;
-                if (op.op == TXN_OP_ZCOUNT || (op.flags & TXN_FLAG_Z_BYSCORE) != 0) {
-                    double min_score = 0.0;
-                    double max_score = 0.0;
-                    bool min_exclusive = false;
-                    bool max_exclusive = false;
-                    if (!parse_score_bound(bounds[0], min_score, min_exclusive)
-                        || !parse_score_bound(bounds[1], max_score, max_exclusive)) {
-                        all_success = false;
-                        continue;
-                    }
-                    for (const auto& item : items) {
-                        const bool above_min = min_exclusive ? item.second > min_score : item.second >= min_score;
-                        const bool below_max = max_exclusive ? item.second < max_score : item.second <= max_score;
-                        if (above_min && below_max) {
-                            selected.push_back(item);
-                        }
-                    }
-                    if ((op.flags & TXN_FLAG_Z_REV) != 0) {
-                        std::reverse(selected.begin(), selected.end());
-                    }
-                    if (bounds.size() >= 4) {
-                        int64_t offset = 0;
-                        int64_t count = 0;
-                        if (!parse_int64(bounds[2], offset) || !parse_int64(bounds[3], count)) {
-                            all_success = false;
-                            continue;
-                        }
-                        if (offset < 0 || count <= 0 || offset >= static_cast<int64_t>(selected.size())) {
-                            selected.clear();
-                        } else {
-                            auto begin = selected.begin() + static_cast<size_t>(offset);
-                            auto end = begin + std::min<size_t>(
-                                static_cast<size_t>(count),
-                                static_cast<size_t>(selected.end() - begin));
-                            selected.assign(begin, end);
-                        }
-                    }
+                bool range_ok = true;
+                if (op.op == TXN_OP_ZLEXCOUNT || op.op == TXN_OP_ZRANGEBYLEX) {
+                    range_ok = select_zset_lex_range(
+                        staged_zsets[user_key],
+                        bounds,
+                        (op.flags & TXN_FLAG_Z_REV) != 0,
+                        selected);
+                } else if (op.op == TXN_OP_ZCOUNT || (op.flags & TXN_FLAG_Z_BYSCORE) != 0) {
+                    range_ok = select_zset_score_range(
+                        staged_zsets[user_key],
+                        bounds,
+                        (op.flags & TXN_FLAG_Z_REV) != 0,
+                        selected);
                 } else {
-                    if ((op.flags & TXN_FLAG_Z_REV) != 0) {
-                        std::reverse(items.begin(), items.end());
-                    }
-                    int64_t start_index = 0;
-                    int64_t stop_index = 0;
-                    if (!parse_int64(bounds[0], start_index) || !parse_int64(bounds[1], stop_index)) {
-                        all_success = false;
-                        continue;
-                    }
-                    const int64_t length = static_cast<int64_t>(items.size());
-                    if (start_index < 0) {
-                        start_index += length;
-                    }
-                    if (stop_index < 0) {
-                        stop_index += length;
-                    }
-                    start_index = std::max<int64_t>(0, start_index);
-                    stop_index = std::min<int64_t>(length - 1, stop_index);
-                    if (length > 0 && start_index <= stop_index && start_index < length) {
-                        selected.assign(
-                            items.begin() + static_cast<size_t>(start_index),
-                            items.begin() + static_cast<size_t>(stop_index + 1));
-                    }
+                    range_ok = select_zset_rank_range(
+                        staged_zsets[user_key],
+                        bounds,
+                        (op.flags & TXN_FLAG_Z_REV) != 0,
+                        selected);
+                }
+                if (!range_ok) {
+                    all_success = false;
+                    continue;
                 }
                 result.success = true;
                 result.value_present = true;
-                if (op.op == TXN_OP_ZCOUNT) {
+                if (op.op == TXN_OP_ZCOUNT || op.op == TXN_OP_ZLEXCOUNT) {
                     result.int_value = static_cast<int64_t>(selected.size());
                 } else {
                     std::vector<std::string> payload_items;
@@ -3038,6 +4753,263 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                             payload_items.push_back(format_zset_score(score));
                         }
                     }
+                    std::string payload = pack_bytes_list(payload_items);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                }
+            } else if (op.op == TXN_OP_ZREMRANGEBYSCORE || op.op == TXN_OP_ZREMRANGEBYRANK || op.op == TXN_OP_ZREMRANGEBYLEX) {
+                std::vector<std::string> bounds;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, bounds) || bounds.size() < 2) {
+                    all_success = false;
+                    continue;
+                }
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                std::vector<std::pair<std::string, double>> selected;
+                bool range_ok = false;
+                if (op.op == TXN_OP_ZREMRANGEBYSCORE) {
+                    range_ok = select_zset_score_range(staged_zsets[user_key], bounds, false, selected);
+                } else if (op.op == TXN_OP_ZREMRANGEBYRANK) {
+                    range_ok = select_zset_rank_range(staged_zsets[user_key], bounds, false, selected);
+                } else {
+                    range_ok = select_zset_lex_range(staged_zsets[user_key], bounds, false, selected);
+                }
+                if (!range_ok) {
+                    all_success = false;
+                    continue;
+                }
+                auto& values = staged_zsets[user_key];
+                int64_t removed = 0;
+                for (const auto& [member, score] : selected) {
+                    removed += values.erase(member) > 0 ? 1 : 0;
+                }
+                if (removed > 0) {
+                    dirty_zsets.insert(user_key);
+                }
+                result.success = true;
+                result.value_present = true;
+                result.int_value = removed;
+            } else if (op.op == TXN_OP_ZRANGESTORE) {
+                std::vector<std::string> args;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, args) || args.size() < 3) {
+                    all_success = false;
+                    continue;
+                }
+                const std::string destination = user_key;
+                const std::string source = args[0];
+                std::vector<std::string> bounds(args.begin() + 1, args.end());
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, source, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                TxnOpResult dest_allowed_result{};
+                s = zset_key_allowed(txn, destination, dest_allowed_result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    result.success = false;
+                    continue;
+                }
+                std::vector<std::pair<std::string, double>> selected;
+                bool range_ok = false;
+                if (op.expire_at_ms == 2) {
+                    range_ok = select_zset_lex_range(staged_zsets[source], bounds, (op.flags & TXN_FLAG_Z_REV) != 0, selected);
+                } else if (op.expire_at_ms == 1) {
+                    range_ok = select_zset_score_range(staged_zsets[source], bounds, (op.flags & TXN_FLAG_Z_REV) != 0, selected);
+                } else {
+                    range_ok = select_zset_rank_range(staged_zsets[source], bounds, (op.flags & TXN_FLAG_Z_REV) != 0, selected);
+                }
+                if (!range_ok) {
+                    all_success = false;
+                    continue;
+                }
+                auto& dest_values = staged_zsets[destination];
+                dest_values.clear();
+                for (const auto& [member, score] : selected) {
+                    dest_values[member] = score;
+                }
+                staged_zsets_loaded.insert(destination);
+                dirty_zsets.insert(destination);
+                result.success = true;
+                result.value_present = true;
+                result.int_value = static_cast<int64_t>(dest_values.size());
+            } else if (op.op == TXN_OP_ZSET_ALGEBRA) {
+                std::vector<std::string> args;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, args) || args.empty()) {
+                    all_success = false;
+                    continue;
+                }
+                int64_t numkeys_i64 = 0;
+                if (!parse_int64(args[0], numkeys_i64) || numkeys_i64 <= 0) {
+                    all_success = false;
+                    continue;
+                }
+                const size_t numkeys = static_cast<size_t>(numkeys_i64);
+                if (args.size() < 1 + numkeys * 2) {
+                    all_success = false;
+                    continue;
+                }
+                std::vector<std::string> sources(args.begin() + 1, args.begin() + 1 + numkeys);
+                std::vector<double> weights;
+                weights.reserve(numkeys);
+                for (size_t i = 0; i < numkeys; ++i) {
+                    double weight = 1.0;
+                    if (!parse_zset_score_value(args[1 + numkeys + i], weight)) {
+                        all_success = false;
+                        break;
+                    }
+                    weights.push_back(weight);
+                }
+                if (!all_success) {
+                    continue;
+                }
+                const bool is_union = (op.flags & TXN_FLAG_SET_ALGEBRA_UNION) != 0;
+                const bool is_diff = (op.flags & TXN_FLAG_SET_ALGEBRA_DIFF) != 0;
+                const bool is_store = (op.flags & TXN_FLAG_SET_ALGEBRA_STORE) != 0;
+                const bool cardinality_only = (op.flags & TXN_FLAG_SCAN_COUNT_ONLY) != 0;
+                std::vector<std::map<std::string, double>> source_values;
+                source_values.reserve(numkeys);
+                for (const auto& source_key : sources) {
+                    TxnOpResult source_result{};
+                    bool allowed = false;
+                    mako::Status s = load_zset_stage(txn, source_key, source_result, allowed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        break;
+                    }
+                    if (allowed) {
+                        source_values.push_back(staged_zsets[source_key]);
+                        continue;
+                    }
+                    int64_t set_cardinality = 0;
+                    s = read_set_cardinality(txn, source_key, set_cardinality);
+                    if (!s.ok()) {
+                        all_success = false;
+                        break;
+                    }
+                    if (set_cardinality > 0) {
+                        std::vector<std::string> members;
+                        s = collect_set_members(txn, source_key, members);
+                        if (!s.ok()) {
+                            all_success = false;
+                            break;
+                        }
+                        std::map<std::string, double> as_zset;
+                        for (const auto& member : members) {
+                            as_zset[member] = 1.0;
+                        }
+                        source_values.push_back(std::move(as_zset));
+                    } else {
+                        source_values.emplace_back();
+                    }
+                }
+                if (!all_success) {
+                    continue;
+                }
+                std::map<std::string, double> out;
+                if (is_diff) {
+                    if (!source_values.empty()) {
+                        out = source_values[0];
+                        for (size_t i = 1; i < source_values.size(); ++i) {
+                            for (const auto& [member, score] : source_values[i]) {
+                                out.erase(member);
+                            }
+                        }
+                    }
+                } else if (is_union) {
+                    for (size_t i = 0; i < source_values.size(); ++i) {
+                        for (const auto& [member, score] : source_values[i]) {
+                            double weighted = score * weights[i];
+                            if (std::isnan(weighted)) {
+                                weighted = 0.0;
+                            }
+                            auto it = out.find(member);
+                            if (it == out.end()) {
+                                out[member] = weighted;
+                            } else {
+                                it->second = combine_zset_aggregate_score(it->second, weighted, op.expire_at_ms);
+                            }
+                        }
+                    }
+                } else {
+                    if (!source_values.empty()) {
+                        for (const auto& [member, score] : source_values[0]) {
+                            double combined = score * weights[0];
+                            if (std::isnan(combined)) {
+                                combined = 0.0;
+                            }
+                            bool present_in_all = true;
+                            for (size_t i = 1; i < source_values.size(); ++i) {
+                                auto it = source_values[i].find(member);
+                                if (it == source_values[i].end()) {
+                                    present_in_all = false;
+                                    break;
+                                }
+                                double weighted = it->second * weights[i];
+                                if (std::isnan(weighted)) {
+                                    weighted = 0.0;
+                                }
+                                combined = combine_zset_aggregate_score(combined, weighted, op.expire_at_ms);
+                            }
+                            if (present_in_all) {
+                                out[member] = combined;
+                            }
+                        }
+                    }
+                }
+                if (cardinality_only) {
+                    result.success = true;
+                    result.value_present = true;
+                    int64_t count = static_cast<int64_t>(out.size());
+                    if (op.expire_at_ms > 0 && op.expire_at_ms < count) {
+                        count = op.expire_at_ms;
+                    }
+                    result.int_value = count;
+                } else if (is_store) {
+                    const std::string destination = user_key;
+                    bool allowed = false;
+                    TxnOpResult dest_allowed_result{};
+                    mako::Status s = zset_key_allowed(txn, destination, dest_allowed_result, allowed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        continue;
+                    }
+                    if (!allowed) {
+                        result.success = false;
+                        continue;
+                    }
+                    staged_zsets[destination] = out;
+                    staged_zsets_loaded.insert(destination);
+                    dirty_zsets.insert(destination);
+                    result.success = true;
+                    result.value_present = true;
+                    result.int_value = static_cast<int64_t>(out.size());
+                } else {
+                    std::vector<std::string> payload_items;
+                    const bool with_scores = (op.flags & TXN_FLAG_Z_WITHSCORES) != 0;
+                    for (const auto& [member, score] : zset_ordered_items(out)) {
+                        payload_items.push_back(member);
+                        if (with_scores) {
+                            payload_items.push_back(format_zset_score(score));
+                        }
+                    }
+                    result.success = true;
+                    result.value_present = true;
                     std::string payload = pack_bytes_list(payload_items);
                     if (!copy_result_value(result, payload)) {
                         all_success = false;
@@ -3076,6 +5048,110 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!copy_result_value(result, payload)) {
                     all_success = false;
                 }
+            } else if (op.op == TXN_OP_ZMPOP) {
+                std::vector<std::string> keys;
+                if (!unpack_bytes_list(op.val_ptr, op.val_len, keys)) {
+                    all_success = false;
+                    continue;
+                }
+                const bool reverse = (op.flags & TXN_FLAG_Z_REV) != 0;
+                const int64_t requested_count = std::max<int64_t>(1, op.expire_at_ms);
+                result.success = true;
+                result.value_present = false;
+                for (const auto& candidate_key : keys) {
+                    TxnOpResult candidate_result{};
+                    bool allowed = false;
+                    mako::Status s = load_zset_stage(txn, candidate_key, candidate_result, allowed);
+                    if (!s.ok()) {
+                        all_success = false;
+                        break;
+                    }
+                    if (!allowed) {
+                        result.success = false;
+                        result.value_present = false;
+                        break;
+                    }
+                    auto items = zset_ordered_items(staged_zsets[candidate_key]);
+                    if (items.empty()) {
+                        continue;
+                    }
+                    if (reverse) {
+                        std::reverse(items.begin(), items.end());
+                    }
+                    const int64_t count = std::clamp<int64_t>(
+                        requested_count,
+                        0,
+                        static_cast<int64_t>(items.size()));
+                    std::vector<std::string> payload_items;
+                    payload_items.push_back(candidate_key);
+                    auto& values = staged_zsets[candidate_key];
+                    for (int64_t idx = 0; idx < count; ++idx) {
+                        const auto& [member, score] = items[static_cast<size_t>(idx)];
+                        payload_items.push_back(member);
+                        payload_items.push_back(format_zset_score(score));
+                        values.erase(member);
+                    }
+                    if (count > 0) {
+                        dirty_zsets.insert(candidate_key);
+                    }
+                    std::string payload = pack_bytes_list(payload_items);
+                    if (!copy_result_value(result, payload)) {
+                        all_success = false;
+                    }
+                    result.success = true;
+                    result.value_present = true;
+                    break;
+                }
+                if (!all_success) {
+                    continue;
+                }
+            } else if (op.op == TXN_OP_ZRANDMEMBER) {
+                bool allowed = false;
+                mako::Status s = load_zset_stage(txn, user_key, result, allowed);
+                if (!s.ok()) {
+                    all_success = false;
+                    continue;
+                }
+                if (!allowed) {
+                    continue;
+                }
+                auto items = zset_ordered_items(staged_zsets[user_key]);
+                const bool with_scores = (op.flags & TXN_FLAG_Z_WITHSCORES) != 0;
+                const bool count_given = (op.flags & TXN_FLAG_Z_COUNT_GIVEN) != 0;
+                result.success = true;
+                if (items.empty()) {
+                    result.value_present = false;
+                    continue;
+                }
+                int64_t requested = op.expire_at_ms;
+                std::vector<std::string> payload_items;
+                const uint64_t offset = g_mako_random_counter.fetch_add(1, std::memory_order_relaxed);
+                if (!count_given) {
+                    payload_items.push_back(items[static_cast<size_t>(offset % items.size())].first);
+                } else if (requested == 0) {
+                    // Empty array response.
+                } else {
+                    const bool allow_duplicates = requested < 0;
+                    if (requested < 0) {
+                        requested = -requested;
+                    }
+                    const int64_t limit = allow_duplicates
+                        ? requested
+                        : std::min<int64_t>(requested, static_cast<int64_t>(items.size()));
+                    const size_t start = static_cast<size_t>(offset % items.size());
+                    for (int64_t idx = 0; idx < limit; ++idx) {
+                        const auto& item = items[(start + static_cast<size_t>(idx)) % items.size()];
+                        payload_items.push_back(item.first);
+                        if (with_scores) {
+                            payload_items.push_back(format_zset_score(item.second));
+                        }
+                    }
+                }
+                result.value_present = true;
+                std::string payload = pack_bytes_list(payload_items);
+                if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
             } else if (op.op == TXN_OP_ZSCAN) {
                 bool allowed = false;
                 mako::Status s = load_zset_stage(txn, user_key, result, allowed);
@@ -3095,6 +5171,46 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 result.value_present = true;
                 std::string payload = pack_bytes_list(payload_items);
                 if (!copy_result_value(result, payload)) {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_FLUSHDB) {
+                std::vector<std::string> keys_to_delete;
+                class FlushScanCallback : public abstract_ordered_index::scan_callback {
+                public:
+                    explicit FlushScanCallback(std::vector<std::string>& keys)
+                        : keys_(keys) {}
+
+                    bool invoke(const char* keyp, size_t keylen, const std::string&) override {
+                        keys_.emplace_back(keyp, keylen);
+                        return true;
+                    }
+
+                private:
+                    std::vector<std::string>& keys_;
+                };
+
+                FlushScanCallback callback(keys_to_delete);
+                g_table->scan(txn, std::string(), nullptr, callback, tl_arena);
+                mako::Status s = mako::Status::OK();
+                for (const auto& storage_key : keys_to_delete) {
+                    s = g_table->Delete(txn, storage_key);
+                    if (!s.ok() && !s.IsNotFound()) {
+                        break;
+                    }
+                    batch_exists[storage_key] = false;
+                    batch_values.erase(storage_key);
+                }
+                if (s.ok() || s.IsNotFound()) {
+                    batch_ttls.clear();
+                    staged_lists.clear();
+                    staged_lists_loaded.clear();
+                    dirty_lists.clear();
+                    staged_zsets.clear();
+                    staged_zsets_loaded.clear();
+                    dirty_zsets.clear();
+                    result.success = true;
+                    result.value_present = true;
+                } else {
                     all_success = false;
                 }
             } else if (op.op == TXN_OP_SCAN) {

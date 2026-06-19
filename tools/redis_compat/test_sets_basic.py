@@ -23,6 +23,13 @@ def test_basic_set_commands(mako_client: redis.Redis) -> None:
     assert mako_client.smembers(name) == {b"b"}
 
 
+def test_smismember_returns_membership_vector(mako_client: redis.Redis) -> None:
+    name = key("smismember")
+
+    assert mako_client.sadd(name, b"a", b"b") == 2
+    assert mako_client.execute_command("SMISMEMBER", name, b"a", b"z", b"b") == [1, 0, 1]
+
+
 def test_spop_and_srandmember_count_modes(mako_client: redis.Redis) -> None:
     name = key("random")
 
@@ -57,6 +64,8 @@ def test_set_algebra_and_store_variants(mako_client: redis.Redis) -> None:
     assert mako_client.sadd(right, b"b", b"c", b"d") == 3
 
     assert mako_client.sinter(left, right) == {b"b", b"c"}
+    assert mako_client.execute_command("SINTERCARD", 2, left, right) == 2
+    assert mako_client.execute_command("SINTERCARD", 2, left, right, "LIMIT", 1) == 1
     assert mako_client.sunion(left, right) == {b"a", b"b", b"c", b"d"}
     assert mako_client.sdiff(left, right) == {b"a"}
 
