@@ -986,10 +986,6 @@ void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionPro
 bool clientconn_should_trip_circuit_for_error(i32 err);
 RpcError clientconn_map_system_error(i32 err);
 void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory);
-bool clientconn_is_factory_bound(const ClientConnection& self);
-uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& self);
-void clientconn_abort_reconnect(ClientConnection& self);
-bool clientconn_is_reconnecting(const ClientConnection& self);
 void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy);
 void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback);
 bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new_id);
@@ -1090,7 +1086,7 @@ impl ClientConnection {
     fn bind_channel_via_poll_thread(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel_via_poll_thread(self, channel); }
     fn bind_channel_direct(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
     fn bind_factory(&mut self, factory: ChannelFactoryProxy) { clientconn_bind_factory(self, factory); }
-    fn abort_reconnect(&mut self) { clientconn_abort_reconnect(self); }
+    fn abort_reconnect(&mut self) { unsafe { self.reconnect_.reconnect_abort_.store(true, std::memory_order_release); } }
     fn set_callback_manager(&mut self, callback_manager: &Arc<CallbackManager>) {
         if callback_manager.is_valid() {
             self.callback_manager_ = callback_manager.clone();
@@ -1130,10 +1126,10 @@ impl ClientConnection {
     fn handle_error(&self) { clientconn_handle_error(self); }
     fn check_pending_write_update(&self) -> bool { clientconn_check_pending_write_update(self) }
     fn handle_free(&self, xid: i64) { clientconn_handle_free(self, xid); }
-    fn is_factory_bound(&self) -> bool { clientconn_is_factory_bound(self) }
-    fn channel_reconnect_attempts_count(&self) -> u64 { clientconn_channel_reconnect_attempts_count(self) }
+    fn is_factory_bound(&self) -> bool { (*self.factory_.lock().unwrap()).is_some() }
+    fn channel_reconnect_attempts_count(&self) -> u64 { unsafe { self.reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire) } }
     fn set_reconnect_policy(&self, policy: &ReconnectPolicy) { clientconn_set_reconnect_policy(self, policy); }
-    fn is_reconnecting(&self) -> bool { clientconn_is_reconnecting(self) }
+    fn is_reconnecting(&self) -> bool { unsafe { self.reconnect_.reconnecting_.load(std::memory_order_acquire) } }
     fn pending_future_count(&self) -> usize { self.pending_fu_.lock().unwrap().len() }
     fn replay_pending_requests_for_test(&self) -> usize { self.replay_pending_requests() }
     fn update_pending_queue_config_for_test(&self, config: &RequestQueueConfig) { self.pending_queue_.update_config(config); }
@@ -1188,7 +1184,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=579773c9e054ba7d0f8563a317574332468a3809fb85d7f7cf5fc97e1cd31482*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=ab94469654ea48f3139b086d4a60025b568bbe22c09dfc1424ad8b3751e579ac*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1403,7 +1399,10 @@ void ClientConnection::bind_factory(ChannelFactoryProxy factory) {
 }
 
 void ClientConnection::abort_reconnect() {
-    clientconn_abort_reconnect((*this));
+    // @unsafe
+    {
+        this->reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+    }
 }
 
 void ClientConnection::set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager) {
@@ -1512,11 +1511,14 @@ void ClientConnection::handle_free(int64_t xid) const {
 }
 
 bool ClientConnection::is_factory_bound() const {
-    return clientconn_is_factory_bound((*this));
+    return ((*this->factory_.lock().unwrap())).is_some();
 }
 
 uint64_t ClientConnection::channel_reconnect_attempts_count() const {
-    return clientconn_channel_reconnect_attempts_count((*this));
+    // @unsafe
+    {
+        return this->reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire);
+    }
 }
 
 void ClientConnection::set_reconnect_policy(const ReconnectPolicy& policy) const {
@@ -1524,7 +1526,10 @@ void ClientConnection::set_reconnect_policy(const ReconnectPolicy& policy) const
 }
 
 bool ClientConnection::is_reconnecting() const {
-    return clientconn_is_reconnecting((*this));
+    // @unsafe
+    {
+        return this->reconnect_.reconnecting_.load(std::memory_order_acquire);
+    }
 }
 
 size_t ClientConnection::pending_future_count() const {
@@ -3040,23 +3045,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
 void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory) {
   if (!factory) return;
   { auto guard = self.factory_.lock().unwrap(); *guard = rusty::Some(std::move(factory)); }
-}
-// @safe - SpinMutex::lock + Option::is_some.
-bool clientconn_is_factory_bound(const ClientConnection& self) {
-  auto guard = self.factory_.lock().unwrap();
-  return guard->is_some();
-}
-// @safe - Atomic load (acquire).
-uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& self) {
-  return self.reconnect_.channel_reconnect_attempts_.load(std::memory_order_acquire);
-}
-// @safe - Atomic store (release).
-void clientconn_abort_reconnect(ClientConnection& self) {
-  self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
-}
-// @safe - Atomic load (acquire).
-bool clientconn_is_reconnecting(const ClientConnection& self) {
-  return self.reconnect_.reconnecting_.load(std::memory_order_acquire);
 }
 // @unsafe - reconnect_policy_ is a plain field; const_cast matches the prior
 // `mutable ReconnectPolicy` access pattern.
