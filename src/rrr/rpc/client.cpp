@@ -994,9 +994,7 @@ uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& sel
 void clientconn_abort_reconnect(ClientConnection& self);
 bool clientconn_is_reconnecting(const ClientConnection& self);
 void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy);
-size_t clientconn_pending_future_count(const ClientConnection& self);
 size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self);
-void clientconn_update_pending_queue_config_for_test(const ClientConnection& self, const RequestQueueConfig& config);
 void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback);
 bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new_id);
 void clientconn_set_keepalive(const ClientConnection& self, const KeepaliveConfig& config);
@@ -1130,9 +1128,9 @@ impl ClientConnection {
     fn channel_reconnect_attempts_count(&self) -> u64 { clientconn_channel_reconnect_attempts_count(self) }
     fn set_reconnect_policy(&self, policy: &ReconnectPolicy) { clientconn_set_reconnect_policy(self, policy); }
     fn is_reconnecting(&self) -> bool { clientconn_is_reconnecting(self) }
-    fn pending_future_count(&self) -> usize { clientconn_pending_future_count(self) }
+    fn pending_future_count(&self) -> usize { self.pending_fu_.lock().unwrap().len() }
     fn replay_pending_requests_for_test(&self) -> usize { clientconn_replay_pending_requests_for_test(self) }
-    fn update_pending_queue_config_for_test(&self, config: &RequestQueueConfig) { clientconn_update_pending_queue_config_for_test(self, config); }
+    fn update_pending_queue_config_for_test(&self, config: &RequestQueueConfig) { self.pending_queue_.update_config(config); }
     fn set_on_server_restart(&self, callback: OnServerRestartCallbackFn) { clientconn_set_on_server_restart(self, callback); }
     fn check_server_instance(&self, new_id: u64) -> bool { clientconn_check_server_instance(self, new_id) }
     fn set_keepalive(&self, config: &KeepaliveConfig) { clientconn_set_keepalive(self, config); }
@@ -1184,7 +1182,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3f6c4fed926471e5329fe17ba3dc6576053b451b2ca4e103a5a8ec0926a294c1*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=daaafa39e9b7f01e1d515691b57760f7fef79fc7658b5a8f0f9798fb8045e421*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1515,7 +1513,7 @@ bool ClientConnection::is_reconnecting() const {
 }
 
 size_t ClientConnection::pending_future_count() const {
-    return clientconn_pending_future_count((*this));
+    return rusty::len(this->pending_fu_.lock().unwrap());
 }
 
 size_t ClientConnection::replay_pending_requests_for_test() const {
@@ -1523,7 +1521,7 @@ size_t ClientConnection::replay_pending_requests_for_test() const {
 }
 
 void ClientConnection::update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
-    clientconn_update_pending_queue_config_for_test((*this), config);
+    this->pending_queue_.update_config(config);
 }
 
 void ClientConnection::set_on_server_restart(OnServerRestartCallbackFn callback) const {
@@ -3050,18 +3048,9 @@ bool clientconn_is_reconnecting(const ClientConnection& self) {
 void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy) {
   const_cast<ClientConnection&>(self).reconnect_policy_ = policy;
 }
-// @unsafe - SpinMutex + rusty::HashMap len.
-size_t clientconn_pending_future_count(const ClientConnection& self) {
-  auto pending_guard = self.pending_fu_.lock().unwrap();
-  return pending_guard->len();
-}
 // @unsafe - Test hook: replays queue through the (now const) replay method.
 size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self) {
   return self.replay_pending_requests();
-}
-// @safe - Test hook: update queue policy (RequestQueue::update_config is const).
-void clientconn_update_pending_queue_config_for_test(const ClientConnection& self, const RequestQueueConfig& config) {
-  self.pending_queue_.update_config(config);
 }
 // @unsafe - rusty::Function move-assign; on_server_restart_ is a plain field.
 void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback) {
