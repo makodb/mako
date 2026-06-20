@@ -115,7 +115,6 @@ rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self);
 ChannelError              fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f);
 void                      fiberchannel_close(FiberChannel& self);
 bool                      fiberchannel_is_closed(const FiberChannel& self);
-ChannelConnectionProxy&   fiberchannel_channel_for_test(FiberChannel& self);
 void                      fiberchannel_drop(FiberChannel& self);
 
 // Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
@@ -174,7 +173,7 @@ impl FiberChannel {
     }
 
     fn channel_for_test(&mut self) -> &mut ChannelConnectionProxy {
-        fiberchannel_channel_for_test(self)
+        &mut self.ch_
     }
 }
 
@@ -184,7 +183,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=7a4d92aea882c2f468a4ea30776be7850ce1bf9d1eec66842ab2edbdd1fb4679*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=b373655128ede95318e9e31b6bbd02911a0fd1f4be59f44d90d84c986a36c751*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -250,7 +249,7 @@ bool FiberChannel::is_closed() const {
 }
 
 ChannelConnectionProxy& FiberChannel::channel_for_test() {
-    return fiberchannel_channel_for_test((*this));
+    return this->ch_;
 }
 
 FiberChannel::~FiberChannel() noexcept(false) {
@@ -357,11 +356,6 @@ bool fiberchannel_is_closed(const FiberChannel& self) {
 // @unsafe - proxy deref through `ch_->close()`.
 void fiberchannel_close(FiberChannel& self) {
     self.ch_->close();
-}
-
-// @safe - non-owning access to the underlying proxy (tests only).
-ChannelConnectionProxy& fiberchannel_channel_for_test(FiberChannel& self) {
-    return self.ch_;
 }
 
 rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self) {

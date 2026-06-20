@@ -104,7 +104,6 @@ constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4
 ChannelError tcpconn_send_frame(TcpConnection& self, const ChannelFrame& frame);
 void         tcpconn_flush(TcpConnection& self);
 void         tcpconn_close(TcpConnection& self);
-std::string  tcpconn_peer_address(const TcpConnection& self);
 void         tcpconn_set_on_frame(TcpConnection& self, OnFrameCallback cb);
 void         tcpconn_set_on_closed(TcpConnection& self, OnClosedCallback cb);
 void         tcpconn_set_on_error(TcpConnection& self, OnErrorCallback cb);
@@ -198,7 +197,7 @@ impl TcpConnection {
     }
 
     fn peer_address(&self) -> std::string {
-        tcpconn_peer_address(self)
+        self.peer_address_
     }
 
     fn set_on_frame(&mut self, cb: OnFrameCallback) {
@@ -250,7 +249,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=b6456c7dad7574058ab4f4bf0c506824d6556c825d546aed9b1ec9e64fd09b6e*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=2722e2e2255377771e27e6955db63cb6b697e75d67aa0646c04f2da0c8e7fb72*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -324,7 +323,7 @@ bool TcpConnection::is_closed() const {
 }
 
 std::string TcpConnection::peer_address() const {
-    return tcpconn_peer_address((*this));
+    return this->peer_address_;
 }
 
 void TcpConnection::set_on_frame(OnFrameCallback cb) {
@@ -505,10 +504,8 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
 struct TcpListener;  // defined by the GEN block below
 ChannelError tcplistener_listen(TcpListener& self, std::string_view addr);
 void         tcplistener_close(TcpListener& self);
-std::string  tcplistener_local_address(const TcpListener& self);
 void         tcplistener_set_on_accept(TcpListener& self, OnAcceptCallback cb);
 void         tcplistener_set_on_error(TcpListener& self, OnErrorCallback cb);
-int          tcplistener_fd(const TcpListener& self);
 bool         tcplistener_handle_read(TcpListener& self);
 void         tcplistener_handle_error(TcpListener& self);
 
@@ -570,7 +567,7 @@ impl TcpListener {
     }
 
     fn local_address(&self) -> std::string {
-        tcplistener_local_address(self)
+        self.bound_address_
     }
 
     fn set_on_accept(&mut self, cb: OnAcceptCallback) {
@@ -582,7 +579,7 @@ impl TcpListener {
     }
 
     fn fd(&self) -> i32 {
-        tcplistener_fd(self)
+        self.listener_.as_owned_fd().as_raw_fd()
     }
 
     fn poll_mode(&self) -> i32 {
@@ -618,7 +615,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=e70facc59412ba1aadacf2dcf6cb070c97c2faa6289a53255c0bc6c93dbe2fe8*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=77a53eda6349c118aa41047bd3d3fd93bafa62245187b22bd26e0d752639fe50*/
 struct TcpListener;
 
 struct TcpListener {
@@ -674,7 +671,7 @@ bool TcpListener::is_closed() const {
 }
 
 std::string TcpListener::local_address() const {
-    return tcplistener_local_address((*this));
+    return this->bound_address_;
 }
 
 void TcpListener::set_on_accept(OnAcceptCallback cb) {
@@ -686,7 +683,7 @@ void TcpListener::set_on_error(OnErrorCallback cb) {
 }
 
 int32_t TcpListener::fd() const {
-    return tcplistener_fd((*this));
+    return this->listener_.as_owned_fd().as_raw_fd();
 }
 
 int32_t TcpListener::poll_mode() const {
@@ -1069,11 +1066,6 @@ void tcpconn_close(TcpConnection& self) {
     tcpconn_deliver_on_closed_locked(self, ChannelError::None);
 }
 
-// @safe - returns a copy of the human-readable peer label.
-std::string tcpconn_peer_address(const TcpConnection& self) {
-    return self.peer_address_;
-}
-
 // @unsafe - last-writer-wins callback store under the spinlock.
 void tcpconn_set_on_frame(TcpConnection& self, OnFrameCallback cb) {
     auto guard = self.on_frame_.lock().unwrap();
@@ -1450,11 +1442,6 @@ void tcplistener_close(TcpListener& self) {
     self.listener_ = rusty::net::TcpListener{};  // RAII close
 }
 
-// @safe - returns a copy of the bound-address label.
-std::string tcplistener_local_address(const TcpListener& self) {
-    return self.bound_address_;
-}
-
 // @unsafe - last-writer-wins callback store under the spinlock.
 void tcplistener_set_on_accept(TcpListener& self, OnAcceptCallback cb) {
     auto guard = self.on_accept_.lock().unwrap();
@@ -1465,11 +1452,6 @@ void tcplistener_set_on_accept(TcpListener& self, OnAcceptCallback cb) {
 void tcplistener_set_on_error(TcpListener& self, OnErrorCallback cb) {
     auto guard = self.on_error_.lock().unwrap();
     *guard = std::move(cb);
-}
-
-// @unsafe - reads the raw listen fd off the owned net::TcpListener.
-int tcplistener_fd(const TcpListener& self) {
-    return self.listener_.as_owned_fd().as_raw_fd();
 }
 
 // @safe - accept loop now delegates to `rusty::net::TcpListener::accept`

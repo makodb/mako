@@ -956,7 +956,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_drop(const ClientConnection& self);
 void clientconn_mark_closing(const ClientConnection& self);
 void clientconn_record_circuit_result(const ClientConnection& self, i32 err);
-bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self);
 void clientconn_record_circuit_state_transition(const ClientConnection& self, CircuitState before, CircuitState after);
 void clientconn_invoke_error_callback(const ClientConnection& self, i32 err, const std::string& message);
 void clientconn_invoke_disconnected_callback(const ClientConnection& self);
@@ -965,9 +964,7 @@ void clientconn_invoke_reconnected_callback(const ClientConnection& self, bool s
 void clientconn_invoke_connected_callback(const ClientConnection& self);
 void clientconn_set_buffering_config(const ClientConnection& self, const BufferingConfig& config);
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
-HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self);
 void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config);
-CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self);
 void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
 void clientconn_handle_free(const ClientConnection& self, i64 xid);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
@@ -994,14 +991,10 @@ uint64_t clientconn_channel_reconnect_attempts_count(const ClientConnection& sel
 void clientconn_abort_reconnect(ClientConnection& self);
 bool clientconn_is_reconnecting(const ClientConnection& self);
 void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy);
-size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self);
 void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback);
 bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new_id);
-void clientconn_set_keepalive(const ClientConnection& self, const KeepaliveConfig& config);
 void clientconn_on_request_dispatched(const ClientConnection& self, size_t bytes);
 void clientconn_on_response_received(const ClientConnection& self, size_t bytes);
-void clientconn_set_callback_manager(ClientConnection& self, const rusty::Arc<CallbackManager>& callback_manager);
-std::string clientconn_host(const ClientConnection& self);
 uint64_t clientconn_monotonic_ms_now();
 template<typename F>
 FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
@@ -1098,7 +1091,11 @@ impl ClientConnection {
     fn bind_channel_direct(&mut self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
     fn bind_factory(&mut self, factory: ChannelFactoryProxy) { clientconn_bind_factory(self, factory); }
     fn abort_reconnect(&mut self) { clientconn_abort_reconnect(self); }
-    fn set_callback_manager(&mut self, callback_manager: &Arc<CallbackManager>) { clientconn_set_callback_manager(self, callback_manager); }
+    fn set_callback_manager(&mut self, callback_manager: &Arc<CallbackManager>) {
+        if callback_manager.is_valid() {
+            self.callback_manager_ = callback_manager.clone();
+        }
+    }
 
     // --- delegating methods (&self → const free fns) ---
     fn invalidate_pending_futures(&self) { clientconn_invalidate_pending_futures(self); }
@@ -1108,11 +1105,20 @@ impl ClientConnection {
     fn reconnect(&self, on_complete: OnReconnectCompleteCallbackFn) -> i32 { clientconn_reconnect(self, on_complete) }
     fn set_buffering_config(&self, config: &BufferingConfig) { clientconn_set_buffering_config(self, config); }
     fn set_heartbeat_config(&self, config: &HeartbeatConfig) { clientconn_set_heartbeat_config(self, config); }
-    fn heartbeat_config(&self) -> HeartbeatConfig { clientconn_heartbeat_config(self) }
+    fn heartbeat_config(&self) -> HeartbeatConfig { self.heartbeat_manager_.config() }
     fn set_circuit_breaker_config(&self, config: &CircuitBreakerConfig) { clientconn_set_circuit_breaker_config(self, config); }
-    fn circuit_breaker_config(&self) -> CircuitBreakerConfig { clientconn_circuit_breaker_config(self) }
+    fn circuit_breaker_config(&self) -> CircuitBreakerConfig { self.circuit_breaker_.config() }
     fn enqueue_heartbeat_probe(&self) { clientconn_enqueue_heartbeat_probe(self); }
-    fn allow_request_with_circuit_metrics(&self) -> bool { clientconn_allow_request_with_circuit_metrics(self) }
+    fn allow_request_with_circuit_metrics(&self) -> bool {
+        let before = self.circuit_breaker_.state();
+        let allowed = self.circuit_breaker_.allow_request();
+        let after = self.circuit_breaker_.state();
+        self.record_circuit_state_transition(before, after);
+        if !allowed {
+            self.metrics_.record_circuit_open_rejection();
+        }
+        allowed
+    }
     fn record_circuit_state_transition(&self, before: CircuitState, after: CircuitState) { clientconn_record_circuit_state_transition(self, before, after); }
     fn record_circuit_result(&self, err: i32) { clientconn_record_circuit_result(self, err); }
     fn invoke_error_callback(&self, err: i32, message: &std::string) { clientconn_invoke_error_callback(self, err, message); }
@@ -1129,14 +1135,14 @@ impl ClientConnection {
     fn set_reconnect_policy(&self, policy: &ReconnectPolicy) { clientconn_set_reconnect_policy(self, policy); }
     fn is_reconnecting(&self) -> bool { clientconn_is_reconnecting(self) }
     fn pending_future_count(&self) -> usize { self.pending_fu_.lock().unwrap().len() }
-    fn replay_pending_requests_for_test(&self) -> usize { clientconn_replay_pending_requests_for_test(self) }
+    fn replay_pending_requests_for_test(&self) -> usize { self.replay_pending_requests() }
     fn update_pending_queue_config_for_test(&self, config: &RequestQueueConfig) { self.pending_queue_.update_config(config); }
     fn set_on_server_restart(&self, callback: OnServerRestartCallbackFn) { clientconn_set_on_server_restart(self, callback); }
     fn check_server_instance(&self, new_id: u64) -> bool { clientconn_check_server_instance(self, new_id) }
-    fn set_keepalive(&self, config: &KeepaliveConfig) { clientconn_set_keepalive(self, config); }
+    fn set_keepalive(&self, config: &KeepaliveConfig) { self.keepalive_config_.set(config); }
     fn on_request_dispatched(&self, bytes: usize) { clientconn_on_request_dispatched(self, bytes); }
     fn on_response_received(&self, bytes: usize) { clientconn_on_response_received(self, bytes); }
-    fn host(&self) -> std::string { clientconn_host(self) }
+    fn host(&self) -> std::string { self.host_ }
 
     // --- static delegators ---
     fn should_trip_circuit_for_error(err: i32) -> bool { clientconn_should_trip_circuit_for_error(err) }
@@ -1182,7 +1188,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=daaafa39e9b7f01e1d515691b57760f7fef79fc7658b5a8f0f9798fb8045e421*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=579773c9e054ba7d0f8563a317574332468a3809fb85d7f7cf5fc97e1cd31482*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1401,7 +1407,9 @@ void ClientConnection::abort_reconnect() {
 }
 
 void ClientConnection::set_callback_manager(const rusty::Arc<CallbackManager>& callback_manager) {
-    clientconn_set_callback_manager((*this), callback_manager);
+    if (callback_manager.is_valid()) {
+        this->callback_manager_ = rusty::clone(callback_manager);
+    }
 }
 
 void ClientConnection::invalidate_pending_futures() const {
@@ -1433,7 +1441,7 @@ void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const
 }
 
 HeartbeatConfig ClientConnection::heartbeat_config() const {
-    return clientconn_heartbeat_config((*this));
+    return this->heartbeat_manager_.config();
 }
 
 void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
@@ -1441,7 +1449,7 @@ void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& co
 }
 
 CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
-    return clientconn_circuit_breaker_config((*this));
+    return this->circuit_breaker_.config();
 }
 
 void ClientConnection::enqueue_heartbeat_probe() const {
@@ -1449,7 +1457,14 @@ void ClientConnection::enqueue_heartbeat_probe() const {
 }
 
 bool ClientConnection::allow_request_with_circuit_metrics() const {
-    return clientconn_allow_request_with_circuit_metrics((*this));
+    auto before = this->circuit_breaker_.state();
+    auto allowed = this->circuit_breaker_.allow_request();
+    auto after = this->circuit_breaker_.state();
+    this->record_circuit_state_transition(std::move(before), std::move(after));
+    if (!allowed) {
+        this->metrics_.record_circuit_open_rejection();
+    }
+    return std::move(allowed);
 }
 
 void ClientConnection::record_circuit_state_transition(CircuitState before, CircuitState after) const {
@@ -1517,7 +1532,7 @@ size_t ClientConnection::pending_future_count() const {
 }
 
 size_t ClientConnection::replay_pending_requests_for_test() const {
-    return clientconn_replay_pending_requests_for_test((*this));
+    return this->replay_pending_requests();
 }
 
 void ClientConnection::update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
@@ -1533,7 +1548,7 @@ bool ClientConnection::check_server_instance(uint64_t new_id) const {
 }
 
 void ClientConnection::set_keepalive(const KeepaliveConfig& config) const {
-    clientconn_set_keepalive((*this), config);
+    this->keepalive_config_.set(std::move(config));
 }
 
 void ClientConnection::on_request_dispatched(size_t bytes) const {
@@ -1545,7 +1560,7 @@ void ClientConnection::on_response_received(size_t bytes) const {
 }
 
 std::string ClientConnection::host() const {
-    return clientconn_host((*this));
+    return this->host_;
 }
 
 bool ClientConnection::should_trip_circuit_for_error(int32_t err) {
@@ -3048,10 +3063,6 @@ bool clientconn_is_reconnecting(const ClientConnection& self) {
 void clientconn_set_reconnect_policy(const ClientConnection& self, const ReconnectPolicy& policy) {
   const_cast<ClientConnection&>(self).reconnect_policy_ = policy;
 }
-// @unsafe - Test hook: replays queue through the (now const) replay method.
-size_t clientconn_replay_pending_requests_for_test(const ClientConnection& self) {
-  return self.replay_pending_requests();
-}
 // @unsafe - rusty::Function move-assign; on_server_restart_ is a plain field.
 void clientconn_set_on_server_restart(const ClientConnection& self, rusty::Function<void(uint64_t, uint64_t)> callback) {
   const_cast<ClientConnection&>(self).on_server_restart_ = std::move(callback);
@@ -3071,10 +3082,6 @@ bool clientconn_check_server_instance(const ClientConnection& self, uint64_t new
   }
   return false;
 }
-// @safe - Cell set (keepalive_config_ interior mutability).
-void clientconn_set_keepalive(const ClientConnection& self, const KeepaliveConfig& config) {
-  self.keepalive_config_.set(config);
-}
 // @safe - delegates to rusty::sys::time::clock_monotonic_us.
 uint64_t clientconn_monotonic_ms_now() {
   return rusty::sys::time::clock_monotonic_us() / 1000;
@@ -3088,16 +3095,6 @@ void clientconn_on_request_dispatched(const ClientConnection& self, size_t bytes
 void clientconn_on_response_received(const ClientConnection& self, size_t bytes) {
   self.metrics_.record_bytes_received(static_cast<uint64_t>(bytes));
   self.update_last_activity(clientconn_monotonic_ms_now());
-}
-// @safe - Share callback manager with facade; Arc clone is @safe.
-void clientconn_set_callback_manager(ClientConnection& self, const rusty::Arc<CallbackManager>& callback_manager) {
-  if (callback_manager.is_valid()) {
-    self.callback_manager_ = callback_manager.clone();
-  }
-}
-// @safe - Returning std::string by value is a safe copy.
-std::string clientconn_host(const ClientConnection& self) {
-  return self.host_;
 }
 void clientconn_drop(const ClientConnection& self) {
   self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
@@ -3498,21 +3495,11 @@ void clientconn_set_heartbeat_config(const ClientConnection& self, const Heartbe
 }
 
 
-// @safe - HeartbeatManager class is @safe; config() returns by value.
-HeartbeatConfig clientconn_heartbeat_config(const ClientConnection& self) {
-  return self.heartbeat_manager_.config();
-}
-
 // @safe - CircuitBreaker class is @safe; set_config is @safe.
 void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config) {
   // CircuitBreaker::set_config assigns a plain config field → non-const;
   // const_cast matches the prior `mutable CircuitBreaker` access pattern.
   const_cast<ClientConnection&>(self).circuit_breaker_.set_config(config);
-}
-
-// @safe - CircuitBreaker class is @safe; config() returns by value.
-CircuitBreakerConfig clientconn_circuit_breaker_config(const ClientConnection& self) {
-  return self.circuit_breaker_.config();
 }
 
 // @safe - No-op stub returning a constant. (The RequestQueue methods
@@ -4463,23 +4450,6 @@ void clientconn_on_channel_closed_fan_out(ClientConnection& self) {
     }).detach();
   }
 }
-
-// @unsafe - one-line delegator to the friend free fn (extraction
-// step toward the DSL flip).
-
-// @safe - CircuitBreaker and ConnectionMetrics are both @safe classes;
-// record_circuit_state_transition is @safe.
-bool clientconn_allow_request_with_circuit_metrics(const ClientConnection& self) {
-  CircuitState before = self.circuit_breaker_.state();
-  bool allowed = self.circuit_breaker_.allow_request();
-  CircuitState after = self.circuit_breaker_.state();
-  self.record_circuit_state_transition(before, after);
-  if (!allowed) {
-    self.metrics_.record_circuit_open_rejection();
-  }
-  return allowed;
-}
-
 
 // @safe - Checks whether an error should contribute to circuit tripping.
 bool clientconn_should_trip_circuit_for_error(i32 err) {
