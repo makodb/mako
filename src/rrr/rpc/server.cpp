@@ -120,30 +120,79 @@ using ShutdownHook = rusty::Function<void()>;
  * For the request object, the marshal only contains <arg1>..<argN>,
  * other fields are already consumed.
  */
-// @safe - RAII guard for one in-flight request.
+// Pending-request counter helpers. The counter is an Arc-shared
+// std::atomic; Arc hands out a const pointer, so bumping the atomic
+// needs a const_cast (the const is Arc's shared-ownership const, not the
+// atomic's — atomics are interior-mutable). These two are the only
+// places the counter moves.
+// @unsafe - const_cast through Arc's shared const to the interior-mutable atomic.
+inline void pending_guard_acquire(const rusty::Arc<std::atomic<int32_t>>& counter) {
+    if (counter.is_valid()) {
+        const_cast<std::atomic<int32_t>*>(counter.get())->fetch_add(1, std::memory_order_relaxed);
+    }
+}
+// @unsafe - mirror of pending_guard_acquire; runs from PendingRequestGuard's
+// drop. Takes a pointer because the DSL lowers `&self.field` to `&this->field`
+// (an address-of), whereas a `&T` param (acquire's caller) lowers to a reference.
+inline void pending_guard_release(const rusty::Arc<std::atomic<int32_t>>* counter) {
+    if (counter->is_valid()) {
+        const_cast<std::atomic<int32_t>*>(counter->get())->fetch_sub(1, std::memory_order_relaxed);
+    }
+}
+
+// @safe - RAII guard for one in-flight request: decrements the shared
+// pending-request counter on drop. The matching increment is done at the
+// guard's single construction site (`Request::attach_pending_guard`).
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ struct + destructor.
+// (The DSL emits a copyable struct since the Arc field is copyable; the
+// guard is only ever boxed and moved — never copied — so the original's
+// deleted copy ctor is not load-bearing.)
+#if RUSTYCPP_RUST
 struct PendingRequestGuard {
-    rusty::Arc<std::atomic<int>> pending_counter;
+    pending_counter: rusty::Arc<std::atomic<i32>>,
+}
 
-    explicit PendingRequestGuard(rusty::Arc<std::atomic<int>> counter)
-        : pending_counter(std::move(counter)) {
-        if (pending_counter.is_valid()) {
-            auto* counter_ptr = const_cast<std::atomic<int>*>(pending_counter.get());
-            counter_ptr->fetch_add(1, std::memory_order_relaxed);
-        }
+impl Drop for PendingRequestGuard {
+    fn drop(&mut self) {
+        pending_guard_release(&self.pending_counter);
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.pending_guard version=1 rust_sha256=2162d7cc4e2a4fb08b01e160d91b6da40128a7a26a7a3e4bc6bebcc072194e84*/
+struct PendingRequestGuard;
 
-    ~PendingRequestGuard() {
-        if (pending_counter.is_valid()) {
-            auto* counter_ptr = const_cast<std::atomic<int>*>(pending_counter.get());
-            counter_ptr->fetch_sub(1, std::memory_order_relaxed);
-        }
+struct PendingRequestGuard {
+    rusty::Arc<std::atomic<int32_t>> pending_counter;
+    mutable bool _rusty_forgotten = false;
+    PendingRequestGuard(rusty::Arc<std::atomic<int32_t>> pending_counter_init) : pending_counter(std::move(pending_counter_init)) {}
+    PendingRequestGuard(const PendingRequestGuard&) = default;
+    PendingRequestGuard(PendingRequestGuard&& other) noexcept : pending_counter(std::move(other.pending_counter)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
     }
+    PendingRequestGuard& operator=(const PendingRequestGuard&) = default;
+    PendingRequestGuard& operator=(PendingRequestGuard&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~PendingRequestGuard();
+        new (this) PendingRequestGuard(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
 
-    PendingRequestGuard(PendingRequestGuard&&) = default;
-    PendingRequestGuard& operator=(PendingRequestGuard&&) = default;
-    PendingRequestGuard(const PendingRequestGuard&) = delete;
-    PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
+
+    ~PendingRequestGuard() noexcept(false);
 };
+
+
+PendingRequestGuard::~PendingRequestGuard() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    pending_guard_release(&this->pending_counter);
+}
+/*RUSTYCPP:GEN-END id=server.pending_guard*/
 
 // `Request` — simple in-flight RPC request container.
 //
@@ -163,12 +212,13 @@ struct Request {
 impl Request {
     fn attach_pending_guard(&mut self, counter: &rusty::Arc<std::atomic<i32>>) {
         if self.pending_guard.is_none() && counter.is_valid() {
+            pending_guard_acquire(counter);
             self.pending_guard = rusty::Some(rusty::make_box::<PendingRequestGuard>(counter.clone()));
         }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=6def5a3206d9261c1289ce335913e64090f08e3446f690c4091ec31144fdd0c4*/
+/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=c680f7c2330b1e791d35146744eb5499bbca4f7e5e33f01840602b96a89f6649*/
 struct Request;
 
 struct Request {
@@ -182,6 +232,7 @@ struct Request {
 
 void Request::attach_pending_guard(const rusty::Arc<std::atomic<int32_t>>& counter) {
     if (this->pending_guard.is_none() && counter.is_valid()) {
+        pending_guard_acquire(counter);
         this->pending_guard = rusty::Option<rusty::Box<PendingRequestGuard>>(rusty::make_box<PendingRequestGuard>(rusty::clone(counter)));
     }
 }
