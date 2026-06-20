@@ -1106,7 +1106,7 @@ private:
 private:
     // @unsafe - For testing: get number of epoll Remove() calls
     // SAFETY: Atomic load is safe but requires @unsafe annotation
-    int get_remove_count() const { return poll_.remove_count_.load(); }
+    int get_remove_count() const { return rrr::epoll_remove_count.load(); }
 
 private:
     // Process incoming commands from channel

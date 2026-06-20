@@ -547,8 +547,9 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         socket_pairs.push_back(create_socket_pair());
     }
 
-    // Reset the static remove counter
-    Epoll::remove_count_ = 0;
+    // Reset the global remove counter (was Epoll::remove_count_ static member;
+    // hoisted to rrr::epoll_remove_count when Epoll moved to the DSL).
+    rrr::epoll_remove_count = 0;
 
     {
         auto test_poll_worker = PollThread::create();
@@ -563,7 +564,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         std::this_thread::sleep_for(milliseconds(100));
 
         // Verify no removes happened yet
-        EXPECT_EQ(Epoll::remove_count_.load(), 0);
+        EXPECT_EQ(rrr::epoll_remove_count.load(), 0);
 
         // Destroy PollThread WITHOUT calling remove() on pollables
         // With the FIX, the destructor will:
@@ -576,8 +577,8 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
 
     }
 
-    // Now check the static remove counter
-    int final_remove_count = Epoll::remove_count_.load();
+    // Now check the global remove counter
+    int final_remove_count = rrr::epoll_remove_count.load();
 
     std::cout << "Remove count after destruction: " << final_remove_count << std::endl;
     std::cout << "Expected (correct behavior): " << NUM_POLLABLES << std::endl;
