@@ -972,10 +972,10 @@ bool clientconn_check_pending_write_update(const ClientConnection& self);
 void clientconn_invalidate_pending_futures(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
 void clientconn_reset_channel_mode_for_reconnect(ClientConnection& self);
-void clientconn_run_recv_loop(ClientConnection& self);
+void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_handle_error(const ClientConnection& self);
-void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
-void clientconn_on_channel_closed_fan_out(ClientConnection& self);
+void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
+void clientconn_on_channel_closed_fan_out(const ClientConnection& self);
 ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
 int clientconn_connect(ClientConnection& self, const int8_t* addr);
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
@@ -1076,9 +1076,12 @@ impl ClientConnection {
     }
 
     // --- delegating methods (&mut self → non-const free fns) ---
-    fn run_recv_loop(&mut self) { clientconn_run_recv_loop(self); }
-    fn decode_response_and_notify(&mut self, bytes: *const u8, size: usize) { clientconn_decode_response_and_notify(self, bytes, size); }
-    fn on_channel_closed_fan_out(&mut self) { clientconn_on_channel_closed_fan_out(self); }
+    // recv-loop cluster: &self over interior-mutable state, so it is callable
+    // directly through a shared Arc<ClientConnection> (no const_cast at the
+    // fiber/job/channel-callback spawn sites).
+    fn run_recv_loop(&self) { clientconn_run_recv_loop(self); }
+    fn decode_response_and_notify(&self, bytes: *const u8, size: usize) { clientconn_decode_response_and_notify(self, bytes, size); }
+    fn on_channel_closed_fan_out(&self) { clientconn_on_channel_closed_fan_out(self); }
     fn connect_via_factory(&mut self, addr: *const i8) -> i32 { clientconn_connect_via_factory(self, addr) }
     fn reset_channel_mode_for_reconnect(&mut self) { clientconn_reset_channel_mode_for_reconnect(self); }
     fn connect(&mut self, addr: *const i8) -> i32 { clientconn_connect(self, addr) }
@@ -1184,7 +1187,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=8a889adc5b79c622698146b56955847256c50ed0409a770949a624cd6fac9b80*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=d2ebbd532b8015575aa4030d9c98a3b93a3f3de97c683ea587eaba94169db4d1*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1236,9 +1239,9 @@ struct ClientConnection {
 
     ~ClientConnection() noexcept(false);
     ClientConnection(rusty::Arc<PollThread> poll_thread_worker);
-    void run_recv_loop();
-    void decode_response_and_notify(const uint8_t* bytes, size_t size);
-    void on_channel_closed_fan_out();
+    void run_recv_loop() const;
+    void decode_response_and_notify(const uint8_t* bytes, size_t size) const;
+    void on_channel_closed_fan_out() const;
     int32_t connect_via_factory(const int8_t* addr);
     void reset_channel_mode_for_reconnect();
     int32_t connect(const int8_t* addr);
@@ -1358,15 +1361,15 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     , is_client_mode_(false)
 {}
 
-void ClientConnection::run_recv_loop() {
+void ClientConnection::run_recv_loop() const {
     clientconn_run_recv_loop((*this));
 }
 
-void ClientConnection::decode_response_and_notify(const uint8_t* bytes, size_t size) {
+void ClientConnection::decode_response_and_notify(const uint8_t* bytes, size_t size) const {
     clientconn_decode_response_and_notify((*this), bytes, std::move(size));
 }
 
-void ClientConnection::on_channel_closed_fan_out() {
+void ClientConnection::on_channel_closed_fan_out() const {
     clientconn_on_channel_closed_fan_out((*this));
 }
 
@@ -4051,8 +4054,7 @@ void clientconn_bind_channel(ClientConnection& self, ChannelConnectionProxy chan
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    mut_conn->run_recv_loop();
+    conn->run_recv_loop();
   }, __FILE__, __LINE__);
 }
 
@@ -4097,8 +4099,7 @@ void clientconn_bind_channel_via_poll_thread(
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    mut_conn->run_recv_loop();
+    conn->run_recv_loop();
   }));
   // Upcast Arc<OneTimeJob> -> Arc<Job> for the PollThread queue.
   auto recv_job_base = rusty::Arc<Job>(recv_job);
@@ -4146,15 +4147,13 @@ void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionPro
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    mut_conn->decode_response_and_notify(f.payload, f.size);
+    conn->decode_response_and_notify(f.payload, f.size);
   });
   channel->set_on_closed([weak_self](ChannelError /*reason*/) {
     auto conn_opt = weak_self.upgrade();
     if (conn_opt.is_none()) return;
     auto conn = conn_opt.unwrap();
-    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-    mut_conn->on_channel_closed_fan_out();
+    conn->on_channel_closed_fan_out();
   });
   // on_error is not surfaced to the RPC layer in this binding mode
   // (the channel-layer contract follows fatal errors with on_closed,
@@ -4186,7 +4185,7 @@ void clientconn_bind_channel_direct(ClientConnection& self, ChannelConnectionPro
 // raw pointer stays valid because the spawning lambda keeps an
 // `Arc<ClientConnection>` alive for the fiber's lifetime, and the
 // connection owns the `Box<FiberChannel>`.
-void clientconn_run_recv_loop(ClientConnection& self) {
+void clientconn_run_recv_loop(const ClientConnection& self) {
   FiberChannel* fc = nullptr;
   {
     auto guard = self.fiber_channel_.lock().unwrap();
@@ -4227,7 +4226,7 @@ void clientconn_run_recv_loop(ClientConnection& self) {
 // reads the instance ID. Sub-leaf 4f's migration switch / parity
 // pass will revisit if a legacy-server interop path needs the bit
 // surfaced through `ChannelFrame`.
-void clientconn_decode_response_and_notify(ClientConnection& self, const std::uint8_t* bytes,
+void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes,
                                                   std::size_t size) {
   // Account for every inbound frame body byte and bump the activity
   // clock so `metrics_.bytes_received()` and `is_idle()` reflect real
@@ -4351,7 +4350,7 @@ void clientconn_decode_response_and_notify(ClientConnection& self, const std::ui
 // state transitions through DISCONNECTING) — channel mode never
 // owned the fd, and the channel layer has already torn down its
 // underlying transport.
-void clientconn_on_channel_closed_fan_out(ClientConnection& self) {
+void clientconn_on_channel_closed_fan_out(const ClientConnection& self) {
   ConnectionState prev_state = self.state_machine_.state();
   const bool user_initiated_closing =
       prev_state == ConnectionState::DISCONNECTING ||
