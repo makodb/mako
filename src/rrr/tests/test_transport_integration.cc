@@ -526,7 +526,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
         }
     });
     server->reg_service(std::move(svc));

@@ -24,6 +24,7 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"

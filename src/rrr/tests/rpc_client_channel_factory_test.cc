@@ -27,6 +27,7 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
@@ -216,7 +217,7 @@ TEST_F(ClientChannelFactoryTest, ConnectRoutesThroughFactory) {
     EXPECT_FALSE(mut_conn().is_channel_mode());
     EXPECT_EQ(factory_->connect_count(), 0u);
 
-    int rc = mut_conn().connect("fake-addr:0");
+    int rc = mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0"));
 
     EXPECT_EQ(rc, 0);
     EXPECT_TRUE(mut_conn().is_channel_mode());
@@ -226,7 +227,7 @@ TEST_F(ClientChannelFactoryTest, ConnectRoutesThroughFactory) {
 }
 
 TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
-    ASSERT_EQ(mut_conn().connect("fake-addr:0"), 0);
+    ASSERT_EQ(mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0")), 0);
     auto stub = factory_->last_stub();
     ASSERT_NE(stub, nullptr);
 
@@ -242,7 +243,7 @@ TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
 TEST_F(ClientChannelFactoryTest, ConnectFailureSurfacesAsErrno) {
     factory_->set_next_error(ChannelError::ConnectionRefused);
 
-    int rc = mut_conn().connect("fake-addr:0");
+    int rc = mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0"));
 
     EXPECT_EQ(rc, ECONNREFUSED);
     EXPECT_FALSE(mut_conn().is_channel_mode());
@@ -257,7 +258,7 @@ TEST_F(ClientChannelFactoryTest,
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 
-    ASSERT_EQ(mut_conn().connect("fake-addr:0"), 0);
+    ASSERT_EQ(mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0")), 0);
     ASSERT_EQ(factory_->connect_count(), 1u);
 
     auto first_stub = factory_->last_stub();

@@ -1,3 +1,4 @@
+#include <std_compat.hpp>  // textual STL before `import std` (abi_tag fix)
 #include <stdint.h>
 
 #include <gtest/gtest.h>

@@ -47,6 +47,14 @@ class CountingPollable : public Pollable {
         write_count_(write_count),
         close_count_(close_count) {}
 
+  // `Pollable` (a pub trait) deletes copy AND move, so the implicit move ctor is
+  // deleted; provide one (default-construct the base, copy the trivial members)
+  // so `CountingPollable` can be moved into an Arc/PollableProxy.
+  CountingPollable(CountingPollable&& o) noexcept
+      : Pollable(), fd_(o.fd_), mode_(o.mode_),
+        read_count_(o.read_count_), write_count_(o.write_count_),
+        close_count_(o.close_count_) {}
+
   int fd() const override { return fd_; }
   int poll_mode() const override { return mode_; }
   size_t content_size() override { return 0; }

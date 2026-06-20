@@ -1,3 +1,4 @@
+#include <std_compat.hpp>  // textual STL before `import std` (abi_tag fix)
 #include <math.h>
 #include <unistd.h>
 

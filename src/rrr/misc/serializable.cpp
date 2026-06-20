@@ -717,7 +717,10 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::BTreeSet<T>& v) {
     rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    // rusty BTreeSet has no begin()/end(); iterate the Rust-style iterator.
+    auto __it = v.iter();
+    for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
+      *this << std::move(__e).unwrap();
     return *this;
   }
 
@@ -733,7 +736,20 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::HashSet<T>& v) {
     rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
+    // HashSet wraps a HashMap<T, monostate>; walk the underlying map's const
+    // Rust iterator (HashSet's own begin()/end() is non-const). next() yields
+    // Option<tuple<const T&, ...>>.
+    // WARNING: ANY hashbrown enumeration (iter()/begin()/drain()) routes
+    // through the `rusty::iter(table)` lambda in slice.hpp, whose return-type
+    // name crashes clang-22's Itanium mangler (SIGSEGV in mangleSourceName).
+    // So this overload MUST NOT be instantiated on clang-22 — there is no
+    // crash-free way to enumerate a hashbrown table there. No production code
+    // serializes a rusty::HashSet today; if that changes, the encoder needs a
+    // mangler-safe enumeration path (or a fixed toolchain). See the
+    // RustyHashSetPrimitives test for the decoder-only workaround.
+    auto __it = v.map.iter();
+    for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
+      *this << std::get<0>(std::move(__e).unwrap());
     return *this;
   }
 
@@ -749,10 +765,11 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
     rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
-    // rusty::BTreeMap iter `operator*()` returns
-    // `std::tuple<const K&, V&>` (post-2026-04 API).
-    for (auto it = v.begin(); it != v.end(); ++it) {
-      auto kv = *it;
+    // rusty BTreeMap has no begin()/end(); iterate the Rust-style iterator.
+    // iter().next() yields Option<std::tuple<const K&, V&>>.
+    auto __it = v.iter();
+    for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
+      auto kv = std::move(__e).unwrap();
       *this << std::get<0>(kv) << std::get<1>(kv);
     }
     return *this;
@@ -772,10 +789,13 @@ class BinaryWriteArchive {
   BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
     rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
     *this << v_len;
-    // rusty::HashMap iter `operator*()` returns
-    // `std::tuple<const K&, V&>` (post-2026-04 API).
-    for (auto it = v.begin(); it != v.end(); ++it) {
-      auto kv = *it;
+    // rusty HashMap has no const begin()/end(); iterate via the Rust iterator.
+    // iter().next() yields Option<std::tuple<const K&, const V&>>.
+    // WARNING: like rusty::HashSet above, hashbrown enumeration crashes
+    // clang-22's name mangler — do not instantiate this overload on clang-22.
+    auto __it = v.iter();
+    for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
+      auto kv = std::move(__e).unwrap();
       *this << std::get<0>(kv) << std::get<1>(kv);
     }
     return *this;

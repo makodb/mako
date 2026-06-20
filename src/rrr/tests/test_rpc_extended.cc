@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 #include <rusty/arc.hpp>
+#include <rusty/function.hpp>  // rusty::Function
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/mutex.hpp>
 #include <rusty/refcell.hpp>
 #include "../rrr.hpp"
@@ -174,7 +176,7 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInline) {
     req->xid = 1;
 
     auto sconn = rusty::Arc<ServerConnection>::make(make_test_rpc_context(), -1);
-    auto weak_sconn = rusty::downgrade(sconn);
+    auto weak_sconn = rusty::sync::downgrade(sconn);
 
     bool cleanup_called = false;
     std::atomic<int> callback_count{0};
