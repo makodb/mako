@@ -4578,38 +4578,67 @@ void clientconn_on_channel_closed_fan_out(const ClientConnection& self) {
 
 
 // @safe - Maps errno-style errors into structured RpcError categories.
-RpcError clientconn_map_system_error(i32 err) {
-  switch (err) {
-    case 0:
-      return RpcError::OK;
-    case ENOTCONN:
-      return RpcError::NOT_CONNECTED;
-    case ECONNREFUSED:
-      return RpcError::CONNECTION_REFUSED;
-    case ECONNRESET:
-      return RpcError::CONNECTION_RESET;
-    case ENETUNREACH:
-      return RpcError::NETWORK_UNREACHABLE;
-    case EHOSTUNREACH:
-      return RpcError::HOST_UNREACHABLE;
-    case ECONNABORTED:
-    case EPIPE:
-      return RpcError::CONNECTION_CLOSED;
-    case EBUSY:
-      return RpcError::CIRCUIT_OPEN;
-    case ETIMEDOUT:
-      return RpcError::RESPONSE_TIMEOUT;
-    case EAGAIN:
-#if EWOULDBLOCK != EAGAIN
-    case EWOULDBLOCK:
-#endif
-      return RpcError::REQUEST_TIMEOUT;
-    case EINVAL:
-      return RpcError::INVALID_ARGUMENT;
-    default:
-      return RpcError::UNKNOWN_ERROR;
-  }
+// Authored as inline Rust DSL (module-scope free fn mirroring
+// clientconn_monotonic_ms_now / should_trip_circuit_for_error): the
+// `#if RUSTYCPP_RUST` block is the source of truth; the transpiler
+// regenerates the GEN block below. The original switch's
+// `#if EWOULDBLOCK != EAGAIN` guard existed only to avoid a duplicate case
+// label; in an if-else `|| err == EWOULDBLOCK` is a harmless redundancy on
+// Linux (EAGAIN == EWOULDBLOCK) and keeps the intent without a preprocessor.
+#if RUSTYCPP_RUST
+fn clientconn_map_system_error(err: i32) -> RpcError {
+    if err == 0i32 { return RpcError::OK; }
+    if err == ENOTCONN { return RpcError::NOT_CONNECTED; }
+    if err == ECONNREFUSED { return RpcError::CONNECTION_REFUSED; }
+    if err == ECONNRESET { return RpcError::CONNECTION_RESET; }
+    if err == ENETUNREACH { return RpcError::NETWORK_UNREACHABLE; }
+    if err == EHOSTUNREACH { return RpcError::HOST_UNREACHABLE; }
+    if err == ECONNABORTED || err == EPIPE { return RpcError::CONNECTION_CLOSED; }
+    if err == EBUSY { return RpcError::CIRCUIT_OPEN; }
+    if err == ETIMEDOUT { return RpcError::RESPONSE_TIMEOUT; }
+    if err == EAGAIN || err == EWOULDBLOCK { return RpcError::REQUEST_TIMEOUT; }
+    if err == EINVAL { return RpcError::INVALID_ARGUMENT; }
+    RpcError::UNKNOWN_ERROR
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.map_system_error version=1 rust_sha256=07653e63f46045f528908f0c74b92dd871ad83e789db92417a1873b3e69c420d*/
+RpcError clientconn_map_system_error(int32_t err) {
+    if (rusty::detail::deref_if_pointer_like(err) == static_cast<int32_t>(0)) {
+        return rusty::clone(RpcError::OK);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENOTCONN)) {
+        return rusty::clone(RpcError::NOT_CONNECTED);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNREFUSED)) {
+        return rusty::clone(RpcError::CONNECTION_REFUSED);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNRESET)) {
+        return rusty::clone(RpcError::CONNECTION_RESET);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENETUNREACH)) {
+        return rusty::clone(RpcError::NETWORK_UNREACHABLE);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EHOSTUNREACH)) {
+        return rusty::clone(RpcError::HOST_UNREACHABLE);
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNABORTED)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPIPE))) {
+        return rusty::clone(RpcError::CONNECTION_CLOSED);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EBUSY)) {
+        return rusty::clone(RpcError::CIRCUIT_OPEN);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ETIMEDOUT)) {
+        return rusty::clone(RpcError::RESPONSE_TIMEOUT);
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EAGAIN)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EWOULDBLOCK))) {
+        return rusty::clone(RpcError::REQUEST_TIMEOUT);
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EINVAL)) {
+        return rusty::clone(RpcError::INVALID_ARGUMENT);
+    }
+    return rusty::clone(rusty::clone(RpcError::UNKNOWN_ERROR));
+}
+/*RUSTYCPP:GEN-END id=client.map_system_error*/
 
 
 // @unsafe - Error handler - transitions to FAILED state.
