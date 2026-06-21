@@ -492,9 +492,6 @@ using CompletionFn = rusty::Function<void()>;
 // mutation goes through interior mutability, so const is correct.
 void                   fut_wait(const Future& self);
 void                   fut_timed_wait(const Future& self, double sec);
-bool                   fut_wait_with_options(const Future& self);
-rusty::RefMut<Marshal> fut_get_reply(const Future& self);
-i32                    fut_get_error_code(const Future& self);
 void                   fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc);
 
 #if RUSTYCPP_RUST
@@ -557,7 +554,14 @@ impl Future {
     }
 
     fn wait_with_options(&self) -> bool {
-        fut_wait_with_options(self)
+        let opts = self.get_options();
+        if opts.timeout_ms == 0u64 {
+            self.wait();
+            return self.ready();
+        }
+        let sec: f64 = (opts.timeout_ms as f64) / 1000.0f64;
+        self.timed_wait(sec);
+        self.ready() && !self.timed_out()
     }
 
     fn timed_out(&self) -> bool {
@@ -575,11 +579,18 @@ impl Future {
     }
 
     fn get_reply(&self) -> rusty::RefMut<Marshal> {
-        fut_get_reply(self)
+        self.wait();
+        self.reply_.borrow_mut()
     }
 
     fn get_error_code(&self) -> i32 {
-        fut_get_error_code(self)
+        if self.timeout_ > 0u64 {
+            let x: f64 = (self.timeout_ as f64) / 1000000.0f64;
+            self.timed_wait(x);
+        } else {
+            self.wait();
+        }
+        self.error_code_.get()
     }
 
     fn get_xid(&self) -> i64 {
@@ -625,7 +636,7 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=01b516b1a7c1ea038fb5c31219e5cae9fc48f09aa582d4f1a1bba9eb851f769d*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=de488b6440e8e9187b54d54aeb9ae5be6e4e06c3cbb097d52ca9e58eb2202d74*/
 struct FutureState;
 struct Future;
 
@@ -707,7 +718,14 @@ void Future::timed_wait(double sec) const {
 }
 
 bool Future::wait_with_options() const {
-    return fut_wait_with_options((*this));
+    const auto opts = this->get_options();
+    if (rusty::detail::deref_if_pointer_like(opts.timeout_ms) == static_cast<uint64_t>(0)) {
+        this->wait();
+        return this->ready();
+    }
+    double sec = ((static_cast<double>(opts.timeout_ms))) / 1000.0;
+    this->timed_wait(std::move(sec));
+    return this->ready() && !this->timed_out();
 }
 
 bool Future::timed_out() const {
@@ -725,11 +743,18 @@ bool Future::add_completion_callback(CompletionFn callback) const {
 }
 
 rusty::RefMut<Marshal> Future::get_reply() const {
-    return fut_get_reply((*this));
+    this->wait();
+    return this->reply_.borrow_mut();
 }
 
 int32_t Future::get_error_code() const {
-    return fut_get_error_code((*this));
+    if (rusty::detail::deref_if_pointer_like(this->timeout_) > static_cast<uint64_t>(0)) {
+        double x = ((static_cast<double>(this->timeout_))) / 1000000.0;
+        this->timed_wait(std::move(x));
+    } else {
+        this->wait();
+    }
+    return this->error_code_.get();
 }
 
 int64_t Future::get_xid() const {
@@ -954,13 +979,11 @@ using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;
 struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_drop(const ClientConnection& self);
-void clientconn_record_circuit_state_transition(const ClientConnection& self, CircuitState before, CircuitState after);
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
 void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_invalidate_pending_futures(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
-void clientconn_reset_channel_mode_for_reconnect(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_handle_error(const ClientConnection& self);
 void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
@@ -974,7 +997,6 @@ void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, Chann
 void clientconn_bind_channel_direct(const ClientConnection& self, ChannelConnectionProxy channel);
 bool clientconn_should_trip_circuit_for_error(i32 err);
 RpcError clientconn_map_system_error(i32 err);
-void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory);
 uint64_t clientconn_monotonic_ms_now();
 template<typename F>
 FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rpc_id, const FutureAttr& attr, F&& write_fn);
@@ -1069,12 +1091,29 @@ impl ClientConnection {
     // connect/bind cluster: &self over interior-mutable state (channels are
     // SpinMutex, reconnect_address_ is Cell), so reachable through a shared Arc.
     fn connect_via_factory(&self, addr: *const i8) -> i32 { clientconn_connect_via_factory(self, addr) }
-    fn reset_channel_mode_for_reconnect(&self) { clientconn_reset_channel_mode_for_reconnect(self); }
+    fn reset_channel_mode_for_reconnect(&self) {
+        {
+            let guard = self.fiber_channel_.lock().unwrap();
+            *guard = rusty::None;
+        }
+        {
+            let guard = self.direct_channel_.lock().unwrap();
+            *guard = rusty::None;
+        }
+        self.channel_mode_.set(false);
+        self.state_machine_.force_state(ConnectionState::DISCONNECTED);
+    }
     fn connect(&self, addr: *const i8) -> i32 { clientconn_connect(self, addr) }
     fn bind_channel(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel(self, channel); }
     fn bind_channel_via_poll_thread(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_via_poll_thread(self, channel); }
     fn bind_channel_direct(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
-    fn bind_factory(&mut self, factory: ChannelFactoryProxy) { clientconn_bind_factory(self, factory); }
+    fn bind_factory(&mut self, factory: ChannelFactoryProxy) {
+        if !factory.is_valid() {
+            return;
+        }
+        let guard = self.factory_.lock().unwrap();
+        *guard = rusty::Some(factory);
+    }
     fn abort_reconnect(&mut self) { unsafe { self.reconnect_.reconnect_abort_.store(true, std::memory_order_release); } }
     fn set_callback_manager(&mut self, callback_manager: &Arc<CallbackManager>) {
         if callback_manager.is_valid() {
@@ -1116,7 +1155,17 @@ impl ClientConnection {
         }
         allowed
     }
-    fn record_circuit_state_transition(&self, before: CircuitState, after: CircuitState) { clientconn_record_circuit_state_transition(self, before, after); }
+    fn record_circuit_state_transition(&self, before: CircuitState, after: CircuitState) {
+        if before == after {
+            return;
+        }
+        match after {
+            CircuitState::OPEN => self.metrics_.record_circuit_open_transition(),
+            CircuitState::HALF_OPEN => self.metrics_.record_circuit_half_open_transition(),
+            CircuitState::CLOSED => self.metrics_.record_circuit_closed_transition(),
+            _ => {},
+        }
+    }
     fn record_circuit_result(&self, err: i32) {
         let before = self.circuit_breaker_.state();
         if err == 0i32 {
@@ -1254,7 +1303,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=c455241d169a5b170e791e4a51e134c4fea7ce9a6cfa2938696c22514ecfc86b*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=93b6d492f7322f87df796c85d3b31afd4edae5b0f278adbeee4b43c2b2c07bde*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1445,7 +1494,16 @@ int32_t ClientConnection::connect_via_factory(const int8_t* addr) const {
 }
 
 void ClientConnection::reset_channel_mode_for_reconnect() const {
-    clientconn_reset_channel_mode_for_reconnect((*this));
+    {
+        auto guard = this->fiber_channel_.lock().unwrap();
+        *guard = rusty::None;
+    }
+    {
+        auto guard = this->direct_channel_.lock().unwrap();
+        *guard = rusty::None;
+    }
+    this->channel_mode_.set(false);
+    this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::DISCONNECTED)));
 }
 
 int32_t ClientConnection::connect(const int8_t* addr) const {
@@ -1465,7 +1523,11 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) const
 }
 
 void ClientConnection::bind_factory(ChannelFactoryProxy factory) {
-    clientconn_bind_factory((*this), std::move(factory));
+    if (!factory.is_valid()) {
+        return;
+    }
+    auto guard = this->factory_.lock().unwrap();
+    *guard = rusty::Option<ChannelFactoryProxy>(std::move(factory));
 }
 
 void ClientConnection::abort_reconnect() {
@@ -1548,7 +1610,30 @@ bool ClientConnection::allow_request_with_circuit_metrics() const {
 }
 
 void ClientConnection::record_circuit_state_transition(CircuitState before, CircuitState after) const {
-    clientconn_record_circuit_state_transition((*this), std::move(before), std::move(after));
+    if (rusty::detail::deref_if_pointer_like(before) == rusty::detail::deref_if_pointer_like(after)) {
+        return;
+    }
+    switch (after) {
+    case CircuitState::OPEN:
+    {
+        this->metrics_.record_circuit_open_transition();
+        break;
+    }
+    case CircuitState::HALF_OPEN:
+    {
+        this->metrics_.record_circuit_half_open_transition();
+        break;
+    }
+    case CircuitState::CLOSED:
+    {
+        this->metrics_.record_circuit_closed_transition();
+        break;
+    }
+    default:
+    {
+        break;
+    }
+    }
 }
 
 void ClientConnection::record_circuit_result(int32_t err) const {
@@ -3080,38 +3165,6 @@ void fut_timed_wait(const Future& self, double sec) {
   }
 }
 
-// @unsafe - drives timed_wait (std::chrono); pure flow control otherwise.
-bool fut_wait_with_options(const Future& self) {
-  auto opts = self.get_options();
-  if (opts.timeout_ms == 0) {
-    self.wait();  // No timeout
-    return self.ready();
-  }
-  double sec = static_cast<double>(opts.timeout_ms) / 1000.0;
-  self.timed_wait(sec);
-  return self.ready() && !self.timed_out();
-}
-
-// @safe - waits, then hands out a RefMut into the reply buffer. The caller
-// holds the guard, so the reference can't outlive it.
-rusty::RefMut<Marshal> fut_get_reply(const Future& self) {
-  self.wait();
-  return self.reply_.borrow_mut();
-}
-
-// @unsafe - drives timed_wait (std::chrono) on the configured timeout.
-i32 fut_get_error_code(const Future& self) {
-  if (self.timeout_ > 0) {
-    double x = self.timeout_;
-    x = x / 1000000;
-    // @unsafe
-    { self.timed_wait(x); }
-  } else {
-    self.wait();
-  }
-  return self.error_code_.get();
-}
-
 // @unsafe - Condvar::notify_all + user callback dispatch outside the lock.
 void fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc) {
   bool should_callback = false;  // Initialized here
@@ -3172,11 +3225,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
   return RequestQueue(c);
 }
 
-// @unsafe - Records the factory under SpinMutex interior mutability.
-void clientconn_bind_factory(ClientConnection& self, ChannelFactoryProxy factory) {
-  if (!factory) return;
-  { auto guard = self.factory_.lock().unwrap(); *guard = rusty::Some(std::move(factory)); }
-}
 // @safe - delegates to rusty::sys::time::clock_monotonic_us.
 uint64_t clientconn_monotonic_ms_now() {
   return rusty::sys::time::clock_monotonic_us() / 1000;
@@ -3910,29 +3958,6 @@ void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
 }
 
 
-// @unsafe - Reset channel-mode state for a factory-driven reconnect
-//. Drops the closed FiberChannel,
-// flips `channel_mode_` off, and forces the state machine to
-// DISCONNECTED so `connect()`'s `verify(!is_connected())` passes.
-// Caller: the spawn body inside `on_channel_closed_fan_out` when a
-// factory is bound.
-void clientconn_reset_channel_mode_for_reconnect(const ClientConnection& self) {
-  // SpinMutex::lock + Option::take are both @safe.
-  {
-    auto guard = self.fiber_channel_.lock().unwrap();
-    *guard = rusty::None;
-  }
-  // 4g1c: also drop the direct-channel slot so reconnect can rebind
-  // a fresh proxy with fresh callbacks.
-  {
-    auto guard = self.direct_channel_.lock().unwrap();
-    *guard = rusty::None;
-  }
-  self.channel_mode_.set(false);
-  self.state_machine_.force_state(ConnectionState::DISCONNECTED);
-}
-
-
 // @unsafe - Channel-factory connect path.
 //
 // Calls the bound `ChannelFactoryProxy::connect(addr)` to obtain a
@@ -4497,30 +4522,6 @@ bool clientconn_should_trip_circuit_for_error(i32 err) {
       return true;
     default:
       return false;
-  }
-}
-
-
-// @safe - Track circuit breaker state transitions in metrics.
-void clientconn_record_circuit_state_transition(const ClientConnection& self,
-    CircuitState before,
-    CircuitState after) {
-  if (before == after) {
-    return;
-  }
-
-  switch (after) {
-    case CircuitState::OPEN:
-      self.metrics_.record_circuit_open_transition();
-      break;
-    case CircuitState::HALF_OPEN:
-      self.metrics_.record_circuit_half_open_transition();
-      break;
-    case CircuitState::CLOSED:
-      self.metrics_.record_circuit_closed_transition();
-      break;
-    default:
-      break;
   }
 }
 
