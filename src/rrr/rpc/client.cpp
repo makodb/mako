@@ -1057,7 +1057,6 @@ using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;
 // previously provided visibility are gone with the class).
 struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
-void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
@@ -1270,7 +1269,25 @@ impl ClientConnection {
         }
         self.pending_queue_.update_config(config.to_queue_config());
     }
-    fn set_heartbeat_config(&self, config: &HeartbeatConfig) { clientconn_set_heartbeat_config(self, config); }
+    fn set_heartbeat_config(&self, config: &HeartbeatConfig) {
+        self.heartbeat_manager_.set_config(config);
+        // Capture a weak self-handle by move so the escaping timeout closure
+        // does not keep the connection alive (mirrors the legacy [weak_conn]
+        // C++ lambda; a move closure's owned capture is escape-safe).
+        let weak_conn: WeakClientConnection = self.weak_self_.clone();
+        self.heartbeat_manager_.set_on_timeout(move || {
+            let conn_opt = weak_conn.upgrade();
+            if conn_opt.is_none() {
+                return;
+            }
+            let conn = conn_opt.unwrap();
+            if !(*conn).connected() {
+                return;
+            }
+            unsafe { Log_warn("rrr::ClientConnection: heartbeat timeout for %s", (*conn).host().c_str()); }
+            (*conn).handle_error();
+        });
+    }
     fn heartbeat_config(&self) -> HeartbeatConfig { self.heartbeat_manager_.config() }
     fn set_circuit_breaker_config(&self, config: &CircuitBreakerConfig) { self.circuit_breaker_.set_config(config); }
     fn circuit_breaker_config(&self) -> CircuitBreakerConfig { self.circuit_breaker_.config() }
@@ -1443,7 +1460,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=32e3f5879746191914e70a19e90c0ba359a921eed4295b90d00141a14aa04f3f*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=e6b3194610cf20b8a540109b4701f0858ea8c68d237fb8d2d544c21c95645758*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1767,7 +1784,23 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
 }
 
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
-    clientconn_set_heartbeat_config((*this), config);
+    this->heartbeat_manager_.set_config(config);
+    const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+    this->heartbeat_manager_.set_on_timeout([=, weak_conn = std::move(weak_conn)]() mutable {
+auto conn_opt = weak_conn.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+if (!((rusty::detail::deref_if_pointer_like(conn))).connected()) {
+    return;
+}
+// @unsafe
+{
+    Log_warn("rrr::ClientConnection: heartbeat timeout for %s", ((rusty::detail::deref_if_pointer_like(conn))).host().c_str());
+}
+((rusty::detail::deref_if_pointer_like(conn))).handle_error();
+});
 }
 
 HeartbeatConfig ClientConnection::heartbeat_config() const {
@@ -3628,28 +3661,6 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
 }
 
 
-// @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
-// lambda body only calls @safe methods + Log_warn (a @safe template shim).
-// @safe - HeartbeatManager::set_config/set_on_timeout are &self (config_field is
-// Cell, on_timeout is RefCell) — driven through const self, no const_cast.
-void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config) {
-  self.heartbeat_manager_.set_config(config);
-  WeakClientConnection weak_conn = self.weak_self_;
-  self.heartbeat_manager_.set_on_timeout([weak_conn]() {
-    auto conn_opt = weak_conn.upgrade();
-    if (conn_opt.is_none()) {
-      return;
-    }
-    auto conn = conn_opt.unwrap();
-    if (!conn->connected()) {
-      return;
-    }
-    Log_warn("rrr::ClientConnection: heartbeat timeout for %s", conn->host().c_str());
-    // handle_error is const-callable; conn.get() returns const T* but
-    // that's fine now.
-    conn->handle_error();
-  });
-}
 
 
 // @safe - No-op stub returning a constant. (The RequestQueue methods
