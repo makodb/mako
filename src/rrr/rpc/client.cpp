@@ -1064,7 +1064,6 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
 void clientconn_bind_channel(const ClientConnection& self, ChannelConnectionProxy channel);
 void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, ChannelConnectionProxy channel);
 void clientconn_bind_channel_direct(const ClientConnection& self, ChannelConnectionProxy channel);
-bool clientconn_should_trip_circuit_for_error(i32 err);
 RpcError clientconn_map_system_error(i32 err);
 uint64_t clientconn_monotonic_ms_now();
 template<typename F>
@@ -1345,7 +1344,17 @@ impl ClientConnection {
     fn host(&self) -> std::string { self.host_ }
 
     // --- static delegators ---
-    fn should_trip_circuit_for_error(err: i32) -> bool { clientconn_should_trip_circuit_for_error(err) }
+    fn should_trip_circuit_for_error(err: i32) -> bool {
+        if err == 0i32 {
+            return false;
+        }
+        if err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET
+            || err == ECONNABORTED || err == ETIMEDOUT || err == EHOSTUNREACH
+            || err == ENETUNREACH || err == EPIPE {
+            return true;
+        }
+        false
+    }
     fn map_system_error(err: i32) -> RpcError { clientconn_map_system_error(err) }
 
     // --- generic request trio ---
@@ -1388,7 +1397,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=029d51d1b35e75518fb63cc9f688f010804c2065d08447c85139bafc002ef52b*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=83f4030428187cce0ed0ac03bb3dbb5e94269a41751bd782dffe1fbc8962e11a*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1884,7 +1893,13 @@ std::string ClientConnection::host() const {
 }
 
 bool ClientConnection::should_trip_circuit_for_error(int32_t err) {
-    return clientconn_should_trip_circuit_for_error(std::move(err));
+    if (rusty::detail::deref_if_pointer_like(err) == static_cast<int32_t>(0)) {
+        return false;
+    }
+    if ((((((((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENOTCONN)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNREFUSED))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNRESET))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNABORTED))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ETIMEDOUT))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EHOSTUNREACH))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENETUNREACH))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPIPE))) {
+        return true;
+    }
+    return false;
 }
 
 RpcError ClientConnection::map_system_error(int32_t err) {
@@ -4516,23 +4531,6 @@ void clientconn_on_channel_closed_fan_out(const ClientConnection& self) {
 }
 
 // @safe - Checks whether an error should contribute to circuit tripping.
-bool clientconn_should_trip_circuit_for_error(i32 err) {
-  switch (err) {
-    case 0:
-      return false;
-    case ENOTCONN:
-    case ECONNREFUSED:
-    case ECONNRESET:
-    case ECONNABORTED:
-    case ETIMEDOUT:
-    case EHOSTUNREACH:
-    case ENETUNREACH:
-    case EPIPE:
-      return true;
-    default:
-      return false;
-  }
-}
 
 
 // @safe - Maps errno-style errors into structured RpcError categories.
