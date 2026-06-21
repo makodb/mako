@@ -3280,9 +3280,19 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
 }
 
 // @safe - delegates to rusty::sys::time::clock_monotonic_us.
+// Authored as inline Rust DSL (module-scope free fn, mirroring
+// heartbeat_time_us): the `#if RUSTYCPP_RUST` block is the source of
+// truth; the transpiler regenerates the matching GEN block below.
+#if RUSTYCPP_RUST
+fn clientconn_monotonic_ms_now() -> u64 { rusty::sys::time::clock_monotonic_us() / 1000 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.monotonic_ms_now version=1 rust_sha256=c1745ab0c4e5cc288ad2cb1d465716128edb56af6e760616553c187d34c2d1a6*/
+uint64_t clientconn_monotonic_ms_now();
+
 uint64_t clientconn_monotonic_ms_now() {
-  return rusty::sys::time::clock_monotonic_us() / 1000;
+    return rusty::sys::time::clock_monotonic_us() / static_cast<uint64_t>(1000);
 }
+/*RUSTYCPP:GEN-END id=client.monotonic_ms_now*/
 
 
 // @unsafe - Cancels all pending futures with error, protected by SpinMutex.
