@@ -490,7 +490,6 @@ using CompletionFn = rusty::Function<void()>;
 // methods; the DSL methods below delegate to these. Defined in the Future
 // implementation section further down. `self` is `const Future&` — every
 // mutation goes through interior mutability, so const is correct.
-void                   fut_wait(const Future& self);
 void                   fut_timed_wait(const Future& self, double sec);
 void                   fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc);
 
@@ -546,7 +545,14 @@ impl Future {
     }
 
     fn wait(&self) {
-        fut_wait(self)
+        if self.timeout_ > 0u64 {
+            let sec: f64 = (self.timeout_ as f64) / 1000000.0;
+            self.timed_wait(sec);
+            return;
+        }
+        let guard = self.state_.lock().unwrap();
+        // rusty::Condvar is @safe; wait WHILE not-ready and not-timed-out.
+        self.ready_cond_.wait_while(guard, |s| !s.ready && !s.timed_out).unwrap();
     }
 
     fn timed_wait(&self, sec: f64) {
@@ -636,7 +642,7 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=de488b6440e8e9187b54d54aeb9ae5be6e4e06c3cbb097d52ca9e58eb2202d74*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=cff2f5a37f053e6c3c7eff1d3e7946af3aed90447961aaf70f998882b25b85f7*/
 struct FutureState;
 struct Future;
 
@@ -710,7 +716,13 @@ bool Future::ready() const {
 }
 
 void Future::wait() const {
-    fut_wait((*this));
+    if (rusty::detail::deref_if_pointer_like(this->timeout_) > static_cast<uint64_t>(0)) {
+        double sec = ((static_cast<double>(this->timeout_))) / 1000000.0;
+        this->timed_wait(std::move(sec));
+        return;
+    }
+    auto guard = this->state_.lock().unwrap();
+    this->ready_cond_.wait_while(std::move(guard), [&](auto&& s) { return !s.ready && !s.timed_out; }).unwrap();
 }
 
 void Future::timed_wait(double sec) const {
@@ -3121,24 +3133,6 @@ static uint64_t current_time_ms() {
 // mutability (Cell / RefCell / Mutex / Condvar).
 
 // @unsafe - rusty::Mutex + rusty::Condvar::wait_while.
-void fut_wait(const Future& self) {
-  // Respect the future's configured timeout so a lost / never-arriving reply
-  // can't wedge the caller forever. Mirrors fut_get_error_code: `timeout_` is
-  // in microseconds; a value of 0 means "no timeout" (caller explicitly opted
-  // out of bounding). Without this, a single dropped reply turns into a
-  // permanent hang (see the StressPipelined livelock investigation).
-  if (self.timeout_ > 0) {
-    double sec = static_cast<double>(self.timeout_) / 1000000.0;
-    fut_timed_wait(self, sec);
-    return;
-  }
-  auto guard = self.state_.lock().unwrap();
-  // wait_while: waits WHILE condition is TRUE, stops when FALSE
-  // We want to wait while NOT ready and NOT timed_out
-  guard = self.ready_cond_.wait_while(std::move(guard), [](FutureState& s) {
-    return !s.ready && !s.timed_out;
-  }).unwrap();
-}
 
 // @safe - Mutex::lock + Condvar::wait_timeout_while are @safe; the only
 // escape is the `std::chrono::duration<double>` ctor.
