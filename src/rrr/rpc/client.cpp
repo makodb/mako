@@ -1048,7 +1048,6 @@ using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;
 // previously provided visibility are gone with the class).
 struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
-void clientconn_drop(const ClientConnection& self);
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_invalidate_pending_futures(const ClientConnection& self);
@@ -1112,7 +1111,11 @@ struct ClientConnection {
 }
 
 impl Drop for ClientConnection {
-    fn drop(&mut self) { clientconn_drop(self); }
+    fn drop(&mut self) {
+        unsafe { self.reconnect_.reconnect_abort_.store(true, std::memory_order_release); }
+        unsafe { self.reconnect_.reconnecting_.store(false, std::memory_order_release); }
+        self.invalidate_pending_futures();
+    }
 }
 
 impl ClientConnection {
@@ -1397,7 +1400,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=83f4030428187cce0ed0ac03bb3dbb5e94269a41751bd782dffe1fbc8962e11a*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=9cd98203cd1d50a786a1dce71f71eebbe3ac98be9dcca5254f9c9385fffd7809*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1538,7 +1541,15 @@ struct ClientConnection {
 
 ClientConnection::~ClientConnection() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    clientconn_drop((*this));
+    // @unsafe
+    {
+        this->reconnect_.reconnect_abort_.store(true, std::memory_order_release);
+    }
+    // @unsafe
+    {
+        this->reconnect_.reconnecting_.store(false, std::memory_order_release);
+    }
+    this->invalidate_pending_futures();
 }
 
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
@@ -3271,11 +3282,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c) {
 // @safe - delegates to rusty::sys::time::clock_monotonic_us.
 uint64_t clientconn_monotonic_ms_now() {
   return rusty::sys::time::clock_monotonic_us() / 1000;
-}
-void clientconn_drop(const ClientConnection& self) {
-  self.reconnect_.reconnect_abort_.store(true, std::memory_order_release);
-  self.reconnect_.reconnecting_.store(false, std::memory_order_release);
-  self.invalidate_pending_futures();
 }
 
 
