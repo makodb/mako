@@ -1050,7 +1050,6 @@ struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_drop(const ClientConnection& self);
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
-void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_invalidate_pending_futures(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
@@ -1193,7 +1192,23 @@ impl ClientConnection {
 
     // --- delegating methods (&self → const free fns) ---
     fn invalidate_pending_futures(&self) { clientconn_invalidate_pending_futures(self); }
-    fn fail_pending_future(&self, xid: i64, err: i32) { clientconn_fail_pending_future(self, xid, err); }
+    fn fail_pending_future(&self, xid: i64, err: i32) {
+        let mut fu_opt: Option<Arc<Future>> = None;
+        {
+            let pending_guard = self.pending_fu_.lock().unwrap();
+            let fu_ptr = (*pending_guard).get(xid);
+            if fu_ptr.is_some() {
+                fu_opt = Some(fu_ptr.unwrap().clone());
+                (*pending_guard).remove(xid);
+            }
+        }
+        if fu_opt.is_some() {
+            let fu = fu_opt.unwrap();
+            self.metrics_.record_request_dropped();
+            (*fu).error_code_.set(err);
+            (*fu).notify_ready(fu.clone());
+        }
+    }
     fn close(&self) { clientconn_close(self); }
     fn mark_closing(&self) {
         unsafe { self.reconnect_.reconnect_abort_.store(true, std::memory_order_release); }
@@ -1373,7 +1388,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=93b6d492f7322f87df796c85d3b31afd4edae5b0f278adbeee4b43c2b2c07bde*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=029d51d1b35e75518fb63cc9f688f010804c2065d08447c85139bafc002ef52b*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1618,7 +1633,21 @@ void ClientConnection::invalidate_pending_futures() const {
 }
 
 void ClientConnection::fail_pending_future(int64_t xid, int32_t err) const {
-    clientconn_fail_pending_future((*this), std::move(xid), std::move(err));
+    rusty::Option<rusty::Arc<Future>> fu_opt = rusty::Option<rusty::Arc<Future>>{rusty::None};
+    {
+        auto pending_guard = this->pending_fu_.lock().unwrap();
+        auto fu_ptr = ((*pending_guard)).get(std::move(xid));
+        if (fu_ptr.is_some()) {
+            fu_opt = rusty::Option<rusty::Arc<Future>>(rusty::clone(fu_ptr.unwrap()));
+            ((*pending_guard)).remove(std::move(xid));
+        }
+    }
+    if (fu_opt.is_some()) {
+        const auto fu = fu_opt.unwrap();
+        this->metrics_.record_request_dropped();
+        (rusty::detail::deref_if_pointer_like(fu)).error_code_.set(std::move(err));
+        ((rusty::detail::deref_if_pointer_like(fu))).notify_ready(rusty::clone(fu));
+    }
 }
 
 void ClientConnection::close() const {
@@ -3278,25 +3307,6 @@ void clientconn_invalidate_pending_futures(const ClientConnection& self) {
 
 // @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
 // LockResult; Arc::clone is @safe. Only notify_ready stays @unsafe.
-void clientconn_fail_pending_future(const ClientConnection& self, i64 xid, int err) {
-  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-  {
-    auto pending_guard = self.pending_fu_.lock().unwrap();
-    auto fu_ptr = pending_guard->get(xid);
-    if (fu_ptr.is_some()) {
-      fu_opt = rusty::Some(fu_ptr.unwrap().clone());
-      pending_guard->remove(xid);
-    }
-  }  // Drop lock before notifying callback/future waiters
-
-  if (fu_opt.is_some()) {
-    auto fu = fu_opt.unwrap();
-    self.metrics_.record_request_dropped();
-    fu->error_code_.set(err);
-    // @unsafe - Future::notify_ready uses interior mutability + callback execution.
-    { fu->notify_ready(fu); }
-  }
-}
 
 
 // @unsafe - Drives channel proxy close + invalidates futures.
