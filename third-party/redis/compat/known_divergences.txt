@@ -8,9 +8,9 @@
 # - mako-design-difference
 # - mako-correctness-fix
 #
-SRANDMEMBER/SPOP randomness :: mako-design-difference :: Phase 6 returns deterministic members; semantic membership/count behavior is implemented, statistical randomness is not claimed yet.
-KEYS/SCAN/DBSIZE set visibility :: mako-design-difference :: Phase 6 hides composite set storage and does not yet expose sets as logical keys through keyspace enumeration.
-KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Phase 7 hides composite list storage and does not yet expose lists as logical keys through keyspace enumeration.
-KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Phase 8 hides composite sorted-set storage and does not yet expose sorted sets as logical keys through keyspace enumeration.
-makoConMultiTrd extended Redis commands :: mako-design-difference :: The alternate MultiTrd binary is ABI/link compatible only; Redis command correctness is claimed for third-party/redis/cpp/makoCon.cc.
-FLUSHDB/FLUSHALL :: mako-design-difference :: Exposed as admin/test compatibility commands backed by a real transactional delete-all implementation; Redis database selection is still single-DB only.
+SRANDMEMBER/SPOP randomness :: mako-design-difference :: Phase 6 returns deterministic members because the adapter uses the existing transactional set scan/order path instead of adding a Redis PRNG/sampling policy. Semantic membership/count behavior is implemented; statistical randomness is not claimed.
+KEYS/SCAN/DBSIZE set visibility :: mako-design-difference :: Set members are stored as hidden length-prefixed composite keys outside the visible `table_key_` namespace. Exposing set logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Lists are stored as hidden meta/element composite keys outside the visible `table_key_` namespace. Exposing list logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Sorted sets are stored as hidden member/score/meta composite keys outside the visible `table_key_` namespace. Exposing zset logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
+makoConMultiTrd extended Redis commands :: mako-design-difference :: The alternate MultiTrd binary shares the FFI ABI but does not call the canonical Redis transaction executor. Claiming full Redis semantics there would require executor deduplication; current correctness is claimed for `third-party/redis/cpp/makoCon.cc`.
+FLUSHDB/FLUSHALL :: mako-design-difference :: These are exposed as admin/test compatibility commands backed by a real chunked transactional delete-all implementation. Redis logical database selection is not implemented, so the commands operate on the single Mako Redis keyspace only.

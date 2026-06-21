@@ -1,12 +1,14 @@
 # Redis TCL Known Skips
 
-# Exact stream-only tests skipped because the current Redis compatibility
-# plan does not include Redis Streams commands.
-
+# Redis Streams are outside the current compatibility surface. The adapter does
+# not implement stream storage, stream consumer groups, or stream blocking
+# timeout behavior, so stream-only assertions remain explicit skips.
 Blocking commands ignores the timeout
 COPY basic usage for stream
 COPY basic usage for stream-cgroups
 
-# Redis keyspace notification pubsub is not part of the current compatibility surface.
+# Redis keyspace notification Pub/Sub is outside the current compatibility
+# surface. Pub/Sub command delivery is implemented, but Redis keyspace event
+# notification fanout for data mutations is not claimed.
 /^Keyspace notifications:
 SMOVE only notify dstset when the addition is successful
