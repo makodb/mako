@@ -3467,14 +3467,12 @@ void clientconn_set_buffering_config(const ClientConnection& self, const Bufferi
 
 // @safe - HeartbeatManager is @safe; Weak copy-assign is now @safe; the
 // lambda body only calls @safe methods + Log_warn (a @safe template shim).
-// One inner @unsafe block remains for the const_cast.
+// @safe - HeartbeatManager::set_config/set_on_timeout are &self (config_field is
+// Cell, on_timeout is RefCell) — driven through const self, no const_cast.
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config) {
-  // HeartbeatManager::set_config/set_on_timeout assign plain fields →
-  // non-const; const_cast matches the prior `mutable HeartbeatManager`.
-  auto& hb = const_cast<ClientConnection&>(self);
-  hb.heartbeat_manager_.set_config(config);
+  self.heartbeat_manager_.set_config(config);
   WeakClientConnection weak_conn = self.weak_self_;
-  hb.heartbeat_manager_.set_on_timeout([weak_conn]() {
+  self.heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
       return;
@@ -3493,9 +3491,8 @@ void clientconn_set_heartbeat_config(const ClientConnection& self, const Heartbe
 
 // @safe - CircuitBreaker class is @safe; set_config is @safe.
 void clientconn_set_circuit_breaker_config(const ClientConnection& self, const CircuitBreakerConfig& config) {
-  // CircuitBreaker::set_config assigns a plain config field → non-const;
-  // const_cast matches the prior `mutable CircuitBreaker` access pattern.
-  const_cast<ClientConnection&>(self).circuit_breaker_.set_config(config);
+  // CircuitBreaker::set_config is &self (config_field is Cell) — no const_cast.
+  self.circuit_breaker_.set_config(config);
 }
 
 // @safe - No-op stub returning a constant. (The RequestQueue methods
@@ -4649,7 +4646,7 @@ void clientconn_handle_error(const ClientConnection& self) {
 // owns internally.
 bool clientconn_check_pending_write_update(const ClientConnection& self) {
   if (self.state_machine_.is_connected() && !self.paused_.get()) {
-    if (const_cast<ClientConnection&>(self).heartbeat_manager_.check_timeout()) {
+    if (self.heartbeat_manager_.check_timeout()) {
       // Timeout callback already transitioned connection through error handling.
       return false;
     }

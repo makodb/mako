@@ -171,9 +171,9 @@ CircuitBreakerConfig CircuitBreakerConfig::disabled() {
 
 // `CircuitBreaker` — single-threaded state machine that tracks
 // success/failure counts and a Cell<CircuitState>. All mutable state
-// is `rusty::Cell<T>` for trivially-copyable interior mutability; the
-// only non-Cell field is the owned `CircuitBreakerConfig` value, which
-// is replaced by `set_config()` (the one non-const method).
+// is `rusty::Cell<T>` for trivially-copyable interior mutability,
+// including the `CircuitBreakerConfig` value (POD: three u32 + bool),
+// which `set_config()` replaces via `Cell::set`.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -184,11 +184,11 @@ CircuitBreakerConfig CircuitBreakerConfig::disabled() {
 //
 // Behavioral diffs from the original C++ class:
 //   * Methods that previously were non-const but only touched Cell
-//     fields (`record_success`, `record_failure`, `reset`) are now
-//     `const`. The body still mutates state, only through the Cells.
-//     Callers that held a non-const ref keep working.
-//   * `set_config()` stays non-const (it overwrites the by-value
-//     `config_` field).
+//     fields (`record_success`, `record_failure`, `reset`,
+//     `set_config`) are now `const`. The body still mutates state,
+//     only through the Cells. Callers that held a non-const ref keep
+//     working, and the breaker is now drivable through a shared/const
+//     ref without const_cast.
 //   * The `= delete` copy/move ctor + assignment declarations are
 //     dropped; the DSL does not yet emit special-member-function
 //     annotations. The class is no longer move/copy-suppressed.
@@ -198,7 +198,7 @@ CircuitBreakerConfig CircuitBreakerConfig::disabled() {
 //     them.
 #if RUSTYCPP_RUST
 struct CircuitBreaker {
-    config_field: CircuitBreakerConfig,
+    config_field: Cell<CircuitBreakerConfig>,
     state_field: Cell<CircuitState>,
     failure_count_field: Cell<u32>,
     success_count_field: Cell<u32>,
@@ -209,7 +209,7 @@ struct CircuitBreaker {
 impl CircuitBreaker {
     fn new(config: CircuitBreakerConfig) -> CircuitBreaker {
         CircuitBreaker {
-            config_field: config,
+            config_field: Cell::<CircuitBreakerConfig>::new(config),
             state_field: Cell::<CircuitState>::new(CircuitState::CLOSED),
             failure_count_field: Cell::<u32>::new(0u32),
             success_count_field: Cell::<u32>::new(0u32),
@@ -218,13 +218,13 @@ impl CircuitBreaker {
         }
     }
 
-    fn set_config(&mut self, config: CircuitBreakerConfig) {
-        self.config_field = config;
+    fn set_config(&self, config: CircuitBreakerConfig) {
+        self.config_field.set(config);
         self.reset();
     }
 
     fn allow_request(&self) -> bool {
-        if !self.config_field.enabled {
+        if !self.config_field.get().enabled {
             return true;
         }
 
@@ -236,7 +236,7 @@ impl CircuitBreaker {
         if (current as i32) == (CircuitState::OPEN as i32) {
             let now: u64 = current_time_us();
             let last: u64 = self.last_failure_time.get();
-            let timeout_us: u64 = (self.config_field.timeout_ms as u64) * 1000u64;
+            let timeout_us: u64 = (self.config_field.get().timeout_ms as u64) * 1000u64;
 
             if now - last >= timeout_us {
                 let next: CircuitState = CircuitState::HALF_OPEN;
@@ -257,7 +257,7 @@ impl CircuitBreaker {
     }
 
     fn record_success(&self) {
-        if !self.config_field.enabled {
+        if !self.config_field.get().enabled {
             return;
         }
 
@@ -272,7 +272,7 @@ impl CircuitBreaker {
             let count: u32 = self.success_count_field.get() + 1u32;
             self.success_count_field.set(count);
 
-            if count >= self.config_field.success_threshold {
+            if count >= self.config_field.get().success_threshold {
                 let closed: CircuitState = CircuitState::CLOSED;
                 self.state_field.set(closed);
                 self.failure_count_field.set(0u32);
@@ -286,7 +286,7 @@ impl CircuitBreaker {
     }
 
     fn record_failure(&self) {
-        if !self.config_field.enabled {
+        if !self.config_field.get().enabled {
             return;
         }
 
@@ -296,7 +296,7 @@ impl CircuitBreaker {
             let count: u32 = self.failure_count_field.get() + 1u32;
             self.failure_count_field.set(count);
 
-            if count >= self.config_field.failure_threshold {
+            if count >= self.config_field.get().failure_threshold {
                 let open: CircuitState = CircuitState::OPEN;
                 self.state_field.set(open);
                 self.last_failure_time.set(current_time_us());
@@ -351,16 +351,16 @@ impl CircuitBreaker {
         self.success_count_field.get()
     }
 
-    fn config(&self) -> &CircuitBreakerConfig {
-        &self.config_field
+    fn config(&self) -> CircuitBreakerConfig {
+        self.config_field.get()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=2f76b672f0943f02de9adac50e7c51879a0dafdb52871f6a484f06465fb9daaa*/
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.1 version=1 rust_sha256=460bc3032dab24cb7b5682072e142f93a8779bd214b66cfea4de0e0abbff701f*/
 struct CircuitBreaker;
 
 struct CircuitBreaker {
-    CircuitBreakerConfig config_field;
+    rusty::Cell<CircuitBreakerConfig> config_field;
     rusty::Cell<CircuitState> state_field;
     rusty::Cell<uint32_t> failure_count_field;
     rusty::Cell<uint32_t> success_count_field;
@@ -368,7 +368,7 @@ struct CircuitBreaker {
     rusty::Cell<bool> probe_in_progress;
 
     static CircuitBreaker new_(CircuitBreakerConfig config);
-    void set_config(CircuitBreakerConfig config);
+    void set_config(CircuitBreakerConfig config) const;
     bool allow_request() const;
     void record_success() const;
     void record_failure() const;
@@ -379,21 +379,21 @@ struct CircuitBreaker {
     void reset() const;
     uint32_t failure_count() const;
     uint32_t success_count() const;
-    const CircuitBreakerConfig& config() const;
+    CircuitBreakerConfig config() const;
 };
 
 
 CircuitBreaker CircuitBreaker::new_(CircuitBreakerConfig config) {
-    return CircuitBreaker{.config_field = std::move(config), .state_field = rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState::CLOSED))), .failure_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .success_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .last_failure_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .probe_in_progress = rusty::Cell<bool>::new_(false)};
+    return CircuitBreaker{.config_field = rusty::Cell<CircuitBreakerConfig>::new_(std::move(config)), .state_field = rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState::CLOSED))), .failure_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .success_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .last_failure_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .probe_in_progress = rusty::Cell<bool>::new_(false)};
 }
 
-void CircuitBreaker::set_config(CircuitBreakerConfig config) {
-    this->config_field = std::move(config);
+void CircuitBreaker::set_config(CircuitBreakerConfig config) const {
+    this->config_field.set(std::move(config));
     this->reset();
 }
 
 bool CircuitBreaker::allow_request() const {
-    if (!this->config_field.enabled) {
+    if (!this->config_field.get().enabled) {
         return true;
     }
     const CircuitState current = this->state_field.get();
@@ -403,7 +403,7 @@ bool CircuitBreaker::allow_request() const {
     if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::OPEN)))) {
         const uint64_t now = current_time_us();
         const uint64_t last = this->last_failure_time.get();
-        const uint64_t timeout_us = ((static_cast<uint64_t>(this->config_field.timeout_ms))) * static_cast<uint64_t>(1000);
+        const uint64_t timeout_us = ((static_cast<uint64_t>(this->config_field.get().timeout_ms))) * static_cast<uint64_t>(1000);
         if ((rusty::detail::deref_if_pointer_like(now) - rusty::detail::deref_if_pointer_like(last)) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
             CircuitState next = rusty::clone(CircuitState::HALF_OPEN);
             this->state_field.set(std::move(next));
@@ -423,7 +423,7 @@ bool CircuitBreaker::allow_request() const {
 }
 
 void CircuitBreaker::record_success() const {
-    if (!this->config_field.enabled) {
+    if (!this->config_field.get().enabled) {
         return;
     }
     const CircuitState current = this->state_field.get();
@@ -435,7 +435,7 @@ void CircuitBreaker::record_success() const {
         this->probe_in_progress.set(false);
         uint32_t count = this->success_count_field.get() + static_cast<uint32_t>(1);
         this->success_count_field.set(std::move(count));
-        if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.success_threshold)) {
+        if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.get().success_threshold)) {
             CircuitState closed = rusty::clone(CircuitState::CLOSED);
             this->state_field.set(std::move(closed));
             this->failure_count_field.set(static_cast<uint32_t>(0));
@@ -449,14 +449,14 @@ void CircuitBreaker::record_success() const {
 }
 
 void CircuitBreaker::record_failure() const {
-    if (!this->config_field.enabled) {
+    if (!this->config_field.get().enabled) {
         return;
     }
     const CircuitState current = this->state_field.get();
     if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::CLOSED)))) {
         uint32_t count = this->failure_count_field.get() + static_cast<uint32_t>(1);
         this->failure_count_field.set(std::move(count));
-        if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.failure_threshold)) {
+        if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.get().failure_threshold)) {
             CircuitState open = rusty::clone(CircuitState::OPEN);
             this->state_field.set(std::move(open));
             this->last_failure_time.set(current_time_us());
@@ -511,8 +511,8 @@ uint32_t CircuitBreaker::success_count() const {
     return this->success_count_field.get();
 }
 
-const CircuitBreakerConfig& CircuitBreaker::config() const {
-    return this->config_field;
+CircuitBreakerConfig CircuitBreaker::config() const {
+    return this->config_field.get();
 }
 /*RUSTYCPP:GEN-END id=circuit_breaker.1*/
 
