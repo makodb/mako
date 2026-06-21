@@ -486,12 +486,13 @@ FutureAttr FutureAttr::new_(FutureCallback cb) {
 // argument, so alias it (mirrors OnFrameCallback / QueuedRequestCallback).
 using CompletionFn = rusty::Function<void()>;
 
-// Free-fn implementations of the Condvar / std::chrono / callback-heavy
-// methods; the DSL methods below delegate to these. Defined in the Future
-// implementation section further down. `self` is `const Future&` — every
-// mutation goes through interior mutability, so const is correct.
-void                   fut_timed_wait(const Future& self, double sec);
-void                   fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc);
+// @safe - the one irreducible std::chrono interop point: build the
+// `std::chrono::duration<double>` that rusty::Condvar::wait_timeout_while
+// requires. Minimized to a single expression so the rest of timed_wait can
+// live in the DSL.
+inline std::chrono::duration<double> fut_secs(double sec) {
+  return std::chrono::duration<double>(sec);
+}
 
 #if RUSTYCPP_RUST
 struct FutureState {
@@ -556,7 +557,16 @@ impl Future {
     }
 
     fn timed_wait(&self, sec: f64) {
-        fut_timed_wait(self, sec)
+        let guard = self.state_.lock().unwrap();
+        let duration = fut_secs(sec);
+        let mut result = self.ready_cond_.wait_timeout_while(guard, duration, |s| !s.ready && !s.timed_out).unwrap();
+        let mut guard = result.0;
+        let condition_became_false: bool = result.1;
+        if !condition_became_false && !(*guard).ready {
+            (*guard).timed_out = true;
+            self.error_code_.set(ETIMEDOUT);
+            self.timeout_type_.set(TimeoutType::RESPONSE_TIMEOUT);
+        }
     }
 
     fn wait_with_options(&self) -> bool {
@@ -635,14 +645,34 @@ impl Future {
     }
 
     fn notify_ready(&self, self_arc: Arc<Future>) {
-        fut_notify_ready(self, self_arc)
+        let mut should_callback: bool = false;
+        let mut completion_callbacks: Vec<CompletionFn> = Vec::new();
+        {
+            let guard = self.state_.lock().unwrap();
+            if !guard.timed_out {
+                guard.ready = true;
+            }
+            should_callback = guard.ready;
+            completion_callbacks = rusty::mem::take(&mut guard.completion_callbacks);
+        }
+        // Notify waiters after dropping the lock.
+        self.ready_cond_.notify_all();
+        for callback in &mut completion_callbacks {
+            if callback {
+                callback();
+            }
+        }
+        if should_callback && self.attr_.callback {
+            let x = self.attr_.callback;
+            x(self_arc);
+        }
     }
 
     fn safe_release(fu: Arc<Future>) {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=cff2f5a37f053e6c3c7eff1d3e7946af3aed90447961aaf70f998882b25b85f7*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=d3ae9b85dd745fd3e9f6edb25af9c90457d47bff297d361bd3f0c6da57227b04*/
 struct FutureState;
 struct Future;
 
@@ -726,7 +756,16 @@ void Future::wait() const {
 }
 
 void Future::timed_wait(double sec) const {
-    fut_timed_wait((*this), std::move(sec));
+    auto guard = this->state_.lock().unwrap();
+    const auto duration = fut_secs(std::move(sec));
+    auto result = this->ready_cond_.wait_timeout_while(std::move(guard), std::move(duration), [&](auto&& s) { return !s.ready && !s.timed_out; }).unwrap();
+    auto guard_shadow1 = std::move(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else return std::get<0>(std::forward<decltype(__t)>(__t)); })(result));
+    const bool condition_became_false = ([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else return std::get<1>(std::forward<decltype(__t)>(__t)); })(result);
+    if (!condition_became_false && !(rusty::detail::deref_if_pointer_like(guard_shadow1)).ready) {
+        (rusty::detail::deref_if_pointer_like(guard_shadow1)).timed_out = true;
+        this->error_code_.set(std::move(ETIMEDOUT));
+        this->timeout_type_.set(rusty::clone(rusty::clone(TimeoutType::RESPONSE_TIMEOUT)));
+    }
 }
 
 bool Future::wait_with_options() const {
@@ -805,7 +844,26 @@ bool Future::should_retry() const {
 }
 
 void Future::notify_ready(rusty::Arc<Future> self_arc) const {
-    fut_notify_ready((*this), std::move(self_arc));
+    bool should_callback = false;
+    rusty::Vec<CompletionFn> completion_callbacks = rusty::Vec<CompletionFn>::new_();
+    {
+        auto guard = this->state_.lock().unwrap();
+        if (!(*guard).timed_out) {
+            (*guard).ready = true;
+        }
+        should_callback = std::move((*guard).ready);
+        completion_callbacks = rusty::mem::take((*guard).completion_callbacks);
+    }
+    this->ready_cond_.notify_all();
+    for (auto&& callback : rusty::for_in(rusty::iter(completion_callbacks))) {
+        if (callback) {
+            callback();
+        }
+    }
+    if (rusty::detail::deref_if_pointer_like(should_callback) && rusty::detail::deref_if_pointer_like(this->attr_.callback)) {
+        const auto x = this->attr_.callback;
+        x(std::move(self_arc));
+    }
 }
 
 void Future::safe_release(rusty::Arc<Future> fu) {
@@ -3136,61 +3194,8 @@ static uint64_t current_time_ms() {
 
 // @safe - Mutex::lock + Condvar::wait_timeout_while are @safe; the only
 // escape is the `std::chrono::duration<double>` ctor.
-void fut_timed_wait(const Future& self, double sec) {
-  auto guard = self.state_.lock().unwrap();
-  std::chrono::duration<double> duration;
-  // @unsafe { std::chrono::duration ctor is not borrow-checked }
-  { duration = std::chrono::duration<double>(sec); }
-  // wait_timeout_while: waits WHILE condition is TRUE
-  // Returns pair<Guard, bool> where bool = true if condition became false
-  auto result = self.ready_cond_.wait_timeout_while(
-    std::move(guard),
-    duration,
-    [](FutureState& s) { return !s.ready && !s.timed_out; }
-  ).unwrap();
-  guard = std::move(result.first);
-  bool condition_became_false = result.second;
-
-  // If condition is still true (timed out while still waiting)
-  if (!condition_became_false && !guard->ready) {
-    guard->timed_out = true;
-    self.error_code_.set(ETIMEDOUT);
-    self.timeout_type_.set(TimeoutType::RESPONSE_TIMEOUT);
-  }
-}
 
 // @unsafe - Condvar::notify_all + user callback dispatch outside the lock.
-void fut_notify_ready(const Future& self, rusty::Arc<Future> self_arc) {
-  bool should_callback = false;  // Initialized here
-  rusty::Vec<rusty::Function<void()>> completion_callbacks;
-  {
-    auto guard = self.state_.lock().unwrap();
-    if (!guard->timed_out) {
-      guard->ready = true;
-    }
-    should_callback = guard->ready;
-    completion_callbacks = std::move(guard->completion_callbacks);
-  }  // Guard dropped here, releasing lock before notify
-
-  self.ready_cond_.notify_all();
-
-  // rusty::Function::operator bool() reports presence; iterate by
-  // mutable ref so we can call non-const operator().
-  for (auto& callback : completion_callbacks) {
-    if (callback) {
-      callback();
-    }
-  }
-
-  // Execute callback outside lock to avoid deadlock.  The wrapper is
-  // copyable (Arc clone = refcount++); we hold a local copy `x` so the
-  // user callable stays alive across the invocation even if the
-  // FutureAttr field is dropped concurrently.
-  if (should_callback && self.attr_.callback) {
-    auto x = self.attr_.callback;
-    x(self_arc);
-  }
-}
 
 // ============================================================================
 // ClientConnection implementation
