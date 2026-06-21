@@ -254,6 +254,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     std::unordered_map<std::string, bool> batch_exists;
     std::unordered_map<std::string, std::string> batch_values;
     std::unordered_map<std::string, int64_t> batch_ttls;
+    std::unordered_map<std::string, std::unordered_set<std::string>> staged_sets;
+    std::unordered_set<std::string> staged_sets_loaded;
+    std::unordered_set<std::string> dirty_sets;
     std::unordered_map<std::string, std::vector<std::string>> staged_lists;
     std::unordered_set<std::string> staged_lists_loaded;
     std::unordered_set<std::string> dirty_lists;
@@ -861,6 +864,11 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     };
 
     auto read_set_cardinality = [&](void* txn, const std::string& set_key, int64_t& count) {
+        auto staged_it = staged_sets.find(set_key);
+        if (staged_it != staged_sets.end()) {
+            count = static_cast<int64_t>(staged_it->second.size());
+            return mako::Status::OK();
+        }
         std::string meta_key = set_meta_storage_key(set_key);
         auto batch_it = batch_exists.find(meta_key);
         if (batch_it != batch_exists.end()) {
@@ -1573,6 +1581,40 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return mako::Status::OK();
     };
 
+    auto rewrite_set_values = [&](void* txn, const std::string& set_key, const std::unordered_set<std::string>& values) {
+        std::vector<std::string> existing_members;
+        mako::Status s = collect_set_members(txn, set_key, existing_members);
+        if (!s.ok()) {
+            return s;
+        }
+        std::unordered_set<std::string> existing(existing_members.begin(), existing_members.end());
+        for (const auto& member : existing) {
+            if (values.find(member) != values.end()) {
+                continue;
+            }
+            std::string member_key = set_storage_key(set_key, member);
+            s = delete_raw_if_exists(txn, member_key);
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[member_key] = false;
+            batch_values.erase(member_key);
+        }
+        for (const auto& member : values) {
+            if (existing.find(member) != existing.end()) {
+                continue;
+            }
+            std::string member_key = set_storage_key(set_key, member);
+            s = put_raw(txn, member_key, "1");
+            if (!s.ok()) {
+                return s;
+            }
+            batch_exists[member_key] = true;
+            batch_values[member_key] = "1";
+        }
+        return write_set_cardinality(txn, set_key, static_cast<int64_t>(values.size()));
+    };
+
     auto collect_hash_entries = [&](void* txn, const std::string& hash_key, std::map<std::string, std::string>& entries) {
         entries.clear();
         const std::string field_prefix = make_hash_field_prefix(hash_key);
@@ -1656,7 +1698,13 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             batch_exists[key] = false;
             batch_values.erase(key);
         }
-        return write_set_cardinality(txn, set_key, 0);
+        s = write_set_cardinality(txn, set_key, 0);
+        if (s.ok()) {
+            staged_sets.erase(set_key);
+            staged_sets_loaded.erase(set_key);
+            dirty_sets.erase(set_key);
+        }
+        return s;
     };
 
     auto expire_set_if_needed = [&](void* txn, const std::string& set_key) {
@@ -1799,6 +1847,11 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     };
 
     auto read_set_member_exists = [&](void* txn, const std::string& set_key, const std::string& member, bool& exists) {
+        auto staged_it = staged_sets.find(set_key);
+        if (staged_it != staged_sets.end()) {
+            exists = staged_it->second.find(member) != staged_it->second.end();
+            return mako::Status::OK();
+        }
         std::string member_key = set_storage_key(set_key, member);
         auto batch_it = batch_exists.find(member_key);
         if (batch_it != batch_exists.end()) {
@@ -2028,7 +2081,35 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return s;
     };
 
+    auto load_set_stage = [&](void* txn, const std::string& set_key, TxnOpResult& result, bool& allowed) {
+        auto loaded_it = staged_sets_loaded.find(set_key);
+        if (loaded_it != staged_sets_loaded.end()) {
+            allowed = true;
+            return mako::Status::OK();
+        }
+        mako::Status s = set_key_allowed(txn, set_key, result, allowed);
+        if (!s.ok() || !allowed) {
+            return s;
+        }
+        s = expire_set_if_needed(txn, set_key);
+        if (!s.ok()) {
+            return s;
+        }
+        std::vector<std::string> members;
+        s = collect_set_members(txn, set_key, members);
+        if (s.ok()) {
+            staged_sets[set_key] = std::unordered_set<std::string>(members.begin(), members.end());
+            staged_sets_loaded.insert(set_key);
+        }
+        return s;
+    };
+
     auto read_set_members = [&](void* txn, const std::string& set_key, std::vector<std::string>& members) {
+        auto staged_it = staged_sets.find(set_key);
+        if (staged_it != staged_sets.end()) {
+            members.assign(staged_it->second.begin(), staged_it->second.end());
+            return mako::Status::OK();
+        }
         bool allowed = false;
         TxnOpResult ignored{};
         mako::Status type_status = set_key_allowed(txn, set_key, ignored, allowed);
@@ -3802,7 +3883,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     continue;
                 }
                 bool allowed = false;
-                mako::Status s = set_key_allowed(txn, user_key, result, allowed);
+                mako::Status s = load_set_stage(txn, user_key, result, allowed);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -3810,49 +3891,18 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!allowed) {
                     continue;
                 }
-                int64_t cardinality = 0;
-                s = read_set_cardinality(txn, user_key, cardinality);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
                 int64_t added = 0;
+                auto& staged = staged_sets[user_key];
                 for (const auto& member : members) {
-                    std::string member_key = set_storage_key(user_key, member);
-                    bool exists = false;
-                    auto batch_it = batch_exists.find(member_key);
-                    if (batch_it != batch_exists.end()) {
-                        exists = batch_it->second;
-                    } else {
-                        s = read_raw_exists(txn, member_key, exists);
-                        if (!s.ok()) {
-                            all_success = false;
-                            break;
-                        }
+                    auto [_, inserted] = staged.insert(member);
+                    if (inserted) {
+                        ++added;
                     }
-                    if (exists) {
-                        continue;
-                    }
-                    s = put_raw(txn, member_key, "1");
-                    if (!s.ok()) {
-                        all_success = false;
-                        break;
-                    }
-                    batch_exists[member_key] = true;
-                    batch_values[member_key] = "1";
-                    ++added;
-                    ++cardinality;
                 }
-                if (!all_success) {
-                    continue;
-                }
-                s = write_set_cardinality(txn, user_key, cardinality);
-                result.success = s.ok();
+                dirty_sets.insert(user_key);
+                result.success = true;
                 result.value_present = true;
                 result.int_value = added;
-                if (!s.ok()) {
-                    all_success = false;
-                }
             } else if (op.op == TXN_OP_SREM) {
                 std::vector<std::string> members;
                 if (!unpack_bytes_list(op.val_ptr, op.val_len, members)) {
@@ -3860,7 +3910,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     continue;
                 }
                 bool allowed = false;
-                mako::Status s = set_key_allowed(txn, user_key, result, allowed);
+                mako::Status s = load_set_stage(txn, user_key, result, allowed);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -3868,57 +3918,15 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!allowed) {
                     continue;
                 }
-                s = expire_set_if_needed(txn, user_key);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
-                int64_t cardinality = 0;
-                s = read_set_cardinality(txn, user_key, cardinality);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
                 int64_t removed = 0;
+                auto& staged = staged_sets[user_key];
                 for (const auto& member : members) {
-                    std::string member_key = set_storage_key(user_key, member);
-                    bool exists = false;
-                    auto batch_it = batch_exists.find(member_key);
-                    if (batch_it != batch_exists.end()) {
-                        exists = batch_it->second;
-                    } else {
-                        s = read_raw_exists(txn, member_key, exists);
-                        if (!s.ok()) {
-                            all_success = false;
-                            break;
-                        }
-                    }
-                    if (!exists) {
-                        continue;
-                    }
-                    s = delete_raw_if_exists(txn, member_key);
-                    if (!s.ok()) {
-                        all_success = false;
-                        break;
-                    }
-                    batch_exists[member_key] = false;
-                    batch_values.erase(member_key);
-                    ++removed;
-                    cardinality = std::max<int64_t>(0, cardinality - 1);
+                    removed += static_cast<int64_t>(staged.erase(member));
                 }
-                if (!all_success) {
-                    continue;
-                }
-                s = write_set_cardinality(txn, user_key, cardinality);
-                if (s.ok() && cardinality == 0) {
-                    s = clear_ttl_meta(txn, user_key);
-                }
-                result.success = s.ok();
+                dirty_sets.insert(user_key);
+                result.success = true;
                 result.value_present = true;
                 result.int_value = removed;
-                if (!s.ok()) {
-                    all_success = false;
-                }
             } else if (op.op == TXN_OP_SISMEMBER) {
                 std::string member(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
                 bool allowed = false;
@@ -3993,7 +4001,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 const std::string& destination = parts[0];
                 const std::string& member = parts[1];
                 bool source_allowed = false;
-                mako::Status s = set_key_allowed(txn, user_key, result, source_allowed);
+                mako::Status s = load_set_stage(txn, user_key, result, source_allowed);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -4003,7 +4011,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 bool destination_allowed = false;
                 TxnOpResult destination_result{};
-                s = set_key_allowed(txn, destination, destination_result, destination_allowed);
+                s = load_set_stage(txn, destination, destination_result, destination_allowed);
                 if (!s.ok()) {
                     all_success = false;
                     continue;
@@ -4012,73 +4020,19 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     result.success = false;
                     continue;
                 }
-                s = expire_set_if_needed(txn, user_key);
-                if (s.ok()) {
-                    s = expire_set_if_needed(txn, destination);
-                }
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
-                std::string source_member_key = set_storage_key(user_key, member);
-                bool source_exists = false;
-                s = read_set_member_exists(txn, user_key, member, source_exists);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
+                auto& source_members = staged_sets[user_key];
                 result.success = true;
                 result.value_present = true;
+                auto source_it = source_members.find(member);
+                const bool source_exists = source_it != source_members.end();
                 result.int_value = source_exists ? 1 : 0;
                 if (!source_exists || user_key == destination) {
                     continue;
                 }
-                int64_t source_cardinality = 0;
-                int64_t destination_cardinality = 0;
-                s = read_set_cardinality(txn, user_key, source_cardinality);
-                if (s.ok()) {
-                    s = read_set_cardinality(txn, destination, destination_cardinality);
-                }
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
-                s = delete_raw_if_exists(txn, source_member_key);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
-                batch_exists[source_member_key] = false;
-                batch_values.erase(source_member_key);
-                source_cardinality = std::max<int64_t>(0, source_cardinality - 1);
-
-                std::string destination_member_key = set_storage_key(destination, member);
-                bool destination_exists = false;
-                s = read_set_member_exists(txn, destination, member, destination_exists);
-                if (!s.ok()) {
-                    all_success = false;
-                    continue;
-                }
-                if (!destination_exists) {
-                    s = put_raw(txn, destination_member_key, "1");
-                    if (!s.ok()) {
-                        all_success = false;
-                        continue;
-                    }
-                    batch_exists[destination_member_key] = true;
-                    batch_values[destination_member_key] = "1";
-                    ++destination_cardinality;
-                }
-                s = write_set_cardinality(txn, user_key, source_cardinality);
-                if (s.ok() && source_cardinality == 0) {
-                    s = clear_ttl_meta(txn, user_key);
-                }
-                if (s.ok()) {
-                    s = write_set_cardinality(txn, destination, destination_cardinality);
-                }
-                if (!s.ok()) {
-                    all_success = false;
-                }
+                source_members.erase(source_it);
+                staged_sets[destination].insert(member);
+                dirty_sets.insert(user_key);
+                dirty_sets.insert(destination);
             } else if (op.op == TXN_OP_SPOP || op.op == TXN_OP_SRANDMEMBER) {
                 std::vector<std::string> members;
                 mako::Status s = read_set_members(txn, user_key, members);
@@ -4111,33 +4065,41 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     }
                 }
                 if (op.op == TXN_OP_SPOP && !selected.empty()) {
-                    int64_t cardinality = 0;
-                    s = read_set_cardinality(txn, user_key, cardinality);
-                    if (!s.ok()) {
-                        all_success = false;
-                        continue;
-                    }
-                    for (const auto& member : selected) {
-                        std::string member_key = set_storage_key(user_key, member);
-                        s = delete_raw_if_exists(txn, member_key);
+                    auto staged_it = staged_sets.find(user_key);
+                    if (staged_it != staged_sets.end()) {
+                        for (const auto& member : selected) {
+                            staged_it->second.erase(member);
+                        }
+                        dirty_sets.insert(user_key);
+                    } else {
+                        int64_t cardinality = 0;
+                        s = read_set_cardinality(txn, user_key, cardinality);
                         if (!s.ok()) {
                             all_success = false;
-                            break;
+                            continue;
                         }
-                        batch_exists[member_key] = false;
-                        batch_values.erase(member_key);
-                        cardinality = std::max<int64_t>(0, cardinality - 1);
-                    }
-                    if (!all_success) {
-                        continue;
-                    }
-                    s = write_set_cardinality(txn, user_key, cardinality);
-                    if (s.ok() && cardinality == 0) {
-                        s = clear_ttl_meta(txn, user_key);
-                    }
-                    if (!s.ok()) {
-                        all_success = false;
-                        continue;
+                        for (const auto& member : selected) {
+                            std::string member_key = set_storage_key(user_key, member);
+                            s = delete_raw_if_exists(txn, member_key);
+                            if (!s.ok()) {
+                                all_success = false;
+                                break;
+                            }
+                            batch_exists[member_key] = false;
+                            batch_values.erase(member_key);
+                            cardinality = std::max<int64_t>(0, cardinality - 1);
+                        }
+                        if (!all_success) {
+                            continue;
+                        }
+                        s = write_set_cardinality(txn, user_key, cardinality);
+                        if (s.ok() && cardinality == 0) {
+                            s = clear_ttl_meta(txn, user_key);
+                        }
+                        if (!s.ok()) {
+                            all_success = false;
+                            continue;
+                        }
                     }
                 }
                 result.success = true;
@@ -5421,6 +5383,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 if (s.ok() || s.IsNotFound()) {
                     batch_ttls.clear();
+                    staged_sets.clear();
+                    staged_sets_loaded.clear();
+                    dirty_sets.clear();
                     staged_lists.clear();
                     staged_lists_loaded.clear();
                     dirty_lists.clear();
@@ -5589,6 +5554,21 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             }
         }
 
+        if (all_success) {
+            for (const auto& set_key : dirty_sets) {
+                auto values_it = staged_sets.find(set_key);
+                const std::unordered_set<std::string> empty_values;
+                const auto& values = values_it == staged_sets.end() ? empty_values : values_it->second;
+                mako::Status s = rewrite_set_values(txn, set_key, values);
+                if (s.ok() && values.empty()) {
+                    s = clear_ttl_meta(txn, set_key);
+                }
+                if (!s.ok()) {
+                    all_success = false;
+                    break;
+                }
+            }
+        }
         if (all_success) {
             for (const auto& list_key : dirty_lists) {
                 auto values_it = staged_lists.find(list_key);

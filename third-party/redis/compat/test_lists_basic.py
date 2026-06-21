@@ -57,6 +57,18 @@ def test_pushx_lmove_rpoplpush_lpos(mako_client: redis.Redis) -> None:
     assert mako_client.execute_command("LPOS", source, b"missing") is None
 
 
+def test_lpos_rank_count_and_maxlen_options(mako_client: redis.Redis) -> None:
+    name = key("lpos-options")
+
+    assert mako_client.rpush(name, b"a", b"b", b"a", b"c", b"a") == 5
+    assert mako_client.execute_command("LPOS", name, b"a", "RANK", 2) == 2
+    assert mako_client.execute_command("LPOS", name, b"a", "RANK", -1) == 4
+    assert mako_client.execute_command("LPOS", name, b"a", "COUNT", 0) == [0, 2, 4]
+    assert mako_client.execute_command("LPOS", name, b"a", "COUNT", 2) == [0, 2]
+    assert mako_client.execute_command("LPOS", name, b"a", "MAXLEN", 2) == 0
+    assert mako_client.execute_command("LPOS", name, b"a", "RANK", 2, "MAXLEN", 2) is None
+
+
 def test_list_type_ttl_and_delete(mako_client: redis.Redis) -> None:
     name = key("typed")
 

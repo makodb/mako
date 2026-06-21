@@ -55,6 +55,19 @@ def test_smove_moves_member_between_sets(mako_client: redis.Redis) -> None:
     assert mako_client.smembers(destination) == {b"a"}
 
 
+def test_sadd_then_smove_inside_multi_uses_staged_set_writes(mako_client: redis.Redis) -> None:
+    source = key("multi-source")
+    destination = key("multi-destination")
+
+    pipe = mako_client.pipeline(transaction=True)
+    pipe.sadd(source, b"a")
+    pipe.smove(source, destination, b"a")
+
+    assert pipe.execute() == [1, True]
+    assert mako_client.smembers(source) == set()
+    assert mako_client.smembers(destination) == {b"a"}
+
+
 def test_set_algebra_and_store_variants(mako_client: redis.Redis) -> None:
     left = key("left")
     right = key("right")

@@ -7370,7 +7370,15 @@ fn write_command_result<W: Write>(
                         if let Some(items) = parse_list_payload(data) {
                             write_array_header(writer, items.len())?;
                             for item in items {
-                                write_bulk(writer, &item)?;
+                                let Ok(text) = std::str::from_utf8(&item) else {
+                                    write_err(writer, "operation failed")?;
+                                    return Ok(());
+                                };
+                                let Ok(position) = text.parse::<i64>() else {
+                                    write_err(writer, "operation failed")?;
+                                    return Ok(());
+                                };
+                                write_integer(writer, position)?;
                             }
                         } else {
                             write_err(writer, "operation failed")?;
