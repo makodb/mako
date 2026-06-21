@@ -1024,6 +1024,15 @@ struct ReconnectState {
 using AsyncReplyCallback = rusty::Function<
     void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
+// @safe - null reply-bytes sentinel for empty-reply async callbacks.
+// Hand-written (and forward-visible to the DSL) because the inline-rust
+// grammar has no nullptr literal; mirrors the fut_secs / make_pending_queue
+// helper pattern. Lets the DSL invalidate path pass "no reply" to a
+// callback as `null_reply_bytes()`.
+inline const uint8_t* null_reply_bytes() {
+  return nullptr;
+}
+
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1050,7 +1059,6 @@ struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_set_heartbeat_config(const ClientConnection& self, const HeartbeatConfig& config);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
-void clientconn_invalidate_pending_futures(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_handle_error(const ClientConnection& self);
@@ -1193,7 +1201,42 @@ impl ClientConnection {
     }
 
     // --- delegating methods (&self → const free fns) ---
-    fn invalidate_pending_futures(&self) { clientconn_invalidate_pending_futures(self); }
+    fn invalidate_pending_futures(&self) {
+        // Drain the slim async-callback slots first. Take each callback out
+        // under the lock via Option::take (mem::take leaves None behind, so
+        // the fixed-size slot vector keeps its shape), then fire them outside
+        // the lock with ENOTCONN + a null reply view.
+        let mut drained_callbacks: Vec<AsyncReplyCallback> = Vec::new();
+        {
+            let cb_guard = self.pending_cb_slots_.lock().unwrap();
+            let mut i: usize = 0;
+            while i < cb_guard.len() {
+                if cb_guard[i].is_some() {
+                    drained_callbacks.push(rusty::mem::take(&mut cb_guard[i]).unwrap());
+                }
+                i += 1usize;
+            }
+        }
+        for cb in &mut drained_callbacks {
+            self.metrics_.record_request_dropped();
+            cb(ENOTCONN, null_reply_bytes(), 0);
+        }
+
+        // Drain the pending-future map in one pass: HashMap::drain() empties
+        // the map as it yields each (xid, Arc<Future>) entry, replacing the
+        // prior iterate-then-clear. The lock is held through the notify loop
+        // below, matching the original (the map is already empty by then).
+        let mut futures: Vec<Arc<Future>> = Vec::new();
+        let guard = self.pending_fu_.lock().unwrap();
+        for (_xid, fu) in guard.drain() {
+            futures.push(fu);
+        }
+        for fu in &futures {
+            self.metrics_.record_request_dropped();
+            (*fu).error_code_.set(ENOTCONN);
+            (*fu).notify_ready(fu.clone());
+        }
+    }
     fn fail_pending_future(&self, xid: i64, err: i32) {
         let mut fu_opt: Option<Arc<Future>> = None;
         {
@@ -1400,7 +1443,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=9cd98203cd1d50a786a1dce71f71eebbe3ac98be9dcca5254f9c9385fffd7809*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=32e3f5879746191914e70a19e90c0ba359a921eed4295b90d00141a14aa04f3f*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1649,7 +1692,33 @@ void ClientConnection::set_callback_manager(const rusty::Arc<CallbackManager>& c
 }
 
 void ClientConnection::invalidate_pending_futures() const {
-    clientconn_invalidate_pending_futures((*this));
+    rusty::Vec<AsyncReplyCallback> drained_callbacks = rusty::Vec<AsyncReplyCallback>::new_();
+    {
+        auto cb_guard = this->pending_cb_slots_.lock().unwrap();
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len(cb_guard)) {
+            if (cb_guard[i].is_some()) {
+                drained_callbacks.push(rusty::mem::take(cb_guard[i]).unwrap());
+            }
+            i += static_cast<size_t>(1);
+        }
+    }
+    for (auto&& cb : rusty::for_in(rusty::iter(drained_callbacks))) {
+        this->metrics_.record_request_dropped();
+        cb(ENOTCONN, null_reply_bytes(), 0);
+    }
+    rusty::Vec<rusty::Arc<Future>> futures = rusty::Vec<rusty::Arc<Future>>::new_();
+    auto guard = this->pending_fu_.lock().unwrap();
+    for (auto&& _for_item : rusty::for_in(guard->drain())) {
+        auto&& _xid = rusty::detail::deref_if_pointer(std::get<0>(rusty::detail::deref_if_pointer(_for_item)));
+        auto&& fu = rusty::detail::deref_if_pointer(std::get<1>(rusty::detail::deref_if_pointer(_for_item)));
+        futures.push(std::move(fu));
+    }
+    for (auto&& fu : rusty::for_in(rusty::iter(futures))) {
+        this->metrics_.record_request_dropped();
+        (rusty::detail::deref_if_pointer_like(fu)).error_code_.set(std::move(ENOTCONN));
+        ((rusty::detail::deref_if_pointer_like(fu))).notify_ready(rusty::clone(fu));
+    }
 }
 
 void ClientConnection::fail_pending_future(int64_t xid, int32_t err) const {
@@ -3293,47 +3362,6 @@ uint64_t clientconn_monotonic_ms_now() {
     return rusty::sys::time::clock_monotonic_us() / static_cast<uint64_t>(1000);
 }
 /*RUSTYCPP:GEN-END id=client.monotonic_ms_now*/
-
-
-// @unsafe - Cancels all pending futures with error, protected by SpinMutex.
-// const: every mutation goes through SpinMutex / Counter / Future's
-// own const-callable methods.
-void clientconn_invalidate_pending_futures(const ClientConnection& self) {
-  // Drain the slim async-callback slots first.  Move callbacks out
-  // under the lock, then fire them outside the lock with ENOTCONN +
-  // null reply view.
-  rusty::Vec<AsyncReplyCallback> drained_callbacks;
-  {
-    auto cb_guard = self.pending_cb_slots_.lock().unwrap();
-    for (size_t i = 0; i < cb_guard->len(); ++i) {
-      if ((*cb_guard)[i].is_some()) {
-        drained_callbacks.push(std::move((*cb_guard)[i].unwrap()));
-        (*cb_guard)[i] = rusty::None;
-      }
-    }
-  }
-  for (auto& cb: drained_callbacks) {
-    self.metrics_.record_request_dropped();
-    cb(ENOTCONN, nullptr, 0);
-  }
-
-  list<rusty::Arc<Future>> futures;
-  auto guard = self.pending_fu_.lock().unwrap();
-  // HashMap's STL iterator yields std::tuple<const K&, V&>, not
-  // std::pair, so the value is at std::get<1>(it), not it.second.
-  for (auto it: *guard) {
-    futures.push_back(std::get<1>(it));  // Copy Arc
-  }
-  guard->clear();  // Clear map (releases its Arc references)
-  // Guard dropped here, releasing lock
-
-  for (auto& fu: futures) {
-    self.metrics_.record_request_dropped();
-    fu->error_code_.set(ENOTCONN);
-    fu->notify_ready(fu);  // Pass Arc to self for callback safety
-    // Arc auto-released when list destroyed
-  }
-}
 
 
 // @safe - HashMap::get returns Option<V&> now; SpinMutex::lock returns
