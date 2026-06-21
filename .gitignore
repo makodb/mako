@@ -92,7 +92,7 @@ experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*
 *.json
-!tools/redis_compat/command_tiers.json
+!third-party/redis/compat/command_tiers.json
 /tmp
 /log
 /archive
@@ -109,8 +109,8 @@ cmake-build/*
 
 # Misc build/test artifacts
 /Testing/
-tools/redis_compat/_client_tmp/
-tools/redis_compat/probe_results.json
+third-party/redis/compat/_client_tmp/
+third-party/redis/compat/probe_results.json
 
 # Local assistant workspace
 /.claude/

@@ -128,28 +128,6 @@ public:
     }
   }
 
-  bool exists(void *txn, lcdf::Str key) override {
-    if (!mbta.get_is_remote()) {
-      STD_OP({
-        bool ret = mbta.transExists(key);
-        if (TThread::transget_without_throw) {
-          TThread::transget_without_throw = false;
-          throw Transaction::Abort();
-        }
-        return ret;
-      });
-    } else {
-      // Remote shards only expose remoteGet(), so this path may copy the value.
-      // The local Redis path above remains no-copy.
-      std::string unused;
-      int ret=TThread::sclient->remoteGet(mbta.get_table_id(), key, unused);
-      if (ret>0) {
-        throw abstract_db::abstract_abort_exception();
-      }
-      return true;
-    }
-  }
-
   bool get_is_remote() {
     return mbta.get_is_remote();
   }

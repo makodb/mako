@@ -3,7 +3,7 @@
 The Phase 12 side-by-side demo is now executable with:
 
 ```bash
-tools/redis_compat/run_cross_shard_demo.py
+third-party/redis/compat/run_cross_shard_demo.py
 ```
 
 ## Latest Captured Result
@@ -17,7 +17,7 @@ Captured: 2026-06-12 19:47:19 UTC
 
 ## Scope
 
-The Mako side uses `tools/redis_compat/fixtures/makocon_multishard.sh`, which
+The Mako side uses `third-party/redis/compat/fixtures/makocon_multishard.sh`, which
 starts one Redis-facing `makoCon` process with `MAKO_NUM_SHARDS=3` and
 `MAKO_LOCAL_SHARDS=0,1,2`. That exercises Redis transactions over Mako's
 sharded table routing in one process.
@@ -31,5 +31,5 @@ Redis endpoint over that deployment.
 Single-shard smoke remains available:
 
 ```bash
-MAKO_G2_ALLOW_SINGLE_SHARD=1 python3 tools/redis_compat/run_bank_transfer.py
+MAKO_G2_ALLOW_SINGLE_SHARD=1 python3 third-party/redis/compat/run_bank_transfer.py
 ```

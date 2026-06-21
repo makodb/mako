@@ -174,7 +174,7 @@ if(DEFINED ENV{CARGO_TARGET_DIR})
     set(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}")
     message(STATUS "Using CARGO_TARGET_DIR for rust-lib: ${RUST_LIB_TARGET_BASE}")
 else()
-    set(RUST_LIB_TARGET_BASE "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target")
+    set(RUST_LIB_TARGET_BASE "${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/rust-lib/target")
 endif()
 set(RUST_LIB_DIR "${RUST_LIB_TARGET_BASE}/release")
 set(RUST_LIB_NAME "rust_redis")
@@ -184,9 +184,10 @@ set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
     COMMAND cargo build --release
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
-            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/lib.rs
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/rust-lib
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/rust-lib/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/rust-lib/src/lib.rs
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/rust-lib/src/resp3_handler.rs
     COMMENT "Building Rust library if needed"
 )
 
@@ -741,6 +742,7 @@ set(LZ4LDFLAGS
   -llz4
   -Wl,-rpath,${TOP}/third-party/lz4
 )
+set(LZ4_LIB "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
 
 if(USE_MALLOC_MODE EQUAL 1)
   list(APPEND CXXFLAGS -DUSE_JEMALLOC)
@@ -835,7 +837,6 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
@@ -1027,7 +1028,7 @@ target_link_libraries(txlog_core
     yaml-cpp
     pthread
     rocksdb
-    lz4
+    ${LZ4_LIB}
     ${CMAKE_DL_LIBS}
     Python3::Python
 )
@@ -1346,6 +1347,8 @@ function(add_apps exec_name exec_path)
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
       ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/redis/cpp
       ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
@@ -1391,9 +1394,9 @@ add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
 add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.cc)
-add_apps(makoCon examples/makoCon.cc)
+add_apps(makoCon third-party/redis/cpp/makoCon.cc)
 add_apps(makoConDBBench examples/makoConDBBench.cc)
-add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
+add_apps(makoConMultiTrd third-party/redis/cpp/makoConMultiTrd.cc)
 # Note: makoServer functionality has been consolidated into simpleTransactionRep.cc
 #       Use: ./simpleTransactionRep --server <args> for server-only mode
 
@@ -2119,7 +2122,7 @@ if(BUILD_TESTS)
     add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
     target_include_directories(raft_lab_standalone PRIVATE ${TEST_INCLUDE_DIRS})
     target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
+    target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb ${LZ4_LIB} ${CMAKE_DL_LIBS} Python3::Python)
     add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
     # PollThread proxy-backed storage guard tests (Phase 1 leaf 2)

@@ -1,0 +1,13 @@
+[package]
+name = "rust_redis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+redis-protocol = { version = "6.0.0", features = ["resp3", "bytes", "codec"] }
+bytes = "1.4"
+itoa = "1.0"
+socket2 = { version = "0.5", features = ["all"] }
+
+[lib]
+crate-type = ["staticlib"]

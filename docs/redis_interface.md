@@ -64,7 +64,7 @@ This document describes Mako's Redis-compatible `makoCon` interface, centered on
 
 ## Rust RESP Layer
 
-The Rust layer lives in `third-party/makocon/mako/rust-lib/src/lib.rs`.
+The Rust layer lives in `third-party/redis/rust-lib/src/lib.rs`.
 
 It owns:
 
@@ -109,7 +109,7 @@ Rust then counts the returned `value_present` bits and emits one Redis integer r
 
 ## C++ Transaction Execution
 
-The C++ Redis entry point is `examples/makoCon.cc`.
+The C++ Redis entry point is `third-party/redis/cpp/makoCon.cc`.
 
 All supported data operations go through `execute_transaction()`. Single commands are sent as one-operation transactions. `MULTI` / `EXEC` sends the queued operations as one transaction.
 
@@ -122,7 +122,7 @@ Redis binaries:
 - `INFO mako` metric population;
 - Redis-layer retry accounting.
 
-`examples/makoConMultiTrd.cc` remains ABI-compatible only. Its queue worker
+`third-party/redis/cpp/makoConMultiTrd.cc` remains ABI-compatible only. Its queue worker
 still implements only the legacy `GET`/`SET`/`DEL`/`EXISTS` storage verbs, so
 the broader Redis command semantics are not claimed for that binary. If
 MultiTrd becomes a correctness target, it needs to call the same transaction

@@ -18,7 +18,7 @@
 
 **85/85 tests pass.** Two server bugs and one test-harness issue were discovered and fixed:
 1. **Growing-value overwrite OCC abort** (Tasks 7–8): found, characterized, and **fixed** in `MassTrans.hh` (commit `cd4b90ee`).
-2. **MULTI/EXEC multi-overwrite last-value bug** (Task 11): found and **fixed** in `examples/makoCon.cc` (commit `cc8205c6`). Root cause: `StringWrapper::Put` stores only a pointer to the value string, so reusing `tl_val_buf` across SET operations caused all stored pointers to alias the last-written value at Commit. Fix: pre-encode each SET value into its own `std::string` in `std::vector<std::string> encoded_vals` before the transaction loop.
+2. **MULTI/EXEC multi-overwrite last-value bug** (Task 11): found and **fixed** in `third-party/redis/cpp/makoCon.cc` (commit `cc8205c6`). Root cause: `StringWrapper::Put` stores only a pointer to the value string, so reusing `tl_val_buf` across SET operations caused all stored pointers to alias the last-written value at Commit. Fix: pre-encode each SET value into its own `std::string` in `std::vector<std::string> encoded_vals` before the transaction loop.
 3. **Test harness: Task 9.4 raw-socket timing fragility** (this commit): The original `test_9_4_delete_in_multi` used a raw TCP socket with fixed `time.sleep` delays. Under server load from Tasks 7–8, the recv timed out and left the server connection in a confused state that hung Task 9.5. Fix: replaced with `r.pipeline(transaction=True).delete(key).execute()`. Also added a `pkill` fallback to `server_manager.stop_server()` so fresh Python processes (not holding `_server_proc`) can force-stop any running makoCon instance before restarting.
 
 The test suite exercises the **makoCon** Redis-compatible server (single-node, in-memory Masstree, no replication, no RocksDB persistence). Tasks 11–16 are application-level workload simulations added to surface real-world invariant requirements.
@@ -248,7 +248,7 @@ The test suite exercises the **makoCon** Redis-compatible server (single-node, i
 ## BUG REPORT §2: MULTI/EXEC Multi-SET-Overwrite Applies Last Value to All Keys [FIXED]
 
 **Severity:** Critical
-**Status:** **FIXED** in commit `cc8205c6` — `examples/makoCon.cc`
+**Status:** **FIXED** in commit `cc8205c6` — `third-party/redis/cpp/makoCon.cc`
 **Discovered by:** Bank Simulation workload test (`test_workload_bank.py`)
 **Tests:** Task 11 (discovery), Tasks 2.1 and 2.7 (did NOT catch it — they only write new keys)
 
@@ -298,7 +298,7 @@ EXEC
 
 ### Root Cause (Confirmed and Fixed)
 
-The C++ `execute_transaction` in `examples/makoCon.cc` used the thread-local `tl_val_buf` (`std::string`) as the encoding buffer for **all** SET operations in the transaction loop. `mbta_sharded_ordered_index::Put` wraps the value in a `StringWrapper`, which stores only a **pointer** to the passed `std::string` — no copy is made. All stored `StringWrapper` instances therefore aliased the same `tl_val_buf`, which held the **last** encoded value by the time `Commit()` ran.
+The C++ `execute_transaction` in `third-party/redis/cpp/makoCon.cc` used the thread-local `tl_val_buf` (`std::string`) as the encoding buffer for **all** SET operations in the transaction loop. `mbta_sharded_ordered_index::Put` wraps the value in a `StringWrapper`, which stores only a **pointer** to the passed `std::string` — no copy is made. All stored `StringWrapper` instances therefore aliased the same `tl_val_buf`, which held the **last** encoded value by the time `Commit()` ran.
 
 **Fix (commit `cc8205c6`):** Pre-encode all SET values into `std::vector<std::string> encoded_vals(num_ops)` before the transaction loop, indexed by operation position. Each `encoded_vals[i]` is an independent `std::string` that outlives `Commit()`. The loop now calls `Put(txn, key, encoded_vals[i])` instead of `Put(txn, key, tl_val_buf)`.
 

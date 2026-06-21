@@ -61,15 +61,6 @@ public:
       return get(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value, max_bytes_read);
   }
 
-  /**
-   * Transactional existence check. Implementations may override this to avoid
-   * materializing values; the default preserves existing get()-based behavior.
-   */
-  virtual bool exists(void *txn, lcdf::Str key) {
-      std::string unused;
-      return get(txn, key, unused);
-  }
-
   class scan_callback {
   public:
     virtual ~scan_callback() {}

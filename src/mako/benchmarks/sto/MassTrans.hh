@@ -167,37 +167,6 @@ public:
     return found;
   }
 
-  // EXISTS checks the key without copying value bytes. It follows transGet's
-  // OCC observation and not-found tracking.
-  bool transExists(Str key, threadinfo_type& ti = mythreadinfo) {
-    unlocked_cursor_type lp(table_, key);
-    bool found = lp.find_unlocked(*ti.ti);
-    if (found) {
-      versioned_value *e = lp.value();
-      auto item = t_read_only_item(e);
-      if (!validityCheck(item, e)) {
-        Sto::abort_without_throw();
-        TThread::transget_without_throw = true;
-        return false;
-      }
-      Version elem_vers;
-      if (!atomicObserve(e, elem_vers)) {
-        return false;
-      }
-      item.observe(tversion_type(elem_vers));
-      if (TThread::is_multiversion()) {
-        return MultiVersionValue::mvExists(
-            (char*)e->data(),
-            e->length(),
-            TThread::txn->get_current_term(),
-            sync_util::sync_logger::hist_timestamp);
-      }
-    } else {
-      ensureNotFound(lp.node(), lp.full_version_value());
-    }
-    return found;
-  }
-
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
     unlocked_cursor_type lp(table_, key);
@@ -914,23 +883,6 @@ protected:
     return true;
   }
 
-  static bool atomicObserve(versioned_value *e, Version& vers) {
-    Version v2;
-    do {
-      v2 = e->version();
-      if (is_locked(v2)){
-        Sto::abort_without_throw();
-        TThread::transget_without_throw=true;
-        return false;
-      }
-
-      fence();
-      vers = e->version();
-      fence();
-    } while (vers != v2);
-    return true;
-  }
-
   template <typename ValType>
   static void assign_val(ValType& val, const ValType& val_to_assign) {
     val = val_to_assign;
@@ -958,3 +910,4 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
+

@@ -45,12 +45,6 @@ public:
                max_bytes_read);
   }
 
-  bool exists(void *txn, lcdf::Str key);
-
-  bool exists(void *txn, const std::string &key) {
-    return exists(txn, lcdf::Str(key));
-  }
-
   const char *put(void *txn,
                   lcdf::Str key,
                   const std::string &value);
@@ -129,12 +123,6 @@ public:
    * @return Status::OK() on success
    */
   mako::Status Delete(void *txn, const std::string &key);
-
-  /**
-   * Check whether a key exists (RocksDB-style wrapper)
-   * @return Status::OK() on a completed existence check
-   */
-  mako::Status Exists(void *txn, const std::string &key, bool *exists);
 
   void scan(void *txn,
             const std::string &start_key,
@@ -326,10 +314,6 @@ inline mako::Status mbta_sharded_ordered_index::Get(
   return found ? mako::Status::OK() : mako::Status::NotFound();
 }
 
-inline bool mbta_sharded_ordered_index::exists(void *txn, lcdf::Str key) {
-  return pick_shard(key)->exists(txn, key);
-}
-
 inline mako::Status mbta_sharded_ordered_index::Put(
     void *txn,
     const std::string &key,
@@ -353,17 +337,6 @@ inline mako::Status mbta_sharded_ordered_index::Delete(
     void *txn,
     const std::string &key) {
   remove(txn, key);
-  return mako::Status::OK();
-}
-
-inline mako::Status mbta_sharded_ordered_index::Exists(
-    void *txn,
-    const std::string &key,
-    bool *exists) {
-  if (!exists) {
-    return mako::Status::InvalidArgument("exists output pointer is null");
-  }
-  *exists = this->exists(txn, key);
   return mako::Status::OK();
 }
 

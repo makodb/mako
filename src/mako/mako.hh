@@ -38,7 +38,6 @@
 #include "lib/multi_transport_manager.h"
 #include "lib/common.h"
 #include "lib/server.h"
-#include "lib/rust_wrapper.h"
 
 // Config node initialization stubs
 // NOTE: The full implementation is in config_node_init.cc but cannot be linked
@@ -67,21 +66,6 @@ namespace mako {
         // Stub - nothing to shutdown yet
     }
 }
-
-
-// Initialize Rust wrapper: communicate with rust-based redis client
-/*
-static void initialize_rust_wrapper()
-{
-  RustWrapper* g_rust_wrapper = new RustWrapper();
-  if (!g_rust_wrapper->init()) {
-      std::cerr << "Failed to initialize rust wrapper!" << std::endl;
-      delete g_rust_wrapper;
-      std::quick_exit( EXIT_SUCCESS );
-  }
-  std::cout << "Successfully initialized rust wrapper!" << std::endl;
-  g_rust_wrapper->start_polling();
-}*/
 
 static void print_system_info()
 {
@@ -178,8 +162,6 @@ static void stopMultiShardTransports() {
 // init all threads (single-shard mode, backward compatible)
 static abstract_db* initWithDB() {
   auto& benchConfig = BenchmarkConfig::getInstance();
-
-  //initialize_rust_wrapper();
 
   // initialize the numa allocator
   size_t numa_memory = mako::parse_memory_spec("1G");

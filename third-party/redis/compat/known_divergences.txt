@@ -1,0 +1,17 @@
+# Known intentional Redis compatibility divergences.
+#
+# Format:
+# <suite/test/command> :: <reason-category> :: <short reason>
+#
+# Reason categories:
+# - feature-killed-per-A.11
+# - mako-design-difference
+# - mako-correctness-fix
+#
+SRANDMEMBER/SPOP randomness :: mako-design-difference :: Phase 6 returns deterministic members; semantic membership/count behavior is implemented, statistical randomness is not claimed yet.
+KEYS/SCAN/DBSIZE set visibility :: mako-design-difference :: Phase 6 hides composite set storage and does not yet expose sets as logical keys through keyspace enumeration.
+MULTI set write+move ordering :: mako-design-difference :: SADD followed by SMOVE of the same new member in one EXEC needs staged set writes; currently tracked as an expected gap.
+KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Phase 7 hides composite list storage and does not yet expose lists as logical keys through keyspace enumeration.
+KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Phase 8 hides composite sorted-set storage and does not yet expose sorted sets as logical keys through keyspace enumeration.
+makoConMultiTrd extended Redis commands :: mako-design-difference :: The alternate MultiTrd binary is ABI/link compatible only; Redis command correctness is claimed for third-party/redis/cpp/makoCon.cc.
+FLUSHDB/FLUSHALL :: mako-design-difference :: Exposed as admin/test compatibility commands backed by a real transactional delete-all implementation; Redis database selection is still single-DB only.

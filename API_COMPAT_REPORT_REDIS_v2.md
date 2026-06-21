@@ -1,8 +1,8 @@
 # Redis API Compatibility Report v2
 
 This report summarizes the Redis-compatible `makoCon` surface implemented in
-this PR. The semantic target is `examples/makoCon.cc`.
-`examples/makoConMultiTrd.cc` is ABI/link-compatible only for extended Redis
+this PR. The semantic target is `third-party/redis/cpp/makoCon.cc`.
+`third-party/redis/cpp/makoConMultiTrd.cc` is ABI/link-compatible only for extended Redis
 commands.
 
 ## Supported Surface
@@ -42,7 +42,7 @@ This does not claim full Redis `INFO clients` or Redis persistence metrics.
 ## Known Divergences
 
 The authoritative divergence list is
-`tools/redis_compat/known_divergences.txt`. Current categories include:
+`third-party/redis/compat/known_divergences.txt`. Current categories include:
 
 - deterministic `SPOP`/`SRANDMEMBER` member choice;
 - collection logical keys not yet visible through `KEYS`/`SCAN`/`DBSIZE`;
@@ -69,10 +69,10 @@ no replication.
 Phase 12 acceptance is not yet a clean release gate.
 
 Latest artifact:
-`tools/redis_compat/acceptance/ACCEPTANCE_20260609_134456_11fa4764.txt`
+`third-party/redis/compat/acceptance/ACCEPTANCE_20260609_134456_11fa4764.txt`
 
 Latest G2-focused artifact:
-`tools/redis_compat/acceptance/ACCEPTANCE_20260612_194706_8cacf577.txt`
+`third-party/redis/compat/acceptance/ACCEPTANCE_20260612_194706_8cacf577.txt`
 
 | Acceptance line | Status | Detail |
 |---|---|---|
@@ -97,18 +97,18 @@ harnesses distinguish missing environment from real failures.
 
 The harnesses now include external fixture hooks:
 
-- `tools/redis_compat/fixtures/makocon_local.sh` starts/stops one local
+- `third-party/redis/compat/fixtures/makocon_local.sh` starts/stops one local
   `makoCon` for smoke and restart-hook testing.
-- `tools/redis_compat/fixtures/makocon_multishard.sh` starts/stops one local
+- `third-party/redis/compat/fixtures/makocon_multishard.sh` starts/stops one local
   Redis-facing `makoCon` with three local shard tables for the G2 bank
   transfer fixture.
-- `tools/redis_compat/fixtures/redis_cluster.sh` starts a local Redis Cluster
+- `third-party/redis/compat/fixtures/redis_cluster.sh` starts a local Redis Cluster
   comparison fixture.
-- `tools/redis_compat/run_cross_shard_demo.py` captures the Phase 12 G2
+- `third-party/redis/compat/run_cross_shard_demo.py` captures the Phase 12 G2
   side-by-side result in `docs/cross_shard_atomicity_demo.md`.
-- `tools/redis_compat/bootstrap_redis_tests.sh` links or fetches Redis TCL
+- `third-party/redis/compat/bootstrap_redis_tests.sh` links or fetches Redis TCL
   tests when explicitly requested.
-- `tools/redis_compat/fixtures/README.md` lists the environment variables for
+- `third-party/redis/compat/fixtures/README.md` lists the environment variables for
   G2, G3, G4, TCL, restart durability, and client failover.
 
 These hooks change the G2 local-fixture status only. A local single-shard

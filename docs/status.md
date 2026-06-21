@@ -265,7 +265,7 @@ The API shape is right but the implementation is shallow. Priority: (1) add data
 
 ### What Exists
 
-- **makoCon** server: Located in `examples/makoCon.cc` and `third-party/makocon/`.
+- **makoCon** server: Located in `third-party/redis/cpp/makoCon.cc` and `third-party/redis/`.
 - Supports basic Redis protocol: `GET`, `SET`, `DEL`, `MULTI/EXEC`.
 - Thread-per-core architecture with `SO_REUSEPORT`.
 - Python-based correctness test suite (`tests/correctness/`) uses makoCon as the server.
