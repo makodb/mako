@@ -1060,7 +1060,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_close(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
-void clientconn_handle_error(const ClientConnection& self);
 void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
 void clientconn_on_channel_closed_fan_out(const ClientConnection& self);
 ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
@@ -1354,7 +1353,52 @@ impl ClientConnection {
         (*self.callback_manager_).invoke_on_connected();
     }
     fn dispatch_frame_via_channel(&self, body_bytes: *const u8, body_size: usize) -> ChannelError { clientconn_dispatch_frame_via_channel(self, body_bytes, body_size) }
-    fn handle_error(&self) { clientconn_handle_error(self); }
+    fn handle_error(&self) {
+        let prev_state = self.state_machine_.state();
+        let abort_flag: bool = unsafe { self.reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+        let user_initiated_closing: bool =
+            (prev_state as i32) == (ConnectionState::DISCONNECTING as i32)
+            || (prev_state as i32) == (ConnectionState::DISCONNECTED as i32)
+            || abort_flag;
+
+        if !user_initiated_closing {
+            self.invoke_error_callback(ECONNRESET, "connection error");
+            self.state_machine_.force_state(ConnectionState::FAILED);
+        }
+        self.close();
+
+        if user_initiated_closing {
+            return;
+        }
+        self.invoke_disconnected_callback();
+
+        // Trigger policy-driven reconnect automatically after transport failures.
+        let reconnect_aborted: bool = unsafe { self.reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+        if self.reconnect_policy_.get().auto_reconnect && !reconnect_aborted {
+            let addr: std::string = self.reconnect_address_.get();
+            if addr.empty() {
+                return;
+            }
+            let weak_conn: WeakClientConnection = self.weak_self_.clone();
+            rusty::thread::spawn(move || {
+                let conn_opt = weak_conn.upgrade();
+                if conn_opt.is_none() {
+                    return;
+                }
+                let conn = conn_opt.unwrap();
+                let conn_aborted: bool = unsafe { (*conn).reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+                if !(*conn).reconnect_policy_.get().auto_reconnect || conn_aborted {
+                    return;
+                }
+                let state = (*conn).connection_state();
+                if (state as i32) == (ConnectionState::FAILED as i32)
+                    || (state as i32) == (ConnectionState::DISCONNECTED as i32) {
+                    unsafe { Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure"); }
+                    (*conn).reconnect(OnReconnectCompleteCallbackFn {});
+                }
+            }).detach();
+        }
+    }
     fn check_pending_write_update(&self) -> bool {
         if self.state_machine_.is_connected() && !self.paused_.get() {
             if self.heartbeat_manager_.check_timeout() {
@@ -1460,7 +1504,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=e6b3194610cf20b8a540109b4701f0858ea8c68d237fb8d2d544c21c95645758*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=beebe9c2ebd7d6c639ff6c2ef32498cd81b5fdcd333509a43c239276b01bf14c*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1908,7 +1952,45 @@ ChannelError ClientConnection::dispatch_frame_via_channel(const uint8_t* body_by
 }
 
 void ClientConnection::handle_error() const {
-    clientconn_handle_error((*this));
+    const auto prev_state = this->state_machine_.state();
+    const bool abort_flag = this->reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+    const bool user_initiated_closing = ((((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTING)))) || (((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) || rusty::detail::deref_if_pointer_like(abort_flag);
+    if (!user_initiated_closing) {
+        this->invoke_error_callback(ECONNRESET, "connection error");
+        this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::FAILED)));
+    }
+    this->close();
+    if (user_initiated_closing) {
+        return;
+    }
+    this->invoke_disconnected_callback();
+    const bool reconnect_aborted = this->reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+    if (rusty::detail::deref_if_pointer_like(this->reconnect_policy_.get().auto_reconnect) && !reconnect_aborted) {
+        const std::string addr = this->reconnect_address_.get();
+        if (addr.empty()) {
+            return;
+        }
+        const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
+auto conn_opt = weak_conn.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+if (!(rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect || rusty::detail::deref_if_pointer_like(conn_aborted)) {
+    return;
+}
+const auto state = ((rusty::detail::deref_if_pointer_like(conn))).connection_state();
+if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::FAILED)))) || (((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) {
+    // @unsafe
+    {
+        Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
+    }
+    ((rusty::detail::deref_if_pointer_like(conn))).reconnect(OnReconnectCompleteCallbackFn{});
+}
+}).detach();
+    }
 }
 
 bool ClientConnection::check_pending_write_update() const {
@@ -4652,60 +4734,6 @@ RpcError clientconn_map_system_error(int32_t err) {
 /*RUSTYCPP:GEN-END id=client.map_system_error*/
 
 
-// @unsafe - Error handler - transitions to FAILED state.
-// const: state_machine_, atomics (mutable), close/invoke_*_callback,
-// and the reconnect spawn are all callable through a const ref.
-void clientconn_handle_error(const ClientConnection& self) {
-  ConnectionState prev_state = self.state_machine_.state();
-  const bool user_initiated_closing =
-      prev_state == ConnectionState::DISCONNECTING ||
-      prev_state == ConnectionState::DISCONNECTED ||
-      self.reconnect_.reconnect_abort_.load(std::memory_order_acquire);
-
-  if (!user_initiated_closing) {
-    self.invoke_error_callback(ECONNRESET, "connection error");
-    // Force transition to FAILED state (from any state)
-    self.state_machine_.force_state(ConnectionState::FAILED);
-  }
-  // @unsafe - calls close() which does system calls
-  { self.close(); }
-
-  if (user_initiated_closing) {
-    return;
-  }
-  self.invoke_disconnected_callback();
-
-  // Trigger policy-driven reconnect automatically after transport failures.
-  if (self.reconnect_policy_.get().auto_reconnect &&
-      !self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
-    // std::string::empty() is a pure const accessor; safe in @safe code.
-    if (self.reconnect_address_.get().empty()) {
-      return;
-    }
-    auto weak_conn = self.weak_self_;
-    rusty::thread::spawn([weak_conn]() {
-        auto conn_opt = weak_conn.upgrade();
-        if (conn_opt.is_none()) {
-          return;
-        }
-
-        auto conn = conn_opt.unwrap();
-        if (!conn->reconnect_policy_.get().auto_reconnect ||
-            conn->reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
-          return;
-        }
-
-        auto state = conn->connection_state();
-        if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
-          Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
-          // @unsafe - reconnect mutates socket/state and performs network I/O.
-          if (conn.get() != nullptr) {
-            conn->reconnect(nullptr);
-          }
-        }
-      }).detach();
-  }
-}
 
 
 // 4g3c3: ClientConnection no longer implements the Pollable role.
