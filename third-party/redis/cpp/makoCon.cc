@@ -39,6 +39,11 @@ static std::atomic<uint64_t> g_mako_txn_aborts{0};
 // Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
 static std::atomic<uint64_t> g_mako_random_counter{1};
+// Redis-facing correctness is claimed through makoCon. Serialize the adapter
+// executor so concurrent Redis MULTI/EXEC requests cannot acknowledge lost
+// read-modify-write updates if the lower Mako path does not surface a
+// retryable abort.
+static std::mutex g_redis_txn_mutex;
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -221,6 +226,8 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     if (!makocon_ffi::allocate_response(request, response)) {
         return false;
     }
+
+    std::lock_guard<std::mutex> redis_txn_lock(g_redis_txn_mutex);
 
     if (request->num_ops == 1 && request->ops != nullptr && request->ops[0].op == TXN_OP_FLUSHDB) {
         const bool ok = execute_flushdb_chunked();

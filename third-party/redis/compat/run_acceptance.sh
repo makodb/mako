@@ -145,7 +145,7 @@ run_resp_fuzz_guard() {
     run_optional_script "G2 bank transfer" "third-party/redis/compat/run_bank_transfer.py" python3 third-party/redis/compat/run_bank_transfer.py
     run_optional_script "G2 cross-shard demo" "third-party/redis/compat/run_cross_shard_demo.py" python3 third-party/redis/compat/run_cross_shard_demo.py
     run_optional_script "G3 failover durability" "third-party/redis/compat/run_failover_durability.py" python3 third-party/redis/compat/run_failover_durability.py
-    run_optional_script "G4 Elle isolation" "third-party/redis/compat/run_elle_isolation.py" python3 third-party/redis/compat/run_elle_isolation.py
+    run_optional_script "G4 serializable isolation" "third-party/redis/compat/run_elle_isolation.py" python3 third-party/redis/compat/run_elle_isolation.py
     run_throughput_guard
     run_memtier_guard
     run_optional_script "TCL semantic guard" "third-party/redis/compat/run_tcl_suite.sh" bash third-party/redis/compat/run_tcl_suite.sh

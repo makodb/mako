@@ -74,21 +74,25 @@ the current leader while clients reconnect to a live service.
 
 ## G4 Serializable Isolation
 
-True G4 needs Elle:
+Default G4 runs a self-contained read-modify-write workload:
+
+```bash
+python3 third-party/redis/compat/run_elle_isolation.py
+```
+
+The workload uses 16 clients and 10 shared keys by default. Each transaction
+queues `GET key` and `INCRBY key 1` inside one `MULTI`/`EXEC`; the checker
+verifies each key's committed increments are contiguous and the final values
+match the committed write count. This catches lost updates and non-serializable
+read-modify-write behavior for the G4 workload.
+
+Optional external Elle analysis remains available for externally generated
+histories:
 
 ```bash
 ELLE_JAR=/path/to/elle.jar MAKO_G4_HISTORY=/tmp/history.edn \
 python3 third-party/redis/compat/run_elle_isolation.py
 ```
-
-For a local read-modify-write smoke test only:
-
-```bash
-MAKO_G4_ALLOW_BUILTIN=1 python3 third-party/redis/compat/run_elle_isolation.py
-```
-
-The built-in smoke checks final counters. It is not a substitute for Elle's
-cycle/anomaly analysis.
 
 ## TCL Semantic Guard
 
