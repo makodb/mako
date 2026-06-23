@@ -1059,6 +1059,21 @@ inline const int8_t* str_as_i8(const std::string& s) {
   return reinterpret_cast<const int8_t*>(s.c_str());
 }
 
+// @unsafe - Log_error wrappers for connect()'s error paths. Called bare from
+// the DSL (like verify): a Log_error inside an inline-rust `unsafe { }` block
+// in a non-void method is miscodegen'd with a spurious return-type qualifier
+// (`int32_t::Log_error`), so the I/O is isolated in these void helpers instead.
+inline void log_connect_bad_state(ConnectionState state) {
+  Log_error("rrr::ClientConnection: cannot connect from state %s",
+            connection_state_to_string(state));
+}
+inline void log_connect_no_factory() {
+  Log_error("rrr::ClientConnection::connect: factory not bound. "
+            "Channel mode requires a ChannelFactoryProxy installed via "
+            "Client::set_channel_factory(...) or auto-installed by "
+            "Client::connect (the latter happens unconditionally now).");
+}
+
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1087,7 +1102,6 @@ void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
 ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
-int clientconn_connect(const ClientConnection& self, const int8_t* addr);
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
 int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* addr);
 void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, ChannelConnectionProxy channel);
@@ -1265,7 +1279,27 @@ impl ClientConnection {
         self.channel_mode_.set(false);
         self.state_machine_.force_state(ConnectionState::DISCONNECTED);
     }
-    fn connect(&self, addr: *const i8) -> i32 { clientconn_connect(self, addr) }
+    fn connect(&self, addr: *const i8) -> i32 {
+        verify(!self.state_machine_.is_connected());
+
+        if !self.state_machine_.transition_to(ConnectionState::CONNECTING) {
+            log_connect_bad_state(self.state_machine_.state());
+            self.invoke_error_callback(EINVAL, "invalid state for connect");
+            return EINVAL;
+        }
+
+        // Channel mode is the only path: Client::connect auto-installs a TCP
+        // factory before calling this. connect_via_factory issues
+        // factory->connect(addr), hands the proxy to bind_channel_direct, and
+        // records reconnect_address_ for the close-side reconnect spawn.
+        if !self.is_factory_bound() {
+            log_connect_no_factory();
+            self.state_machine_.transition_to(ConnectionState::FAILED);
+            self.invoke_error_callback(EINVAL, "no channel factory bound");
+            return EINVAL;
+        }
+        self.connect_via_factory(addr)
+    }
     fn bind_channel(&self, channel: ChannelConnectionProxy) {
         if !channel.is_valid() {
             return;
@@ -1653,7 +1687,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=7db307f6feb344a919ed8c84ef91bd32dffb34d2995ec1acc52a0a0337ad6738*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3529b660c8823a47558dcc757697d426353de42018b4d77052885ecc4e3a23e5*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1917,7 +1951,19 @@ void ClientConnection::reset_channel_mode_for_reconnect() const {
 }
 
 int32_t ClientConnection::connect(const int8_t* addr) const {
-    return clientconn_connect((*this), addr);
+    verify(!this->state_machine_.is_connected());
+    if (!this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::CONNECTING)))) {
+        log_connect_bad_state(this->state_machine_.state());
+        this->invoke_error_callback(EINVAL, "invalid state for connect");
+        return EINVAL;
+    }
+    if (!this->is_factory_bound()) {
+        log_connect_no_factory();
+        this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::FAILED)));
+        this->invoke_error_callback(EINVAL, "no channel factory bound");
+        return EINVAL;
+    }
+    return this->connect_via_factory(addr);
 }
 
 void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
@@ -3741,40 +3787,6 @@ uint64_t clientconn_monotonic_ms_now() {
 
 // @unsafe - Establishes TCP/IPC connection to server
 // Contains syscalls, raw pointers, and other unsafe operations
-int clientconn_connect(const ClientConnection& self, const int8_t* addr_i8) {
-  // DSL emits `const int8_t*` for `*const i8`; the legacy body uses char*.
-  const char* addr = reinterpret_cast<const char*>(addr_i8);
-  verify(!self.state_machine_.is_connected());
-
-  // Transition to CONNECTING state
-  if (!self.state_machine_.transition_to(ConnectionState::CONNECTING)) {
-    Log_error("rrr::ClientConnection: cannot connect from state %s",
-              connection_state_to_string(self.state_machine_.state()));
-    self.invoke_error_callback(EINVAL, "invalid state for connect");
-    return EINVAL;
-  }
-
-  // channel mode is the only path.
-  //
-  // Channel mode is non-negotiable post-4g3a, and `Client::connect`
-  // always installs a default TCP factory before calling this method
-  // (see `Client::connect` for the auto-install logic). The legacy
-  // socket(2) + connect(2) + register-pollable path has been deleted.
-  //
-  // `connect_via_factory` issues `factory->connect(addr)`, hands the
-  // returned proxy to `bind_channel_direct(...)`, and records
-  // `reconnect_address_` for the close-side reconnect spawn.
-  if (!self.is_factory_bound()) {
-    Log_error("rrr::ClientConnection::connect: factory not bound. "
-              "Channel mode requires a ChannelFactoryProxy installed via "
-              "Client::set_channel_factory(...) or auto-installed by "
-              "Client::connect (the latter happens unconditionally now).");
-    self.state_machine_.transition_to(ConnectionState::FAILED);
-    self.invoke_error_callback(EINVAL, "no channel factory bound");
-    return EINVAL;
-  }
-  return self.connect_via_factory(addr_i8);
-}
 
 
 // @unsafe - Attempts to reconnect to the last connected address
