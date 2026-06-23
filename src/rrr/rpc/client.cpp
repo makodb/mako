@@ -1041,6 +1041,16 @@ inline void fiberchannel_bind_callbacks(rusty::Box<FiberChannel>& fc) {
   fc->bind_callbacks();
 }
 
+// @unsafe - invokes close() on a channel object owned through a Box
+// (Box::operator->). Hand-written for the same Box-method-deref reason as
+// fiberchannel_bind_callbacks; a template so close() of the direct-channel
+// proxy (Box<ChannelConnectionBase>) and the FiberChannel (Box<FiberChannel>)
+// both route through it. Non-const Box& because both close()s are &mut self.
+template<typename T>
+inline void box_close(rusty::Box<T>& b) {
+  b->close();
+}
+
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1066,7 +1076,6 @@ using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;
 struct ClientConnection;
 inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
-void clientconn_close(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
 void clientconn_on_channel_closed_fan_out(const ClientConnection& self);
@@ -1288,7 +1297,42 @@ impl ClientConnection {
             (*fu).notify_ready(fu.clone());
         }
     }
-    fn close(&self) { clientconn_close(self); }
+    fn close(&self) {
+        let prev_state = self.state_machine_.state();
+        let was_connected: bool = self.state_machine_.is_connected();
+        if was_connected {
+            self.state_machine_.transition_to(ConnectionState::DISCONNECTING);
+        }
+
+        // Tear down the channel proxy(ies). The channel layer's close() is
+        // idempotent + thread-safe per the facade contract. box_close routes
+        // the call through the Box (the DSL can't deref a Box for a method).
+        {
+            let guard = self.direct_channel_.lock().unwrap();
+            if (*guard).is_some() {
+                box_close((*guard).as_ref().unwrap());
+            }
+        }
+        {
+            let guard = self.fiber_channel_.lock().unwrap();
+            if (*guard).is_some() {
+                box_close((*guard).as_ref().unwrap());
+            }
+        }
+
+        if was_connected {
+            self.state_machine_.transition_to(ConnectionState::DISCONNECTED);
+        } else if !self.state_machine_.is_terminal() {
+            self.state_machine_.force_state(ConnectionState::DISCONNECTED);
+        }
+        self.heartbeat_manager_.reset();
+        self.invalidate_pending_futures();
+
+        if (prev_state as i32) == (ConnectionState::CONNECTED as i32)
+            || (prev_state as i32) == (ConnectionState::DISCONNECTING as i32) {
+            self.invoke_disconnected_callback();
+        }
+    }
     fn mark_closing(&self) {
         unsafe { self.reconnect_.reconnect_abort_.store(true, std::memory_order_release); }
         if self.state_machine_.is_connected() {
@@ -1540,7 +1584,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=8dd1c17c86002054490be754959e796e6f6b1e429ecdce7207d4d49c2fcb1a46*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=a156f984cb378d505b159696be4a8323257bb48f4d802ecaab4b4824b61c6aea*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1854,7 +1898,33 @@ void ClientConnection::fail_pending_future(int64_t xid, int32_t err) const {
 }
 
 void ClientConnection::close() const {
-    clientconn_close((*this));
+    const auto prev_state = this->state_machine_.state();
+    const bool was_connected = this->state_machine_.is_connected();
+    if (was_connected) {
+        this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::DISCONNECTING)));
+    }
+    {
+        auto guard = this->direct_channel_.lock().unwrap();
+        if (((*guard)).is_some()) {
+            box_close(((*guard)).as_ref().unwrap());
+        }
+    }
+    {
+        auto guard = this->fiber_channel_.lock().unwrap();
+        if (((*guard)).is_some()) {
+            box_close(((*guard)).as_ref().unwrap());
+        }
+    }
+    if (was_connected) {
+        this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::DISCONNECTED)));
+    } else if (!this->state_machine_.is_terminal()) {
+        this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::DISCONNECTED)));
+    }
+    this->heartbeat_manager_.reset();
+    this->invalidate_pending_futures();
+    if ((((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::CONNECTED)))) || (((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTING))))) {
+        this->invoke_disconnected_callback();
+    }
 }
 
 void ClientConnection::mark_closing() const {
@@ -3546,49 +3616,6 @@ uint64_t clientconn_monotonic_ms_now() {
 // `on_closed` after this method returns.
 // const: every mutation routes through SpinMutex / Cell / Function /
 // heartbeat_manager_ — all interior-mutable.
-void clientconn_close(const ClientConnection& self) {
-  ConnectionState prev_state = self.state_machine_.state();
-  const bool was_connected = self.state_machine_.is_connected();
-  if (was_connected) {
-    // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
-    self.state_machine_.transition_to(ConnectionState::DISCONNECTING);
-  }
-
-  // Tear down the channel proxy(ies). The channel layer's `close()`
-  // is idempotent and thread-safe per the facade contract.
-  // @unsafe { SpinMutex::lock + Box::get + proxy method dispatch }
-  {
-    auto guard = self.direct_channel_.lock().unwrap();
-    if (guard->is_some()) {
-      auto* conn = guard->as_ref().unwrap().get();
-      conn->close();
-    }
-  }
-  // @unsafe { SpinMutex::lock + FiberChannel::close }
-  {
-    auto guard = self.fiber_channel_.lock().unwrap();
-    if (guard->is_some()) {
-      auto* fc = const_cast<FiberChannel*>(
-          guard->as_ref().unwrap().get());
-      fc->close();
-    }
-  }
-
-  if (was_connected) {
-    // Transition to DISCONNECTED state for clean shutdown.
-    self.state_machine_.transition_to(ConnectionState::DISCONNECTED);
-  } else if (!self.state_machine_.is_terminal()) {
-    // If not connected and not already terminal, force to DISCONNECTED.
-    self.state_machine_.force_state(ConnectionState::DISCONNECTED);
-  }
-  self.heartbeat_manager_.reset();
-  self.invalidate_pending_futures();
-
-  if (prev_state == ConnectionState::CONNECTED ||
-      prev_state == ConnectionState::DISCONNECTING) {
-    self.invoke_disconnected_callback();
-  }
-}
 
 
 // @unsafe - Establishes TCP/IPC connection to server
