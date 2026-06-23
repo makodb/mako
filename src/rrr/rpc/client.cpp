@@ -1051,6 +1051,14 @@ inline void box_close(rusty::Box<T>& b) {
   b->close();
 }
 
+// @unsafe - reinterpret a std::string's C string as the `const int8_t*`
+// address form clientconn_connect expects. Hand-written because the DSL has
+// no reinterpret_cast / `.c_str()`; the string must outlive the connect()
+// call, so callers pass a named local (not a temporary).
+inline const int8_t* str_as_i8(const std::string& s) {
+  return reinterpret_cast<const int8_t*>(s.c_str());
+}
+
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1078,7 +1086,6 @@ inline RequestQueue make_pending_queue(const RequestQueueConfig& c);
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self);
 void clientconn_run_recv_loop(const ClientConnection& self);
 void clientconn_decode_response_and_notify(const ClientConnection& self, const std::uint8_t* bytes, std::size_t size);
-void clientconn_on_channel_closed_fan_out(const ClientConnection& self);
 ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self, const std::uint8_t* body_bytes, std::size_t body_size);
 int clientconn_connect(const ClientConnection& self, const int8_t* addr);
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
@@ -1180,7 +1187,69 @@ impl ClientConnection {
     // fiber/job/channel-callback spawn sites).
     fn run_recv_loop(&self) { clientconn_run_recv_loop(self); }
     fn decode_response_and_notify(&self, bytes: *const u8, size: usize) { clientconn_decode_response_and_notify(self, bytes, size); }
-    fn on_channel_closed_fan_out(&self) { clientconn_on_channel_closed_fan_out(self); }
+    fn on_channel_closed_fan_out(&self) {
+        let prev_state = self.state_machine_.state();
+        let abort_flag: bool = unsafe { self.reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+        let user_initiated_closing: bool =
+            (prev_state as i32) == (ConnectionState::DISCONNECTING as i32)
+            || (prev_state as i32) == (ConnectionState::DISCONNECTED as i32)
+            || abort_flag;
+
+        if !user_initiated_closing {
+            self.invoke_error_callback(ECONNRESET, "channel closed");
+            self.state_machine_.force_state(ConnectionState::FAILED);
+        }
+
+        self.heartbeat_manager_.reset();
+        self.invalidate_pending_futures();
+
+        if !user_initiated_closing {
+            self.invoke_disconnected_callback();
+        }
+
+        // Trigger channel-mode auto-reconnect if the policy allows. The
+        // counter is bumped the moment the fan-out reaches this branch (the
+        // observability signal tests assert), then a spawn does the work
+        // unless reconnect was aborted.
+        let addr: std::string = self.reconnect_address_.get();
+        if self.reconnect_policy_.get().auto_reconnect && !addr.empty() {
+            unsafe { self.reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel); }
+
+            let reconnect_aborted: bool = unsafe { self.reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+            if reconnect_aborted {
+                return;
+            }
+            let weak_conn: WeakClientConnection = self.weak_self_.clone();
+            rusty::thread::spawn(move || {
+                let conn_opt = weak_conn.upgrade();
+                if conn_opt.is_none() {
+                    return;
+                }
+                let conn = conn_opt.unwrap();
+                let conn_aborted: bool = unsafe { (*conn).reconnect_.reconnect_abort_.load(std::memory_order_acquire) };
+                if !(*conn).reconnect_policy_.get().auto_reconnect || conn_aborted {
+                    return;
+                }
+                let state = (*conn).connection_state();
+                if (state as i32) == (ConnectionState::FAILED as i32)
+                    || (state as i32) == (ConnectionState::DISCONNECTED as i32) {
+                    if (*conn).is_factory_bound() {
+                        unsafe { Log_info("rrr::ClientConnection: channel-mode auto-reconnect (factory) triggered after on_closed"); }
+                        // Reset the channel-mode latch + drop the stale FiberChannel
+                        // before re-connecting (connect verifies !is_connected and
+                        // bind_channel needs the slot empty). connect reads
+                        // reconnect_address_ itself, so we just re-run it.
+                        (*conn).reset_channel_mode_for_reconnect();
+                        let reconnect_addr: std::string = (*conn).reconnect_address_.get();
+                        let _ = (*conn).connect(str_as_i8(reconnect_addr));
+                        return;
+                    }
+                    unsafe { Log_info("rrr::ClientConnection: channel-mode auto-reconnect (legacy) triggered after on_closed"); }
+                    (*conn).reconnect(OnReconnectCompleteCallbackFn {});
+                }
+            }).detach();
+        }
+    }
     // connect/bind cluster: &self over interior-mutable state (channels are
     // SpinMutex, reconnect_address_ is Cell), so reachable through a shared Arc.
     fn connect_via_factory(&self, addr: *const i8) -> i32 { clientconn_connect_via_factory(self, addr) }
@@ -1584,7 +1653,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=a156f984cb378d505b159696be4a8323257bb48f4d802ecaab4b4824b61c6aea*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=7db307f6feb344a919ed8c84ef91bd32dffb34d2995ec1acc52a0a0337ad6738*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1775,7 +1844,59 @@ void ClientConnection::decode_response_and_notify(const uint8_t* bytes, size_t s
 }
 
 void ClientConnection::on_channel_closed_fan_out() const {
-    clientconn_on_channel_closed_fan_out((*this));
+    const auto prev_state = this->state_machine_.state();
+    const bool abort_flag = this->reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+    const bool user_initiated_closing = ((((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTING)))) || (((static_cast<int32_t>(prev_state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) || rusty::detail::deref_if_pointer_like(abort_flag);
+    if (!user_initiated_closing) {
+        this->invoke_error_callback(ECONNRESET, "channel closed");
+        this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::FAILED)));
+    }
+    this->heartbeat_manager_.reset();
+    this->invalidate_pending_futures();
+    if (!user_initiated_closing) {
+        this->invoke_disconnected_callback();
+    }
+    const std::string addr = this->reconnect_address_.get();
+    if (rusty::detail::deref_if_pointer_like(this->reconnect_policy_.get().auto_reconnect) && !addr.empty()) {
+        // @unsafe
+        {
+            this->reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
+        }
+        const bool reconnect_aborted = this->reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+        if (reconnect_aborted) {
+            return;
+        }
+        const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
+auto conn_opt = weak_conn.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(std::memory_order_acquire);
+if (!(rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect || rusty::detail::deref_if_pointer_like(conn_aborted)) {
+    return;
+}
+const auto state = ((rusty::detail::deref_if_pointer_like(conn))).connection_state();
+if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::FAILED)))) || (((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) {
+    if (((rusty::detail::deref_if_pointer_like(conn))).is_factory_bound()) {
+        // @unsafe
+        {
+            Log_info("rrr::ClientConnection: channel-mode auto-reconnect (factory) triggered after on_closed");
+        }
+        ((rusty::detail::deref_if_pointer_like(conn))).reset_channel_mode_for_reconnect();
+        const std::string reconnect_addr = (rusty::detail::deref_if_pointer_like(conn)).reconnect_address_.get();
+        static_cast<void>(((rusty::detail::deref_if_pointer_like(conn))).connect(str_as_i8(std::move(reconnect_addr))));
+        return;
+    }
+    // @unsafe
+    {
+        Log_info("rrr::ClientConnection: channel-mode auto-reconnect (legacy) triggered after on_closed");
+    }
+    ((rusty::detail::deref_if_pointer_like(conn))).reconnect(OnReconnectCompleteCallbackFn{});
+}
+}).detach();
+    }
 }
 
 int32_t ClientConnection::connect_via_factory(const int8_t* addr) const {
@@ -4606,96 +4727,6 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
 // state transitions through DISCONNECTING) — channel mode never
 // owned the fd, and the channel layer has already torn down its
 // underlying transport.
-void clientconn_on_channel_closed_fan_out(const ClientConnection& self) {
-  ConnectionState prev_state = self.state_machine_.state();
-  const bool user_initiated_closing =
-      prev_state == ConnectionState::DISCONNECTING ||
-      prev_state == ConnectionState::DISCONNECTED ||
-      self.reconnect_.reconnect_abort_.load(std::memory_order_acquire);
-
-  if (!user_initiated_closing) {
-    self.invoke_error_callback(ECONNRESET, "channel closed");
-    self.state_machine_.force_state(ConnectionState::FAILED);
-  }
-
-  self.heartbeat_manager_.reset();
-  self.invalidate_pending_futures();
-
-  if (!user_initiated_closing) {
-    self.invoke_disconnected_callback();
-  }
-
-  // Trigger auto-reconnect if the policy allows. Channel-mode
-  // reconnect is wired in sub-leaf 4e (factory-based); for 4d we
-  // bump an observable counter the moment the fan-out reaches the
-  // reconnect-policy branch, then conditionally spawn the legacy
-  // fd reconnect path. The counter is the observability signal:
-  // tests verify it incremented by setting
-  // `reconnect_abort_=true` (so the spawn short-circuits without
-  // actually calling `reconnect()`). Production callers that want
-  // a real reconnect leave the abort flag false and rely on the
-  // spawn.
-  if (self.reconnect_policy_.get().auto_reconnect &&
-      // std::string::empty() is a pure const accessor, safe in @safe code.
-      !self.reconnect_address_.get().empty()) {
-    self.reconnect_.channel_reconnect_attempts_.fetch_add(1, std::memory_order_acq_rel);
-
-    if (self.reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
-      // Caller requested no reconnect (typically: connection
-      // tearing down). Counter is still bumped for observability.
-      return;
-    }
-    auto weak_conn = self.weak_self_;
-    rusty::thread::spawn([weak_conn]() {
-      auto conn_opt = weak_conn.upgrade();
-      if (conn_opt.is_none()) {
-        return;
-      }
-      auto conn = conn_opt.unwrap();
-      if (!conn->reconnect_policy_.get().auto_reconnect ||
-          conn->reconnect_.reconnect_abort_.load(std::memory_order_acquire)) {
-        return;
-      }
-      auto state = conn->connection_state();
-      if (state == ConnectionState::FAILED ||
-          state == ConnectionState::DISCONNECTED) {
-        // factory-driven reconnect.
-        //
-        // When a `ChannelFactoryProxy` is bound, the fan-out's
-        // reconnect spawn re-runs the same factory connect path
-        // that the original `connect(addr)` took (factory ->
-        // connect -> bind_channel) instead of the legacy fd
-        // `reconnect()` (which re-opens a raw socket). The
-        // factory-aware path also re-arms the recv-loop fiber via
-        // `bind_channel`, so a successful reconnect resumes
-        // request demux without a manual setup step.
-        if (conn.get() == nullptr) {
-          return;
-        }
-        if (conn->is_factory_bound()) {
-          Log_info(
-              "rrr::ClientConnection: channel-mode auto-reconnect "
-              "(factory) triggered after on_closed");
-          // Reset the channel-mode latch + drop the stale
-          // FiberChannel before calling connect again — connect's
-          // verify(!is_connected()) requires the state machine to
-          // be non-CONNECTED, and the new bind_channel needs the
-          // option slot empty so it can install fresh callbacks.
-          conn->reset_channel_mode_for_reconnect();
-          // `connect` reads `reconnect_address_` itself (set by
-          // the original connect call), so we just call it.
-          (void)conn->connect(reinterpret_cast<const int8_t*>(conn->reconnect_address_.get().c_str()));
-          return;
-        }
-        Log_info(
-            "rrr::ClientConnection: channel-mode auto-reconnect (legacy) "
-            "triggered after on_closed");
-        // @unsafe - reconnect mutates socket/state and performs network I/O.
-        conn->reconnect(nullptr);
-      }
-    }).detach();
-  }
-}
 
 // @safe - Checks whether an error should contribute to circuit tripping.
 
