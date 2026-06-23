@@ -3492,63 +3492,17 @@ class ClientPool {
 
     // Mutex-protected state. Bundling cache + load-balancer state in a
     // single SpinMutex matches the access pattern (get_client touches
-    // both under one lock) and replaces the prior `SpinLock l_ +
-    // unprotected fields` pattern with rusty's RAII guard.
-    // Thin std::map subclass that exposes the BTreeMap-style surface
-    // (`get`, `remove`, `keys`, `len`, two-arg `insert`) so the rest of
-    // ClientPool keeps using the rusty-idiomatic call style we wrote
-    // it against. Switched away from `rusty::BTreeMap` because the
-    // transpiled BTreeMap port has unresolved transpiler bugs that
-    // surface when iter() / clone() / remove() are instantiated.
-    // Migrate back when the upstream BTreeMap port is fixed.
-    template<typename K, typename V>
-    struct CompatMap : std::map<K, V> {
-        using std::map<K, V>::map;
-        // BTreeMap::get(K) -> Option<V&>
-        ::rusty::Option<V&> get(const K& key) {
-            auto it = this->find(key);
-            if (it == this->end()) return ::rusty::Option<V&>(::rusty::None);
-            return ::rusty::Option<V&>(it->second);
-        }
-        ::rusty::Option<const V&> get(const K& key) const {
-            auto it = this->find(key);
-            if (it == this->end()) return ::rusty::Option<const V&>(::rusty::None);
-            return ::rusty::Option<const V&>(it->second);
-        }
-        // BTreeMap::insert(K, V) -> Option<V> (old value if any)
-        ::rusty::Option<V> insert(K key, V value) {
-            auto it = this->find(key);
-            if (it != this->end()) {
-                V old = std::move(it->second);
-                it->second = std::move(value);
-                return ::rusty::Option<V>(std::move(old));
-            }
-            std::map<K, V>::emplace(std::move(key), std::move(value));
-            return ::rusty::Option<V>(::rusty::None);
-        }
-        // BTreeMap::remove(K) -> Option<V>
-        ::rusty::Option<V> remove(const K& key) {
-            auto it = this->find(key);
-            if (it == this->end()) return ::rusty::Option<V>(::rusty::None);
-            V v = std::move(it->second);
-            this->erase(it);
-            return ::rusty::Option<V>(std::move(v));
-        }
-        // BTreeMap::len() -> size_t
-        std::size_t len() const { return this->size(); }
-        // BTreeMap::keys() — snapshot keys into a rusty::Vec for caller.
-        ::rusty::Vec<K> keys() const {
-            ::rusty::Vec<K> out;
-            for (const auto& kv : *this) out.push(kv.first);
-            return out;
-        }
-    };
-
+    // both under one lock). Uses rusty::BTreeMap directly now that the
+    // transpiled BTreeMap port handles get/insert/remove/keys/iter/len
+    // (only clone() is still broken, which ClientPool never does).
     struct PoolState {
         // @safe - rusty::Arc<Client> for thread-safe reference counting.
-        CompatMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
+        // (rusty::BTreeMap has no default ctor; new_() via in-class init.)
+        rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache =
+            rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>>::new_();
         // Load balancer state per address (for round-robin tracking).
-        CompatMap<std::string, LoadBalancerState> lb_state;
+        rusty::BTreeMap<std::string, LoadBalancerState> lb_state =
+            rusty::BTreeMap<std::string, LoadBalancerState>::new_();
     };
     mutable SpinMutex<PoolState> state_;
 
@@ -4878,7 +4832,8 @@ ClientPool::~ClientPool() {
   // rusty::BTreeMap iter `operator*()` returns
   // `std::tuple<const K&, V&>` (post-2026-04 API).
   auto guard = state_.lock().unwrap();
-  for (auto&& [_addr, clients] : guard->cache) {
+  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+    auto&& clients = std::get<1>(rusty::detail::deref_if_pointer(_kv));
     for (auto& client : clients) {
       client->close();
     }
@@ -4912,7 +4867,7 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   auto guard = state_.lock().unwrap();
   size_t removed = 0;
-  auto clients_opt = guard->cache.get(addr);
+  auto clients_opt = guard->cache.get_mut(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
@@ -4955,7 +4910,7 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
 
   auto guard = state_.lock().unwrap();
   size_t closed = 0;
-  auto clients_opt = guard->cache.get(addr);
+  auto clients_opt = guard->cache.get_mut(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
@@ -4989,23 +4944,16 @@ size_t ClientPool::remove_all_unhealthy() {
   size_t total_removed = 0;
   auto cfg = config_.get();
 
-  // BTreeMap::keys() now returns `keys_range` (a transient
-  // iterator-shaped object), not `Vec<K>`. Drain into a Vec so the
-  // subsequent loop body — which mutates `cache` via `remove(...)`
-  // — doesn't iterate while modifying.
+  // Snapshot keys into a Vec so the loop body (which mutates `cache` via
+  // remove) doesn't iterate while modifying. BTreeMap::iter() yields
+  // tuple<const K&, V&>; project the key.
   rusty::Vec<std::string> keys;
-  {
-    auto key_vec = guard->cache.keys();
-    keys.reserve(key_vec.size());
-    // CompatMap::keys() returns a snapshot rusty::Vec; iterate with
-    // STL-style range-for instead of the old Rust-iter `.next()` loop.
-    for (auto& addr : key_vec) {
-      keys.push(std::string(addr));
-    }
+  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+    keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = guard->cache.get(addr);
+    auto clients_opt = guard->cache.get_mut(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -5048,21 +4996,14 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   auto guard = state_.lock().unwrap();
   size_t total_closed = 0;
 
-  // same drain pattern as remove_all_unhealthy above —
-  // BTreeMap::keys() returns a transient `keys_range`.
+  // same drain pattern as remove_all_unhealthy above — snapshot keys.
   rusty::Vec<std::string> keys;
-  {
-    auto key_vec = guard->cache.keys();
-    keys.reserve(key_vec.size());
-    // CompatMap::keys() returns a snapshot rusty::Vec; iterate with
-    // STL-style range-for instead of the old Rust-iter `.next()` loop.
-    for (auto& addr : key_vec) {
-      keys.push(std::string(addr));
-    }
+  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+    keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = guard->cache.get(addr);
+    auto clients_opt = guard->cache.get_mut(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -5099,7 +5040,8 @@ size_t ClientPool::total_client_count() {
   auto guard = state_.lock().unwrap();
   size_t count = 0;
   // BTreeMap iter returns `tuple<const K&, V&>`.
-  for (auto&& [_addr, clients] : guard->cache) {
+  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+    auto&& clients = std::get<1>(rusty::detail::deref_if_pointer(_kv));
     count += clients.size();
   }
   return count;
@@ -5205,7 +5147,8 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
   {
     auto guard = state_.lock().unwrap();
     // BTreeMap iter returns `tuple<const K&, V&>`.
-    for (auto&& [addr, _clients] : guard->cache) {
+    for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+      auto&& addr = std::get<0>(rusty::detail::deref_if_pointer(_kv));
       addresses.push(addr);
     }
   }
@@ -5232,15 +5175,15 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   auto guard = state_.lock().unwrap();
 
   // Get or create load balancer state for this address
-  auto lb_state_opt = guard->lb_state.get(addr);
+  auto lb_state_opt = guard->lb_state.get_mut(addr);
   if (lb_state_opt.is_none()) {
     guard->lb_state.insert(addr, LoadBalancerState::new_());
-    lb_state_opt = guard->lb_state.get(addr);
+    lb_state_opt = guard->lb_state.get_mut(addr);
   }
   // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
   auto& lb_state = lb_state_opt.unwrap();
 
-  auto clients_opt = guard->cache.get(addr);
+  auto clients_opt = guard->cache.get_mut(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     int client_count = static_cast<int>(clients.size());
