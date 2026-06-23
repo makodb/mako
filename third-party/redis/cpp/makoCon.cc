@@ -4048,19 +4048,25 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 }
                 std::vector<std::string> selected;
                 if (!members.empty() && requested > 0) {
-                    const size_t start = op.op == TXN_OP_SRANDMEMBER
-                        ? static_cast<size_t>(g_mako_random_counter.fetch_add(1, std::memory_order_relaxed) % members.size())
-                        : 0;
+                    thread_local std::mt19937_64 rng([] {
+                        std::random_device rd;
+                        uint64_t seed = (static_cast<uint64_t>(rd()) << 32) ^ rd();
+                        seed ^= static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+                        seed ^= static_cast<uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+                        return seed;
+                    }());
                     if (allow_duplicates) {
+                        std::uniform_int_distribution<size_t> dist(0, members.size() - 1);
                         selected.reserve(static_cast<size_t>(requested));
                         for (int64_t idx = 0; idx < requested; ++idx) {
-                            selected.push_back(members[(start + static_cast<size_t>(idx)) % members.size()]);
+                            selected.push_back(members[dist(rng)]);
                         }
                     } else {
                         const size_t take = std::min<size_t>(members.size(), static_cast<size_t>(requested));
+                        std::shuffle(members.begin(), members.end(), rng);
                         selected.reserve(take);
                         for (size_t idx = 0; idx < take; ++idx) {
-                            selected.push_back(members[(start + idx) % members.size()]);
+                            selected.push_back(members[idx]);
                         }
                     }
                 }

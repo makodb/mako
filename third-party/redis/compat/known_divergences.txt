@@ -8,7 +8,6 @@
 # - mako-design-difference
 # - mako-correctness-fix
 #
-SRANDMEMBER/SPOP randomness :: mako-design-difference :: Phase 6 returns deterministic members because the adapter uses the existing transactional set scan/order path instead of adding a Redis PRNG/sampling policy. Semantic membership/count behavior is implemented; statistical randomness is not claimed.
 KEYS/SCAN/DBSIZE set visibility :: mako-design-difference :: Set members are stored as hidden length-prefixed composite keys outside the visible `table_key_` namespace. Exposing set logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
 KEYS/SCAN/DBSIZE list visibility :: mako-design-difference :: Lists are stored as hidden meta/element composite keys outside the visible `table_key_` namespace. Exposing list logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
 KEYS/SCAN/DBSIZE sorted-set visibility :: mako-design-difference :: Sorted sets are stored as hidden member/score/meta composite keys outside the visible `table_key_` namespace. Exposing zset logical keys through keyspace enumeration needs a shared logical-key index or safe remote-scan design, not a local composite-prefix scan.
