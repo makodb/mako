@@ -1033,6 +1033,14 @@ inline const uint8_t* null_reply_bytes() {
   return nullptr;
 }
 
+// @unsafe - reaches the owned FiberChannel through its Box (Box::operator->).
+// Hand-written (forward-visible to the DSL) because the inline-rust grammar
+// emits a Box method call as `box.method()` (dot) rather than `box->method()`;
+// bind_channel calls this once the Box is pinned in `fiber_channel_`.
+inline void fiberchannel_bind_callbacks(rusty::Box<FiberChannel>& fc) {
+  fc->bind_callbacks();
+}
+
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1066,7 +1074,6 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
 int clientconn_connect(const ClientConnection& self, const int8_t* addr);
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
 int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* addr);
-void clientconn_bind_channel(const ClientConnection& self, ChannelConnectionProxy channel);
 void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, ChannelConnectionProxy channel);
 void clientconn_bind_channel_direct(const ClientConnection& self, ChannelConnectionProxy channel);
 RpcError clientconn_map_system_error(i32 err);
@@ -1181,7 +1188,36 @@ impl ClientConnection {
         self.state_machine_.force_state(ConnectionState::DISCONNECTED);
     }
     fn connect(&self, addr: *const i8) -> i32 { clientconn_connect(self, addr) }
-    fn bind_channel(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel(self, channel); }
+    fn bind_channel(&self, channel: ChannelConnectionProxy) {
+        if !channel.is_valid() {
+            return;
+        }
+        // Move the proxy into a heap-allocated FiberChannel (make_box
+        // constructs in-place; FiberChannel is move-deleted because its
+        // callbacks capture `this`). bind_callbacks must run AFTER the Box is
+        // in its final slot so those [this]-captures pin to a stable address.
+        {
+            let guard = self.fiber_channel_.lock().unwrap();
+            *guard = rusty::Some(rusty::make_box::<FiberChannel>(channel));
+            fiberchannel_bind_callbacks((*guard).as_ref().unwrap());
+        }
+        self.channel_mode_.set(true);
+
+        // Capture a Weak so the parked recv-loop fiber doesn't extend the
+        // connection lifetime (would cycle through fiber_channel_ ownership).
+        let weak_self: WeakClientConnection = self.weak_self_.clone();
+        // The recv-loop fiber must live on the reactor that fires the proxy's
+        // on_frame/on_closed callbacks (single-threaded IntEvent signaling);
+        // the caller picks the thread (see bind_channel_via_poll_thread).
+        Fiber::create_run(move || {
+            let conn_opt = weak_self.upgrade();
+            if conn_opt.is_none() {
+                return;
+            }
+            let conn = conn_opt.unwrap();
+            (*conn).run_recv_loop();
+        }, __FILE__, __LINE__);
+    }
     fn bind_channel_via_poll_thread(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_via_poll_thread(self, channel); }
     fn bind_channel_direct(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
     fn bind_factory(&mut self, factory: ChannelFactoryProxy) {
@@ -1504,7 +1540,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=beebe9c2ebd7d6c639ff6c2ef32498cd81b5fdcd333509a43c239276b01bf14c*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=8dd1c17c86002054490be754959e796e6f6b1e429ecdce7207d4d49c2fcb1a46*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1720,7 +1756,24 @@ int32_t ClientConnection::connect(const int8_t* addr) const {
 }
 
 void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
-    clientconn_bind_channel((*this), std::move(channel));
+    if (!channel.is_valid()) {
+        return;
+    }
+    {
+        auto guard = this->fiber_channel_.lock().unwrap();
+        *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
+        fiberchannel_bind_callbacks(((*guard)).as_ref().unwrap());
+    }
+    this->channel_mode_.set(true);
+    const WeakClientConnection weak_self = rusty::clone(this->weak_self_);
+    Fiber::create_run([=, weak_self = std::move(weak_self)]() mutable {
+auto conn_opt = weak_self.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+((rusty::detail::deref_if_pointer_like(conn))).run_recv_loop();
+}, __FILE__, __LINE__);
 }
 
 void ClientConnection::bind_channel_via_poll_thread(ChannelConnectionProxy channel) const {
@@ -4233,56 +4286,6 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
 // path. Cross-thread scheduling of the spawn is sub-leaf 4e's
 // concern; for 4c2 we document the constraint and rely on the
 // caller.
-void clientconn_bind_channel(const ClientConnection& self, ChannelConnectionProxy channel) {
-  if (!channel) return;
-
-  // Move the proxy into a heap-allocated `FiberChannel` so the
-  // recv-loop fiber can hold a stable pointer to the wrapper across
-  // its parking lifetime. `FiberChannel` is move-deleted (its
-  // callbacks capture `this`), so we use `make_box` which constructs
-  // in-place via perfect-forwarded `new` rather than moving.
-  // rusty::make_box + SpinMutex::lock + Option::operator= are all @safe.
-  {
-    auto guard = self.fiber_channel_.lock().unwrap();
-    *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
-    // The FiberChannel ctor only inits fields; bind_callbacks wires
-    // the [this]-capturing on_frame/on_closed/on_error lambdas onto
-    // the owned channel proxy. Must run after the Box-allocated
-    // FiberChannel is in its final memory location (so `this` is
-    // pinned).
-    guard->as_ref().unwrap()->bind_callbacks();
-  }
-  self.channel_mode_.set(true);
-
-  // Capture a Weak<> so the parked fiber doesn't extend the
-  // connection's lifetime (which would create a cycle via
-  // `fiber_channel_` ownership).
-  WeakClientConnection weak_self = self.weak_self_;
-
-  // Spawn the recv-loop fiber on the *current* thread's reactor.
-  // Per the channel-layer threading contract, the recv-loop fiber
-  // must live on the same reactor that fires the proxy's
-  // `on_frame` / `on_closed` callbacks (so the `IntEvent` it parks
-  // on can be signaled cross-fiber within one thread —
-  // cross-thread `IntEvent::set` is unsafe). Caller is responsible
-  // for choosing the right thread:
-  //   - Fake-channel unit tests call `bind_channel(...)` from the
-  //     test thread, where they also drive `deliver()` /
-  //     `deliver_closed()`. The recv-loop fiber lives on the test
-  //     thread; everything stays single-threaded.
-  //   - Production TCP / factory paths use
-  //     `bind_channel_via_poll_thread(...)` (sub-leaf 4f) which
-  //     submits a `OneTimeJob` to the poll thread, where the
-  //     spawn — and therefore the resulting fiber — lands on the
-  //     same reactor that fires `TcpConnection::handle_read`'s
-  //     `on_frame` callback.
-  Fiber::create_run([weak_self]() mutable {
-    auto conn_opt = weak_self.upgrade();
-    if (conn_opt.is_none()) return;
-    auto conn = conn_opt.unwrap();
-    conn->run_recv_loop();
-  }, __FILE__, __LINE__);
-}
 
 
 // @unsafe - Channel-mode bind that schedules the recv-loop fiber
