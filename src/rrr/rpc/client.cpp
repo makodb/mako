@@ -3483,91 +3483,284 @@ void Client::clear_connection_callbacks() const {
 /*RUSTYCPP:GEN-END id=client.1*/
 
 
-// @safe - Thread-safe pool of client connections using Arc
-// MIGRATED: Now uses rusty::Arc<Client> for cached connections
-class ClientPool {
+// Forward declaration + free-fn declarations for the clientpool_* helpers
+// that the DSL ClientPool's generated method defs delegate to: the floored
+// network-I/O get_client and the four get_mut-mutating cleanup methods keep
+// their proven hand-written C++ bodies (defined far below, near where the
+// old out-of-line method defs lived).
+struct ClientPool;
+size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr);
+size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr);
+size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms);
+size_t clientpool_remove_all_unhealthy(const ClientPool& self);
+size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_ms);
+rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, const std::string& addr);
 
-    // owns a shared reference to PollThread
-    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker_;
+// @safe - Thread-safe pool of client connections using Arc.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. PoolState bundles the SpinMutex-guarded
+// per-address client cache + load-balancer state (get_client touches both
+// under one lock). The plain `fn new(...) -> ClientPool` lowers to a
+// value-returning `ClientPool::new_(...)` factory (no `#[cpp_ctor]`); the
+// four get_mut cleanup methods + the @unsafe get_client delegate to
+// hand-written free fns.
+#if RUSTYCPP_RUST
+struct PoolState {
+    cache: BTreeMap<std::string, Vec<Arc<Client>>>,
+    lb_state: BTreeMap<std::string, LoadBalancerState>,
+}
 
-    // Mutex-protected state. Bundling cache + load-balancer state in a
-    // single SpinMutex matches the access pattern (get_client touches
-    // both under one lock). Uses rusty::BTreeMap directly now that the
-    // transpiled BTreeMap port handles get/insert/remove/keys/iter/len
-    // (only clone() is still broken, which ClientPool never does).
-    struct PoolState {
-        // @safe - rusty::Arc<Client> for thread-safe reference counting.
-        // (rusty::BTreeMap has no default ctor; new_() via in-class init.)
-        rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache =
-            rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>>::new_();
-        // Load balancer state per address (for round-robin tracking).
-        rusty::BTreeMap<std::string, LoadBalancerState> lb_state =
-            rusty::BTreeMap<std::string, LoadBalancerState>::new_();
-    };
-    mutable SpinMutex<PoolState> state_;
+impl PoolState {
+    fn new() -> PoolState {
+        PoolState {
+            cache: BTreeMap::<std::string, Vec<Arc<Client>>>::new(),
+            lb_state: BTreeMap::<std::string, LoadBalancerState>::new(),
+        }
+    }
+}
 
-    // Pool configuration (Cell for interior mutability)
-    rusty::Cell<PoolConfig> config_;
+struct ClientPool {
+    poll_thread_worker_: Option<Arc<PollThread>>,
+    state_: SpinMutex<PoolState>,
+    config_: Cell<PoolConfig>,
+}
 
-    // Helper: Check if a client is considered healthy
-    // @safe - Uses metrics to determine health
-    bool is_client_healthy(const rusty::Arc<Client>& client) const;
+impl Drop for ClientPool {
+    fn drop(&mut self) {
+        let guard = self.state_.lock().unwrap();
+        for (_addr, clients) in (*guard).cache.iter() {
+            for client in &clients {
+                (*client).close();
+            }
+        }
+        if self.poll_thread_worker_.is_some() {
+            (*self.poll_thread_worker_.as_ref().unwrap()).shutdown();
+        }
+    }
+}
 
-public:
-    // @safe - Creates pool with optional PollThread and config
-    ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None,
-               const PoolConfig& config = PoolConfig::defaults());
-    // @safe - Closes all cached connections
-    ~ClientPool();
+impl ClientPool {
+    fn new(poll_thread_worker: Option<Arc<PollThread>>, config: PoolConfig) -> ClientPool {
+        verify(config.min_connections > 0);
+        verify(config.max_connections >= config.min_connections);
+        let mut ptw: Option<Arc<PollThread>> = poll_thread_worker;
+        if ptw.is_none() {
+            ptw = Some(PollThread::create());
+        }
+        ClientPool {
+            poll_thread_worker_: ptw,
+            state_: SpinMutex::<PoolState>::new(PoolState::new()),
+            config_: Cell::<PoolConfig>::new(config),
+        }
+    }
 
-    // === Configuration ===
+    fn set_pool_config(&self, config: PoolConfig) {
+        self.config_.set(config);
+    }
 
-    // @safe - Set pool configuration
-    void set_pool_config(const PoolConfig& config);
+    fn pool_config(&self) -> PoolConfig {
+        self.config_.get()
+    }
 
-    // @safe - Get current pool configuration
-    PoolConfig pool_config() const;
+    fn is_client_healthy(&self, client: &Arc<Client>) -> bool {
+        let cfg = self.config_.get();
+        if !cfg.health_check_enabled {
+            return true;
+        }
+        if !(*client).connected() {
+            return false;
+        }
+        let requests_sent = (*client).metrics().requests_sent();
+        if requests_sent < cfg.min_requests_for_health {
+            return true;
+        }
+        let success_rate = (*client).metrics().success_rate_percent();
+        success_rate >= cfg.unhealthy_threshold_percent
+    }
 
-    // === Client Access ===
+    fn get_healthy_client_count(&self, addr: &std::string) -> usize {
+        clientpool_get_healthy_client_count(self, addr)
+    }
 
-    // return cached client connection
-    // on error, return None
-    // @unsafe - Gets or creates client connection
-    // SAFETY: Contains raw pointer dereference
-    rusty::Option<rusty::Arc<rrr::Client>> get_client(const std::string& addr);
+    fn total_client_count(&self) -> usize {
+        let guard = self.state_.lock().unwrap();
+        let mut count: usize = 0;
+        for (_addr, clients) in (*guard).cache.iter() {
+            count += clients.len();
+        }
+        count
+    }
 
-    // === Health Management ===
+    fn address_count(&self) -> usize {
+        let guard = self.state_.lock().unwrap();
+        (*guard).cache.len()
+    }
 
-    // @safe - Get count of healthy clients for an address
-    size_t get_healthy_client_count(const std::string& addr);
+    fn remove_unhealthy_clients(&self, addr: &std::string) -> usize {
+        clientpool_remove_unhealthy_clients(self, addr)
+    }
 
-    // @safe - Remove unhealthy clients for an address
-    // Returns number of clients removed
-    size_t remove_unhealthy_clients(const std::string& addr);
+    fn close_idle_clients(&self, addr: &std::string, current_time_ms: u64) -> usize {
+        clientpool_close_idle_clients(self, addr, current_time_ms)
+    }
 
-    // @safe - Close idle clients for an address
-    // Returns number of clients closed
-    // @param current_time_ms Current time in milliseconds (e.g., from steady_clock)
-    size_t close_idle_clients(const std::string& addr, uint64_t current_time_ms);
+    fn remove_all_unhealthy(&self) -> usize {
+        clientpool_remove_all_unhealthy(self)
+    }
 
-    // === Pool-wide Operations ===
+    fn close_all_idle(&self, current_time_ms: u64) -> usize {
+        clientpool_close_all_idle(self, current_time_ms)
+    }
 
-    // @safe - Remove all unhealthy clients from all addresses
-    // Returns total number of clients removed
-    size_t remove_all_unhealthy();
+    fn get_client(&self, addr: &std::string) -> Option<Arc<Client>> {
+        clientpool_get_client(self, addr)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.client_pool version=1 rust_sha256=8fab2b14db1e079f6bca8357980e2c85ad65e80bb8000565a42401e0ff81b569*/
+struct PoolState;
+struct ClientPool;
 
-    // @safe - Close all idle clients from all addresses
-    // Returns total number of clients closed
-    // @param current_time_ms Current time in milliseconds
-    size_t close_all_idle(uint64_t current_time_ms);
+struct PoolState {
+    rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>> cache;
+    rusty::BTreeMap<std::string, LoadBalancerState> lb_state;
 
-    // @safe - Get total number of cached clients across all addresses
-    size_t total_client_count();
-
-    // @safe - Get number of addresses with cached clients
-    size_t address_count();
-
+    static PoolState new_();
 };
+
+struct ClientPool {
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
+    SpinMutex<PoolState> state_;
+    rusty::Cell<PoolConfig> config_;
+    mutable bool _rusty_forgotten = false;
+    ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker__init, SpinMutex<PoolState> state__init, rusty::Cell<PoolConfig> config__init) : poll_thread_worker_(std::move(poll_thread_worker__init)), state_(std::move(state__init)), config_(std::move(config__init)) {}
+    ClientPool(const ClientPool&) = delete;
+    ClientPool(ClientPool&& other) noexcept : poll_thread_worker_(std::move(other.poll_thread_worker_)), state_(std::move(other.state_)), config_(std::move(other.config_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    ClientPool& operator=(const ClientPool&) = delete;
+    ClientPool& operator=(ClientPool&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~ClientPool();
+        new (this) ClientPool(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
+    ~ClientPool() noexcept(false);
+    static ClientPool new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker, PoolConfig config);
+    void set_pool_config(PoolConfig config) const;
+    PoolConfig pool_config() const;
+    bool is_client_healthy(const rusty::Arc<Client>& client) const;
+    size_t get_healthy_client_count(const std::string& addr) const;
+    size_t total_client_count() const;
+    size_t address_count() const;
+    size_t remove_unhealthy_clients(const std::string& addr) const;
+    size_t close_idle_clients(const std::string& addr, uint64_t current_time_ms) const;
+    size_t remove_all_unhealthy() const;
+    size_t close_all_idle(uint64_t current_time_ms) const;
+    rusty::Option<rusty::Arc<Client>> get_client(const std::string& addr) const;
+};
+
+
+PoolState PoolState::new_() {
+    return PoolState{.cache = rusty::BTreeMap<std::string, rusty::Vec<rusty::Arc<Client>>>::new_(), .lb_state = rusty::BTreeMap<std::string, LoadBalancerState>::new_()};
+}
+
+ClientPool::~ClientPool() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    auto guard = this->state_.lock().unwrap();
+    for (auto&& _for_item : rusty::for_in(rusty::iter((*guard).cache))) {
+        auto&& _addr = rusty::detail::deref_if_pointer(std::get<0>(rusty::detail::deref_if_pointer(_for_item)));
+        auto&& clients = rusty::detail::deref_if_pointer(std::get<1>(rusty::detail::deref_if_pointer(_for_item)));
+        for (auto&& client : rusty::for_in(rusty::iter(clients))) {
+            ((rusty::detail::deref_if_pointer_like(client))).close();
+        }
+    }
+    if (this->poll_thread_worker_.is_some()) {
+        ((rusty::detail::deref_if_pointer_like(this->poll_thread_worker_.as_ref().unwrap()))).shutdown();
+    }
+}
+
+ClientPool ClientPool::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker, PoolConfig config) {
+    verify(rusty::detail::deref_if_pointer_like(config.min_connections) > 0);
+    verify(rusty::detail::deref_if_pointer_like(config.max_connections) >= rusty::detail::deref_if_pointer_like(config.min_connections));
+    rusty::Option<rusty::Arc<PollThread>> ptw = poll_thread_worker;
+    if (ptw.is_none()) {
+        ptw = rusty::Option<rusty::Arc<PollThread>>(PollThread::create());
+    }
+    return ClientPool(std::move(ptw), SpinMutex<PoolState>::new_(PoolState::new_()), rusty::Cell<PoolConfig>::new_(std::move(config)));
+}
+
+void ClientPool::set_pool_config(PoolConfig config) const {
+    this->config_.set(std::move(config));
+}
+
+PoolConfig ClientPool::pool_config() const {
+    return this->config_.get();
+}
+
+bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
+    const auto cfg = this->config_.get();
+    if (!cfg.health_check_enabled) {
+        return true;
+    }
+    if (!((rusty::detail::deref_if_pointer_like(client))).connected()) {
+        return false;
+    }
+    const auto requests_sent = ((rusty::detail::deref_if_pointer_like(client))).metrics().requests_sent();
+    if (rusty::detail::deref_if_pointer_like(requests_sent) < rusty::detail::deref_if_pointer_like(cfg.min_requests_for_health)) {
+        return true;
+    }
+    const auto success_rate = ((rusty::detail::deref_if_pointer_like(client))).metrics().success_rate_percent();
+    return rusty::detail::deref_if_pointer_like(success_rate) >= rusty::detail::deref_if_pointer_like(cfg.unhealthy_threshold_percent);
+}
+
+size_t ClientPool::get_healthy_client_count(const std::string& addr) const {
+    return clientpool_get_healthy_client_count((*this), addr);
+}
+
+size_t ClientPool::total_client_count() const {
+    auto guard = this->state_.lock().unwrap();
+    size_t count = static_cast<size_t>(0);
+    for (auto&& _for_item : rusty::for_in(rusty::iter((*guard).cache))) {
+        auto&& _addr = rusty::detail::deref_if_pointer(std::get<0>(rusty::detail::deref_if_pointer(_for_item)));
+        auto&& clients = rusty::detail::deref_if_pointer(std::get<1>(rusty::detail::deref_if_pointer(_for_item)));
+        count += rusty::len(clients);
+    }
+    return std::move(count);
+}
+
+size_t ClientPool::address_count() const {
+    auto guard = this->state_.lock().unwrap();
+    return rusty::len((*guard).cache);
+}
+
+size_t ClientPool::remove_unhealthy_clients(const std::string& addr) const {
+    return clientpool_remove_unhealthy_clients((*this), addr);
+}
+
+size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) const {
+    return clientpool_close_idle_clients((*this), addr, std::move(current_time_ms));
+}
+
+size_t ClientPool::remove_all_unhealthy() const {
+    return clientpool_remove_all_unhealthy((*this));
+}
+
+size_t ClientPool::close_all_idle(uint64_t current_time_ms) const {
+    return clientpool_close_all_idle((*this), std::move(current_time_ms));
+}
+
+rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const std::string& addr) const {
+    return clientpool_get_client((*this), addr);
+}
+/*RUSTYCPP:GEN-END id=client.client_pool*/
 
 }  // export namespace rrr
 
@@ -4709,87 +4902,18 @@ RpcError clientconn_map_system_error(int32_t err) {
 // ClientPool implementation
 // ============================================================================
 
-// @safe - Constructs pool with PollThread ownership
-ClientPool::ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =? */,
-                       const PoolConfig& config /* =? */)
-    : config_(config) {
-
-  verify(config.min_connections > 0);
-  verify(config.max_connections >= config.min_connections);
-  if (poll_thread_worker.is_none()) {
-    poll_thread_worker_ = rusty::Some(PollThread::create());
-  } else {
-    poll_thread_worker_ = std::move(poll_thread_worker);
-  }
-}
-
-// @safe - Set pool configuration
-void ClientPool::set_pool_config(const PoolConfig& config) {
-  config_.set(config);
-}
-
-// @safe - Get current pool configuration
-PoolConfig ClientPool::pool_config() const {
-  return config_.get();
-}
-
-// @unsafe - Check if a client is considered healthy
-bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
-  auto cfg = config_.get();
-
-  // If health checking is disabled, all clients are considered healthy
-  if (!cfg.health_check_enabled) {
-    return true;
-  }
-
-  // Must be connected to be healthy
-  if (!client->connected()) {
-    return false;
-  }
-
-  // Check metrics-based health
-  const auto& metrics = client->metrics();
-  auto requests_sent = metrics.requests_sent();
-
-  // Not enough data to judge health
-  if (requests_sent < cfg.min_requests_for_health) {
-    return true;  // Assume healthy until proven otherwise
-  }
-
-  // Check success rate
-  auto success_rate = metrics.success_rate_percent();
-  return success_rate >= cfg.unhealthy_threshold_percent;
-}
-
-// @safe - Destroys pool and all cached connections
-ClientPool::~ClientPool() {
-  // rusty::BTreeMap iter `operator*()` returns
-  // `std::tuple<const K&, V&>` (post-2026-04 API).
-  auto guard = state_.lock().unwrap();
-  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
-    auto&& clients = std::get<1>(rusty::detail::deref_if_pointer(_kv));
-    for (auto& client : clients) {
-      client->close();
-    }
-  }
-
-  // Shutdown PollThread if we own it
-  if (poll_thread_worker_.is_some()) {
-    poll_thread_worker_.as_ref().unwrap()->shutdown();
-  }
-}
-
 // @safe - SpinMutex::lock + BTreeMap ops + is_client_healthy are all @safe.
-size_t ClientPool::get_healthy_client_count(const std::string& addr) {
-  auto guard = state_.lock().unwrap();
+// Delegated (not inline DSL): the inline `let clients = opt.unwrap()` lowered
+// to a Vec copy (vs the `auto& clients` reference here), which corrupted the
+// cached Arcs. Keep the proven reference-based body.
+size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr) {
+  auto guard = self.state_.lock().unwrap();
   size_t count = 0;
   auto clients_opt = guard->cache.get(addr);
   if (clients_opt.is_some()) {
-    // rusty::BTreeMap::get returns `Option<V&>` (post-2026-04
-    // API), so unwrap() yields a reference, not a pointer.
     auto& clients = clients_opt.unwrap();
     for (const auto& client : clients) {
-      if (is_client_healthy(client)) {
+      if (self.is_client_healthy(client)) {
         count++;
       }
     }
@@ -4798,15 +4922,15 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
 }
 
 // @safe - SpinMutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
-size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
-  auto guard = state_.lock().unwrap();
+size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr) {
+  auto guard = self.state_.lock().unwrap();
   size_t removed = 0;
   auto clients_opt = guard->cache.get_mut(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
     auto& clients = clients_opt.unwrap();
-    auto cfg = config_.get();
+    auto cfg = self.config_.get();
 
     // Remove unhealthy clients, but keep at least min_connections.
     rusty::Vec<rusty::Arc<Client>> kept;
@@ -4816,7 +4940,7 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
         kept.push(client.clone());
         continue;
       }
-      if (!is_client_healthy(client)) {
+      if (!self.is_client_healthy(client)) {
         client->close();
         removed++;
       } else {
@@ -4834,15 +4958,15 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
 }
 
 // @safe - SpinMutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
-size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) {
-  auto cfg = config_.get();
+size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms) {
+  auto cfg = self.config_.get();
 
   // If idle timeout is 0, no timeout
   if (cfg.idle_timeout_ms == 0) {
     return 0;
   }
 
-  auto guard = state_.lock().unwrap();
+  auto guard = self.state_.lock().unwrap();
   size_t closed = 0;
   auto clients_opt = guard->cache.get_mut(addr);
   if (clients_opt.is_some()) {
@@ -4873,10 +4997,10 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
 }
 
 // @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
-size_t ClientPool::remove_all_unhealthy() {
-  auto guard = state_.lock().unwrap();
+size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
+  auto guard = self.state_.lock().unwrap();
   size_t total_removed = 0;
-  auto cfg = config_.get();
+  auto cfg = self.config_.get();
 
   // Snapshot keys into a Vec so the loop body (which mutates `cache` via
   // remove) doesn't iterate while modifying. BTreeMap::iter() yields
@@ -4901,7 +5025,7 @@ size_t ClientPool::remove_all_unhealthy() {
         kept.push(client.clone());
         continue;
       }
-      if (!is_client_healthy(client)) {
+      if (!self.is_client_healthy(client)) {
         client->close();
         removed++;
       } else {
@@ -4921,13 +5045,13 @@ size_t ClientPool::remove_all_unhealthy() {
 }
 
 // @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
-size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
-  auto cfg = config_.get();
+size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_ms) {
+  auto cfg = self.config_.get();
   if (cfg.idle_timeout_ms == 0) {
     return 0;
   }
 
-  auto guard = state_.lock().unwrap();
+  auto guard = self.state_.lock().unwrap();
   size_t total_closed = 0;
 
   // same drain pattern as remove_all_unhealthy above — snapshot keys.
@@ -4969,33 +5093,15 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   return total_closed;
 }
 
-// @safe - SpinMutex::lock + BTreeMap/Vec ops are @safe.
-size_t ClientPool::total_client_count() {
-  auto guard = state_.lock().unwrap();
-  size_t count = 0;
-  // BTreeMap iter returns `tuple<const K&, V&>`.
-  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
-    auto&& clients = std::get<1>(rusty::detail::deref_if_pointer(_kv));
-    count += clients.size();
-  }
-  return count;
-}
-
-// @safe - SpinMutex::lock + BTreeMap::len are @safe.
-size_t ClientPool::address_count() {
-  auto guard = state_.lock().unwrap();
-  return guard->cache.len();
-}
-
 
 // @unsafe - Drives Client::connect / reconnect synchronously; the state_
 // lock + BTreeMap ops are @safe but the network I/O underneath is not.
-rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
+rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, const std::string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
-  auto cfg = config_.get();
+  auto cfg = self.config_.get();
   int num_connections = cfg.min_connections;
 
-  auto guard = state_.lock().unwrap();
+  auto guard = self.state_.lock().unwrap();
 
   // Get or create load balancer state for this address
   auto lb_state_opt = guard->lb_state.get_mut(addr);
@@ -5024,7 +5130,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       auto& client = clients[idx];
 
       // Check if client is connected and healthy
-      if (client->connected() && is_client_healthy(client)) {
+      if (client->connected() && self.is_client_healthy(client)) {
         sp_cl = rusty::Some(client.clone());
         break;
       }
@@ -5056,7 +5162,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       // Create new connections (use min_connections)
       bool ok = true;
       for (int i = 0; i < num_connections; i++) {
-        auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
+        auto client = Client::create(self.poll_thread_worker_.as_ref().unwrap().clone());
         client->set_client_mode(true);
         if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
           Log_warn("ClientPool: failed to create new connection to %s", addr.c_str());
@@ -5078,7 +5184,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     rusty::Vec<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
     for (int i = 0; i < num_connections; i++) {
-      auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
+      auto client = Client::create(self.poll_thread_worker_.as_ref().unwrap().clone());
       client->set_client_mode(true);  // Jetpack: mark as client
       if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
         ok = false;

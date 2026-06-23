@@ -167,7 +167,7 @@ protected:
 };
 
 TEST_F(ClientPoolTest, CreateWithDefaultConfig) {
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto config = pool.pool_config();
     EXPECT_EQ(config.min_connections, 1);
@@ -177,7 +177,7 @@ TEST_F(ClientPoolTest, CreateWithDefaultConfig) {
 
 TEST_F(ClientPoolTest, CreateWithCustomConfig) {
     auto custom_config = PoolConfig::aggressive();
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), custom_config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), custom_config);
 
     auto config = pool.pool_config();
     EXPECT_EQ(config.min_connections, 2);
@@ -185,7 +185,7 @@ TEST_F(ClientPoolTest, CreateWithCustomConfig) {
 }
 
 TEST_F(ClientPoolTest, SetPoolConfig) {
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto new_config = PoolConfig::conservative();
     pool.set_pool_config(new_config);
@@ -199,7 +199,7 @@ TEST_F(ClientPoolTest, GetClientCreatesConnections) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -215,7 +215,7 @@ TEST_F(ClientPoolTest, GetClientReusesConnections) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto client1 = pool.get_client(server_addr());
     ASSERT_TRUE(client1.is_some());
@@ -233,7 +233,7 @@ TEST_F(ClientPoolTest, GetHealthyClientCount) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -249,7 +249,7 @@ TEST_F(ClientPoolTest, TotalClientCount) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     EXPECT_EQ(pool.total_client_count(), 0u);
 
@@ -271,7 +271,7 @@ TEST_F(ClientPoolTest, AddressCount) {
     auto server2 = start_server_with_retry(poll2, &port2);
     ASSERT_NE(server2, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     EXPECT_EQ(pool.address_count(), 0u);
 
@@ -295,7 +295,7 @@ TEST_F(ClientPoolTest, CloseIdleClientsNoTimeout) {
     // Config with no idle timeout
     auto config = PoolConfig::defaults();
     config.idle_timeout_ms = 0;
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -315,7 +315,7 @@ TEST_F(ClientPoolTest, CloseIdleClientsRespectsMinConnections) {
     auto config = PoolConfig::defaults();
     config.min_connections = 1;
     config.idle_timeout_ms = 10;  // 10ms timeout
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -335,7 +335,7 @@ TEST_F(ClientPoolTest, HealthCheckDisabled) {
     ASSERT_NE(server, nullptr);
 
     auto config = PoolConfig::no_health_check();
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -352,7 +352,7 @@ TEST_F(ClientPoolTest, RemoveUnhealthyRespectsMinConnections) {
 
     auto config = PoolConfig::defaults();
     config.min_connections = 1;
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -369,7 +369,7 @@ TEST_F(ClientPoolTest, GetClientWithRealRequests) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto client_opt = pool.get_client(server_addr());
     ASSERT_TRUE(client_opt.is_some());
@@ -396,7 +396,7 @@ TEST_F(ClientPoolTest, RemoveAllUnhealthyWithMultipleAddresses) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), PoolConfig::defaults());
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());
@@ -414,7 +414,7 @@ TEST_F(ClientPoolTest, CloseAllIdleWithMultipleAddresses) {
 
     auto config = PoolConfig::defaults();
     config.idle_timeout_ms = 10;  // 10ms
-    ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
 
     auto client = pool.get_client(server_addr());
     ASSERT_TRUE(client.is_some());

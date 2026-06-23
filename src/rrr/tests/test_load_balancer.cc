@@ -437,7 +437,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToRoundRobin) {
     config.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get clients multiple times
     std::vector<rusty::Arc<Client>> clients_obtained;
@@ -456,7 +456,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
     config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get a client
     auto client_opt = pool.get_client(addr_);
@@ -483,7 +483,7 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
     config.min_connections = 2;
     config.max_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     auto busy_client_opt = pool.get_client(addr_);
     ASSERT_TRUE(busy_client_opt.is_some());
@@ -523,7 +523,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
     config.load_balancing = LoadBalancingStrategy::LEAST_LATENCY;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get a client
     auto client_opt = pool.get_client(addr_);
@@ -548,7 +548,7 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeChanged) {
     auto config1 = PoolConfig::defaults();
     config1.load_balancing = LoadBalancingStrategy::RANDOM;
 
-    ClientPool pool(poll_thread_.clone(), config1);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config1);
 
     // Change to round-robin
     auto config2 = PoolConfig::defaults();
