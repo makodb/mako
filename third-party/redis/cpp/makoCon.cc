@@ -238,6 +238,24 @@ static bool redis_request_has_write(const TxnRequest* request) {
     return false;
 }
 
+static bool redis_op_uses_only_primary_lock_key(const TxnOperation& op) {
+    switch (op.op) {
+        case TXN_OP_RENAME:
+        case TXN_OP_COPY:
+        case TXN_OP_SMOVE:
+        case TXN_OP_LMOVE:
+        case TXN_OP_SORT:
+        case TXN_OP_ZRANGESTORE:
+        case TXN_OP_SET_ALGEBRA:
+        case TXN_OP_ZSET_ALGEBRA:
+        case TXN_OP_BPOP:
+        case TXN_OP_ZMPOP:
+            return false;
+        default:
+            return true;
+    }
+}
+
 static std::vector<size_t> redis_request_lock_stripes(const TxnRequest* request) {
     std::vector<size_t> stripes;
     if (request == nullptr || request->ops == nullptr) {
@@ -396,12 +414,21 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     std::unique_lock<std::shared_mutex> redis_keyspace_exclusive_lock;
     std::shared_lock<std::shared_mutex> redis_keyspace_shared_lock;
+    std::unique_lock<std::mutex> redis_single_key_lock;
     std::vector<std::unique_lock<std::mutex>> redis_key_locks;
     if (redis_request_has_flushdb(request)) {
         redis_keyspace_exclusive_lock = std::unique_lock<std::shared_mutex>(g_redis_keyspace_mutex);
     } else {
         redis_keyspace_shared_lock = std::shared_lock<std::shared_mutex>(g_redis_keyspace_mutex);
-        if (redis_request_has_write(request)) {
+        if (request != nullptr
+            && request->ops != nullptr
+            && request->num_ops == 1
+            && !redis_op_is_read_only(request->ops[0])
+            && redis_op_uses_only_primary_lock_key(request->ops[0])) {
+            const TxnOperation& op = request->ops[0];
+            const size_t stripe = redis_lock_hash(op.key_ptr, op.key_len) % kRedisTxnLockStripes;
+            redis_single_key_lock = std::unique_lock<std::mutex>(g_redis_txn_key_mutexes[stripe]);
+        } else if (redis_request_has_write(request)) {
             const std::vector<size_t> stripes = redis_request_lock_stripes(request);
             redis_key_locks.reserve(stripes.size());
             for (size_t stripe : stripes) {
