@@ -2034,7 +2034,7 @@ void ClientConnection::invalidate_pending_futures() const {
     }
     rusty::Vec<rusty::Arc<Future>> futures = rusty::Vec<rusty::Arc<Future>>::new_();
     auto guard = this->pending_fu_.lock().unwrap();
-    for (auto&& _for_item : rusty::for_in(guard->drain())) {
+    for (auto&& _for_item : rusty::for_in((*guard).drain())) {
         auto&& _xid = rusty::detail::deref_if_pointer(std::get<0>(rusty::detail::deref_if_pointer(_for_item)));
         auto&& fu = rusty::detail::deref_if_pointer(std::get<1>(rusty::detail::deref_if_pointer(_for_item)));
         futures.push(std::move(fu));
@@ -2299,7 +2299,7 @@ bool ClientConnection::check_pending_write_update() const {
 
 void ClientConnection::handle_free(int64_t xid) const {
     auto guard = this->pending_fu_.lock().unwrap();
-    if (guard->remove(std::move(xid)).is_some()) {
+    if ((*guard).remove(std::move(xid)).is_some()) {
         this->metrics_.record_request_dropped();
     }
 }
@@ -3199,8 +3199,8 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
     }
     {
         auto guard = this->pending_factory_field.lock().unwrap();
-        if (guard->is_some()) {
-            ChannelFactoryProxy moved = guard->take().unwrap();
+        if ((*guard).is_some()) {
+            ChannelFactoryProxy moved = (*guard).take().unwrap();
             mut_conn.bind_factory(std::move(moved));
         }
     }
@@ -3270,7 +3270,7 @@ void Client::set_channel_factory(ChannelFactoryProxy factory) const {
 
 bool Client::has_pending_channel_factory() const {
     auto guard = this->pending_factory_field.lock().unwrap();
-    return guard->is_some();
+    return (*guard).is_some();
 }
 
 size_t Client::pending_request_count() const {
@@ -4090,16 +4090,16 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
     }
     {
         auto direct_guard = self.direct_channel_.lock().unwrap();
-        if (direct_guard->is_some()) {
-            auto& proxy = *direct_guard->as_ref().unwrap();
+        if ((*direct_guard).is_some()) {
+            auto& proxy = *(*direct_guard).as_ref().unwrap();
             if (proxy.is_closed()) {
                 self.record_circuit_result(ENOTCONN);
                 return FutureResult::Err(ENOTCONN);
             }
         } else {
             auto guard = self.fiber_channel_.lock().unwrap();
-            if (guard->is_none() ||
-                guard->as_ref().unwrap()->is_closed()) {
+            if ((*guard).is_none() ||
+                (*guard).as_ref().unwrap()->is_closed()) {
                 self.record_circuit_result(ENOTCONN);
                 return FutureResult::Err(ENOTCONN);
             }
@@ -4109,7 +4109,7 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
     auto fu = Future::create(self.xid_counter_.next(1), attr);
     {
         auto pending_guard = self.pending_fu_.lock().unwrap();
-        pending_guard->insert(fu->xid_, fu);
+        (*pending_guard).insert(fu->xid_, fu);
     }
 
     BufferSink body_sink;
@@ -4126,7 +4126,7 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
     if (ch_err != ChannelError::None) {
         {
             auto pending_guard = self.pending_fu_.lock().unwrap();
-            pending_guard->remove(fu->xid_);
+            (*pending_guard).remove(fu->xid_);
         }
         self.record_circuit_result(EIO);
         return FutureResult::Err(EIO);
@@ -4152,16 +4152,16 @@ rusty::Result<rusty::Unit, i32> clientconn_request_async(
     }
     {
         auto direct_guard = self.direct_channel_.lock().unwrap();
-        if (direct_guard->is_some()) {
-            auto& proxy = *direct_guard->as_ref().unwrap();
+        if ((*direct_guard).is_some()) {
+            auto& proxy = *(*direct_guard).as_ref().unwrap();
             if (proxy.is_closed()) {
                 self.record_circuit_result(ENOTCONN);
                 return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
             }
         } else {
             auto guard = self.fiber_channel_.lock().unwrap();
-            if (guard->is_none() ||
-                guard->as_ref().unwrap()->is_closed()) {
+            if ((*guard).is_none() ||
+                (*guard).as_ref().unwrap()->is_closed()) {
                 self.record_circuit_result(ENOTCONN);
                 return rusty::Result<rusty::Unit, i32>::Err(ENOTCONN);
             }
@@ -4268,7 +4268,7 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
             }
             if (timeout_type != TimeoutType::NONE) {
                 auto state_guard = final_fu->state_.lock().unwrap();
-                state_guard->timed_out = true;
+                (*state_guard).timed_out = true;
             }
             final_fu->error_code_.set(err);
             final_fu->timeout_type_.set(timeout_type);
@@ -4379,14 +4379,14 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
   if (!self.channel_mode_.get()) return ChannelError::ConnectionReset;
   {
     auto guard = self.direct_channel_.lock().unwrap();
-    if (guard->is_some()) {
-      auto& mut_proxy = *guard->as_mut().unwrap();
+    if ((*guard).is_some()) {
+      auto& mut_proxy = *(*guard).as_mut().unwrap();
       return mut_proxy.send_frame(ChannelFrame{body_bytes, body_size});
     }
   }
   auto guard = self.fiber_channel_.lock().unwrap();
-  if (guard->is_none()) return ChannelError::ConnectionReset;
-  return guard->as_mut().unwrap()->send_frame(
+  if ((*guard).is_none()) return ChannelError::ConnectionReset;
+  return (*guard).as_mut().unwrap()->send_frame(
       ChannelFrame{body_bytes, body_size});
 }
 
@@ -4437,7 +4437,7 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
   // @unsafe { SpinMutex::lock + ChannelFactoryProxy copy }
   {
     auto guard = self.factory_.lock().unwrap();
-    if (guard->is_none()) {
+    if ((*guard).is_none()) {
       Log_error(
           "rrr::ClientConnection::connect_via_factory: factory unbound at "
           "the moment of connect (race against bind_factory)");
@@ -4455,7 +4455,7 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
     // while we issue the syscall doesn't introduce contention with
     // the dispatch path (which locks `fiber_channel_`, not
     // `factory_`).
-    auto* bound = guard->as_ref().unwrap().get();
+    auto* bound = (*guard).as_ref().unwrap().get();
     ConnectResult result = bound->connect(std::string_view(addr));
     if (result.error != ChannelError::None || result.connection.is_none()) {
       const auto err_str = std::string("factory connect failed: ")
@@ -4553,7 +4553,7 @@ void clientconn_bind_channel_via_poll_thread(
     // Wire up the on_frame/on_closed/on_error lambdas on the just-
     // installed FiberChannel (see comment in the make_box site above
     // — bind_callbacks() runs after the Box address is final).
-    guard->as_ref().unwrap()->bind_callbacks();
+    (*guard).as_ref().unwrap()->bind_callbacks();
   }
   self.channel_mode_.set(true);
 
@@ -4659,9 +4659,9 @@ void clientconn_run_recv_loop(const ClientConnection& self) {
   FiberChannel* fc = nullptr;
   {
     auto guard = self.fiber_channel_.lock().unwrap();
-    if (guard->is_none()) return;
+    if ((*guard).is_none()) return;
     // @unsafe { Box::get returns raw pointer }
-    fc = const_cast<FiberChannel*>(guard->as_ref().unwrap().get());
+    fc = const_cast<FiberChannel*>((*guard).as_ref().unwrap().get());
   }
   while (true) {
     rusty::Option<OwnedFrame> frame_opt = fc->recv_frame();
@@ -4757,10 +4757,10 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
   rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
   {
     auto guard = self.pending_fu_.lock().unwrap();
-    auto fu_ptr = guard->get(v_reply_xid.get());
+    auto fu_ptr = (*guard).get(v_reply_xid.get());
     if (fu_ptr.is_some()) {
       fu_opt = rusty::Some(fu_ptr.unwrap().clone());
-      guard->remove(v_reply_xid.get());
+      (*guard).remove(v_reply_xid.get());
     }
   }
 
@@ -4909,7 +4909,7 @@ RpcError clientconn_map_system_error(int32_t err) {
 size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr) {
   auto guard = self.state_.lock().unwrap();
   size_t count = 0;
-  auto clients_opt = guard->cache.get(addr);
+  auto clients_opt = (*guard).cache.get(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     for (const auto& client : clients) {
@@ -4925,7 +4925,7 @@ size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::st
 size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr) {
   auto guard = self.state_.lock().unwrap();
   size_t removed = 0;
-  auto clients_opt = guard->cache.get_mut(addr);
+  auto clients_opt = (*guard).cache.get_mut(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
@@ -4951,7 +4951,7 @@ size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::st
 
     // Remove empty entries from cache
     if (clients.is_empty()) {
-      guard->cache.remove(addr);
+      (*guard).cache.remove(addr);
     }
   }
   return removed;
@@ -4968,7 +4968,7 @@ size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& 
 
   auto guard = self.state_.lock().unwrap();
   size_t closed = 0;
-  auto clients_opt = guard->cache.get_mut(addr);
+  auto clients_opt = (*guard).cache.get_mut(addr);
   if (clients_opt.is_some()) {
     // BTreeMap::get returns `Option<V&>`.
     auto& clients = clients_opt.unwrap();
@@ -4990,7 +4990,7 @@ size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& 
     clients = std::move(kept);
 
     if (clients.is_empty()) {
-      guard->cache.remove(addr);
+      (*guard).cache.remove(addr);
     }
   }
   return closed;
@@ -5006,12 +5006,12 @@ size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
   // remove) doesn't iterate while modifying. BTreeMap::iter() yields
   // tuple<const K&, V&>; project the key.
   rusty::Vec<std::string> keys;
-  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+  for (auto&& _kv : rusty::for_in((*guard).cache.iter())) {
     keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = guard->cache.get_mut(addr);
+    auto clients_opt = (*guard).cache.get_mut(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -5039,7 +5039,7 @@ size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
     }
   }
   for (const auto& addr : empty_keys) {
-    guard->cache.remove(addr);
+    (*guard).cache.remove(addr);
   }
   return total_removed;
 }
@@ -5056,12 +5056,12 @@ size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_m
 
   // same drain pattern as remove_all_unhealthy above — snapshot keys.
   rusty::Vec<std::string> keys;
-  for (auto&& _kv : rusty::for_in(guard->cache.iter())) {
+  for (auto&& _kv : rusty::for_in((*guard).cache.iter())) {
     keys.push(std::string(std::get<0>(rusty::detail::deref_if_pointer(_kv))));
   }
   rusty::Vec<std::string> empty_keys;
   for (const auto& addr : keys) {
-    auto clients_opt = guard->cache.get_mut(addr);
+    auto clients_opt = (*guard).cache.get_mut(addr);
     if (clients_opt.is_none()) {
       continue;
     }
@@ -5088,7 +5088,7 @@ size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_m
     }
   }
   for (const auto& addr : empty_keys) {
-    guard->cache.remove(addr);
+    (*guard).cache.remove(addr);
   }
   return total_closed;
 }
@@ -5104,15 +5104,15 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
   auto guard = self.state_.lock().unwrap();
 
   // Get or create load balancer state for this address
-  auto lb_state_opt = guard->lb_state.get_mut(addr);
+  auto lb_state_opt = (*guard).lb_state.get_mut(addr);
   if (lb_state_opt.is_none()) {
-    guard->lb_state.insert(addr, LoadBalancerState::new_());
-    lb_state_opt = guard->lb_state.get_mut(addr);
+    (*guard).lb_state.insert(addr, LoadBalancerState::new_());
+    lb_state_opt = (*guard).lb_state.get_mut(addr);
   }
   // BTreeMap::get returns `Option<V&>`; unwrap() is a reference.
   auto& lb_state = lb_state_opt.unwrap();
 
-  auto clients_opt = guard->cache.get_mut(addr);
+  auto clients_opt = (*guard).cache.get_mut(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     int client_count = static_cast<int>(clients.size());
@@ -5176,7 +5176,7 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
         sp_cl = rusty::Some(clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(clients.size()) - 1))].clone());
       } else {
         // Remove from cache if we can't connect
-        guard->cache.remove(addr);
+        (*guard).cache.remove(addr);
       }
     }
   } else {
@@ -5194,7 +5194,7 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
     }
     if (ok) {
       sp_cl = rusty::Some(parallel_clients[static_cast<size_t>(RandomGenerator::rand(0, static_cast<int>(parallel_clients.size()) - 1))].clone());
-      guard->cache.insert(addr, std::move(parallel_clients));
+      (*guard).cache.insert(addr, std::move(parallel_clients));
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
   }

@@ -1024,7 +1024,7 @@ void tcpconn_flush(TcpConnection& self) {
     if (self.closed_.get()) return;
 
     auto guard = self.outbound_.lock().unwrap();
-    if (guard->empty()) return;
+    if ((*guard).empty()) return;
 
     // Best-effort: try to drain immediately. Errors here are reported
     // via the callbacks set on this connection; the caller of `flush`
@@ -1090,7 +1090,7 @@ void tcpconn_set_on_error(TcpConnection& self, OnErrorCallback cb) {
 int tcpconn_poll_mode(const TcpConnection& self) {
     int mode = PollMode::READ;
     auto guard = self.outbound_.lock().unwrap();
-    if (!guard->empty()) {
+    if (!(*guard).empty()) {
         mode |= PollMode::WRITE;
     }
     return mode;
@@ -1099,7 +1099,7 @@ int tcpconn_poll_mode(const TcpConnection& self) {
 // @safe - outbound (locked) + inbound buffered byte counts.
 std::size_t tcpconn_content_size(TcpConnection& self) {
     auto guard = self.outbound_.lock().unwrap();
-    return guard->size() + self.inbound_.buffered_bytes();
+    return (*guard).size() + self.inbound_.buffered_bytes();
 }
 
 // @unsafe - recv(2) syscall into a raw `char` scratch buffer +

@@ -275,12 +275,12 @@ int any_message_registry::register_type(std::string name,
                                       Factory factory) {
   auto guard = registry().lock().unwrap();
   size_t hash = ti.hash_code();
-  verify(guard->by_name.get(name).is_none() &&
+  verify((*guard).by_name.get(name).is_none() &&
          "AnyMessageRegistry: name already registered.");
-  if (guard->name_by_type_hash.get(hash).is_none()) {
-    guard->name_by_type_hash.insert(hash, name);
+  if ((*guard).name_by_type_hash.get(hash).is_none()) {
+    (*guard).name_by_type_hash.insert(hash, name);
   }
-  guard->by_name.insert(std::move(name), std::move(factory));
+  (*guard).by_name.insert(std::move(name), std::move(factory));
   return 0;
 }
 
@@ -288,7 +288,7 @@ int any_message_registry::register_type(std::string name,
 // through `*entry.unwrap()` (Option-of-pointer deref).
 SerializableProxy any_message_registry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
-  auto entry = guard->by_name.get(name);
+  auto entry = (*guard).by_name.get(name);
   if (entry.is_none()) return SerializableProxy{};
   return entry.unwrap()();
 }
@@ -299,7 +299,7 @@ SerializableProxy any_message_registry::create(const std::string& name) {
 const std::string* any_message_registry::name_for_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
   size_t hash = ti.hash_code();
-  auto entry = guard->name_by_type_hash.get(hash);
+  auto entry = (*guard).name_by_type_hash.get(hash);
   if (entry.is_none()) return nullptr;
   return &entry.unwrap();
 }
@@ -307,20 +307,20 @@ const std::string* any_message_registry::name_for_type(std::type_index ti) {
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::get + Option::is_some.
 bool any_message_registry::is_registered_name(const std::string& name) {
   auto guard = registry().lock().unwrap();
-  return guard->by_name.get(name).is_some();
+  return (*guard).by_name.get(name).is_some();
 }
 
 // @unsafe - same pattern as is_registered_name.
 bool any_message_registry::is_registered_type(std::type_index ti) {
   auto guard = registry().lock().unwrap();
-  return guard->name_by_type_hash.get(ti.hash_code()).is_some();
+  return (*guard).name_by_type_hash.get(ti.hash_code()).is_some();
 }
 
 // @unsafe - SpinMutex::lock().unwrap() + HashMap::clear().
 void any_message_registry::clear_for_testing() {
   auto guard = registry().lock().unwrap();
-  guard->by_name.clear();
-  guard->name_by_type_hash.clear();
+  (*guard).by_name.clear();
+  (*guard).name_by_type_hash.clear();
 }
 
 }  // namespace rrr

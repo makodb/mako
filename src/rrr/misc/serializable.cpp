@@ -1436,24 +1436,24 @@ SpinMutex<SerializableRegistryMap>& registry() {
 
 void SerializableRegistry::register_factory(int32_t kind, Factory factory) {
   auto guard = registry().lock().unwrap();
-  guard->map.insert(kind, std::move(factory));
+  (*guard).map.insert(kind, std::move(factory));
 }
 
 SerializableProxy SerializableRegistry::create(int32_t kind) {
   auto guard = registry().lock().unwrap();
-  auto entry = guard->map.get(kind);
+  auto entry = (*guard).map.get(kind);
   verify(entry.is_some());
   return entry.unwrap()();
 }
 
 bool SerializableRegistry::is_registered(int32_t kind) {
   auto guard = registry().lock().unwrap();
-  return guard->map.get(kind).is_some();
+  return (*guard).map.get(kind).is_some();
 }
 
 void SerializableRegistry::clear_for_testing() {
   auto guard = registry().lock().unwrap();
-  guard->map.clear();
+  (*guard).map.clear();
 }
 
 }  // namespace rrr

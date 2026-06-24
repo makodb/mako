@@ -457,13 +457,13 @@ void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
     }
     auto list_guard = this->lru_list_.lock().unwrap();
     while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like(cfg.max_entries)) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
-        int64_t oldest_xid = list_guard->back().xid;
-        set_guard->remove(std::move(oldest_xid));
-        list_guard->pop_back();
+        int64_t oldest_xid = (*list_guard).back().xid;
+        (*set_guard).remove(std::move(oldest_xid));
+        (*list_guard).pop_back();
         this->evictions_.set(this->evictions_.get() + static_cast<uint64_t>(1));
     }
-    list_guard->push_front(CompletedEntry::new_(std::move(xid), std::move(current_time_ms)));
-    set_guard->insert(std::move(xid));
+    (*list_guard).push_front(CompletedEntry::new_(std::move(xid), std::move(current_time_ms)));
+    (*set_guard).insert(std::move(xid));
     this->total_tracked_.set(this->total_tracked_.get() + static_cast<uint64_t>(1));
 }
 
@@ -482,8 +482,8 @@ bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
         if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
             if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
-                set_guard->remove(std::move(xid));
-                list_guard->remove(std::move(i));
+                (*set_guard).remove(std::move(xid));
+                (*list_guard).remove(std::move(i));
                 return false;
             }
             this->query_hits_.set(this->query_hits_.get() + static_cast<uint64_t>(1));
@@ -499,12 +499,12 @@ bool CompletionTracker::remove(int64_t xid) {
     if (!rusty::contains(set_guard, std::move(xid))) {
         return false;
     }
-    set_guard->remove(std::move(xid));
+    (*set_guard).remove(std::move(xid));
     auto list_guard = this->lru_list_.lock().unwrap();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
         if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
-            list_guard->remove(std::move(i));
+            (*list_guard).remove(std::move(i));
             return true;
         }
         i += static_cast<size_t>(1);
@@ -515,8 +515,8 @@ bool CompletionTracker::remove(int64_t xid) {
 void CompletionTracker::clear() {
     auto set_guard = this->completed_set_.lock().unwrap();
     auto list_guard = this->lru_list_.lock().unwrap();
-    set_guard->clear();
-    list_guard->clear();
+    (*set_guard).clear();
+    (*list_guard).clear();
 }
 
 size_t CompletionTracker::size() const {
@@ -567,8 +567,8 @@ size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
         if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
             int64_t xid = list_guard[i].xid;
-            set_guard->remove(std::move(xid));
-            list_guard->remove(std::move(i));
+            (*set_guard).remove(std::move(xid));
+            (*list_guard).remove(std::move(i));
             evicted += static_cast<size_t>(1);
         } else {
             i += static_cast<size_t>(1);

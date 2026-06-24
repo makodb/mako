@@ -382,23 +382,10 @@ public:
         }
     }
 
-    // @safe - Pointer access through UnsafeCell
-    // @lifetime: (&'a) -> &'a
-    T* operator->() {
-        // @unsafe
-        {
-            return data_->get();
-        }
-    }
-
-    // @safe - Const pointer access
-    // @lifetime: (&'a) -> &'a
-    const T* operator->() const {
-        // @unsafe
-        {
-            return data_->get_const();
-        }
-    }
+    // operator-> intentionally removed: SpinMutexGuard is now registered in the
+    // inline-rust auto-deref owner predicates, so DSL `guard.field` /
+    // `guard.method()` lower to `(*guard).` (operator*), and hand-written C++
+    // consumers use `(*guard).` directly — operator-> is dead.
 
     // Transparent forwarding so the inline-Rust DSL's container operations on a
     // guarded collection resolve through to the inner value: the DSL lowers

@@ -391,12 +391,12 @@ return rusty::clone((*guard).on_reconnected); }();
 
 void CallbackManager::clear_all() const {
     auto guard = this->callbacks_field.lock().unwrap();
-    guard->clear();
+    (*guard).clear();
 }
 
 size_t CallbackManager::callback_count() const {
     auto guard = this->callbacks_field.lock().unwrap();
-    return guard->total_count();
+    return (*guard).total_count();
 }
 
 bool CallbackManager::has_callbacks() const {

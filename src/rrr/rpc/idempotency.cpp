@@ -677,7 +677,7 @@ bool IdempotencyCache::remove(const IdempotencyKey& key) const {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
         if ((rusty::detail::deref_if_pointer_like(guard[i].key.client_id) == rusty::detail::deref_if_pointer_like(key.client_id)) && (rusty::detail::deref_if_pointer_like(guard[i].key.sequence) == rusty::detail::deref_if_pointer_like(key.sequence))) {
-            guard->remove(i);
+            (*guard).remove(i);
             return true;
         }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
@@ -687,7 +687,7 @@ bool IdempotencyCache::remove(const IdempotencyKey& key) const {
 
 void IdempotencyCache::clear() const {
     auto guard = this->cache_.lock().unwrap();
-    guard->clear();
+    (*guard).clear();
 }
 
 size_t IdempotencyCache::size() const {
@@ -733,7 +733,7 @@ size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(guard)) {
         if (guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
-            guard->remove(i);
+            (*guard).remove(i);
             evicted = rusty::detail::deref_if_pointer_like(evicted) + static_cast<size_t>(1);
         } else {
             i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);

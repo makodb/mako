@@ -452,10 +452,10 @@ bool RequestQueue::enqueue(QueuedRequest request) const {
 
 rusty::Option<QueuedRequest> RequestQueue::dequeue() {
     auto guard = this->queue_.lock().unwrap();
-    if (guard->size() == static_cast<size_t>(0)) {
+    if ((*guard).size() == static_cast<size_t>(0)) {
         return rusty::Option<QueuedRequest>{rusty::None};
     }
-    return rusty::Option<QueuedRequest>(guard->pop_front());
+    return rusty::Option<QueuedRequest>((*guard).pop_front());
 }
 
 size_t RequestQueue::expire_stale() const {
@@ -464,23 +464,23 @@ size_t RequestQueue::expire_stale() const {
 
 size_t RequestQueue::size() const {
     auto guard = this->queue_.lock().unwrap();
-    return guard->size();
+    return (*guard).size();
 }
 
 bool RequestQueue::empty() const {
     auto guard = this->queue_.lock().unwrap();
-    return guard->size() == static_cast<size_t>(0);
+    return (*guard).size() == static_cast<size_t>(0);
 }
 
 bool RequestQueue::full() {
     auto guard = this->queue_.lock().unwrap();
-    return guard->size() >= rusty::detail::deref_if_pointer_like(this->config_.max_size);
+    return (*guard).size() >= rusty::detail::deref_if_pointer_like(this->config_.max_size);
 }
 
 size_t RequestQueue::remaining_capacity() {
     auto guard = this->queue_.lock().unwrap();
-    if (rusty::detail::deref_if_pointer_like(this->config_.max_size) > guard->size()) {
-        return rusty::detail::deref_if_pointer_like(this->config_.max_size) - guard->size();
+    if (rusty::detail::deref_if_pointer_like(this->config_.max_size) > (*guard).size()) {
+        return rusty::detail::deref_if_pointer_like(this->config_.max_size) - (*guard).size();
     } else {
         return static_cast<size_t>(0);
     }
@@ -525,11 +525,11 @@ inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
         return false;
     }
     auto guard = self.queue_.lock().unwrap();
-    if (guard->size() >= self.config_.max_size) {
+    if ((*guard).size() >= self.config_.max_size) {
         switch (self.config_.overflow_strategy) {
             case OverflowStrategy::DROP_OLDEST:
-                if (guard->size() > 0) {
-                    auto oldest = guard->pop_front();
+                if ((*guard).size() > 0) {
+                    auto oldest = (*guard).pop_front();
                     rq_invoke_callback_safely(std::move(oldest.callback), kRequestQueueRejectedError);
                 }
                 break;
@@ -542,7 +542,7 @@ inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
     if (request.ttl_ms == 0) {
         request.ttl_ms = self.config_.default_ttl_ms;
     }
-    guard->push_back(std::move(request));
+    (*guard).push_back(std::move(request));
     return true;
 }
 
@@ -553,7 +553,7 @@ inline size_t rq_expire_stale(const RequestQueue& self) {
     size_t removed = 0;
     {
         auto guard = self.queue_.lock().unwrap();
-        auto expired = guard->extract_if(
+        auto expired = (*guard).extract_if(
             rusty::Function<bool(const QueuedRequest&)>(
                 [](const QueuedRequest& r) { return r.is_expired(); }));
         removed = expired.size();
@@ -582,7 +582,7 @@ inline void rq_clear_all(const RequestQueue& self, int error_code) {
                 callbacks_to_invoke.push(std::move(req.callback));
             }
         }
-        guard->clear();
+        (*guard).clear();
     }
     for (auto& cb : callbacks_to_invoke) {
         // @unsafe { invoking + swallowing exceptions }

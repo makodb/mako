@@ -555,25 +555,25 @@ bool inmemory_switchboard_register_listener(InMemorySwitchboard& self,
                                             std::string addr,
                                             rusty::sync::Weak<InMemoryListener> listener) {
     auto guard = self.listeners_.lock().unwrap();
-    if (guard->contains_key(addr)) {
+    if ((*guard).contains_key(addr)) {
         // Address already taken. The caller must close the existing
         // listener first.
         return false;
     }
-    guard->insert(std::move(addr), std::move(listener));
+    (*guard).insert(std::move(addr), std::move(listener));
     return true;
 }
 
 void inmemory_switchboard_unregister_listener(InMemorySwitchboard& self,
                                               const std::string& addr) {
     auto guard = self.listeners_.lock().unwrap();
-    guard->remove(addr);
+    (*guard).remove(addr);
 }
 
 rusty::Option<rusty::Arc<InMemoryListener>>
 inmemory_switchboard_find_listener(InMemorySwitchboard& self, const std::string& addr) {
     auto guard = self.listeners_.lock().unwrap();
-    auto val_opt = guard->get(addr);
+    auto val_opt = (*guard).get(addr);
     if (val_opt.is_none()) {
         return rusty::None;
     }
@@ -584,7 +584,7 @@ inmemory_switchboard_find_listener(InMemorySwitchboard& self, const std::string&
         val_opt.unwrap().upgrade();
     if (upgraded.is_none()) {
         // The listener was destroyed without unregistering. Clean up.
-        guard->remove(addr);
+        (*guard).remove(addr);
         return rusty::None;
     }
     return upgraded;
@@ -619,28 +619,28 @@ ChannelError inmemory_channel_send_frame(InMemoryChannel& self, const ChannelFra
     {
         auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
         if (self.is_a_side_) {
-            self_already_closed = guard->a_closed;
-            peer_already_closed = guard->b_closed;
-            peer_on_frame       = guard->b_on_frame;
-            if (guard->drop_next_sends_a > 0) {
+            self_already_closed = (*guard).a_closed;
+            peer_already_closed = (*guard).b_closed;
+            peer_on_frame       = (*guard).b_on_frame;
+            if ((*guard).drop_next_sends_a > 0) {
                 drop_this_send = true;
-                --guard->drop_next_sends_a;
-            } else if (guard->send_error_count_a > 0) {
+                --(*guard).drop_next_sends_a;
+            } else if ((*guard).send_error_count_a > 0) {
                 inject_error  = true;
-                injected_err  = guard->send_error_a;
-                --guard->send_error_count_a;
+                injected_err  = (*guard).send_error_a;
+                --(*guard).send_error_count_a;
             }
         } else {
-            self_already_closed = guard->b_closed;
-            peer_already_closed = guard->a_closed;
-            peer_on_frame       = guard->a_on_frame;
-            if (guard->drop_next_sends_b > 0) {
+            self_already_closed = (*guard).b_closed;
+            peer_already_closed = (*guard).a_closed;
+            peer_on_frame       = (*guard).a_on_frame;
+            if ((*guard).drop_next_sends_b > 0) {
                 drop_this_send = true;
-                --guard->drop_next_sends_b;
-            } else if (guard->send_error_count_b > 0) {
+                --(*guard).drop_next_sends_b;
+            } else if ((*guard).send_error_count_b > 0) {
                 inject_error  = true;
-                injected_err  = guard->send_error_b;
-                --guard->send_error_count_b;
+                injected_err  = (*guard).send_error_b;
+                --(*guard).send_error_count_b;
             }
         }
     }
@@ -682,9 +682,9 @@ ChannelError inmemory_channel_send_frame(InMemoryChannel& self, const ChannelFra
 void inmemory_channel_inject_drop_next_sends(InMemoryChannel& self, int count) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
     if (self.is_a_side_) {
-        guard->drop_next_sends_a = count;
+        (*guard).drop_next_sends_a = count;
     } else {
-        guard->drop_next_sends_b = count;
+        (*guard).drop_next_sends_b = count;
     }
 }
 
@@ -692,11 +692,11 @@ void inmemory_channel_inject_drop_next_sends(InMemoryChannel& self, int count) {
 void inmemory_channel_inject_send_error(InMemoryChannel& self, ChannelError err, int count) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
     if (self.is_a_side_) {
-        guard->send_error_a       = err;
-        guard->send_error_count_a = count;
+        (*guard).send_error_a       = err;
+        (*guard).send_error_count_a = count;
     } else {
-        guard->send_error_b       = err;
-        guard->send_error_count_b = count;
+        (*guard).send_error_b       = err;
+        (*guard).send_error_count_b = count;
     }
 }
 
@@ -704,13 +704,13 @@ void inmemory_channel_inject_send_error(InMemoryChannel& self, ChannelError err,
 void inmemory_channel_clear_fault_injection(InMemoryChannel& self) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
     if (self.is_a_side_) {
-        guard->drop_next_sends_a  = 0;
-        guard->send_error_count_a = 0;
-        guard->send_error_a       = ChannelError::None;
+        (*guard).drop_next_sends_a  = 0;
+        (*guard).send_error_count_a = 0;
+        (*guard).send_error_a       = ChannelError::None;
     } else {
-        guard->drop_next_sends_b  = 0;
-        guard->send_error_count_b = 0;
-        guard->send_error_b       = ChannelError::None;
+        (*guard).drop_next_sends_b  = 0;
+        (*guard).send_error_count_b = 0;
+        (*guard).send_error_b       = ChannelError::None;
     }
 }
 
@@ -749,18 +749,18 @@ void inmemory_channel_close(InMemoryChannel& self) {
     {
         auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
         if (self.is_a_side_) {
-            if (guard->a_closed) return;  // idempotent
-            guard->a_closed = true;
+            if ((*guard).a_closed) return;  // idempotent
+            (*guard).a_closed = true;
             // Notify peer if it's not already closed.
-            if (!guard->b_closed) {
-                peer_on_closed = guard->b_on_closed;
+            if (!(*guard).b_closed) {
+                peer_on_closed = (*guard).b_on_closed;
                 fire_peer_closed = true;
             }
         } else {
-            if (guard->b_closed) return;
-            guard->b_closed = true;
-            if (!guard->a_closed) {
-                peer_on_closed = guard->a_on_closed;
+            if ((*guard).b_closed) return;
+            (*guard).b_closed = true;
+            if (!(*guard).a_closed) {
+                peer_on_closed = (*guard).a_on_closed;
                 fire_peer_closed = true;
             }
         }
@@ -782,34 +782,34 @@ bool inmemory_channel_is_closed(InMemoryChannel& self) {
     // Reporting joint state (a_closed || b_closed) ensures the
     // implication holds in both directions.
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    return guard->a_closed || guard->b_closed;
+    return (*guard).a_closed || (*guard).b_closed;
 }
 
 // @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
 std::string inmemory_channel_peer_address(InMemoryChannel& self) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    return self.is_a_side_ ? guard->b_peer_address : guard->a_peer_address;
+    return self.is_a_side_ ? (*guard).b_peer_address : (*guard).a_peer_address;
 }
 
 // @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
 void inmemory_channel_set_on_frame(InMemoryChannel& self, OnFrameCallback cb) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) guard->a_on_frame  = std::move(cb);
-    else            guard->b_on_frame  = std::move(cb);
+    if (self.is_a_side_) (*guard).a_on_frame  = std::move(cb);
+    else            (*guard).b_on_frame  = std::move(cb);
 }
 
 // @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
 void inmemory_channel_set_on_closed(InMemoryChannel& self, OnClosedCallback cb) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) guard->a_on_closed = std::move(cb);
-    else            guard->b_on_closed = std::move(cb);
+    if (self.is_a_side_) (*guard).a_on_closed = std::move(cb);
+    else            (*guard).b_on_closed = std::move(cb);
 }
 
 // @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
 void inmemory_channel_set_on_error(InMemoryChannel& self, OnErrorCallback cb) {
     auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) guard->a_on_error  = std::move(cb);
-    else            guard->b_on_error  = std::move(cb);
+    if (self.is_a_side_) (*guard).a_on_error  = std::move(cb);
+    else            (*guard).b_on_error  = std::move(cb);
 }
 
 // ---------------------------------------------------------------------------
@@ -820,12 +820,12 @@ ChannelError inmemory_listener_listen(InMemoryListener& self, std::string_view a
     rusty::sync::Weak<InMemoryListener> w;
     {
         auto guard = self.inner_.lock().unwrap();
-        if (guard->closed) {
+        if ((*guard).closed) {
             return ChannelError::Internal;
         }
-        if (!guard->local_address.empty()) {
+        if (!(*guard).local_address.empty()) {
             // Already listening; treat as idempotent if same addr.
-            if (guard->local_address == std::string(addr)) {
+            if ((*guard).local_address == std::string(addr)) {
                 return ChannelError::None;
             }
             return ChannelError::AddressInUse;
@@ -835,13 +835,13 @@ ChannelError inmemory_listener_listen(InMemoryListener& self, std::string_view a
                       "(caller must call set_self_weak before listen)");
             return ChannelError::Internal;
         }
-        guard->local_address = std::string(addr);
+        (*guard).local_address = std::string(addr);
         w = self.self_weak_.as_ref().unwrap().clone();
     }
     if (!inmemory_switchboard_register_listener(const_cast<InMemorySwitchboard&>(*self.switchboard_.get()), std::string(addr), std::move(w))) {
         // Address already taken in the switchboard.
         auto guard = self.inner_.lock().unwrap();
-        guard->local_address.clear();
+        (*guard).local_address.clear();
         return ChannelError::AddressInUse;
     }
     return ChannelError::None;
@@ -851,9 +851,9 @@ void inmemory_listener_close(InMemoryListener& self) {
     std::string addr_to_unregister;
     {
         auto guard = self.inner_.lock().unwrap();
-        if (guard->closed) return;
-        guard->closed = true;
-        addr_to_unregister = guard->local_address;
+        if ((*guard).closed) return;
+        (*guard).closed = true;
+        addr_to_unregister = (*guard).local_address;
     }
     if (!addr_to_unregister.empty()) {
         inmemory_switchboard_unregister_listener(const_cast<InMemorySwitchboard&>(*self.switchboard_.get()), addr_to_unregister);
@@ -862,22 +862,22 @@ void inmemory_listener_close(InMemoryListener& self) {
 
 bool inmemory_listener_is_closed(InMemoryListener& self) {
     auto guard = self.inner_.lock().unwrap();
-    return guard->closed;
+    return (*guard).closed;
 }
 
 std::string inmemory_listener_local_address(InMemoryListener& self) {
     auto guard = self.inner_.lock().unwrap();
-    return guard->local_address;
+    return (*guard).local_address;
 }
 
 void inmemory_listener_set_on_accept(InMemoryListener& self, OnAcceptCallback cb) {
     auto guard = self.inner_.lock().unwrap();
-    guard->on_accept = std::move(cb);
+    (*guard).on_accept = std::move(cb);
 }
 
 void inmemory_listener_set_on_error(InMemoryListener& self, OnErrorCallback cb) {
     auto guard = self.inner_.lock().unwrap();
-    guard->on_error = std::move(cb);
+    (*guard).on_error = std::move(cb);
 }
 
 // @unsafe - inline `const_cast<InMemoryConnectionState*>(state.get())`
@@ -889,11 +889,11 @@ inmemory_listener_accept_for_connect(InMemoryListener& self, const std::string& 
     std::string server_address;
     {
         auto guard = self.inner_.lock().unwrap();
-        if (guard->closed || guard->local_address.empty()) {
+        if ((*guard).closed || (*guard).local_address.empty()) {
             return rusty::None;
         }
-        cb_to_fire = guard->on_accept;  // wrapper copy = Arc clone (refcount++)
-        server_address = guard->local_address;
+        cb_to_fire = (*guard).on_accept;  // wrapper copy = Arc clone (refcount++)
+        server_address = (*guard).local_address;
     }
     if (!cb_to_fire) {
         // Listener exists but has no accept handler installed yet.
@@ -924,8 +924,8 @@ inmemory_listener_accept_for_connect(InMemoryListener& self, const std::string& 
         // requires going through the lock guard for any access.
         auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
         auto guard = mut_state->inner.lock().unwrap();
-        guard->a_peer_address = client_address;  // A is the client
-        guard->b_peer_address = server_address;  // B is the server
+        (*guard).a_peer_address = client_address;  // A is the client
+        (*guard).b_peer_address = server_address;  // B is the server
     }
     auto client_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(),
                                                           /*is_a_side=*/true));
@@ -986,8 +986,8 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
     {
         auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
         auto guard = mut_state->inner.lock().unwrap();
-        guard->a_peer_address = std::move(a_addr);
-        guard->b_peer_address = std::move(b_addr);
+        (*guard).a_peer_address = std::move(a_addr);
+        (*guard).b_peer_address = std::move(b_addr);
     }
     auto a_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/true));
     auto b_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/false));

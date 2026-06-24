@@ -315,7 +315,7 @@ void fiberchannel_on_inbound_frame(FiberChannel& self, const ChannelFrame& f) {
     }
     {
         auto guard = self.queue_.lock().unwrap();
-        guard->push_back(std::move(copy));
+        (*guard).push_back(std::move(copy));
     }
     fiberchannel_signal_pending_recv(self);
 }
@@ -362,9 +362,9 @@ rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self) {
     while (true) {
         {
             auto guard = self.queue_.lock().unwrap();
-            if (!guard->empty()) {
-                OwnedFrame f = std::move(guard->front());
-                guard->pop_front();
+            if (!(*guard).empty()) {
+                OwnedFrame f = std::move((*guard).front());
+                (*guard).pop_front();
                 return rusty::Some(std::move(f));
             }
         }
@@ -378,7 +378,7 @@ rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self) {
 
         {
             auto guard = self.queue_.lock().unwrap();
-            if (!guard->empty() || self.closed_.get()) {
+            if (!(*guard).empty() || self.closed_.get()) {
                 self.pending_recv_event_.reset();
                 continue;
             }

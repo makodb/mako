@@ -1726,8 +1726,8 @@ void sconn_decode_request_and_dispatch(
         bool surpress_warning = false;
         {
             auto guard = g_rpc_id_missing.lock().unwrap();
-            if (!guard->contains(rpc_id)) {
-                guard->insert(rpc_id);
+            if (!(*guard).contains(rpc_id)) {
+                (*guard).insert(rpc_id);
             } else {
                 surpress_warning = true;
             }
@@ -1777,13 +1777,13 @@ void sconn_dispatch_response_frame_via_channel(
     // @unsafe { SpinMutex::lock + Box::get + raw pointer extraction }
     {
         auto guard = self.channel_proxy_.lock().unwrap();
-        if (guard->is_none()) {
+        if ((*guard).is_none()) {
             Log_warn("rrr::ServerConnection::dispatch_response_frame_via_channel: "
                      "channel mode flipped on but proxy is unbound (race?). "
                      "Dropping reply.");
             return;
         }
-        conn = guard->as_ref().unwrap().get();
+        conn = (*guard).as_ref().unwrap().get();
     }
     ChannelFrame frame{bytes, size};
     // @unsafe - virtual method dispatch through ChannelConnectionBase*
@@ -1819,8 +1819,8 @@ void sconn_close(ServerConnection& self) {
         // @unsafe { SpinMutex::lock + Box::get + virtual dispatch }
         {
             auto guard = self.channel_proxy_.lock().unwrap();
-            if (guard->is_some()) {
-                auto* conn = guard->as_ref().unwrap().get();
+            if ((*guard).is_some()) {
+                auto* conn = (*guard).as_ref().unwrap().get();
                 conn->close();
             }
         }
@@ -1943,7 +1943,7 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
             mut_sconn.bind_channel(std::move(conn_proxy));
             {
                 auto guard = server_ptr->channel_sconns_field.lock().unwrap();
-                guard->push(std::move(sconn));
+                (*guard).push(std::move(sconn));
             }
         });
         listener->set_on_error([](ChannelError err, std::string_view msg) {
@@ -2003,7 +2003,7 @@ void server_drop_impl(Server& self) {
             auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
             mut_sconn.close();
         }
-        guard->clear();
+        (*guard).clear();
     }
     // No need to wait for connections - Arc<RpcServiceContext>
     // ensures services stay alive until the last ServerConnection
