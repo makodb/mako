@@ -47,6 +47,7 @@ static std::atomic<uint64_t> g_mako_random_counter{1};
 static std::shared_mutex g_redis_keyspace_mutex;
 static constexpr size_t kRedisTxnLockStripes = 256;
 static std::array<std::mutex, kRedisTxnLockStripes> g_redis_txn_key_mutexes;
+static bool g_redis_single_worker_mode = false;
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -416,7 +417,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
     std::shared_lock<std::shared_mutex> redis_keyspace_shared_lock;
     std::unique_lock<std::mutex> redis_single_key_lock;
     std::vector<std::unique_lock<std::mutex>> redis_key_locks;
-    if (redis_request_has_flushdb(request)) {
+    if (g_redis_single_worker_mode) {
+        // One Rust protocol worker already serializes all FFI executor calls.
+    } else if (redis_request_has_flushdb(request)) {
         redis_keyspace_exclusive_lock = std::unique_lock<std::shared_mutex>(g_redis_keyspace_mutex);
     } else {
         redis_keyspace_shared_lock = std::shared_lock<std::shared_mutex>(g_redis_keyspace_mutex);
@@ -2459,10 +2462,14 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                         all_success = false;
                         continue;
                     }
-                    s = read_logical_exists(txn, user_key, tl_key_buf, logical_existed);
-                    if (!s.ok()) {
-                        all_success = false;
-                        continue;
+                    if (string_existed) {
+                        logical_existed = true;
+                    } else {
+                        s = read_logical_exists(txn, user_key, tl_key_buf, logical_existed);
+                        if (!s.ok()) {
+                            all_success = false;
+                            continue;
+                        }
                     }
                 }
 
@@ -2545,29 +2552,32 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
                 if (write_allowed) {
                     std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
-                    s = delete_set(txn, user_key);
-                    if (!s.ok()) {
-                        result.success = false;
-                        all_success = false;
-                        continue;
-                    }
-                    s = delete_list(txn, user_key);
-                    if (!s.ok()) {
-                        result.success = false;
-                        all_success = false;
-                        continue;
-                    }
-                    s = delete_zset(txn, user_key);
-                    if (!s.ok()) {
-                        result.success = false;
-                        all_success = false;
-                        continue;
-                    }
-                    s = delete_hash(txn, user_key);
-                    if (!s.ok()) {
-                        result.success = false;
-                        all_success = false;
-                        continue;
+                    const bool replacing_non_string = expired_for_set || (logical_existed && !string_existed);
+                    if (replacing_non_string) {
+                        s = delete_set(txn, user_key);
+                        if (!s.ok()) {
+                            result.success = false;
+                            all_success = false;
+                            continue;
+                        }
+                        s = delete_list(txn, user_key);
+                        if (!s.ok()) {
+                            result.success = false;
+                            all_success = false;
+                            continue;
+                        }
+                        s = delete_zset(txn, user_key);
+                        if (!s.ok()) {
+                            result.success = false;
+                            all_success = false;
+                            continue;
+                        }
+                        s = delete_hash(txn, user_key);
+                        if (!s.ok()) {
+                            result.success = false;
+                            all_success = false;
+                            continue;
+                        }
                     }
                     s = put_raw(txn, tl_key_buf, raw_val);
                     if (!s.ok()) {
@@ -5904,6 +5914,7 @@ int main() {
         !parse_env_int("MAKO_SHARD_INDEX", 0, 0, nshards - 1, shard_index)) {
         return 1;
     }
+    g_redis_single_worker_mode = nthreads == 1;
     std::vector<int> local_shards;
     if (!parse_local_shards(getenv("MAKO_LOCAL_SHARDS"), nshards, local_shards)) {
         return 1;
