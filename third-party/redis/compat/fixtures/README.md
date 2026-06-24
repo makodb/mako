@@ -140,6 +140,10 @@ The default workload set is `workloada workloadb workloadc workloadf`. Override
 written as timestamped CSV and per-phase logs under
 `third-party/redis/compat/benchmark_logs/`.
 
+YCSB load phases exercise Redis hash inserts and are currently a diagnostic for
+the Mako Redis hash-write path, not a Redis parity claim. Report load and run
+phases separately when using this runner for PR evidence.
+
 ## Restart Durability
 
 The restart guard needs stop/start hooks:
