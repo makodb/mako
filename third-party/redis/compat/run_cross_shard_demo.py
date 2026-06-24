@@ -84,9 +84,10 @@ starts one Redis-facing `makoCon` process with `MAKO_NUM_SHARDS=3` and
 `MAKO_LOCAL_SHARDS=0,1,2`. That exercises Redis transactions over Mako's
 sharded table routing in one process.
 
-This is not a replicated failover fixture. A future distributed-service demo
-should keep backing shard servers alive as separate processes and expose a
-Redis endpoint over that deployment.
+This is the stable multi-shard Redis fixture available in this PR. The separate
+`dbtest`/`bash/shard.sh` paths are benchmark/replication runners, not
+Redis-serving backing services, so they are not used as the G2 Redis
+compatibility target. This fixture is not a replicated failover fixture.
 
 ## Local Smoke
 

@@ -7,7 +7,8 @@ single local `makoCon` process proves distributed claims.
 
 `third-party/redis/compat/run_bank_transfer.py` is the workload. A true G2 run needs a
 multi-shard Mako Redis endpoint. The current default `third-party/redis/cpp/makoCon.cc`
-validation path is one shard, so the acceptance runner reports `N/A`.
+validation path is one shard, so the acceptance runner reports `N/A` unless a
+multi-shard fixture is selected.
 
 Local smoke only:
 
@@ -23,9 +24,11 @@ MAKO_G2_USE_LOCAL_FIXTURE=1 python3 third-party/redis/compat/run_bank_transfer.p
 
 This starts one `makoCon` process with `MAKO_NUM_SHARDS=3` and
 `MAKO_LOCAL_SHARDS=0,1,2`, so the Redis endpoint routes keys across multiple
-local Mako shard tables in one process. It validates the Redis transaction
-surface over Mako's sharded table routing. It is not a multi-process failover
-fixture.
+local Mako shard tables in one process. By default the workload follows the
+plan-level G2 shape: 3 independent runs, 100 accounts, 16 clients, 30 seconds
+per run, and exact total-balance preservation after each run. It validates the
+Redis transaction surface over Mako's sharded table routing. It is not a
+multi-process backing-service or failover fixture.
 
 Redis Cluster comparison fixture:
 
@@ -42,6 +45,11 @@ G2_DEMO_START_REDIS_CLUSTER=1 python3 third-party/redis/compat/run_cross_shard_d
 
 This records Redis Cluster's cross-slot transaction rejection and the Mako bank
 invariant in `docs/cross_shard_atomicity_demo.md`.
+
+The separate `dbtest`/`bash/shard.sh` replicated scripts are benchmark/live
+deployment runners, not Redis-serving `makoCon` backing services. They do not
+expose a RESP endpoint that `run_bank_transfer.py` can target, so they are not
+used as the G2 Redis compatibility fixture in this PR.
 
 ## G3 Failover Durability
 
