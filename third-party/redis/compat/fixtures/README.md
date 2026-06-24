@@ -118,6 +118,28 @@ REDIS_COMPAT_FETCH_REDIS_TESTS=1 REDIS_COMPAT_BOOTSTRAP_TCL=1 \
 bash third-party/redis/compat/run_tcl_suite.sh
 ```
 
+## YCSB Benchmark
+
+`third-party/redis/compat/run_ycsb_benchmark.sh` runs the standard YCSB Redis
+binding against Mako and, by default, a local Redis reference server. It is not
+part of the default acceptance runner because it requires a separate YCSB
+distribution and workload sizing should be selected for the benchmark host.
+
+```bash
+YCSB_HOME=/tmp/ycsb-0.17.0 \
+MAKO_PORT=6380 REDIS_PORT=6379 \
+YCSB_RECORDCOUNT=10000 YCSB_OPERATIONCOUNT=10000 YCSB_THREADS=16 \
+bash third-party/redis/compat/run_ycsb_benchmark.sh
+```
+
+Older YCSB release launchers are Python 2 scripts; the runner uses `python2`
+automatically when it is present, or accepts an explicit `YCSB_PYTHON=/path`.
+
+The default workload set is `workloada workloadb workloadc workloadf`. Override
+`YCSB_WORKLOADS` only when a narrower mix is being investigated. Results are
+written as timestamped CSV and per-phase logs under
+`third-party/redis/compat/benchmark_logs/`.
+
 ## Restart Durability
 
 The restart guard needs stop/start hooks:
