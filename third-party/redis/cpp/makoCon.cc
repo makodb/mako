@@ -16,10 +16,12 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <shared_mutex>
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
@@ -39,11 +41,12 @@ static std::atomic<uint64_t> g_mako_txn_aborts{0};
 // Retry attempts are recorded by the Rust Redis retry loop.
 static std::atomic<uint64_t> g_mako_txn_retries{0};
 static std::atomic<uint64_t> g_mako_random_counter{1};
-// Redis-facing correctness is claimed through makoCon. Serialize the adapter
-// executor so concurrent Redis MULTI/EXEC requests cannot acknowledge lost
-// read-modify-write updates if the lower Mako path does not surface a
-// retryable abort.
-static std::mutex g_redis_txn_mutex;
+// Redis-facing correctness is claimed through makoCon. Conflicting write
+// transactions are serialized by Redis key stripe instead of using one global
+// executor lock, so unrelated keys can still make progress in parallel.
+static std::shared_mutex g_redis_keyspace_mutex;
+static constexpr size_t kRedisTxnLockStripes = 256;
+static std::array<std::mutex, kRedisTxnLockStripes> g_redis_txn_key_mutexes;
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -122,6 +125,170 @@ static bool env_enabled(const char* name) {
         return static_cast<char>(std::tolower(c));
     });
     return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
+static uint64_t redis_lock_hash(const uint8_t* data, size_t len) {
+    uint64_t hash = 1469598103934665603ull;
+    for (size_t i = 0; i < len; ++i) {
+        hash ^= static_cast<uint64_t>(data[i]);
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+static bool redis_lock_read_u64_le(const uint8_t* data, size_t len, size_t& pos, uint64_t& out) {
+    if (data == nullptr || pos + sizeof(uint64_t) > len) {
+        return false;
+    }
+    out = 0;
+    for (size_t i = 0; i < sizeof(uint64_t); ++i) {
+        out |= static_cast<uint64_t>(data[pos + i]) << (8 * i);
+    }
+    pos += sizeof(uint64_t);
+    return true;
+}
+
+static bool redis_lock_unpack_bytes_list(const uint8_t* data, size_t len, std::vector<std::string>& out) {
+    out.clear();
+    size_t pos = 0;
+    uint64_t count = 0;
+    if (!redis_lock_read_u64_le(data, len, pos, count)) {
+        return false;
+    }
+    out.reserve(static_cast<size_t>(count));
+    for (uint64_t i = 0; i < count; ++i) {
+        uint64_t item_len = 0;
+        if (!redis_lock_read_u64_le(data, len, pos, item_len)
+            || item_len > len
+            || pos + static_cast<size_t>(item_len) > len) {
+            return false;
+        }
+        out.emplace_back(reinterpret_cast<const char*>(data + pos), static_cast<size_t>(item_len));
+        pos += static_cast<size_t>(item_len);
+    }
+    return pos == len;
+}
+
+static bool redis_op_is_read_only(const TxnOperation& op) {
+    switch (op.op) {
+        case TXN_OP_GET:
+        case TXN_OP_EXISTS:
+        case TXN_OP_STRLEN:
+        case TXN_OP_TTL:
+        case TXN_OP_SCAN:
+        case TXN_OP_SISMEMBER:
+        case TXN_OP_SCARD:
+        case TXN_OP_SMEMBERS:
+        case TXN_OP_SRANDMEMBER:
+        case TXN_OP_TYPE:
+        case TXN_OP_LLEN:
+        case TXN_OP_LINDEX:
+        case TXN_OP_LRANGE:
+        case TXN_OP_LPOS:
+        case TXN_OP_ZSCORE:
+        case TXN_OP_ZCARD:
+        case TXN_OP_ZRANGE:
+        case TXN_OP_ZRANK:
+        case TXN_OP_ZCOUNT:
+        case TXN_OP_ZSCAN:
+        case TXN_OP_HGET:
+        case TXN_OP_HMGET:
+        case TXN_OP_HGETALL:
+        case TXN_OP_HEXISTS:
+        case TXN_OP_HLEN:
+        case TXN_OP_HKEYS:
+        case TXN_OP_HVALS:
+        case TXN_OP_HSTRLEN:
+        case TXN_OP_HSCAN:
+        case TXN_OP_GETBIT:
+        case TXN_OP_GETRANGE:
+        case TXN_OP_DUMP:
+        case TXN_OP_ZRANGEBYLEX:
+        case TXN_OP_ZLEXCOUNT:
+        case TXN_OP_ZRANDMEMBER:
+            return true;
+        case TXN_OP_SET_ALGEBRA:
+            return (op.flags & TXN_FLAG_SET_ALGEBRA_STORE) == 0;
+        default:
+            return false;
+    }
+}
+
+static bool redis_request_has_flushdb(const TxnRequest* request) {
+    if (request == nullptr || request->ops == nullptr) {
+        return false;
+    }
+    for (size_t i = 0; i < request->num_ops; ++i) {
+        if (request->ops[i].op == TXN_OP_FLUSHDB) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool redis_request_has_write(const TxnRequest* request) {
+    if (request == nullptr || request->ops == nullptr) {
+        return false;
+    }
+    for (size_t i = 0; i < request->num_ops; ++i) {
+        if (!redis_op_is_read_only(request->ops[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::vector<size_t> redis_request_lock_stripes(const TxnRequest* request) {
+    std::vector<size_t> stripes;
+    if (request == nullptr || request->ops == nullptr) {
+        return stripes;
+    }
+    stripes.reserve(request->num_ops);
+    auto add_lock_key = [&](const uint8_t* key, size_t len) {
+        const size_t stripe = redis_lock_hash(key, len) % kRedisTxnLockStripes;
+        stripes.push_back(stripe);
+    };
+    auto add_packed_lock_keys = [&](const TxnOperation& op, size_t max_items) {
+        std::vector<std::string> keys;
+        if (!redis_lock_unpack_bytes_list(op.val_ptr, op.val_len, keys)) {
+            return;
+        }
+        const size_t limit = std::min(max_items, keys.size());
+        for (size_t i = 0; i < limit; ++i) {
+            if (!keys[i].empty()) {
+                add_lock_key(reinterpret_cast<const uint8_t*>(keys[i].data()), keys[i].size());
+            }
+        }
+    };
+    for (size_t i = 0; i < request->num_ops; ++i) {
+        const TxnOperation& op = request->ops[i];
+        add_lock_key(op.key_ptr, op.key_len);
+        switch (op.op) {
+            case TXN_OP_RENAME:
+            case TXN_OP_COPY:
+                if (op.val_ptr != nullptr) {
+                    add_lock_key(op.val_ptr, op.val_len);
+                }
+                break;
+            case TXN_OP_SMOVE:
+            case TXN_OP_LMOVE:
+            case TXN_OP_SORT:
+            case TXN_OP_ZRANGESTORE:
+                add_packed_lock_keys(op, 1);
+                break;
+            case TXN_OP_SET_ALGEBRA:
+            case TXN_OP_ZSET_ALGEBRA:
+            case TXN_OP_BPOP:
+            case TXN_OP_ZMPOP:
+                add_packed_lock_keys(op, SIZE_MAX);
+                break;
+            default:
+                break;
+        }
+    }
+    std::sort(stripes.begin(), stripes.end());
+    stripes.erase(std::unique(stripes.begin(), stripes.end()), stripes.end());
+    return stripes;
 }
 
 // Initialize thread-local state for database operations
@@ -227,7 +394,21 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         return false;
     }
 
-    std::lock_guard<std::mutex> redis_txn_lock(g_redis_txn_mutex);
+    std::unique_lock<std::shared_mutex> redis_keyspace_exclusive_lock;
+    std::shared_lock<std::shared_mutex> redis_keyspace_shared_lock;
+    std::vector<std::unique_lock<std::mutex>> redis_key_locks;
+    if (redis_request_has_flushdb(request)) {
+        redis_keyspace_exclusive_lock = std::unique_lock<std::shared_mutex>(g_redis_keyspace_mutex);
+    } else {
+        redis_keyspace_shared_lock = std::shared_lock<std::shared_mutex>(g_redis_keyspace_mutex);
+        if (redis_request_has_write(request)) {
+            const std::vector<size_t> stripes = redis_request_lock_stripes(request);
+            redis_key_locks.reserve(stripes.size());
+            for (size_t stripe : stripes) {
+                redis_key_locks.emplace_back(g_redis_txn_key_mutexes[stripe]);
+            }
+        }
+    }
 
     if (request->num_ops == 1 && request->ops != nullptr && request->ops[0].op == TXN_OP_FLUSHDB) {
         const bool ok = execute_flushdb_chunked();
