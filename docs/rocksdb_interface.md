@@ -576,6 +576,22 @@ for (const auto& n : names) {
 
 ---
 
+## Current consumers
+
+Three programs currently use the ITable / IDatabase interface:
+
+| Consumer | Role | Notes |
+|---|---|---|
+| `examples/simpleTransactionRep.cc` | Database server + transaction test with colocated / server-only / remote-client modes | The interface's flagship consumer — exercised by Docker CI (`shard1ReplicationSimpleRaft`, `shard2ReplicationSimpleRaft`). Proves the "same client code runs against `mako::DB` or `mako::RemoteDB`" claim by using `IDatabase*` polymorphically. |
+| `examples/makoCon.cc` | Redis-compatible server built on top of `mako::DB`; MULTI/EXEC wraps in one transaction | Proof-of-concept for building higher-level protocol layers on the interface. Not currently in CI. |
+| `examples/rocksdbInterfaceTest.cc` | Integration test for `Scan` / `ReverseScan` / `Exists` / `Insert` / `GetApproximateSize` / `ListTables` | Safety-net regression suite for the six ops added in PR #60. Not currently in CI. |
+
+No internal Mako subsystem consumes `IDatabase`. The Mako runtime (TPCC benchmarks, `dbtest`, `txn_proto2_impl`) uses `typed_txn_btree` and `abstract_ordered_index` directly. The four RocksDB *producers* (`ConfigStore`, `ReplicatedDB`, `RocksDBLogStorage`, `RocksDBPersistence`) call the real RocksDB C API directly.
+
+The compat interface is deliberately an **external-consumer surface** — its purpose is to let code that thinks in RocksDB terms compile and run against Mako, whether that's a client program (`simpleTransactionRep`), a higher-level protocol shim (`makoCon`), or an eventual downstream project.
+
+---
+
 ## Compatibility Summary Matrix
 
 Feasibility assessment for every notable RocksDB feature, from the conceptual analysis above:
@@ -633,10 +649,10 @@ Method-level mapping for translating RocksDB code to Mako's interface:
 The existing interface is already at "80% of the common-case surface." What extensions move the needle:
 
 **High value, low-to-medium effort**:
-- **WriteBatch as a single-txn wrapper** (mostly ergonomic — makes RocksDB `WriteBatch` code compile).
-- **MultiGet as batched read within one implicit txn** (better consistency than N individual Gets).
-- **Stateful iterator adapter** (unlocks stateful-iterator RocksDB code; use chunked materialization).
-- **Explicit `Transaction` class** exposing OCC directly (matches `OptimisticTransactionDB` shape; largely just wraps what `BeginTransaction/Commit/Rollback` already does).
+- **WriteBatch as a single-txn wrapper**: `makoCon.cc` already does this manually — its Redis `MULTI/EXEC` path calls `BeginTransaction` → op → op → `Commit`. Exposing an explicit `WriteBatch` lets it drop that custom wrapper and lets any RocksDB code using `WriteBatch` compile against `mako::DB` unchanged.
+- **MultiGet as batched read within one implicit txn**: `makoCon.cc`'s Redis `MGET` currently issues N individual `Get` calls, each in its own transaction. A native `MultiGet` gives it snapshot-consistent multi-key reads with less overhead. Same win for any consumer doing bulk lookups.
+- **Stateful iterator adapter**: no current consumer needs this. Useful when porting RocksDB code that uses `for (it->SeekToFirst(); it->Valid(); it->Next())`. Worth building only when a specific porting target motivates it.
+- **Explicit `Transaction` class** (`OptimisticTransactionDB`-shaped): `simpleTransactionRep.cc` gets what it needs from the `BeginTransaction/Commit/Rollback` triple already. A separate `Transaction` object is mostly a shape match for RocksDB code being ported in; low urgency compared to WriteBatch/MultiGet.
 
 **Medium value, medium effort**:
 - **Cross-shard Scan** (the existing single-shard limitation; requires RPC fan-out for `RemoteDB`).
