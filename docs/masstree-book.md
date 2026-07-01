@@ -644,31 +644,13 @@ struct MultiVersionValue {
 
 ## 13. RocksDB API Compatibility Analysis
 
-This section compares the **API surface** of Masstree (via MassTrans) with RocksDB's API, focusing on what a compatibility shim needs to bridge. Storage-layer differences (in-memory vs LSM, persistence, compaction) and distributed concerns (sharding, replication) are out of scope here — see [mako-book.md](mako-book.md) for those.
+Mako exposes a RocksDB-shaped API — `mako::IDatabase` / `mako::ITable` — as a facade over the transactional layer described in §8 ("Mako Integration: Transactions"). Two backends implement the interface: `mako::DB` (in-process, wraps a `SiloRuntime` directly) and `mako::RemoteDB` (RPC client to a remote Mako server).
 
-### API Mapping: What Maps Directly
+For the current method-level mapping (RocksDB C++ API → `IDatabase`/`ITable`), the conceptual analysis of where Silo/Masstree aligns with and diverges from RocksDB (persistence, snapshots, epochs, iteration model, secondary indexes, extension points), the compatibility feasibility matrix, and the roadmap for further extensions, see the standalone reference:
 
-| RocksDB | Masstree (via MassTrans) | Notes |
-|---------|------------------------|-------|
-| `db->Put(wo, k, v)` | `transPut(k, v)` | Masstree requires a transaction context |
-| `db->Get(ro, k, &v)` | `transGet(k, v)` | Lock-free read in Masstree |
-| `db->Delete(wo, k)` | `transDelete(k)` | Marks as removed, RCU-deferred |
-| `txn->Put/Get/Delete` | `transPut/Get/Delete` | Both support transactions |
-| `db->Write(WriteBatch)` | Multiple ops in one Masstree txn | Masstree txn = atomic batch |
+**→ [`docs/rocksdb_interface.md`](rocksdb_interface.md)**
 
-### Bridgeable Gaps (shim layer)
-
-| Feature | RocksDB API | Masstree Gap | Shim Approach |
-|---------|------------|--------------|---------------|
-| **Iterator** | `NewIterator()` → stateful `Seek/Next/Prev/Valid/key/value` | Callback-only `transQuery(begin, end, cb)` | Wrap in a stateful iterator that pre-fetches via `transQuery`, caches results, exposes `Seek/Next/Prev`. Re-fetches on cache exhaustion. ~200 LOC. |
-| **WriteBatch** | `batch.Put(); batch.Delete(); db->Write(batch)` | No batch API outside txns | Collect ops, execute as a single Masstree transaction. Semantically equivalent. |
-| **Non-Txn Put/Get** | `db->Put(wo, k, v)` without explicit txn | Masstree requires txn context | Auto-wrap in one-shot `Sto::start_transaction()` / `commit()`. |
-| **Status codes** | Returns `Status` (`ok()`, `IsNotFound()`, etc.) | MassTrans returns bool / throws `abstract_abort_exception` | Translate: false → `NotFound`, exception → `Busy`. |
-| **Slice type** | `Slice(data, len)` — zero-copy, binary-safe | Masstree uses `Str` (pointer + length) internally | `Str` is already a slice type. Shim maps `Slice` ↔ `Str`. Nearly zero-overhead. |
-| **Column Families** | Logical namespaces within one DB (see below) | Separate Masstree instances via `open_index()` | Map each CF to a separate Masstree. Cross-CF atomic writes via multi-index OCC transaction. |
-| **Snapshots** | `db->GetSnapshot()` → point-in-time reads | MVCC version chains exist but not exposed as snapshots | Record current MVCC timestamp. Reads traverse version chain to find visible version. Requires exposing MVCC traversal. ~150 LOC. |
-| **Properties/Stats** | `db->GetProperty("rocksdb.stats", &s)` | No stats API | Return stubs initially. Add real stats (tree size, node count, txn abort rate) incrementally. |
-| **ReadOptions / WriteOptions** | Per-operation options (`sync`, `snapshot`, `verify_checksums`, etc.) | No per-op options | Accept the structs, use `snapshot` field if snapshots are implemented, ignore the rest. |
+The remainder of this section is a Masstree-side note on the one topic that's easier to see from the storage-engine angle: **how RocksDB's Column Family model maps onto separate Masstree instances**.
 
 ### Column Families: RocksDB Model → Masstree Mapping
 
@@ -712,43 +694,8 @@ index_metadata->transPut("k2", "v2");  // CF "metadata"
 Sto::commit();                          // Atomic across both indexes
 ```
 
-**What doesn't map**: Per-CF options (compression, compaction style) are RocksDB-specific and have no Masstree equivalent. The shim accepts these options but ignores them — all Masstree instances use the same in-memory configuration.
-
-### Bridgeable with Different Performance Profile
-
-| Feature | RocksDB API | Masstree API | Shim Approach |
-|---------|-------------|--------------|---------------|
-| **Merge operators** | `db->Merge(k, delta)` — user-defined read-modify-write (e.g., counter increment, list append). Defers merge to read/compaction time for efficiency. | No native Merge. | Shim wraps as OCC transaction: `begin_txn → Get → apply_merge_fn → Put → commit`, retry on abort. Correct — OCC detects conflicting writes, no lost updates. Less efficient than RocksDB's deferred merge under high contention (each merge does a full read), but functionally equivalent. |
-
-Note: The concurrency control difference (RocksDB uses pessimistic locking internally, Masstree uses optimistic version-based OCC) is an **internal implementation detail**, not an API difference. The `Put`/`Get`/`Delete`/`Commit` API surface is identical — callers don't observe blocking vs retry at the API level.
-
-### Shim Architecture
-
-```
-Application (uses RocksDB API)
-         |
-+--------v---------+
-| RocksDB Shim     |  ← Translates API calls
-|  - Iterator      |     Pre-fetch + cache over transQuery
-|  - WriteBatch    |     Collect ops → single txn
-|  - Status codes  |     bool/exception → Status
-|  - Snapshot      |     MVCC timestamp capture
-|  - Options       |     Accept, mostly ignore
-+--------+---------+
-         |
-+--------v---------+
-| MassTrans        |  ← Masstree + OCC transactions
-|  - transGet      |
-|  - transPut      |
-|  - transDelete   |
-|  - transQuery    |
-+------------------+
-```
-
-### Summary
-
-The core CRUD and transaction APIs map cleanly. The main shim work is the **Iterator** (stateful cursor over callback-based scans) and **Snapshots** (exposing MVCC timestamps). All RocksDB APIs can be bridged — the only semantic difference is the **conflict model** (pessimistic blocking vs optimistic retry), which is correct but has a different latency profile under contention.
+**What doesn't map**: Per-CF options (compression, compaction style) are RocksDB-specific and have no Masstree equivalent. `mako::DB` accepts these options at the interface boundary but ignores them — all Masstree instances use the same in-memory configuration.
 
 ---
 
-*This document is based on the Masstree paper (EuroSys'12) and the implementation in `src/mako/masstree/`. For Mako-specific transaction and replication details, see [mako-book.md](mako-book.md).*
+*This document is based on the Masstree paper (EuroSys'12) and the implementation in `src/mako/masstree/`. For Mako-specific transaction and replication details, see [mako-book.md](mako-book.md). For the full RocksDB API compatibility reference and roadmap, see [rocksdb_interface.md](rocksdb_interface.md).*
