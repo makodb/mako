@@ -8,9 +8,9 @@
 #include "snapshot_format.hpp"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
-#include "config_manager/config_manager.h"
-#include "config_manager/cluster_config.h"
-#include "config_manager/config_watcher.h"
+#include "cluster/config_manager.h"
+#include "cluster/cluster_config.h"
+#include "cluster/config_watcher.h"
 
 import std;
 

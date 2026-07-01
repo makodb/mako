@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include <gtest/gtest.h>
-#include "../src/config_manager/config_store.h"
+#include "../src/cluster/config_store.h"
 #include "../src/deptran/sharding_policy_builder.h"
 
 import std;

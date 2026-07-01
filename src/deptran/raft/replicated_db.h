@@ -2,7 +2,7 @@
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
-#include "config_manager/replicated_kv.h"
+#include "cluster/replicated_kv.h"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -15,7 +15,7 @@ namespace janus {
 class RaftServer;  // Forward declaration
 
 // ReplicatedDBOp and KVOperation are now defined in
-// config_manager/replicated_kv.h so ConfigManager can depend on the
+// cluster/replicated_kv.h so ConfigManager can depend on the
 // abstract interface without pulling in <rocksdb/c.h>.
 
 // TypeList-derived kind. Wire payload preserved

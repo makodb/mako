@@ -12,7 +12,7 @@
  * may conflict with other code. Include this header last in your file.
  */
 
-#include "config_manager/config_store.h"
+#include "cluster/config_store.h"
 #include "deptran/config_service.h"
 #include "deptran/config_client.h"
 #include "benchmark_config.h"

@@ -3,10 +3,10 @@
 
 #include <gtest/gtest.h>
 
-#include "config_manager/cluster_config.h"
-#include "config_manager/config_manager.h"
-#include "config_manager/config_watcher.h"
-#include "config_manager/in_memory_replicated_kv.h"
+#include "cluster/cluster_config.h"
+#include "cluster/config_manager.h"
+#include "cluster/config_watcher.h"
+#include "cluster/in_memory_replicated_kv.h"
 
 namespace janus {
 

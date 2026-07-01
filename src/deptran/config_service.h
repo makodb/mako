@@ -12,7 +12,7 @@
 #include "procedure.h"
 #include "rcc/tx.h"
 #include "rcc_rpc.h"
-#include "config_manager/config_store.h"
+#include "cluster/config_store.h"
 #include "config_schema.h"
 #include "sharding_policy.h"
 #include <rusty/cell.hpp>

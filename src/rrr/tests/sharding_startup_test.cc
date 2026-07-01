@@ -13,7 +13,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include "../rrr.hpp"
-#include "../src/config_manager/config_store.h"
+#include "../src/cluster/config_store.h"
 #include "../src/deptran/config_service.h"
 #include "../src/deptran/sharding_policy.h"
 #include "../src/deptran/sharding_policy_builder.h"

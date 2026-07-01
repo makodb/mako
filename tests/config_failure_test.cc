@@ -17,7 +17,7 @@
 #include "rcc/tx.h"
 #include "rcc_rpc.h"
 #include "config_schema.h"
-#include "config_manager/config_store.h"
+#include "cluster/config_store.h"
 #include "config_service.h"
 #include "config_client.h"
 

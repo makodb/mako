@@ -4,7 +4,7 @@
  */
 
 #include "config_node_init.h"
-#include "config_manager/config_store.h"
+#include "cluster/config_store.h"
 #include "config_service.h"
 #include "config_client.h"
 #include "sharding_policy_cache.h"

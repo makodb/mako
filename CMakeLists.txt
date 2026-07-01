@@ -935,7 +935,7 @@ file(GLOB MEMDB_SRC
 file(GLOB_RECURSE DEPTRAN_CORE_SRC
     "src/deptran/*.cc"
     "src/deptran/*/*.cc"
-    "src/config_manager/*.cc"
+    "src/cluster/*.cc"
 )
 # Exclude specific deptran files (standalone binaries / optional backends)
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
@@ -1084,7 +1084,7 @@ file(GLOB RAFT_BORROW_SRC
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
-# src/config_manager/ and are no longer part of RAFT_BORROW_SRC.
+# src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
@@ -1671,9 +1671,9 @@ if(BUILD_TESTS)
     # in-memory fake without spinning up Raft or RocksDB.
     add_executable(test_config_manager
         tests/config_manager_test.cc
-        src/config_manager/config_manager.cc
-        src/config_manager/cluster_config.cc
-        src/config_manager/config_watcher.cc
+        src/cluster/config_manager.cc
+        src/cluster/cluster_config.cc
+        src/cluster/config_watcher.cc
     )
     target_include_directories(test_config_manager PRIVATE
         src

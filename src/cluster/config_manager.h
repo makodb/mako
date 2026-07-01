@@ -1,5 +1,5 @@
 #pragma once
-#include "config_manager/replicated_kv.h"
+#include "cluster/replicated_kv.h"
 #include <string>
 #include <vector>
 
