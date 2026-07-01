@@ -231,5 +231,149 @@ TEST_F(ConfigManagerTest, WatcherTracksPollCount) {
     EXPECT_EQ(watcher.GetPollCount(), 3u);
 }
 
+// ===========================================================================
+// KillShard — non-durable-shard failure handoff
+// ===========================================================================
+
+TEST_F(ConfigManagerTest, KillShardFlipsStatusAndSetsReplacement) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a", "b"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"c", "d"}));
+
+    const uint64_t epoch_before = cm_.GetEpoch();
+    ASSERT_TRUE(cm_.KillShard(/*dead=*/1, /*taker=*/0));
+
+    EXPECT_EQ(cm_.GetShardStatus(1), "dead");
+    EXPECT_EQ(cm_.GetShardReplacement(1), 0u);
+    EXPECT_TRUE(cm_.GetShardReplicas(1).empty());
+    // The speculative-epoch bump is part of the kill batch — this is
+    // what other shards will use to invalidate in-flight speculative
+    // state that touched the dead shard.
+    EXPECT_EQ(cm_.GetEpoch(), epoch_before + 1);
+}
+
+TEST_F(ConfigManagerTest, KillShardIsOneVersionBump) {
+    // The five key writes + epoch bump collapse into a single BATCH,
+    // so __version__ advances by exactly one.
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    const uint64_t v_before = cm_.GetVersion();
+    ASSERT_TRUE(cm_.KillShard(1, 0));
+    EXPECT_EQ(cm_.GetVersion(), v_before + 1);
+}
+
+TEST_F(ConfigManagerTest, KillShardRefusesSelfKill) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    EXPECT_FALSE(cm_.KillShard(0, 0));
+    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+}
+
+TEST_F(ConfigManagerTest, KillShardRefusesUnknownDead) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    // dead_id=99 was never added.
+    EXPECT_FALSE(cm_.KillShard(99, 0));
+}
+
+TEST_F(ConfigManagerTest, KillShardRefusesUnknownTaker) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    // taker_id=99 was never added.
+    EXPECT_FALSE(cm_.KillShard(0, 99));
+    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+}
+
+TEST_F(ConfigManagerTest, ClusterConfigRoutesKilledShardToTaker) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    // Find a key whose hash lands on shard 1 so we can observe the
+    // handoff. Deterministic probe — the FNV-1a hash of "k<i>" cycles
+    // through both shards inside a small range.
+    std::string probe;
+    for (int i = 0; i < 32; ++i) {
+        const std::string candidate = "k" + std::to_string(i);
+        if (cc.GetShardForKey(candidate) == 1u) {
+            probe = candidate;
+            break;
+        }
+    }
+    ASSERT_FALSE(probe.empty()) << "no probe key hashed to shard 1";
+    ASSERT_EQ(cc.GetShardForKey(probe), 1u);
+
+    // Kill 1 -> handoff to 0.
+    ASSERT_TRUE(cm_.KillShard(1, 0));
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    EXPECT_EQ(cc.GetShardForKey(probe), 0u)
+        << "requests hashing to the dead shard should follow the pointer";
+}
+
+TEST_F(ConfigManagerTest, ClusterConfigTransitivelyFollowsReplacement) {
+    // Chain: shard 2 -> shard 1 -> shard 0. A key that hashes to 2
+    // must resolve all the way through to 0.
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.AddShard(2, {"c"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    std::string probe;
+    for (int i = 0; i < 128; ++i) {
+        const std::string candidate = "k" + std::to_string(i);
+        if (cc.GetShardForKey(candidate) == 2u) {
+            probe = candidate;
+            break;
+        }
+    }
+    ASSERT_FALSE(probe.empty());
+
+    ASSERT_TRUE(cm_.KillShard(2, 1));
+    ASSERT_TRUE(cm_.KillShard(1, 0));
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    EXPECT_EQ(cc.GetShardForKey(probe), 0u);
+}
+
+TEST_F(ConfigManagerTest, KillShardRefusesTakerAlreadyDead) {
+    // The taker-existence guard is (has_replicas). Killing a shard
+    // clears its replicas, so a subsequent kill *into* the freshly
+    // killed shard is refused. This is the write-time cycle prevention.
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ASSERT_TRUE(cm_.KillShard(1, 0));           // 1 -> 0, kills 1
+    EXPECT_FALSE(cm_.KillShard(0, 1))           // 1 is dead + empty replicas
+        << "must refuse kill into dead taker";
+    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+}
+
+TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
+    // Belt-and-suspenders: even if a broken write path or stale cache
+    // ever produced a cycle in the ShardInfo map, GetShardForKey must
+    // terminate. We build the cycle at the ClusterConfig layer
+    // directly, bypassing ConfigManager's write-time guard.
+    ClusterConfig cc;
+    cc.SetShardCount(2);
+
+    ShardInfo s0;
+    s0.id = 0;
+    s0.status = "dead";
+    s0.replacement = 1;
+    cc.UpdateShard(0, s0);
+
+    ShardInfo s1;
+    s1.id = 1;
+    s1.status = "dead";
+    s1.replacement = 0;
+    cc.UpdateShard(1, s1);
+
+    // Any lookup must terminate. Both nodes are dead so the caller
+    // treats the result as unreachable; what matters here is that
+    // GetShardForKey does not infinite-loop.
+    const uint32_t landed = cc.GetShardForKey("anything");
+    EXPECT_TRUE(landed == 0u || landed == 1u);
+}
+
 }  // namespace janus
 

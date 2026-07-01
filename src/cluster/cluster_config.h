@@ -11,7 +11,12 @@ struct ShardInfo {
     uint32_t id = 0;
     std::vector<std::string> replicas;
     std::string leader;
-    std::string status;  // "active", "draining", etc.
+    std::string status;  // "active", "draining", "dead", etc.
+    // For status == "dead": taker shard whose Raft group inherits
+    // requests that would hash to this shard. 0 means unset. The taker
+    // may itself be dead — GetShardForKey chases transitively with a
+    // cycle guard.
+    uint32_t replacement = 0;
 };
 
 /**

@@ -25,7 +25,28 @@ uint32_t ClusterConfig::HashKey(const std::string& key) {
 uint32_t ClusterConfig::GetShardForKey(const std::string& key) const {
     std::lock_guard<std::mutex> lock(mtx_);
     if (shard_count_ == 0) return 0;
-    return HashKey(key) % shard_count_;
+
+    uint32_t sid = HashKey(key) % shard_count_;
+
+    // Chase the replacement pointer for dead shards. Guard against a
+    // pathological cycle in the config by bounding the number of hops
+    // by shard_count_ + 1 — any longer chain must revisit a shard, so
+    // we bail out and return the last shard visited (routing will then
+    // fail against a dead shard, which the caller detects as a normal
+    // "shard unreachable" error rather than an infinite spin here).
+    //
+    // Note: 0 is a legitimate shard id, so we do NOT use it as a
+    // "no taker" sentinel — KillShard always sets replacement when it
+    // sets status=dead, and we trust that invariant here. If the
+    // pointer chain steps off the map (unknown shard id) we stop.
+    const uint32_t max_hops = shard_count_ + 1;
+    for (uint32_t hop = 0; hop < max_hops; ++hop) {
+        auto it = shards_.find(sid);
+        if (it == shards_.end()) return sid;
+        if (it->second.status != "dead") return sid;
+        sid = it->second.replacement;
+    }
+    return sid;
 }
 
 // ===========================================================================
@@ -124,6 +145,7 @@ bool ClusterConfig::LoadFromConfigManager(ConfigManager* cm) {
         info.replicas = cm->GetShardReplicas(i);
         info.leader = cm->GetShardLeader(i);
         info.status = cm->GetShardStatus(i);
+        info.replacement = cm->GetShardReplacement(i);
         new_shards[i] = std::move(info);
     }
 

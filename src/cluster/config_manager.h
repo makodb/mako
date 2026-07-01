@@ -18,7 +18,11 @@ namespace janus {
  *   shard_count             — total number of shards (uint32)
  *   shard/<id>/replicas     — comma-separated list of replica site IDs
  *   shard/<id>/leader       — current leader site name
- *   shard/<id>/status       — active, draining, adding, removing
+ *   shard/<id>/status       — active, draining, adding, removing, dead
+ *   shard/<id>/replacement  — for status=dead: taker shard id whose Raft
+ *                             group receives requests that used to route
+ *                             here. Chase transitively (dead -> dead ok)
+ *                             with cycle detection.
  *   epoch                   — global speculative epoch number (uint64)
  *   node/<site>/addr        — node network address
  *   node/<site>/status      — alive, dead, decommissioning
@@ -78,6 +82,27 @@ public:
 
     // @unsafe - RocksDB batch write via Raft (deletes shard keys, decrements shard_count)
     bool RemoveShard(uint32_t shard_id);
+
+    // Kill a non-durable shard whose data is lost and hand its routing
+    // over to a live shard. Semantics: shard/<dead_id>/status flips to
+    // "dead", shard/<dead_id>/replacement is set to taker_id, replicas
+    // are cleared, and the speculative epoch is advanced so any
+    // in-flight speculative state that touched dead_id is invalidated.
+    //
+    // shard_count is NOT decremented — the hash used for routing stays
+    // `hash(key) % shard_count`; ClusterConfig::GetShardForKey follows
+    // the replacement pointer when the hash lands on a dead shard.
+    //
+    // Fails if:
+    //   - dead_id == taker_id
+    //   - taker shard doesn't exist (or has no replicas)
+    //   - dead shard doesn't exist (nothing to kill)
+    // @unsafe - RocksDB batch write via Raft (multi-key atomic)
+    bool KillShard(uint32_t dead_id, uint32_t taker_id);
+
+    // @unsafe - RocksDB read. Returns 0 if not set. A shard_id with
+    // status != "dead" should never have a replacement pointer.
+    uint32_t GetShardReplacement(uint32_t shard_id);
 
     // =========================================================================
     // Epoch management

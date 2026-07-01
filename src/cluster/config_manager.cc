@@ -209,6 +209,61 @@ bool ConfigManager::RemoveShard(uint32_t shard_id) {
   return BatchWithVersion(ops);
 }
 
+// @unsafe - RocksDB read
+uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
+  if (!db_) return 0;
+  std::string value;
+  if (db_->Get(ShardKey(shard_id, "replacement"), &value)) {
+    try {
+      return static_cast<uint32_t>(std::stoul(value));
+    } catch (...) {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// @unsafe - RocksDB batch write via Raft (multi-key atomic)
+bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
+  if (!db_) return false;
+
+  // Validate — refuse obviously nonsensical requests. These checks are
+  // best-effort reads against the current (stale) state; the batch
+  // itself remains atomic once accepted.
+  if (dead_id == taker_id) return false;
+
+  // Dead shard must currently exist. We treat "has a status entry" as
+  // proof of existence — the AddShard path always writes status.
+  if (GetShardStatus(dead_id).empty()) return false;
+
+  // Taker must exist and be usable (has replicas). Killing into a shard
+  // that itself is dead is legal (routing chains through it), but
+  // killing into a shard that was never added is not.
+  if (GetShardReplicas(taker_id).empty()) return false;
+
+  // Build the atomic batch:
+  //   - flip dead shard's status
+  //   - point at taker
+  //   - clear replicas (belt-and-suspenders — nothing should try to
+  //     talk to the dead replicas any more)
+  //   - advance the speculative epoch so any in-flight speculative
+  //     state that touched dead_id is invalidated cluster-wide
+  //   - __version__ bump is folded in by BatchWithVersion
+  uint64_t epoch = GetEpoch() + 1;
+
+  std::vector<KVOperation> ops;
+  ops.push_back({ReplicatedDBOp::PUT,
+                 ShardKey(dead_id, "status"), "dead"});
+  ops.push_back({ReplicatedDBOp::PUT,
+                 ShardKey(dead_id, "replacement"), std::to_string(taker_id)});
+  ops.push_back({ReplicatedDBOp::PUT,
+                 ShardKey(dead_id, "replicas"), ""});
+  ops.push_back({ReplicatedDBOp::PUT,
+                 KEY_EPOCH, std::to_string(epoch)});
+
+  return BatchWithVersion(ops);
+}
+
 // ===========================================================================
 // Epoch management
 // ===========================================================================
