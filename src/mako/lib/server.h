@@ -44,6 +44,11 @@ namespace mako
         // new handlers
         void HandleGetRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleScanRequest(char *reqBuf, char *respBuf, size_t &respLen);
+        // Self-contained non-txn writes (docs/mako-nontxn-api-plan.md):
+        // runs the op as a local one-op OCC txn via the L3 non-txn API
+        // (put / insert / remove selected by reqType).
+        void HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,
+                                      char *respBuf, size_t &respLen);
         void HandleLockRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleBatchLockRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleValidateRequest(char *reqBuf, char *respBuf, size_t &respLen);

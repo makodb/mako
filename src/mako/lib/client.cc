@@ -85,6 +85,11 @@ namespace mako
         case warmupReqType:
             HandleWarmupReply(respBuf);
             break;
+        case nontxnPutReqType:
+        case nontxnInsertReqType:
+        case nontxnRemoveReqType:
+            HandleNontxnWriteReply(respBuf);
+            break;
         default:
             Warning("Unrecognized request type: %d\n", reqType);
         }
@@ -581,6 +586,56 @@ namespace mako
                                       bytes_used);
     }
 
+    // @unsafe - raw transport buffers
+    void Client::InvokeNontxnWrite(uint64_t txn_nr,
+                                   int dstShardIdx,
+                                   uint16_t server_id,
+                                   const string &key,
+                                   const string &value,
+                                   uint16_t table_id,
+                                   uint8_t reqType,
+                                   resp_continuation_t continuation,
+                                   error_continuation_t error_continuation,
+                                   uint32_t timeout)
+    {
+        uint32_t reqId = ++lastReqId;
+        reqId *= 10;
+
+        Debug("invoke InvokeNontxnWrite type=%d\n", reqType);
+        crtReqK =
+            PendingRequestK(key,
+                            reqId,
+                            txn_nr,
+                            server_id,
+                            continuation,
+                            error_continuation);
+
+        auto *reqBuf = reinterpret_cast<client_kv_request_t *>(
+            transport->GetRequestBuf(
+                sizeof(client_kv_request_t),
+                sizeof(client_kv_response_t)));
+        reqBuf->req_nr = reqId + current_term;
+        reqBuf->txn_id = 0;  // unused for non-txn ops
+        reqBuf->table_id = table_id;
+        ASSERT_LT(key.size(), max_key_length);
+        ASSERT_LT(value.size(), max_value_length);
+        reqBuf->klen = key.size();
+        reqBuf->vlen = value.size();
+        memcpy(reqBuf->key_and_value, key.data(), key.size());
+        memcpy(reqBuf->key_and_value + key.size(), value.data(), value.size());
+
+        size_t bytes_used = sizeof(client_kv_request_t)
+            - (max_key_length + max_value_length)
+            + reqBuf->klen + reqBuf->vlen;
+
+        blocked = true;
+        transport->SendRequestToShard(this,
+                                      reqType,
+                                      dstShardIdx,
+                                      config.warehouses+5+server_id%TThread::get_num_erpc_server(),
+                                      bytes_used);
+    }
+
     void Client::InvokeAbort(uint64_t txn_nr,
                              int dstShardIdx,
                              uint16_t server_id,
@@ -633,6 +688,27 @@ namespace mako
         // invoke application callback
         crtReqK.resp_continuation(respBuf);
         // remove from pending list
+        if (num_response_waiting) num_response_waiting --;
+        if (num_response_waiting == 0) {
+            blocked = false;
+            crtReqK.req_nr = 0;
+        }
+    }
+
+    // Reply handler for the three non-txn write types; same
+    // req_nr-matching and unblocking protocol as HandleGetReply.
+    void Client::HandleNontxnWriteReply(char *respBuf)
+    {
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        Debug("[%lu] HandleNontxnWriteReply req_nr: %d, crt: %d, status: %d\n",
+              clientid, resp->req_nr, crtReqK.req_nr, resp->status);
+        if (resp->req_nr != crtReqK.req_nr)
+        {
+            Debug("Received nontxn-write reply when no request was pending; req_nr = %u", resp->req_nr);
+            return;
+        }
+
+        crtReqK.resp_continuation(respBuf);
         if (num_response_waiting) num_response_waiting --;
         if (num_response_waiting == 0) {
             blocked = false;

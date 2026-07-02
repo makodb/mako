@@ -187,6 +187,16 @@ namespace mako
     // reserved for watermark exchange between follower data center
     const uint8_t watermarkReqType = 13;
 
+    // Self-contained non-transactional write ops (Masstree-shape API,
+    // docs/mako-nontxn-api-plan.md). Server-side handlers run the op
+    // as a local one-op OCC transaction on the owning shard (which
+    // replicates through the normal commit path). Wire format:
+    // client_kv_request_t / client_kv_response_t with txn_id unused;
+    // the op's boolean result is returned in value[0] with vlen=1.
+    const uint8_t nontxnPutReqType = 14;
+    const uint8_t nontxnInsertReqType = 15;
+    const uint8_t nontxnRemoveReqType = 16;
+
     // --------------------------- Remote client API (for decoupled clients)
     // These message types enable clients to run on different servers
     const uint8_t clientBeginTxnReqType = 20;

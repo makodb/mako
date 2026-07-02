@@ -17,6 +17,20 @@ namespace mako
         ShardClient(std::string file, string cluster, int shardIndex, int par_id);
         int remoteGet(int remote_table_id, std::string key, std::string &value);
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
+
+        // Self-contained non-transactional writes (docs/mako-nontxn-api-plan.md).
+        // The op runs as a one-op OCC transaction on the owning shard and
+        // replicates via the normal commit path there. Returns
+        // ErrorCode::SUCCESS/ERROR/TIMEOUT/SERVER_BUSY; the op's
+        // Masstree-parity boolean ("newly inserted" for put/insert,
+        // "existed" for remove) comes back via *op_result.
+        int nontxnPut(int remote_table_id, const std::string &key,
+                      const std::string &value, bool *op_result);
+        int nontxnInsert(int remote_table_id, const std::string &key,
+                         const std::string &value, bool *op_result);
+        int nontxnRemove(int remote_table_id, const std::string &key,
+                         bool *op_result);
+
         // Single timestamp interfaces
         int remoteGetTimestamp(uint32_t &timestamp);
         int remoteExchangeWatermark(uint32_t &watermark, uint64_t set_bits);
@@ -59,6 +73,12 @@ namespace mako
         void GetCallback(char *respBuf);
         void ScanCallback(char *respBuf);
         void BasicCallBack(char *respBuf);
+        void NontxnWriteCallback(char *respBuf);
+
+        // Shared body of nontxnPut/nontxnInsert/nontxnRemove.
+        int nontxnWrite(uint8_t reqType, int remote_table_id,
+                        const std::string &key, const std::string &value,
+                        bool *op_result);
 
         /* Timeout which only go to one shard. */
         void GiveUpTimeout();

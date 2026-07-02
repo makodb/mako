@@ -7,6 +7,10 @@
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
+// After bench.h so the textual std headers are already in (the
+// `import std;` below would otherwise make ticker.h/rcu.h's
+// unqualified lock_guard/allocator references ambiguous).
+#include "benchmarks/sto/Transaction.hh"
 #if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
@@ -61,6 +65,11 @@ namespace mako
         {
         case getReqType:
             HandleGetRequest(reqBuf, respBuf, respLen);
+            break;
+        case nontxnPutReqType:
+        case nontxnInsertReqType:
+        case nontxnRemoveReqType:
+            HandleNontxnWriteRequest(reqType, reqBuf, respBuf, respLen);
             break;
         case scanReqType:
             HandleScanRequest(reqBuf, respBuf, respLen);
@@ -560,6 +569,81 @@ namespace mako
         //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,mako::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, obj_v.c_str(), obj_v.length());
 #endif
+    }
+
+    // Self-contained non-transactional write (put / insert / remove by
+    // reqType). Runs the op through the L3 non-txn API — an internal
+    // one-op OCC transaction on this shard, which replicates through
+    // the normal commit path (serialize_util) when replication is on.
+    // See docs/mako-nontxn-api-plan.md.
+    //
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,
+                                                 char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_kv_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        // Response carries exactly one result byte in value[0].
+        respLen = sizeof(client_kv_response_t) - max_value_length + 1;
+        resp->req_nr = req->req_nr;
+        resp->vlen = 0;
+
+        // Leader-only writes (plan decision D3): a follower accepting a
+        // non-txn write would apply it locally but never submit it to
+        // the replication log — silent divergence. Fail loudly instead.
+        if (BenchmarkConfig::getInstance().getIsReplicated() &&
+            !BenchmarkConfig::getInstance().getLeaderConfig()) {
+            resp->status = ErrorCode::ERROR;
+            return;
+        }
+
+        // The worker thread serving this request may hold an ambient Sto
+        // transaction staged by the 2PC handlers (shard_put / BatchLock).
+        // Starting the op's internal one-op txn would trip
+        // Sto::start_transaction's in-progress assertion. Report busy so
+        // the client can retry rather than corrupting the staged txn.
+        if (Sto::in_progress()) {
+            resp->status = ErrorCode::SERVER_BUSY;
+            return;
+        }
+
+        obj_key0.assign(req->key_and_value, req->klen);
+        obj_v.assign(req->key_and_value + req->klen, req->vlen);
+
+        int status = ErrorCode::SUCCESS;
+        bool op_result = false;
+
+        auto it = open_tables_table_id.find(req->table_id);
+        if (it == open_tables_table_id.end() || it->second == nullptr) {
+            status = ErrorCode::ERROR;  // table not found
+        } else {
+            try {
+                switch (reqType) {
+                case nontxnPutReqType:
+                    op_result = it->second->put(obj_key0, obj_v);
+                    break;
+                case nontxnInsertReqType:
+                    op_result = it->second->insert(obj_key0, obj_v);
+                    break;
+                case nontxnRemoveReqType:
+                    op_result = it->second->remove(lcdf::Str(obj_key0));
+                    break;
+                default:
+                    status = ErrorCode::ERROR;
+                    break;
+                }
+            } catch (...) {
+                // The L3 non-txn ops retry OCC aborts internally; anything
+                // escaping here is unexpected — surface as an error.
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        resp->status = status;
+        if (status == ErrorCode::SUCCESS) {
+            resp->vlen = 1;
+            resp->value[0] = op_result ? 1 : 0;
+        }
     }
 
     // ============================================================================
