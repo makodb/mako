@@ -341,6 +341,11 @@ public:
   // Default implementations abort loudly: only backends that support
   // non-txn access override them (mbta_ordered_index today). Callers
   // must not assume every abstract_ordered_index supports this API.
+  //
+  // CONSTRAINT: these must NOT be called from a thread that has an
+  // open transaction (the internal one-op txn would trip
+  // Sto::start_transaction's in-progress assertion). Finish or abort
+  // the thread's transaction first.
   // ==========================================================================
 
   // @unsafe - default aborts via NDB_UNIMPLEMENTED

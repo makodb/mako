@@ -171,7 +171,7 @@ New unit tests for the six non-txn L3 methods:
 - Scan / rscan: return keys in expected order over a bounded range.
 - Interleaving safety: concurrent txn'd Put and non-txn Get see consistent snapshots (validates the implicit-txn wrap).
 
-Test location: `src/mako/benchmarks/ut/` alongside `simpleTransaction.cc` (which already exercises the txn'd L3 API). File name: `simpleNonTxn.cc` or similar.
+Test location (as implemented): `tests/test_silo_nontxn_api.cc`, following the established gtest + CTest pattern of `tests/test_silo_*.cc` rather than the standalone-binary style of `benchmarks/ut/`.
 
 **Cost**: ~1 day.
 

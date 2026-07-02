@@ -517,13 +517,16 @@ public:
   // the plan doc.
   // VT is templated (like transPut) so callers can pass StringWrapper
   // for zero-copy packing as well as plain value_type.
+  // Returns true iff the key was newly inserted (Masstree's insert
+  // convention). Note trans_write returns "key already existed", so
+  // the result is inverted here.
   template <typename VT = value_type>
   bool put(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    auto ret = transPut(key, value, ti);
+    auto existed = transPut(key, value, ti);
     Sto::commit();
-    return ret;
+    return !existed;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
@@ -535,13 +538,14 @@ public:
   }
 
   // Put-if-absent: returns true iff the key was newly inserted.
+  // (transInsert returns "key already existed"; inverted here.)
   template <typename VT = value_type>
   bool insert(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    auto ret = transInsert(key, value, ti);
+    auto existed = transInsert(key, value, ti);
     Sto::commit();
-    return ret;
+    return !existed;
   }
 
   // Forward range scan over [begin, end). Callback is invoked per
@@ -686,7 +690,10 @@ public:
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
     cursor_type lp(table_, key);
     bool found = lp.find_locked(*ti.ti);
-    lp.value()->deallocate_rcu(*ti.ti);
+    // Only deallocate when the key exists: on a miss the cursor's
+    // value slot is uninitialized and dereferencing it is UB.
+    if (found)
+      lp.value()->deallocate_rcu(*ti.ti);
     lp.finish(found ? -1 : 0, *ti.ti);
     return found;
   }

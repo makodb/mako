@@ -2611,6 +2611,22 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
 
+    # Test: non-transactional (Masstree-shape) API on MassTrans /
+    # abstract_ordered_index / mbta_sharded_ordered_index — the gating
+    # tests for docs/silo-masstree-api-unification.md.
+    add_executable(test_silo_nontxn_api tests/test_silo_nontxn_api.cc)
+    target_include_directories(test_silo_nontxn_api PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_nontxn_api PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_nontxn_api
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
+
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
     # is not picked up by ctest.
