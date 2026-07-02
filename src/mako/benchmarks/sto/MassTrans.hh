@@ -508,7 +508,13 @@ protected:
 
 public:
 
-  // non-transaction put/get. These just wrap a transaction get/put
+  // Non-transactional API (Masstree-shape; see
+  // docs/silo-masstree-api-unification.md). Each op below is per-key
+  // atomic: it does NOT participate in a caller's transaction.
+  // put/get/insert/scan/rscan wrap a one-op OCC transaction (safe
+  // under concurrent OCC readers/writers); remove (further down) is
+  // a direct raw write — the asymmetry is accepted and documented in
+  // the plan doc.
   bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
@@ -523,6 +529,36 @@ public:
     auto ret = transGet(key, value, ti);
     Sto::commit();
     return ret;
+  }
+
+  // Put-if-absent: returns true iff the key was newly inserted.
+  bool insert(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transInsert(key, value, ti);
+    Sto::commit();
+    return ret;
+  }
+
+  // Forward range scan over [begin, end). Callback is invoked per
+  // key-value pair; return false from the callback to stop early.
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  void scan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+            threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    transQuery(begin, end, callback, va, ti);
+    Sto::commit();
+  }
+
+  // Reverse range scan; same contract as scan but descending order.
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  void rscan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+             threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    transRQuery(begin, end, callback, va, ti);
+    Sto::commit();
   }
 
   // implementation of TObject methods
