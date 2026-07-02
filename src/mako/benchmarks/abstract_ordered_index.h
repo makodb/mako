@@ -308,9 +308,83 @@ public:
   virtual void remove(
       void *txn,
       customer_key key)
-  {   
+  {
     remove(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)));
-  } 
+  }
+
+  // ==========================================================================
+  // Non-transactional API (Masstree-shape).
+  //
+  // These ops do NOT participate in a caller's transaction; each is
+  // per-key atomic on its own. See docs/silo-masstree-api-unification.md
+  // for the semantic contract:
+  //   - get/put/insert/scan/rscan run inside an internal one-op OCC
+  //     transaction (safe under concurrent OCC readers/writers).
+  //   - remove is a direct raw write (fast; documented asymmetry).
+  //
+  // Default implementations abort loudly: only backends that support
+  // non-txn access override them (mbta_ordered_index today). Callers
+  // must not assume every abstract_ordered_index supports this API.
+  // ==========================================================================
+
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual bool get(
+      lcdf::Str key,
+      std::string &value,
+      size_t max_bytes_read = std::string::npos) {
+    (void)key; (void)value; (void)max_bytes_read;
+    NDB_UNIMPLEMENTED("non-txn get");
+  }
+
+  // Overwrite semantics; returns true iff the key was newly inserted.
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual bool put(
+      lcdf::Str key,
+      const std::string &value) {
+    (void)key; (void)value;
+    NDB_UNIMPLEMENTED("non-txn put");
+  }
+
+  // Put-if-absent; returns true iff the key was newly inserted.
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual bool insert(
+      lcdf::Str key,
+      const std::string &value) {
+    (void)key; (void)value;
+    NDB_UNIMPLEMENTED("non-txn insert");
+  }
+
+  // Returns true iff the key existed. Direct raw write — see the
+  // asymmetry note above.
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual bool remove(lcdf::Str key) {
+    (void)key;
+    NDB_UNIMPLEMENTED("non-txn remove");
+  }
+
+  // Forward scan [start_key, *end_key), or [start_key, +infty) when
+  // end_key is null. Same callback contract as the transactional scan.
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual void scan(
+      const std::string &start_key,
+      const std::string *end_key,
+      scan_callback &callback,
+      str_arena *arena = nullptr) {
+    (void)start_key; (void)end_key; (void)callback; (void)arena;
+    NDB_UNIMPLEMENTED("non-txn scan");
+  }
+
+  // Reverse scan (*end_key, start_key], or (-infty, start_key] when
+  // end_key is null; descending order.
+  // @unsafe - default aborts via NDB_UNIMPLEMENTED
+  virtual void rscan(
+      const std::string &start_key,
+      const std::string *end_key,
+      scan_callback &callback,
+      str_arena *arena = nullptr) {
+    (void)start_key; (void)end_key; (void)callback; (void)arena;
+    NDB_UNIMPLEMENTED("non-txn rscan");
+  }
 
   /**
    * Only an estimate, not transactional!

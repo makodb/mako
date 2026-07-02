@@ -136,6 +136,34 @@ public:
              abstract_ordered_index::scan_callback &callback,
              str_arena *arena = nullptr);
 
+  // ========================================================================
+  // Non-transactional API (Masstree-shape).
+  // Mirrors abstract_ordered_index's non-txn methods; routes per-key ops
+  // via pick_shard and scans via the local shard (same single-shard
+  // limitation as the transactional scan). See
+  // docs/silo-masstree-api-unification.md.
+  // ========================================================================
+
+  bool get(lcdf::Str key,
+           std::string &value,
+           size_t max_bytes_read = std::string::npos);
+
+  bool put(lcdf::Str key, const std::string &value);
+
+  bool insert(lcdf::Str key, const std::string &value);
+
+  bool remove(lcdf::Str key);
+
+  void scan(const std::string &start_key,
+            const std::string *end_key,
+            abstract_ordered_index::scan_callback &callback,
+            str_arena *arena = nullptr);
+
+  void rscan(const std::string &start_key,
+             const std::string *end_key,
+             abstract_ordered_index::scan_callback &callback,
+             str_arena *arena = nullptr);
+
   size_t size() const;
 
   std::map<std::string, uint64_t> clear();
@@ -231,6 +259,64 @@ inline void mbta_sharded_ordered_index::rscan(
     if (i==BenchmarkConfig::getInstance().getShardIndex()) {
       auto *shard = shard_tables_[i];
       shard->rscan(txn, start_key, end_key, callback, arena);
+    }
+  }
+}
+
+// ============================================================================
+// Non-transactional API (Masstree-shape) — routing mirrors of the
+// abstract_ordered_index non-txn methods.
+// ============================================================================
+
+// @safe - routes to the owning shard's non-txn get
+inline bool mbta_sharded_ordered_index::get(
+    lcdf::Str key,
+    std::string &value,
+    size_t max_bytes_read) {
+  return pick_shard(key)->get(key, value, max_bytes_read);
+}
+
+// @safe - routes to the owning shard's non-txn put
+inline bool mbta_sharded_ordered_index::put(
+    lcdf::Str key,
+    const std::string &value) {
+  return pick_shard(key)->put(key, value);
+}
+
+// @safe - routes to the owning shard's non-txn insert (put-if-absent)
+inline bool mbta_sharded_ordered_index::insert(
+    lcdf::Str key,
+    const std::string &value) {
+  return pick_shard(key)->insert(key, value);
+}
+
+// @safe - routes to the owning shard's non-txn remove
+inline bool mbta_sharded_ordered_index::remove(lcdf::Str key) {
+  return pick_shard(key)->remove(key);
+}
+
+// @safe - local shard only, same limitation as the transactional scan
+inline void mbta_sharded_ordered_index::scan(
+    const std::string &start_key,
+    const std::string *end_key,
+    abstract_ordered_index::scan_callback &callback,
+    str_arena *arena) {
+  for (int i = 0; i < shard_tables_.size(); i++) {
+    if (i == BenchmarkConfig::getInstance().getShardIndex()) {
+      shard_tables_[i]->scan(start_key, end_key, callback, arena);
+    }
+  }
+}
+
+// @safe - local shard only, same limitation as the transactional rscan
+inline void mbta_sharded_ordered_index::rscan(
+    const std::string &start_key,
+    const std::string *end_key,
+    abstract_ordered_index::scan_callback &callback,
+    str_arena *arena) {
+  for (int i = 0; i < shard_tables_.size(); i++) {
+    if (i == BenchmarkConfig::getInstance().getShardIndex()) {
+      shard_tables_[i]->rscan(start_key, end_key, callback, arena);
     }
   }
 }

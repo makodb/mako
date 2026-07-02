@@ -515,7 +515,10 @@ public:
   // under concurrent OCC readers/writers); remove (further down) is
   // a direct raw write — the asymmetry is accepted and documented in
   // the plan doc.
-  bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
+  // VT is templated (like transPut) so callers can pass StringWrapper
+  // for zero-copy packing as well as plain value_type.
+  template <typename VT = value_type>
+  bool put(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
     auto ret = transPut(key, value, ti);
@@ -532,7 +535,8 @@ public:
   }
 
   // Put-if-absent: returns true iff the key was newly inserted.
-  bool insert(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
+  template <typename VT = value_type>
+  bool insert(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
     auto ret = transInsert(key, value, ti);

@@ -283,6 +283,112 @@ STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& va
 #endif
 }
 
+// ============================================================================
+// Non-transactional API (Masstree-shape) — overrides of the
+// abstract_ordered_index defaults. See docs/silo-masstree-api-unification.md.
+//
+// Each op delegates to MassTrans's one-op-txn variant and retries on
+// OCC abort, so callers get Masstree-parity "no spurious failure"
+// semantics. remove is MassTrans's direct raw write (the documented
+// asymmetry). Values follow the same conventions as the transactional
+// methods above: writes take a mako::Encode()'d value, reads strip
+// EXTRA_BITS_FOR_VALUE.
+//
+// Local tables only — non-txn access to a remote shard is not
+// supported (asserted).
+//
+// Scan/rscan deliver callbacks live during the attempt; if the one-op
+// txn aborts mid-scan the whole scan retries, so callbacks may
+// observe a repeated prefix. This matches the pre-existing
+// shard_scan-with-caller-retry behavior, just with the retry moved
+// inside.
+// ============================================================================
+
+// @unsafe - retries around Sto thread-local txn state
+bool get(lcdf::Str key, std::string &value,
+         size_t max_bytes_read = std::string::npos) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  while (true) {
+    try {
+      bool ret = mbta.get(key, value);
+      if (TThread::transget_without_throw) {
+        TThread::transget_without_throw = false;
+        continue;  // silent abort — retry
+      }
+      if (ret) {
+        UPDATE_VS(value.data(), value.length())
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+      }
+      return ret;
+    } catch (Transaction::Abort&) { /* conflict — retry */ }
+  }
+}
+
+// @unsafe - retries around Sto thread-local txn state
+bool put(lcdf::Str key, const std::string &value) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  while (true) {
+    try {
+      return mbta.put(key, StringWrapper(value));
+    } catch (Transaction::Abort&) { /* conflict — retry */ }
+  }
+}
+
+// @unsafe - retries around Sto thread-local txn state
+bool insert(lcdf::Str key, const std::string &value) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  while (true) {
+    try {
+      return mbta.insert(key, StringWrapper(value));
+    } catch (Transaction::Abort&) { /* conflict — retry */ }
+  }
+}
+
+// @unsafe - direct raw write through MassTrans cursor
+bool remove(lcdf::Str key) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  return mbta.remove(key);
+}
+
+// @unsafe - retries around Sto thread-local txn state
+void scan(const std::string &start_key,
+          const std::string *end_key,
+          scan_callback &callback,
+          str_arena *arena = nullptr) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+  while (true) {
+    try {
+      mbta.scan(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        return callback.invoke(key.data(), key.length(), value);
+      }, arena);
+      return;
+    } catch (Transaction::Abort&) { /* conflict — retry whole scan */ }
+  }
+}
+
+// @unsafe - retries around Sto thread-local txn state
+void rscan(const std::string &start_key,
+           const std::string *end_key,
+           scan_callback &callback,
+           str_arena *arena = nullptr) override {
+  ALWAYS_ASSERT(!mbta.get_is_remote());
+  mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+  while (true) {
+    try {
+      mbta.rscan(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        return callback.invoke(key.data(), key.length(), value);
+      }, arena);
+      return;
+    } catch (Transaction::Abort&) { /* conflict — retry whole scan */ }
+  }
+}
+
 size_t size() const
 {
 return mbta.approx_size();
