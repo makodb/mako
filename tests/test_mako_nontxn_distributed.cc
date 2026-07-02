@@ -22,9 +22,13 @@
 
 #include "benchmarks/bench.h"
 #include "benchmarks/mbta_wrapper.hh"
+#include "benchmarks/mbta_sharded_ordered_index.hh"
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
+#include "lib/client_tcp_server.h"
+#include "local_table.hh"
+#include "remote_db.hh"
 #include "benchmarks/sto/Transaction.hh"
 #include "benchmarks/sto/sync_util.hh"
 
@@ -212,6 +216,14 @@ TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
     EXPECT_EQ(out, "server-owned");
 
     EXPECT_FALSE(g_client_tbl->get(lcdf::Str("dk5-missing"), out));
+
+    // Regression: a value LONGER than EXTRA_BITS_FOR_VALUE. The server
+    // strips the suffix once (L3 get); a second client-side strip
+    // would silently truncate long values (short ones dodge the bug).
+    const std::string long_val(4 * mako::EXTRA_BITS_FOR_VALUE, 'x');
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5-long"), mako::Encode(long_val)));
+    ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5-long"), out));
+    EXPECT_EQ(out, long_val);
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +250,87 @@ TEST_F(MakoNontxnDistributed, RemoteOpSequence) {
             EXPECT_EQ(out, "v" + std::to_string(i));
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// L7 facade: ITable non-txn surface over the same store.
+// ---------------------------------------------------------------------------
+TEST_F(MakoNontxnDistributed, L7LocalTableNontxn) {
+    auto* sharded = new mbta_sharded_ordered_index(
+        "nontxn_dist", std::vector<abstract_ordered_index*>{g_server_tbl});
+    mako::LocalTable lt(sharded, "nontxn_dist");
+
+    EXPECT_TRUE(lt.Put("l7k1", mako::Encode("v1")).ok());
+    std::string out;
+    ASSERT_TRUE(lt.Get("l7k1", out).ok());
+    EXPECT_EQ(out, "v1");
+
+    EXPECT_TRUE(lt.Insert("l7k2", mako::Encode("first")).ok());
+    EXPECT_TRUE(lt.Insert("l7k2", mako::Encode("second")).IsInvalidArgument());
+    ASSERT_TRUE(lt.Get("l7k2", out).ok());
+    EXPECT_EQ(out, "first");
+
+    bool exists = false;
+    EXPECT_TRUE(lt.Exists("l7k2", &exists).ok());
+    EXPECT_TRUE(exists);
+
+    EXPECT_TRUE(lt.Delete("l7k2").ok());
+    EXPECT_TRUE(lt.Delete("l7k2").IsNotFound());
+    EXPECT_TRUE(lt.Exists("l7k2", &exists).ok());
+    EXPECT_FALSE(exists);
+    EXPECT_TRUE(lt.Get("l7k2", out).IsNotFound());
+}
+
+// End-to-end decoupled-client path: RemoteDB's raw KV socket →
+// ClientTcpServer → ShardReceiver::RunNontxnOp → L3 non-txn ops on
+// the server table. This is the re-based (sound) RemoteTable KV path;
+// the old one staged shard_put writes that never committed.
+TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
+    auto* recv = new mako::ShardReceiver(config_path());
+    std::map<int, abstract_ordered_index*> tables;
+    tables[kRemoteTableId] = g_server_tbl;
+    recv->Register(g_db, tables);
+
+    auto* tcp = new mako::ClientTcpServer(31307, 2);
+    tcp->SetReceiver(recv);
+    ASSERT_TRUE(tcp->Start());
+
+    mako::RemoteDB* rdb = nullptr;
+    ASSERT_TRUE(mako::RemoteDB::ConnectNontxn("127.0.0.1", 31307, &rdb).ok());
+    mako::ITable* tbl = rdb->GetTable("nontxn_dist", kRemoteTableId);
+    ASSERT_NE(tbl, nullptr);
+
+    EXPECT_TRUE(tbl->Put("l7r1", mako::Encode("remote-v1")).ok());
+    std::string out;
+    ASSERT_TRUE(tbl->Get("l7r1", out).ok());
+    EXPECT_EQ(out, "remote-v1");
+
+    EXPECT_TRUE(tbl->Insert("l7r2", mako::Encode("only")).ok());
+    EXPECT_TRUE(tbl->Insert("l7r2", mako::Encode("dup")).IsInvalidArgument());
+
+    bool exists = false;
+    EXPECT_TRUE(tbl->Exists("l7r2", &exists).ok());
+    EXPECT_TRUE(exists);
+
+    EXPECT_TRUE(tbl->Delete("l7r2").ok());
+    EXPECT_TRUE(tbl->Delete("l7r2").IsNotFound());
+    EXPECT_TRUE(tbl->Get("l7r2", out).IsNotFound());
+
+    // Long value survives the round trip (single server-side strip).
+    const std::string long_val(4 * mako::EXTRA_BITS_FOR_VALUE, 'y');
+    EXPECT_TRUE(tbl->Put("l7r3", mako::Encode(long_val)).ok());
+    ASSERT_TRUE(tbl->Get("l7r3", out).ok());
+    EXPECT_EQ(out, long_val);
+
+    // Writes are REAL: visible + committed on the server-side view
+    // (the old shard_put path staged uncommitted, invisible writes).
+    std::string sv;
+    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("l7r1"), sv));
+    EXPECT_EQ(sv, "remote-v1");
+
+    rdb->Disconnect();
+    delete rdb;
+    tcp->Stop();
 }
 
 }  // namespace

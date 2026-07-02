@@ -92,6 +92,53 @@ public:
     // Approximate key count for the LOCAL shard only; no transaction needed.
     // Value may be stale. For cluster-wide count, RPC to other shards is required (not yet implemented).
     virtual Status GetApproximateSize(size_t* size) = 0;
+
+    // =========================================================================
+    // Non-transactional API (Masstree-shape; docs/mako-nontxn-api-plan.md)
+    // =========================================================================
+    // Each op is self-contained and immediately visible: internally a
+    // one-op OCC transaction on the owning shard, so writes replicate
+    // through the normal commit path. No BeginTransaction handle is
+    // involved, and these must NOT be called from a thread with an
+    // open transaction.
+    //
+    // Semantics:
+    //   Put     — blind overwrite; OK.
+    //   Insert  — put-if-absent; InvalidArgument if the key exists.
+    //   Delete  — real remove; NotFound if the key was absent.
+    //   Get     — OK / NotFound; value comes back decoded (no
+    //             EXTRA_BITS suffix). Values passed to Put/Insert
+    //             should be encoded with mako::Encode(), matching the
+    //             transactional API's convention.
+    //   Exists  — OK with *exists set; only errors on real failures.
+    //
+    // Defaults return NotSupported so existing ITable implementers
+    // keep compiling; LocalTable and RemoteTable override all five.
+
+    virtual Status Put(const std::string& key, const std::string& value) {
+        (void)key; (void)value;
+        return Status::NotSupported("non-txn Put not implemented by this backend");
+    }
+
+    virtual Status Insert(const std::string& key, const std::string& value) {
+        (void)key; (void)value;
+        return Status::NotSupported("non-txn Insert not implemented by this backend");
+    }
+
+    virtual Status Get(const std::string& key, std::string& value) {
+        (void)key; (void)value;
+        return Status::NotSupported("non-txn Get not implemented by this backend");
+    }
+
+    virtual Status Delete(const std::string& key) {
+        (void)key;
+        return Status::NotSupported("non-txn Delete not implemented by this backend");
+    }
+
+    virtual Status Exists(const std::string& key, bool* exists) {
+        (void)key; (void)exists;
+        return Status::NotSupported("non-txn Exists not implemented by this backend");
+    }
 };
 
 /**

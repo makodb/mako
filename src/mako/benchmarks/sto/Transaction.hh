@@ -695,8 +695,13 @@ public:
     // mode-1 convention, but empty — safe to borrow for a one-op txn)
     // from one that is mid-2PC with staged state (must not be
     // clobbered). Used by the non-txn write handlers.
-    bool has_staged_items() const {
-        return tset_size_ != 0;
+    //
+    // The in_progress() conjunct matters: after a mode-0 commit,
+    // tset_size_ keeps its final count until the next
+    // start_transaction resets it — a committed txn's leftovers are
+    // not staged state.
+    bool has_staged_items() {
+        return in_progress() && tset_size_ != 0;
     }
 
     // opacity checking

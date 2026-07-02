@@ -321,10 +321,9 @@ bool get(lcdf::Str key, std::string &value,
       if (ret == mako::ErrorCode::ABORT) return false;  // not found
       usleep(1000);  // transient — retry
     }
-    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-      UPDATE_VS(value.data(), value.length())
-      value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
-    }
+    // No strip here: the server serves nontxnGet through the L3 get,
+    // which already removed the EXTRA_BITS suffix (unlike getReqType,
+    // whose shard_get returns raw stored bytes).
     return true;
   }
   while (true) {

@@ -210,6 +210,48 @@ public:
         return Status::OK();
     }
 
+    // =========================================================================
+    // Non-transactional API (implements the ITable non-txn surface
+    // over the L3 non-txn ops; see idb.hh for semantics)
+    // =========================================================================
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Put(const std::string& key, const std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        index_->put(lcdf::Str(key), value);  // returns "newly inserted"
+        return Status::OK();
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Insert(const std::string& key, const std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->insert(lcdf::Str(key), value)
+                   ? Status::OK()
+                   : Status::InvalidArgument("key already exists");
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Get(const std::string& key, std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->get(lcdf::Str(key), value) ? Status::OK()
+                                                  : Status::NotFound();
+    }
+
+    // @unsafe - direct raw write through the MassTrans cursor
+    Status Delete(const std::string& key) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->remove(lcdf::Str(key)) ? Status::OK()
+                                              : Status::NotFound();
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Exists(const std::string& key, bool* exists) override {
+        if (!index_ || !exists) return Status::InvalidArgument("Invalid argument");
+        std::string unused;
+        *exists = index_->get(lcdf::Str(key), unused);
+        return Status::OK();
+    }
+
     // @safe - Access underlying index (for advanced operations)
     mbta_sharded_ordered_index* GetIndex() { return index_; }
     const mbta_sharded_ordered_index* GetIndex() const { return index_; }

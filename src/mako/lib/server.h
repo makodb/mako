@@ -49,6 +49,22 @@ namespace mako
         // (put / insert / remove selected by reqType).
         void HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,
                                       char *respBuf, size_t &respLen);
+
+        // Shared core of the self-contained non-txn ops (types 14-17):
+        // runs one op on the CALLING thread via the L3 non-txn API (an
+        // internal one-op OCC transaction; writes replicate through
+        // the normal commit path). The calling thread must be
+        // Silo-registered (helper threads and ClientTcpServer workers
+        // are). Returns ErrorCode::SUCCESS / SERVER_BUSY (this
+        // thread's participant txn holds staged 2PC state; retry) /
+        // ABORT (get: key not found) / ERROR (non-leader write or
+        // unknown table). op_result: put="newly inserted",
+        // insert="inserted", remove="was present", get="found".
+        // get_out (get only) receives the value with the EXTRA_BITS
+        // suffix already stripped by the L3 get.
+        int RunNontxnOp(uint8_t opType, uint16_t table_id,
+                        const std::string &key, const std::string &value,
+                        bool *op_result, std::string *get_out);
         void HandleLockRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleBatchLockRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleValidateRequest(char *reqBuf, char *respBuf, size_t &respLen);

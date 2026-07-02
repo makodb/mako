@@ -415,7 +415,17 @@ inline mako::Status mbta_sharded_ordered_index::Insert(
     void *txn,
     const std::string &key,
     const std::string &value) {
-  put(txn, key, value);
+  // Check existence first: transInsert silently succeeds for duplicates
+  // (returns bool but the wrapper discards it), so we detect dups via
+  // Get — the staged read makes insert-if-absent serializable (commit
+  // validation catches a racing insert). Regressed to a blind put() in
+  // 9d66d336; restored (rocksdbInterfaceTest I1.4 gates this).
+  std::string unused;
+  bool found = get(txn, key, unused);
+  if (found) {
+    return mako::Status::InvalidArgument("Key already exists");
+  }
+  insert(txn, key, value);
   return mako::Status::OK();
 }
 

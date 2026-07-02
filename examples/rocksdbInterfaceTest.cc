@@ -10,6 +10,7 @@
  *   I1.4 Insert         - put-if-not-exists
  *   I1.5 GetApproximateSize - approximate entry count
  *   I1.6 ListTables     - list all opened tables
+ *   I1.7 Non-txn API    - Put/Get/Insert/Delete/Exists without a txn handle
  *   Full integration    - open/close, put/get/delete/scan lifecycle
  */
 
@@ -573,6 +574,49 @@ void test_full_integration(mako::IDatabase* db) {
 }
 
 // ============================================================================
+// Test I1.7: Non-transactional API (docs/mako-nontxn-api-plan.md)
+// ============================================================================
+void test_nontxn_api(mako::IDatabase* db) {
+    printf("\n--- Test I1.7: Non-transactional API ---\n");
+
+    mako::ITable* table = db->GetTable("nontxn_table");
+    VERIFY(table != nullptr, "GetTable succeeds");
+
+    // Each op is self-contained (an internal one-op OCC txn): no
+    // BeginTransaction/Commit around it.
+    mako::Status s = table->Put("nt_key", mako::Encode("nt_value"));
+    VERIFY(s.ok(), "non-txn Put succeeds");
+
+    std::string val;
+    s = table->Get("nt_key", val);
+    VERIFY(s.ok(), "non-txn Get finds the key");
+    VERIFY(val == "nt_value", "non-txn Get returns the decoded value");
+
+    s = table->Get("nt_missing", val);
+    VERIFY(s.IsNotFound(), "non-txn Get on absent key is NotFound");
+
+    s = table->Insert("nt_once", mako::Encode("first"));
+    VERIFY(s.ok(), "non-txn Insert on fresh key succeeds");
+    s = table->Insert("nt_once", mako::Encode("second"));
+    VERIFY(s.IsInvalidArgument(), "non-txn Insert on existing key rejected");
+    s = table->Get("nt_once", val);
+    VERIFY(s.ok() && val == "first", "existing value untouched by dup Insert");
+
+    bool exists = false;
+    s = table->Exists("nt_once", &exists);
+    VERIFY(s.ok() && exists, "non-txn Exists true for present key");
+
+    s = table->Delete("nt_once");
+    VERIFY(s.ok(), "non-txn Delete removes the key");
+    s = table->Delete("nt_once");
+    VERIFY(s.IsNotFound(), "non-txn Delete on absent key is NotFound");
+    s = table->Exists("nt_once", &exists);
+    VERIFY(s.ok() && !exists, "non-txn Exists false after Delete");
+
+    printf("Test I1.7 PASSED\n");
+}
+
+// ============================================================================
 // main
 // ============================================================================
 int main(int argc, char* argv[]) {
@@ -600,6 +644,7 @@ int main(int argc, char* argv[]) {
     test_approx_size(db);
     test_approx_size_stress(db);
     test_list_tables(db);
+    test_nontxn_api(db);
 
     // Run full integration test
     test_full_integration(db);
