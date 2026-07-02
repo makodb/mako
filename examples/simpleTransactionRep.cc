@@ -24,10 +24,10 @@
 
 #include <signal.h>
 #include <mako.hh>
-#include "db.hh"
-#include "remote_db.hh"
-#include "idb.hh"
-#include "local_table.hh"
+#include "rocks_interface/db.hh"
+#include "rocks_interface/remote_db.hh"
+#include "rocks_interface/idb.hh"
+#include "rocks_interface/local_table.hh"
 #include "examples/common.h"
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"

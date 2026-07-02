@@ -125,7 +125,7 @@ Implement them in the two backends that matter for the compat facade path:
 **`src/mako/benchmarks/mbta_sharded_ordered_index.hh`** (Mako's sharded `abstract_ordered_index` impl):
 - Delegate to `pick_shard(key)->get(...)` etc. — same pattern already used by the txn'd methods.
 
-`RemoteTable` in `src/mako/remote_db.hh` does not need to implement these (the remote client can't do non-txn ops against a remote shard — it always goes through RPC which is inherently boundary-crossing).
+`RemoteTable` in `src/rocks_interface/remote_db.hh` does not need to implement these (the remote client can't do non-txn ops against a remote shard — it always goes through RPC which is inherently boundary-crossing).
 
 **Cost**: ~1 day. Wrapping and delegating; new methods on the two backends.
 

@@ -18,7 +18,7 @@
 #include <stdio.h>
 
 #include <mako.hh>
-#include "db.hh"
+#include "rocks_interface/db.hh"
 #include <examples/common.h>
 
 import std;

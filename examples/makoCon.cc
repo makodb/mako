@@ -16,7 +16,7 @@
 #include <stdlib.h>
 
 #include <mako.hh>
-#include "db.hh"
+#include "rocks_interface/db.hh"
 #include <examples/common.h>
 #include "lib/transaction_ffi.h"
 

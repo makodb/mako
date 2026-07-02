@@ -269,7 +269,7 @@ void mako::stop_erpc_server()
 // Client TCP Server for RemoteDB connections
 // ============================================================================
 
-#include "lib/client_tcp_server.h"
+#include "rocks_interface/client_tcp_server.h"
 
 import std;
 

@@ -1,6 +1,6 @@
 # Mako RocksDB-Compatible Interface
 
-This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/mako/idb.hh`. It covers three things:
+This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/rocks_interface/idb.hh`. It covers three things:
 
 - **Conceptual model** — how Silo/Masstree's building blocks map to RocksDB's (`DB`, `ColumnFamily`, `Transaction`, `Snapshot`, `Iterator`, persistence, …), what aligns, and where the two systems irreconcilably diverge.
 - **Interface reference** — the abstract `ITable` and `IDatabase` methods, their semantics, and worked examples.
@@ -702,9 +702,9 @@ The existing interface is already at "80% of the common-case surface." What exte
 
 ## Related files
 
-- `src/mako/idb.hh` — the abstract `IDatabase` and `ITable` interfaces this doc describes.
-- `src/mako/db.hh` — local `mako::DB` implementation.
-- `src/mako/remote_db.hh` — remote-client `mako::RemoteDB` implementation.
-- `src/mako/local_table.hh` — local table backing.
+- `src/rocks_interface/idb.hh` — the abstract `IDatabase` and `ITable` interfaces this doc describes.
+- `src/rocks_interface/db.hh` — local `mako::DB` implementation.
+- `src/rocks_interface/remote_db.hh` — remote-client `mako::RemoteDB` implementation.
+- `src/rocks_interface/local_table.hh` — local table backing.
 - `src/mako/silo_runtime.h` — the `SiloRuntime` container that each local DB wraps.
 - [`masstree-test-plan.md`](masstree-test-plan.md) — masstree correctness testing.

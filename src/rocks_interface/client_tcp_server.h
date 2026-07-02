@@ -26,9 +26,9 @@
  *   server.Stop();
  */
 
-#include "lib/server.h"
-#include "lib/common.h"
-#include "benchmarks/bench.h"  // scoped_db_thread_ctx (worker Silo binding)
+#include "mako/lib/server.h"
+#include "mako/lib/common.h"
+#include "mako/benchmarks/bench.h"  // scoped_db_thread_ctx (worker Silo binding)
 #include <atomic>
 #include <thread>
 #include <vector>

@@ -230,4 +230,4 @@ compiled three times with only `namespace kv = ...;` changed
 - [`rocksdb_interface.md`](rocksdb_interface.md) — the L7 facade this plan's Phase 4 extends.
 - `src/mako/benchmarks/mbta_wrapper.hh`, `mbta_sharded_ordered_index.hh` — Phase 2 targets.
 - `src/mako/lib/shardClient.cc`, `src/mako/lib/server.cc` — Phase 1 targets.
-- `src/mako/remote_db.hh`, `src/mako/idb.hh`, `src/mako/local_table.hh` — Phase 4 targets.
+- `src/rocks_interface/` (`remote_db.hh`, `idb.hh`, `local_table.hh`, ...) — Phase 4 targets; the facade moved to its own folder in 2026-07.

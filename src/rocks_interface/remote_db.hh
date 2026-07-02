@@ -35,7 +35,7 @@
 #include "idb.hh"
 #include "db.hh"  // For mako::Options, ClientConfig
 #include "client_proxy.h"
-#include "lib/common.h"  // non-txn wire types (nontxn*ReqType, structs)
+#include "mako/lib/common.h"  // non-txn wire types (nontxn*ReqType, structs)
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>

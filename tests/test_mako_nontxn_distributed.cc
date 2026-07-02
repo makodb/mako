@@ -26,9 +26,9 @@
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
-#include "lib/client_tcp_server.h"
-#include "local_table.hh"
-#include "remote_db.hh"
+#include "rocks_interface/client_tcp_server.h"
+#include "rocks_interface/local_table.hh"
+#include "rocks_interface/remote_db.hh"
 #include "benchmarks/sto/Transaction.hh"
 #include "benchmarks/sto/sync_util.hh"
 

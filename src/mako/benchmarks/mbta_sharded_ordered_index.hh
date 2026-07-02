@@ -13,7 +13,7 @@
 #include "abstract_ordered_index.h"
 #include "benchmarks/benchmark_config.h"
 #include "../lib/common.h"
-#include "../status.hh"
+#include "rocks_interface/status.hh"
 
 class mbta_sharded_ordered_index {
 public:
