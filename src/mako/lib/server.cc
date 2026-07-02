@@ -69,6 +69,7 @@ namespace mako
         case nontxnPutReqType:
         case nontxnInsertReqType:
         case nontxnRemoveReqType:
+        case nontxnGetReqType:
             HandleNontxnWriteRequest(reqType, reqBuf, respBuf, respLen);
             break;
         case scanReqType:
@@ -581,28 +582,38 @@ namespace mako
     void ShardReceiver::HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,
                                                  char *respBuf, size_t &respLen)
     {
-        auto *req = reinterpret_cast<client_kv_request_t *>(reqBuf);
+        auto *req = reinterpret_cast<nontxn_write_request_t *>(reqBuf);
         auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
-        // Response carries exactly one result byte in value[0].
-        respLen = sizeof(client_kv_response_t) - max_value_length + 1;
+        const bool is_get = (reqType == nontxnGetReqType);
+        // Default response carries no value bytes; the success paths
+        // below extend respLen for the result byte / value payload.
+        respLen = sizeof(client_kv_response_t) - max_value_length;
         resp->req_nr = req->req_nr;
         resp->vlen = 0;
 
         // Leader-only writes (plan decision D3): a follower accepting a
         // non-txn write would apply it locally but never submit it to
         // the replication log — silent divergence. Fail loudly instead.
-        if (BenchmarkConfig::getInstance().getIsReplicated() &&
+        // (Reads don't mutate, so gets are served regardless.)
+        if (!is_get &&
+            BenchmarkConfig::getInstance().getIsReplicated() &&
             !BenchmarkConfig::getInstance().getLeaderConfig()) {
             resp->status = ErrorCode::ERROR;
             return;
         }
 
-        // The worker thread serving this request may hold an ambient Sto
-        // transaction staged by the 2PC handlers (shard_put / BatchLock).
-        // Starting the op's internal one-op txn would trip
-        // Sto::start_transaction's in-progress assertion. Report busy so
-        // the client can retry rather than corrupting the staged txn.
-        if (Sto::in_progress()) {
+        // The worker thread serving this request may hold a STAGED
+        // participant transaction (from 2PC handlers: BatchLock stages
+        // writes + locks; Validate/Install arrive as later RPCs).
+        // Running our one-op txn now would clobber that staged state
+        // (Sto::start_transaction in mode 1 resets the txn without the
+        // mode-0 in-progress assertion).
+        //
+        // Note the idle-participant invariant: shard_reset() leaves the
+        // thread's txn in_progress but EMPTY between 2PC transactions —
+        // that state is safe to borrow (we restore it below). Only a
+        // txn with staged items is busy.
+        if (TThread::txn && TThread::txn->has_staged_items()) {
             resp->status = ErrorCode::SERVER_BUSY;
             return;
         }
@@ -617,6 +628,26 @@ namespace mako
         if (it == open_tables_table_id.end() || it->second == nullptr) {
             status = ErrorCode::ERROR;  // table not found
         } else {
+            // Run the op as a clean mode-0 local commit: participant
+            // mode (1) never invokes try_commit (Transaction.cc:242),
+            // and leftover shard bits from earlier RPCs would trigger
+            // the remote 2PC phases inside try_commit. Save/restore
+            // the thread's coordination state around the op.
+            int saved_mode = TThread::mode();
+            unsigned saved_read_bits = TThread::readset_shard_bits;
+            unsigned saved_write_bits = TThread::writeset_shard_bits;
+            TThread::set_mode(0);
+            TThread::readset_shard_bits = 0;
+            TThread::writeset_shard_bits = 0;
+
+            // Close out the idle participant txn (in_progress but empty
+            // — guaranteed by the busy guard above) so the op's
+            // Sto::start_transaction passes its mode-0 assertion.
+            // Aborting an empty txn unwinds nothing.
+            if (TThread::txn && TThread::txn->in_progress()) {
+                TThread::txn->silent_abort();
+            }
+
             try {
                 switch (reqType) {
                 case nontxnPutReqType:
@@ -628,6 +659,15 @@ namespace mako
                 case nontxnRemoveReqType:
                     op_result = it->second->remove(lcdf::Str(obj_key0));
                     break;
+                case nontxnGetReqType:
+                    // Self-contained read: unlike getReqType/shard_get,
+                    // nothing is staged in this worker's participant
+                    // txn, so no cleanup RPC is owed by the caller.
+                    obj_v.clear();
+                    op_result = it->second->get(lcdf::Str(obj_key0), obj_v);
+                    if (!op_result)
+                        status = ErrorCode::ABORT;  // key not found
+                    break;
                 default:
                     status = ErrorCode::ERROR;
                     break;
@@ -637,12 +677,33 @@ namespace mako
                 // escaping here is unexpected — surface as an error.
                 status = ErrorCode::ERROR;
             }
+
+            TThread::set_mode(saved_mode);
+            TThread::readset_shard_bits = saved_read_bits;
+            TThread::writeset_shard_bits = saved_write_bits;
+
+            // Restore the idle-participant invariant: our one-op txn
+            // left the thread's txn in a committed/stopped state, but
+            // 2PC handlers expect it in_progress-and-empty (the state
+            // shard_reset establishes).
+            db->shard_reset();
         }
 
         resp->status = status;
         if (status == ErrorCode::SUCCESS) {
-            resp->vlen = 1;
-            resp->value[0] = op_result ? 1 : 0;
+            if (is_get) {
+                // Raw stored bytes (incl. any EXTRA_BITS suffix the
+                // writer appended); the client strips, mirroring the
+                // getReqType reply handling.
+                ASSERT_LT(obj_v.size(), max_value_length);
+                resp->vlen = obj_v.size();
+                memcpy(resp->value, obj_v.data(), obj_v.size());
+                respLen += obj_v.size();
+            } else {
+                resp->vlen = 1;
+                resp->value[0] = op_result ? 1 : 0;
+                respLen += 1;
+            }
         }
     }
 

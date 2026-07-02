@@ -187,15 +187,20 @@ namespace mako
     // reserved for watermark exchange between follower data center
     const uint8_t watermarkReqType = 13;
 
-    // Self-contained non-transactional write ops (Masstree-shape API,
+    // Self-contained non-transactional ops (Masstree-shape API,
     // docs/mako-nontxn-api-plan.md). Server-side handlers run the op
-    // as a local one-op OCC transaction on the owning shard (which
-    // replicates through the normal commit path). Wire format:
-    // client_kv_request_t / client_kv_response_t with txn_id unused;
-    // the op's boolean result is returned in value[0] with vlen=1.
+    // as a local one-op OCC transaction on the owning shard (writes
+    // replicate through the normal commit path). Wire format:
+    // nontxn_write_request_t / client_kv_response_t. Writes return the
+    // op's boolean result in value[0] with vlen=1; get returns the
+    // stored value bytes (status ABORT = key not found). Unlike
+    // getReqType, nontxnGetReqType stages NOTHING in the serving
+    // worker's participant transaction — no follow-up 2PC abort/commit
+    // is ever expected from the caller.
     const uint8_t nontxnPutReqType = 14;
     const uint8_t nontxnInsertReqType = 15;
     const uint8_t nontxnRemoveReqType = 16;
+    const uint8_t nontxnGetReqType = 17;
 
     // --------------------------- Remote client API (for decoupled clients)
     // These message types enable clients to run on different servers
@@ -450,6 +455,21 @@ namespace mako
         uint16_t table_id;          // Target table
         uint16_t klen;              // Key length
         uint16_t vlen;              // Value length (0 for Get/Delete)
+        char key_and_value[max_key_length + max_value_length];
+    };
+
+    // Request for the self-contained non-txn ops (types 14-17;
+    // vlen==0 for remove and get).
+    // MUST start with targert_server_id: the transport backends peek
+    // the first uint16_t of every shard request to pick the helper
+    // queue (see TargetServerIDReader in rrr_rpc_backend.cc).
+    struct nontxn_write_request_t
+    {
+        uint16_t targert_server_id; // requesting client's global warehouse id
+        uint32_t req_nr;
+        uint16_t table_id;          // target table
+        uint16_t klen;              // key length
+        uint16_t vlen;              // value length (0 for remove)
         char key_and_value[max_key_length + max_value_length];
     };
 

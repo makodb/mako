@@ -690,6 +690,15 @@ public:
         return TThread::mode() == 1 || state_ < s_aborted;
     }
 
+    // @safe - True iff the transaction has accumulated read/write-set
+    // items. Distinguishes an IDLE participant thread (in_progress by
+    // mode-1 convention, but empty — safe to borrow for a one-op txn)
+    // from one that is mid-2PC with staged state (must not be
+    // clobbered). Used by the non-txn write handlers.
+    bool has_staged_items() const {
+        return tset_size_ != 0;
+    }
+
     // opacity checking
     // These function will eventually help us track the commit TID when we
     // have no opacity, or for GV7 opacity.

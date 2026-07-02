@@ -93,7 +93,9 @@ void erpc_server(
     config->configFile,
     local_uri,
     cluster,
-    1, 12,
+    // Handler range is inclusive; 14-16 are the self-contained
+    // non-txn write ops (nontxnPut/Insert/Remove, common.h).
+    1, 17,
     0, // physPort
     0, // numa node
     running_shardIndex,

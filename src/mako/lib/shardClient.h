@@ -28,6 +28,8 @@ namespace mako
                       const std::string &value, bool *op_result);
         int nontxnInsert(int remote_table_id, const std::string &key,
                          const std::string &value, bool *op_result);
+        int nontxnGet(int remote_table_id, const std::string &key,
+                      std::string &value);
         int nontxnRemove(int remote_table_id, const std::string &key,
                          bool *op_result);
 

@@ -308,11 +308,19 @@ STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& va
 bool get(lcdf::Str key, std::string &value,
          size_t max_bytes_read = std::string::npos) override {
   if (mbta.get_is_remote()) {
-    // Remote table: self-contained read RPC (same path the txn'd
-    // get's remote branch uses). remoteGet returns >0 on failure.
-    int ret = TThread::sclient->remoteGet(
-        mbta.get_table_id(), std::string(key.data(), key.length()), value);
-    if (ret > 0) return false;
+    // Remote table: self-contained read RPC. NOT remoteGet — that one
+    // stages a read-set item in the serving worker's participant txn
+    // (cleaned up by the txn path's later 2PC abort/commit, which a
+    // non-txn caller never sends), leaving the worker permanently
+    // "busy" for non-txn writes. ABORT signals key-not-found; TIMEOUT
+    // (lost/late reply) is retried.
+    std::string k(key.data(), key.length());
+    while (true) {
+      int ret = TThread::sclient->nontxnGet(mbta.get_table_id(), k, value);
+      if (ret == mako::ErrorCode::SUCCESS) break;
+      if (ret == mako::ErrorCode::ABORT) return false;  // not found
+      usleep(1000);  // transient — retry
+    }
     if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
       UPDATE_VS(value.data(), value.length())
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
@@ -336,15 +344,33 @@ bool get(lcdf::Str key, std::string &value,
   }
 }
 
+// Shared retry driver for the remote non-txn write RPCs. Transient
+// failures (TIMEOUT: lost/late reply; SERVER_BUSY: the serving worker
+// is mid-2PC) are retried, matching the local branch's
+// retry-until-success semantics. Hard errors (leader check, unknown
+// table) assert loudly.
+// @unsafe - blocks on RPC promises
+template <typename RpcFn>
+static bool nontxn_remote_write(RpcFn&& rpc) {
+  while (true) {
+    bool op_result = false;
+    int ret = rpc(&op_result);
+    if (ret == mako::ErrorCode::SUCCESS)
+      return op_result;
+    ALWAYS_ASSERT(ret == mako::ErrorCode::TIMEOUT ||
+                  ret == mako::ErrorCode::SERVER_BUSY ||
+                  ret == mako::ErrorCode::ABORT);
+    usleep(1000);  // brief backoff, then retry
+  }
+}
+
 // @unsafe - retries around Sto thread-local txn state
 bool put(lcdf::Str key, const std::string &value) override {
   if (mbta.get_is_remote()) {
-    bool op_result = false;
-    int ret = TThread::sclient->nontxnPut(
-        mbta.get_table_id(), std::string(key.data(), key.length()),
-        value, &op_result);
-    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
-    return op_result;
+    std::string k(key.data(), key.length());
+    return nontxn_remote_write([&](bool* r) {
+      return TThread::sclient->nontxnPut(mbta.get_table_id(), k, value, r);
+    });
   }
   while (true) {
     try {
@@ -356,12 +382,10 @@ bool put(lcdf::Str key, const std::string &value) override {
 // @unsafe - retries around Sto thread-local txn state
 bool insert(lcdf::Str key, const std::string &value) override {
   if (mbta.get_is_remote()) {
-    bool op_result = false;
-    int ret = TThread::sclient->nontxnInsert(
-        mbta.get_table_id(), std::string(key.data(), key.length()),
-        value, &op_result);
-    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
-    return op_result;
+    std::string k(key.data(), key.length());
+    return nontxn_remote_write([&](bool* r) {
+      return TThread::sclient->nontxnInsert(mbta.get_table_id(), k, value, r);
+    });
   }
   while (true) {
     try {
@@ -374,12 +398,10 @@ bool insert(lcdf::Str key, const std::string &value) override {
 // self-contained RPC (remote)
 bool remove(lcdf::Str key) override {
   if (mbta.get_is_remote()) {
-    bool op_result = false;
-    int ret = TThread::sclient->nontxnRemove(
-        mbta.get_table_id(), std::string(key.data(), key.length()),
-        &op_result);
-    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
-    return op_result;
+    std::string k(key.data(), key.length());
+    return nontxn_remote_write([&](bool* r) {
+      return TThread::sclient->nontxnRemove(mbta.get_table_id(), k, r);
+    });
   }
   return mbta.remove(key);
 }

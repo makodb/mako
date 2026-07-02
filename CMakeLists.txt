@@ -2627,6 +2627,23 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
 
+    # Test: distributed (two-shards-in-one-process) non-txn API — the
+    # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
+    # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
+    # loopback fake transport.
+    add_executable(test_mako_nontxn_distributed tests/test_mako_nontxn_distributed.cc)
+    target_include_directories(test_mako_nontxn_distributed PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mako_nontxn_distributed PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mako_nontxn_distributed
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
+
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
     # is not picked up by ctest.

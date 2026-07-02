@@ -88,6 +88,7 @@ namespace mako
         case nontxnPutReqType:
         case nontxnInsertReqType:
         case nontxnRemoveReqType:
+        case nontxnGetReqType:
             HandleNontxnWriteReply(respBuf);
             break;
         default:
@@ -610,12 +611,12 @@ namespace mako
                             continuation,
                             error_continuation);
 
-        auto *reqBuf = reinterpret_cast<client_kv_request_t *>(
+        auto *reqBuf = reinterpret_cast<nontxn_write_request_t *>(
             transport->GetRequestBuf(
-                sizeof(client_kv_request_t),
+                sizeof(nontxn_write_request_t),
                 sizeof(client_kv_response_t)));
+        reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
-        reqBuf->txn_id = 0;  // unused for non-txn ops
         reqBuf->table_id = table_id;
         ASSERT_LT(key.size(), max_key_length);
         ASSERT_LT(value.size(), max_value_length);
@@ -624,7 +625,7 @@ namespace mako
         memcpy(reqBuf->key_and_value, key.data(), key.size());
         memcpy(reqBuf->key_and_value + key.size(), value.data(), value.size());
 
-        size_t bytes_used = sizeof(client_kv_request_t)
+        size_t bytes_used = sizeof(nontxn_write_request_t)
             - (max_key_length + max_value_length)
             + reqBuf->klen + reqBuf->vlen;
 
