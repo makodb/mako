@@ -2627,10 +2627,11 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
 
-    # Test: the namespace-switchable KV surface (kv_masstree / kv_silo /
-    # kv_mako) — the compile-both-ways gate for the three-backend goal
-    # in docs/mako-nontxn-api-plan.md (Phase 5). One TYPED_TEST body
-    # runs against all three backends.
+    # Test: the consolidated three-backend story — one TYPED_TEST body
+    # drives masstree_ordered_index / mbta_ordered_index /
+    # mbta_sharded_ordered_index through abstract_ordered_index*
+    # (docs/mako-nontxn-api-plan.md Phase 5, as revised: no separate
+    # KV vocabulary; backends are picked at construction).
     add_executable(test_kv_backends tests/test_kv_backends.cc)
     target_include_directories(test_kv_backends PRIVATE
         ${TEST_INCLUDE_DIRS}

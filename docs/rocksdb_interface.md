@@ -191,7 +191,10 @@ parameter; each op is a self-contained, immediately-visible operation
 replicate through the normal commit path). Semantics: `Put` = blind
 overwrite (OK); `Insert` = put-if-absent (`InvalidArgument` if
 present); `Delete` = real remove (`NotFound` if absent); `Get` = OK /
-`NotFound`, value returned decoded; `Exists` = OK + flag. Defaults
+`NotFound`; `Exists` = OK + flag. Values are raw bytes in both
+directions (the backend applies its storage encoding internally,
+unlike the transactional methods, which require caller-Encoded
+values). Defaults
 return `NotSupported`; `LocalTable` implements them over the L3
 non-txn API and `RemoteTable` over the self-contained non-txn request
 types (14-17). Callers must not have an open transaction on the

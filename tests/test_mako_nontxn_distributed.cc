@@ -168,7 +168,7 @@ protected:
 // Remote put → verify on the server-side (local) view.
 // ---------------------------------------------------------------------------
 TEST_F(MakoNontxnDistributed, RemotePutRoundTrip) {
-    const std::string val = mako::Encode("dist-v1");
+    const std::string val = "dist-v1";
     EXPECT_TRUE(g_client_tbl->put(lcdf::Str("dk1"), val));
 
     std::string out;
@@ -177,8 +177,8 @@ TEST_F(MakoNontxnDistributed, RemotePutRoundTrip) {
 }
 
 TEST_F(MakoNontxnDistributed, RemotePutOverwrites) {
-    EXPECT_TRUE(g_client_tbl->put(lcdf::Str("dk2"), mako::Encode("one")));
-    EXPECT_FALSE(g_client_tbl->put(lcdf::Str("dk2"), mako::Encode("two")));
+    EXPECT_TRUE(g_client_tbl->put(lcdf::Str("dk2"), "one"));
+    EXPECT_FALSE(g_client_tbl->put(lcdf::Str("dk2"), "two"));
 
     std::string out;
     ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk2"), out));
@@ -186,8 +186,8 @@ TEST_F(MakoNontxnDistributed, RemotePutOverwrites) {
 }
 
 TEST_F(MakoNontxnDistributed, RemoteInsertIsExclusive) {
-    EXPECT_TRUE(g_client_tbl->insert(lcdf::Str("dk3"), mako::Encode("first")));
-    EXPECT_FALSE(g_client_tbl->insert(lcdf::Str("dk3"), mako::Encode("second")));
+    EXPECT_TRUE(g_client_tbl->insert(lcdf::Str("dk3"), "first"));
+    EXPECT_FALSE(g_client_tbl->insert(lcdf::Str("dk3"), "second"));
 
     std::string out;
     ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk3"), out));
@@ -195,7 +195,7 @@ TEST_F(MakoNontxnDistributed, RemoteInsertIsExclusive) {
 }
 
 TEST_F(MakoNontxnDistributed, RemoteRemoveSemantics) {
-    ASSERT_TRUE(g_client_tbl->put(lcdf::Str("dk4"), mako::Encode("victim")));
+    ASSERT_TRUE(g_client_tbl->put(lcdf::Str("dk4"), "victim"));
 
     EXPECT_TRUE(g_client_tbl->remove(lcdf::Str("dk4")));
     std::string out;
@@ -209,7 +209,7 @@ TEST_F(MakoNontxnDistributed, RemoteRemoveSemantics) {
 // client view (remoteGet RPC path).
 // ---------------------------------------------------------------------------
 TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
-    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5"), mako::Encode("server-owned")));
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5"), "server-owned"));
 
     std::string out;
     ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5"), out));
@@ -221,7 +221,7 @@ TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
     // strips the suffix once (L3 get); a second client-side strip
     // would silently truncate long values (short ones dodge the bug).
     const std::string long_val(4 * mako::EXTRA_BITS_FOR_VALUE, 'x');
-    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5-long"), mako::Encode(long_val)));
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5-long"), long_val));
     ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5-long"), out));
     EXPECT_EQ(out, long_val);
 }
@@ -233,7 +233,7 @@ TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
 TEST_F(MakoNontxnDistributed, RemoteOpSequence) {
     for (int i = 0; i < 20; i++) {
         std::string k = "seq_" + std::to_string(i);
-        ASSERT_TRUE(g_client_tbl->put(lcdf::Str(k), mako::Encode("v" + std::to_string(i))));
+        ASSERT_TRUE(g_client_tbl->put(lcdf::Str(k), "v" + std::to_string(i)));
     }
     for (int i = 0; i < 20; i += 2) {
         std::string k = "seq_" + std::to_string(i);
@@ -260,13 +260,13 @@ TEST_F(MakoNontxnDistributed, L7LocalTableNontxn) {
         "nontxn_dist", std::vector<abstract_ordered_index*>{g_server_tbl});
     mako::LocalTable lt(sharded, "nontxn_dist");
 
-    EXPECT_TRUE(lt.Put("l7k1", mako::Encode("v1")).ok());
+    EXPECT_TRUE(lt.Put("l7k1", "v1").ok());
     std::string out;
     ASSERT_TRUE(lt.Get("l7k1", out).ok());
     EXPECT_EQ(out, "v1");
 
-    EXPECT_TRUE(lt.Insert("l7k2", mako::Encode("first")).ok());
-    EXPECT_TRUE(lt.Insert("l7k2", mako::Encode("second")).IsInvalidArgument());
+    EXPECT_TRUE(lt.Insert("l7k2", "first").ok());
+    EXPECT_TRUE(lt.Insert("l7k2", "second").IsInvalidArgument());
     ASSERT_TRUE(lt.Get("l7k2", out).ok());
     EXPECT_EQ(out, "first");
 
@@ -300,13 +300,13 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     mako::ITable* tbl = rdb->GetTable("nontxn_dist", kRemoteTableId);
     ASSERT_NE(tbl, nullptr);
 
-    EXPECT_TRUE(tbl->Put("l7r1", mako::Encode("remote-v1")).ok());
+    EXPECT_TRUE(tbl->Put("l7r1", "remote-v1").ok());
     std::string out;
     ASSERT_TRUE(tbl->Get("l7r1", out).ok());
     EXPECT_EQ(out, "remote-v1");
 
-    EXPECT_TRUE(tbl->Insert("l7r2", mako::Encode("only")).ok());
-    EXPECT_TRUE(tbl->Insert("l7r2", mako::Encode("dup")).IsInvalidArgument());
+    EXPECT_TRUE(tbl->Insert("l7r2", "only").ok());
+    EXPECT_TRUE(tbl->Insert("l7r2", "dup").IsInvalidArgument());
 
     bool exists = false;
     EXPECT_TRUE(tbl->Exists("l7r2", &exists).ok());
@@ -318,7 +318,7 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
 
     // Long value survives the round trip (single server-side strip).
     const std::string long_val(4 * mako::EXTRA_BITS_FOR_VALUE, 'y');
-    EXPECT_TRUE(tbl->Put("l7r3", mako::Encode(long_val)).ok());
+    EXPECT_TRUE(tbl->Put("l7r3", long_val).ok());
     ASSERT_TRUE(tbl->Get("l7r3", out).ok());
     EXPECT_EQ(out, long_val);
 

@@ -175,12 +175,12 @@ TEST_F(SiloNonTxnApi, MassTransScanInOrderAndRScanReverse) {
 TEST_F(SiloNonTxnApi, L3PutGetRoundTripThroughBasePointer) {
     abstract_ordered_index* tbl = make_table("l3_roundtrip");
 
-    const std::string val = mako::Encode("l3-value");
-    EXPECT_TRUE(tbl->put(lcdf::Str("k"), val));
+    // Raw bytes in, raw bytes out: the L3 non-txn ops own the
+    // Encode/strip boundary internally.
+    EXPECT_TRUE(tbl->put(lcdf::Str("k"), "l3-value"));
 
     std::string out;
     EXPECT_TRUE(tbl->get(lcdf::Str("k"), out));
-    // The wrapper strips EXTRA_BITS_FOR_VALUE: exact round-trip.
     EXPECT_EQ(out, "l3-value");
 
     EXPECT_FALSE(tbl->get(lcdf::Str("missing"), out));
@@ -189,8 +189,8 @@ TEST_F(SiloNonTxnApi, L3PutGetRoundTripThroughBasePointer) {
 TEST_F(SiloNonTxnApi, L3PutOverwrites) {
     abstract_ordered_index* tbl = make_table("l3_overwrite");
 
-    EXPECT_TRUE(tbl->put(lcdf::Str("k"), mako::Encode("one")));
-    EXPECT_FALSE(tbl->put(lcdf::Str("k"), mako::Encode("two")));  // existed
+    EXPECT_TRUE(tbl->put(lcdf::Str("k"), "one"));
+    EXPECT_FALSE(tbl->put(lcdf::Str("k"), "two"));  // existed
 
     std::string out;
     ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
@@ -200,8 +200,8 @@ TEST_F(SiloNonTxnApi, L3PutOverwrites) {
 TEST_F(SiloNonTxnApi, L3InsertIsExclusive) {
     abstract_ordered_index* tbl = make_table("l3_insert");
 
-    EXPECT_TRUE(tbl->insert(lcdf::Str("k"), mako::Encode("one")));
-    EXPECT_FALSE(tbl->insert(lcdf::Str("k"), mako::Encode("two")));
+    EXPECT_TRUE(tbl->insert(lcdf::Str("k"), "one"));
+    EXPECT_FALSE(tbl->insert(lcdf::Str("k"), "two"));
 
     std::string out;
     ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
@@ -211,7 +211,7 @@ TEST_F(SiloNonTxnApi, L3InsertIsExclusive) {
 TEST_F(SiloNonTxnApi, L3RemoveSemantics) {
     abstract_ordered_index* tbl = make_table("l3_remove");
 
-    ASSERT_TRUE(tbl->put(lcdf::Str("k"), mako::Encode("v")));
+    ASSERT_TRUE(tbl->put(lcdf::Str("k"), "v"));
     EXPECT_TRUE(tbl->remove(lcdf::Str("k")));
     std::string out;
     EXPECT_FALSE(tbl->get(lcdf::Str("k"), out));
@@ -223,7 +223,7 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
 
     for (int i = 0; i < 8; i++) {
         std::string k = "s" + std::to_string(i);
-        ASSERT_TRUE(tbl->put(lcdf::Str(k), mako::Encode("val" + std::to_string(i))));
+        ASSERT_TRUE(tbl->put(lcdf::Str(k), "val" + std::to_string(i)));
     }
 
     // Full forward scan: sorted keys, stripped values.
@@ -269,9 +269,9 @@ TEST_F(SiloNonTxnApi, ShardedRoutesNonTxnOps) {
     shards.push_back(make_table("sharded_0"));
     mbta_sharded_ordered_index sharded("sharded", shards);
 
-    EXPECT_TRUE(sharded.put(lcdf::Str("a"), mako::Encode("va")));
-    EXPECT_TRUE(sharded.insert(lcdf::Str("b"), mako::Encode("vb")));
-    EXPECT_FALSE(sharded.insert(lcdf::Str("b"), mako::Encode("vb2")));
+    EXPECT_TRUE(sharded.put(lcdf::Str("a"), "va"));
+    EXPECT_TRUE(sharded.insert(lcdf::Str("b"), "vb"));
+    EXPECT_FALSE(sharded.insert(lcdf::Str("b"), "vb2"));
 
     std::string out;
     EXPECT_TRUE(sharded.get(lcdf::Str("a"), out));
@@ -299,8 +299,9 @@ TEST_F(SiloNonTxnApi, ShardedRoutesNonTxnOps) {
 TEST_F(SiloNonTxnApi, NonTxnGetDoesNotSeeUncommittedTxnWrite) {
     abstract_ordered_index* tbl = make_table("interleave");
 
-    const std::string committed = mako::Encode("committed");
-    ASSERT_TRUE(tbl->put(lcdf::Str("k"), committed));
+    // Non-txn put takes raw bytes; the txn'd put below keeps the
+    // caller-Encodes convention (it stores a pointer until commit).
+    ASSERT_TRUE(tbl->put(lcdf::Str("k"), "committed"));
 
     std::atomic<int> stage{0};  // 0=init, 1=staged, 2=main-checked, 3=committed
     const std::string staged_val = mako::Encode("staged");
@@ -348,7 +349,7 @@ TEST_F(SiloNonTxnApi, ConcurrentNonTxnOpsAllSucceed) {
             silo_thread_init();
             for (int i = 0; i < kKeysPerThread; i++) {
                 std::string k = "t" + std::to_string(t) + "_" + std::to_string(i);
-                std::string v = mako::Encode("v" + std::to_string(t * 1000 + i));
+                std::string v = "v" + std::to_string(t * 1000 + i);
                 if (!tbl->put(lcdf::Str(k), v)) {
                     // put returns false only if the key existed — keys are
                     // distinct per thread, so this would be a bug.

@@ -207,19 +207,39 @@ restored (regressed to a blind `put()` in 9d66d336 —
 never runs it). `ITable` non-txn methods default to `NotSupported`
 rather than pure-virtual so other implementers keep compiling.
 
-**Phase 5** — `src/mako/kv_backends.hh` with namespaces `kv_masstree`
-/ `kv_silo` / `kv_mako` (the adapter is `kv_masstree::Table`, not
-`masstree_kv::Table` as sketched). One deliberate upgrade over the
-plan: the uniform surface takes RAW value bytes on every backend —
-the silo/mako shims apply `mako::Encode()` on writes and the L3 ops
-strip on reads, so the EXTRA_BITS convention no longer leaks to
-callers (masstree has no such convention, so this is what makes the
-backends truly interchangeable). The adapter allocates values in the
-RCU arena and defers overwrite/remove frees; every op pins a
-`scoped_rcu_region`. Gate: `tests/test_kv_backends.cc` — one
-TYPED_TEST body over all three backends plus the same smoke body
-compiled three times with only `namespace kv = ...;` changed
-(30 tests).
+**Phase 5 (revised: consolidated, no new surface)** — the first
+implementation added `src/mako/kv_backends.hh` with `kv_masstree` /
+`kv_silo` / `kv_mako` namespaces; review concluded that was yet
+another API layer beside the layers it wrapped, so it was deleted and
+consolidated into `abstract_ordered_index` itself:
+
+- The RAW-value-bytes convention moved INTO the L3 non-txn ops:
+  `mbta_ordered_index::put/insert` apply `mako::Encode()` internally
+  (reads/scans already come back stripped), so no caller of the
+  non-txn surface sees the EXTRA_BITS convention. The txn'd ops keep
+  caller-encodes (they store a pointer into the caller's buffer until
+  commit). Remote non-txn ops carry raw bytes on the wire; the owning
+  shard encodes at its local L3.
+- The masstree adapter became `masstree_ordered_index`
+  (`src/mako/benchmarks/masstree_ordered_index.hh`), a real
+  `abstract_ordered_index` subclass: the six non-txn ops implemented
+  (values owned in the RCU arena, overwrite/remove frees deferred,
+  every op pins a `scoped_rcu_region`); the transactional/2PC
+  virtuals abort via `NDB_UNIMPLEMENTED` — masstree has no
+  transaction runtime.
+- `mbta_sharded_ordered_index` now actually inherits
+  `abstract_ordered_index` (it had only mirrored the methods), with
+  compiler-verified `override`s and the remaining pure virtuals
+  implemented (point `shard_get`/`shard_put` route per-key; the range
+  2PC ops abort — RPC handlers operate on per-table objects, never
+  the routing wrapper).
+
+"Switch backend" is therefore plain runtime polymorphism: construct
+`masstree_ordered_index`, `mbta_ordered_index`, or
+`mbta_sharded_ordered_index` and hold an `abstract_ordered_index*`.
+Gate: `tests/test_kv_backends.cc` — one TYPED_TEST body over the
+three concrete types through the base pointer, plus a single ordinary
+function exercised against all three (25 tests).
 
 **Phase 6** — this section; consumer notes added to
 `rocksdb_interface.md` and `mako-book.md`.

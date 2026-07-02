@@ -106,10 +106,11 @@ public:
     //   Put     — blind overwrite; OK.
     //   Insert  — put-if-absent; InvalidArgument if the key exists.
     //   Delete  — real remove; NotFound if the key was absent.
-    //   Get     — OK / NotFound; value comes back decoded (no
-    //             EXTRA_BITS suffix). Values passed to Put/Insert
-    //             should be encoded with mako::Encode(), matching the
-    //             transactional API's convention.
+    //   Get     — OK / NotFound. Values are RAW BYTES in both
+    //             directions on this surface: backends apply their
+    //             storage encoding internally (unlike the
+    //             transactional API above, where callers must pass
+    //             mako::Encode()'d values that outlive the commit).
     //   Exists  — OK with *exists set; only errors on real failures.
     //
     // Defaults return NotSupported so existing ITable implementers

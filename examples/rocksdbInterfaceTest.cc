@@ -584,7 +584,10 @@ void test_nontxn_api(mako::IDatabase* db) {
 
     // Each op is self-contained (an internal one-op OCC txn): no
     // BeginTransaction/Commit around it.
-    mako::Status s = table->Put("nt_key", mako::Encode("nt_value"));
+    // Non-txn ops take RAW bytes (the backend encodes internally) —
+    // unlike the txn'd Put/Insert above, which require caller-Encoded
+    // values whose lifetime spans the commit.
+    mako::Status s = table->Put("nt_key", "nt_value");
     VERIFY(s.ok(), "non-txn Put succeeds");
 
     std::string val;
@@ -595,9 +598,9 @@ void test_nontxn_api(mako::IDatabase* db) {
     s = table->Get("nt_missing", val);
     VERIFY(s.IsNotFound(), "non-txn Get on absent key is NotFound");
 
-    s = table->Insert("nt_once", mako::Encode("first"));
+    s = table->Insert("nt_once", "first");
     VERIFY(s.ok(), "non-txn Insert on fresh key succeeds");
-    s = table->Insert("nt_once", mako::Encode("second"));
+    s = table->Insert("nt_once", "second");
     VERIFY(s.IsInvalidArgument(), "non-txn Insert on existing key rejected");
     s = table->Get("nt_once", val);
     VERIFY(s.ok() && val == "first", "existing value untouched by dup Insert");

@@ -366,14 +366,21 @@ static bool nontxn_remote_write(RpcFn&& rpc) {
 // @unsafe - retries around Sto thread-local txn state
 bool put(lcdf::Str key, const std::string &value) override {
   if (mbta.get_is_remote()) {
+    // Raw bytes on the wire; the owning shard's local branch encodes.
     std::string k(key.data(), key.length());
     return nontxn_remote_write([&](bool* r) {
       return TThread::sclient->nontxnPut(mbta.get_table_id(), k, value, r);
     });
   }
+  // Encoding happens HERE, once, at the storage boundary: non-txn
+  // callers pass raw bytes (unlike the txn'd put, which stores a
+  // pointer into the caller's buffer until commit and therefore needs
+  // the caller to own an Encode()d copy). The one-op txn commits
+  // inside mbta.put, so the local's lifetime suffices.
+  const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return mbta.put(key, StringWrapper(value));
+      return mbta.put(key, StringWrapper(enc));
     } catch (Transaction::Abort&) { /* conflict — retry */ }
   }
 }
@@ -386,9 +393,11 @@ bool insert(lcdf::Str key, const std::string &value) override {
       return TThread::sclient->nontxnInsert(mbta.get_table_id(), k, value, r);
     });
   }
+  // Raw-bytes convention: Encode applied here, once (see put above).
+  const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return mbta.insert(key, StringWrapper(value));
+      return mbta.insert(key, StringWrapper(enc));
     } catch (Transaction::Abort&) { /* conflict — retry */ }
   }
 }

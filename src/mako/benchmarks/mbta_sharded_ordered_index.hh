@@ -15,7 +15,11 @@
 #include "../lib/common.h"
 #include "rocks_interface/status.hh"
 
-class mbta_sharded_ordered_index {
+// A true abstract_ordered_index: the "Mako routing" backend beside
+// mbta_ordered_index (Silo) and masstree_ordered_index (plain
+// Masstree). Callers hold an abstract_ordered_index* and pick the
+// backend at construction.
+class mbta_sharded_ordered_index : public abstract_ordered_index {
 public:
   mbta_sharded_ordered_index(
       std::string name,
@@ -26,19 +30,19 @@ public:
   bool get(void *txn,
            lcdf::Str key,
            std::string &value,
-           size_t max_bytes_read = std::string::npos);
+           size_t max_bytes_read = std::string::npos) override;
 
   bool get(void *txn,
            const std::string &key,
            std::string &value,
-           size_t max_bytes_read = std::string::npos) {
+           size_t max_bytes_read = std::string::npos) override {
     return get(txn, lcdf::Str(key), value, max_bytes_read);
   }
 
   bool get(void *txn,
            int32_t key,
            std::string &value,
-           size_t max_bytes_read = std::string::npos) {
+           size_t max_bytes_read = std::string::npos) override {
     return get(txn,
                lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)),
                value,
@@ -47,17 +51,17 @@ public:
 
   const char *put(void *txn,
                   lcdf::Str key,
-                  const std::string &value);
+                  const std::string &value) override;
 
   const char *put(void *txn,
                   const std::string &key,
-                  const std::string &value) {
+                  const std::string &value) override {
     return put(txn, lcdf::Str(key), value);
   }
 
   const char *put(void *txn,
                   int32_t key,
-                  const std::string &value) {
+                  const std::string &value) override {
     return put(txn,
                lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)),
                value);
@@ -67,7 +71,7 @@ public:
                        lcdf::Str key,
                        bool (*compar)(const std::string &newValue,
                                       const std::string &oldValue),
-                       const std::string &value);
+                       const std::string &value) override;
 
   const char *put_mbta(void *txn,
                        const std::string &key,
@@ -79,18 +83,18 @@ public:
 
   const char *insert(void *txn,
                      lcdf::Str key,
-                     const std::string &value) {
+                     const std::string &value) override {
     // @safe - Forward to per-shard insert() which calls transInsert (not transPut)
     return pick_shard(key)->insert(txn, key, value);
   }
 
-  void remove(void *txn, lcdf::Str key);
+  void remove(void *txn, lcdf::Str key) override;
 
-  void remove(void *txn, const std::string &key) {
+  void remove(void *txn, const std::string &key) override {
     remove(txn, lcdf::Str(key));
   }
 
-  void remove(void *txn, int32_t key) {
+  void remove(void *txn, int32_t key) override {
     remove(txn, lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)));
   }
 
@@ -128,13 +132,13 @@ public:
             const std::string &start_key,
             const std::string *end_key,
             abstract_ordered_index::scan_callback &callback,
-            str_arena *arena = nullptr);
+            str_arena *arena = nullptr) override;
 
   void rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              abstract_ordered_index::scan_callback &callback,
-             str_arena *arena = nullptr);
+             str_arena *arena = nullptr) override;
 
   // ========================================================================
   // Non-transactional API (Masstree-shape).
@@ -146,29 +150,66 @@ public:
 
   bool get(lcdf::Str key,
            std::string &value,
-           size_t max_bytes_read = std::string::npos);
+           size_t max_bytes_read = std::string::npos) override;
 
-  bool put(lcdf::Str key, const std::string &value);
+  bool put(lcdf::Str key, const std::string &value) override;
 
-  bool insert(lcdf::Str key, const std::string &value);
+  bool insert(lcdf::Str key, const std::string &value) override;
 
-  bool remove(lcdf::Str key);
+  bool remove(lcdf::Str key) override;
 
   void scan(const std::string &start_key,
             const std::string *end_key,
             abstract_ordered_index::scan_callback &callback,
-            str_arena *arena = nullptr);
+            str_arena *arena = nullptr) override;
 
   void rscan(const std::string &start_key,
              const std::string *end_key,
              abstract_ordered_index::scan_callback &callback,
-             str_arena *arena = nullptr);
+             str_arena *arena = nullptr) override;
 
-  size_t size() const;
+  size_t size() const override;
 
-  std::map<std::string, uint64_t> clear();
+  std::map<std::string, uint64_t> clear() override;
 
-  void print_stats();
+  void print_stats() override;
+
+  // ========================================================================
+  // Remaining abstract_ordered_index pure virtuals.
+  // ========================================================================
+
+  // Cross-shard 2PC point ops route to the owning per-key table, same
+  // as the transactional point ops above.
+  bool shard_get(lcdf::Str key,
+                 std::string &value,
+                 size_t max_bytes_read = std::string::npos) override {
+    return pick_shard(key)->shard_get(key, value, max_bytes_read);
+  }
+
+  const char *shard_put(lcdf::Str key, const std::string &value) override {
+    return pick_shard(key)->shard_put(key, value);
+  }
+
+  // Range ops have no per-key owner; the RPC-handler paths that use
+  // them operate on per-table objects, never on this routing wrapper.
+  bool shard_scan(const std::string &, const std::string *,
+                  abstract_ordered_index::scan_callback &,
+                  str_arena * = nullptr) override {
+    NDB_UNIMPLEMENTED("mbta_sharded_ordered_index: shard_scan");
+  }
+
+  void scanRemoteOne(void *, const std::string &, const std::string &,
+                     std::string &) override {
+    NDB_UNIMPLEMENTED("mbta_sharded_ordered_index: scanRemoteOne");
+  }
+
+  // The wrapper spans per-key tables with their own ids/remoteness;
+  // report the first shard's id for diagnostics, and local (the
+  // per-key tables carry their own is_remote).
+  int get_table_id() override {
+    return shard_tables_.empty() ? -1 : shard_tables_[0]->get_table_id();
+  }
+  bool get_is_remote() override { return false; }
 
   static mbta_sharded_ordered_index *
   build(const std::string &name,

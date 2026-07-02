@@ -338,9 +338,20 @@ public:
   //     transaction (safe under concurrent OCC readers/writers).
   //   - remove is a direct raw write (fast; documented asymmetry).
   //
+  // VALUES ARE RAW BYTES on this surface, in both directions: backends
+  // that need a storage encoding apply it internally (mbta applies
+  // mako::Encode on writes; reads/scans already come back stripped).
+  // This is what makes implementations interchangeable — callers hold
+  // an abstract_ordered_index* and pick the backend at construction:
+  // masstree_ordered_index (plain Masstree, no transactions),
+  // mbta_ordered_index (Silo), or mbta_sharded_ordered_index (Mako
+  // routing). Note the txn'd put/insert above KEEP the caller-Encodes
+  // convention — they store a pointer into the caller's buffer until
+  // commit, so the caller must own the encoded copy's lifetime.
+  //
   // Default implementations abort loudly: only backends that support
-  // non-txn access override them (mbta_ordered_index today). Callers
-  // must not assume every abstract_ordered_index supports this API.
+  // non-txn access override them. Callers must not assume every
+  // abstract_ordered_index supports this API.
   //
   // CONSTRAINT: these must NOT be called from a thread that has an
   // open transaction (the internal one-op txn would trip

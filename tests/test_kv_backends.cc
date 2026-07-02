@@ -1,12 +1,25 @@
-// Gating tests for the namespace-switchable KV surface
-// (docs/mako-nontxn-api-plan.md Phase 5; src/mako/kv_backends.hh).
+// Gating tests for the consolidated three-backend story
+// (docs/mako-nontxn-api-plan.md Phase 5, as revised): there is ONE
+// non-transactional KV interface — the non-txn ops on
+// abstract_ordered_index — with three implementations picked at
+// construction time:
+//
+//     masstree_ordered_index      plain Masstree, no transactions
+//     mbta_ordered_index          Silo (one-op OCC txn per op)
+//     mbta_sharded_ordered_index  Mako routing over per-key tables
 //
 // Two proofs:
-//   1. TYPED_TEST over tag structs — the SAME test body runs against
-//      kv_masstree, kv_silo, and kv_mako and asserts identical
-//      observable behavior for the single-node-reachable subset.
-//   2. Literal namespace switching — the same function body compiles
-//      three times with only `namespace kv = ...;` changed.
+//   1. TYPED_TEST over factory tags — the SAME test body runs against
+//      all three concrete types THROUGH abstract_ordered_index* and
+//      asserts identical observable behavior for the
+//      single-node-reachable subset.
+//   2. exercise_any_backend(): one ordinary (non-template) function
+//      taking abstract_ordered_index* serves every backend — the
+//      consolidation is plain runtime polymorphism, no per-backend
+//      vocabulary.
+//
+// Values are RAW BYTES per the interface contract: backends needing a
+// storage encoding (mbta's EXTRA_BITS) apply it internally.
 //
 // Scan boundary keys are chosen strictly BETWEEN stored keys so the
 // expected result set is identical under any inclusive/exclusive
@@ -15,13 +28,41 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "kv_backends.hh"
+// masstree_ordered_index must precede mbta_wrapper (MassTrans's
+// `#define RCU 1` vs imstring.h's template parameter).
+#include "benchmarks/masstree_ordered_index.hh"
+#include "benchmarks/mbta_wrapper.hh"
+#include "benchmarks/mbta_sharded_ordered_index.hh"
 
 #include <gtest/gtest.h>
 
 import std;
 
 namespace {
+
+using mbta_type = mbta_ordered_index::mbta_type;
+
+std::atomic<int> g_tid_counter{0};
+std::atomic<long> g_table_id{7000};
+
+// Per-thread Silo/Masstree bring-up — the same minimal contract
+// test_silo_nontxn_api.cc uses. One shared storage runtime serves all
+// three backends, so one init covers them (masstree_ordered_index
+// needs the threadinfo/RCU part).
+void engine_thread_init() {
+    static thread_local bool done = false;
+    if (done) return;
+    done = true;
+    static std::once_flag once;
+    std::call_once(once, [] { mbta_type::static_init(); });
+    TThread::set_id(g_tid_counter.fetch_add(1));
+    TThread::set_mode(0);
+    TThread::readset_shard_bits = 0;
+    TThread::writeset_shard_bits = 0;
+    TThread::transget_without_throw = false;
+    TThread::transget_without_stable = false;
+    mbta_type::thread_init();
+}
 
 // A scan_callback that collects (key, value) pairs and optionally
 // stops early after `limit` entries.
@@ -39,35 +80,42 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Backend tags: one type per namespace, same members.
+// Backend tags: each constructs its concrete type; tests only ever see
+// abstract_ordered_index*.
 // ---------------------------------------------------------------------------
 struct MasstreeBackend {
-    using Table = kv_masstree::Table;
-    static Table* open(const std::string& n) { return kv_masstree::open(n); }
-    static void thread_init() { kv_masstree::thread_init(); }
+    static abstract_ordered_index* make(const std::string& name) {
+        return new masstree_ordered_index(name, g_table_id.fetch_add(1));
+    }
     static const char* prefix() { return "mt"; }
 };
 struct SiloBackend {
-    using Table = kv_silo::Table;
-    static Table* open(const std::string& n) { return kv_silo::open(n); }
-    static void thread_init() { kv_silo::thread_init(); }
+    static abstract_ordered_index* make(const std::string& name) {
+        return new mbta_ordered_index(name, g_table_id.fetch_add(1),
+                                      /*db=*/nullptr);
+    }
     static const char* prefix() { return "silo"; }
 };
 struct MakoBackend {
-    using Table = kv_mako::Table;
-    static Table* open(const std::string& n) { return kv_mako::open(n); }
-    static void thread_init() { kv_mako::thread_init(); }
+    static abstract_ordered_index* make(const std::string& name) {
+        auto* local = new mbta_ordered_index(name, g_table_id.fetch_add(1),
+                                             /*db=*/nullptr);
+        return new mbta_sharded_ordered_index(
+            name, std::vector<abstract_ordered_index*>{local});
+    }
     static const char* prefix() { return "mako"; }
 };
 
 template <typename B>
 class KvBackends : public ::testing::Test {
 protected:
-    void SetUp() override { B::thread_init(); }
+    void SetUp() override { engine_thread_init(); }
 
-    // Unique table per (backend, test) so key spaces never collide.
-    typename B::Table* fresh_table(const std::string& tag) {
-        return B::open(std::string(B::prefix()) + "_" + tag);
+    // Fresh table per (backend, test) so key spaces never collide.
+    // Leaked deliberately: MassTrans teardown wants RCU quiescence a
+    // unit test can't provide; tables are small.
+    abstract_ordered_index* fresh_table(const std::string& tag) {
+        return B::make(std::string(B::prefix()) + "_" + tag);
     }
 };
 
@@ -78,18 +126,18 @@ TYPED_TEST_SUITE(KvBackends, Backends);
 // Point ops: identical semantics on all three backends.
 // ---------------------------------------------------------------------------
 TYPED_TEST(KvBackends, PutGetRoundTripRawBytes) {
-    auto* t = this->fresh_table("roundtrip");
+    abstract_ordered_index* t = this->fresh_table("roundtrip");
 
     EXPECT_TRUE(t->put(lcdf::Str("k1"), "plain-value"));
     std::string out;
     ASSERT_TRUE(t->get(lcdf::Str("k1"), out));
-    EXPECT_EQ(out, "plain-value");  // raw bytes back, no Encode leakage
+    EXPECT_EQ(out, "plain-value");  // raw bytes back, no encoding leakage
 
     EXPECT_FALSE(t->get(lcdf::Str("missing"), out));
 }
 
 TYPED_TEST(KvBackends, PutReturnsNewlyInsertedAndOverwrites) {
-    auto* t = this->fresh_table("putret");
+    abstract_ordered_index* t = this->fresh_table("putret");
 
     EXPECT_TRUE(t->put(lcdf::Str("k"), "one"));
     EXPECT_FALSE(t->put(lcdf::Str("k"), "two"));  // existed
@@ -100,7 +148,7 @@ TYPED_TEST(KvBackends, PutReturnsNewlyInsertedAndOverwrites) {
 }
 
 TYPED_TEST(KvBackends, InsertIsPutIfAbsent) {
-    auto* t = this->fresh_table("insert");
+    abstract_ordered_index* t = this->fresh_table("insert");
 
     EXPECT_TRUE(t->insert(lcdf::Str("k"), "first"));
     EXPECT_FALSE(t->insert(lcdf::Str("k"), "second"));
@@ -111,7 +159,7 @@ TYPED_TEST(KvBackends, InsertIsPutIfAbsent) {
 }
 
 TYPED_TEST(KvBackends, RemoveSemantics) {
-    auto* t = this->fresh_table("remove");
+    abstract_ordered_index* t = this->fresh_table("remove");
 
     ASSERT_TRUE(t->put(lcdf::Str("k"), "victim"));
     EXPECT_TRUE(t->remove(lcdf::Str("k")));
@@ -127,7 +175,7 @@ TYPED_TEST(KvBackends, RemoveSemantics) {
 }
 
 TYPED_TEST(KvBackends, LongValuesSurviveRoundTrip) {
-    auto* t = this->fresh_table("longval");
+    abstract_ordered_index* t = this->fresh_table("longval");
 
     // Longer than any internal suffix/prefix convention.
     const std::string big(4096, 'x');
@@ -143,13 +191,13 @@ TYPED_TEST(KvBackends, LongValuesSurviveRoundTrip) {
 // convention-independent.
 // ---------------------------------------------------------------------------
 TYPED_TEST(KvBackends, ScanForwardSortedWithValues) {
-    auto* t = this->fresh_table("scan");
+    abstract_ordered_index* t = this->fresh_table("scan");
     for (int i = 0; i < 6; i++) {
         std::string k = "s" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "val" + std::to_string(i)));
     }
 
-    // ("s0", "s4") exclusive-ish boundaries: s1, s2, s3 on any convention.
+    // Between s0/s1 up to between s3/s4: s1, s2, s3 on any convention.
     Collect cb;
     const std::string start = "s0z", end = "s3z";
     t->scan(start, &end, cb);
@@ -169,7 +217,7 @@ TYPED_TEST(KvBackends, ScanForwardSortedWithValues) {
 }
 
 TYPED_TEST(KvBackends, ScanEarlyStop) {
-    auto* t = this->fresh_table("scanstop");
+    abstract_ordered_index* t = this->fresh_table("scanstop");
     for (int i = 0; i < 6; i++) {
         std::string k = "e" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "v" + std::to_string(i)));
@@ -182,7 +230,7 @@ TYPED_TEST(KvBackends, ScanEarlyStop) {
 }
 
 TYPED_TEST(KvBackends, RScanDescending) {
-    auto* t = this->fresh_table("rscan");
+    abstract_ordered_index* t = this->fresh_table("rscan");
     for (int i = 0; i < 6; i++) {
         std::string k = "r" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "v" + std::to_string(i)));
@@ -199,43 +247,23 @@ TYPED_TEST(KvBackends, RScanDescending) {
     }
 }
 
-TYPED_TEST(KvBackends, OpenIsFindOrCreate) {
-    auto* a = this->fresh_table("registry");
-    auto* b = this->fresh_table("registry");
-    EXPECT_EQ(a, b);
-
-    ASSERT_TRUE(a->put(lcdf::Str("shared"), "seen-through-b"));
+// ---------------------------------------------------------------------------
+// The consolidation proof: one ordinary function, any backend.
+// ---------------------------------------------------------------------------
+void exercise_any_backend(abstract_ordered_index* t) {
+    ASSERT_TRUE(t->put(lcdf::Str("nk"), "nv"));
     std::string out;
-    ASSERT_TRUE(b->get(lcdf::Str("shared"), out));
-    EXPECT_EQ(out, "seen-through-b");
-}
-
-// ---------------------------------------------------------------------------
-// The literal proof: the same body, three namespaces, one alias line.
-// ---------------------------------------------------------------------------
-#define KV_SMOKE_BODY(tbl_name)                                   \
-    kv::thread_init();                                            \
-    kv::Table* t = kv::open(tbl_name);                            \
-    ASSERT_TRUE(t->put(lcdf::Str("nk"), "nv"));                   \
-    std::string out;                                              \
-    ASSERT_TRUE(t->get(lcdf::Str("nk"), out));                    \
-    EXPECT_EQ(out, "nv");                                         \
-    EXPECT_TRUE(t->remove(lcdf::Str("nk")));                      \
+    ASSERT_TRUE(t->get(lcdf::Str("nk"), out));
+    EXPECT_EQ(out, "nv");
+    EXPECT_TRUE(t->remove(lcdf::Str("nk")));
     EXPECT_FALSE(t->get(lcdf::Str("nk"), out));
-
-TEST(KvNamespaceSwitch, Masstree) {
-    namespace kv = kv_masstree;
-    KV_SMOKE_BODY("ns_smoke_masstree")
 }
 
-TEST(KvNamespaceSwitch, Silo) {
-    namespace kv = kv_silo;
-    KV_SMOKE_BODY("ns_smoke_silo")
-}
-
-TEST(KvNamespaceSwitch, Mako) {
-    namespace kv = kv_mako;
-    KV_SMOKE_BODY("ns_smoke_mako")
+TEST(KvBackendSwitch, OneFunctionServesAllThree) {
+    engine_thread_init();
+    exercise_any_backend(MasstreeBackend::make("switch_mt"));
+    exercise_any_backend(SiloBackend::make("switch_silo"));
+    exercise_any_backend(MakoBackend::make("switch_mako"));
 }
 
 }  // namespace
