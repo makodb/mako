@@ -183,6 +183,32 @@ None of these have workarounds. `NotSupported` is the honest answer for all thre
 | `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
 | `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
 
+### ITable non-transactional methods (2026-07)
+
+`ITable` also carries a non-transactional surface (no `void* txn`
+parameter; each op is a self-contained, immediately-visible operation
+— internally a one-op OCC transaction on the owning shard, so writes
+replicate through the normal commit path). Semantics: `Put` = blind
+overwrite (OK); `Insert` = put-if-absent (`InvalidArgument` if
+present); `Delete` = real remove (`NotFound` if absent); `Get` = OK /
+`NotFound`, value returned decoded; `Exists` = OK + flag. Defaults
+return `NotSupported`; `LocalTable` implements them over the L3
+non-txn API and `RemoteTable` over the self-contained non-txn request
+types (14-17). Callers must not have an open transaction on the
+calling thread. See
+[`mako-nontxn-api-plan.md`](mako-nontxn-api-plan.md).
+
+The `RemoteDB` KV path was re-based onto this machinery: the previous
+implementation "wrote" via `shard_put` — staging + locking a 2PC
+participant write that nothing ever committed (never visible, never
+replicated, lock leaked) — and "deleted" via an empty-value put. Both
+decoupled-client server paths (the raw-struct handlers and
+`MakoClientService`) now run `ShardReceiver::RunNontxnOp`.
+`RemoteDB::ConnectNontxn(host, port)` + `GetTable(name, table_id)`
+give a client that interoperates with `ClientTcpServer` end-to-end
+(the rrr-protocol txn'd client still has no matching live server —
+pre-existing).
+
 ### IDatabase
 
 | Method | What it does | What it lacks | Why this implementation |

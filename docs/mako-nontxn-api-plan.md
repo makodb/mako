@@ -145,6 +145,85 @@ Phases 1–3 are the core "Mako has the API" milestone; 4–5 are the consumer-f
 - Reworking the ambient-2PC `shard_*` protocol (untouched, as in the previous plan).
 - `remoteRScan` (add only on demand).
 
+## As implemented (2026-07)
+
+All six phases landed on `worktree-api-unification`. Deviations and
+discoveries, by phase:
+
+**Phase 1** — Landed as planned, plus one type the plan didn't call
+for: `nontxnGetReqType = 17`. Wire format `nontxn_write_request_t`
+must start with `targert_server_id` because the transport backends
+peek the first `uint16_t` of every shard request to pick the helper
+queue (`TargetServerIDReader`, rrr_rpc_backend.cc). Handler
+registration ranges widened to 1..17.
+
+**Phase 2 (D1-reads revised)** — The plan reused `remoteGet` for the
+remote non-txn get. That is wrong: `HandleGetRequest → shard_get`
+stages a read-set item in the serving worker's participant
+transaction, which the txn path cleans up via its later 2PC
+abort/commit — a non-txn caller never sends one, so the worker is
+left permanently "busy" and every later non-txn write spins on
+SERVER_BUSY. Reads got their own self-contained `nontxnGet` (server
+runs the L3 get; stages nothing). Corollary: the server's L3 get
+already strips EXTRA_BITS, so the client must NOT strip again —
+values longer than the suffix were being silently truncated
+(long-value regression tests now pin this on both the ShardClient and
+RemoteDB paths). Client remote branches retry transient failures
+(TIMEOUT / SERVER_BUSY) instead of asserting.
+
+**Phase 3** — `tests/test_mako_nontxn_distributed.cc`: two shards in
+one process (client-view `is_remote` tables driving RPCs into a
+`ShardServer` over the loopback transport), 8 tests. Server-side
+"busy" needed sharpening: `Transaction::has_staged_items()` requires
+`in_progress()` — after a mode-0 commit `tset_size_` keeps its final
+count until the next `start_transaction`, so committed leftovers must
+not read as staged 2PC state. Replication smoke and leader-
+enforcement tests were not implementable in this harness (no
+replicated single-process fixture); leader gating is enforced in
+`RunNontxnOp` and exercised implicitly by CI's replicated suites.
+
+**Phase 4** — The investigation found the decoupled-client stack has
+two parallel server paths (raw-struct handlers types 20-25 dispatched
+via `ReceiveRequest`, and a never-registered rrr `MakoClientService`)
+and that `RemoteDB`'s rrr protocol cannot talk to `ClientTcpServer`'s
+raw `[type][len][payload]` framing at all — both halves were
+scaffolding. Implementation: the non-txn core is factored into
+`ShardReceiver::RunNontxnOp` (leader check, staged-2PC busy check,
+mode-0 one-op commit, mode-1 idle-participant restore) and ALL
+decoupled-client KV handlers were re-based onto it (F4 fixed in both
+families; "delete" is now a real remove instead of an uncommitted
+empty-value put). `RemoteTable`'s non-txn methods speak the raw
+framing with types 14-17 via `RemoteDB::ConnectNontxn` +
+`GetTable(name, table_id)` — the first client that interoperates with
+`ClientTcpServer` end-to-end. Enablers fixed along the way:
+`ClientTcpServer` workers now bind Silo thread state
+(`scoped_db_thread_ctx`, the TODO the original code deferred);
+`ClientTcpServer::Stop` must `shutdown()` the listen fd (close alone
+never wakes a Linux `accept()`); `ShardReceiver::Register` only
+establishes the idle-participant invariant in mode 1; and
+`mbta_sharded_ordered_index::Insert(txn)` got its duplicate detection
+restored (regressed to a blind `put()` in 9d66d336 —
+`rocksdbInterfaceTest` I1.4 had been red since, unnoticed because CI
+never runs it). `ITable` non-txn methods default to `NotSupported`
+rather than pure-virtual so other implementers keep compiling.
+
+**Phase 5** — `src/mako/kv_backends.hh` with namespaces `kv_masstree`
+/ `kv_silo` / `kv_mako` (the adapter is `kv_masstree::Table`, not
+`masstree_kv::Table` as sketched). One deliberate upgrade over the
+plan: the uniform surface takes RAW value bytes on every backend —
+the silo/mako shims apply `mako::Encode()` on writes and the L3 ops
+strip on reads, so the EXTRA_BITS convention no longer leaks to
+callers (masstree has no such convention, so this is what makes the
+backends truly interchangeable). The adapter allocates values in the
+RCU arena and defers overwrite/remove frees; every op pins a
+`scoped_rcu_region`. Gate: `tests/test_kv_backends.cc` — one
+TYPED_TEST body over all three backends plus the same smoke body
+compiled three times with only `namespace kv = ...;` changed
+(30 tests).
+
+**Phase 6** — this section; consumer notes added to
+`rocksdb_interface.md` and `mako-book.md`.
+
 ## Related documents
 
 - [`silo-masstree-api-unification.md`](silo-masstree-api-unification.md) — the Silo-level predecessor (implemented).

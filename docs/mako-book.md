@@ -605,6 +605,31 @@ persistence.persistAsync(log_data, size, shard_id, partition_id,
 
 RocksDB databases are created at `/tmp/mako_rocksdb_{shard_id}`.
 
+### The three-backend KV surface (non-transactional)
+
+`src/mako/kv_backends.hh` exposes the same non-transactional API
+(`get / put / insert / remove / scan / rscan`, raw-byte values) at
+three points of the stack, selected by a namespace alias:
+
+```cpp
+namespace kv = kv_silo;   // or kv_masstree / kv_mako — nothing else changes
+kv::thread_init();
+kv::Table* t = kv::open("mytable");
+t->put(lcdf::Str("k"), "value");
+```
+
+- `kv_masstree` — plain Masstree (L1), no transactions; the adapter
+  owns value memory with RCU-deferred frees.
+- `kv_silo` — Silo's L3 table; each op is an internal one-op OCC
+  transaction.
+- `kv_mako` — the sharded index; remote keys travel self-contained
+  non-txn RPCs, and writes on a replicated leader reach the
+  replication log through the normal commit path.
+
+Design and semantics: [`mako-nontxn-api-plan.md`](mako-nontxn-api-plan.md)
+and its predecessor
+[`silo-masstree-api-unification.md`](silo-masstree-api-unification.md).
+
 ---
 
 ## 7. Networking and RPC
