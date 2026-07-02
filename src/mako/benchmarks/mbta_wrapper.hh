@@ -307,7 +307,18 @@ STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& va
 // @unsafe - retries around Sto thread-local txn state
 bool get(lcdf::Str key, std::string &value,
          size_t max_bytes_read = std::string::npos) override {
-  ALWAYS_ASSERT(!mbta.get_is_remote());
+  if (mbta.get_is_remote()) {
+    // Remote table: self-contained read RPC (same path the txn'd
+    // get's remote branch uses). remoteGet returns >0 on failure.
+    int ret = TThread::sclient->remoteGet(
+        mbta.get_table_id(), std::string(key.data(), key.length()), value);
+    if (ret > 0) return false;
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+      UPDATE_VS(value.data(), value.length())
+      value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    }
+    return true;
+  }
   while (true) {
     try {
       bool ret = mbta.get(key, value);
@@ -327,7 +338,14 @@ bool get(lcdf::Str key, std::string &value,
 
 // @unsafe - retries around Sto thread-local txn state
 bool put(lcdf::Str key, const std::string &value) override {
-  ALWAYS_ASSERT(!mbta.get_is_remote());
+  if (mbta.get_is_remote()) {
+    bool op_result = false;
+    int ret = TThread::sclient->nontxnPut(
+        mbta.get_table_id(), std::string(key.data(), key.length()),
+        value, &op_result);
+    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
+    return op_result;
+  }
   while (true) {
     try {
       return mbta.put(key, StringWrapper(value));
@@ -337,7 +355,14 @@ bool put(lcdf::Str key, const std::string &value) override {
 
 // @unsafe - retries around Sto thread-local txn state
 bool insert(lcdf::Str key, const std::string &value) override {
-  ALWAYS_ASSERT(!mbta.get_is_remote());
+  if (mbta.get_is_remote()) {
+    bool op_result = false;
+    int ret = TThread::sclient->nontxnInsert(
+        mbta.get_table_id(), std::string(key.data(), key.length()),
+        value, &op_result);
+    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
+    return op_result;
+  }
   while (true) {
     try {
       return mbta.insert(key, StringWrapper(value));
@@ -345,9 +370,17 @@ bool insert(lcdf::Str key, const std::string &value) override {
   }
 }
 
-// @unsafe - direct raw write through MassTrans cursor
+// @unsafe - direct raw write through MassTrans cursor (local);
+// self-contained RPC (remote)
 bool remove(lcdf::Str key) override {
-  ALWAYS_ASSERT(!mbta.get_is_remote());
+  if (mbta.get_is_remote()) {
+    bool op_result = false;
+    int ret = TThread::sclient->nontxnRemove(
+        mbta.get_table_id(), std::string(key.data(), key.length()),
+        &op_result);
+    ALWAYS_ASSERT(ret == mako::ErrorCode::SUCCESS);
+    return op_result;
+  }
   return mbta.remove(key);
 }
 
@@ -356,6 +389,12 @@ void scan(const std::string &start_key,
           const std::string *end_key,
           scan_callback &callback,
           str_arena *arena = nullptr) override {
+  // Remote tables: fail loudly. The only scan RPC (remoteScan /
+  // HandleScanRequest) returns a single first-match value, not a
+  // stream — full remote scan needs new protocol (plan non-goal;
+  // see docs/mako-nontxn-api-plan.md D5). Note the txn'd scan on a
+  // remote table silently scans the empty local tree; asserting
+  // here is deliberately stricter.
   ALWAYS_ASSERT(!mbta.get_is_remote());
   mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
   while (true) {
@@ -375,6 +414,7 @@ void rscan(const std::string &start_key,
            const std::string *end_key,
            scan_callback &callback,
            str_arena *arena = nullptr) override {
+  // Remote tables: fail loudly (same rationale as scan above).
   ALWAYS_ASSERT(!mbta.get_is_remote());
   mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
   while (true) {
