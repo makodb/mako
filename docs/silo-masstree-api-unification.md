@@ -129,21 +129,36 @@ Implement them in the two backends that matter for the compat facade path:
 
 **Cost**: ~1 day. Wrapping and delegating; new methods on the two backends.
 
-### Phase 3 — Deprecate and repurpose `shard_get` / `shard_scan`
+### Phase 3 — Clarify the role of `shard_get` / `shard_scan` / `shard_put`
 
-The existing `shard_get(key, value, max_bytes)` and `shard_scan(start, end, cb, arena)` on `abstract_ordered_index` are misleadingly labeled. Their comment says "non-transaction control" but they actually delegate to `transGet` / `transQuery` inside a `STD_OP` transaction wrapper.
+**REVISED during implementation.** The original plan proposed aliasing
+`shard_get`/`shard_scan` to the new non-txn methods, on the belief that
+they were "implicit-txn wraps." Implementation-time inspection showed
+that is wrong — and the aliasing option would have broken cross-shard
+2PC:
 
-Options for what to do with them:
+- `STD_OP` does **not** start or commit a transaction; it only
+  translates `Transaction::Abort` into `abstract_abort_exception`.
+- `shard_get` calls `transGet` against the RPC-handler thread's
+  **ambient** Sto transaction and adds the key to its read-set. No
+  commit — the read is validated later during 2PC.
+- `shard_put` calls `transPut` **and** `Sto::shard_try_lock_last_writeset()`
+  — staging a write and locking its write-set entry for the 2PC
+  prepare phase. The commit happens later when the coordinator drives
+  it.
+- `shard_scan` similarly stages into the ambient transaction.
 
-1. **Delete them.** Callers migrate to the new non-txn `get(...)` / `scan(...)` (same signature minus the misleading `shard_` prefix). Cleanest but requires updating ~10 caller sites in `server.cc`, `client_service.cc`, `simpleTransaction.cc`.
+These are the **remote-shard participants of Mako's distributed
+transaction protocol**, not standalone ops. They must not be aliased
+to (or reimplemented on top of) the self-contained non-txn API.
 
-2. **Alias them to the new non-txn methods.** `shard_get` becomes an inline forwarder to `get`. Callers work unchanged; the name stays a wart but disappears in one release cycle.
+**What Phase 3 actually did** (original "Option 3"): kept
+`shard_get`/`shard_scan`/`shard_put` exactly as they are, replaced the
+misleading "non-transaction control" comment with accurate
+cross-shard-2PC documentation, and cross-referenced the new non-txn
+methods for callers who want self-contained semantics.
 
-3. **Keep them as a separate cross-shard-RPC layer.** Rename the comment to accurately describe them ("used by cross-shard RPC handlers"), leave the implementation alone. The new `get`/`scan` non-txn methods coexist for callers who want the honest name.
-
-**Recommended path: Option 2.** Alias `shard_get` → `get` and `shard_scan` → `scan` (inline forwarders that keep the old names for compat). Then follow up in a separate cleanup PR to move the ~10 call sites over to the honest names and delete the aliases. This unblocks convergence without a big diff.
-
-**Cost**: ~half day (aliases + comment cleanup). +~half day for the follow-up call-site migration if we do it in the same push.
+**Cost**: ~half day (comment corrections + this plan revision).
 
 ### Phase 4 — Tests
 

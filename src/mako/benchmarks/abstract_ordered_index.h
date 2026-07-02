@@ -31,7 +31,13 @@ public:
       std::string &value,
       size_t max_bytes_read = std::string::npos) = 0;
 
-  // non-transaction control and add the key to read-set;
+  // Cross-shard 2PC (RPC-handler side): read a key WITHOUT a
+  // caller-supplied txn handle, adding it to the RPC thread's ambient
+  // Sto transaction read-set for later 2PC validation. This does NOT
+  // start or commit a transaction — it stages into whatever
+  // distributed transaction the coordinator is driving across RPCs.
+  // For self-contained non-transactional reads, use the Masstree-shape
+  // get(key, value) further down instead.
   virtual bool shard_get(
       lcdf::Str key,
       std::string &value,
@@ -86,6 +92,10 @@ public:
       scan_callback &callback,
       str_arena *arena = nullptr) = 0;
 
+  // Cross-shard 2PC (RPC-handler side): scan staged into the RPC
+  // thread's ambient Sto transaction, like shard_get. Not a
+  // self-contained scan — see the non-txn scan(start, end, cb) below
+  // for that.
   virtual bool shard_scan(
       const std::string &start_key,
       const std::string *end_key,
@@ -135,6 +145,12 @@ public:
        bool(*compar)(const std::string& newValue,const std::string& oldValue),
        const std::string &value) = 0;
 
+  // Cross-shard 2PC (RPC-handler side): stage a write into the RPC
+  // thread's ambient Sto transaction AND lock its write-set entry
+  // (Sto::shard_try_lock_last_writeset) for the 2PC prepare phase.
+  // The commit happens later when the coordinator drives it. Not a
+  // self-contained write — see the non-txn put(key, value) below for
+  // that.
   virtual const char *
   shard_put(lcdf::Str key,
       const std::string &value) = 0;
