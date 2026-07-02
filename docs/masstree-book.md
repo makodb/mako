@@ -440,6 +440,13 @@ class MassTrans {
 };
 ```
 
+MassTrans (and the `abstract_ordered_index` layer above it) also
+exposes a **non-transactional API** whose shape matches Masstree's own
+operation set — `get / put / insert / remove / scan / rscan` without a
+transaction handle, each op per-key atomic on its own. See
+[silo-masstree-api-unification.md](silo-masstree-api-unification.md)
+for the design and semantic contract.
+
 ### How Transactions Work
 
 1. **Read**: `transGet` reads the value and records `(node, version)` in the transaction's read set.
