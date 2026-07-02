@@ -2627,6 +2627,23 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
 
+    # Test: the namespace-switchable KV surface (kv_masstree / kv_silo /
+    # kv_mako) — the compile-both-ways gate for the three-backend goal
+    # in docs/mako-nontxn-api-plan.md (Phase 5). One TYPED_TEST body
+    # runs against all three backends.
+    add_executable(test_kv_backends tests/test_kv_backends.cc)
+    target_include_directories(test_kv_backends PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_kv_backends PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_kv_backends
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_kv_backends COMMAND test_kv_backends)
+
     # Test: distributed (two-shards-in-one-process) non-txn API — the
     # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
