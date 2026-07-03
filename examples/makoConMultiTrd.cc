@@ -153,7 +153,7 @@ bool RustWrapper::init() {
 
 void RustWrapper::ensure_thread_info() {
     if (!ti_initialized) {
-        mbta_ordered_index::mbta_type::thread_init();
+        mbta_table::thread_init();
         ti_initialized = true;
     }
     if (!tl_initialized) {

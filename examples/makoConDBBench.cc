@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
 
     // ---- Per-thread DB state (single thread) ----
     // Equivalent to RustWrapper::ensure_thread_info()
-    mbta_ordered_index::mbta_type::thread_init();
+    mbta_table::thread_init();
 
     str_arena arena;
     std::string txn_obj_buf;
