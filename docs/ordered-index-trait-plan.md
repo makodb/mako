@@ -197,6 +197,34 @@ permit (document exclusions per the CLAUDE.md convention); update
 `mako-book.md` §6, `rocksdb_interface.md`, and this plan with
 as-implemented notes.
 
+## P0 results (2026-07-02) — GATE PASSED
+
+- **Inline trait emission works.** `inline-rust --rewrite` lowers
+  `trait` items to pure-virtual C++ interface classes: `&self` →
+  `const` virtual, `&mut self` → non-const, supertrait → public
+  inheritance, copy/move deleted, protected default ctor. A
+  hand-written class inherited two interface levels, overrode, and
+  dispatched through both base pointers (compiled + ran, clang-21).
+- **C++ types pass through verbatim** in trait signatures:
+  `&mut std::string` → `std::string&`, `&std::string` → `const
+  std::string&`; raw pointers likewise (`*mut c_void` → `c_void*`,
+  satisfied by a `using c_void = void;` alias outside the GEN block).
+- **Linkage: use `pub trait`.** Upstream main (a4bcff5f) emits
+  `pub trait` at namespace scope and reserves the anonymous-namespace
+  wrapper (a crate-pipeline ODR guard) for non-`pub` traits. An
+  interim `#[cpp_extern_interface]` attribute built during the spike
+  was made obsolete by that rule and dropped.
+- **The submodule pin CANNOT advance to upstream main**: main removed
+  runtime headers rrr depends on (`rusty/rc.hpp`, `hashmap.hpp`,
+  `btreemap.hpp`), breaking the tree build. The pin stays at
+  bcd32358. The transpiler is used as an **out-of-tree dev tool**
+  built from upstream main (binary parked at
+  `build_local/rusty-cpp-transpiler-a4bcff5f`); this is sound because
+  GEN output is committed, plain C++, and references nothing from the
+  rusty runtime. Regenerating requires temporarily building the
+  transpiler from upstream main (or any later rev with the `pub`
+  linkage rule).
+
 ## Effort: ~5–7 days
 
 ## Risks & open questions
