@@ -271,7 +271,42 @@ artifact.
 Every phase gated on: full tree build, 259 unit + 8×3 distributed +
 rocksdbInterfaceTest, all green.
 
-## Effort: ~5–7 days
+## Backend migration (scope extension, 2026-07-03)
+
+The user's intent goes beyond the contract: the three backends
+themselves — masstree, silo, mako ordered indexes — should be WRITTEN
+in the DSL. Mechanism (user-clarified, spike-verified at tool
+a4bcff5f): `#[cpp_inherit]` on an `impl Trait for Type` ADJACENT to
+the DSL struct lowers to direct inheritance
+(`struct Type : public Trait` + overrides), no adapter. For the
+multi-interface backends: `pub trait FullOrderedIndex:
+TxnOrderedIndex + ShardParticipant {}` lowers to a multi-base
+interface; the struct attaches `#[cpp_inherit] impl FullOrderedIndex
+for X {}` (empty) and carries its methods in the INHERENT impl —
+merged members override the inherited virtuals by C++ signature
+match (all dispatch paths verified end-to-end).
+
+Phases:
+- **T1 (done)** — recipe spikes; no transpiler work needed.
+- **T2** — `mbta_sharded_ordered_index` → DSL struct + inherent impl
+  (pure routing: FNV hash, pick_shard delegation, scan loops; unsafe
+  only at virtual calls through shard pointers). Bridge re-parents to
+  `FullOrderedIndex`. Status helpers/put_mbta stay C++-side sugar.
+- **T3** — `masstree_ordered_index` → DSL struct
+  (`#[cpp_inherit] impl OrderedIndex`), `Box<concurrent_btree>` field
+  (the tree is non-movable; the synthesized move ctor requires
+  movable fields), RCU bodies in unsafe blocks; possibly a small C++
+  helper for the templated search_range callback bridge.
+- **T4** — `mbta_ordered_index` decision gate: its core is
+  try/catch on Transaction::Abort (STD_OP + non-txn retry loops),
+  which the DSL cannot express. Either (a) per-verb C++ `try_op`
+  helpers wrapping the catch sites with structure/fields/routing in
+  DSL, or (b) documented as floored (Event/ALock precedent).
+  Recommendation: (a).
+
+Every phase gates on the full suite, as before.
+
+## Effort: ~5–7 days (contract phases) + ~4–6 days (backend migration)
 
 ## Risks & open questions
 
