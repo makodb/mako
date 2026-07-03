@@ -40,7 +40,11 @@
 #include <map>
 #include <algorithm>
 
-class masstree_ordered_index : public abstract_ordered_index {
+// OrderedIndex ONLY — masstree has no transaction runtime, and after
+// the trait split (docs/ordered-index-trait-plan.md) that is a type
+// fact rather than a set of aborting stubs: this class simply does
+// not implement TxnOrderedIndex or ShardParticipant.
+class masstree_ordered_index : public OrderedIndex {
 public:
     masstree_ordered_index(std::string name, int table_id)
         : name_(std::move(name)), table_id_(table_id) {}
@@ -92,7 +96,7 @@ public:
 
     // @unsafe - iterates RCU-protected buffers
     void scan(const std::string &start_key, const std::string *end_key,
-              scan_callback &callback, str_arena * = nullptr) override {
+              oi_scan_callback &callback, str_arena * = nullptr) override {
         scoped_rcu_region guard;
         Collector c(callback);
         varkey lower = to_key(lcdf::Str(start_key));
@@ -106,7 +110,7 @@ public:
 
     // @unsafe - iterates RCU-protected buffers
     void rscan(const std::string &start_key, const std::string *end_key,
-               scan_callback &callback, str_arena * = nullptr) override {
+               oi_scan_callback &callback, str_arena * = nullptr) override {
         scoped_rcu_region guard;
         Collector c(callback);
         varkey upper = to_key(lcdf::Str(start_key));
@@ -128,7 +132,7 @@ public:
     // @unsafe - NOT THREAD SAFE (mbtree::clear contract); leaks owned
     // values deliberately — reclaiming them would need a full scan and
     // clear() is a test/teardown affordance, not a hot path.
-    std::map<std::string, uint64_t> clear() override {
+    std::map<std::string, uint64_t> clear() {
         tree_.clear();
         return {};
     }
@@ -136,49 +140,12 @@ public:
     int get_table_id() override { return table_id_; }
     bool get_is_remote() override { return false; }
 
-    // ========================================================================
-    // Transactional / 2PC surface: unsupported by design (masstree has
-    // no transaction runtime). Abort loudly, same style as the base
-    // class's non-txn defaults.
-    // ========================================================================
-
-    bool get(void *, lcdf::Str, std::string &,
-             size_t = std::string::npos) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: transactional get");
-    }
-    bool shard_get(lcdf::Str, std::string &,
-                   size_t = std::string::npos) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: shard_get");
-    }
-    void scan(void *, const std::string &, const std::string *,
-              scan_callback &, str_arena * = nullptr) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: transactional scan");
-    }
-    bool shard_scan(const std::string &, const std::string *,
-                    scan_callback &, str_arena * = nullptr) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: shard_scan");
-    }
-    void scanRemoteOne(void *, const std::string &, const std::string &,
-                       std::string &) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: scanRemoteOne");
-    }
-    void rscan(void *, const std::string &, const std::string *,
-               scan_callback &, str_arena * = nullptr) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: transactional rscan");
-    }
-    void put(void *, lcdf::Str, const std::string &) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: transactional put");
-    }
-    const char *shard_put(lcdf::Str, const std::string &) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: shard_put");
-    }
-
     const std::string &name() const { return name_; }
 
 private:
     // Bridges mbtree's functor protocol to the shared scan_callback.
     struct Collector {
-        explicit Collector(scan_callback &cb) : cb_(cb) {}
+        explicit Collector(oi_scan_callback &cb) : cb_(cb) {}
         // @unsafe - decodes the RCU-protected value buffer
         bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
             uint32_t len;
@@ -186,7 +153,7 @@ private:
             buf_.assign(reinterpret_cast<const char*>(v) + sizeof(len), len);
             return cb_.invoke(k.data(), k.length(), buf_);
         }
-        scan_callback &cb_;
+        oi_scan_callback &cb_;
         std::string buf_;
     };
 

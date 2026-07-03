@@ -10,11 +10,11 @@
 //
 // Two proofs:
 //   1. TYPED_TEST over factory tags — the SAME test body runs against
-//      all three concrete types THROUGH abstract_ordered_index* and
+//      all three concrete types THROUGH OrderedIndex* and
 //      asserts identical observable behavior for the
 //      single-node-reachable subset.
 //   2. exercise_any_backend(): one ordinary (non-template) function
-//      taking abstract_ordered_index* serves every backend — the
+//      taking OrderedIndex* serves every backend — the
 //      consolidation is plain runtime polymorphism, no per-backend
 //      vocabulary.
 //
@@ -66,7 +66,7 @@ void engine_thread_init() {
 
 // A scan_callback that collects (key, value) pairs and optionally
 // stops early after `limit` entries.
-class Collect : public abstract_ordered_index::scan_callback {
+class Collect : public oi_scan_callback {
 public:
     explicit Collect(size_t limit = SIZE_MAX) : limit_(limit) {}
     bool invoke(const char* keyp, size_t keylen,
@@ -81,23 +81,23 @@ private:
 
 // ---------------------------------------------------------------------------
 // Backend tags: each constructs its concrete type; tests only ever see
-// abstract_ordered_index*.
+// OrderedIndex*.
 // ---------------------------------------------------------------------------
 struct MasstreeBackend {
-    static abstract_ordered_index* make(const std::string& name) {
+    static OrderedIndex* make(const std::string& name) {
         return new masstree_ordered_index(name, g_table_id.fetch_add(1));
     }
     static const char* prefix() { return "mt"; }
 };
 struct SiloBackend {
-    static abstract_ordered_index* make(const std::string& name) {
+    static OrderedIndex* make(const std::string& name) {
         return new mbta_ordered_index(name, g_table_id.fetch_add(1),
                                       /*db=*/nullptr);
     }
     static const char* prefix() { return "silo"; }
 };
 struct MakoBackend {
-    static abstract_ordered_index* make(const std::string& name) {
+    static OrderedIndex* make(const std::string& name) {
         auto* local = new mbta_ordered_index(name, g_table_id.fetch_add(1),
                                              /*db=*/nullptr);
         return new mbta_sharded_ordered_index(
@@ -114,7 +114,7 @@ protected:
     // Fresh table per (backend, test) so key spaces never collide.
     // Leaked deliberately: MassTrans teardown wants RCU quiescence a
     // unit test can't provide; tables are small.
-    abstract_ordered_index* fresh_table(const std::string& tag) {
+    OrderedIndex* fresh_table(const std::string& tag) {
         return B::make(std::string(B::prefix()) + "_" + tag);
     }
 };
@@ -126,62 +126,62 @@ TYPED_TEST_SUITE(KvBackends, Backends);
 // Point ops: identical semantics on all three backends.
 // ---------------------------------------------------------------------------
 TYPED_TEST(KvBackends, PutGetRoundTripRawBytes) {
-    abstract_ordered_index* t = this->fresh_table("roundtrip");
+    OrderedIndex* t = this->fresh_table("roundtrip");
 
     EXPECT_TRUE(t->put(lcdf::Str("k1"), "plain-value"));
     std::string out;
-    ASSERT_TRUE(t->get(lcdf::Str("k1"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("k1"), out, std::string::npos));
     EXPECT_EQ(out, "plain-value");  // raw bytes back, no encoding leakage
 
-    EXPECT_FALSE(t->get(lcdf::Str("missing"), out));
+    EXPECT_FALSE(t->get(lcdf::Str("missing"), out, std::string::npos));
 }
 
 TYPED_TEST(KvBackends, PutReturnsNewlyInsertedAndOverwrites) {
-    abstract_ordered_index* t = this->fresh_table("putret");
+    OrderedIndex* t = this->fresh_table("putret");
 
     EXPECT_TRUE(t->put(lcdf::Str("k"), "one"));
     EXPECT_FALSE(t->put(lcdf::Str("k"), "two"));  // existed
 
     std::string out;
-    ASSERT_TRUE(t->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "two");
 }
 
 TYPED_TEST(KvBackends, InsertIsPutIfAbsent) {
-    abstract_ordered_index* t = this->fresh_table("insert");
+    OrderedIndex* t = this->fresh_table("insert");
 
     EXPECT_TRUE(t->insert(lcdf::Str("k"), "first"));
     EXPECT_FALSE(t->insert(lcdf::Str("k"), "second"));
 
     std::string out;
-    ASSERT_TRUE(t->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "first");  // dup insert must not overwrite
 }
 
 TYPED_TEST(KvBackends, RemoveSemantics) {
-    abstract_ordered_index* t = this->fresh_table("remove");
+    OrderedIndex* t = this->fresh_table("remove");
 
     ASSERT_TRUE(t->put(lcdf::Str("k"), "victim"));
     EXPECT_TRUE(t->remove(lcdf::Str("k")));
 
     std::string out;
-    EXPECT_FALSE(t->get(lcdf::Str("k"), out));
+    EXPECT_FALSE(t->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_FALSE(t->remove(lcdf::Str("k")));  // absent
 
     // Reinsert after remove works and reads back the new value.
     EXPECT_TRUE(t->put(lcdf::Str("k"), "reborn"));
-    ASSERT_TRUE(t->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "reborn");
 }
 
 TYPED_TEST(KvBackends, LongValuesSurviveRoundTrip) {
-    abstract_ordered_index* t = this->fresh_table("longval");
+    OrderedIndex* t = this->fresh_table("longval");
 
     // Longer than any internal suffix/prefix convention.
     const std::string big(4096, 'x');
     ASSERT_TRUE(t->put(lcdf::Str("big"), big));
     std::string out;
-    ASSERT_TRUE(t->get(lcdf::Str("big"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("big"), out, std::string::npos));
     EXPECT_EQ(out, big);
 }
 
@@ -191,7 +191,7 @@ TYPED_TEST(KvBackends, LongValuesSurviveRoundTrip) {
 // convention-independent.
 // ---------------------------------------------------------------------------
 TYPED_TEST(KvBackends, ScanForwardSortedWithValues) {
-    abstract_ordered_index* t = this->fresh_table("scan");
+    OrderedIndex* t = this->fresh_table("scan");
     for (int i = 0; i < 6; i++) {
         std::string k = "s" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "val" + std::to_string(i)));
@@ -200,7 +200,7 @@ TYPED_TEST(KvBackends, ScanForwardSortedWithValues) {
     // Between s0/s1 up to between s3/s4: s1, s2, s3 on any convention.
     Collect cb;
     const std::string start = "s0z", end = "s3z";
-    t->scan(start, &end, cb);
+    t->scan(start, &end, cb, nullptr);
     ASSERT_EQ(cb.pairs.size(), 3u);
     for (int i = 0; i < 3; i++) {
         EXPECT_EQ(cb.pairs[i].first, "s" + std::to_string(i + 1));
@@ -210,14 +210,14 @@ TYPED_TEST(KvBackends, ScanForwardSortedWithValues) {
     // Open-ended scan from midway: s3, s4, s5.
     Collect cb2;
     const std::string start2 = "s2z";
-    t->scan(start2, nullptr, cb2);
+    t->scan(start2, nullptr, cb2, nullptr);
     ASSERT_EQ(cb2.pairs.size(), 3u);
     EXPECT_EQ(cb2.pairs.front().first, "s3");
     EXPECT_EQ(cb2.pairs.back().first, "s5");
 }
 
 TYPED_TEST(KvBackends, ScanEarlyStop) {
-    abstract_ordered_index* t = this->fresh_table("scanstop");
+    OrderedIndex* t = this->fresh_table("scanstop");
     for (int i = 0; i < 6; i++) {
         std::string k = "e" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "v" + std::to_string(i)));
@@ -225,12 +225,12 @@ TYPED_TEST(KvBackends, ScanEarlyStop) {
 
     Collect cb(/*limit=*/2);
     const std::string start = "e0";
-    t->scan(start, nullptr, cb);
+    t->scan(start, nullptr, cb, nullptr);
     EXPECT_EQ(cb.pairs.size(), 2u);
 }
 
 TYPED_TEST(KvBackends, RScanDescending) {
-    abstract_ordered_index* t = this->fresh_table("rscan");
+    OrderedIndex* t = this->fresh_table("rscan");
     for (int i = 0; i < 6; i++) {
         std::string k = "r" + std::to_string(i);
         ASSERT_TRUE(t->put(lcdf::Str(k), "v" + std::to_string(i)));
@@ -239,7 +239,7 @@ TYPED_TEST(KvBackends, RScanDescending) {
     // From between r4/r5 down to between r0/r1: r4, r3, r2, r1.
     Collect cb;
     const std::string start = "r4z", end = "r0z";
-    t->rscan(start, &end, cb);
+    t->rscan(start, &end, cb, nullptr);
     ASSERT_EQ(cb.pairs.size(), 4u);
     for (int i = 0; i < 4; i++) {
         EXPECT_EQ(cb.pairs[i].first, "r" + std::to_string(4 - i));
@@ -250,13 +250,13 @@ TYPED_TEST(KvBackends, RScanDescending) {
 // ---------------------------------------------------------------------------
 // The consolidation proof: one ordinary function, any backend.
 // ---------------------------------------------------------------------------
-void exercise_any_backend(abstract_ordered_index* t) {
+void exercise_any_backend(OrderedIndex* t) {
     ASSERT_TRUE(t->put(lcdf::Str("nk"), "nv"));
     std::string out;
-    ASSERT_TRUE(t->get(lcdf::Str("nk"), out));
+    ASSERT_TRUE(t->get(lcdf::Str("nk"), out, std::string::npos));
     EXPECT_EQ(out, "nv");
     EXPECT_TRUE(t->remove(lcdf::Str("nk")));
-    EXPECT_FALSE(t->get(lcdf::Str("nk"), out));
+    EXPECT_FALSE(t->get(lcdf::Str("nk"), out, std::string::npos));
 }
 
 TEST(KvBackendSwitch, OneFunctionServesAllThree) {
