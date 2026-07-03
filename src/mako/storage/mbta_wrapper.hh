@@ -1209,7 +1209,14 @@ public:
   thread_init(bool loader, int source)
   {
     static int tidcounter = 0;
-    static int partition_id = 0; // to distinguish different worker thread
+    // Per-SHARD worker sequence. A single process can run several
+    // shards (dbtest -L 0,1): pid = seq % warehouses is only correct
+    // if each shard's workers draw a contiguous block, but concurrent
+    // shard-runners interleave on a shared counter — two same-shard
+    // workers could get the same pid, derive identical client ports,
+    // and EADDRINUSE-panic (shard2SingleProcess CI flake).
+    static constexpr size_t kMaxLocalShards = 64;
+    static std::atomic<size_t> partition_seq[kMaxLocalShards];
     TThread::set_id(__sync_fetch_and_add(&tidcounter, 1));
     TThread::set_mode(0); // checking in-progress
     TThread::set_num_eprc_server(BenchmarkConfig::getInstance().getNumErpcServer());
@@ -1243,7 +1250,8 @@ public:
     TThread::isRemoteShard = false;
     TThread::skipBeforeRemotePayment = 0;
     if(!loader) {
-      size_t old = __sync_fetch_and_add(&partition_id, 1);
+      size_t shard_slot = BenchmarkConfig::getInstance().getShardIndex() % kMaxLocalShards;
+      size_t old = partition_seq[shard_slot].fetch_add(1);
       // Use local partition ID (0 to warehouses-1) within each shard
       // getPartitionID() will compute absolute partition ID using shard_index
       size_t local_pid = old % BenchmarkConfig::getInstance().getConfig()->warehouses;

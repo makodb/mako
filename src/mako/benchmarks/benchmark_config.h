@@ -218,6 +218,13 @@ class BenchmarkConfig {
       // Set thread-local shard index for multi-shard mode
       // Call with -1 to clear and revert to global shardIndex_
       static void setThreadLocalShardIndex(int idx) { tl_shard_index_ = idx; }
+      // Raw thread-local value (-1 when unset). Used by ndb_thread to
+      // INHERIT the spawner's shard binding: in single-process
+      // multi-shard mode, worker threads spawned by a shard-runner
+      // must not fall back to the shared global shardIndex_ (a race —
+      // both shards' workers would derive the same client ports and
+      // EADDRINUSE-panic; see shard2SingleProcess CI flake).
+      static int getThreadLocalShardIndex() { return tl_shard_index_; }
       static void clearThreadLocalShardIndex() { tl_shard_index_ = -1; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
