@@ -122,7 +122,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->scan(txn, start_key, end_key, adapter, nullptr);
+            index_->tx_scan(txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Scan: transaction aborted");
@@ -154,7 +154,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->rscan(txn, start_key, end_key, adapter, nullptr);
+            index_->tx_rscan(txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("ReverseScan: transaction aborted");

@@ -39,9 +39,9 @@ public:
             std::string value = mako::Encode("test_value_" + std::to_string(i));
             try {
                 if (i%2==0)
-                    table->put(txn, key, value);
+                    table->tx_put(txn, key, value);
                 else
-                    table2->put(txn, key, value);
+                    table2->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
@@ -57,7 +57,7 @@ public:
             std::string key = "test_key_" + std::to_string(i);
             std::string value = "";
             try {
-                table->get(txn, key, value);
+                table->tx_get(txn, key, value);
                 db->commit_txn(txn);
                 
                 std::string expected = "test_value_" + std::to_string(i);
@@ -102,7 +102,7 @@ public:
             std::string key = "overwrite_key";
             std::string value = mako::Encode("initial_2000");
             try {
-                table->put(txn, key, value);
+                table->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
@@ -117,7 +117,7 @@ public:
             std::string key = "overwrite_key";
             std::string value = mako::Encode("updated_1000");
             try {
-                table->put(txn, key, value);
+                table->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Update aborted: %s\n", key.c_str());
@@ -131,7 +131,7 @@ public:
             std::string key = "overwrite_key";
             std::string value = mako::Encode("updated_0000");
             try {
-                table->put(txn, key, value);
+                table->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Update aborted: %s\n", key.c_str());
@@ -144,7 +144,7 @@ public:
             std::string key = "overwrite_key" ;
             std::string value = "";
             try {
-                table->get(txn, key, value);
+                table->tx_get(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 db->abort_txn(txn);
@@ -172,7 +172,7 @@ public:
                 void *txn = db->new_txn(0, arena, txn_buf());
                 std::string value = mako::Encode("A");
                 try {
-                    table->put(txn, key, value);
+                    table->tx_put(txn, key, value);
                     db->commit_txn(txn);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
@@ -185,7 +185,7 @@ public:
                 std::string large(100, 'B');
                 std::string value = mako::Encode(large);
                 try {
-                    table->put(txn, key, value);
+                    table->tx_put(txn, key, value);
                     db->commit_txn(txn);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
@@ -197,7 +197,7 @@ public:
                 void *txn = db->new_txn(0, arena, txn_buf());
                 std::string readback = "";
                 try {
-                    table->get(txn, key, readback);
+                    table->tx_get(txn, key, readback);
                     db->commit_txn(txn);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
@@ -224,7 +224,7 @@ public:
                 void *txn = db->new_txn(0, arena, txn_buf());
                 std::string value = mako::Encode(step.val);
                 try {
-                    table->put(txn, key, value);
+                    table->tx_put(txn, key, value);
                     db->commit_txn(txn);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);
@@ -237,7 +237,7 @@ public:
                 void *txn = db->new_txn(0, arena, txn_buf());
                 std::string readback = "";
                 try {
-                    table->get(txn, key, readback);
+                    table->tx_get(txn, key, readback);
                     db->commit_txn(txn);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     db->abort_txn(txn);

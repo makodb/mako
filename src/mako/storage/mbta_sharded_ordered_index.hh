@@ -85,48 +85,48 @@ impl mbta_sharded_ordered_index {
 
     // ---- transactional ops (TxnOrderedIndex) ------------------------
 
-    fn get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
-        unsafe { (*oi_pick_shard(&self.shard_tables, key)).get(txn, key, value, max_bytes_read) }
+    fn tx_get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
+        unsafe { (*oi_pick_shard(&self.shard_tables, key)).tx_get(txn, key, value, max_bytes_read) }
     }
 
-    fn put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
-        unsafe { (*oi_pick_shard(&self.shard_tables, key)).put(txn, key, value) }
+    fn tx_put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
+        unsafe { (*oi_pick_shard(&self.shard_tables, key)).tx_put(txn, key, value) }
     }
 
-    fn insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
+    fn tx_insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
         // Forward to per-shard insert() (transInsert, not transPut).
-        unsafe { (*oi_pick_shard(&self.shard_tables, key)).insert(txn, key, value) }
+        unsafe { (*oi_pick_shard(&self.shard_tables, key)).tx_insert(txn, key, value) }
     }
 
-    fn remove(&mut self, txn: *mut c_void, key: lcdf::Str) {
-        unsafe { (*oi_pick_shard(&self.shard_tables, key)).remove(txn, key) }
+    fn tx_remove(&mut self, txn: *mut c_void, key: lcdf::Str) {
+        unsafe { (*oi_pick_shard(&self.shard_tables, key)).tx_remove(txn, key) }
     }
 
     // Txn'd range reads visit every shard (keys are hash-distributed,
     // so there is no global order across shards — historical behavior
     // kept).
-    fn scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+    fn tx_scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
         let n = unsafe { oi_shard_count(&self.shard_tables) };
         let mut i: usize = 0;
         while i < n {
-            unsafe { (*oi_shard_at(&self.shard_tables, i)).scan(txn, start_key, end_key, callback, arena) };
+            unsafe { (*oi_shard_at(&self.shard_tables, i)).tx_scan(txn, start_key, end_key, callback, arena) };
             i += 1;
         }
     }
 
-    fn rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+    fn tx_rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
         let n = unsafe { oi_shard_count(&self.shard_tables) };
         let mut i: usize = 0;
         while i < n {
-            unsafe { (*oi_shard_at(&self.shard_tables, i)).rscan(txn, start_key, end_key, callback, arena) };
+            unsafe { (*oi_shard_at(&self.shard_tables, i)).tx_rscan(txn, start_key, end_key, callback, arena) };
             i += 1;
         }
     }
 
-    fn scanRemoteOne(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string) {
+    fn tx_scan_remote_one(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string) {
         // Range op with no per-key owner; only per-table objects serve
         // the remote txn path.
-        unsafe { oi_unimplemented("mbta_sharded_ordered_index: scanRemoteOne") }
+        unsafe { oi_unimplemented("mbta_sharded_ordered_index: tx_scan_remote_one") }
     }
 
     // ---- 2PC participant ops (ShardParticipant) ---------------------
@@ -203,7 +203,7 @@ impl mbta_sharded_ordered_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=495113940cf8ee25530d5acdf8f64e72a5561acd40706c8a30bac025da8e6025*/
+/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=301ffeb6ba1be1f650c1a0babeab4bff33c3567b97bbfd7d7ff5dc9a4bf8a614*/
 struct mbta_sharded_ordered_index;
 
 struct mbta_sharded_ordered_index : public FullOrderedIndex {
@@ -215,13 +215,13 @@ struct mbta_sharded_ordered_index : public FullOrderedIndex {
 
     abstract_ordered_index* shard_for_index(size_t idx) const;
     int32_t check_shard(lcdf::Str key) const;
-    bool get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read);
-    void put(c_void* txn, lcdf::Str key, const std::string& value);
-    void insert(c_void* txn, lcdf::Str key, const std::string& value);
-    void remove(c_void* txn, lcdf::Str key);
-    void scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
-    void rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
-    void scanRemoteOne(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value);
+    bool tx_get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read);
+    void tx_put(c_void* txn, lcdf::Str key, const std::string& value);
+    void tx_insert(c_void* txn, lcdf::Str key, const std::string& value);
+    void tx_remove(c_void* txn, lcdf::Str key);
+    void tx_scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void tx_rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void tx_scan_remote_one(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value);
     bool shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read);
     const c_char* shard_put(lcdf::Str key, const std::string& value);
     bool shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
@@ -251,62 +251,62 @@ inline int32_t mbta_sharded_ordered_index::check_shard(lcdf::Str key) const {
     }
 }
 
-inline bool mbta_sharded_ordered_index::get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) {
+inline bool mbta_sharded_ordered_index::tx_get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) {
     // @unsafe
     {
-        return ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).get(txn, std::move(key), value, std::move(max_bytes_read));
+        return ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).tx_get(txn, std::move(key), value, std::move(max_bytes_read));
     }
 }
 
-inline void mbta_sharded_ordered_index::put(c_void* txn, lcdf::Str key, const std::string& value) {
+inline void mbta_sharded_ordered_index::tx_put(c_void* txn, lcdf::Str key, const std::string& value) {
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).put(txn, std::move(key), value);
+        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).tx_put(txn, std::move(key), value);
     }
 }
 
-inline void mbta_sharded_ordered_index::insert(c_void* txn, lcdf::Str key, const std::string& value) {
+inline void mbta_sharded_ordered_index::tx_insert(c_void* txn, lcdf::Str key, const std::string& value) {
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).insert(txn, std::move(key), value);
+        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).tx_insert(txn, std::move(key), value);
     }
 }
 
-inline void mbta_sharded_ordered_index::remove(c_void* txn, lcdf::Str key) {
+inline void mbta_sharded_ordered_index::tx_remove(c_void* txn, lcdf::Str key) {
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).remove(txn, std::move(key));
+        ((rusty::detail::deref_if_pointer_like(oi_pick_shard(&this->shard_tables, std::move(key))))).tx_remove(txn, std::move(key));
     }
 }
 
-inline void mbta_sharded_ordered_index::scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+inline void mbta_sharded_ordered_index::tx_scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
     const auto n = oi_shard_count(&this->shard_tables);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
         // @unsafe
         {
-            ((rusty::detail::deref_if_pointer_like(oi_shard_at(&this->shard_tables, std::move(i))))).scan(txn, start_key, end_key, callback, arena);
+            ((rusty::detail::deref_if_pointer_like(oi_shard_at(&this->shard_tables, std::move(i))))).tx_scan(txn, start_key, end_key, callback, arena);
         }
         i += 1;
     }
 }
 
-inline void mbta_sharded_ordered_index::rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+inline void mbta_sharded_ordered_index::tx_rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
     const auto n = oi_shard_count(&this->shard_tables);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
         // @unsafe
         {
-            ((rusty::detail::deref_if_pointer_like(oi_shard_at(&this->shard_tables, std::move(i))))).rscan(txn, start_key, end_key, callback, arena);
+            ((rusty::detail::deref_if_pointer_like(oi_shard_at(&this->shard_tables, std::move(i))))).tx_rscan(txn, start_key, end_key, callback, arena);
         }
         i += 1;
     }
 }
 
-inline void mbta_sharded_ordered_index::scanRemoteOne(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) {
+inline void mbta_sharded_ordered_index::tx_scan_remote_one(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) {
     // @unsafe
     {
-        oi_unimplemented("mbta_sharded_ordered_index: scanRemoteOne");
+        oi_unimplemented("mbta_sharded_ordered_index: tx_scan_remote_one");
     }
 }
 
@@ -411,8 +411,8 @@ inline bool mbta_sharded_ordered_index::get_is_remote() {
 inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
                                      void *txn, const std::string &key,
                                      std::string &value) {
-  bool found = t->get(txn, lcdf::Str(key.data(), key.size()), value,
-                      std::string::npos);
+  bool found = t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
+                         std::string::npos);
   return found ? mako::Status::OK() : mako::Status::NotFound();
 }
 
@@ -421,7 +421,7 @@ inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
 inline mako::Status mbta_sharded_Put(mbta_sharded_ordered_index *t,
                                      void *txn, const std::string &key,
                                      const std::string &value) {
-  t->put(txn, lcdf::Str(key.data(), key.size()), value);
+  t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
   return mako::Status::OK();
 }
 
@@ -433,17 +433,17 @@ inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
   // insert-if-absent serializable (commit validation catches a racing
   // insert). Gated by rocksdbInterfaceTest I1.4.
   std::string unused;
-  if (t->get(txn, lcdf::Str(key.data(), key.size()), unused,
-             std::string::npos)) {
+  if (t->tx_get(txn, lcdf::Str(key.data(), key.size()), unused,
+                std::string::npos)) {
     return mako::Status::InvalidArgument("Key already exists");
   }
-  t->insert(txn, lcdf::Str(key.data(), key.size()), value);
+  t->tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
   return mako::Status::OK();
 }
 
 inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
                                         void *txn, const std::string &key) {
-  t->remove(txn, lcdf::Str(key.data(), key.size()));
+  t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
   return mako::Status::OK();
 }
 

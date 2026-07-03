@@ -43,13 +43,13 @@ public:
             std::string key = "test_key_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
             std::string value = mako::Encode("test_value_w" + std::to_string(worker_id_) + "_" + std::to_string(i));
             try {
-                table->put(txn, key, value);
+                table->tx_put(txn, key, value);
 
                 if (BenchmarkConfig::getInstance().getNshards()==2) {
                     int remote_shard = home_shard_index==0?1:0;
                     std::string key2 = "test_key2_w" + std::to_string(worker_id_) + "_" + std::to_string(i) + "_remote";
                     std::string value2 = mako::Encode("test_value2_w" + std::to_string(worker_id_) + "_" + std::to_string(i));
-                    table->put(txn, key2, value2);
+                    table->tx_put(txn, key2, value2);
                 }
 
                 db->commit_txn(txn);
@@ -67,7 +67,7 @@ public:
             std::string key = "test_key_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
             std::string value = "";
             try {
-                table->get(txn, key, value);
+                table->tx_get(txn, key, value);
                 db->commit_txn(txn);
 
                 std::string expected = "test_value_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
@@ -93,7 +93,7 @@ public:
                 std::string key = "test_key2_w" + std::to_string(worker_id_) + "_" + std::to_string(i) + "_remote";
                 std::string value = "";
                 try {
-                    table->get(txn, key, value);
+                    table->tx_get(txn, key, value);
                     db->commit_txn(txn);
 
                     std::string expected = "test_value2_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
@@ -128,7 +128,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
             try {
-                table->put(txn, shared_key, value);
+                table->tx_put(txn, shared_key, value);
                 db->commit_txn(txn);
                 commits++;
                 printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] txn %zu COMMITTED\n", home_shard_index, worker_id_, i);
@@ -149,7 +149,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             std::string value;
             try {
-                bool exists = table->get(txn, shared_key, value);
+                bool exists = table->tx_get(txn, shared_key, value);
                 db->commit_txn(txn);
                 if (exists) {
                     printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] Final read: key '%s' EXISTS with value: %s\n",
@@ -181,7 +181,7 @@ public:
             std::string key = "overlap_key_" + std::to_string(key_group + (i % 5));
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
             try {
-                table->put(txn, key, value);
+                table->tx_put(txn, key, value);
                 db->commit_txn(txn);
                 commits++;
                 printf("[TEST_OVERLAP_KEYS] [Shard %d Worker %d] key=%s txn %zu COMMITTED\n",
@@ -208,7 +208,7 @@ public:
                     std::string key = "overlap_key_" + std::to_string(group * 5 + i);
                     std::string value;
                     try {
-                        bool exists = table->get(txn, key, value);
+                        bool exists = table->tx_get(txn, key, value);
                         db->commit_txn(txn);
                         if (exists) {
                             total_existing_keys++;
@@ -242,8 +242,8 @@ public:
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
 
             try {
-                table->put(txn, shared_local_key, value);
-                table->put(txn, shared_remote_key, value);
+                table->tx_put(txn, shared_local_key, value);
+                table->tx_put(txn, shared_remote_key, value);
                 db->commit_txn(txn);
                 commits++;
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu (local:%d remote:%d) COMMITTED\n",
@@ -272,7 +272,7 @@ public:
             std::string local_key = "cross_shard_local";
             std::string local_value;
             try {
-                bool local_exists = table->get(txn, local_key, local_value);
+                bool local_exists = table->tx_get(txn, local_key, local_value);
                 db->commit_txn(txn);
                 if (local_exists) {
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: local key EXISTS on shard %d\n",
@@ -296,7 +296,7 @@ public:
                 std::string remote_key = "cross_shard_remote";
                 std::string remote_value;
                 try {
-                    bool remote_exists = table->get(txn2, remote_key, remote_value);
+                    bool remote_exists = table->tx_get(txn2, remote_key, remote_value);
                     db->commit_txn(txn2);
                     if (remote_exists) {
                         printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: remote key EXISTS on shard %d\n",
@@ -334,10 +334,10 @@ public:
             try {
                 if (is_writer) {
                     std::string value = mako::Encode("writer_" + std::to_string(worker_id_) + "_" + std::to_string(i));
-                    table->put(txn, key, value);
+                    table->tx_put(txn, key, value);
                 } else {
                     std::string value;
-                    table->get(txn, key, value);
+                    table->tx_get(txn, key, value);
                 }
                 db->commit_txn(txn);
                 commits++;

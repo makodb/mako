@@ -577,7 +577,7 @@ int main() {
     std::map<uint64_t, txn_record *> combined_txn_list;
     
     for (int i = 0; i < N_THREADS; i++) {
-        combined_txn_list.insert(txn_list[i].begin(), txn_list[i].end());
+        combined_txn_list.tx_insert(txn_list[i].begin(), txn_list[i].end());
     }
     
     std::cout << "Single thread replay" << std::endl;

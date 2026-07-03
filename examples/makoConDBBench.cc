@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            customerTable->put(txn, db_key, StringWrapper(db_val));
+            customerTable->tx_put(txn, db_key, StringWrapper(db_val));
             db->commit_txn(txn);
             ++load_succ;
         } catch (abstract_db::abstract_abort_exception&) {
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
 
         std::string val_out;
         try {
-            customerTable->get(txn, db_key, val_out);
+            customerTable->tx_get(txn, db_key, val_out);
             db->commit_txn(txn);
             ++get_succ;
         } catch (abstract_db::abstract_abort_exception&) {
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            customerTable->put(txn, db_key, StringWrapper(db_val));
+            customerTable->tx_put(txn, db_key, StringWrapper(db_val));
             db->commit_txn(txn);
             ++set_succ;
         } catch (abstract_db::abstract_abort_exception&) {

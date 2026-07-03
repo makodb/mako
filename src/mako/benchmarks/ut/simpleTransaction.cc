@@ -38,7 +38,7 @@ public:
             std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
             std::string value = mako::Encode("value_XXXXXXXXXXXXX_" + std::to_string(i));
             try {
-                customerTable->put(txn, key, value);
+                customerTable->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -52,7 +52,7 @@ public:
             std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
             std::string value = "";
             try {
-                customerTable->get(txn, key, value);
+                customerTable->tx_get(txn, key, value);
                 db->commit_txn(txn);
                 ASSERT_EQ(value.substr(0,("value_XXXXXXXXXXXXX_" + std::to_string(i)).length()), "value_XXXXXXXXXXXXX_" + std::to_string(i));
             } catch (abstract_db::abstract_abort_exception &ex) {
@@ -78,7 +78,7 @@ public:
             std::string key = "XXXXXXXXXXXX";
             std::string value = mako::Encode("2000000000000000");
             try {
-                customerTable->put(txn, key, value);
+                customerTable->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -93,7 +93,7 @@ public:
             std::string key = "XXXXXXXXXXXX";
             std::string value = mako::Encode("1000000000000000");
             try {
-                customerTable->put(txn, key, value);
+                customerTable->tx_put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -138,9 +138,9 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
             try {
-                customerTable->insert(txn, key, value);
-                customerTable->insert(txn, key1, value1);
-                customerTable->insert(txn, key2, value2);
+                customerTable->tx_insert(txn, key, value);
+                customerTable->tx_insert(txn, key1, value1);
+                customerTable->tx_insert(txn, key2, value2);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -223,7 +223,7 @@ public:
            std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
            std::string value = "";
            try {
-               customerTable->get(txn, key, value);
+               customerTable->tx_get(txn, key, value);
                db->commit_txn(txn);
                ASSERT_EQ(value.substr(0,("value_XXXXXXXXXXXXX_" + std::to_string(i)).length()), "value_XXXXXXXXXXXXX_" + std::to_string(i));
            } catch (abstract_db::abstract_abort_exception &ex) {

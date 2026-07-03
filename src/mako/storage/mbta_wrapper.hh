@@ -92,7 +92,7 @@ public:
 
   std::string *arena(void);
 
-  bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
+  bool tx_get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
     // DEBUG: Log first few remote accesses
     static thread_local int debug_count = 0;
     if (mbta.get_is_remote() && debug_count < 3) {
@@ -174,7 +174,7 @@ public:
     });
   }
 
-  void put(void* txn,
+  void tx_put(void* txn,
                   lcdf::Str key,
                   const std::string &value)
   {
@@ -196,21 +196,21 @@ public:
     });
   }
   
-void insert(void *txn,
+void tx_insert(void *txn,
 	     lcdf::Str key,
 	     const std::string &value)
 {
 STD_OP(mbta.transInsert(key, StringWrapper(value));)
 }
 
-void remove(void *txn, lcdf::Str key) {
+void tx_remove(void *txn, lcdf::Str key) {
 #if OP_LOGGING
 mt_del++;
 #endif
 STD_OP(mbta.transDelete(key));
 }
 
-void scan(void *txn,
+void tx_scan(void *txn,
     const std::string &start_key,
     const std::string *end_key,
     scan_callback &callback,
@@ -226,7 +226,7 @@ STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& val
 }, arena));
 }
 
-void scanRemoteOne(void *txn,
+void tx_scan_remote_one(void *txn,
     const std::string &start_key,
     const std::string &end_key,
     std::string &value) {
@@ -264,7 +264,7 @@ void scanRemoteOne(void *txn,
   }
 }
 
-void rscan(void *txn,
+void tx_rscan(void *txn,
      const std::string &start_key,
      const std::string *end_key,
      scan_callback &callback,
@@ -490,7 +490,7 @@ ht_ordered_index_string(const std::string &name, mbta_wrapper *db) : ht(), name(
 
 std::string *arena(void);
 
-bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
+bool tx_get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
 #if OP_LOGGING
 ht_get++;
 #endif
@@ -502,7 +502,7 @@ return ret;
   });
 }
 
-void put(
+void tx_put(
 void* txn,
 const lcdf::Str key,
 const std::string &value)
@@ -517,7 +517,7 @@ ht.transPut(key, StringWrapper(value));
           });
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -529,7 +529,7 @@ ht.transPut(key, StringWrapper(value));
 	});
   }
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -538,7 +538,7 @@ ht.transPut(key, StringWrapper(value));
     });
   }
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -546,7 +546,7 @@ ht.transPut(key, StringWrapper(value));
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,
@@ -583,11 +583,11 @@ public:
 
   std::string *arena(void);
 
-  bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
+  bool tx_get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
     return false;
   }
 
-  bool get(
+  bool tx_get(
       void *txn,
       int32_t key,
       std::string &value,
@@ -603,14 +603,14 @@ public:
   }
 
 
-  void put(
+  void tx_put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
   {
   }
 
-  void put(
+  void tx_put(
       void* txn,
       int32_t key,
       const std::string &value)
@@ -624,13 +624,13 @@ public:
   }
 
   
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      int32_t key,
                      const std::string &value)
   {
@@ -642,11 +642,11 @@ public:
   }
 
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
       return;
   }
 
-  void remove(void *txn, int32_t key) {
+  void tx_remove(void *txn, int32_t key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -654,7 +654,7 @@ public:
         ht.transDelete(key);});
   }     
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -662,7 +662,7 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,
@@ -705,11 +705,11 @@ public:
 
   std::string *arena(void);
 
-  bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
+  bool tx_get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
     return false;
   }
 
-  bool get(
+  bool tx_get(
       void *txn,
       customer_key key,
       std::string &value,
@@ -725,14 +725,14 @@ public:
   }
 
 
-  void put(
+  void tx_put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
   {
   }
 
-  void put(
+  void tx_put(
       void* txn,
       customer_key key,
       const std::string &value)
@@ -746,13 +746,13 @@ public:
   }
 
   
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      customer_key key,
                      const std::string &value)
   {
@@ -764,11 +764,11 @@ public:
   }
 
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
       return;
   }
 
-  void remove(void *txn, customer_key key) {
+  void tx_remove(void *txn, customer_key key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -776,7 +776,7 @@ public:
         ht.transDelete(key);});
   }     
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -784,7 +784,7 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,
@@ -827,7 +827,7 @@ public:
 
   std::string *arena(void);
 
-  bool get(
+  bool tx_get(
       void *txn,
       lcdf::Str key,
       std::string &value,
@@ -844,7 +844,7 @@ public:
 
   }
   
-  void put(
+  void tx_put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -860,7 +860,7 @@ public:
           });
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -873,7 +873,7 @@ public:
         ht.transPut(k, StringWrapper(value)); return 0;});
   }
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -883,7 +883,7 @@ public:
         ht.transDelete(k);});
   }     
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -891,7 +891,7 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,
@@ -933,7 +933,7 @@ public:
 
   std::string *arena(void);
 
-  bool get(
+  bool tx_get(
       void *txn,
       lcdf::Str key,
       std::string &value,
@@ -950,7 +950,7 @@ public:
 
   }
   
-  void put(
+  void tx_put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -966,7 +966,7 @@ public:
           });
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -979,7 +979,7 @@ public:
         ht.transPut(k, StringWrapper(value)); return 0;});
   }
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -989,7 +989,7 @@ public:
         ht.transDelete(k);});
   }     
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -997,7 +997,7 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,
@@ -1040,7 +1040,7 @@ public:
 
   std::string *arena(void);
 
-  bool get(
+  bool tx_get(
       void *txn,
       lcdf::Str key,
       std::string &value,
@@ -1057,7 +1057,7 @@ public:
 
   }
   
-  void put(
+  void tx_put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -1073,7 +1073,7 @@ public:
           });
   }
 
-  void insert(void *txn,
+  void tx_insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -1086,7 +1086,7 @@ public:
         ht.transPut(k, StringWrapper(value)); return 0;});
   }
 
-  void remove(void *txn, lcdf::Str key) {
+  void tx_remove(void *txn, lcdf::Str key) {
 #if OP_LOGGING
     ht_del++;
 #endif    
@@ -1096,7 +1096,7 @@ public:
         ht.transDelete(k);});
   }     
 
-  void scan(void *txn,
+  void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
             scan_callback &callback,
@@ -1104,7 +1104,7 @@ public:
     NDB_UNIMPLEMENTED("scan");
   }
 
-  void rscan(void *txn,
+  void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
              scan_callback &callback,

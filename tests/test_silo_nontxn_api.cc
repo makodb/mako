@@ -311,7 +311,7 @@ TEST_F(SiloNonTxnApi, NonTxnGetDoesNotSeeUncommittedTxnWrite) {
         Sto::start_transaction();
         auto* mbta_tbl = static_cast<mbta_ordered_index*>(tbl);
         // Stage a write in the open transaction via the txn'd path.
-        mbta_tbl->put(/*txn=*/nullptr, lcdf::Str("k"), staged_val);
+        mbta_tbl->tx_put(/*txn=*/nullptr, lcdf::Str("k"), staged_val);
         stage.store(1);
         while (stage.load() != 2) std::this_thread::yield();
         Sto::commit();
@@ -378,17 +378,17 @@ TEST_F(SiloNonTxnApi, ConcurrentNonTxnOpsAllSucceed) {
 // non-txn methods fall through to abstract_ordered_index's defaults.
 class NoNonTxnBackend : public abstract_ordered_index {
 public:
-    bool get(void*, lcdf::Str, std::string&, size_t) override { return false; }
+    bool tx_get(void*, lcdf::Str, std::string&, size_t) override { return false; }
     bool shard_get(lcdf::Str, std::string&, size_t) override { return false; }
-    void scan(void*, const std::string&, const std::string*,
-              scan_callback&, str_arena*) override {}
+    void tx_scan(void*, const std::string&, const std::string*,
+                 scan_callback&, str_arena*) override {}
     bool shard_scan(const std::string&, const std::string*,
                     scan_callback&, str_arena*) override { return false; }
-    void scanRemoteOne(void*, const std::string&, const std::string&,
-                       std::string&) override {}
-    void rscan(void*, const std::string&, const std::string*,
-               scan_callback&, str_arena*) override {}
-    void put(void*, lcdf::Str, const std::string&) override {}
+    void tx_scan_remote_one(void*, const std::string&, const std::string&,
+                            std::string&) override {}
+    void tx_rscan(void*, const std::string&, const std::string*,
+                  scan_callback&, str_arena*) override {}
+    void tx_put(void*, lcdf::Str, const std::string&) override {}
     const char* shard_put(lcdf::Str, const std::string&) override { return nullptr; }
     size_t size() const override { return 0; }
     std::map<std::string, uint64_t> clear() override { return {}; }

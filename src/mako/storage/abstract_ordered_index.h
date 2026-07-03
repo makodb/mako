@@ -97,13 +97,13 @@ pub trait OrderedIndex {
 // the remote-table single-match range read used by the txn'd remote
 // path.
 pub trait TxnOrderedIndex: OrderedIndex {
-    fn get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
-    fn put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
-    fn insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
-    fn remove(&mut self, txn: *mut c_void, key: lcdf::Str);
-    fn scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
-    fn rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
-    fn scanRemoteOne(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string);
+    fn tx_get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
+    fn tx_put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
+    fn tx_insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
+    fn tx_remove(&mut self, txn: *mut c_void, key: lcdf::Str);
+    fn tx_scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn tx_rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn tx_scan_remote_one(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string);
 }
 
 // Cross-shard 2PC (RPC-handler side): these stage reads/writes into
@@ -126,7 +126,7 @@ pub trait ShardParticipant {
 pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=d69a3ce88c25d546110855f60100599fe1e52dc0c7348987d7a0345b63e50ec4*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=d69fd6d42054573c9ad5fcc8e3474b6bfdbb93a1f64594abc19119f76fc7d6ac*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}
@@ -172,13 +172,13 @@ template <class U> class OrderedIndexAdapterRefMut;
 class TxnOrderedIndex : public OrderedIndex {
 public:
     virtual ~TxnOrderedIndex() noexcept(false) {}
-    virtual bool get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
-    virtual void put(c_void* txn, lcdf::Str key, const std::string& value) = 0;
-    virtual void insert(c_void* txn, lcdf::Str key, const std::string& value) = 0;
-    virtual void remove(c_void* txn, lcdf::Str key) = 0;
-    virtual void scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
-    virtual void rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
-    virtual void scanRemoteOne(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) = 0;
+    virtual bool tx_get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
+    virtual void tx_put(c_void* txn, lcdf::Str key, const std::string& value) = 0;
+    virtual void tx_insert(c_void* txn, lcdf::Str key, const std::string& value) = 0;
+    virtual void tx_remove(c_void* txn, lcdf::Str key) = 0;
+    virtual void tx_scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual void tx_rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual void tx_scan_remote_one(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) = 0;
     TxnOrderedIndex(const TxnOrderedIndex&) = delete;
     TxnOrderedIndex& operator=(const TxnOrderedIndex&) = delete;
     TxnOrderedIndex(TxnOrderedIndex&&) = delete;
@@ -224,22 +224,16 @@ public:
   // abstract_ordered_index::scan_callback everywhere).
   using scan_callback = oi_scan_callback;
 
-  // C++ name hiding: the bridge's own overloads (forwarders, string
-  // sugar, aborting defaults) and TxnOrderedIndex's txn'd names would
-  // each hide the other inherited overload sets. Re-expose everything
-  // side by side.
-  using OrderedIndex::get;
-  using OrderedIndex::put;
-  using OrderedIndex::insert;
-  using OrderedIndex::remove;
-  using OrderedIndex::scan;
-  using OrderedIndex::rscan;
-  using TxnOrderedIndex::get;
-  using TxnOrderedIndex::put;
-  using TxnOrderedIndex::insert;
-  using TxnOrderedIndex::remove;
-  using TxnOrderedIndex::scan;
-  using TxnOrderedIndex::rscan;
+  // C++ name hiding: the bridge's tx_-named sugar (forwarders,
+  // string-key forms) hides the inherited tx_ virtuals; re-expose
+  // them. The plain (non-txn) verbs no longer collide with anything —
+  // the tx_ rename dissolved the cross-trait overload families.
+  using TxnOrderedIndex::tx_get;
+  using TxnOrderedIndex::tx_put;
+  using TxnOrderedIndex::tx_insert;
+  using TxnOrderedIndex::tx_remove;
+  using TxnOrderedIndex::tx_scan;
+  using TxnOrderedIndex::tx_rscan;
   using ShardParticipant::shard_get;
   using ShardParticipant::shard_scan;
 
@@ -248,13 +242,13 @@ public:
   // ------------------------------------------------------------------
 
   // txn'd insert: "behavior unspecified if key exists" — default is put.
-  void insert(void *txn, lcdf::Str key, const std::string &value) override {
-    put(txn, key, value);
+  void tx_insert(void *txn, lcdf::Str key, const std::string &value) override {
+    tx_put(txn, key, value);
   }
 
   // txn'd remove: default is put of an empty value.
-  void remove(void *txn, lcdf::Str key) override {
-    put(txn, key, "");
+  void tx_remove(void *txn, lcdf::Str key) override {
+    tx_put(txn, key, "");
   }
 
   // Non-txn surface: only backends that support non-txn access
@@ -295,8 +289,8 @@ public:
   // non-virtual spellings restore the historical call shapes
   // (max_bytes_read = npos, arena = nullptr).
   // ------------------------------------------------------------------
-  bool get(void *txn, lcdf::Str key, std::string &value) {
-    return get(txn, key, value, std::string::npos);
+  bool tx_get(void *txn, lcdf::Str key, std::string &value) {
+    return tx_get(txn, key, value, std::string::npos);
   }
   bool shard_get(lcdf::Str key, std::string &value) {
     return shard_get(key, value, std::string::npos);
@@ -304,13 +298,13 @@ public:
   bool get(lcdf::Str key, std::string &value) {
     return get(key, value, std::string::npos);
   }
-  void scan(void *txn, const std::string &start_key,
-            const std::string *end_key, oi_scan_callback &callback) {
-    scan(txn, start_key, end_key, callback, nullptr);
+  void tx_scan(void *txn, const std::string &start_key,
+               const std::string *end_key, oi_scan_callback &callback) {
+    tx_scan(txn, start_key, end_key, callback, nullptr);
   }
-  void rscan(void *txn, const std::string &start_key,
-             const std::string *end_key, oi_scan_callback &callback) {
-    rscan(txn, start_key, end_key, callback, nullptr);
+  void tx_rscan(void *txn, const std::string &start_key,
+                const std::string *end_key, oi_scan_callback &callback) {
+    tx_rscan(txn, start_key, end_key, callback, nullptr);
   }
   bool shard_scan(const std::string &start_key,
                   const std::string *end_key, oi_scan_callback &callback) {
@@ -330,18 +324,19 @@ public:
   // std::string constructor). Backends override only the lcdf::Str
   // core.
   // ------------------------------------------------------------------
-  bool get(void *txn, const std::string &key, std::string &value,
-           size_t max_bytes_read = std::string::npos) {
-    return get(txn, lcdf::Str(key.data(), key.size()), value, max_bytes_read);
+  bool tx_get(void *txn, const std::string &key, std::string &value,
+              size_t max_bytes_read = std::string::npos) {
+    return tx_get(txn, lcdf::Str(key.data(), key.size()), value,
+                  max_bytes_read);
   }
-  void put(void *txn, const std::string &key, const std::string &value) {
-    put(txn, lcdf::Str(key.data(), key.size()), value);
+  void tx_put(void *txn, const std::string &key, const std::string &value) {
+    tx_put(txn, lcdf::Str(key.data(), key.size()), value);
   }
-  void insert(void *txn, const std::string &key, const std::string &value) {
-    insert(txn, lcdf::Str(key.data(), key.size()), value);
+  void tx_insert(void *txn, const std::string &key, const std::string &value) {
+    tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
   }
-  void remove(void *txn, const std::string &key) {
-    remove(txn, lcdf::Str(key.data(), key.size()));
+  void tx_remove(void *txn, const std::string &key) {
+    tx_remove(txn, lcdf::Str(key.data(), key.size()));
   }
 
   // ------------------------------------------------------------------
