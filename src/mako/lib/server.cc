@@ -448,7 +448,7 @@ namespace mako
                 item_micro::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v);
+                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),value_size);
                    offset = 0;
                 }
@@ -499,7 +499,7 @@ namespace mako
                 stock::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.s_i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v);
+                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),mako::size_per_stock_value);
                    //offset += mako::size_per_stock_value;
                    offset = 0;
@@ -551,7 +551,7 @@ namespace mako
                 status = ErrorCode::ABORT;
             } else {
                 try {
-                    bool ret = it->second->shard_get(obj_key0, obj_v);
+                    bool ret = it->second->shard_get(obj_key0, obj_v, std::string::npos);
                     // abort here,
                     //  "not found a key" maybe a expected behavior
                     if (!ret){ // key not found or found but invalid
@@ -694,7 +694,7 @@ namespace mako
                 break;
             case nontxnGetReqType:
                 get_out->clear();
-                *op_result = it->second->get(lcdf::Str(key), *get_out);
+                *op_result = it->second->get(lcdf::Str(key), *get_out, std::string::npos);
                 if (!*op_result)
                     status = ErrorCode::ABORT;  // key not found
                 break;

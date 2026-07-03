@@ -24,7 +24,8 @@ enum {
 
 // Forward declarations
 class abstract_db;
-class abstract_ordered_index;
+class FullOrderedIndex;
+using abstract_ordered_index = FullOrderedIndex;
 
 // Per-shard state for multi-shard mode
 struct ShardContext {

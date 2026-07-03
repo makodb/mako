@@ -79,7 +79,7 @@ std::string get_current_absolute_path() {
 }
 
 // Scan callback for collecting results
-class new_scan_callback_bench : public abstract_ordered_index::scan_callback {
+class new_scan_callback_bench : public oi_scan_callback {
 public:
     new_scan_callback_bench() {}
     
@@ -101,7 +101,7 @@ std::vector<kv_pair> scan_tables(abstract_db *db, abstract_ordered_index* table)
     std::string endKey(1, WE);
     new_scan_callback_bench calloc;
     void *txn0 = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
-    table->tx_scan(txn0, startKey, &endKey, calloc, nullptr);
+    tx_scan(table, txn0, startKey, &endKey, calloc, nullptr);
     db->commit_txn(txn0);
     return calloc.values;
 }
@@ -115,7 +115,7 @@ inline std::vector<kv_pair> scan_tables(abstract_db *db, mbta_sharded_ordered_in
     std::string endKey(1, WE);
     new_scan_callback_bench calloc;
     void *txn0 = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
-    table->tx_scan(txn0, startKey, &endKey, calloc, nullptr);
+    tx_scan(table, txn0, startKey, &endKey, calloc, nullptr);
     db->commit_txn(txn0);
     return calloc.values;
 }

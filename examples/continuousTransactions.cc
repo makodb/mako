@@ -73,7 +73,7 @@ public:
                         is_cross_shard = true;
                     }
 
-                    table->tx_put(txn, key, value);
+                    tx_put(table, txn, key, value);
                 } else {
                     // Read transaction
                     stats.reads++;
@@ -89,7 +89,7 @@ public:
                     }
 
                     string value;
-                    table->tx_get(txn, key, value, std::string::npos);
+                    tx_get(table, txn, key, value, std::string::npos);
                 }
 
                 db_->commit_txn(txn);

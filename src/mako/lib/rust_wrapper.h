@@ -17,7 +17,8 @@
 #include "sto/StringWrapper.hh"
 
 class abstract_db;
-class abstract_ordered_index;
+class FullOrderedIndex;
+using abstract_ordered_index = FullOrderedIndex;
 class str_arena;
 
 extern "C" {

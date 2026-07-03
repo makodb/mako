@@ -52,7 +52,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_BASIC);
             std::string key = "key_checking_" + std::to_string(i);
             std::string value = std::to_string(100);
-            open_tables["checking"]->tx_put(txn, key, StringWrapper(value));
+            tx_put(open_tables["checking"], txn, key, StringWrapper(value));
             db->commit_txn(txn);
         }
 
@@ -60,7 +60,7 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_BASIC);
             std::string key = "key_saving_" + std::to_string(i);
             std::string value = std::to_string(100);
-            open_tables["saving"]->tx_put(txn, key, StringWrapper(value));
+            tx_put(open_tables["saving"], txn, key, StringWrapper(value));
             db->commit_txn(txn);
         }
     }
@@ -82,12 +82,12 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
             std::string key = "key_checking_" + std::to_string(i);
             std::string value = "";
-            open_tables["checking"]->tx_get(txn, key, value);
+            tx_get(open_tables["checking"], txn, key, value);
             value = std::to_string(atoi(value.c_str()) + 10);
-            open_tables["checking"]->tx_put(txn, key, StringWrapper(value));
-            open_tables["remote_0"]->tx_get(txn, key, obj_v);  // the checking on the remote shard
+            tx_put(open_tables["checking"], txn, key, StringWrapper(value));
+            tx_get(open_tables["remote_0"], txn, key, obj_v);  // the checking on the remote shard
             obj_v = std::to_string(atoi(obj_v.c_str()) - 10);
-            open_tables["remote_0"]->tx_put(txn, key, obj_v);
+            tx_put(open_tables["remote_0"], txn, key, obj_v);
             db->commit_txn(txn);
         }
 

@@ -55,6 +55,16 @@ inline abstract_ordered_index *oi_pick_shard(const shard_table_vec *v,
   return (*v)[oi_hash_shard(key, v->size())];
 }
 
+// Aggregate clear across shards (NOT thread safe; teardown affordance).
+// @unsafe - virtual calls through raw shard pointers
+inline oi_stats_map oi_sharded_clear(const shard_table_vec *v) {
+  oi_stats_map aggregated;
+  for (size_t i = 0; i < v->size(); i++) {
+    for (auto &kv : (*v)[i]->clear()) aggregated[kv.first] += kv.second;
+  }
+  return aggregated;
+}
+
 // @unsafe - aborts (NDB_UNIMPLEMENTED is a C++ macro the DSL can't spell)
 [[noreturn]] inline void oi_unimplemented(const char *what) {
   (void)what;
@@ -187,6 +197,10 @@ impl mbta_sharded_ordered_index {
         total
     }
 
+    fn clear(&mut self) -> oi_stats_map {
+        unsafe { oi_sharded_clear(&self.shard_tables) }
+    }
+
     fn get_table_id(&mut self) -> i32 {
         // The wrapper spans per-key tables with their own ids; report
         // the first shard's id for diagnostics.
@@ -203,7 +217,7 @@ impl mbta_sharded_ordered_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=301ffeb6ba1be1f650c1a0babeab4bff33c3567b97bbfd7d7ff5dc9a4bf8a614*/
+/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=f093ce2d66028996019bbced45239b5cb2c7c964574ae4ce91c710b9584b6c4b*/
 struct mbta_sharded_ordered_index;
 
 struct mbta_sharded_ordered_index : public FullOrderedIndex {
@@ -232,6 +246,7 @@ struct mbta_sharded_ordered_index : public FullOrderedIndex {
     void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
     void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
     size_t size() const;
+    oi_stats_map clear();
     int32_t get_table_id();
     bool get_is_remote();
 };
@@ -385,6 +400,13 @@ inline size_t mbta_sharded_ordered_index::size() const {
     return std::move(total);
 }
 
+inline oi_stats_map mbta_sharded_ordered_index::clear() {
+    // @unsafe
+    {
+        return oi_sharded_clear(&this->shard_tables);
+    }
+}
+
 inline int32_t mbta_sharded_ordered_index::get_table_id() {
     if (oi_shard_count(&this->shard_tables) == 0) {
         return -1;
@@ -468,16 +490,10 @@ inline mbta_sharded_ordered_index *mbta_sharded_build(
                                         std::move(tables));
 }
 
-// Aggregate clear across shards (NOT thread safe; teardown affordance).
+// Aggregate clear across shards — now the trait method.
 inline std::map<std::string, uint64_t> mbta_sharded_clear(
     mbta_sharded_ordered_index *t) {
-  std::map<std::string, uint64_t> aggregated;
-  for (size_t i = 0;; i++) {
-    abstract_ordered_index *s = t->shard_for_index(i);
-    if (s == nullptr) break;
-    for (auto &kv : s->clear()) aggregated[kv.first] += kv.second;
-  }
-  return aggregated;
+  return t->clear();
 }
 
 #endif  // MAKO_BENCHMARKS_MBTA_SHARDED_ORDERED_INDEX_HH

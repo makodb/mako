@@ -53,7 +53,7 @@ public:
     void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf());
     try {
       const string k = queue_key(id, ctr);
-      tbl->tx_insert(txn, k, queue_values);
+      tx_insert(tbl, txn, k, queue_values);
       if (likely(db->commit_txn(txn))) {
         ctr++;
         return txn_result(true, queue_values.size());
@@ -78,12 +78,12 @@ public:
       const string lowk = queue_key(id, 0);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
       limit_callback c(1);
-      tbl->tx_scan(txn, lowk, &highk, c);
+      tx_scan(tbl, txn, lowk, &highk, c);
       ssize_t ret = 0;
       if (likely(!c.values.empty())) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
-        tbl->tx_remove(txn, k);
+        tx_remove(tbl, txn, k);
         ret = -queue_values.size();
       }
       if (likely(db->commit_txn(txn)))
@@ -108,13 +108,13 @@ public:
       const string lowk = queue_key(id, ctr);
       const string highk = queue_key(id, numeric_limits<uint64_t>::max());
       limit_callback c(1);
-      tbl->tx_scan(txn, lowk, &highk, c);
+      tx_scan(tbl, txn, lowk, &highk, c);
       const bool found = !c.values.empty();
       ssize_t ret = 0;
       if (likely(found)) {
         ALWAYS_ASSERT(c.values.size() == 1);
         const string &k = c.values.front().first;
-        tbl->tx_remove(txn, k);
+        tx_remove(tbl, txn, k);
         ret = -queue_values.size();
       }
       if (likely(db->commit_txn(txn))) {
@@ -142,8 +142,8 @@ public:
       string v;
       bool found = false;
       ssize_t ret = 0;
-      if (likely((found = tbl->tx_get(txn, k, v)))) {
-        tbl->tx_remove(txn, k);
+      if (likely((found = tx_get(tbl, txn, k, v)))) {
+        tx_remove(tbl, txn, k);
         ret = -queue_values.size();
       }
       if (likely(db->commit_txn(txn))) {
@@ -208,7 +208,7 @@ protected:
           for (size_t j = 0; j < nkeys; j++) {
             const string k = queue_key(id, j);
             const string &v = queue_values;
-            tbl->tx_insert(txn, k, v);
+            tx_insert(tbl, txn, k, v);
           }
           if (BenchmarkConfig::getInstance().getVerbose())
             cerr << "batch 1/1 done" << endl;
@@ -220,7 +220,7 @@ protected:
             for (size_t j = i * batchsize; j < keyend; j++) {
               const string k = queue_key(id, j);
               const string &v = queue_values;
-              tbl->tx_insert(txn, k, v);
+              tx_insert(tbl, txn, k, v);
             }
             if (BenchmarkConfig::getInstance().getVerbose())
               cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

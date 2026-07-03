@@ -82,7 +82,7 @@ public:
     }
 
     // @safe - Bridges scan_callback::invoke to std::function
-    class ScanAdapter : public abstract_ordered_index::scan_callback {
+    class ScanAdapter : public oi_scan_callback {
     public:
         explicit ScanAdapter(std::function<bool(const std::string&, const std::string&)> fn)
             : fn_(std::move(fn)) {}
@@ -122,7 +122,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->tx_scan(txn, start_key, end_key, adapter, nullptr);
+            tx_scan(index_, txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Scan: transaction aborted");
@@ -154,7 +154,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->tx_rscan(txn, start_key, end_key, adapter, nullptr);
+            tx_rscan(index_, txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("ReverseScan: transaction aborted");

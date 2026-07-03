@@ -182,7 +182,7 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
             
             tl_val_buf.clear();
             try {
-                customerTable->tx_get(txn, tl_key_buf, tl_val_buf);
+                tx_get(customerTable, txn, tl_key_buf, tl_val_buf);
                 db->commit_txn(txn);
                 result = tl_val_buf;
             } catch (abstract_db::abstract_abort_exception &ex) {
@@ -209,7 +209,7 @@ RustWrapper::Result RustWrapper::execute_request(OpCode op,
             tl_val_buf.append(mako::EXTRA_BITS_FOR_VALUE, 'B');
 
             try {
-                customerTable->tx_put(txn, tl_key_buf, StringWrapper(tl_val_buf));
+                tx_put(customerTable, txn, tl_key_buf, StringWrapper(tl_val_buf));
                 db->commit_txn(txn);
                 result = "OK";
             } catch (abstract_db::abstract_abort_exception &ex) {

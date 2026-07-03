@@ -150,6 +150,13 @@ inline void oi_mt_rscan(concurrent_btree *t, const std::string &start_key,
 
 inline size_t oi_mt_size(const concurrent_btree *t) { return t->size(); }
 
+// NOT THREAD SAFE (mbtree::clear contract); owned values leak
+// deliberately — teardown affordance, not a hot path.
+inline oi_stats_map oi_mt_clear(concurrent_btree *t) {
+  t->clear();
+  return oi_stats_map();
+}
+
 #if RUSTYCPP_RUST
 pub struct masstree_ordered_index {
     name: std::string,
@@ -193,6 +200,10 @@ impl OrderedIndex for masstree_ordered_index {
         unsafe { oi_mt_size(self.tree) }
     }
 
+    fn clear(&mut self) -> oi_stats_map {
+        unsafe { oi_mt_clear(self.tree) }
+    }
+
     fn get_table_id(&mut self) -> i32 {
         self.table_id
     }
@@ -202,7 +213,7 @@ impl OrderedIndex for masstree_ordered_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=masstree_ordered_index.1 version=1 rust_sha256=b1c4acd500fd1f0c8397b1c16675b8d321aa905692794d832af82b18a43c375e*/
+/*RUSTYCPP:GEN-BEGIN id=masstree_ordered_index.1 version=1 rust_sha256=52057791992e6c49a23cec4616869f1ff0ad9b2d2f5ed8b2228471e0dfeeb942*/
 struct masstree_ordered_index;
 
 struct masstree_ordered_index : public OrderedIndex {
@@ -220,6 +231,7 @@ struct masstree_ordered_index : public OrderedIndex {
     void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
     void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
     size_t size() const;
+    oi_stats_map clear();
     int32_t get_table_id();
     bool get_is_remote();
 };
@@ -277,6 +289,13 @@ inline size_t masstree_ordered_index::size() const {
     // @unsafe
     {
         return oi_mt_size(this->tree);
+    }
+}
+
+inline oi_stats_map masstree_ordered_index::clear() {
+    // @unsafe
+    {
+        return oi_mt_clear(this->tree);
     }
 }
 

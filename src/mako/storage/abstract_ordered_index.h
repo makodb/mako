@@ -39,7 +39,7 @@
  */
 
 // The scan callback, at namespace scope so the DSL traits can name it
-// (it was abstract_ordered_index::scan_callback; the bridge keeps
+// (it was oi_scan_callback; the bridge keeps
 // that spelling alive via a member alias).
 class oi_scan_callback {
 public:
@@ -58,6 +58,8 @@ public:
 // Spellings for the DSL's raw-pointer types (`*mut c_void` etc.).
 using c_void = void;
 using c_char = char;
+// Opaque spelling for clear()'s stats-map return.
+using oi_stats_map = std::map<std::string, uint64_t>;
 
 #if RUSTYCPP_RUST
 // The non-transactional KV surface (Masstree-shape) + bookkeeping.
@@ -84,6 +86,7 @@ pub trait OrderedIndex {
     fn scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
     fn rscan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
     fn size(&self) -> usize;
+    fn clear(&mut self) -> oi_stats_map;
     fn get_table_id(&mut self) -> i32;
     fn get_is_remote(&mut self) -> bool;
 }
@@ -126,7 +129,7 @@ pub trait ShardParticipant {
 pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=d69fd6d42054573c9ad5fcc8e3474b6bfdbb93a1f64594abc19119f76fc7d6ac*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=f2b3919ff4b3135ad3def1925077a87538b4e693ba0946b5007f00779c018474*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}
@@ -155,6 +158,7 @@ public:
     virtual void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
     virtual void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
     virtual size_t size() const = 0;
+    virtual oi_stats_map clear() = 0;
     virtual int32_t get_table_id() = 0;
     virtual bool get_is_remote() = 0;
     OrderedIndex(const OrderedIndex&) = delete;
@@ -208,146 +212,64 @@ template <class U> class FullOrderedIndexAdapterRefMut;
 /*RUSTYCPP:GEN-END id=abstract_ordered_index.1*/
 
 /**
- * abstract_ordered_index — the combined bridge over the generated
- * role interfaces. Existing code holds this type; new code should
- * prefer the narrowest role interface it needs. Carries what traits
- * cannot: default arguments (as non-virtual forwarders), the
- * string-key spellings (lcdf::Str has no implicit std::string ctor),
- * legacy default bodies, and the two bookkeeping virtuals whose
- * types aren't worth expressing in the DSL.
+ * The interface IS the three traits above — nothing else. The former
+ * hand-written bridge (overload merging, default-arg forwarders,
+ * string-key members, legacy default bodies) is gone: every name on
+ * the class surface has exactly one spelling. `abstract_ordered_index`
+ * survives as an alias so the ~125 declaration sites and the legacy
+ * subclasses keep compiling verbatim.
  */
-class abstract_ordered_index : public FullOrderedIndex {
-public:
-  virtual ~abstract_ordered_index() {}
+using abstract_ordered_index = FullOrderedIndex;
 
-  // Compat spelling for the callback (pre-trait code says
-  // abstract_ordered_index::scan_callback everywhere).
-  using scan_callback = oi_scan_callback;
+// ---------------------------------------------------------------------------
+// Convenience FREE functions (deliberately not members: free-function
+// overload sets involve no class-scope name hiding, need no
+// using-declarations, and may carry default arguments — everything the
+// bridge existed to fake). All dispatch through the trait virtuals.
+// ---------------------------------------------------------------------------
 
-  // C++ name hiding: the bridge's tx_-named sugar (forwarders,
-  // string-key forms) hides the inherited tx_ virtuals; re-expose
-  // them. The plain (non-txn) verbs no longer collide with anything —
-  // the tx_ rename dissolved the cross-trait overload families.
-  using TxnOrderedIndex::tx_get;
-  using TxnOrderedIndex::tx_put;
-  using TxnOrderedIndex::tx_insert;
-  using TxnOrderedIndex::tx_remove;
-  using TxnOrderedIndex::tx_scan;
-  using TxnOrderedIndex::tx_rscan;
-  using ShardParticipant::shard_get;
-  using ShardParticipant::shard_scan;
-
-  // ------------------------------------------------------------------
-  // Legacy default bodies (previously defaults on the base virtuals).
-  // ------------------------------------------------------------------
-
-  // txn'd insert: "behavior unspecified if key exists" — default is put.
-  void tx_insert(void *txn, lcdf::Str key, const std::string &value) override {
-    tx_put(txn, key, value);
-  }
-
-  // txn'd remove: default is put of an empty value.
-  void tx_remove(void *txn, lcdf::Str key) override {
-    tx_put(txn, key, "");
-  }
-
-  // Non-txn surface: only backends that support non-txn access
-  // override these; the defaults abort loudly. Callers must not
-  // assume every abstract_ordered_index supports this API.
-  // @unsafe - defaults abort via NDB_UNIMPLEMENTED
-  bool get(lcdf::Str key, std::string &value,
-           size_t max_bytes_read) override {
-    (void)key; (void)value; (void)max_bytes_read;
-    NDB_UNIMPLEMENTED("non-txn get");
-  }
-  bool put(lcdf::Str key, const std::string &value) override {
-    (void)key; (void)value;
-    NDB_UNIMPLEMENTED("non-txn put");
-  }
-  bool insert(lcdf::Str key, const std::string &value) override {
-    (void)key; (void)value;
-    NDB_UNIMPLEMENTED("non-txn insert");
-  }
-  bool remove(lcdf::Str key) override {
-    (void)key;
-    NDB_UNIMPLEMENTED("non-txn remove");
-  }
-  void scan(const std::string &start_key, const std::string *end_key,
-            oi_scan_callback &callback, str_arena *arena) override {
-    (void)start_key; (void)end_key; (void)callback; (void)arena;
-    NDB_UNIMPLEMENTED("non-txn scan");
-  }
-  void rscan(const std::string &start_key, const std::string *end_key,
-             oi_scan_callback &callback, str_arena *arena) override {
-    (void)start_key; (void)end_key; (void)callback; (void)arena;
-    NDB_UNIMPLEMENTED("non-txn rscan");
-  }
-
-  // ------------------------------------------------------------------
-  // Default-argument forwarders. Rust traits carry no default
-  // arguments, so the generated virtuals take every parameter; these
-  // non-virtual spellings restore the historical call shapes
-  // (max_bytes_read = npos, arena = nullptr).
-  // ------------------------------------------------------------------
-  bool tx_get(void *txn, lcdf::Str key, std::string &value) {
-    return tx_get(txn, key, value, std::string::npos);
-  }
-  bool shard_get(lcdf::Str key, std::string &value) {
-    return shard_get(key, value, std::string::npos);
-  }
-  bool get(lcdf::Str key, std::string &value) {
-    return get(key, value, std::string::npos);
-  }
-  void tx_scan(void *txn, const std::string &start_key,
-               const std::string *end_key, oi_scan_callback &callback) {
-    tx_scan(txn, start_key, end_key, callback, nullptr);
-  }
-  void tx_rscan(void *txn, const std::string &start_key,
-                const std::string *end_key, oi_scan_callback &callback) {
-    tx_rscan(txn, start_key, end_key, callback, nullptr);
-  }
-  bool shard_scan(const std::string &start_key,
-                  const std::string *end_key, oi_scan_callback &callback) {
-    return shard_scan(start_key, end_key, callback, nullptr);
-  }
-  void scan(const std::string &start_key, const std::string *end_key,
-            oi_scan_callback &callback) {
-    scan(start_key, end_key, callback, nullptr);
-  }
-  void rscan(const std::string &start_key, const std::string *end_key,
-             oi_scan_callback &callback) {
-    rscan(start_key, end_key, callback, nullptr);
-  }
-
-  // ------------------------------------------------------------------
-  // Non-virtual string-key conveniences (lcdf::Str has no implicit
-  // std::string constructor). Backends override only the lcdf::Str
-  // core.
-  // ------------------------------------------------------------------
-  bool tx_get(void *txn, const std::string &key, std::string &value,
-              size_t max_bytes_read = std::string::npos) {
-    return tx_get(txn, lcdf::Str(key.data(), key.size()), value,
-                  max_bytes_read);
-  }
-  void tx_put(void *txn, const std::string &key, const std::string &value) {
-    tx_put(txn, lcdf::Str(key.data(), key.size()), value);
-  }
-  void tx_insert(void *txn, const std::string &key, const std::string &value) {
-    tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
-  }
-  void tx_remove(void *txn, const std::string &key) {
-    tx_remove(txn, lcdf::Str(key.data(), key.size()));
-  }
-
-  // ------------------------------------------------------------------
-  // Bookkeeping kept hand-written: clear()'s return type isn't worth
-  // expressing in the DSL; print_stats is an optional hook.
-  // ------------------------------------------------------------------
-
-  /** Not thread safe for now */
-  virtual std::map<std::string, uint64_t> clear() = 0;
-
-  virtual void print_stats() {}
-};
+inline bool tx_get(FullOrderedIndex *t, void *txn, lcdf::Str key,
+                   std::string &value,
+                   size_t max_bytes_read = std::string::npos) {
+  return t->tx_get(txn, key, value, max_bytes_read);
+}
+inline bool tx_get(FullOrderedIndex *t, void *txn, const std::string &key,
+                   std::string &value,
+                   size_t max_bytes_read = std::string::npos) {
+  return t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
+                   max_bytes_read);
+}
+inline void tx_put(FullOrderedIndex *t, void *txn, lcdf::Str key,
+                   const std::string &value) {
+  t->tx_put(txn, key, value);
+}
+inline void tx_put(FullOrderedIndex *t, void *txn, const std::string &key,
+                   const std::string &value) {
+  t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
+}
+inline void tx_insert(FullOrderedIndex *t, void *txn, lcdf::Str key,
+                      const std::string &value) {
+  t->tx_insert(txn, key, value);
+}
+inline void tx_insert(FullOrderedIndex *t, void *txn, const std::string &key,
+                      const std::string &value) {
+  t->tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
+}
+inline void tx_remove(FullOrderedIndex *t, void *txn, lcdf::Str key) {
+  t->tx_remove(txn, key);
+}
+inline void tx_remove(FullOrderedIndex *t, void *txn, const std::string &key) {
+  t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
+}
+inline void tx_scan(FullOrderedIndex *t, void *txn,
+                    const std::string &start_key, const std::string *end_key,
+                    oi_scan_callback &callback, str_arena *arena = nullptr) {
+  t->tx_scan(txn, start_key, end_key, callback, arena);
+}
+inline void tx_rscan(FullOrderedIndex *t, void *txn,
+                     const std::string &start_key, const std::string *end_key,
+                     oi_scan_callback &callback, str_arena *arena = nullptr) {
+  t->tx_rscan(txn, start_key, end_key, callback, arena);
+}
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */

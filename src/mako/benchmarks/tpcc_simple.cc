@@ -494,7 +494,7 @@ protected:
         const size_t sz = Size(v);
         warehouse_total_sz += sz;
         n_warehouses++;
-        tbl_warehouse(i)->tx_insert(txn, Encode(k), Encode(obj_buf, v));
+        tx_insert(tbl_warehouse(i), txn, Encode(k), Encode(obj_buf, v));
 
         warehouses.push_back(v);
       }
@@ -504,7 +504,7 @@ protected:
       for (uint i = 1; i <= NumWarehouses(); i++) {
         const warehouse::key k(i);
         string warehouse_v;
-        ALWAYS_ASSERT(tbl_warehouse(i)->tx_get(txn, Encode(k), warehouse_v));
+        ALWAYS_ASSERT(tx_get(tbl_warehouse(i), txn, Encode(k), warehouse_v));
         warehouse::value warehouse_temp;
         const warehouse::value *v = Decode(warehouse_v, warehouse_temp);
         ALWAYS_ASSERT(warehouses[i - 1] == *v);
@@ -565,7 +565,7 @@ protected:
 
         const size_t sz = Size(v);
         total_sz += sz;
-        tbl_item(1)->tx_insert(txn, EncodeK(k), Encode(obj_buf, v)); // this table is shared, so any partition is OK
+        tx_insert(tbl_item(1), txn, EncodeK(k), Encode(obj_buf, v)); // this table is shared, so any partition is OK
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ASSERT(db->commit_txn(txn));
@@ -663,8 +663,8 @@ protected:
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
-            tbl_stock(w)->tx_insert(txn, EncodeK(k), Encode(obj_buf, v));
-            tbl_stock_data(w)->tx_insert(txn, EncodeK(k_data), Encode(obj_buf1, v_data));
+            tx_insert(tbl_stock(w), txn, EncodeK(k), Encode(obj_buf, v));
+            tx_insert(tbl_stock_data(w), txn, EncodeK(k_data), Encode(obj_buf1, v_data));
           }
           if (db->commit_txn(txn)) {
             b++;
@@ -739,7 +739,7 @@ protected:
           const size_t sz = Size(v);
           district_total_sz += sz;
           n_districts++;
-          tbl_district(w)->tx_insert(txn, EncodeK(k), Encode(obj_buf, v));
+          tx_insert(tbl_district(w), txn, EncodeK(k), Encode(obj_buf, v));
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ASSERT(db->commit_txn(txn));
@@ -842,7 +842,7 @@ protected:
 
               const size_t sz = Size(v);
               total_sz += sz;
-              tbl_customer(w)->tx_insert(txn, EncodeK(k), Encode(obj_buf, v));
+              tx_insert(tbl_customer(w), txn, EncodeK(k), Encode(obj_buf, v));
 
             }
             if (db->commit_txn(txn)) {
@@ -943,12 +943,12 @@ protected:
             const size_t sz = Size(v_oo);
             oorder_total_sz += sz;
             n_oorders++;
-            tbl_oorder(w)->tx_insert(txn, EncodeK(k_oo), Encode(obj_buf, v_oo));
+            tx_insert(tbl_oorder(w), txn, EncodeK(k_oo), Encode(obj_buf, v_oo));
 
             const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
             const oorder_c_id_idx::value v_oo_idx(0);
 
-            tbl_oorder_c_id_idx(w)->tx_insert(txn, Encode(k_oo_idx), Encode(obj_buf, v_oo_idx));
+            tx_insert(tbl_oorder_c_id_idx(w), txn, Encode(k_oo_idx), Encode(obj_buf, v_oo_idx));
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
@@ -958,7 +958,7 @@ protected:
               const size_t sz = Size(v_no);
               new_order_total_sz += sz;
               n_new_orders++;
-              tbl_new_order(w)->tx_insert(txn, Encode(k_no), Encode(obj_buf, v_no));
+              tx_insert(tbl_new_order(w), txn, Encode(k_no), Encode(obj_buf, v_no));
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -984,7 +984,7 @@ protected:
               const size_t sz = Size(v_ol);
               order_line_total_sz += sz;
               n_order_lines++;
-              tbl_order_line(w)->tx_insert(txn, Encode(k_ol), Encode(obj_buf, v_ol));
+              tx_insert(tbl_order_line(w), txn, Encode(k_ol), Encode(obj_buf, v_ol));
             }
             if (db->commit_txn(txn)) {
               c++;
@@ -1040,7 +1040,7 @@ tpcc_worker::txn_read_items()
       const uint ol_i_id = itemIDs[ol_number - 1];
 
       const item::key k_i(ol_i_id);
-      ALWAYS_ASSERT(tbl_item(1)->tx_get(txn, EncodeK(obj_key0, k_i), obj_v));
+      ALWAYS_ASSERT(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
 
     }
 
@@ -1065,7 +1065,7 @@ tpcc_worker::txn_read_customer()
   scoped_str_arena s_arena(arena);
   try {
     const customer::key k_c(warehouse_id, districtID, customerID);
-    ALWAYS_ASSERT(tbl_customer(warehouse_id)->tx_get(txn, EncodeK(obj_key0, k_c), obj_v)); 
+    ALWAYS_ASSERT(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v)); 
     if (likely(db->commit_txn(txn)))
       return txn_result(true, 0);
   } catch (abstract_db::abstract_abort_exception &ex) {
@@ -1085,13 +1085,13 @@ tpcc_worker::txn_update_customer()
   scoped_str_arena s_arena(arena);
   try {
     const customer::key k_c(warehouse_id, districtID, customerID);
-    ALWAYS_ASSERT(tbl_customer(warehouse_id)->tx_get(txn, EncodeK(obj_key0, k_c), obj_v)); 
+    ALWAYS_ASSERT(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v)); 
     
     customer::value v_c_temp;
     const customer::value *v_c = Decode(obj_v, v_c_temp);
     customer::value v_c_new(*v_c);
     v_c_new.c_balance += 10;
-    tbl_customer(warehouse_id)->tx_put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
+    tx_put(tbl_customer(warehouse_id), txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
   
     if (likely(db->commit_txn(txn)))
       return txn_result(true, 0);

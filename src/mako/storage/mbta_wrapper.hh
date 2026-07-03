@@ -154,7 +154,7 @@ public:
 
   bool shard_scan(const std::string &start_key,
     const std::string *end_key,
-    scan_callback &callback,
+    oi_scan_callback &callback,
     str_arena *arena = nullptr) {
     mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 
@@ -213,7 +213,7 @@ STD_OP(mbta.transDelete(key));
 void tx_scan(void *txn,
     const std::string &start_key,
     const std::string *end_key,
-    scan_callback &callback,
+    oi_scan_callback &callback,
     str_arena *arena = nullptr) {
 #if OP_LOGGING
 mt_scan++;
@@ -267,7 +267,7 @@ void tx_scan_remote_one(void *txn,
 void tx_rscan(void *txn,
      const std::string &start_key,
      const std::string *end_key,
-     scan_callback &callback,
+     oi_scan_callback &callback,
      str_arena *arena = nullptr) {
 #if 1
 #if OP_LOGGING
@@ -416,7 +416,7 @@ bool remove(lcdf::Str key) override {
 // @unsafe - retries around Sto thread-local txn state
 void scan(const std::string &start_key,
           const std::string *end_key,
-          scan_callback &callback,
+          oi_scan_callback &callback,
           str_arena *arena = nullptr) override {
   // Remote tables: fail loudly. The only scan RPC (remoteScan /
   // HandleScanRequest) returns a single first-match value, not a
@@ -441,7 +441,7 @@ void scan(const std::string &start_key,
 // @unsafe - retries around Sto thread-local txn state
 void rscan(const std::string &start_key,
            const std::string *end_key,
-           scan_callback &callback,
+           oi_scan_callback &callback,
            str_arena *arena = nullptr) override {
   // Remote tables: fail loudly (same rationale as scan above).
   ALWAYS_ASSERT(!mbta.get_is_remote());
@@ -541,7 +541,7 @@ ht.transPut(key, StringWrapper(value));
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -549,7 +549,7 @@ ht.transPut(key, StringWrapper(value));
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }
@@ -657,7 +657,7 @@ public:
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -665,7 +665,7 @@ public:
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }
@@ -779,7 +779,7 @@ public:
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -787,7 +787,7 @@ public:
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }
@@ -886,7 +886,7 @@ public:
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -894,7 +894,7 @@ public:
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }
@@ -992,7 +992,7 @@ public:
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -1000,7 +1000,7 @@ public:
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }
@@ -1099,7 +1099,7 @@ public:
   void tx_scan(void *txn,
             const std::string &start_key,
             const std::string *end_key,
-            scan_callback &callback,
+            oi_scan_callback &callback,
             str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("scan");
   }
@@ -1107,7 +1107,7 @@ public:
   void tx_rscan(void *txn,
              const std::string &start_key,
              const std::string *end_key,
-             scan_callback &callback,
+             oi_scan_callback &callback,
              str_arena *arena = nullptr) {
     NDB_UNIMPLEMENTED("rscan");
   }

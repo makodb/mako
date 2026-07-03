@@ -65,29 +65,29 @@ public:
     try {
       // pick user at random
       biduser_rec::key biduser_key(r.next() % nusers);
-      ALWAYS_ASSERT(bidusertbl->tx_get(txn, Encode(obj_k0, biduser_key), obj_v0));
+      ALWAYS_ASSERT(tx_get(bidusertbl, txn, Encode(obj_k0, biduser_key), obj_v0));
       biduser_rec::value biduser_value_temp;
       const biduser_rec::value *biduser_value = Decode(obj_v0, biduser_value_temp);
 
       // update the user's bid
       const uint32_t bid = biduser_value->bid;
       biduser_value_temp.bid++;
-      bidusertbl->tx_put(txn, Encode(str(), biduser_key), Encode(str(), biduser_value_temp));
+      tx_put(bidusertbl, txn, Encode(str(), biduser_key), Encode(str(), biduser_value_temp));
 
       // insert the new bid
       const bid_rec::key bid_key(biduser_key.uid, bid);
       const bid_rec::value bid_value(r.next() % nproducts, r.next_uniform() * pricefactor);
-      bidtbl->tx_insert(txn, Encode(str(), bid_key), Encode(str(), bid_value));
+      tx_insert(bidtbl, txn, Encode(str(), bid_key), Encode(str(), bid_value));
 
       // update the max value if necessary
       const bidmax_rec::key bidmax_key(bid_value.pid);
-      ALWAYS_ASSERT(bidmaxtbl->tx_get(txn, Encode(obj_k0, bidmax_key), obj_v0));
+      ALWAYS_ASSERT(tx_get(bidmaxtbl, txn, Encode(obj_k0, bidmax_key), obj_v0));
       bidmax_rec::value bidmax_value_temp;
       const bidmax_rec::value *bidmax_value = Decode(obj_v0, bidmax_value_temp);
 
       if (bid_value.amount > bidmax_value->amount) {
         bidmax_value_temp.amount = bid_value.amount;
-        bidmaxtbl->tx_put(txn, Encode(str(), bidmax_key), Encode(str(), bidmax_value_temp));
+        tx_put(bidmaxtbl, txn, Encode(str(), bidmax_key), Encode(str(), bidmax_value_temp));
       }
 
       if (likely(db->commit_txn(txn)))
@@ -157,7 +157,7 @@ protected:
             const biduser_rec::key key(j);
             const biduser_rec::value value(0);
             string buf0;
-            bidusertbl->tx_insert(txn, Encode(key), Encode(buf0, value));
+            tx_insert(bidusertbl, txn, Encode(key), Encode(buf0, value));
           }
           if (BenchmarkConfig::getInstance().getVerbose())
             cerr << "batch 1/1 done" << endl;
@@ -170,7 +170,7 @@ protected:
               const biduser_rec::key key(j);
               const biduser_rec::value value(0);
               string buf0;
-              bidusertbl->tx_insert(txn, Encode(key), Encode(buf0, value));
+              tx_insert(bidusertbl, txn, Encode(key), Encode(buf0, value));
             }
             if (BenchmarkConfig::getInstance().getVerbose())
               cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;
@@ -189,7 +189,7 @@ protected:
             const bidmax_rec::key key(j);
             const bidmax_rec::value value(0.0);
             string buf0;
-            bidmaxtbl->tx_insert(txn, Encode(key), Encode(buf0, value));
+            tx_insert(bidmaxtbl, txn, Encode(key), Encode(buf0, value));
           }
           if (BenchmarkConfig::getInstance().getVerbose())
             cerr << "batch 1/1 done" << endl;
@@ -202,7 +202,7 @@ protected:
               const bidmax_rec::key key(j);
               const bidmax_rec::value value(0.0);
               string buf0;
-              bidmaxtbl->tx_insert(txn, Encode(key), Encode(buf0, value));
+              tx_insert(bidmaxtbl, txn, Encode(key), Encode(buf0, value));
             }
             if (BenchmarkConfig::getInstance().getVerbose())
               cerr << "batch " << (i + 1) << "/" << nbatches << " done" << endl;

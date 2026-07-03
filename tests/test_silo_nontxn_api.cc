@@ -68,9 +68,9 @@ protected:
     }
 };
 
-// A scan_callback that collects (key, value) pairs and optionally
+// A oi_scan_callback that collects (key, value) pairs and optionally
 // stops early after `limit` entries.
-class CollectCallback : public abstract_ordered_index::scan_callback {
+class CollectCallback : public oi_scan_callback {
 public:
     explicit CollectCallback(size_t limit = SIZE_MAX) : limit_(limit) {}
     bool invoke(const char* keyp, size_t keylen,
@@ -180,10 +180,10 @@ TEST_F(SiloNonTxnApi, L3PutGetRoundTripThroughBasePointer) {
     EXPECT_TRUE(tbl->put(lcdf::Str("k"), "l3-value"));
 
     std::string out;
-    EXPECT_TRUE(tbl->get(lcdf::Str("k"), out));
+    EXPECT_TRUE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "l3-value");
 
-    EXPECT_FALSE(tbl->get(lcdf::Str("missing"), out));
+    EXPECT_FALSE(tbl->get(lcdf::Str("missing"), out, std::string::npos));
 }
 
 TEST_F(SiloNonTxnApi, L3PutOverwrites) {
@@ -193,7 +193,7 @@ TEST_F(SiloNonTxnApi, L3PutOverwrites) {
     EXPECT_FALSE(tbl->put(lcdf::Str("k"), "two"));  // existed
 
     std::string out;
-    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "two");
 }
 
@@ -204,7 +204,7 @@ TEST_F(SiloNonTxnApi, L3InsertIsExclusive) {
     EXPECT_FALSE(tbl->insert(lcdf::Str("k"), "two"));
 
     std::string out;
-    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "one");
 }
 
@@ -214,7 +214,7 @@ TEST_F(SiloNonTxnApi, L3RemoveSemantics) {
     ASSERT_TRUE(tbl->put(lcdf::Str("k"), "v"));
     EXPECT_TRUE(tbl->remove(lcdf::Str("k")));
     std::string out;
-    EXPECT_FALSE(tbl->get(lcdf::Str("k"), out));
+    EXPECT_FALSE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_FALSE(tbl->remove(lcdf::Str("k")));  // second remove: absent
 }
 
@@ -231,7 +231,7 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
         CollectCallback cb;
         std::string start = "s0";
         std::string end = "s9";
-        tbl->scan(start, &end, cb);
+        tbl->scan(start, &end, cb, nullptr);
         ASSERT_EQ(cb.pairs.size(), 8u);
         for (int i = 0; i < 8; i++) {
             EXPECT_EQ(cb.pairs[i].first, "s" + std::to_string(i));
@@ -243,7 +243,7 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
     {
         CollectCallback cb(/*limit=*/3);
         std::string start = "s0";
-        tbl->scan(start, nullptr, cb);
+        tbl->scan(start, nullptr, cb, nullptr);
         EXPECT_EQ(cb.pairs.size(), 3u);
     }
 
@@ -252,7 +252,7 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
         CollectCallback cb;
         std::string start = "s9";
         std::string end = "s0";
-        tbl->rscan(start, &end, cb);
+        tbl->rscan(start, &end, cb, nullptr);
         ASSERT_GE(cb.pairs.size(), 1u);
         for (size_t i = 1; i < cb.pairs.size(); i++) {
             EXPECT_GT(cb.pairs[i - 1].first, cb.pairs[i].first);
@@ -311,7 +311,7 @@ TEST_F(SiloNonTxnApi, NonTxnGetDoesNotSeeUncommittedTxnWrite) {
         Sto::start_transaction();
         auto* mbta_tbl = static_cast<mbta_ordered_index*>(tbl);
         // Stage a write in the open transaction via the txn'd path.
-        mbta_tbl->tx_put(/*txn=*/nullptr, lcdf::Str("k"), staged_val);
+        tx_put(mbta_tbl, /*txn=*/nullptr, lcdf::Str("k"), staged_val);
         stage.store(1);
         while (stage.load() != 2) std::this_thread::yield();
         Sto::commit();
@@ -322,7 +322,7 @@ TEST_F(SiloNonTxnApi, NonTxnGetDoesNotSeeUncommittedTxnWrite) {
 
     // Uncommitted write must be invisible.
     std::string out;
-    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "committed");
 
     stage.store(2);
@@ -330,7 +330,7 @@ TEST_F(SiloNonTxnApi, NonTxnGetDoesNotSeeUncommittedTxnWrite) {
     writer.join();
 
     // Committed write now visible.
-    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out));
+    ASSERT_TRUE(tbl->get(lcdf::Str("k"), out, std::string::npos));
     EXPECT_EQ(out, "staged");
 }
 
@@ -359,7 +359,7 @@ TEST_F(SiloNonTxnApi, ConcurrentNonTxnOpsAllSucceed) {
             for (int i = 0; i < kKeysPerThread; i++) {
                 std::string k = "t" + std::to_string(t) + "_" + std::to_string(i);
                 std::string out;
-                if (!tbl->get(lcdf::Str(k), out) ||
+                if (!tbl->get(lcdf::Str(k), out, std::string::npos) ||
                     out != "v" + std::to_string(t * 1000 + i)) {
                     failures.fetch_add(1);
                 }
@@ -371,48 +371,14 @@ TEST_F(SiloNonTxnApi, ConcurrentNonTxnOpsAllSucceed) {
 }
 
 // ===========================================================================
-// 5. Default implementations abort loudly
+// 5. Unimplemented surface is a COMPILE-TIME fact now
 // ===========================================================================
-
-// Minimal implementer that overrides only the pure virtuals — the
-// non-txn methods fall through to abstract_ordered_index's defaults.
-class NoNonTxnBackend : public abstract_ordered_index {
-public:
-    bool tx_get(void*, lcdf::Str, std::string&, size_t) override { return false; }
-    bool shard_get(lcdf::Str, std::string&, size_t) override { return false; }
-    void tx_scan(void*, const std::string&, const std::string*,
-                 scan_callback&, str_arena*) override {}
-    bool shard_scan(const std::string&, const std::string*,
-                    scan_callback&, str_arena*) override { return false; }
-    void tx_scan_remote_one(void*, const std::string&, const std::string&,
-                            std::string&) override {}
-    void tx_rscan(void*, const std::string&, const std::string*,
-                  scan_callback&, str_arena*) override {}
-    void tx_put(void*, lcdf::Str, const std::string&) override {}
-    const char* shard_put(lcdf::Str, const std::string&) override { return nullptr; }
-    size_t size() const override { return 0; }
-    std::map<std::string, uint64_t> clear() override { return {}; }
-    int get_table_id() override { return -1; }
-    bool get_is_remote() override { return false; }
-
-    // Bring the base's non-txn overloads into scope alongside the
-    // txn'd overrides above (they would otherwise be name-hidden).
-    using abstract_ordered_index::get;
-    using abstract_ordered_index::put;
-    using abstract_ordered_index::scan;
-    using abstract_ordered_index::rscan;
-};
-
-TEST_F(SiloNonTxnApi, DefaultNonTxnImplementationsAbort) {
-    // Earlier tests spawn worker threads; fork()-based death tests need
-    // the threadsafe style to be reliable in that environment.
-    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-    NoNonTxnBackend backend;
-    std::string out;
-    EXPECT_DEATH(backend.get(lcdf::Str("k"), out), "");
-    EXPECT_DEATH(backend.put(lcdf::Str("k"), std::string("v")), "");
-    EXPECT_DEATH(backend.insert(lcdf::Str("k"), std::string("v")), "");
-    EXPECT_DEATH(backend.remove(lcdf::Str("k")), "");
-}
+// The old bridge supplied aborting defaults for the non-txn ops, and
+// this section death-tested them. After the de-overloading campaign
+// the interface is exactly the three traits: a backend that does not
+// implement the non-txn surface simply does not implement
+// OrderedIndex, and instantiating it fails to compile — there is
+// nothing left to abort at runtime. (Legacy ht_*/ndb/kvdb backends
+// carry explicit aborting stubs; see storage/mbta_wrapper.hh.)
 
 }  // namespace
