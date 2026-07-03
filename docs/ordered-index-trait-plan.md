@@ -316,6 +316,29 @@ Phases:
 
 Every phase gates on the full suite, as before.
 
+## De-overloading campaign (user-directed, 2026-07-03)
+
+Goal: eliminate the bridge's overload families. Naming decision: the
+TRANSACTIONAL ops take the prefix (tx_get/tx_put/tx_insert/tx_remove/
+tx_scan/tx_rscan, scanRemoteOne → tx_scan_remote_one); the
+non-transactional KV surface keeps the plain Masstree verbs.
+
+- S1: rename the txn'd family end-to-end (traits, backends, bridge
+  sugar renamed in place, all call sites). Cross-trait name collision
+  dies; using-set shrinks 14 → 6.
+- S2: clear()/print_stats disposition; scan_callback spelling;
+  aborting defaults move into the legacy backends (ht_*/ndb/kvdb).
+- S3: sugar → free functions with default args (class surface = one
+  spelling per name); forwarders + remaining usings deleted; bridge
+  reduced to nothing; `using abstract_ordered_index =
+  FullOrderedIndex;` keeps the 125 declaration sites verbatim.
+- S4: mbta_ordered_index becomes a FULL DSL struct
+  (#[cpp_inherit] impl FullOrderedIndex) — the structural constraint
+  dissolves with the bridge; exception boundary stays in C++ kernels
+  (approved); MassTrans allocated behind a factory free fn.
+- S5: docs + PR notes.
+
+
 ## Effort: ~5–7 days (contract phases) + ~4–6 days (backend migration)
 
 ## Risks & open questions
