@@ -166,13 +166,8 @@ public:
                scan_callback &, str_arena * = nullptr) override {
         NDB_UNIMPLEMENTED("masstree_ordered_index: transactional rscan");
     }
-    const char *put(void *, lcdf::Str, const std::string &) override {
+    void put(void *, lcdf::Str, const std::string &) override {
         NDB_UNIMPLEMENTED("masstree_ordered_index: transactional put");
-    }
-    const char *put_mbta(void *, lcdf::Str,
-                         bool (*)(const std::string &, const std::string &),
-                         const std::string &) override {
-        NDB_UNIMPLEMENTED("masstree_ordered_index: put_mbta");
     }
     const char *shard_put(lcdf::Str, const std::string &) override {
         NDB_UNIMPLEMENTED("masstree_ordered_index: shard_put");

@@ -32,46 +32,15 @@ public:
            std::string &value,
            size_t max_bytes_read = std::string::npos) override;
 
-  bool get(void *txn,
-           const std::string &key,
-           std::string &value,
-           size_t max_bytes_read = std::string::npos) override {
-    return get(txn, lcdf::Str(key), value, max_bytes_read);
-  }
-
-  bool get(void *txn,
-           int32_t key,
-           std::string &value,
-           size_t max_bytes_read = std::string::npos) override {
-    return get(txn,
-               lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)),
-               value,
-               max_bytes_read);
-  }
-
-  const char *put(void *txn,
-                  lcdf::Str key,
-                  const std::string &value) override;
-
-  const char *put(void *txn,
-                  const std::string &key,
-                  const std::string &value) override {
-    return put(txn, lcdf::Str(key), value);
-  }
-
-  const char *put(void *txn,
-                  int32_t key,
-                  const std::string &value) override {
-    return put(txn,
-               lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)),
-               value);
-  }
+  void put(void *txn,
+           lcdf::Str key,
+           const std::string &value) override;
 
   const char *put_mbta(void *txn,
                        lcdf::Str key,
                        bool (*compar)(const std::string &newValue,
                                       const std::string &oldValue),
-                       const std::string &value) override;
+                       const std::string &value);
 
   const char *put_mbta(void *txn,
                        const std::string &key,
@@ -81,22 +50,16 @@ public:
     return put_mbta(txn, lcdf::Str(key), compar, value);
   }
 
-  const char *insert(void *txn,
-                     lcdf::Str key,
-                     const std::string &value) override {
+  void insert(void *txn,
+              lcdf::Str key,
+              const std::string &value) override {
     // @safe - Forward to per-shard insert() which calls transInsert (not transPut)
-    return pick_shard(key)->insert(txn, key, value);
+    pick_shard(key)->insert(txn, key, value);
   }
 
   void remove(void *txn, lcdf::Str key) override;
 
-  void remove(void *txn, const std::string &key) override {
-    remove(txn, lcdf::Str(key));
-  }
 
-  void remove(void *txn, int32_t key) override {
-    remove(txn, lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)));
-  }
 
   // ========================================================================
   // RocksDB-like Get/Put/Delete wrappers (return mako::Status)
@@ -252,21 +215,17 @@ inline bool mbta_sharded_ordered_index::get(
   return pick_shard(key)->get(txn, key, value, max_bytes_read);
 }
 
-inline const char *mbta_sharded_ordered_index::put(
+inline void mbta_sharded_ordered_index::put(
     void *txn,
     lcdf::Str key,
     const std::string &value) {
-  return pick_shard(key)->put(txn, key, value);
+  pick_shard(key)->put(txn, key, value);
 }
 
-inline const char *mbta_sharded_ordered_index::put_mbta(
-    void *txn,
-    lcdf::Str key,
-    bool (*compar)(const std::string &newValue,
-                   const std::string &oldValue),
-    const std::string &value) {
-  return pick_shard(key)->put_mbta(txn, key, compar, value);
-}
+// put_mbta is mbta-specific and no longer on abstract_ordered_index;
+// the definition lives in storage/mbta_wrapper.hh (needs the complete
+// mbta_ordered_index type for the cast; per-key tables are mbta by
+// construction).
 
 inline void mbta_sharded_ordered_index::remove(void *txn, lcdf::Str key) {
   pick_shard(key)->remove(txn, key);

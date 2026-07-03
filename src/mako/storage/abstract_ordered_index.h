@@ -9,7 +9,6 @@
 
 #include "../macros.h"
 #include "../str_arena.h"
-#include "benchmarks/tpcc_keys.h"
 
 /**
  * The underlying index manages memory for keys/values, but
@@ -43,29 +42,6 @@ public:
       std::string &value,
       size_t max_bytes_read = std::string::npos) = 0;
 
-  virtual bool get(
-      void *txn,
-      const std::string &key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) {
-      return get(txn, lcdf::Str(key), value, max_bytes_read);
-  }
-
-  virtual bool get(
-      void *txn,
-      int32_t key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) {
-      return get(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value, max_bytes_read);
-  }
-  
-  virtual bool get(
-      void *txn,
-      customer_key key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) {
-      return get(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value, max_bytes_read);
-  }
 
   class scan_callback {
   public:
@@ -134,16 +110,45 @@ public:
    * returned is guaranteed to be valid memory until the key associated with
    * value is overriden.
    */
-  virtual const char *
+  virtual void
   put(void *txn,
       lcdf::Str key,
       const std::string &value) = 0;
 
-   virtual const char *
-   put_mbta(void *txn,
-       lcdf::Str key,
-       bool(*compar)(const std::string& newValue,const std::string& oldValue),
-       const std::string &value) = 0;
+  /**
+   * Insert a key of length keylen. If a record with key k exists,
+   * behavior is unspecified. Default implementation calls put().
+   */
+  virtual void
+  insert(void *txn,
+         lcdf::Str key,
+         const std::string &value)
+  {
+    put(txn, key, value);
+  }
+
+  // -------------------------------------------------------------------
+  // Non-virtual string-key conveniences. lcdf::Str has no implicit
+  // std::string constructor, so these spellings are the bridge; they
+  // are deliberately NOT virtual — backends override only the
+  // lcdf::Str core above. (The former int32_t/customer_key overload
+  // zoo had no callers and is gone; benchmark key types stay in
+  // benchmark code.)
+  // -------------------------------------------------------------------
+  bool get(void *txn, const std::string &key, std::string &value,
+           size_t max_bytes_read = std::string::npos) {
+    return get(txn, lcdf::Str(key.data(), key.size()), value, max_bytes_read);
+  }
+  void put(void *txn, const std::string &key, const std::string &value) {
+    put(txn, lcdf::Str(key.data(), key.size()), value);
+  }
+  void insert(void *txn, const std::string &key, const std::string &value) {
+    insert(txn, lcdf::Str(key.data(), key.size()), value);
+  }
+  void remove(void *txn, const std::string &key) {
+    remove(txn, lcdf::Str(key.data(), key.size()));
+  }
+
 
   // Cross-shard 2PC (RPC-handler side): stage a write into the RPC
   // thread's ambient Sto transaction AND lock its write-set entry
@@ -155,72 +160,17 @@ public:
   shard_put(lcdf::Str key,
       const std::string &value) = 0;
 
-  virtual const char *
-  put(void *txn,
-      const std::string &key,
-      const std::string &value) {
-      return put(txn, lcdf::Str(key), value);
-  }
-
-  virtual const char *
-  put_mbta(void *txn,
-      const std::string &key,
-      bool(*compar)(const std::string& newValue,const std::string& oldValue),
-      const std::string &value) {
-      return put_mbta(txn, lcdf::Str(key), compar, value);
-  }
-
-  virtual const char *
-  put(void *txn,
-      lcdf::Str key,
-      std::string &&value)
-  {
-      return put(txn, key, static_cast<const std::string &>(value));
-  }
 
 
 
-  virtual const char *
-  put(void *txn,
-      const std::string &key,
-      std::string &&value)
-  {   
-      return put(txn, key, static_cast<const std::string &>(value));
-  }  
 
 
-  virtual const char *
-  put(void *txn,
-         int32_t key,
-         const std::string &value)
-  {
-      return put(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
-
-  virtual const char *
-  put(void *txn,
-         int32_t key,
-         std::string &&value)
-  {
-      return put(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
 
 
-  virtual const char *
-  put(void *txn,
-         customer_key key,
-         const std::string &value)
-  {
-      return put(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
 
-  virtual const char *
-  put(void *txn,
-         customer_key key,
-         std::string &&value)
-  {
-      return put(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
+
+
+
 
 
 
@@ -232,70 +182,6 @@ public:
    *
    * Default implementation calls put(). See put() for meaning of return value.
    */
-  virtual const char *
-  insert(void *txn,
-         lcdf::Str key,
-         const std::string &value)
-  {
-    return put(txn, key, value);
-  }
-
-  virtual const char *
-  insert(void *txn,
-         const std::string &key,
-         const std::string &value)
-  {      
-    return insert(txn, lcdf::Str(key), value);
-  } 
-
-  virtual const char *
-  insert(void *txn,
-         lcdf::Str key,
-         std::string &&value)
-  {
-      return insert(txn, key, static_cast<const std::string &>(value));
-  }
-
-  virtual const char *
-  insert(void *txn,
-         const std::string &key,
-         std::string &&value)
-  {      
-      return insert(txn, key, static_cast<const std::string &>(value));
-  }   
-
-  virtual const char *
-  insert(void *txn,
-         int32_t key,
-         const std::string &value)
-  {
-      return insert(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
-
-  virtual const char *
-  insert(void *txn,
-         int32_t key,
-         std::string &&value)
-  {
-      return insert(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
-
-  virtual const char *
-  insert(void *txn,
-         customer_key key,
-         const std::string &value)
-  {      
-      return insert(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
-  
-  virtual const char *
-  insert(void *txn,
-         customer_key key,
-         std::string &&value)
-  {      
-      return insert(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value);
-  }
-
 
   /**
    * Default implementation calls put() with NULL (zero-length) value
@@ -305,27 +191,6 @@ public:
       lcdf::Str key)
   {
     put(txn, key, "");
-  }
-
-  virtual void remove(
-      void *txn,
-      const std::string &key)
-  {   
-    remove(txn, lcdf::Str(key));
-  } 
-
-  virtual void remove(
-      void *txn,
-      int32_t key)
-  {
-    remove(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)));
-  }
-
-  virtual void remove(
-      void *txn,
-      customer_key key)
-  {
-    remove(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)));
   }
 
   // ==========================================================================

@@ -388,10 +388,7 @@ public:
                        std::string&) override {}
     void rscan(void*, const std::string&, const std::string*,
                scan_callback&, str_arena*) override {}
-    const char* put(void*, lcdf::Str, const std::string&) override { return nullptr; }
-    const char* put_mbta(void*, lcdf::Str,
-                         bool (*)(const std::string&, const std::string&),
-                         const std::string&) override { return nullptr; }
+    void put(void*, lcdf::Str, const std::string&) override {}
     const char* shard_put(lcdf::Str, const std::string&) override { return nullptr; }
     size_t size() const override { return 0; }
     std::map<std::string, uint64_t> clear() override { return {}; }

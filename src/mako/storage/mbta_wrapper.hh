@@ -174,7 +174,7 @@ public:
     });
   }
 
-  const char *put(void* txn,
+  void put(void* txn,
                   lcdf::Str key,
                   const std::string &value)
   {
@@ -183,7 +183,6 @@ public:
 #endif
     STD_OP({
         mbta.transPut(key, StringWrapper(value));
-        return 0;
     });
   }
 
@@ -197,11 +196,11 @@ public:
     });
   }
   
-const char *insert(void *txn,
+void insert(void *txn,
 	     lcdf::Str key,
 	     const std::string &value)
 {
-STD_OP(mbta.transInsert(key, StringWrapper(value)); return 0;)
+STD_OP(mbta.transInsert(key, StringWrapper(value));)
 }
 
 void remove(void *txn, lcdf::Str key) {
@@ -503,7 +502,7 @@ return ret;
   });
 }
 
-const char *put(
+void put(
 void* txn,
 const lcdf::Str key,
 const std::string &value)
@@ -515,11 +514,10 @@ ht_put++;
 // may be worth investigating if we can use that optimization to avoid copying keys
 STD_OP({
 ht.transPut(key, StringWrapper(value));
-        return 0;
           });
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -527,7 +525,7 @@ ht.transPut(key, StringWrapper(value));
     ht_insert++;
 #endif
     STD_OP({
-	ht.transPut(key, StringWrapper(value)); return 0;
+	ht.transPut(key, StringWrapper(value));
 	});
   }
 
@@ -605,15 +603,14 @@ public:
   }
 
 
-  const char *put(
+  void put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
   {
-    return 0;
   }
 
-  const char *put(
+  void put(
       void* txn,
       int32_t key,
       const std::string &value)
@@ -623,19 +620,17 @@ public:
 #endif
     STD_OP({
         ht.transPut(key, StringWrapper(value));
-        return 0;
           });
   }
 
   
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
-    return 0;
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      int32_t key,
                      const std::string &value)
   {
@@ -643,7 +638,7 @@ public:
     ht_insert++;
 #endif
     STD_OP({
-        ht.transPut(key, StringWrapper(value)); return 0;});
+        ht.transPut(key, StringWrapper(value));});
   }
 
 
@@ -730,15 +725,14 @@ public:
   }
 
 
-  const char *put(
+  void put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
   {
-    return 0;
   }
 
-  const char *put(
+  void put(
       void* txn,
       customer_key key,
       const std::string &value)
@@ -748,19 +742,17 @@ public:
 #endif
     STD_OP({
         ht.transPut(key, StringWrapper(value));
-        return 0;
           });
   }
 
   
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
-    return 0;
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      customer_key key,
                      const std::string &value)
   {
@@ -768,7 +760,7 @@ public:
     ht_insert++;
 #endif
     STD_OP({
-        ht.transPut(key, StringWrapper(value)); return 0;});
+        ht.transPut(key, StringWrapper(value));});
   }
 
 
@@ -852,7 +844,7 @@ public:
 
   }
   
-  const char *put(
+  void put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -868,7 +860,7 @@ public:
           });
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -958,7 +950,7 @@ public:
 
   }
   
-  const char *put(
+  void put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -974,7 +966,7 @@ public:
           });
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -1065,7 +1057,7 @@ public:
 
   }
   
-  const char *put(
+  void put(
       void* txn,
       lcdf::Str key,
       const std::string &value)
@@ -1081,7 +1073,7 @@ public:
           });
   }
 
-  const char *insert(void *txn,
+  void insert(void *txn,
                      lcdf::Str key,
                      const std::string &value)
   {
@@ -1148,6 +1140,19 @@ private:
 };
 */
 
+
+// Out-of-line from mbta_sharded_ordered_index.hh: put_mbta left the
+// abstract interface, and casting to the concrete per-key table type
+// needs mbta_ordered_index to be complete.
+inline const char *mbta_sharded_ordered_index::put_mbta(
+    void *txn,
+    lcdf::Str key,
+    bool (*compar)(const std::string &newValue,
+                   const std::string &oldValue),
+    const std::string &value) {
+  return static_cast<mbta_ordered_index *>(pick_shard(key))
+      ->put_mbta(txn, key, compar, value);
+}
 
 class mbta_wrapper : public abstract_db {
 public:
@@ -1486,9 +1491,12 @@ public:
 
 };
 
-__thread str_arena* mbta_wrapper::thr_arena;
+// inline: this header is included from multiple TUs (apps AND libmako
+// members since ThreadPool.cc joined); non-inline definitions here
+// only ever linked by accident of single inclusion.
+inline __thread str_arena* mbta_wrapper::thr_arena;
 
-std::string *mbta_ordered_index::arena() {
+inline std::string *mbta_ordered_index::arena() {
   return (*db->thr_arena)();
 }
 
