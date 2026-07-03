@@ -11,130 +11,302 @@
 #include "../str_arena.h"
 
 /**
- * The underlying index manages memory for keys/values, but
- * may choose to expose the underlying memory to callers
- * (see put() and inesrt()).
+ * The storage-table interface, authored as rusty-cpp inline-Rust
+ * traits (docs/ordered-index-trait-plan.md). The `#if RUSTYCPP_RUST`
+ * block below is the source of truth; the transpiler regenerates the
+ * committed `/*RUSTYCPP:GEN-BEGIN ...*​/` block via
+ *
+ *   rusty-cpp-transpiler inline-rust --rewrite --files <this file>
+ *
+ * (tool built from rusty-cpp upstream main — see the plan's P0 notes;
+ * the generated code is plain C++ and needs nothing from the rusty
+ * runtime, so the submodule pin is unaffected).
+ *
+ * Three role traits, mirroring what backends can actually do:
+ *   OrderedIndex     — the non-transactional KV surface + bookkeeping;
+ *                      every backend implements this.
+ *   TxnOrderedIndex  — the transactional ops (caller-managed txn
+ *                      handle); mbta and the sharded router implement
+ *                      this. Masstree has no transaction runtime.
+ *   ShardParticipant — cross-shard 2PC RPC-handler ops that stage
+ *                      into the serving thread's ambient Sto
+ *                      transaction (no start/commit here; the
+ *                      coordinator drives those over later RPCs).
+ *
+ * `abstract_ordered_index` (below the generated block) is the
+ * combined bridge the existing tree consumes; consumers migrate to
+ * the narrowest interface they need (plan P3).
  */
-class abstract_ordered_index {
-public:
 
+// The scan callback, at namespace scope so the DSL traits can name it
+// (it was abstract_ordered_index::scan_callback; the bridge keeps
+// that spelling alive via a member alias).
+class oi_scan_callback {
+public:
+  virtual ~oi_scan_callback() {}
+  // XXX(stephentu): key is passed as (const char *, size_t) pair
+  // because it really should be the string_type of the underlying
+  // tree, but since the interface is not templated we can't
+  // really do better than this for now
+  //
+  // we keep value as std::string b/c we have more control over how those
+  // strings are generated
+  virtual bool invoke(const char *keyp, size_t keylen,
+                      const std::string &value) = 0;
+};
+
+// Spellings for the DSL's raw-pointer types (`*mut c_void` etc.).
+using c_void = void;
+using c_char = char;
+
+#if RUSTYCPP_RUST
+// The non-transactional KV surface (Masstree-shape) + bookkeeping.
+//
+// Non-txn ops do NOT participate in a caller's transaction; each is
+// per-key atomic on its own (see docs/silo-masstree-api-unification.md):
+// get/put/insert/scan/rscan run inside an internal one-op OCC
+// transaction on backends that have one; remove is a direct raw write
+// (documented asymmetry). VALUES ARE RAW BYTES in both directions:
+// backends needing a storage encoding apply it internally (mbta
+// Encodes on writes; reads/scans come back stripped). Must NOT be
+// called from a thread with an open transaction.
+//
+// put returns "newly inserted"; insert is put-if-absent and returns
+// "inserted"; remove returns "existed". scan covers [start, *end) or
+// [start, +inf) when end is null; rscan is the descending mirror.
+// size() is an estimate; get_table_id/get_is_remote are backend
+// identity used by routing.
+pub trait OrderedIndex {
+    fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
+    fn put(&mut self, key: lcdf::Str, value: &std::string) -> bool;
+    fn insert(&mut self, key: lcdf::Str, value: &std::string) -> bool;
+    fn remove(&mut self, key: lcdf::Str) -> bool;
+    fn scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn rscan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn size(&self) -> usize;
+    fn get_table_id(&mut self) -> i32;
+    fn get_is_remote(&mut self) -> bool;
+}
+
+// The transactional ops. txn is the opaque handle from
+// abstract_db::new_txn (thread-local Sto state in the mbta backend).
+// Unlike the non-txn surface, values passed to put/insert here must
+// be mako::Encode()'d by the caller and outlive the commit (the
+// backend stores a pointer into the caller's buffer). get covers a
+// point read; scan/rscan mirror the non-txn ranges; scanRemoteOne is
+// the remote-table single-match range read used by the txn'd remote
+// path.
+pub trait TxnOrderedIndex: OrderedIndex {
+    fn get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
+    fn put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
+    fn insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string);
+    fn remove(&mut self, txn: *mut c_void, key: lcdf::Str);
+    fn scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena);
+    fn scanRemoteOne(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string);
+}
+
+// Cross-shard 2PC (RPC-handler side): these stage reads/writes into
+// the RPC thread's ambient Sto transaction for the coordinator-driven
+// prepare/commit phases (shard_put also locks its write-set entry via
+// Sto::shard_try_lock_last_writeset). They neither start nor commit a
+// transaction. For self-contained ops, use OrderedIndex.
+pub trait ShardParticipant {
+    fn shard_get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool;
+    fn shard_put(&mut self, key: lcdf::Str, value: &std::string) -> *const c_char;
+    fn shard_scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=eb378ef018e7477ddb0305af8dca42c07691c5decf465c17102d98c6df179414*/
+class ShardParticipant {
+public:
+    virtual ~ShardParticipant() noexcept(false) {}
+    virtual bool shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
+    virtual const c_char* shard_put(lcdf::Str key, const std::string& value) = 0;
+    virtual bool shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    ShardParticipant(const ShardParticipant&) = delete;
+    ShardParticipant& operator=(const ShardParticipant&) = delete;
+    ShardParticipant(ShardParticipant&&) = delete;
+    ShardParticipant& operator=(ShardParticipant&&) = delete;
+protected:
+    ShardParticipant() = default;
+};
+
+template <class U> class ShardParticipantAdapter;
+template <class U> class ShardParticipantAdapterRef;
+template <class U> class ShardParticipantAdapterRefMut;
+
+class OrderedIndex {
+public:
+    virtual ~OrderedIndex() noexcept(false) {}
+    virtual bool get(lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
+    virtual bool put(lcdf::Str key, const std::string& value) = 0;
+    virtual bool insert(lcdf::Str key, const std::string& value) = 0;
+    virtual bool remove(lcdf::Str key) = 0;
+    virtual void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual size_t size() const = 0;
+    virtual int32_t get_table_id() = 0;
+    virtual bool get_is_remote() = 0;
+    OrderedIndex(const OrderedIndex&) = delete;
+    OrderedIndex& operator=(const OrderedIndex&) = delete;
+    OrderedIndex(OrderedIndex&&) = delete;
+    OrderedIndex& operator=(OrderedIndex&&) = delete;
+protected:
+    OrderedIndex() = default;
+};
+
+template <class U> class OrderedIndexAdapter;
+template <class U> class OrderedIndexAdapterRef;
+template <class U> class OrderedIndexAdapterRefMut;
+
+class TxnOrderedIndex : public OrderedIndex {
+public:
+    virtual ~TxnOrderedIndex() noexcept(false) {}
+    virtual bool get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
+    virtual void put(c_void* txn, lcdf::Str key, const std::string& value) = 0;
+    virtual void insert(c_void* txn, lcdf::Str key, const std::string& value) = 0;
+    virtual void remove(c_void* txn, lcdf::Str key) = 0;
+    virtual void scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual void rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    virtual void scanRemoteOne(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) = 0;
+    TxnOrderedIndex(const TxnOrderedIndex&) = delete;
+    TxnOrderedIndex& operator=(const TxnOrderedIndex&) = delete;
+    TxnOrderedIndex(TxnOrderedIndex&&) = delete;
+    TxnOrderedIndex& operator=(TxnOrderedIndex&&) = delete;
+protected:
+    TxnOrderedIndex() = default;
+};
+
+template <class U> class TxnOrderedIndexAdapter;
+template <class U> class TxnOrderedIndexAdapterRef;
+template <class U> class TxnOrderedIndexAdapterRefMut;
+/*RUSTYCPP:GEN-END id=abstract_ordered_index.1*/
+
+/**
+ * abstract_ordered_index — the combined bridge over the generated
+ * role interfaces. Existing code holds this type; new code should
+ * prefer the narrowest role interface it needs. Carries what traits
+ * cannot: default arguments (as non-virtual forwarders), the
+ * string-key spellings (lcdf::Str has no implicit std::string ctor),
+ * legacy default bodies, and the two bookkeeping virtuals whose
+ * types aren't worth expressing in the DSL.
+ */
+class abstract_ordered_index : public TxnOrderedIndex,
+                               public ShardParticipant {
+public:
   virtual ~abstract_ordered_index() {}
 
-  /**
-   * Get a key of length keylen. The underlying DB does not manage
-   * the memory associated with key. Returns true if found, false otherwise
-   */
-  virtual bool get(
-      void *txn,
-      lcdf::Str key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) = 0;
+  // Compat spelling for the callback (pre-trait code says
+  // abstract_ordered_index::scan_callback everywhere).
+  using scan_callback = oi_scan_callback;
 
-  // Cross-shard 2PC (RPC-handler side): read a key WITHOUT a
-  // caller-supplied txn handle, adding it to the RPC thread's ambient
-  // Sto transaction read-set for later 2PC validation. This does NOT
-  // start or commit a transaction — it stages into whatever
-  // distributed transaction the coordinator is driving across RPCs.
-  // For self-contained non-transactional reads, use the Masstree-shape
-  // get(key, value) further down instead.
-  virtual bool shard_get(
-      lcdf::Str key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) = 0;
+  // C++ name hiding: the bridge's own overloads (forwarders, string
+  // sugar, aborting defaults) and TxnOrderedIndex's txn'd names would
+  // each hide the other inherited overload sets. Re-expose everything
+  // side by side.
+  using OrderedIndex::get;
+  using OrderedIndex::put;
+  using OrderedIndex::insert;
+  using OrderedIndex::remove;
+  using OrderedIndex::scan;
+  using OrderedIndex::rscan;
+  using TxnOrderedIndex::get;
+  using TxnOrderedIndex::put;
+  using TxnOrderedIndex::insert;
+  using TxnOrderedIndex::remove;
+  using TxnOrderedIndex::scan;
+  using TxnOrderedIndex::rscan;
+  using ShardParticipant::shard_get;
+  using ShardParticipant::shard_scan;
 
+  // ------------------------------------------------------------------
+  // Legacy default bodies (previously defaults on the base virtuals).
+  // ------------------------------------------------------------------
 
-  class scan_callback {
-  public:
-    virtual ~scan_callback() {}
-    // XXX(stephentu): key is passed as (const char *, size_t) pair
-    // because it really should be the string_type of the underlying
-    // tree, but since abstract_ordered_index is not templated we can't
-    // really do better than this for now
-    //
-    // we keep value as std::string b/c we have more control over how those
-    // strings are generated
-    virtual bool invoke(const char *keyp, size_t keylen,
-                        const std::string &value) = 0;
-  };
-
-  /**
-   * Search [start_key, *end_key) if end_key is not null, otherwise
-   * search [start_key, +infty)
-   */
-  virtual void scan(
-      void *txn,
-      const std::string &start_key,
-      const std::string *end_key,
-      scan_callback &callback,
-      str_arena *arena = nullptr) = 0;
-
-  // Cross-shard 2PC (RPC-handler side): scan staged into the RPC
-  // thread's ambient Sto transaction, like shard_get. Not a
-  // self-contained scan — see the non-txn scan(start, end, cb) below
-  // for that.
-  virtual bool shard_scan(
-      const std::string &start_key,
-      const std::string *end_key,
-      scan_callback &callback,
-      str_arena *arena = nullptr) = 0;
-
-  virtual void scanRemoteOne(
-      void *txn,
-      const std::string &start_key,
-      const std::string &end_key,
-      std::string &value) = 0;
-
-  /**
-   * Search (*end_key, start_key] if end_key is not null, otherwise
-   * search (-infty, start_key] (starting at start_key and traversing
-   * backwards)
-   */
-  virtual void rscan(
-      void *txn,
-      const std::string &start_key,
-      const std::string *end_key,
-      scan_callback &callback,
-      str_arena *arena = nullptr) = 0;
-
-  /**
-   * Put a key of length keylen, with mapping of length valuelen.
-   * The underlying DB does not manage the memory pointed to by key or value
-   * (a copy is made).
-   *
-   * If a record with key k exists, overwrites. Otherwise, inserts.
-   *
-   * If the return value is not NULL, then it points to the actual stable
-   * location in memory where the value is located. Thus, [ret, ret+valuelen)
-   * will be valid memory, bytewise equal to [value, value+valuelen), since the
-   * implementations have immutable values for the time being. The value
-   * returned is guaranteed to be valid memory until the key associated with
-   * value is overriden.
-   */
-  virtual void
-  put(void *txn,
-      lcdf::Str key,
-      const std::string &value) = 0;
-
-  /**
-   * Insert a key of length keylen. If a record with key k exists,
-   * behavior is unspecified. Default implementation calls put().
-   */
-  virtual void
-  insert(void *txn,
-         lcdf::Str key,
-         const std::string &value)
-  {
+  // txn'd insert: "behavior unspecified if key exists" — default is put.
+  void insert(void *txn, lcdf::Str key, const std::string &value) override {
     put(txn, key, value);
   }
 
-  // -------------------------------------------------------------------
-  // Non-virtual string-key conveniences. lcdf::Str has no implicit
-  // std::string constructor, so these spellings are the bridge; they
-  // are deliberately NOT virtual — backends override only the
-  // lcdf::Str core above. (The former int32_t/customer_key overload
-  // zoo had no callers and is gone; benchmark key types stay in
-  // benchmark code.)
-  // -------------------------------------------------------------------
+  // txn'd remove: default is put of an empty value.
+  void remove(void *txn, lcdf::Str key) override {
+    put(txn, key, "");
+  }
+
+  // Non-txn surface: only backends that support non-txn access
+  // override these; the defaults abort loudly. Callers must not
+  // assume every abstract_ordered_index supports this API.
+  // @unsafe - defaults abort via NDB_UNIMPLEMENTED
+  bool get(lcdf::Str key, std::string &value,
+           size_t max_bytes_read) override {
+    (void)key; (void)value; (void)max_bytes_read;
+    NDB_UNIMPLEMENTED("non-txn get");
+  }
+  bool put(lcdf::Str key, const std::string &value) override {
+    (void)key; (void)value;
+    NDB_UNIMPLEMENTED("non-txn put");
+  }
+  bool insert(lcdf::Str key, const std::string &value) override {
+    (void)key; (void)value;
+    NDB_UNIMPLEMENTED("non-txn insert");
+  }
+  bool remove(lcdf::Str key) override {
+    (void)key;
+    NDB_UNIMPLEMENTED("non-txn remove");
+  }
+  void scan(const std::string &start_key, const std::string *end_key,
+            oi_scan_callback &callback, str_arena *arena) override {
+    (void)start_key; (void)end_key; (void)callback; (void)arena;
+    NDB_UNIMPLEMENTED("non-txn scan");
+  }
+  void rscan(const std::string &start_key, const std::string *end_key,
+             oi_scan_callback &callback, str_arena *arena) override {
+    (void)start_key; (void)end_key; (void)callback; (void)arena;
+    NDB_UNIMPLEMENTED("non-txn rscan");
+  }
+
+  // ------------------------------------------------------------------
+  // Default-argument forwarders. Rust traits carry no default
+  // arguments, so the generated virtuals take every parameter; these
+  // non-virtual spellings restore the historical call shapes
+  // (max_bytes_read = npos, arena = nullptr).
+  // ------------------------------------------------------------------
+  bool get(void *txn, lcdf::Str key, std::string &value) {
+    return get(txn, key, value, std::string::npos);
+  }
+  bool shard_get(lcdf::Str key, std::string &value) {
+    return shard_get(key, value, std::string::npos);
+  }
+  bool get(lcdf::Str key, std::string &value) {
+    return get(key, value, std::string::npos);
+  }
+  void scan(void *txn, const std::string &start_key,
+            const std::string *end_key, oi_scan_callback &callback) {
+    scan(txn, start_key, end_key, callback, nullptr);
+  }
+  void rscan(void *txn, const std::string &start_key,
+             const std::string *end_key, oi_scan_callback &callback) {
+    rscan(txn, start_key, end_key, callback, nullptr);
+  }
+  bool shard_scan(const std::string &start_key,
+                  const std::string *end_key, oi_scan_callback &callback) {
+    return shard_scan(start_key, end_key, callback, nullptr);
+  }
+  void scan(const std::string &start_key, const std::string *end_key,
+            oi_scan_callback &callback) {
+    scan(start_key, end_key, callback, nullptr);
+  }
+  void rscan(const std::string &start_key, const std::string *end_key,
+             oi_scan_callback &callback) {
+    rscan(start_key, end_key, callback, nullptr);
+  }
+
+  // ------------------------------------------------------------------
+  // Non-virtual string-key conveniences (lcdf::Str has no implicit
+  // std::string constructor). Backends override only the lcdf::Str
+  // core.
+  // ------------------------------------------------------------------
   bool get(void *txn, const std::string &key, std::string &value,
            size_t max_bytes_read = std::string::npos) {
     return get(txn, lcdf::Str(key.data(), key.size()), value, max_bytes_read);
@@ -149,155 +321,15 @@ public:
     remove(txn, lcdf::Str(key.data(), key.size()));
   }
 
+  // ------------------------------------------------------------------
+  // Bookkeeping kept hand-written: clear()'s return type isn't worth
+  // expressing in the DSL; print_stats is an optional hook.
+  // ------------------------------------------------------------------
 
-  // Cross-shard 2PC (RPC-handler side): stage a write into the RPC
-  // thread's ambient Sto transaction AND lock its write-set entry
-  // (Sto::shard_try_lock_last_writeset) for the 2PC prepare phase.
-  // The commit happens later when the coordinator drives it. Not a
-  // self-contained write — see the non-txn put(key, value) below for
-  // that.
-  virtual const char *
-  shard_put(lcdf::Str key,
-      const std::string &value) = 0;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  /**
-   * Insert a key of length keylen.
-   *
-   * If a record with key k exists, behavior is unspecified- this function
-   * is only to be used when you can guarantee no such key exists (ie in loading phase)
-   *
-   * Default implementation calls put(). See put() for meaning of return value.
-   */
-
-  /**
-   * Default implementation calls put() with NULL (zero-length) value
-   */
-  virtual void remove(
-      void *txn,
-      lcdf::Str key)
-  {
-    put(txn, key, "");
-  }
-
-  // ==========================================================================
-  // Non-transactional API (Masstree-shape).
-  //
-  // These ops do NOT participate in a caller's transaction; each is
-  // per-key atomic on its own. See docs/silo-masstree-api-unification.md
-  // for the semantic contract:
-  //   - get/put/insert/scan/rscan run inside an internal one-op OCC
-  //     transaction (safe under concurrent OCC readers/writers).
-  //   - remove is a direct raw write (fast; documented asymmetry).
-  //
-  // VALUES ARE RAW BYTES on this surface, in both directions: backends
-  // that need a storage encoding apply it internally (mbta applies
-  // mako::Encode on writes; reads/scans already come back stripped).
-  // This is what makes implementations interchangeable — callers hold
-  // an abstract_ordered_index* and pick the backend at construction:
-  // masstree_ordered_index (plain Masstree, no transactions),
-  // mbta_ordered_index (Silo), or mbta_sharded_ordered_index (Mako
-  // routing). Note the txn'd put/insert above KEEP the caller-Encodes
-  // convention — they store a pointer into the caller's buffer until
-  // commit, so the caller must own the encoded copy's lifetime.
-  //
-  // Default implementations abort loudly: only backends that support
-  // non-txn access override them. Callers must not assume every
-  // abstract_ordered_index supports this API.
-  //
-  // CONSTRAINT: these must NOT be called from a thread that has an
-  // open transaction (the internal one-op txn would trip
-  // Sto::start_transaction's in-progress assertion). Finish or abort
-  // the thread's transaction first.
-  // ==========================================================================
-
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual bool get(
-      lcdf::Str key,
-      std::string &value,
-      size_t max_bytes_read = std::string::npos) {
-    (void)key; (void)value; (void)max_bytes_read;
-    NDB_UNIMPLEMENTED("non-txn get");
-  }
-
-  // Overwrite semantics; returns true iff the key was newly inserted.
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual bool put(
-      lcdf::Str key,
-      const std::string &value) {
-    (void)key; (void)value;
-    NDB_UNIMPLEMENTED("non-txn put");
-  }
-
-  // Put-if-absent; returns true iff the key was newly inserted.
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual bool insert(
-      lcdf::Str key,
-      const std::string &value) {
-    (void)key; (void)value;
-    NDB_UNIMPLEMENTED("non-txn insert");
-  }
-
-  // Returns true iff the key existed. Direct raw write — see the
-  // asymmetry note above.
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual bool remove(lcdf::Str key) {
-    (void)key;
-    NDB_UNIMPLEMENTED("non-txn remove");
-  }
-
-  // Forward scan [start_key, *end_key), or [start_key, +infty) when
-  // end_key is null. Same callback contract as the transactional scan.
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual void scan(
-      const std::string &start_key,
-      const std::string *end_key,
-      scan_callback &callback,
-      str_arena *arena = nullptr) {
-    (void)start_key; (void)end_key; (void)callback; (void)arena;
-    NDB_UNIMPLEMENTED("non-txn scan");
-  }
-
-  // Reverse scan (*end_key, start_key], or (-infty, start_key] when
-  // end_key is null; descending order.
-  // @unsafe - default aborts via NDB_UNIMPLEMENTED
-  virtual void rscan(
-      const std::string &start_key,
-      const std::string *end_key,
-      scan_callback &callback,
-      str_arena *arena = nullptr) {
-    (void)start_key; (void)end_key; (void)callback; (void)arena;
-    NDB_UNIMPLEMENTED("non-txn rscan");
-  }
-
-  /**
-   * Only an estimate, not transactional!
-   */
-  virtual size_t size() const = 0;
-
-  /**
-   * Not thread safe for now
-   */
+  /** Not thread safe for now */
   virtual std::map<std::string, uint64_t> clear() = 0;
 
-  virtual void print_stats() { }
-
-  // mbta_ordered_index only has one mbta object which is the instance of MassTrans (TObject)
-  virtual int get_table_id() = 0;
-  virtual bool get_is_remote() = 0;
+  virtual void print_stats() {}
 };
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */
