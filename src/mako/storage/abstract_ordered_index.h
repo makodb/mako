@@ -116,8 +116,17 @@ pub trait ShardParticipant {
     fn shard_put(&mut self, key: lcdf::Str, value: &std::string) -> *const c_char;
     fn shard_scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) -> bool;
 }
+
+// The full-role combination: what a table serving transactional
+// callers AND 2PC RPC handlers is. Lowered to a multi-base interface;
+// DSL backends attach `#[cpp_inherit] impl FullOrderedIndex for X {}`
+// and carry their methods in the inherent impl (merged members
+// override the inherited virtuals by signature). The hand-written
+// abstract_ordered_index bridge derives from this.
+pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=eb378ef018e7477ddb0305af8dca42c07691c5decf465c17102d98c6df179414*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=d69a3ce88c25d546110855f60100599fe1e52dc0c7348987d7a0345b63e50ec4*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}
@@ -181,6 +190,21 @@ protected:
 template <class U> class TxnOrderedIndexAdapter;
 template <class U> class TxnOrderedIndexAdapterRef;
 template <class U> class TxnOrderedIndexAdapterRefMut;
+
+class FullOrderedIndex : public TxnOrderedIndex, public ShardParticipant {
+public:
+    virtual ~FullOrderedIndex() noexcept(false) {}
+    FullOrderedIndex(const FullOrderedIndex&) = delete;
+    FullOrderedIndex& operator=(const FullOrderedIndex&) = delete;
+    FullOrderedIndex(FullOrderedIndex&&) = delete;
+    FullOrderedIndex& operator=(FullOrderedIndex&&) = delete;
+protected:
+    FullOrderedIndex() = default;
+};
+
+template <class U> class FullOrderedIndexAdapter;
+template <class U> class FullOrderedIndexAdapterRef;
+template <class U> class FullOrderedIndexAdapterRefMut;
 /*RUSTYCPP:GEN-END id=abstract_ordered_index.1*/
 
 /**
@@ -192,8 +216,7 @@ template <class U> class TxnOrderedIndexAdapterRefMut;
  * legacy default bodies, and the two bookkeeping virtuals whose
  * types aren't worth expressing in the DSL.
  */
-class abstract_ordered_index : public TxnOrderedIndex,
-                               public ShardParticipant {
+class abstract_ordered_index : public FullOrderedIndex {
 public:
   virtual ~abstract_ordered_index() {}
 
