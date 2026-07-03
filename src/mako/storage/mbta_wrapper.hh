@@ -1141,16 +1141,16 @@ private:
 */
 
 
-// Out-of-line from mbta_sharded_ordered_index.hh: put_mbta left the
-// abstract interface, and casting to the concrete per-key table type
-// needs mbta_ordered_index to be complete.
-inline const char *mbta_sharded_ordered_index::put_mbta(
-    void *txn,
-    lcdf::Str key,
+// Free-fn sugar declared in mbta_sharded_ordered_index.hh: put_mbta
+// is mbta-specific and needs the complete mbta type for the cast;
+// per-key tables are mbta by construction.
+inline const char *mbta_sharded_put_mbta(
+    mbta_sharded_ordered_index *t, void *txn, lcdf::Str key,
     bool (*compar)(const std::string &newValue,
                    const std::string &oldValue),
     const std::string &value) {
-  return static_cast<mbta_ordered_index *>(pick_shard(key))
+  return static_cast<mbta_ordered_index *>(
+             oi_pick_shard(&t->shard_tables, key))
       ->put_mbta(txn, key, compar, value);
 }
 
@@ -1440,7 +1440,7 @@ public:
   open_sharded_index(const std::string &name) override {
     auto &benchConfig = BenchmarkConfig::getInstance();
     const size_t shard_count = static_cast<size_t>(benchConfig.getNshards());
-    return mbta_sharded_ordered_index::build(
+    return mbta_sharded_build(
         name,
         shard_count,
         [this, &name](size_t shard) {

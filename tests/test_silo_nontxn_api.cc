@@ -274,20 +274,20 @@ TEST_F(SiloNonTxnApi, ShardedRoutesNonTxnOps) {
     EXPECT_FALSE(sharded.insert(lcdf::Str("b"), "vb2"));
 
     std::string out;
-    EXPECT_TRUE(sharded.get(lcdf::Str("a"), out));
+    EXPECT_TRUE(sharded.get(lcdf::Str("a"), out, std::string::npos));
     EXPECT_EQ(out, "va");
-    EXPECT_TRUE(sharded.get(lcdf::Str("b"), out));
+    EXPECT_TRUE(sharded.get(lcdf::Str("b"), out, std::string::npos));
     EXPECT_EQ(out, "vb");
 
     CollectCallback cb;
     std::string start = "a";
-    sharded.scan(start, nullptr, cb);
+    sharded.scan(start, nullptr, cb, nullptr);
     ASSERT_EQ(cb.pairs.size(), 2u);
     EXPECT_EQ(cb.pairs[0].first, "a");
     EXPECT_EQ(cb.pairs[1].first, "b");
 
     EXPECT_TRUE(sharded.remove(lcdf::Str("a")));
-    EXPECT_FALSE(sharded.get(lcdf::Str("a"), out));
+    EXPECT_FALSE(sharded.get(lcdf::Str("a"), out, std::string::npos));
 }
 
 // ===========================================================================

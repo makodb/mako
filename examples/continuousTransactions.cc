@@ -89,7 +89,7 @@ public:
                     }
 
                     string value;
-                    table->get(txn, key, value);
+                    table->get(txn, key, value, std::string::npos);
                 }
 
                 db_->commit_txn(txn);

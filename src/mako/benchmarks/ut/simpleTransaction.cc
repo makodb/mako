@@ -209,7 +209,7 @@ public:
            std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
            std::string value = mako::Encode("value_XXXXXXXXXXXXX_" + std::to_string(i));
            try {
-               customerTable->put_mbta(txn, key, cmpFunc2_v3, value);
+               mbta_sharded_put_mbta(customerTable, txn, key, cmpFunc2_v3, value);
                db->commit_txn(txn);
            } catch (abstract_db::abstract_abort_exception &ex) {
                std::cout << "abort key=" << key << std::endl;
