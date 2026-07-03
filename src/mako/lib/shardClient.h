@@ -18,7 +18,7 @@ namespace mako
         int remoteGet(int remote_table_id, std::string key, std::string &value);
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
 
-        // Self-contained non-transactional writes (docs/mako-nontxn-api-plan.md).
+        // Self-contained non-transactional writes (docs/storage-interface.md).
         // The op runs as a one-op OCC transaction on the owning shard and
         // replicates via the normal commit path there. Returns
         // ErrorCode::SUCCESS/ERROR/TIMEOUT/SERVER_BUSY; the op's

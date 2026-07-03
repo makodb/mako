@@ -284,7 +284,7 @@ STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& va
 
 // ============================================================================
 // Non-transactional API (Masstree-shape) — overrides of the
-// abstract_ordered_index defaults. See docs/silo-masstree-api-unification.md.
+// abstract_ordered_index defaults. See docs/storage-interface.md.
 //
 // Each op delegates to MassTrans's one-op-txn variant and retries on
 // OCC abort, so callers get Masstree-parity "no spurious failure"
@@ -421,7 +421,7 @@ void scan(const std::string &start_key,
   // Remote tables: fail loudly. The only scan RPC (remoteScan /
   // HandleScanRequest) returns a single first-match value, not a
   // stream — full remote scan needs new protocol (plan non-goal;
-  // see docs/mako-nontxn-api-plan.md D5). Note the txn'd scan on a
+  // see docs/storage-interface.md D5). Note the txn'd scan on a
   // remote table silently scans the empty local tree; asserting
   // here is deliberately stricter.
   ALWAYS_ASSERT(!mbta.get_is_remote());

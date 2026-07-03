@@ -509,7 +509,7 @@ protected:
 public:
 
   // Non-transactional API (Masstree-shape; see
-  // docs/silo-masstree-api-unification.md). Each op below is per-key
+  // docs/storage-interface.md). Each op below is per-key
   // atomic: it does NOT participate in a caller's transaction.
   // put/get/insert/scan/rscan wrap a one-op OCC transaction (safe
   // under concurrent OCC readers/writers); remove (further down) is

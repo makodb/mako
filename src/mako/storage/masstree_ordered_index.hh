@@ -3,7 +3,7 @@
 /**
  * masstree_ordered_index — plain Masstree (L1) behind the shared
  * OrderedIndex interface, AUTHORED IN THE RUST DSL
- * (docs/ordered-index-trait-plan.md, backend phase T3). The
+ * (docs/storage-interface.md, backend phase T3). The
  * #if RUSTYCPP_RUST block is the source of truth; regenerate with
  * scripts/regen_storage_dsl.sh.
  *

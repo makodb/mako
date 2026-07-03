@@ -49,7 +49,7 @@ namespace mako
         // Self-contained non-transactional write (put / insert / remove,
         // selected by reqType — one of nontxnPutReqType /
         // nontxnInsertReqType / nontxnRemoveReqType). value is empty for
-        // remove. See docs/mako-nontxn-api-plan.md.
+        // remove. See docs/storage-interface.md.
         void InvokeNontxnWrite(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,

@@ -1,4 +1,4 @@
-// Gating tests for docs/silo-masstree-api-unification.md — the
+// Gating tests for docs/storage-interface.md — the
 // non-transactional (Masstree-shape) API added to Silo's layers:
 //
 //   1. MassTrans level:   insert / scan / rscan (Phase 1) plus the

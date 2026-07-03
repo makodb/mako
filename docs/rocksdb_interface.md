@@ -79,7 +79,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **No pessimistic flavor**. RocksDB's `TransactionDB` (2PL) has no counterpart. Any consumer requiring lock-based blocking semantics can't be supported without a fresh implementation.
 
-**Non-transactional access.** Silo's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`silo-masstree-api-unification.md`](silo-masstree-api-unification.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
+**Non-transactional access.** Silo's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`storage-interface.md`](storage-interface.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
 
 ### 4. Snapshots
 
@@ -199,7 +199,7 @@ return `NotSupported`; `LocalTable` implements them over the L3
 non-txn API and `RemoteTable` over the self-contained non-txn request
 types (14-17). Callers must not have an open transaction on the
 calling thread. See
-[`mako-nontxn-api-plan.md`](mako-nontxn-api-plan.md).
+[`storage-interface.md`](storage-interface.md).
 
 The `RemoteDB` KV path was re-based onto this machinery: the previous
 implementation "wrote" via `shard_put` — staging + locking a 2PC

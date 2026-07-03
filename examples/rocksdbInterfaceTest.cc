@@ -574,7 +574,7 @@ void test_full_integration(mako::IDatabase* db) {
 }
 
 // ============================================================================
-// Test I1.7: Non-transactional API (docs/mako-nontxn-api-plan.md)
+// Test I1.7: Non-transactional API (docs/storage-interface.md)
 // ============================================================================
 void test_nontxn_api(mako::IDatabase* db) {
     printf("\n--- Test I1.7: Non-transactional API ---\n");

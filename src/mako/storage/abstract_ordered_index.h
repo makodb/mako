@@ -12,7 +12,7 @@
 
 /**
  * The storage-table interface, authored as rusty-cpp inline-Rust
- * traits (docs/ordered-index-trait-plan.md). The `#if RUSTYCPP_RUST`
+ * traits (docs/storage-interface.md). The `#if RUSTYCPP_RUST`
  * block below is the source of truth; the transpiler regenerates the
  * committed `/*RUSTYCPP:GEN-BEGIN ...*​/` block via
  *
@@ -65,7 +65,7 @@ using oi_stats_map = std::map<std::string, uint64_t>;
 // The non-transactional KV surface (Masstree-shape) + bookkeeping.
 //
 // Non-txn ops do NOT participate in a caller's transaction; each is
-// per-key atomic on its own (see docs/silo-masstree-api-unification.md):
+// per-key atomic on its own (see docs/storage-interface.md):
 // get/put/insert/scan/rscan run inside an internal one-op OCC
 // transaction on backends that have one; remove is a direct raw write
 // (documented asymmetry). VALUES ARE RAW BYTES in both directions:

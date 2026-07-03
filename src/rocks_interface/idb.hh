@@ -94,7 +94,7 @@ public:
     virtual Status GetApproximateSize(size_t* size) = 0;
 
     // =========================================================================
-    // Non-transactional API (Masstree-shape; docs/mako-nontxn-api-plan.md)
+    // Non-transactional API (Masstree-shape; docs/storage-interface.md)
     // =========================================================================
     // Each op is self-contained and immediately visible: internally a
     // one-op OCC transaction on the owning shard, so writes replicate

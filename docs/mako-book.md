@@ -628,9 +628,7 @@ t->put(lcdf::Str("k"), "value");   // same code either way
   self-contained non-txn RPCs, and writes on a replicated leader
   reach the replication log through the normal commit path.
 
-Design and semantics: [`mako-nontxn-api-plan.md`](mako-nontxn-api-plan.md)
-and its predecessor
-[`silo-masstree-api-unification.md`](silo-masstree-api-unification.md).
+Design and semantics: [`storage-interface.md`](storage-interface.md).
 
 ---
 

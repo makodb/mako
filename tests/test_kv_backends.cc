@@ -1,5 +1,5 @@
 // Gating tests for the consolidated three-backend story
-// (docs/mako-nontxn-api-plan.md Phase 5, as revised): there is ONE
+// (docs/storage-interface.md Phase 5, as revised): there is ONE
 // non-transactional KV interface — the non-txn ops on
 // abstract_ordered_index — with three implementations picked at
 // construction time:

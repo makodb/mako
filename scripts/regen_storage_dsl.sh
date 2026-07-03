@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerate the storage-layer inline-Rust DSL headers
-# (docs/ordered-index-trait-plan.md). This wrapper is THE regeneration
+# (docs/storage-interface.md). This wrapper is THE regeneration
 # path — not bare `inline-rust --rewrite` — because the transpiler
 # emits out-of-line method definitions without `inline` (correct for
 # its single-TU module precedent, an ODR violation in our multi-TU

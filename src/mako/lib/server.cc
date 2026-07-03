@@ -583,7 +583,7 @@ namespace mako
     // reqType). Runs the op through the L3 non-txn API — an internal
     // one-op OCC transaction on this shard, which replicates through
     // the normal commit path (serialize_util) when replication is on.
-    // See docs/mako-nontxn-api-plan.md.
+    // See docs/storage-interface.md.
     //
     // @unsafe - handles raw buffer pointers from transport layer
     void ShardReceiver::HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,

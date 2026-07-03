@@ -18,7 +18,7 @@
 
 // ============================================================================
 // mbta_sharded_ordered_index — the "Mako routing" backend, AUTHORED IN
-// THE RUST DSL (docs/ordered-index-trait-plan.md, backend phase T2).
+// THE RUST DSL (docs/storage-interface.md, backend phase T2).
 // The #if RUSTYCPP_RUST block is the source of truth; the transpiler
 // regenerates the GEN block (inline-rust --rewrite). The empty
 // #[cpp_inherit] impl attaches the FullOrderedIndex base

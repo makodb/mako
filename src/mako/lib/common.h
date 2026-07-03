@@ -188,7 +188,7 @@ namespace mako
     const uint8_t watermarkReqType = 13;
 
     // Self-contained non-transactional ops (Masstree-shape API,
-    // docs/mako-nontxn-api-plan.md). Server-side handlers run the op
+    // docs/storage-interface.md). Server-side handlers run the op
     // as a local one-op OCC transaction on the owning shard (writes
     // replicate through the normal commit path). Wire format:
     // nontxn_write_request_t / client_kv_response_t. Writes return the

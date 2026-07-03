@@ -1,4 +1,4 @@
-// Distributed gating tests for docs/mako-nontxn-api-plan.md.
+// Distributed gating tests for docs/storage-interface.md.
 //
 // Two shards in ONE process, mirroring examples' ut/simpleShards.cc:
 //   - Server role: FastTransport bound to shard 1's URI + ShardServer
