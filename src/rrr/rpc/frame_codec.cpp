@@ -1,7 +1,9 @@
 module;
 
-#include <cstdint>
-#include <cstring>
+#include <stdint.h>
+#include <string.h>
+
+#include <rusty/rusty.hpp>
 
 export module rrr.frame_codec;
 
@@ -24,15 +26,24 @@ export namespace rrr {
 // ---------------------------------------------------------------------------
 // Wire-format constants
 // ---------------------------------------------------------------------------
-
-// Size of the on-wire header (a single i32 carrying payload size + flag).
-inline constexpr std::size_t kFrameHeaderSize = sizeof(std::int32_t);
-
-// Maximum payload size representable on the wire. The high bit of the i32
-// is reserved for the response extended-header flag, so the remaining 31
-// bits cap the payload at 2 GiB - 1.
-inline constexpr std::int32_t kMaxFramePayloadSize =
-    static_cast<std::int32_t>(kResponseSizeMask);
+//
+// `kFrameHeaderSize` is the on-wire size of the i32 carrying
+// `<payload_size> | <extended_header_flag_bit>` (= sizeof(int32_t) = 4
+// on every target we build for). `kMaxFramePayloadSize` is the low 31
+// bits of that i32 (the high bit is reserved for the
+// extended-header flag), capping the payload at 2 GiB - 1.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definitions.
+#if RUSTYCPP_RUST
+const kFrameHeaderSize: usize = 4;
+const kMaxFramePayloadSize: i32 = 0x7fffffff;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.1 version=1 rust_sha256=65acb26ca87ce3b0e1228a8f10bedaf8c0c0c20fde095d1fb4a702de2e70fd46*/
+constexpr size_t kFrameHeaderSize = static_cast<size_t>(4);
+constexpr int32_t kMaxFramePayloadSize = static_cast<int32_t>(2147483647);
+/*RUSTYCPP:GEN-END id=frame_codec.1*/
 
 // ---------------------------------------------------------------------------
 // Decode results
@@ -65,15 +76,41 @@ inline constexpr const char* frame_decode_status_to_string(FrameDecodeStatus s) 
  *     is set. The RPC layer interprets this as "the response payload
  *     starts with `<server_instance_id>` after `<error_code>`".
  *     Request frames must always have this flag clear.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block with the C++ struct + method.
+ * The generated struct is still an aggregate, so `FrameHeader{}`
+ * continues to value-initialize both fields to 0/false at every call
+ * site (peek_header, FrameView::header, next_frame, consume_frame).
  */
+#if RUSTYCPP_RUST
 struct FrameHeader {
-    std::int32_t payload_size = 0;
-    bool         extended_header_flag = false;
+    payload_size: i32,
+    extended_header_flag: bool,
+}
 
-    constexpr std::int32_t total_frame_size() const {
-        return payload_size + static_cast<std::int32_t>(kFrameHeaderSize);
+impl FrameHeader {
+    fn total_frame_size(&self) -> i32 {
+        self.payload_size + (kFrameHeaderSize as i32)
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.3 version=1 rust_sha256=54b8840038c07349c37dba3672294103f924f418bbde9e2625bb295fcf5d3888*/
+struct FrameHeader;
+
+struct FrameHeader {
+    int32_t payload_size;
+    bool extended_header_flag;
+
+    int32_t total_frame_size() const;
 };
+
+
+int32_t FrameHeader::total_frame_size() const {
+    return rusty::detail::deref_if_pointer_like(this->payload_size) + ((static_cast<int32_t>(kFrameHeaderSize)));
+}
+/*RUSTYCPP:GEN-END id=frame_codec.3*/
 
 // ---------------------------------------------------------------------------
 // Stateless encode / decode
@@ -148,12 +185,30 @@ inline FrameDecodeStatus frame_codec_peek_header(const std::uint8_t* buf,
  *
  * Note that `payload_size == header.payload_size` always; the field is
  * duplicated for ergonomic parity with `ChannelFrame`.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block with the C++ struct. The
+ * generated struct is still an aggregate, so every call site's
+ * `FrameView v{}` continues to value-init `header` (both fields 0),
+ * `payload` (nullptr) and `payload_size` (0).
  */
+#if RUSTYCPP_RUST
 struct FrameView {
-    FrameHeader          header;
-    const std::uint8_t*  payload = nullptr;
-    std::size_t          payload_size = 0;
+    header: FrameHeader,
+    payload: *const u8,
+    payload_size: usize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.4 version=1 rust_sha256=b360ce69953a7f80a792566fe786167aaee1d16a0a48b9b9c4a51811f22da1bf*/
+struct FrameView;
+
+struct FrameView {
+    FrameHeader header;
+    const uint8_t* payload;
+    size_t payload_size;
 };
+/*RUSTYCPP:GEN-END id=frame_codec.4*/
 
 // ---------------------------------------------------------------------------
 // Coalesced encoding helper
@@ -259,7 +314,18 @@ namespace {
 // so long-lived connections don't accumulate unbounded slack at the
 // front of the buffer. Tuned to a small multiple of a typical RPC frame
 // to amortize the memmove cost across many frames.
-constexpr std::size_t kCompactThresholdBytes = 64 * 1024;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definition.
+#if RUSTYCPP_RUST
+const kCompactThresholdBytes: usize = 64 * 1024;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.2 version=1 rust_sha256=ade771f22e7be5d8311223bfcb4465698724808595170a67078906b947aaff5e*/
+extern const size_t kCompactThresholdBytes;
+
+constexpr size_t kCompactThresholdBytes = static_cast<size_t>(64) * static_cast<size_t>(1024);
+/*RUSTYCPP:GEN-END id=frame_codec.2*/
 
 }  // namespace
 

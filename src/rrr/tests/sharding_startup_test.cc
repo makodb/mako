@@ -31,8 +31,17 @@ using namespace rrr;
 
 // @safe - Atomic counter for port allocation
 static std::atomic<int> g_startup_test_port{0};
-constexpr int PORT_BASE = 22000;
-constexpr int PORT_RANGE = 10000;
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ definitions.
+#if RUSTYCPP_RUST
+const PORT_BASE: i32 = 22000;
+const PORT_RANGE: i32 = 10000;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=sharding_startup_test.1 version=1 rust_sha256=a5a91d4fd47eb78cd72342a2286e702c8f7b0dd95f40ab8c48c64aeed8d0d9a3*/
+constexpr int32_t PORT_BASE = static_cast<int32_t>(22000);
+constexpr int32_t PORT_RANGE = static_cast<int32_t>(10000);
+/*RUSTYCPP:GEN-END id=sharding_startup_test.1*/
 
 // @safe - Atomic counter for unique database paths
 static std::atomic<int> g_db_path_counter{0};

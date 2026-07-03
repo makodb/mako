@@ -56,7 +56,15 @@ using ALockLockedCallback = detail::CallbackWrapper<void(uint64_t) const>;
 using ALockNotifyCallback = detail::CallbackWrapper<void() const>;
 using ALockWoundCallback  = detail::CallbackWrapper<int() const>;
 
-inline constexpr uint64_t ALOCK_TIMEOUT = 200000; // 0.2s
+// 0.2 seconds in microseconds. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block is the source of truth; the transpiler
+// regenerates the matching `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+#if RUSTYCPP_RUST
+const ALOCK_TIMEOUT: u64 = 200000;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=alock.1 version=1 rust_sha256=033f8628c9cb1c27e3a0f10d4a53bb94f18496edb243244d60c74306c686109a*/
+constexpr uint64_t ALOCK_TIMEOUT = static_cast<uint64_t>(200000);
+/*RUSTYCPP:GEN-END id=alock.1*/
 
 // @safe - see file header.
 class ALock {

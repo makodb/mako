@@ -8,7 +8,7 @@
 #include "Transaction.hh"
 #include "MassTrans.hh"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 #include "lib/common.h"
 #include "benchmarks/benchmark_config.h"
 

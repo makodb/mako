@@ -55,7 +55,7 @@ TEST(CircuitBreakerStateTest, StateToString) {
 // ============================================================================
 
 TEST(CircuitBreakerTest, InitialStateClosed) {
-    CircuitBreaker cb;
+    CircuitBreaker cb(CircuitBreakerConfig{});
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);
     EXPECT_TRUE(cb.is_closed());
     EXPECT_FALSE(cb.is_open());
@@ -264,7 +264,7 @@ TEST(CircuitBreakerTest, VeryHighThreshold) {
 }
 
 TEST(CircuitBreakerTest, SuccessInClosedState) {
-    CircuitBreaker cb;
+    CircuitBreaker cb(CircuitBreakerConfig{});
 
     // Success in CLOSED state should be no-op (just reset failure count)
     cb.record_success();
@@ -301,7 +301,7 @@ TEST(CircuitBreakerTest, ConcurrentFailures) {
 }
 
 TEST(CircuitBreakerTest, ConcurrentStateQueries) {
-    CircuitBreaker cb;
+    CircuitBreaker cb(CircuitBreakerConfig{});
 
     std::atomic<bool> all_ok{true};
     std::vector<std::thread> threads;

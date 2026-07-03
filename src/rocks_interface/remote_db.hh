@@ -35,6 +35,7 @@
 #include "idb.hh"
 #include "db.hh"  // For mako::Options, ClientConfig
 #include "client_proxy.h"
+#include "mako/lib/common.h"  // non-txn wire types (nontxn*ReqType, structs)
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
@@ -44,6 +45,13 @@
 #include <unordered_map>
 #include <mutex>
 #include <memory>
+
+// @unsafe { POSIX sockets for the raw non-txn KV connection }
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <string.h>
+#include <stddef.h>
 
 namespace mako {
 
@@ -157,6 +165,23 @@ public:
         (void)size;
         return Status::IOError("GetApproximateSize not supported on remote table");
     }
+
+    // =========================================================================
+    // Non-transactional API (see idb.hh for semantics)
+    // =========================================================================
+    // Implemented over the self-contained non-txn request types
+    // (14-17), which ClientTcpServer routes into
+    // ShardReceiver::RunNontxnOp — a sound path that commits (and
+    // replicates) each op, unlike the txn'd Put/Get/Delete above
+    // whose server side is still the decoupled-client scaffolding.
+    // NOTE: table_id must match the server's registered table id —
+    // use RemoteDB::GetTable(name, table_id).
+
+    Status Put(const std::string& key, const std::string& value) override;
+    Status Insert(const std::string& key, const std::string& value) override;
+    Status Get(const std::string& key, std::string& value) override;
+    Status Delete(const std::string& key) override;
+    Status Exists(const std::string& key, bool* exists) override;
 
 private:
     RemoteDB* db_;      // Borrowed pointer to parent (not owned)
@@ -284,7 +309,72 @@ public:
     Status SendDelete(uint64_t txn_id, uint16_t table_id,
                       const std::string& key);
 
+    // =========================================================================
+    // Non-transactional KV connection (raw ClientTcpServer framing)
+    // =========================================================================
+
+    /**
+     * Connect for the non-transactional API only. Skips the rrr RPC
+     * bring-up entirely: the connection is a lazy raw TCP socket
+     * speaking ClientTcpServer's [type:1][len:4][payload] framing with
+     * the self-contained non-txn request types (14-17). Transactional
+     * methods on the returned instance report not-connected errors.
+     */
+    static Status ConnectNontxn(const std::string& host, int port,
+                                RemoteDB** dbptr);
+
+    /**
+     * Get or create a table proxy bound to an explicit server-side
+     * table id. The name-only GetTable() assigns ids from a local
+     * counter, which only works if client and server registered
+     * tables in the same order; the non-txn ops address tables by the
+     * server's real id, so prefer this overload.
+     */
+    ITable* GetTable(const std::string& name, uint16_t table_id);
+
+    // Internal senders for RemoteTable's non-txn methods. op_result
+    // returns the op's boolean (put="newly inserted",
+    // insert="inserted", remove="was present").
+    Status NontxnWrite(uint8_t reqType, uint16_t table_id,
+                       const std::string& key, const std::string& value,
+                       bool* op_result);
+    Status NontxnGet(uint16_t table_id, const std::string& key,
+                     std::string& value);
+
 private:
+    // Raw non-txn KV socket state (lazily connected; guarded by kv_mutex_)
+    int kv_fd_ = -1;
+    std::mutex kv_mutex_;
+    uint32_t kv_req_nr_ = 0;
+
+    Status EnsureKvSocketLocked();
+    Status KvRoundTripLocked(uint8_t reqType, uint16_t table_id,
+                             const std::string& key, const std::string& value,
+                             int* srv_status, bool* op_result,
+                             std::string* value_out);
+    // @unsafe - POSIX I/O loops
+    static bool WriteAll(int fd, const void* buf, size_t n) {
+        const char* p = static_cast<const char*>(buf);
+        while (n > 0) {
+            ssize_t w = ::write(fd, p, n);
+            if (w <= 0) return false;
+            p += w;
+            n -= static_cast<size_t>(w);
+        }
+        return true;
+    }
+    // @unsafe - POSIX I/O loops
+    static bool ReadAll(int fd, void* buf, size_t n) {
+        char* p = static_cast<char*>(buf);
+        while (n > 0) {
+            ssize_t r = ::read(fd, p, n);
+            if (r <= 0) return false;
+            p += r;
+            n -= static_cast<size_t>(r);
+        }
+        return true;
+    }
+
     // Private constructor - use Connect() factory method
     RemoteDB() = default;
 
@@ -447,6 +537,15 @@ inline void RemoteDB::Disconnect() {
     }
     is_connected_.store(false);
 
+    // Close the raw non-txn KV socket
+    {
+        std::lock_guard<std::mutex> lock(kv_mutex_);
+        if (kv_fd_ >= 0) {
+            ::close(kv_fd_);  // @unsafe
+            kv_fd_ = -1;
+        }
+    }
+
     // Close RPC client
     if (proxy_.is_some()) {
         proxy_.as_mut().unwrap()->close();
@@ -570,6 +669,245 @@ inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
     } else {
         return Status::IOError("Delete operation failed (RPC error: " + std::to_string(ret) + ")");
     }
+}
+
+
+// ============================================================================
+// Non-transactional KV implementation (raw ClientTcpServer framing)
+// ============================================================================
+
+// @safe - Factory that skips the rrr bring-up (non-txn surface only)
+inline Status RemoteDB::ConnectNontxn(const std::string& host, int port,
+                                      RemoteDB** dbptr) {
+    *dbptr = nullptr;
+    auto* db = new RemoteDB();
+    db->options_.server_host = host;
+    db->options_.server_port = port;
+    // No poll thread / rrr client / proxy: transactional methods will
+    // report not-connected. The kv socket connects lazily on first op.
+    db->is_connected_.store(true);
+    *dbptr = db;
+    return Status::OK();
+}
+
+// @safe - Table proxy bound to the server's real table id
+inline ITable* RemoteDB::GetTable(const std::string& name, uint16_t table_id) {
+    std::lock_guard<std::mutex> lock(tables_mutex_);
+    auto it = tables_.find(name);
+    if (it != tables_.end() && it->second.is_some()) {
+        return it->second.as_ref().unwrap().get();
+    }
+    auto table = rusty::make_box<RemoteTable>(this, name, table_id);
+    RemoteTable* ptr = table.get();
+    tables_[name] = rusty::Some(std::move(table));
+    return ptr;
+}
+
+// @unsafe - POSIX socket connect (caller holds kv_mutex_)
+inline Status RemoteDB::EnsureKvSocketLocked() {
+    if (kv_fd_ >= 0) {
+        return Status::OK();
+    }
+    if (!is_connected_.load()) {
+        return Status::IOError("Not connected to server");
+    }
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));  // @unsafe
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* res = nullptr;
+    std::string port_str = std::to_string(options_.server_port);
+    if (getaddrinfo(options_.server_host.c_str(), port_str.c_str(),
+                    &hints, &res) != 0 || res == nullptr) {
+        return Status::IOError("KV: cannot resolve " + options_.server_host);
+    }
+
+    int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (fd < 0) {
+        freeaddrinfo(res);
+        return Status::IOError("KV: socket() failed");
+    }
+
+    // Bound the blocking round trip by the configured RPC timeout.
+    struct timeval tv;
+    tv.tv_sec = options_.timeout_ms / 1000;
+    tv.tv_usec = (options_.timeout_ms % 1000) * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));  // @unsafe
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));  // @unsafe
+
+    int ret = ::connect(fd, res->ai_addr, res->ai_addrlen);
+    freeaddrinfo(res);
+    if (ret != 0) {
+        ::close(fd);  // @unsafe
+        return Status::IOError("KV: connect to " + options_.server_host + ":" +
+                               port_str + " failed");
+    }
+    kv_fd_ = fd;
+    return Status::OK();
+}
+
+// One blocking request/response on the kv socket. srv_status receives
+// the server's ErrorCode; op_result the boolean result byte (writes);
+// value_out the value payload (get). Any framing/socket failure closes
+// the socket (next call reconnects) and returns IOError.
+// @unsafe - raw wire structs + POSIX I/O
+inline Status RemoteDB::KvRoundTripLocked(uint8_t reqType, uint16_t table_id,
+                                          const std::string& key,
+                                          const std::string& value,
+                                          int* srv_status, bool* op_result,
+                                          std::string* value_out) {
+    Status s = EnsureKvSocketLocked();
+    if (!s.ok()) {
+        return s;
+    }
+    if (key.size() >= max_key_length || value.size() >= max_value_length) {
+        return Status::InvalidArgument("key or value too large");
+    }
+
+    nontxn_write_request_t req;
+    req.targert_server_id = 0;  // raw path: no helper-queue routing
+    req.req_nr = ++kv_req_nr_;
+    req.table_id = table_id;
+    req.klen = static_cast<uint16_t>(key.size());
+    req.vlen = static_cast<uint16_t>(value.size());
+    memcpy(req.key_and_value, key.data(), key.size());  // @unsafe
+    memcpy(req.key_and_value + key.size(), value.data(), value.size());  // @unsafe
+
+    const uint32_t payload_len = static_cast<uint32_t>(
+        offsetof(nontxn_write_request_t, key_and_value) +
+        req.klen + req.vlen);
+
+    bool io_ok = WriteAll(kv_fd_, &reqType, sizeof(reqType)) &&
+                 WriteAll(kv_fd_, &payload_len, sizeof(payload_len)) &&
+                 WriteAll(kv_fd_, &req, payload_len);
+
+    client_kv_response_t resp;
+    const size_t resp_header = sizeof(client_kv_response_t) - max_value_length;
+    io_ok = io_ok && ReadAll(kv_fd_, &resp, resp_header);
+    if (io_ok && resp.vlen > 0) {
+        if (resp.vlen > max_value_length) {
+            io_ok = false;  // protocol desync
+        } else {
+            io_ok = ReadAll(kv_fd_, resp.value, resp.vlen);
+        }
+    }
+
+    if (!io_ok || resp.req_nr != req.req_nr) {
+        ::close(kv_fd_);  // @unsafe
+        kv_fd_ = -1;
+        return Status::IOError("KV: request failed (connection reset)");
+    }
+
+    *srv_status = resp.status;
+    if (op_result != nullptr) {
+        *op_result = (resp.vlen == 1) && (resp.value[0] != 0);
+    }
+    if (value_out != nullptr) {
+        value_out->assign(resp.value, resp.vlen);
+    }
+    return Status::OK();
+}
+
+// @safe - Bounded retry on transient server-busy
+inline Status RemoteDB::NontxnWrite(uint8_t reqType, uint16_t table_id,
+                                    const std::string& key,
+                                    const std::string& value,
+                                    bool* op_result) {
+    std::lock_guard<std::mutex> lock(kv_mutex_);
+    for (int attempt = 0; attempt < 100; attempt++) {
+        int srv_status = ErrorCode::ERROR;
+        Status s = KvRoundTripLocked(reqType, table_id, key, value,
+                                     &srv_status, op_result, nullptr);
+        if (!s.ok()) {
+            return s;
+        }
+        switch (srv_status) {
+        case ErrorCode::SUCCESS:
+            return Status::OK();
+        case ErrorCode::SERVER_BUSY:
+            usleep(1000);  // @unsafe - serving worker mid-2PC; retry
+            continue;
+        default:
+            return Status::IOError(
+                "KV write rejected by server (not leader or unknown table)");
+        }
+    }
+    return Status::Busy("server busy (staged 2PC state); retry later");
+}
+
+// @safe - Bounded retry on transient server-busy
+inline Status RemoteDB::NontxnGet(uint16_t table_id, const std::string& key,
+                                  std::string& value) {
+    std::lock_guard<std::mutex> lock(kv_mutex_);
+    for (int attempt = 0; attempt < 100; attempt++) {
+        int srv_status = ErrorCode::ERROR;
+        Status s = KvRoundTripLocked(nontxnGetReqType, table_id, key,
+                                     std::string(), &srv_status, nullptr,
+                                     &value);
+        if (!s.ok()) {
+            return s;
+        }
+        switch (srv_status) {
+        case ErrorCode::SUCCESS:
+            // Value arrives with EXTRA_BITS already stripped by the
+            // server's L3 get — no client-side strip.
+            return Status::OK();
+        case ErrorCode::ABORT:
+            return Status::NotFound();
+        case ErrorCode::SERVER_BUSY:
+            usleep(1000);  // @unsafe
+            continue;
+        default:
+            return Status::IOError("KV get rejected by server (unknown table)");
+        }
+    }
+    return Status::Busy("server busy (staged 2PC state); retry later");
+}
+
+// ---- RemoteTable non-txn methods (thin delegation; idb.hh semantics)
+
+// @safe - Delegates to RemoteDB
+inline Status RemoteTable::Put(const std::string& key, const std::string& value) {
+    if (!db_) return Status::InvalidArgument("Invalid table");
+    return db_->NontxnWrite(nontxnPutReqType, table_id_, key, value, nullptr);
+}
+
+// @safe - Delegates to RemoteDB
+inline Status RemoteTable::Insert(const std::string& key, const std::string& value) {
+    if (!db_) return Status::InvalidArgument("Invalid table");
+    bool inserted = false;
+    Status s = db_->NontxnWrite(nontxnInsertReqType, table_id_, key, value,
+                                &inserted);
+    if (!s.ok()) return s;
+    return inserted ? Status::OK()
+                    : Status::InvalidArgument("key already exists");
+}
+
+// @safe - Delegates to RemoteDB
+inline Status RemoteTable::Get(const std::string& key, std::string& value) {
+    if (!db_) return Status::InvalidArgument("Invalid table");
+    return db_->NontxnGet(table_id_, key, value);
+}
+
+// @safe - Delegates to RemoteDB
+inline Status RemoteTable::Delete(const std::string& key) {
+    if (!db_) return Status::InvalidArgument("Invalid table");
+    bool removed = false;
+    Status s = db_->NontxnWrite(nontxnRemoveReqType, table_id_, key,
+                                std::string(), &removed);
+    if (!s.ok()) return s;
+    return removed ? Status::OK() : Status::NotFound();
+}
+
+// @safe - Implemented via Get
+inline Status RemoteTable::Exists(const std::string& key, bool* exists) {
+    if (!exists) return Status::InvalidArgument("Invalid argument");
+    std::string unused;
+    Status s = Get(key, unused);
+    if (s.ok()) { *exists = true; return Status::OK(); }
+    if (s.IsNotFound()) { *exists = false; return Status::OK(); }
+    return s;
 }
 
 }  // namespace mako

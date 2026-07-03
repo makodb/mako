@@ -79,7 +79,7 @@ TEST(ConnectionMetricsTest, RequestCompletedWithLatency) {
     ConnectionMetrics metrics;
 
     metrics.record_request_sent();
-    metrics.record_request_completed(1000);  // 1000 microseconds
+    metrics.record_request_completed_with_latency(1000);  // 1000 microseconds
 
     EXPECT_EQ(metrics.requests_completed(), 1u);
     EXPECT_EQ(metrics.in_flight_requests(), 0u);
@@ -199,26 +199,26 @@ TEST(ConnectionMetricsTest, AverageLatencyCalculation) {
     EXPECT_EQ(metrics.avg_latency_us(), 0u);
 
     // Single completion
-    metrics.record_request_completed(1000);
+    metrics.record_request_completed_with_latency(1000);
     EXPECT_EQ(metrics.avg_latency_us(), 1000u);
 
     // Average of 1000 and 3000 = 2000
-    metrics.record_request_completed(3000);
+    metrics.record_request_completed_with_latency(3000);
     EXPECT_EQ(metrics.avg_latency_us(), 2000u);
 }
 
 TEST(ConnectionMetricsTest, MinMaxLatencyTracking) {
     ConnectionMetrics metrics;
 
-    metrics.record_request_completed(500);
+    metrics.record_request_completed_with_latency(500);
     EXPECT_EQ(metrics.min_latency_us(), 500u);
     EXPECT_EQ(metrics.max_latency_us(), 500u);
 
-    metrics.record_request_completed(1000);
+    metrics.record_request_completed_with_latency(1000);
     EXPECT_EQ(metrics.min_latency_us(), 500u);
     EXPECT_EQ(metrics.max_latency_us(), 1000u);
 
-    metrics.record_request_completed(200);
+    metrics.record_request_completed_with_latency(200);
     EXPECT_EQ(metrics.min_latency_us(), 200u);
     EXPECT_EQ(metrics.max_latency_us(), 1000u);
 }
@@ -227,7 +227,7 @@ TEST(ConnectionMetricsTest, Reset) {
     ConnectionMetrics metrics;
 
     metrics.record_request_sent();
-    metrics.record_request_completed(1000);
+    metrics.record_request_completed_with_latency(1000);
     metrics.record_bytes_sent(100);
     metrics.record_bytes_received(50);
     metrics.record_reconnect();

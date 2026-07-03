@@ -636,6 +636,31 @@ persistence.persistAsync(log_data, size, shard_id, partition_id,
 
 RocksDB databases are created at `/tmp/mako_rocksdb_{shard_id}`.
 
+### The three-backend KV surface (non-transactional)
+
+There is ONE non-transactional KV interface — the non-txn ops on
+`abstract_ordered_index` (`get / put / insert / remove / scan /
+rscan`, raw-byte values in both directions) — with three
+implementations picked at construction time:
+
+```cpp
+abstract_ordered_index* t = new mbta_ordered_index("mytable", id, db);
+// or: new masstree_ordered_index("mytable", id);
+// or: new mbta_sharded_ordered_index("mytable", shard_tables);
+t->put(lcdf::Str("k"), "value");   // same code either way
+```
+
+- `masstree_ordered_index` — plain Masstree (L1), no transactions;
+  owns value memory with RCU-deferred frees; the transactional
+  virtuals abort loudly.
+- `mbta_ordered_index` — Silo's table; each non-txn op is an internal
+  one-op OCC transaction (Encode/strip handled internally).
+- `mbta_sharded_ordered_index` — per-key routing; remote keys travel
+  self-contained non-txn RPCs, and writes on a replicated leader
+  reach the replication log through the normal commit path.
+
+Design and semantics: [`storage-interface.md`](storage-interface.md).
+
 ---
 
 ## 7. Networking and RPC

@@ -1,6 +1,6 @@
 // @safe - RRR RPC service implementation for Mako client API
 #include "client_service.h"
-#include "lib/common.h"
+#include "mako/lib/common.h"
 #include "rrr/rrr.hpp"
 
 namespace mako {
@@ -142,21 +142,16 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
 
     req->m >> txn_id >> table_id >> key >> value;
 
-    rrr::i32 status = ErrorCode::SUCCESS;
-
-    // Get table and perform Put using shard_put (same as ShardReceiver)
-    auto it = receiver_->GetOpenTables().find(table_id);
-    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
-        status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandlePut: table %d not found", table_id);
-    } else {
-        try {
-            // Perform the put operation using shard_put (no txn handle needed)
-            it->second->shard_put(key, value);
-        } catch (...) {
-            status = ErrorCode::ABORT;
-            Log_warn("MakoClientService::HandlePut: exception during put");
-        }
+    // Self-contained non-txn put (commits + replicates) — NOT
+    // shard_put, which staged + locked a 2PC participant write that
+    // nothing ever committed. NOTE: the calling thread must be
+    // Silo-registered (see ClientTcpServer::WorkerThread).
+    bool op_result = false;
+    rrr::i32 status = receiver_->RunNontxnOp(
+        nontxnPutReqType, static_cast<uint16_t>(table_id),
+        key, value, &op_result, nullptr);
+    if (status != ErrorCode::SUCCESS) {
+        Log_warn("MakoClientService::HandlePut: status=%d", status);
     }
 
     Log_debug("MakoClientService::HandlePut: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
@@ -181,26 +176,16 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
 
     req->m >> txn_id >> table_id >> key;
 
-    rrr::i32 status = ErrorCode::SUCCESS;
     std::string value;
 
-    // Get table and perform Get using shard_get (same as ShardReceiver)
-    auto it = receiver_->GetOpenTables().find(table_id);
-    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
-        status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandleGet: table %d not found", table_id);
-    } else {
-        try {
-            // Perform the get operation using shard_get (no txn handle needed)
-            bool found = it->second->shard_get(key, value);
-            if (!found) {
-                status = ErrorCode::ABORT;  // Key not found
-            }
-        } catch (...) {
-            status = ErrorCode::ABORT;
-            Log_warn("MakoClientService::HandleGet: exception during get");
-        }
-    }
+    // Self-contained non-txn get — NOT shard_get, which staged a
+    // read-set item this decoupled client would never clean up. Value
+    // arrives with EXTRA_BITS already stripped by the L3 get. ABORT =
+    // key not found.
+    bool op_result = false;
+    rrr::i32 status = receiver_->RunNontxnOp(
+        nontxnGetReqType, static_cast<uint16_t>(table_id),
+        key, std::string(), &op_result, &value);
 
     Log_debug("MakoClientService::HandleGet: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
               txn_id, table_id, key.length(), value.length(), status);
@@ -225,22 +210,15 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
 
     req->m >> txn_id >> table_id >> key;
 
-    rrr::i32 status = ErrorCode::SUCCESS;
-
-    // Get table and perform Delete using shard_put with empty value (same as ShardReceiver)
-    auto it = receiver_->GetOpenTables().find(table_id);
-    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
-        status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandleDelete: table %d not found", table_id);
-    } else {
-        try {
-            // Delete by putting empty value (consistent with ShardReceiver::HandleClientDeleteRequest)
-            std::string empty_value;
-            it->second->shard_put(key, empty_value);
-        } catch (...) {
-            status = ErrorCode::ABORT;
-            Log_warn("MakoClientService::HandleDelete: exception during delete");
-        }
+    // Real non-txn remove — the old path "deleted" by staging an
+    // empty-value shard_put that was never committed. Absent key is
+    // not an error (blind delete, matching the struct handler).
+    bool op_result = false;
+    rrr::i32 status = receiver_->RunNontxnOp(
+        nontxnRemoveReqType, static_cast<uint16_t>(table_id),
+        key, std::string(), &op_result, nullptr);
+    if (status != ErrorCode::SUCCESS) {
+        Log_warn("MakoClientService::HandleDelete: status=%d", status);
     }
 
     Log_debug("MakoClientService::HandleDelete: txn_id=%ld, table=%d, key_len=%zu, status=%d",

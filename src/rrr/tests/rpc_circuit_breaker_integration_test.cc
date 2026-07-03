@@ -101,7 +101,7 @@ protected:
 };
 
 TEST_F(CircuitBreakerIntegrationTest, InitialStateClosed) {
-    CircuitBreaker cb;
+    CircuitBreaker cb(CircuitBreakerConfig{});
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);
     EXPECT_TRUE(cb.is_closed());
     EXPECT_TRUE(cb.allow_request());

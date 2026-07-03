@@ -49,10 +49,28 @@ inline constexpr const char* channel_error_to_string(ChannelError e) {
     return "Unknown";
 }
 
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block with the C++ struct. The
+// generated struct is still an aggregate, so every call site's
+// positional `ChannelFrame{payload, size}` brace init and every
+// `ChannelFrame f{}` value-init continues to work; the `= nullptr` /
+// `= 0` field defaults are dropped but every consumer either supplies
+// both fields explicitly or relies on `{}` zero-init.
+#if RUSTYCPP_RUST
 struct ChannelFrame {
-    const std::uint8_t* payload = nullptr;
-    std::size_t size = 0;
+    payload: *const u8,
+    size: usize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel.1 version=1 rust_sha256=00e89d6c5a4b7e937f13ff4dd75a4258a187f6661dd053f2816bf00a2e95e1fb*/
+struct ChannelFrame;
+
+struct ChannelFrame {
+    const uint8_t* payload;
+    size_t size;
 };
+/*RUSTYCPP:GEN-END id=channel.1*/
 
 using OnFrameCallback  = detail::CallbackWrapper<void(const ChannelFrame&) const>;
 using OnClosedCallback = detail::CallbackWrapper<void(ChannelError reason) const>;

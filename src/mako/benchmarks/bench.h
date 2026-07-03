@@ -8,7 +8,7 @@
 #include <utility>
 #include <string>
 
-#include "abstract_db.h"
+#include "storage/abstract_db.h"
 #include "../macros.h"
 #include "../thread.h"
 #include "../util.h"
@@ -280,7 +280,7 @@ protected:
 
 // XXX(stephentu): limit_callback is not optimal, should use
 // static_limit_callback if possible
-class limit_callback : public abstract_ordered_index::scan_callback {
+class limit_callback : public oi_scan_callback {
 public:
   limit_callback(ssize_t limit = -1)
     : limit(limit), n(0)
@@ -306,7 +306,7 @@ private:
 };
 
 
-class latest_key_callback : public abstract_ordered_index::scan_callback {
+class latest_key_callback : public oi_scan_callback {
 public:
   latest_key_callback(std::string &k, ssize_t limit = -1)
     : limit(limit), n(0), k(&k)
@@ -340,7 +340,7 @@ private:
 // this isn't done for values, because each value has a distinct string from
 // the string allocator, so there are no mutations while holding > 1 ref-count
 template <size_t N>
-class static_limit_callback : public abstract_ordered_index::scan_callback {
+class static_limit_callback : public oi_scan_callback {
 public:
   // XXX: push ignore_key into lower layer
   static_limit_callback(str_arena *arena, bool ignore_key)

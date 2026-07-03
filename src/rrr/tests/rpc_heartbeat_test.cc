@@ -51,7 +51,7 @@ TEST(HeartbeatConfigTest, DisabledPreset) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, InitialState) {
-    HeartbeatManager hb;
+    HeartbeatManager hb(HeartbeatConfig{});
     EXPECT_FALSE(hb.is_pending_pong());
     EXPECT_FALSE(hb.is_timed_out());
     EXPECT_EQ(hb.missed_count(), 0u);

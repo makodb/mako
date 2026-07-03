@@ -28,10 +28,10 @@
 #include "status.hh"
 #include "idb.hh"
 #include "local_table.hh"
-#include "benchmarks/abstract_db.h"
-#include "benchmarks/benchmark_config.h"
-#include "benchmarks/bench.h"
-#include "lib/configuration.h"
+#include "mako/storage/abstract_db.h"
+#include "mako/benchmarks/benchmark_config.h"
+#include "mako/benchmarks/bench.h"
+#include "mako/lib/configuration.h"
 
 #include <string>
 #include <vector>

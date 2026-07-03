@@ -1974,7 +1974,7 @@ class Client {
     // Pending circuit-breaker config (applied when connection is created)
     rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
     // Pending reconnect config (applied when connection is created)
-    rusty::Cell<ReconnectPolicy> pending_reconnect_policy_{ReconnectPolicy()};
+    rusty::Cell<ReconnectPolicy> pending_reconnect_policy_{ReconnectPolicy::conservative()};
     // Shared lifecycle callback manager, wired into active ClientConnection.
     rusty::Arc<CallbackManager> callback_manager_{rusty::Arc<CallbackManager>::make()};
 

@@ -159,6 +159,30 @@ if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     timed_out=1
 fi
 
+# Give the follower a grace window to DRAIN REPLAY LAG before we kill
+# it: the leader finishing does not mean p1 has consumed the log tail,
+# and killing mid-lag snapshots an arbitrary replay_batch count (CI
+# saw 256/478 vs the >500 check on slow shared runners — the check's
+# intent is "replication works", not "follower keeps up in real
+# time"). Poll the p1 log until the counter clears the threshold or
+# the grace budget expires; the later checks still enforce the
+# threshold itself.
+log_p1_drain="${script_name}_shard0-p1-$trd.log"
+drain_budget="${MAKO_REPLAY_DRAIN_SECONDS:-45}"
+drained=0
+for ((i = 0; i < drain_budget; i++)); do
+    rb=$(grep "replay_batch:" "$log_p1_drain" 2>/dev/null | tail -1 | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
+    if [ -n "$rb" ] && [ "$rb" -gt 500 ]; then
+        echo "Follower replay drained: replay_batch=$rb after ${i}s"
+        drained=1
+        break
+    fi
+    sleep 1
+done
+if [ "$drained" -eq 0 ]; then
+    echo "Note: follower replay still below threshold after ${drain_budget}s grace (last: ${rb:-none})"
+fi
+
 # Graceful shutdown: SIGTERM first
 echo "Stopping shards (graceful)..."
 pkill -TERM -f "dbtest.*shard-index 0" 2>/dev/null || true

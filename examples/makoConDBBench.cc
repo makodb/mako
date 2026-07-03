@@ -1,11 +1,11 @@
 #include <stddef.h>
 
 #include <mako.hh>
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include <examples/common.h>
-#include "benchmarks/abstract_db.h"
-#include "benchmarks/abstract_ordered_index.h"
-#include "benchmarks/sto/StringWrapper.hh"
+#include "storage/abstract_db.h"
+#include "storage/abstract_ordered_index.h"
+#include "sto/StringWrapper.hh"
 
 import std;
 
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
 
     // ---- Per-thread DB state (single thread) ----
     // Equivalent to RustWrapper::ensure_thread_info()
-    mbta_ordered_index::mbta_type::thread_init();
+    mbta_table::thread_init();
 
     str_arena arena;
     std::string txn_obj_buf;
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            customerTable->put(txn, db_key, StringWrapper(db_val));
+            tx_put(customerTable, txn, db_key, StringWrapper(db_val));
             db->commit_txn(txn);
             ++load_succ;
         } catch (abstract_db::abstract_abort_exception&) {
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
 
         std::string val_out;
         try {
-            customerTable->get(txn, db_key, val_out);
+            tx_get(customerTable, txn, db_key, val_out);
             db->commit_txn(txn);
             ++get_succ;
         } catch (abstract_db::abstract_abort_exception&) {
@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
         void* txn = db->new_txn(0, arena, txn_obj_buf.data());
 
         try {
-            customerTable->put(txn, db_key, StringWrapper(db_val));
+            tx_put(customerTable, txn, db_key, StringWrapper(db_val));
             db->commit_txn(txn);
             ++set_succ;
         } catch (abstract_db::abstract_abort_exception&) {

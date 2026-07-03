@@ -1,31 +1,67 @@
 module;
 
-#include <cstdint>
+#include <stdint.h>
+#include <rusty/rusty.hpp>
 
 export module rrr.internal_protocol;
 
 import std;
 
-// @safe - Wire-protocol constants + pure constexpr bit-twiddling helpers.
-// No raw pointers, syscalls, or operator-overload chains.
+// @safe - Wire-protocol constants + pure bit-twiddling functions. All
+// three constants and all three response-header functions are authored
+// as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth, and the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block immediately after it with the
+// C++ implementation. The C++ compiler only sees the GEN block. No
+// raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
+// The high bit of the encoded i32 marks "extended header" (response
+// carries `<server_instance_id>` after `<error_code>`); the low 31
+// bits hold the payload size.
+#if RUSTYCPP_RUST
+const kInternalHeartbeatRpcId: i32 = i32::MIN;
+const kResponseHeaderExtFlag: u32 = 0x80000000;
+const kResponseSizeMask: u32 = 0x7fffffff;
+
+fn response_has_extended_header(encoded_size: i32) -> bool {
+    ((encoded_size as u32) & kResponseHeaderExtFlag) != 0
+}
+
+fn response_payload_size(encoded_size: i32) -> i32 {
+    ((encoded_size as u32) & kResponseSizeMask) as i32
+}
+
+fn encode_response_size(payload_size: i32, extended_header: bool) -> i32 {
+    let base: u32 = (payload_size as u32) & kResponseSizeMask;
+    let out: u32 = if extended_header { base | kResponseHeaderExtFlag } else { base };
+    out as i32
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=internal_protocol.1 version=1 rust_sha256=94c111947385b2bc7e509d619d81feea1b690f97166051d92f3c10f3dae88f6e*/
 constexpr int32_t kInternalHeartbeatRpcId = std::numeric_limits<int32_t>::min();
+constexpr uint32_t kResponseHeaderExtFlag = static_cast<uint32_t>(2147483648);
+constexpr uint32_t kResponseSizeMask = static_cast<uint32_t>(2147483647);
+bool response_has_extended_header(int32_t encoded_size);
+int32_t response_payload_size(int32_t encoded_size);
+int32_t encode_response_size(int32_t payload_size, bool extended_header);
 
-constexpr uint32_t kResponseHeaderExtFlag = 0x80000000u;
-constexpr uint32_t kResponseSizeMask = 0x7fffffffu;
 
-inline constexpr bool response_has_extended_header(int32_t encoded_size) {
-    return (static_cast<uint32_t>(encoded_size) & kResponseHeaderExtFlag) != 0;
+
+
+bool response_has_extended_header(int32_t encoded_size) {
+    return ((((static_cast<uint32_t>(encoded_size))) & rusty::detail::deref_if_pointer_like(kResponseHeaderExtFlag))) != static_cast<uint32_t>(0);
 }
 
-inline constexpr int32_t response_payload_size(int32_t encoded_size) {
-    return static_cast<int32_t>(static_cast<uint32_t>(encoded_size) & kResponseSizeMask);
+int32_t response_payload_size(int32_t encoded_size) {
+    return static_cast<int32_t>((((static_cast<uint32_t>(encoded_size))) & rusty::detail::deref_if_pointer_like(kResponseSizeMask)));
 }
 
-inline constexpr int32_t encode_response_size(int32_t payload_size, bool extended_header) {
-    const uint32_t base = static_cast<uint32_t>(payload_size) & kResponseSizeMask;
-    return static_cast<int32_t>(extended_header ? (base | kResponseHeaderExtFlag) : base);
+int32_t encode_response_size(int32_t payload_size, bool extended_header) {
+    const uint32_t base = ((static_cast<uint32_t>(payload_size))) & rusty::detail::deref_if_pointer_like(kResponseSizeMask);
+    const uint32_t out = (extended_header ? rusty::detail::deref_if_pointer_like(base) | rusty::detail::deref_if_pointer_like(kResponseHeaderExtFlag) : base);
+    return static_cast<int32_t>(out);
 }
+/*RUSTYCPP:GEN-END id=internal_protocol.1*/
 
 } // export namespace rrr

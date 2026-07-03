@@ -3,7 +3,7 @@
 #define SILO_ONS_BENCHMARKS_STO_REPLAYDB_H_
 #include <iostream>
 #include <vector>
-#include "../abstract_db.h"
+#include "storage/abstract_db.h"
 
 // Single timestamp system commit info
 struct CommitInfo {
