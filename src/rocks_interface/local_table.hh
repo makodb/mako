@@ -9,11 +9,59 @@
 
 #include "idb.hh"
 #include "status.hh"
-#include "benchmarks/mbta_sharded_ordered_index.hh"
-#include "benchmarks/abstract_db.h"
+#include "mako/storage/mbta_sharded_ordered_index.hh"
+#include "mako/storage/abstract_db.h"
 #include <string>
 
 namespace mako {
+
+// ============================================================================
+// RocksDB-register glue over the sharded engine table: Status-returning
+// Get/Put/Insert/Delete used by LocalTable (and facade-style example
+// apps). Capitalized names are the rocks_interface convention
+// (mirroring rocksdb::DB); the engine interface itself is the
+// lowercase trait surface in storage/abstract_ordered_index.h.
+// ============================================================================
+
+inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
+                                     void *txn, const std::string &key,
+                                     std::string &value) {
+  bool found = t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
+                         std::string::npos);
+  return found ? mako::Status::OK() : mako::Status::NotFound();
+}
+
+// NOTE: the value must already be mako::Encode()'d by the caller and
+// outlive the commit (the txn'd path stores a pointer, no copy).
+inline mako::Status mbta_sharded_Put(mbta_sharded_ordered_index *t,
+                                     void *txn, const std::string &key,
+                                     const std::string &value) {
+  t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
+                                        void *txn, const std::string &key,
+                                        const std::string &value) {
+  // Check existence first: transInsert silently succeeds for
+  // duplicates, so dups are detected via Get — the staged read makes
+  // insert-if-absent serializable (commit validation catches a racing
+  // insert). Gated by rocksdbInterfaceTest I1.4.
+  std::string unused;
+  if (t->tx_get(txn, lcdf::Str(key.data(), key.size()), unused,
+                std::string::npos)) {
+    return mako::Status::InvalidArgument("Key already exists");
+  }
+  t->tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
+                                        void *txn, const std::string &key) {
+  t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
+  return mako::Status::OK();
+}
+
 
 /**
  * LocalTable - Wrapper around mbta_sharded_ordered_index implementing ITable
@@ -36,7 +84,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return index_->Put(txn, key, value);
+            return mbta_sharded_Put(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -52,7 +100,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return index_->Get(txn, key, value);
+            return mbta_sharded_Get(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -68,7 +116,7 @@ public:
         }
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
-            return index_->Delete(txn, key);
+            return mbta_sharded_Delete(index_, txn, key);
         } catch (abstract_db::abstract_abort_exception& ex) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -82,7 +130,7 @@ public:
     }
 
     // @safe - Bridges scan_callback::invoke to std::function
-    class ScanAdapter : public abstract_ordered_index::scan_callback {
+    class ScanAdapter : public oi_scan_callback {
     public:
         explicit ScanAdapter(std::function<bool(const std::string&, const std::string&)> fn)
             : fn_(std::move(fn)) {}
@@ -122,7 +170,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->scan(txn, start_key, end_key, adapter);
+            tx_scan(index_, txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Scan: transaction aborted");
@@ -154,7 +202,7 @@ public:
         try {
             // @unsafe { Calls underlying index which uses raw pointers }
             ScanAdapter adapter(std::move(callback));
-            index_->rscan(txn, start_key, end_key, adapter);
+            tx_rscan(index_, txn, start_key, end_key, adapter, nullptr);
             return Status::OK();
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("ReverseScan: transaction aborted");
@@ -190,7 +238,7 @@ public:
             // @unsafe { Calls underlying index which uses raw pointers }
             // Uses mbta_sharded_ordered_index::Insert() which calls transInsert
             // (native insert OCC semantics) rather than transPut (overwrite semantics).
-            return index_->Insert(txn, key, value);
+            return mbta_sharded_Insert(index_, txn, key, value);
         } catch (abstract_db::abstract_abort_exception&) {
             return Status::IOError("Transaction aborted");
         } catch (...) {
@@ -207,6 +255,48 @@ public:
         }
         // @unsafe { Calls underlying index which uses raw pointers }
         *size = index_->size();
+        return Status::OK();
+    }
+
+    // =========================================================================
+    // Non-transactional API (implements the ITable non-txn surface
+    // over the L3 non-txn ops; see idb.hh for semantics)
+    // =========================================================================
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Put(const std::string& key, const std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        index_->put(lcdf::Str(key), value);  // returns "newly inserted"
+        return Status::OK();
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Insert(const std::string& key, const std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->insert(lcdf::Str(key), value)
+                   ? Status::OK()
+                   : Status::InvalidArgument("key already exists");
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Get(const std::string& key, std::string& value) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->get(lcdf::Str(key), value, std::string::npos) ? Status::OK()
+                                                  : Status::NotFound();
+    }
+
+    // @unsafe - direct raw write through the MassTrans cursor
+    Status Delete(const std::string& key) override {
+        if (!index_) return Status::InvalidArgument("Invalid table");
+        return index_->remove(lcdf::Str(key)) ? Status::OK()
+                                              : Status::NotFound();
+    }
+
+    // @unsafe - L3 non-txn op runs an internal one-op OCC txn
+    Status Exists(const std::string& key, bool* exists) override {
+        if (!index_ || !exists) return Status::InvalidArgument("Invalid argument");
+        std::string unused;
+        *exists = index_->get(lcdf::Str(key), unused, std::string::npos);
         return Status::OK();
     }
 

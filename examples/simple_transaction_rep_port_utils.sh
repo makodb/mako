@@ -70,7 +70,14 @@ import random
 import socket
 import sys
 
-OFFSETS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+# Probe CONTIGUOUS per-shard windows, not spot offsets: dbtest binds
+# base+id for id in [0, ~warehouses+5+num_erpc) within each shard
+# block (blocks at +0, +100, +1000, ... per the config layout). CI
+# died on base+6 — a mid-window port a spot-offset probe never
+# checked, squatted by a leftover listener from an earlier suite.
+WINDOW = 40  # ports probed per shard block; covers ids with slack
+BLOCK_STARTS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+OFFSETS = [b + i for b in BLOCK_STARTS for i in range(WINDOW)]
 BASE_MIN = int(sys.argv[1])
 BASE_MAX = int(sys.argv[2])
 

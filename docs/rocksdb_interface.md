@@ -1,6 +1,6 @@
 # Mako RocksDB-Compatible Interface
 
-This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/mako/idb.hh`. It covers three things:
+This document describes Mako's RocksDB-compatible `ITable` and `IDatabase` interfaces, located in `src/rocks_interface/idb.hh`. It covers three things:
 
 - **Conceptual model** — how Silo/Masstree's building blocks map to RocksDB's (`DB`, `ColumnFamily`, `Transaction`, `Snapshot`, `Iterator`, persistence, …), what aligns, and where the two systems irreconcilably diverge.
 - **Interface reference** — the abstract `ITable` and `IDatabase` methods, their semantics, and worked examples.
@@ -46,7 +46,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **RocksDB `ColumnFamily`.** A CF is a logical KV namespace within a single `DB`. All CFs in one DB share the WAL and block cache, but their key spaces are disjoint. Every put/get/delete/iterator takes a `ColumnFamilyHandle*`. A DB has at minimum one CF (`default`).
 
-**Silo tables.** Each table is a separate `abstract_ordered_index` (`src/mako/benchmarks/abstract_ordered_index.h`), most often instantiated as `typed_txn_btree<Schema>` (`src/mako/typed_txn_btree.h:8-16`) wrapping an `mbtree<concurrent_btree>`. TPC-C creates ~10 tables (`warehouse`, `district`, `customer`, `stock`, `item`, `order`, `order_line`, `new_order`, `history`, plus secondary indexes — `tpcc.cc:1372`).
+**Silo tables.** Each table is a separate `abstract_ordered_index` (`src/mako/storage/abstract_ordered_index.h`), most often instantiated as `typed_txn_btree<Schema>` (`src/mako/typed_txn_btree.h:8-16`) wrapping an `mbtree<concurrent_btree>`. TPC-C creates ~10 tables (`warehouse`, `district`, `customer`, `stock`, `item`, `order`, `order_line`, `new_order`, `history`, plus secondary indexes — `tpcc.cc:1372`).
 
 **Mapping.** RocksDB CF ↔ Silo table ↔ mbtree instance, all natural fits. `IDatabase::GetTable(name)` already returns an `ITable*` per name — this is functionally equivalent to `DB::CreateColumnFamily` / `DB::GetColumnFamilyHandle`.
 
@@ -60,7 +60,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC, validates read-set at commit) and `TransactionDB` (pessimistic 2PL, locks acquired eagerly). Both use `class Transaction` with `Put`/`Get`/`GetForUpdate`/`Commit`/`Rollback`. Isolation: snapshot isolation by default; serializable with `SetSnapshot()` + `GetForUpdate()`. Supports 2PC (`Prepare`).
 
-**Silo.** OCC-only via opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/benchmarks/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation: **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
+**Silo.** OCC-only via opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation: **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
 
 **Mapping**:
 
@@ -78,6 +78,8 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 | `SetName` (named txn for recovery) | Supported | Not supported | Gap |
 
 **No pessimistic flavor**. RocksDB's `TransactionDB` (2PL) has no counterpart. Any consumer requiring lock-based blocking semantics can't be supported without a fresh implementation.
+
+**Non-transactional access.** Silo's `abstract_ordered_index` also exposes a **non-transactional API** mirroring Masstree's operation set — `get / put / insert / remove / scan / rscan` without a txn handle, each op per-key atomic on its own (internally a one-op OCC transaction with retry; `remove` is a direct raw write). This is the analog of RocksDB's plain `db->Put/Get/Delete` outside any `Transaction`. See [`storage-interface.md`](storage-interface.md) for the full contract, including the constraint that these must not be called from a thread with an open transaction.
 
 ### 4. Snapshots
 
@@ -180,6 +182,35 @@ None of these have workarounds. `NotSupported` is the honest answer for all thre
 | `Exists` | Check key presence without reading value | Does a full Get internally; no bloom-filter hint | Chosen over a separate existence flag to reuse the OCC read-set tracking already done by Get |
 | `Insert` | Insert only if key absent | Aborts transaction on duplicate | Uses `transInsert` instead of `transPut` — non-obvious distinction; `transInsert` registers the key in the OCC write-set so a concurrent insert on the same key causes abort rather than silent overwrite |
 | `GetApproximateSize` | Approximate key count for the local shard | Local shard only; count may be stale | Counter updated under lock in `install()` (commit phase) rather than atomics in the hot path, as reviewer noted atomics are too expensive for an approximate metric |
+
+### ITable non-transactional methods (2026-07)
+
+`ITable` also carries a non-transactional surface (no `void* txn`
+parameter; each op is a self-contained, immediately-visible operation
+— internally a one-op OCC transaction on the owning shard, so writes
+replicate through the normal commit path). Semantics: `Put` = blind
+overwrite (OK); `Insert` = put-if-absent (`InvalidArgument` if
+present); `Delete` = real remove (`NotFound` if absent); `Get` = OK /
+`NotFound`; `Exists` = OK + flag. Values are raw bytes in both
+directions (the backend applies its storage encoding internally,
+unlike the transactional methods, which require caller-Encoded
+values). Defaults
+return `NotSupported`; `LocalTable` implements them over the L3
+non-txn API and `RemoteTable` over the self-contained non-txn request
+types (14-17). Callers must not have an open transaction on the
+calling thread. See
+[`storage-interface.md`](storage-interface.md).
+
+The `RemoteDB` KV path was re-based onto this machinery: the previous
+implementation "wrote" via `shard_put` — staging + locking a 2PC
+participant write that nothing ever committed (never visible, never
+replicated, lock leaked) — and "deleted" via an empty-value put. Both
+decoupled-client server paths (the raw-struct handlers and
+`MakoClientService`) now run `ShardReceiver::RunNontxnOp`.
+`RemoteDB::ConnectNontxn(host, port)` + `GetTable(name, table_id)`
+give a client that interoperates with `ClientTcpServer` end-to-end
+(the rrr-protocol txn'd client still has no matching live server —
+pre-existing).
 
 ### IDatabase
 
@@ -674,9 +705,9 @@ The existing interface is already at "80% of the common-case surface." What exte
 
 ## Related files
 
-- `src/mako/idb.hh` — the abstract `IDatabase` and `ITable` interfaces this doc describes.
-- `src/mako/db.hh` — local `mako::DB` implementation.
-- `src/mako/remote_db.hh` — remote-client `mako::RemoteDB` implementation.
-- `src/mako/local_table.hh` — local table backing.
+- `src/rocks_interface/idb.hh` — the abstract `IDatabase` and `ITable` interfaces this doc describes.
+- `src/rocks_interface/db.hh` — local `mako::DB` implementation.
+- `src/rocks_interface/remote_db.hh` — remote-client `mako::RemoteDB` implementation.
+- `src/rocks_interface/local_table.hh` — local table backing.
 - `src/mako/silo_runtime.h` — the `SiloRuntime` container that each local DB wraps.
 - [`masstree-test-plan.md`](masstree-test-plan.md) — masstree correctness testing.

@@ -19,8 +19,8 @@
 #include <vector>
 #include <cstring> // for memcpy
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Interface.hh"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/Interface.hh"
+#include "sto/sync_util.hh"
 #include "benchmarks/benchmark_config.h"
 
 #ifndef STO_PROFILE_COUNTERS
@@ -688,6 +688,20 @@ public:
 
     bool in_progress() {
         return TThread::mode() == 1 || state_ < s_aborted;
+    }
+
+    // @safe - True iff the transaction has accumulated read/write-set
+    // items. Distinguishes an IDLE participant thread (in_progress by
+    // mode-1 convention, but empty — safe to borrow for a one-op txn)
+    // from one that is mid-2PC with staged state (must not be
+    // clobbered). Used by the non-txn write handlers.
+    //
+    // The in_progress() conjunct matters: after a mode-0 commit,
+    // tset_size_ keeps its final count until the next
+    // start_transaction resets it — a committed txn's leftovers are
+    // not staged state.
+    bool has_staged_items() {
+        return in_progress() && tset_size_ != 0;
     }
 
     // opacity checking

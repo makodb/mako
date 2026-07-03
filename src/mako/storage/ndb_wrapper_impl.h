@@ -536,7 +536,7 @@ printf("Should not reach here-insert\n");
 template <template <typename> class Transaction>
 class ndb_wrapper_search_range_callback : public txn_btree<Transaction>::search_range_callback {
 public:
-  ndb_wrapper_search_range_callback(abstract_ordered_index::scan_callback &upcall)
+  ndb_wrapper_search_range_callback(oi_scan_callback &upcall)
     : upcall(&upcall) {}
 
   virtual bool
@@ -547,7 +547,7 @@ public:
   }
 
 private:
-  abstract_ordered_index::scan_callback *upcall;
+  oi_scan_callback *upcall;
 };
 
 template <template <typename> class Transaction>

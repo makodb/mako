@@ -384,7 +384,7 @@ class kvdb_wrapper_search_range_callback : public Btree::search_range_callback {
 public:
   typedef basic_kvdb_record<UseConcurrencyControl> kvdb_record;
   kvdb_wrapper_search_range_callback(
-      abstract_ordered_index::scan_callback &upcall,
+      oi_scan_callback &upcall,
       str_arena *arena)
     : upcall(&upcall), arena(arena) {}
 
@@ -400,7 +400,7 @@ public:
   }
 
 private:
-  abstract_ordered_index::scan_callback *upcall;
+  oi_scan_callback *upcall;
   str_arena *arena;
 };
 

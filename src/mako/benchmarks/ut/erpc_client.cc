@@ -7,7 +7,7 @@
 #include "rpc_constants.h"
 #include "util/numautils.h"
 #include "consts.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 #include "lib/common.h"
 
 import std;

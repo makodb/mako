@@ -6,11 +6,11 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
 #include "common.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;
@@ -38,7 +38,7 @@ public:
             std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
             std::string value = mako::Encode("value_XXXXXXXXXXXXX_" + std::to_string(i));
             try {
-                customerTable->put(txn, key, value);
+                tx_put(customerTable, txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -52,7 +52,7 @@ public:
             std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
             std::string value = "";
             try {
-                customerTable->get(txn, key, value);
+                tx_get(customerTable, txn, key, value);
                 db->commit_txn(txn);
                 ASSERT_EQ(value.substr(0,("value_XXXXXXXXXXXXX_" + std::to_string(i)).length()), "value_XXXXXXXXXXXXX_" + std::to_string(i));
             } catch (abstract_db::abstract_abort_exception &ex) {
@@ -78,7 +78,7 @@ public:
             std::string key = "XXXXXXXXXXXX";
             std::string value = mako::Encode("2000000000000000");
             try {
-                customerTable->put(txn, key, value);
+                tx_put(customerTable, txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -93,7 +93,7 @@ public:
             std::string key = "XXXXXXXXXXXX";
             std::string value = mako::Encode("1000000000000000");
             try {
-                customerTable->put(txn, key, value);
+                tx_put(customerTable, txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -138,9 +138,9 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
             try {
-                customerTable->insert(txn, key, value);
-                customerTable->insert(txn, key1, value1);
-                customerTable->insert(txn, key2, value2);
+                tx_insert(customerTable, txn, key, value);
+                tx_insert(customerTable, txn, key1, value1);
+                tx_insert(customerTable, txn, key2, value2);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 std::cout << "abort key=" << key << std::endl;
@@ -209,7 +209,7 @@ public:
            std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
            std::string value = mako::Encode("value_XXXXXXXXXXXXX_" + std::to_string(i));
            try {
-               customerTable->put_mbta(txn, key, cmpFunc2_v3, value);
+               mbta_sharded_put_mbta(customerTable, txn, key, cmpFunc2_v3, value);
                db->commit_txn(txn);
            } catch (abstract_db::abstract_abort_exception &ex) {
                std::cout << "abort key=" << key << std::endl;
@@ -223,7 +223,7 @@ public:
            std::string key = "key_XXXXXXXXXXXXX_" + std::to_string(i);
            std::string value = "";
            try {
-               customerTable->get(txn, key, value);
+               tx_get(customerTable, txn, key, value);
                db->commit_txn(txn);
                ASSERT_EQ(value.substr(0,("value_XXXXXXXXXXXXX_" + std::to_string(i)).length()), "value_XXXXXXXXXXXXX_" + std::to_string(i));
            } catch (abstract_db::abstract_abort_exception &ex) {
@@ -235,7 +235,7 @@ public:
 
     void init() {
         scoped_db_thread_ctx ctx(db, false);
-        mbta_ordered_index::mbta_type::thread_init();
+        mbta_table::thread_init();
     }
     static mbta_sharded_ordered_index * OpenTablesForTablespace(abstract_db *db, const char *name) {
        auto *table = db->open_sharded_index(name);

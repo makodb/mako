@@ -2,7 +2,7 @@
 
 Scope: `src/masstree/` only. Excludes the Silo transactional layer
 (`test_silo_runtime.cc`, `test_silo_multi_site_stress.cc`) and excludes
-the STO benchmark suite under `src/mako/benchmarks/sto/`.
+the STO benchmark suite under `src/mako/sto/`.
 
 ## Current state (baseline)
 

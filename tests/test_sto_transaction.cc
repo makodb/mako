@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "mako/benchmarks/sto/TRcu.hh"
+#include "mako/sto/TRcu.hh"
 
 import std;
 

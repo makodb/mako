@@ -2,8 +2,8 @@
 #include <map>
 #include "lib/common.h"
 #include <vector>
-#include "benchmarks/sto/sync_util.hh"
-#include "benchmarks/sto/common.hh"
+#include "sto/sync_util.hh"
+#include "sto/common.hh"
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
 #endif

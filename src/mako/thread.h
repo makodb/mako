@@ -47,8 +47,13 @@ public:
   void join();
   virtual void run();
 
+  // Shard binding captured from the SPAWNING thread at start() time
+  // (-1 = spawner had none; child keeps the dynamic global fallback).
+  int inherited_shard_index() const { return inherited_shard_index_; }
+
 private:
   run_t body_;
+  int inherited_shard_index_{-1};
   pthread_t thd_{};
   const bool daemon_;
   const std::string name_;

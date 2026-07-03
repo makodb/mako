@@ -422,7 +422,7 @@ Mako wraps Masstree with OCC (Optimistic Concurrency Control) via the **STO** (S
 
 ### MassTrans
 
-`MassTrans<V>` (in `src/mako/benchmarks/sto/MassTrans.hh`) wraps a Masstree instance with transaction semantics:
+`MassTrans<V>` (in `src/mako/sto/MassTrans.hh`) wraps a Masstree instance with transaction semantics:
 
 ```cpp
 template <typename V>
@@ -439,6 +439,13 @@ class MassTrans {
     void transQuery(Str begin, Str end, Cb); // Range scan
 };
 ```
+
+MassTrans (and the `abstract_ordered_index` layer above it) also
+exposes a **non-transactional API** whose shape matches Masstree's own
+operation set — `get / put / insert / remove / scan / rscan` without a
+transaction handle, each op per-key atomic on its own. See
+[storage-interface.md](storage-interface.md)
+for the design and semantic contract.
 
 ### How Transactions Work
 
@@ -593,7 +600,7 @@ struct MultiVersionValue {
 |------|---------|
 | `config.h` | Build-time settings: cache line size, jemalloc, NUMA, hugepages |
 
-### Mako Integration (`src/mako/benchmarks/sto/`)
+### Mako Integration (`src/mako/sto/`)
 
 | File | Purpose |
 |------|---------|

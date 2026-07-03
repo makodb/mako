@@ -5,7 +5,12 @@
 #include <string.h>
 #include <stdlib.h>
 
+// bench.h first: its textual std/rcu/ticker includes must precede
+// any header that opens namespace std into the global namespace
+// (house pattern for import-std TUs; see server.cc).
+#include "benchmarks/bench.h"
 #include "ThreadPool.h"
+#include "storage/mbta_wrapper.hh"  // mbta_ordered_index (put_mbta cast)
 #include "lib/common.h"
 
 import std;
@@ -103,7 +108,10 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                 //Warning("Info of KV: # of K: %d, # of V: %d, table_id: %d, is_deleted: %d,key:%s", *len_of_K, obj_v.length(), *table_id, delete_true,mako::printStringAsBit(obj_k).c_str());
                 void *txn = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
                 abstract_ordered_index *table_index = db->get_index_by_table_id(*table_id) ;
-                table_index->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
+                // put_mbta left the abstract interface (mbta-specific
+                // compare-and-put); replay tables are mbta by construction.
+                static_cast<mbta_ordered_index*>(table_index)
+                    ->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
                 auto ret = db->commit_txn_no_paxos(txn);// we should have ret>0, then retry
                 if (try_cnt > 1 && try_cnt % 20 == 0) {
                     std::cout << "succeed at retry#:" << try_cnt << std::endl;

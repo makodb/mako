@@ -2,8 +2,8 @@
 
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
-#include "Transaction.hh"
-#include "MassTrans.hh"
+#include "sto/Transaction.hh"
+#include "sto/MassTrans.hh"
 #include "../str_arena.h"
 
 #define STD_OP(f) \

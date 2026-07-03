@@ -508,13 +508,25 @@ protected:
 
 public:
 
-  // non-transaction put/get. These just wrap a transaction get/put
-  bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
+  // Non-transactional API (Masstree-shape; see
+  // docs/storage-interface.md). Each op below is per-key
+  // atomic: it does NOT participate in a caller's transaction.
+  // put/get/insert/scan/rscan wrap a one-op OCC transaction (safe
+  // under concurrent OCC readers/writers); remove (further down) is
+  // a direct raw write — the asymmetry is accepted and documented in
+  // the plan doc.
+  // VT is templated (like transPut) so callers can pass StringWrapper
+  // for zero-copy packing as well as plain value_type.
+  // Returns true iff the key was newly inserted (Masstree's insert
+  // convention). Note trans_write returns "key already existed", so
+  // the result is inverted here.
+  template <typename VT = value_type>
+  bool put(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    auto ret = transPut(key, value, ti);
+    auto existed = transPut(key, value, ti);
     Sto::commit();
-    return ret;
+    return !existed;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
@@ -523,6 +535,38 @@ public:
     auto ret = transGet(key, value, ti);
     Sto::commit();
     return ret;
+  }
+
+  // Put-if-absent: returns true iff the key was newly inserted.
+  // (transInsert returns "key already existed"; inverted here.)
+  template <typename VT = value_type>
+  bool insert(Str key, const VT& value, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto existed = transInsert(key, value, ti);
+    Sto::commit();
+    return !existed;
+  }
+
+  // Forward range scan over [begin, end). Callback is invoked per
+  // key-value pair; return false from the callback to stop early.
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  void scan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+            threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    transQuery(begin, end, callback, va, ti);
+    Sto::commit();
+  }
+
+  // Reverse range scan; same contract as scan but descending order.
+  template <typename Callback, typename ValAllocator = DefaultValAllocator>
+  void rscan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+             threadinfo_type& ti = mythreadinfo) {
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    transRQuery(begin, end, callback, va, ti);
+    Sto::commit();
   }
 
   // implementation of TObject methods
@@ -646,7 +690,10 @@ public:
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
     cursor_type lp(table_, key);
     bool found = lp.find_locked(*ti.ti);
-    lp.value()->deallocate_rcu(*ti.ti);
+    // Only deallocate when the key exists: on a miss the cursor's
+    // value slot is uninitialized and dereferencing it is UB.
+    if (found)
+      lp.value()->deallocate_rcu(*ti.ti);
     lp.finish(found ? -1 : 0, *ti.ti);
     return found;
   }

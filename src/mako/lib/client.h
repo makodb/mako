@@ -46,6 +46,21 @@ namespace mako
                             error_continuation_t error_continuation,
                             uint32_t timeout);
 
+        // Self-contained non-transactional write (put / insert / remove,
+        // selected by reqType — one of nontxnPutReqType /
+        // nontxnInsertReqType / nontxnRemoveReqType). value is empty for
+        // remove. See docs/storage-interface.md.
+        void InvokeNontxnWrite(uint64_t txn_nr,
+                            int dstShardIdx,
+                            uint16_t server_id,
+                            const string &key,
+                            const string &value,
+                            uint16_t table_id,
+                            uint8_t reqType,
+                            resp_continuation_t continuation,
+                            error_continuation_t error_continuation,
+                            uint32_t timeout);
+
         void InvokeBatchLock(uint64_t txn_nr,
                             uint16_t id,
                             map<int, BatchLockRequestWrapper> &request_batch_per_shard,
@@ -135,6 +150,7 @@ namespace mako
 
         void HandleGetReply(char *respBuf);
         void HandleScanReply(char *respBuf);
+        void HandleNontxnWriteReply(char *respBuf);
         void HandleLockReply(char *respBuf);
         void HandleBatchLockReply(char *respBuf);
         void HandleValidateReply(char *respBuf);

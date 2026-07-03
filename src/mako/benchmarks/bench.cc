@@ -22,7 +22,7 @@
 #include "common.h"
 #include "lib/fasttransport.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
 

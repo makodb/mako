@@ -23,8 +23,8 @@
 #include "util.h"
 
 #include "benchmarks/bench.h"
-#include "benchmarks/sto/sync_util.hh"
-#include "benchmarks/mbta_wrapper.hh"
+#include "sto/sync_util.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"

@@ -26,8 +26,9 @@
  *   server.Stop();
  */
 
-#include "lib/server.h"
-#include "lib/common.h"
+#include "mako/lib/server.h"
+#include "mako/lib/common.h"
+#include "mako/benchmarks/bench.h"  // scoped_db_thread_ctx (worker Silo binding)
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -293,8 +294,11 @@ inline void ClientTcpServer::Stop() {
 
     stop_requested_.store(true);
 
-    // Close listener socket to unblock accept()
+    // Wake the listener: on Linux, close() alone does NOT unblock a
+    // thread parked in accept() — shutdown() does (accept returns
+    // with an error, and the loop sees stop_requested_).
     if (listen_fd_ >= 0) {
+        ::shutdown(listen_fd_, SHUT_RDWR);  // @unsafe
         ::close(listen_fd_);  // @unsafe
         listen_fd_ = -1;
     }
@@ -386,22 +390,23 @@ inline void ClientTcpServer::SendRejectionResponse(int client_fd, const char* me
     ::write(client_fd, &resp, resp_len);  // @unsafe
 }
 
-// @unsafe - Worker thread with transaction context binding
+// @unsafe - Worker thread with Silo/Masstree thread binding
 inline void ClientTcpServer::WorkerThread(int slot_id, int client_fd) {
-    // Note: Transaction context setup requires TThread and scoped_db_thread_ctx
-    // These are set up properly when the worker handles requests.
-    // For now, we proceed with basic request handling.
-    // Full transaction isolation would require:
-    //   scoped_db_thread_ctx ctx(db_, true, 1);
-    //   TThread::set_id(base_id + slot_id);
-    //   TThread::set_mode(1);
-    //   TThread::set_shard_index(shard_index_);
-    //   TThread::set_pid(slot_id);
-    //   TThread::set_nshards(nshards_);
-    // This is deferred to a future iteration as it requires more integration.
-
-    // Handle client requests
-    HandleClientRequests(client_fd);
+    // Bind this worker to Silo/Masstree for the connection's lifetime:
+    // the KV handlers run self-contained non-txn ops (one-op OCC txns
+    // via ShardReceiver::RunNontxnOp), which need a TThread id and
+    // masstree threadinfo on the calling thread. loader=true skips the
+    // ShardClient bring-up inside thread_init (these ops are local).
+    // The worker stays in mode 0, so RunNontxnOp commits directly and
+    // skips the helper-thread idle-participant reset.
+    abstract_db* db = receiver_ ? receiver_->GetDb() : nullptr;
+    if (db) {
+        scoped_db_thread_ctx ctx(db, /*loader=*/true);
+        HandleClientRequests(client_fd);
+    } else {
+        // No database registered — handlers will fail per-request.
+        HandleClientRequests(client_fd);
+    }
 
     // Close connection
     ::close(client_fd);  // @unsafe

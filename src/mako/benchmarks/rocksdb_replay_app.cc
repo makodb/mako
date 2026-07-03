@@ -14,7 +14,7 @@
 
 #include "sto/ReplayDB.h"
 #include "mako.hh"
-#include "mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "deptran/s_main.h"
 #include "util.h"
 
