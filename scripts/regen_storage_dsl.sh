@@ -22,6 +22,7 @@ FILES=(
   src/mako/storage/abstract_ordered_index.h
   src/mako/storage/mbta_sharded_ordered_index.hh
   src/mako/storage/masstree_ordered_index.hh
+  src/mako/storage/mbta_wrapper.hh
 )
 
 post_pass() {

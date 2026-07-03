@@ -75,272 +75,266 @@ std::atomic<long> ht_insert(0);
 std::atomic<long> ht_del(0);
 #endif
 
-class mbta_wrapper;
+// ============================================================================
+// mbta_ordered_index — the Silo/STO backend as a rusty-cpp inline-Rust
+// DSL struct (docs/storage-interface.md). The #if RUSTYCPP_RUST block
+// is the source of truth; regenerate with scripts/regen_storage_dsl.sh.
+//
+// The empty #[cpp_inherit] impl attaches the FullOrderedIndex base
+// (TxnOrderedIndex + ShardParticipant); the inherent impl's methods
+// override the inherited virtuals by signature.
+//
+// C++ stays where C++ must: the per-verb kernels below own the
+// exception boundary (Sto ops throw Transaction::Abort — STD_OP
+// translates it to abstract_db::abstract_abort_exception for the
+// txn'd/2PC families; the non-txn family catches and retries in
+// place), the UPDATE_VS read-set bookkeeping macro, and the RPC retry
+// loops. The DSL owns the class shape, the interface attachment, and
+// the remote/local dispatch.
+//
+// The index holds its MassTrans behind a raw pointer: MassTrans is
+// non-movable and DSL structs are move-only with a synthesized
+// fieldwise+move ctor. The allocation is process-lifetime, matching
+// the historical table lifetime (tables are never torn down mid-run;
+// close_index has no callers).
+//
+// (mbta_wrapper_norm.hh / mbta_wrapper_arena.hh are unused legacy
+// copies of this file; they are not included anywhere.)
+// ============================================================================
 
-// PS: we don't use mbta_wraper_norm.hh anymore (in rolis, mbta_wraper_norm is the alias of mbta_wraper)
-class mbta_ordered_index : public abstract_ordered_index {    // weihshen, the mbta_ordered_index of Masstrans we need
-public:
-  mbta_ordered_index(const std::string &name, mbta_wrapper *db, bool is_remote=false) : mbta(), db(db) {
-    std::exit(EXIT_FAILURE);
-  }
-
-  mbta_ordered_index(const std::string &name, const long table_id, mbta_wrapper *db, bool is_remote=false) : mbta(), db(db) {
-      mbta.set_table_id(table_id);
-      mbta.set_is_remote(is_remote);
-      mbta.set_table_name(name);
-  }
-
-  std::string *arena(void);
-
-  bool tx_get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
-    // DEBUG: Log first few remote accesses
-    static thread_local int debug_count = 0;
-    if (mbta.get_is_remote() && debug_count < 3) {
-      debug_count++;
-      Warning("DEBUG get(): table_id=%d, table_name=%s, is_remote=%d",
-              mbta.get_table_id(), mbta.get_table_name().c_str(), mbta.get_is_remote());
-    }
-    if (!mbta.get_is_remote()) {
-      STD_OP({
-        bool ret = mbta.transGet(key, value);
-        // Check for silent abort (transGet uses abort_without_throw for certain failures)
-        // Throw to match RPC path behavior and allow caller to handle properly
-        if (TThread::transget_without_throw) {
-          TThread::transget_without_throw = false;
-          throw Transaction::Abort();
-        }
-        if (ret) {
-          UPDATE_VS(value.data(),value.length())
-          if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
-        }
-        return ret;
-      });
-    } else {
-      int ret=TThread::sclient->remoteGet(mbta.get_table_id(), key, value);
-      if (ret>0) {
-        throw abstract_db::abstract_abort_exception();
-      }
-      if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-        UPDATE_VS(value.data(),value.length())
-        value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
-      }
-      return true;
-    }
-  }
-
-  bool get_is_remote() {
-    return mbta.get_is_remote();
-  }
-
-  void set_is_remote(bool s) {
-    mbta.set_is_remote(s) ;
-  }
-
-  int get_table_id() { // mbta_ordered_index
-    return mbta.get_table_id();
-  }
-
-  const std::string& get_table_name() const { return mbta.get_table_name(); }
-
-  void set_table_name(const std::string& t) { mbta.set_table_name(t); }
-
-  // handle get request from a remote shard
-  bool shard_get(lcdf::Str key, std::string &value, size_t max_bytes_read) {
-    STD_OP({
-      bool ret = mbta.transGet(key, value);
-      return ret;
-    });
-  }
-
-  bool shard_scan(const std::string &start_key,
-    const std::string *end_key,
-    oi_scan_callback &callback,
-    str_arena *arena = nullptr) {
-    mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
-
-    STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
-    return callback.invoke(key.data(), key.length(), value);
-    }, arena));
-    return true;
-  }
-
-  const char *shard_put(lcdf::Str key, const std::string &value) {
-    STD_OP({
-        mbta.transPut(key, StringWrapper(value));
-        if (!Sto::shard_try_lock_last_writeset()) {
-          throw Transaction::Abort();
-        }
-        return 0;
-    });
-  }
-
-  void tx_put(void* txn,
-                  lcdf::Str key,
-                  const std::string &value)
-  {
-#if OP_LOGGING
-    mt_put++;
+// MassTrans table type at namespace scope, so the kernels and external
+// thread-bring-up call sites can name it (was the class-scoped
+// mbta_ordered_index::mbta_type).
+#if STO_OPACITY
+typedef MassTrans<std::string, versioned_str_struct, true/*opacity*/> mbta_table;
+#else
+typedef MassTrans<std::string, versioned_str_struct, false/*opacity*/> mbta_table;
 #endif
-    STD_OP({
-        mbta.transPut(key, StringWrapper(value));
-    });
-  }
 
-  const char *put_mbta(void *txn,
-                     const lcdf::Str key,
-                     bool(*compar)(const std::string& newValue,const std::string& oldValue),
-                     const std::string &value) {
-    STD_OP({
-        mbta.transPutMbta(key, StringWrapper(value), compar);
-        return 0;
-    });
-  }
-  
-void tx_insert(void *txn,
-	     lcdf::Str key,
-	     const std::string &value)
-{
-STD_OP(mbta.transInsert(key, StringWrapper(value));)
+// Spelling for put_mbta's comparator (fn-pointer params need a
+// single-ident alias in the DSL).
+using oi_cmp_fn = bool (*)(const std::string &, const std::string &);
+
+// ---------------------------------------------------------------------------
+// C++ kernels for the DSL bodies.
+// ---------------------------------------------------------------------------
+
+// @unsafe - allocates the (non-movable) MassTrans the index owns
+inline mbta_table *oi_mbta_make(const std::string &name, long table_id,
+                                bool is_remote) {
+  auto *t = new mbta_table();
+  t->set_table_id(table_id);
+  t->set_is_remote(is_remote);
+  t->set_table_name(name);
+  return t;
 }
 
-void tx_remove(void *txn, lcdf::Str key) {
-#if OP_LOGGING
-mt_del++;
-#endif
-STD_OP(mbta.transDelete(key));
+// @safe - identity reads/writes forwarded to MassTrans
+inline bool oi_mbta_is_remote(mbta_table *t) { return t->get_is_remote(); }
+inline int oi_mbta_table_id(mbta_table *t) { return t->get_table_id(); }
+inline void oi_mbta_set_is_remote(mbta_table *t, bool s) {
+  t->set_is_remote(s);
 }
-
-void tx_scan(void *txn,
-    const std::string &start_key,
-    const std::string *end_key,
-    oi_scan_callback &callback,
-    str_arena *arena = nullptr) {
-#if OP_LOGGING
-mt_scan++;
-#endif    
-mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
-STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
-
-  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
-  return callback.invoke(key.data(), key.length(), value);
-}, arena));
+inline void oi_mbta_set_table_name(mbta_table *t, const std::string &n) {
+  t->set_table_name(n);
 }
+inline size_t oi_mbta_size(const mbta_table *t) { return t->approx_size(); }
 
-void tx_scan_remote_one(void *txn,
-    const std::string &start_key,
-    const std::string &end_key,
-    std::string &value) {
-  if (!mbta.get_is_remote()) {
-    // Local scan - use transQuery and return first result
-    bool found = false;
-    STD_OP(mbta.transQuery(start_key, mbta_type::Str(end_key), [&] (mbta_type::Str key, std::string& v) {
-      if (!found) {
-        value = v;
-        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-          UPDATE_VS(value.data(), value.length())
-          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
-        }
-        found = true;
-      }
-      return false;  // Stop after first result
-    }, static_cast<str_arena*>(nullptr)));
-    // Check for silent abort after transQuery (may have used abort_without_throw)
-    // Throw to match RPC path behavior
+// ---- transactional verbs (caller-managed txn) -----------------------------
+
+// @unsafe - Sto txn read; pokes TThread read-set metadata (UPDATE_VS)
+inline bool oi_mbta_tx_get_local(mbta_table *t, lcdf::Str key,
+                                 std::string &value) {
+  STD_OP({
+    bool ret = t->transGet(key, value);
+    // Check for silent abort (transGet uses abort_without_throw for
+    // certain failures). Throw to match RPC path behavior and allow
+    // caller to handle properly.
     if (TThread::transget_without_throw) {
       TThread::transget_without_throw = false;
-      throw abstract_db::abstract_abort_exception();
+      throw Transaction::Abort();
     }
-    // Note: If no result found, value remains empty (same as remote scan behavior)
-  } else {
-    // Remote scan via RPC
-    int ret=TThread::sclient->remoteScan(mbta.get_table_id(), start_key, end_key, value);
-    if (ret>0) {
-      throw abstract_db::abstract_abort_exception();
+    if (ret) {
+      UPDATE_VS(value.data(), value.length())
+      if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+        value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
     }
-    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
-      UPDATE_VS(value.data(),value.length())
+    return ret;
+  });
+}
+
+// @unsafe - remote txn read RPC; failures become abstract_abort
+inline bool oi_mbta_tx_get_remote(mbta_table *t, lcdf::Str key,
+                                  std::string &value) {
+  int ret = TThread::sclient->remoteGet(t->get_table_id(), key, value);
+  if (ret > 0) {
+    throw abstract_db::abstract_abort_exception();
+  }
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+    UPDATE_VS(value.data(), value.length())
+    value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+  }
+  return true;
+}
+
+// @unsafe - Sto txn write (stores a pointer into the caller's buffer)
+inline void oi_mbta_tx_put(mbta_table *t, lcdf::Str key,
+                           const std::string &value) {
+#if OP_LOGGING
+  mt_put++;
+#endif
+  STD_OP({ t->transPut(key, StringWrapper(value)); });
+}
+
+// @unsafe - Sto txn insert
+inline void oi_mbta_tx_insert(mbta_table *t, lcdf::Str key,
+                              const std::string &value) {
+  STD_OP(t->transInsert(key, StringWrapper(value));)
+}
+
+// @unsafe - Sto txn delete
+inline void oi_mbta_tx_remove(mbta_table *t, lcdf::Str key) {
+#if OP_LOGGING
+  mt_del++;
+#endif
+  STD_OP(t->transDelete(key));
+}
+
+// @unsafe - Sto txn range read; strips EXTRA_BITS from delivered values
+inline void oi_mbta_tx_scan(mbta_table *t, const std::string &start_key,
+                            const std::string *end_key,
+                            oi_scan_callback &callback, str_arena *arena) {
+#if OP_LOGGING
+  mt_scan++;
+#endif
+  mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  STD_OP(t->transQuery(start_key, end,
+                       [&](mbta_table::Str key, std::string &value) {
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
       value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    return callback.invoke(key.data(), key.length(), value);
+  }, arena));
+}
+
+// @unsafe - Sto txn reverse range read
+inline void oi_mbta_tx_rscan(mbta_table *t, const std::string &start_key,
+                             const std::string *end_key,
+                             oi_scan_callback &callback, str_arena *arena) {
+#if OP_LOGGING
+  mt_rscan++;
+#endif
+  mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  STD_OP(t->transRQuery(start_key, end,
+                        [&](mbta_table::Str key, std::string &value) {
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+      value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    return callback.invoke(key.data(), key.length(), value);
+  }, arena));
+}
+
+// @unsafe - local single-match range read on the caller's txn
+inline void oi_mbta_tx_scan_one_local(mbta_table *t,
+                                      const std::string &start_key,
+                                      const std::string &end_key,
+                                      std::string &value) {
+  bool found = false;
+  STD_OP(t->transQuery(start_key, mbta_table::Str(end_key),
+                       [&](mbta_table::Str key, std::string &v) {
+    if (!found) {
+      value = v;
+      if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+        UPDATE_VS(value.data(), value.length())
+        value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+      }
+      found = true;
     }
+    return false;  // Stop after first result
+  }, static_cast<str_arena *>(nullptr)));
+  // Check for silent abort after transQuery (may have used
+  // abort_without_throw). Throw to match RPC path behavior.
+  if (TThread::transget_without_throw) {
+    TThread::transget_without_throw = false;
+    throw abstract_db::abstract_abort_exception();
+  }
+  // Note: If no result found, value remains empty (same as remote scan
+  // behavior)
+}
+
+// @unsafe - remote single-match scan RPC
+inline void oi_mbta_tx_scan_one_remote(mbta_table *t,
+                                       const std::string &start_key,
+                                       const std::string &end_key,
+                                       std::string &value) {
+  int ret =
+      TThread::sclient->remoteScan(t->get_table_id(), start_key, end_key, value);
+  if (ret > 0) {
+    throw abstract_db::abstract_abort_exception();
+  }
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+    UPDATE_VS(value.data(), value.length())
+    value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
   }
 }
 
-void tx_rscan(void *txn,
-     const std::string &start_key,
-     const std::string *end_key,
-     oi_scan_callback &callback,
-     str_arena *arena = nullptr) {
-#if 1
-#if OP_LOGGING
-mt_rscan++;
-#endif
-mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
-STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
-
-  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
-  return callback.invoke(key.data(), key.length(), value);
-}, arena));
-#endif
+// @unsafe - mbta-specific compare-and-put (replay path; put_mbta)
+inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
+                                   oi_cmp_fn compar,
+                                   const std::string &value) {
+  STD_OP({
+    t->transPutMbta(key, StringWrapper(value), compar);
+    return 0;
+  });
 }
 
-// ============================================================================
-// Non-transactional API (Masstree-shape) — overrides of the
-// abstract_ordered_index defaults. See docs/storage-interface.md.
+// ---- 2PC participant verbs (ambient Sto txn) ------------------------------
+
+// @unsafe - stages a read into the serving thread's ambient Sto txn
+inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
+                              std::string &value) {
+  STD_OP({
+    bool ret = t->transGet(key, value);
+    return ret;
+  });
+}
+
+// @unsafe - ambient-txn write + write-set lock
+inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
+                                     const std::string &value) {
+  STD_OP({
+    t->transPut(key, StringWrapper(value));
+    if (!Sto::shard_try_lock_last_writeset()) {
+      throw Transaction::Abort();
+    }
+    return 0;
+  });
+}
+
+// @unsafe - ambient-txn range read (raw stored bytes, no strip)
+inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
+                               const std::string *end_key,
+                               oi_scan_callback &callback, str_arena *arena) {
+  mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  STD_OP(t->transQuery(start_key, end,
+                       [&](mbta_table::Str key, std::string &value) {
+    return callback.invoke(key.data(), key.length(), value);
+  }, arena));
+  return true;
+}
+
+// ---- non-transactional verbs (Masstree-shape) -----------------------------
 //
-// Each op delegates to MassTrans's one-op-txn variant and retries on
-// OCC abort, so callers get Masstree-parity "no spurious failure"
-// semantics. remove is MassTrans's direct raw write (the documented
-// asymmetry). Values follow the same conventions as the transactional
-// methods above: writes take a mako::Encode()'d value, reads strip
-// EXTRA_BITS_FOR_VALUE.
-//
-// Local tables only — non-txn access to a remote shard is not
-// supported (asserted).
+// Each local op delegates to MassTrans's one-op-txn variant and
+// retries on OCC abort, so callers get Masstree-parity "no spurious
+// failure" semantics. remove is MassTrans's direct raw write (the
+// documented asymmetry). Values follow the raw-bytes convention:
+// writes are Encoded here, once, at the storage boundary; reads/scans
+// strip EXTRA_BITS_FOR_VALUE.
 //
 // Scan/rscan deliver callbacks live during the attempt; if the one-op
-// txn aborts mid-scan the whole scan retries, so callbacks may
-// observe a repeated prefix. This matches the pre-existing
+// txn aborts mid-scan the whole scan retries, so callbacks may observe
+// a repeated prefix. This matches the pre-existing
 // shard_scan-with-caller-retry behavior, just with the retry moved
 // inside.
-// ============================================================================
-
-// @unsafe - retries around Sto thread-local txn state
-bool get(lcdf::Str key, std::string &value,
-         size_t max_bytes_read = std::string::npos) override {
-  if (mbta.get_is_remote()) {
-    // Remote table: self-contained read RPC. NOT remoteGet — that one
-    // stages a read-set item in the serving worker's participant txn
-    // (cleaned up by the txn path's later 2PC abort/commit, which a
-    // non-txn caller never sends), leaving the worker permanently
-    // "busy" for non-txn writes. ABORT signals key-not-found; TIMEOUT
-    // (lost/late reply) is retried.
-    std::string k(key.data(), key.length());
-    while (true) {
-      int ret = TThread::sclient->nontxnGet(mbta.get_table_id(), k, value);
-      if (ret == mako::ErrorCode::SUCCESS) break;
-      if (ret == mako::ErrorCode::ABORT) return false;  // not found
-      usleep(1000);  // transient — retry
-    }
-    // No strip here: the server serves nontxnGet through the L3 get,
-    // which already removed the EXTRA_BITS suffix (unlike getReqType,
-    // whose shard_get returns raw stored bytes).
-    return true;
-  }
-  while (true) {
-    try {
-      bool ret = mbta.get(key, value);
-      if (TThread::transget_without_throw) {
-        TThread::transget_without_throw = false;
-        continue;  // silent abort — retry
-      }
-      if (ret) {
-        UPDATE_VS(value.data(), value.length())
-        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
-          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
-      }
-      return ret;
-    } catch (Transaction::Abort&) { /* conflict — retry */ }
-  }
-}
 
 // Shared retry driver for the remote non-txn write RPCs. Transient
 // failures (TIMEOUT: lost/late reply; SERVER_BUSY: the serving worker
@@ -349,7 +343,7 @@ bool get(lcdf::Str key, std::string &value,
 // table) assert loudly.
 // @unsafe - blocks on RPC promises
 template <typename RpcFn>
-static bool nontxn_remote_write(RpcFn&& rpc) {
+inline bool oi_mbta_nontxn_remote_write(RpcFn &&rpc) {
   while (true) {
     bool op_result = false;
     int ret = rpc(&op_result);
@@ -362,15 +356,61 @@ static bool nontxn_remote_write(RpcFn&& rpc) {
   }
 }
 
-// @unsafe - retries around Sto thread-local txn state
-bool put(lcdf::Str key, const std::string &value) override {
-  if (mbta.get_is_remote()) {
-    // Raw bytes on the wire; the owning shard's local branch encodes.
-    std::string k(key.data(), key.length());
-    return nontxn_remote_write([&](bool* r) {
-      return TThread::sclient->nontxnPut(mbta.get_table_id(), k, value, r);
-    });
+// @unsafe - self-contained remote read RPC with retry
+inline bool oi_mbta_get_remote(mbta_table *t, lcdf::Str key,
+                               std::string &value) {
+  // Self-contained read RPC. NOT remoteGet — that one stages a
+  // read-set item in the serving worker's participant txn (cleaned up
+  // by the txn path's later 2PC abort/commit, which a non-txn caller
+  // never sends), leaving the worker permanently "busy" for non-txn
+  // writes. ABORT signals key-not-found; TIMEOUT (lost/late reply) is
+  // retried.
+  std::string k(key.data(), key.length());
+  while (true) {
+    int ret = TThread::sclient->nontxnGet(t->get_table_id(), k, value);
+    if (ret == mako::ErrorCode::SUCCESS) break;
+    if (ret == mako::ErrorCode::ABORT) return false;  // not found
+    usleep(1000);  // transient — retry
   }
+  // No strip here: the server serves nontxnGet through the L3 get,
+  // which already removed the EXTRA_BITS suffix (unlike getReqType,
+  // whose shard_get returns raw stored bytes).
+  return true;
+}
+
+// @unsafe - one-op OCC txn with retry around Sto thread-local state
+inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key,
+                              std::string &value) {
+  while (true) {
+    try {
+      bool ret = t->get(key, value);
+      if (TThread::transget_without_throw) {
+        TThread::transget_without_throw = false;
+        continue;  // silent abort — retry
+      }
+      if (ret) {
+        UPDATE_VS(value.data(), value.length())
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
+          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+      }
+      return ret;
+    } catch (Transaction::Abort &) { /* conflict — retry */ }
+  }
+}
+
+// @unsafe - remote non-txn overwrite RPC (raw bytes on the wire; the
+// owning shard's local branch encodes)
+inline bool oi_mbta_put_remote(mbta_table *t, lcdf::Str key,
+                               const std::string &value) {
+  std::string k(key.data(), key.length());
+  return oi_mbta_nontxn_remote_write([&](bool *r) {
+    return TThread::sclient->nontxnPut(t->get_table_id(), k, value, r);
+  });
+}
+
+// @unsafe - one-op OCC overwrite with retry
+inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
+                              const std::string &value) {
   // Encoding happens HERE, once, at the storage boundary: non-txn
   // callers pass raw bytes (unlike the txn'd put, which stores a
   // pointer into the caller's buffer until commit and therefore needs
@@ -379,109 +419,469 @@ bool put(lcdf::Str key, const std::string &value) override {
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return mbta.put(key, StringWrapper(enc));
-    } catch (Transaction::Abort&) { /* conflict — retry */ }
+      return t->put(key, StringWrapper(enc));
+    } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
 
-// @unsafe - retries around Sto thread-local txn state
-bool insert(lcdf::Str key, const std::string &value) override {
-  if (mbta.get_is_remote()) {
-    std::string k(key.data(), key.length());
-    return nontxn_remote_write([&](bool* r) {
-      return TThread::sclient->nontxnInsert(mbta.get_table_id(), k, value, r);
-    });
-  }
+// @unsafe - remote non-txn put-if-absent RPC
+inline bool oi_mbta_insert_remote(mbta_table *t, lcdf::Str key,
+                                  const std::string &value) {
+  std::string k(key.data(), key.length());
+  return oi_mbta_nontxn_remote_write([&](bool *r) {
+    return TThread::sclient->nontxnInsert(t->get_table_id(), k, value, r);
+  });
+}
+
+// @unsafe - one-op OCC put-if-absent with retry
+inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
+                                 const std::string &value) {
   // Raw-bytes convention: Encode applied here, once (see put above).
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
-      return mbta.insert(key, StringWrapper(enc));
-    } catch (Transaction::Abort&) { /* conflict — retry */ }
+      return t->insert(key, StringWrapper(enc));
+    } catch (Transaction::Abort &) { /* conflict — retry */ }
   }
 }
 
-// @unsafe - direct raw write through MassTrans cursor (local);
-// self-contained RPC (remote)
-bool remove(lcdf::Str key) override {
-  if (mbta.get_is_remote()) {
-    std::string k(key.data(), key.length());
-    return nontxn_remote_write([&](bool* r) {
-      return TThread::sclient->nontxnRemove(mbta.get_table_id(), k, r);
-    });
-  }
-  return mbta.remove(key);
+// @unsafe - remote non-txn delete RPC
+inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key) {
+  std::string k(key.data(), key.length());
+  return oi_mbta_nontxn_remote_write([&](bool *r) {
+    return TThread::sclient->nontxnRemove(t->get_table_id(), k, r);
+  });
 }
 
-// @unsafe - retries around Sto thread-local txn state
-void scan(const std::string &start_key,
-          const std::string *end_key,
-          oi_scan_callback &callback,
-          str_arena *arena = nullptr) override {
+// @unsafe - direct raw write through the MassTrans cursor
+inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
+  return t->remove(key);
+}
+
+// @unsafe - one-op OCC range read with whole-scan retry
+inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
+                                const std::string *end_key,
+                                oi_scan_callback &callback,
+                                str_arena *arena) {
   // Remote tables: fail loudly. The only scan RPC (remoteScan /
   // HandleScanRequest) returns a single first-match value, not a
-  // stream — full remote scan needs new protocol (plan non-goal;
-  // see docs/storage-interface.md D5). Note the txn'd scan on a
-  // remote table silently scans the empty local tree; asserting
-  // here is deliberately stricter.
-  ALWAYS_ASSERT(!mbta.get_is_remote());
-  mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+  // stream — full remote scan needs new protocol (plan non-goal; see
+  // docs/storage-interface.md). Note the txn'd scan on a remote table
+  // silently scans the empty local tree; asserting here is
+  // deliberately stricter.
+  ALWAYS_ASSERT(!t->get_is_remote());
+  mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
-      mbta.scan(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+      t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
       }, arena);
       return;
-    } catch (Transaction::Abort&) { /* conflict — retry whole scan */ }
+    } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
 }
 
-// @unsafe - retries around Sto thread-local txn state
-void rscan(const std::string &start_key,
-           const std::string *end_key,
-           oi_scan_callback &callback,
-           str_arena *arena = nullptr) override {
+// @unsafe - one-op OCC reverse range read with whole-scan retry
+inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
+                                 const std::string *end_key,
+                                 oi_scan_callback &callback,
+                                 str_arena *arena) {
   // Remote tables: fail loudly (same rationale as scan above).
-  ALWAYS_ASSERT(!mbta.get_is_remote());
-  mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
+  ALWAYS_ASSERT(!t->get_is_remote());
+  mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
-      mbta.rscan(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+      t->rscan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
       }, arena);
       return;
-    } catch (Transaction::Abort&) { /* conflict — retry whole scan */ }
+    } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
 }
 
-size_t size() const
-{
-return mbta.approx_size();
+// @unsafe - throws: clear() is unimplemented on mbta tables
+inline oi_stats_map oi_mbta_clear_unsupported() {
+  // TODO: unclear if we need to implement; apparently this should
+  // clear the tree and possibly return some stats
+  throw 2;
 }
 
-// TODO: unclear if we need to implement, apparently this should clear the tree and possibly return some stats
-std::map<std::string, uint64_t>
-clear() {
-throw 2;
+#if RUSTYCPP_RUST
+pub struct mbta_ordered_index {
+    mbta: *mut mbta_table,
 }
 
-#if STO_OPACITY
-typedef MassTrans<std::string, versioned_str_struct, true/*opacity*/> mbta_type;
-#else
-typedef MassTrans<std::string, versioned_str_struct, false/*opacity*/> mbta_type;
+#[cpp_inherit]
+impl FullOrderedIndex for mbta_ordered_index {
+}
+
+impl mbta_ordered_index {
+    // ---- identity ----------------------------------------------------
+
+    fn get_table_id(&mut self) -> i32 {
+        unsafe { oi_mbta_table_id(self.mbta) }
+    }
+
+    fn get_is_remote(&mut self) -> bool {
+        unsafe { oi_mbta_is_remote(self.mbta) }
+    }
+
+    fn set_is_remote(&mut self, s: bool) {
+        unsafe { oi_mbta_set_is_remote(self.mbta, s) }
+    }
+
+    fn set_table_name(&mut self, name: &std::string) {
+        unsafe { oi_mbta_set_table_name(self.mbta, name) }
+    }
+
+    // ---- transactional ops (TxnOrderedIndex) ------------------------
+
+    fn tx_get(&mut self, txn: *mut c_void, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            return unsafe { oi_mbta_tx_get_remote(self.mbta, key, value) };
+        }
+        unsafe { oi_mbta_tx_get_local(self.mbta, key, value) }
+    }
+
+    fn tx_put(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
+        unsafe { oi_mbta_tx_put(self.mbta, key, value) }
+    }
+
+    fn tx_insert(&mut self, txn: *mut c_void, key: lcdf::Str, value: &std::string) {
+        unsafe { oi_mbta_tx_insert(self.mbta, key, value) }
+    }
+
+    fn tx_remove(&mut self, txn: *mut c_void, key: lcdf::Str) {
+        unsafe { oi_mbta_tx_remove(self.mbta, key) }
+    }
+
+    fn tx_scan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        unsafe { oi_mbta_tx_scan(self.mbta, start_key, end_key, callback, arena) }
+    }
+
+    fn tx_rscan(&mut self, txn: *mut c_void, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        unsafe { oi_mbta_tx_rscan(self.mbta, start_key, end_key, callback, arena) }
+    }
+
+    fn tx_scan_remote_one(&mut self, txn: *mut c_void, start_key: &std::string, end_key: &std::string, value: &mut std::string) {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            unsafe { oi_mbta_tx_scan_one_remote(self.mbta, start_key, end_key, value) };
+            return;
+        }
+        unsafe { oi_mbta_tx_scan_one_local(self.mbta, start_key, end_key, value) }
+    }
+
+    // mbta-specific compare-and-put, outside the traits (replay path;
+    // see ThreadPool.cc).
+    fn put_mbta(&mut self, txn: *mut c_void, key: lcdf::Str, compar: oi_cmp_fn, value: &std::string) -> *const c_char {
+        unsafe { oi_mbta_put_cmp(self.mbta, key, compar, value) }
+    }
+
+    // ---- 2PC participant ops (ShardParticipant) ---------------------
+
+    fn shard_get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
+        unsafe { oi_mbta_shard_get(self.mbta, key, value) }
+    }
+
+    fn shard_put(&mut self, key: lcdf::Str, value: &std::string) -> *const c_char {
+        unsafe { oi_mbta_shard_put(self.mbta, key, value) }
+    }
+
+    fn shard_scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) -> bool {
+        unsafe { oi_mbta_shard_scan(self.mbta, start_key, end_key, callback, arena) }
+    }
+
+    // ---- non-transactional ops (OrderedIndex) ------------------------
+
+    fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            return unsafe { oi_mbta_get_remote(self.mbta, key, value) };
+        }
+        unsafe { oi_mbta_get_local(self.mbta, key, value) }
+    }
+
+    fn put(&mut self, key: lcdf::Str, value: &std::string) -> bool {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            return unsafe { oi_mbta_put_remote(self.mbta, key, value) };
+        }
+        unsafe { oi_mbta_put_local(self.mbta, key, value) }
+    }
+
+    fn insert(&mut self, key: lcdf::Str, value: &std::string) -> bool {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            return unsafe { oi_mbta_insert_remote(self.mbta, key, value) };
+        }
+        unsafe { oi_mbta_insert_local(self.mbta, key, value) }
+    }
+
+    fn remove(&mut self, key: lcdf::Str) -> bool {
+        let remote = unsafe { oi_mbta_is_remote(self.mbta) };
+        if remote {
+            return unsafe { oi_mbta_remove_remote(self.mbta, key) };
+        }
+        unsafe { oi_mbta_remove_local(self.mbta, key) }
+    }
+
+    fn scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        unsafe { oi_mbta_nontxn_scan(self.mbta, start_key, end_key, callback, arena) }
+    }
+
+    fn rscan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        unsafe { oi_mbta_nontxn_rscan(self.mbta, start_key, end_key, callback, arena) }
+    }
+
+    fn size(&self) -> usize {
+        unsafe { oi_mbta_size(self.mbta) }
+    }
+
+    fn clear(&mut self) -> oi_stats_map {
+        unsafe { oi_mbta_clear_unsupported() }
+    }
+}
 #endif
+/*RUSTYCPP:GEN-BEGIN id=mbta_wrapper.1 version=1 rust_sha256=10cad92217c38d1a9d7aefbea200d7798798aca41d56256394d9941a3d44aa31*/
+struct mbta_ordered_index;
 
-private:
-friend class mbta_wrapper;
-mbta_type mbta;
-std::map<std::string, std::string> properties;
+struct mbta_ordered_index : public FullOrderedIndex {
+    mbta_table* mbta;
+    mbta_ordered_index(mbta_table* mbta_init) : FullOrderedIndex(), mbta(std::move(mbta_init)) {}
+    mbta_ordered_index(mbta_ordered_index&& other) noexcept : FullOrderedIndex(), mbta(std::move(other.mbta)) {}
 
-mbta_wrapper *db;
+
+    int32_t get_table_id();
+    bool get_is_remote();
+    void set_is_remote(bool s);
+    void set_table_name(const std::string& name);
+    bool tx_get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read);
+    void tx_put(c_void* txn, lcdf::Str key, const std::string& value);
+    void tx_insert(c_void* txn, lcdf::Str key, const std::string& value);
+    void tx_remove(c_void* txn, lcdf::Str key);
+    void tx_scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void tx_rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void tx_scan_remote_one(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value);
+    const c_char* put_mbta(c_void* txn, lcdf::Str key, oi_cmp_fn compar, const std::string& value);
+    bool shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read);
+    const c_char* shard_put(lcdf::Str key, const std::string& value);
+    bool shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    bool get(lcdf::Str key, std::string& value, size_t max_bytes_read);
+    bool put(lcdf::Str key, const std::string& value);
+    bool insert(lcdf::Str key, const std::string& value);
+    bool remove(lcdf::Str key);
+    void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    size_t size() const;
+    oi_stats_map clear();
 };
+
+
+inline int32_t mbta_ordered_index::get_table_id() {
+    // @unsafe
+    {
+        return oi_mbta_table_id(this->mbta);
+    }
+}
+
+inline bool mbta_ordered_index::get_is_remote() {
+    // @unsafe
+    {
+        return oi_mbta_is_remote(this->mbta);
+    }
+}
+
+inline void mbta_ordered_index::set_is_remote(bool s) {
+    // @unsafe
+    {
+        oi_mbta_set_is_remote(this->mbta, std::move(s));
+    }
+}
+
+inline void mbta_ordered_index::set_table_name(const std::string& name) {
+    // @unsafe
+    {
+        oi_mbta_set_table_name(this->mbta, name);
+    }
+}
+
+inline bool mbta_ordered_index::tx_get(c_void* txn, lcdf::Str key, std::string& value, size_t max_bytes_read) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        return oi_mbta_tx_get_remote(this->mbta, std::move(key), value);
+    }
+    // @unsafe
+    {
+        return oi_mbta_tx_get_local(this->mbta, std::move(key), value);
+    }
+}
+
+inline void mbta_ordered_index::tx_put(c_void* txn, lcdf::Str key, const std::string& value) {
+    // @unsafe
+    {
+        oi_mbta_tx_put(this->mbta, std::move(key), value);
+    }
+}
+
+inline void mbta_ordered_index::tx_insert(c_void* txn, lcdf::Str key, const std::string& value) {
+    // @unsafe
+    {
+        oi_mbta_tx_insert(this->mbta, std::move(key), value);
+    }
+}
+
+inline void mbta_ordered_index::tx_remove(c_void* txn, lcdf::Str key) {
+    // @unsafe
+    {
+        oi_mbta_tx_remove(this->mbta, std::move(key));
+    }
+}
+
+inline void mbta_ordered_index::tx_scan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        oi_mbta_tx_scan(this->mbta, start_key, end_key, callback, arena);
+    }
+}
+
+inline void mbta_ordered_index::tx_rscan(c_void* txn, const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        oi_mbta_tx_rscan(this->mbta, start_key, end_key, callback, arena);
+    }
+}
+
+inline void mbta_ordered_index::tx_scan_remote_one(c_void* txn, const std::string& start_key, const std::string& end_key, std::string& value) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        // @unsafe
+        {
+            oi_mbta_tx_scan_one_remote(this->mbta, start_key, end_key, value);
+        }
+        return;
+    }
+    // @unsafe
+    {
+        oi_mbta_tx_scan_one_local(this->mbta, start_key, end_key, value);
+    }
+}
+
+inline const c_char* mbta_ordered_index::put_mbta(c_void* txn, lcdf::Str key, oi_cmp_fn compar, const std::string& value) {
+    // @unsafe
+    {
+        return oi_mbta_put_cmp(this->mbta, std::move(key), std::move(compar), value);
+    }
+}
+
+inline bool mbta_ordered_index::shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
+    // @unsafe
+    {
+        return oi_mbta_shard_get(this->mbta, std::move(key), value);
+    }
+}
+
+inline const c_char* mbta_ordered_index::shard_put(lcdf::Str key, const std::string& value) {
+    // @unsafe
+    {
+        return oi_mbta_shard_put(this->mbta, std::move(key), value);
+    }
+}
+
+inline bool mbta_ordered_index::shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        return oi_mbta_shard_scan(this->mbta, start_key, end_key, callback, arena);
+    }
+}
+
+inline bool mbta_ordered_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        return oi_mbta_get_remote(this->mbta, std::move(key), value);
+    }
+    // @unsafe
+    {
+        return oi_mbta_get_local(this->mbta, std::move(key), value);
+    }
+}
+
+inline bool mbta_ordered_index::put(lcdf::Str key, const std::string& value) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        return oi_mbta_put_remote(this->mbta, std::move(key), value);
+    }
+    // @unsafe
+    {
+        return oi_mbta_put_local(this->mbta, std::move(key), value);
+    }
+}
+
+inline bool mbta_ordered_index::insert(lcdf::Str key, const std::string& value) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        return oi_mbta_insert_remote(this->mbta, std::move(key), value);
+    }
+    // @unsafe
+    {
+        return oi_mbta_insert_local(this->mbta, std::move(key), value);
+    }
+}
+
+inline bool mbta_ordered_index::remove(lcdf::Str key) {
+    const auto remote = oi_mbta_is_remote(this->mbta);
+    if (remote) {
+        return oi_mbta_remove_remote(this->mbta, std::move(key));
+    }
+    // @unsafe
+    {
+        return oi_mbta_remove_local(this->mbta, std::move(key));
+    }
+}
+
+inline void mbta_ordered_index::scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        oi_mbta_nontxn_scan(this->mbta, start_key, end_key, callback, arena);
+    }
+}
+
+inline void mbta_ordered_index::rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    // @unsafe
+    {
+        oi_mbta_nontxn_rscan(this->mbta, start_key, end_key, callback, arena);
+    }
+}
+
+inline size_t mbta_ordered_index::size() const {
+    // @unsafe
+    {
+        return oi_mbta_size(this->mbta);
+    }
+}
+
+inline oi_stats_map mbta_ordered_index::clear() {
+    // @unsafe
+    {
+        return oi_mbta_clear_unsupported();
+    }
+}
+/*RUSTYCPP:GEN-END id=mbta_wrapper.1*/
+
+// Builds the index shell plus its process-lifetime MassTrans (the
+// fieldwise ctor is DSL-synthesized). Find-or-create stays
+// mbta_wrapper's job.
+inline mbta_ordered_index *mbta_index_build(const std::string &name,
+                                            long table_id,
+                                            bool is_remote = false) {
+  return new mbta_ordered_index(oi_mbta_make(name, table_id, is_remote));
+}
+
 
 /*
 class ht_ordered_index_string : public abstract_ordered_index {
@@ -1291,13 +1691,13 @@ public:
     
     if (TThread::id() == 0) {
       // someone has to do this (they don't provide us with a general init callback)
-      mbta_ordered_index::mbta_type::static_init();
+      mbta_table::static_init();
       // need this too
       pthread_t advancer;
       pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
       pthread_detach(advancer);
     }
-    mbta_ordered_index::mbta_type::thread_init();
+    mbta_table::thread_init();
   }
 
   void
@@ -1382,13 +1782,10 @@ public:
              size_t value_size_hint,
 	           bool mostly_append = false,
              bool use_hashtable = false) {
+    // We only actually create tables in preallocate_open_index now!
     std::cout << "deprecated function!" << std::endl;
     std::exit(EXIT_FAILURE);
-
-    // We only actually create tables in preallocate_open_index now!
-    auto ret = new mbta_ordered_index(name, this, name.find("dummy") != std::string::npos);
-    std::cout << "new table is created with name: " << name << ", id: " << ret->get_table_id() << std::endl;
-    return ret;
+    return nullptr;
   }
 
 
@@ -1470,7 +1867,7 @@ public:
 
     for (int i=0; i<=mako::NUM_TABLES_PER_SHARD * benchConfig.getNshards(); i++) {
       int table_id = i;
-      auto tbl = new mbta_ordered_index(std::to_string(table_id), table_id, this);
+      auto tbl = mbta_index_build(std::to_string(table_id), table_id);
       int shard_index = (table_id - 1) / mako::NUM_TABLES_PER_SHARD;
       if (table_id==0) {
         shard_index = 0;  // table id 0 is not used!
@@ -1503,9 +1900,5 @@ public:
 // members since ThreadPool.cc joined); non-inline definitions here
 // only ever linked by accident of single inclusion.
 inline __thread str_arena* mbta_wrapper::thr_arena;
-
-inline std::string *mbta_ordered_index::arena() {
-  return (*db->thr_arena)();
-}
 
 #endif

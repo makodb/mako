@@ -139,10 +139,10 @@ protected:
         }
 
         // The same logical table from the two role perspectives.
-        g_client_tbl = new mbta_ordered_index(
-            "nontxn_dist", kRemoteTableId, g_db, /*is_remote=*/true);
-        g_server_tbl = new mbta_ordered_index(
-            "nontxn_dist", kRemoteTableId, g_db, /*is_remote=*/false);
+        g_client_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,
+                                        /*is_remote=*/true);
+        g_server_tbl = mbta_index_build("nontxn_dist", kRemoteTableId,
+                                        /*is_remote=*/false);
 
         // Server role in detached threads (transport first, then the
         // worker that consumes its queues).
@@ -172,7 +172,7 @@ TEST_F(MakoNontxnDistributed, RemotePutRoundTrip) {
     EXPECT_TRUE(g_client_tbl->put(lcdf::Str("dk1"), val));
 
     std::string out;
-    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk1"), out));
+    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk1"), out, std::string::npos));
     EXPECT_EQ(out, "dist-v1");
 }
 
@@ -181,7 +181,7 @@ TEST_F(MakoNontxnDistributed, RemotePutOverwrites) {
     EXPECT_FALSE(g_client_tbl->put(lcdf::Str("dk2"), "two"));
 
     std::string out;
-    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk2"), out));
+    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk2"), out, std::string::npos));
     EXPECT_EQ(out, "two");
 }
 
@@ -190,7 +190,7 @@ TEST_F(MakoNontxnDistributed, RemoteInsertIsExclusive) {
     EXPECT_FALSE(g_client_tbl->insert(lcdf::Str("dk3"), "second"));
 
     std::string out;
-    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk3"), out));
+    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("dk3"), out, std::string::npos));
     EXPECT_EQ(out, "first");
 }
 
@@ -199,7 +199,7 @@ TEST_F(MakoNontxnDistributed, RemoteRemoveSemantics) {
 
     EXPECT_TRUE(g_client_tbl->remove(lcdf::Str("dk4")));
     std::string out;
-    EXPECT_FALSE(g_server_tbl->get(lcdf::Str("dk4"), out));
+    EXPECT_FALSE(g_server_tbl->get(lcdf::Str("dk4"), out, std::string::npos));
 
     EXPECT_FALSE(g_client_tbl->remove(lcdf::Str("dk4")));  // absent
 }
@@ -212,17 +212,17 @@ TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
     ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5"), "server-owned"));
 
     std::string out;
-    ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5"), out));
+    ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5"), out, std::string::npos));
     EXPECT_EQ(out, "server-owned");
 
-    EXPECT_FALSE(g_client_tbl->get(lcdf::Str("dk5-missing"), out));
+    EXPECT_FALSE(g_client_tbl->get(lcdf::Str("dk5-missing"), out, std::string::npos));
 
     // Regression: a value LONGER than EXTRA_BITS_FOR_VALUE. The server
     // strips the suffix once (L3 get); a second client-side strip
     // would silently truncate long values (short ones dodge the bug).
     const std::string long_val(4 * mako::EXTRA_BITS_FOR_VALUE, 'x');
     ASSERT_TRUE(g_server_tbl->put(lcdf::Str("dk5-long"), long_val));
-    ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5-long"), out));
+    ASSERT_TRUE(g_client_tbl->get(lcdf::Str("dk5-long"), out, std::string::npos));
     EXPECT_EQ(out, long_val);
 }
 
@@ -242,7 +242,7 @@ TEST_F(MakoNontxnDistributed, RemoteOpSequence) {
     for (int i = 0; i < 20; i++) {
         std::string k = "seq_" + std::to_string(i);
         std::string out;
-        bool found = g_server_tbl->get(lcdf::Str(k), out);
+        bool found = g_server_tbl->get(lcdf::Str(k), out, std::string::npos);
         if (i % 2 == 0) {
             EXPECT_FALSE(found) << k;
         } else {
@@ -325,7 +325,7 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     // Writes are REAL: visible + committed on the server-side view
     // (the old shard_put path staged uncommitted, invisible writes).
     std::string sv;
-    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("l7r1"), sv));
+    ASSERT_TRUE(g_server_tbl->get(lcdf::Str("l7r1"), sv, std::string::npos));
     EXPECT_EQ(sv, "remote-v1");
 
     rdb->Disconnect();

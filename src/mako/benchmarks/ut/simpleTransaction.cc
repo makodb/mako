@@ -235,7 +235,7 @@ public:
 
     void init() {
         scoped_db_thread_ctx ctx(db, false);
-        mbta_ordered_index::mbta_type::thread_init();
+        mbta_table::thread_init();
     }
     static mbta_sharded_ordered_index * OpenTablesForTablespace(abstract_db *db, const char *name) {
        auto *table = db->open_sharded_index(name);

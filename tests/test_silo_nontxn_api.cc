@@ -27,7 +27,7 @@ import std;
 
 namespace {
 
-using mbta_type = mbta_ordered_index::mbta_type;
+using mbta_type = mbta_table;
 
 std::atomic<int> g_tid_counter{0};
 
@@ -64,7 +64,7 @@ protected:
     // that a unit test can't easily provide; tables are small.
     mbta_ordered_index* make_table(const std::string& name) {
         static long table_id = 100;
-        return new mbta_ordered_index(name, table_id++, /*db=*/nullptr);
+        return mbta_index_build(name, table_id++);
     }
 };
 

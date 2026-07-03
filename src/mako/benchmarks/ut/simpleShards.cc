@@ -36,7 +36,7 @@ public:
 
     void init() {
         scoped_db_thread_ctx ctx(db, true);
-        mbta_ordered_index::mbta_type::thread_init();
+        mbta_table::thread_init();
         abstract_ordered_index *checking = simple_tpcc_worker::OpenTablesForTablespace(db, "checking") ;
         abstract_ordered_index *saving = simple_tpcc_worker::OpenTablesForTablespace(db, "saving") ;
         open_tables["checking"] = checking;

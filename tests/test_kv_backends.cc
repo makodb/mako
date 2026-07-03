@@ -40,7 +40,7 @@ import std;
 
 namespace {
 
-using mbta_type = mbta_ordered_index::mbta_type;
+using mbta_type = mbta_table;
 
 std::atomic<int> g_tid_counter{0};
 std::atomic<long> g_table_id{7000};
@@ -92,15 +92,13 @@ struct MasstreeBackend {
 };
 struct SiloBackend {
     static OrderedIndex* make(const std::string& name) {
-        return new mbta_ordered_index(name, g_table_id.fetch_add(1),
-                                      /*db=*/nullptr);
+        return mbta_index_build(name, g_table_id.fetch_add(1));
     }
     static const char* prefix() { return "silo"; }
 };
 struct MakoBackend {
     static OrderedIndex* make(const std::string& name) {
-        auto* local = new mbta_ordered_index(name, g_table_id.fetch_add(1),
-                                             /*db=*/nullptr);
+        auto* local = mbta_index_build(name, g_table_id.fetch_add(1));
         return new mbta_sharded_ordered_index(
             name, std::vector<abstract_ordered_index*>{local});
     }
