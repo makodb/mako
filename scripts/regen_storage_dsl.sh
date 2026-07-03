@@ -21,6 +21,7 @@ TRANSPILER="${1:-build_local/rusty-cpp-transpiler-a4bcff5f}"
 FILES=(
   src/mako/storage/abstract_ordered_index.h
   src/mako/storage/mbta_sharded_ordered_index.hh
+  src/mako/storage/masstree_ordered_index.hh
 )
 
 post_pass() {

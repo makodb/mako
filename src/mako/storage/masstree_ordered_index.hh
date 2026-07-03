@@ -1,33 +1,35 @@
 #pragma once
 
 /**
- * masstree_ordered_index - plain Masstree (L1) behind the shared
- * abstract_ordered_index interface.
+ * masstree_ordered_index — plain Masstree (L1) behind the shared
+ * OrderedIndex interface, AUTHORED IN THE RUST DSL
+ * (docs/ordered-index-trait-plan.md, backend phase T3). The
+ * #if RUSTYCPP_RUST block is the source of truth; regenerate with
+ * scripts/regen_storage_dsl.sh.
  *
- * The third table backend beside mbta_ordered_index (Silo) and
- * mbta_sharded_ordered_index (Mako routing): callers hold an
- * abstract_ordered_index* and pick the backend at construction —
- * there is no separate API surface for masstree.
- *
- * Only the NON-TRANSACTIONAL ops are supported (masstree has no
- * transaction runtime); the transactional/2PC virtuals abort loudly
- * via NDB_UNIMPLEMENTED. Values are raw bytes in both directions, per
- * the non-txn contract in abstract_ordered_index.h — this backend has
- * no storage encoding at all.
+ * OrderedIndex ONLY — masstree has no transaction runtime, and that
+ * is a type fact: this class does not implement TxnOrderedIndex or
+ * ShardParticipant.
  *
  * Value ownership: masstree stores raw pointers, so this class owns
  * the value allocations. Buffers live in the RCU arena as
  * [u32 len][bytes]; overwrite/remove frees are RCU-deferred and every
- * op pins a scoped_rcu_region, so concurrent readers are safe.
+ * op pins a scoped_rcu_region (the DSL holds it as a move-only guard
+ * local from the oi_rcu_region() factory), so concurrent readers are
+ * safe.
+ *
+ * C++ stays where C++ must: the per-op kernels below do the
+ * raw-pointer surgery (RCU-arena alloc/copy/deferred-free, tree calls,
+ * and the templated search_range functor bridge, none of which the
+ * DSL should hand-roll); the DSL owns the class shape, the interface
+ * attachment, the RCU guard scoping, and the bookkeeping logic.
  *
  * Thread contract: same per-thread bring-up as the rest of the engine
- * (masstree threadinfo + RCU registration — scoped_db_thread_ctx or
- * an mbta-style thread_init covers it).
+ * (masstree threadinfo + RCU registration — scoped_db_thread_ctx or an
+ * mbta-style thread_init covers it).
  *
- * INCLUDE ORDER: this header must be included BEFORE any header that
- * pulls in sto/MassTrans.hh (e.g. mbta_wrapper.hh) —
- * MassTrans does `#define RCU 1`, which mangles imstring.h's
- * `template <bool RCU>` parameter that varkey.h drags in.
+ * INCLUDE ORDER: before any header pulling sto/MassTrans.hh
+ * (`#define RCU 1` vs imstring.h's template parameter).
  */
 
 #include "mako/masstree_btree.h"  // concurrent_btree
@@ -37,148 +39,252 @@
 #include <stdint.h>
 #include <string.h>
 #include <string>
-#include <map>
 #include <algorithm>
 
-// OrderedIndex ONLY — masstree has no transaction runtime, and after
-// the trait split (docs/ordered-index-trait-plan.md) that is a type
-// fact rather than a set of aborting stubs: this class simply does
-// not implement TxnOrderedIndex or ShardParticipant.
-class masstree_ordered_index : public OrderedIndex {
-public:
-    masstree_ordered_index(std::string name, int table_id)
-        : name_(std::move(name)), table_id_(table_id) {}
+// ---------------------------------------------------------------------------
+// C++ kernels for the DSL bodies.
+// ---------------------------------------------------------------------------
 
-    // ========================================================================
-    // Non-transactional API (the supported surface)
-    // ========================================================================
+// RAII region as a move-only value the DSL can hold in a guard local.
+// @unsafe - pins the calling thread's RCU epoch
+inline scoped_rcu_region oi_rcu_region() { return scoped_rcu_region(); }
 
-    // @unsafe - copies out of an RCU-protected buffer
-    bool get(lcdf::Str key, std::string &value,
-             size_t max_bytes_read = std::string::npos) override {
-        scoped_rcu_region guard;  // pins the value buffer while we copy
-        concurrent_btree::value_type v{};
-        if (!tree_.search(to_key(key), v)) return false;
-        uint32_t len;
-        memcpy(&len, v, sizeof(len));
-        size_t n = std::min<size_t>(len, max_bytes_read);
-        value.assign(reinterpret_cast<const char*>(v) + sizeof(len), n);
-        return true;
-    }
+// @unsafe - RCU arena allocation: [u32 len][bytes]
+inline concurrent_btree::value_type oi_mt_make_val(const std::string &value) {
+  uint32_t len = static_cast<uint32_t>(value.size());
+  auto *p =
+      static_cast<uint8_t *>(rcu::s_instance.alloc(sizeof(len) + value.size()));
+  memcpy(p, &len, sizeof(len));
+  memcpy(p + sizeof(len), value.data(), value.size());
+  return p;
+}
 
-    // @unsafe - RCU arena allocation + deferred free of the old value
-    bool put(lcdf::Str key, const std::string &value) override {
-        scoped_rcu_region guard;
-        concurrent_btree::value_type old = nullptr;
-        bool inserted = tree_.insert(to_key(key), make_val(value), &old);
-        if (!inserted && old != nullptr) rcu_free_val(old);
-        return inserted;
-    }
+// @unsafe - deferred free (readers may still hold v)
+inline void oi_mt_free_val_rcu(concurrent_btree::value_type v) {
+  uint32_t len;
+  memcpy(&len, v, sizeof(len));
+  rcu::s_instance.dealloc_rcu(v, sizeof(len) + len);
+}
 
-    // @unsafe - RCU arena allocation
-    bool insert(lcdf::Str key, const std::string &value) override {
-        scoped_rcu_region guard;
-        concurrent_btree::value_type v = make_val(value);
-        if (tree_.insert_if_absent(to_key(key), v)) return true;
-        // Never published — safe to free immediately.
-        rcu::s_instance.dealloc(v, sizeof(uint32_t) + value.size());
-        return false;
-    }
+inline varkey oi_mt_key(lcdf::Str s) {
+  return varkey(reinterpret_cast<const uint8_t *>(s.data()), s.length());
+}
 
-    // @unsafe - deferred free of the removed value
-    bool remove(lcdf::Str key) override {
-        scoped_rcu_region guard;
-        concurrent_btree::value_type old = nullptr;
-        if (!tree_.remove(to_key(key), &old)) return false;
-        if (old != nullptr) rcu_free_val(old);
-        return true;
-    }
+// @unsafe - copies out of an RCU-protected buffer (caller holds region)
+inline bool oi_mt_get(concurrent_btree *t, lcdf::Str key, std::string &value,
+                      size_t max_bytes_read) {
+  concurrent_btree::value_type v{};
+  if (!t->search(oi_mt_key(key), v)) return false;
+  uint32_t len;
+  memcpy(&len, v, sizeof(len));
+  size_t n = std::min<size_t>(len, max_bytes_read);
+  value.assign(reinterpret_cast<const char *>(v) + sizeof(len), n);
+  return true;
+}
 
-    // @unsafe - iterates RCU-protected buffers
-    void scan(const std::string &start_key, const std::string *end_key,
-              oi_scan_callback &callback, str_arena * = nullptr) override {
-        scoped_rcu_region guard;
-        Collector c(callback);
-        varkey lower = to_key(lcdf::Str(start_key));
-        if (end_key != nullptr) {
-            varkey upper = to_key(lcdf::Str(*end_key));
-            tree_.search_range(lower, &upper, c);
-        } else {
-            tree_.search_range(lower, nullptr, c);
-        }
-    }
+// @unsafe - overwrite; RCU-defers the displaced value (caller holds region)
+inline bool oi_mt_put(concurrent_btree *t, lcdf::Str key,
+                      const std::string &value) {
+  concurrent_btree::value_type old = nullptr;
+  bool inserted = t->insert(oi_mt_key(key), oi_mt_make_val(value), &old);
+  if (!inserted && old != nullptr) oi_mt_free_val_rcu(old);
+  return inserted;
+}
 
-    // @unsafe - iterates RCU-protected buffers
-    void rscan(const std::string &start_key, const std::string *end_key,
-               oi_scan_callback &callback, str_arena * = nullptr) override {
-        scoped_rcu_region guard;
-        Collector c(callback);
-        varkey upper = to_key(lcdf::Str(start_key));
-        if (end_key != nullptr) {
-            varkey lower = to_key(lcdf::Str(*end_key));
-            tree_.rsearch_range(upper, &lower, c);
-        } else {
-            tree_.rsearch_range(upper, nullptr, c);
-        }
-    }
+// @unsafe - put-if-absent; loser buffer freed immediately (never published)
+inline bool oi_mt_insert(concurrent_btree *t, lcdf::Str key,
+                         const std::string &value) {
+  concurrent_btree::value_type v = oi_mt_make_val(value);
+  if (t->insert_if_absent(oi_mt_key(key), v)) return true;
+  rcu::s_instance.dealloc(v, sizeof(uint32_t) + value.size());
+  return false;
+}
 
-    // ========================================================================
-    // Bookkeeping
-    // ========================================================================
+// @unsafe - RCU-defers the removed value (caller holds region)
+inline bool oi_mt_remove(concurrent_btree *t, lcdf::Str key) {
+  concurrent_btree::value_type old = nullptr;
+  if (!t->remove(oi_mt_key(key), &old)) return false;
+  if (old != nullptr) oi_mt_free_val_rcu(old);
+  return true;
+}
 
-    // @safe - masstree maintains the count internally
-    size_t size() const override { return tree_.size(); }
-
-    // @unsafe - NOT THREAD SAFE (mbtree::clear contract); leaks owned
-    // values deliberately — reclaiming them would need a full scan and
-    // clear() is a test/teardown affordance, not a hot path.
-    std::map<std::string, uint64_t> clear() {
-        tree_.clear();
-        return {};
-    }
-
-    int get_table_id() override { return table_id_; }
-    bool get_is_remote() override { return false; }
-
-    const std::string &name() const { return name_; }
-
-private:
-    // Bridges mbtree's functor protocol to the shared scan_callback.
-    struct Collector {
-        explicit Collector(oi_scan_callback &cb) : cb_(cb) {}
-        // @unsafe - decodes the RCU-protected value buffer
-        bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
-            uint32_t len;
-            memcpy(&len, v, sizeof(len));
-            buf_.assign(reinterpret_cast<const char*>(v) + sizeof(len), len);
-            return cb_.invoke(k.data(), k.length(), buf_);
-        }
-        oi_scan_callback &cb_;
-        std::string buf_;
-    };
-
-    static varkey to_key(lcdf::Str s) {
-        return varkey(reinterpret_cast<const uint8_t*>(s.data()), s.length());
-    }
-
-    // @unsafe - RCU arena allocation
-    static concurrent_btree::value_type make_val(const std::string &value) {
-        uint32_t len = static_cast<uint32_t>(value.size());
-        auto *p = static_cast<uint8_t*>(
-            rcu::s_instance.alloc(sizeof(len) + value.size()));
-        memcpy(p, &len, sizeof(len));
-        memcpy(p + sizeof(len), value.data(), value.size());
-        return p;
-    }
-
-    // @unsafe - schedules a deferred free (readers may still hold v)
-    static void rcu_free_val(concurrent_btree::value_type v) {
-        uint32_t len;
-        memcpy(&len, v, sizeof(len));
-        rcu::s_instance.dealloc_rcu(v, sizeof(len) + len);
-    }
-
-    std::string name_;
-    int table_id_;
-    concurrent_btree tree_;
+// Bridges mbtree's templated functor protocol to the shared callback.
+// @unsafe - decodes RCU-protected buffers (caller holds region)
+struct oi_mt_collector {
+  explicit oi_mt_collector(oi_scan_callback &cb) : cb_(cb) {}
+  bool operator()(const lcdf::Str &k, concurrent_btree::value_type v) {
+    uint32_t len;
+    memcpy(&len, v, sizeof(len));
+    buf_.assign(reinterpret_cast<const char *>(v) + sizeof(len), len);
+    return cb_.invoke(k.data(), k.length(), buf_);
+  }
+  oi_scan_callback &cb_;
+  std::string buf_;
 };
+
+// @unsafe - [start, *end) ascending (caller holds region)
+inline void oi_mt_scan(concurrent_btree *t, const std::string &start_key,
+                       const std::string *end_key, oi_scan_callback &cb) {
+  oi_mt_collector c(cb);
+  varkey lower = oi_mt_key(lcdf::Str(start_key));
+  if (end_key != nullptr) {
+    varkey upper = oi_mt_key(lcdf::Str(*end_key));
+    t->search_range(lower, &upper, c);
+  } else {
+    t->search_range(lower, nullptr, c);
+  }
+}
+
+// @unsafe - descending mirror (caller holds region)
+inline void oi_mt_rscan(concurrent_btree *t, const std::string &start_key,
+                        const std::string *end_key, oi_scan_callback &cb) {
+  oi_mt_collector c(cb);
+  varkey upper = oi_mt_key(lcdf::Str(start_key));
+  if (end_key != nullptr) {
+    varkey lower = oi_mt_key(lcdf::Str(*end_key));
+    t->rsearch_range(upper, &lower, c);
+  } else {
+    t->rsearch_range(upper, nullptr, c);
+  }
+}
+
+inline size_t oi_mt_size(const concurrent_btree *t) { return t->size(); }
+
+#if RUSTYCPP_RUST
+pub struct masstree_ordered_index {
+    name: std::string,
+    table_id: i32,
+    tree: *mut concurrent_btree,
+}
+
+#[cpp_inherit]
+impl OrderedIndex for masstree_ordered_index {
+    fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_get(self.tree, key, value, max_bytes_read) }
+    }
+
+    fn put(&mut self, key: lcdf::Str, value: &std::string) -> bool {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_put(self.tree, key, value) }
+    }
+
+    fn insert(&mut self, key: lcdf::Str, value: &std::string) -> bool {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_insert(self.tree, key, value) }
+    }
+
+    fn remove(&mut self, key: lcdf::Str) -> bool {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_remove(self.tree, key) }
+    }
+
+    fn scan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_scan(self.tree, start_key, end_key, callback) }
+    }
+
+    fn rscan(&mut self, start_key: &std::string, end_key: *const std::string, callback: &mut oi_scan_callback, arena: *mut str_arena) {
+        let _guard = unsafe { oi_rcu_region() };
+        unsafe { oi_mt_rscan(self.tree, start_key, end_key, callback) }
+    }
+
+    fn size(&self) -> usize {
+        unsafe { oi_mt_size(self.tree) }
+    }
+
+    fn get_table_id(&mut self) -> i32 {
+        self.table_id
+    }
+
+    fn get_is_remote(&mut self) -> bool {
+        false
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=masstree_ordered_index.1 version=1 rust_sha256=b1c4acd500fd1f0c8397b1c16675b8d321aa905692794d832af82b18a43c375e*/
+struct masstree_ordered_index;
+
+struct masstree_ordered_index : public OrderedIndex {
+    std::string name;
+    int32_t table_id;
+    concurrent_btree* tree;
+    masstree_ordered_index(std::string name_init, int32_t table_id_init, concurrent_btree* tree_init) : OrderedIndex(), name(std::move(name_init)), table_id(std::move(table_id_init)), tree(std::move(tree_init)) {}
+    masstree_ordered_index(masstree_ordered_index&& other) noexcept : OrderedIndex(), name(std::move(other.name)), table_id(std::move(other.table_id)), tree(std::move(other.tree)) {}
+
+
+    bool get(lcdf::Str key, std::string& value, size_t max_bytes_read);
+    bool put(lcdf::Str key, const std::string& value);
+    bool insert(lcdf::Str key, const std::string& value);
+    bool remove(lcdf::Str key);
+    void scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    void rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena);
+    size_t size() const;
+    int32_t get_table_id();
+    bool get_is_remote();
+};
+
+
+inline bool masstree_ordered_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        return oi_mt_get(this->tree, std::move(key), value, std::move(max_bytes_read));
+    }
+}
+
+inline bool masstree_ordered_index::put(lcdf::Str key, const std::string& value) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        return oi_mt_put(this->tree, std::move(key), value);
+    }
+}
+
+inline bool masstree_ordered_index::insert(lcdf::Str key, const std::string& value) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        return oi_mt_insert(this->tree, std::move(key), value);
+    }
+}
+
+inline bool masstree_ordered_index::remove(lcdf::Str key) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        return oi_mt_remove(this->tree, std::move(key));
+    }
+}
+
+inline void masstree_ordered_index::scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        oi_mt_scan(this->tree, start_key, end_key, callback);
+    }
+}
+
+inline void masstree_ordered_index::rscan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {
+    const auto _guard = oi_rcu_region();
+    // @unsafe
+    {
+        oi_mt_rscan(this->tree, start_key, end_key, callback);
+    }
+}
+
+inline size_t masstree_ordered_index::size() const {
+    // @unsafe
+    {
+        return oi_mt_size(this->tree);
+    }
+}
+
+inline int32_t masstree_ordered_index::get_table_id() {
+    return this->table_id;
+}
+
+inline bool masstree_ordered_index::get_is_remote() {
+    return false;
+}
+/*RUSTYCPP:GEN-END id=masstree_ordered_index.1*/

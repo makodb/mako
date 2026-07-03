@@ -85,7 +85,8 @@ private:
 // ---------------------------------------------------------------------------
 struct MasstreeBackend {
     static OrderedIndex* make(const std::string& name) {
-        return new masstree_ordered_index(name, g_table_id.fetch_add(1));
+        return new masstree_ordered_index(name, g_table_id.fetch_add(1),
+                                          new concurrent_btree());
     }
     static const char* prefix() { return "mt"; }
 };
