@@ -4,7 +4,7 @@
 #include <thread>
 #include <algorithm>
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 using namespace std;
 

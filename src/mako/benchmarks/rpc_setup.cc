@@ -13,7 +13,7 @@
 #include "lib/fasttransport.h"
 #include "lib/server.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 #include "spinbarrier.h"
 
 

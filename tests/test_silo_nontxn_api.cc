@@ -17,8 +17,8 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
-#include "benchmarks/mbta_sharded_ordered_index.hh"
+#include "storage/mbta_wrapper.hh"
+#include "storage/mbta_sharded_ordered_index.hh"
 #include "lib/common.h"
 
 #include <gtest/gtest.h>

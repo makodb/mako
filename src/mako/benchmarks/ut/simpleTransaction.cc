@@ -6,11 +6,11 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
 #include "common.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;

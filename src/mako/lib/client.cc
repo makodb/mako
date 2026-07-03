@@ -6,7 +6,7 @@
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/common.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 
 import std;
 

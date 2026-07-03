@@ -11,7 +11,7 @@
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
-#include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+#include "../src/mako/storage/mbta_sharded_ordered_index.hh"
 
 import std;
 

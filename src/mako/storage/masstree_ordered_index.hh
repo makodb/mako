@@ -25,7 +25,7 @@
  * an mbta-style thread_init covers it).
  *
  * INCLUDE ORDER: this header must be included BEFORE any header that
- * pulls in benchmarks/sto/MassTrans.hh (e.g. mbta_wrapper.hh) —
+ * pulls in sto/MassTrans.hh (e.g. mbta_wrapper.hh) —
  * MassTrans does `#define RCU 1`, which mangles imstring.h's
  * `template <bool RCU>` parameter that varkey.h drags in.
  */

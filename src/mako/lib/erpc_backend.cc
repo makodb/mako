@@ -15,8 +15,8 @@
 #include "lib/assert.h"
 #include "lib/common.h"
 #include "lib/message.h"
-#include "benchmarks/sto/sync_util.hh"
-#include "benchmarks/sto/Transaction.hh"
+#include "sto/sync_util.hh"
+#include "sto/Transaction.hh"
 #include "thread.h"
 
 #include <util.h>

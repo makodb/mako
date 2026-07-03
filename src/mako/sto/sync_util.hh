@@ -5,7 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 
 using namespace std;
 

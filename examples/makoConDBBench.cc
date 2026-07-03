@@ -1,11 +1,11 @@
 #include <stddef.h>
 
 #include <mako.hh>
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include <examples/common.h>
-#include "benchmarks/abstract_db.h"
-#include "benchmarks/abstract_ordered_index.h"
-#include "benchmarks/sto/StringWrapper.hh"
+#include "storage/abstract_db.h"
+#include "storage/abstract_ordered_index.h"
+#include "sto/StringWrapper.hh"
 
 import std;
 

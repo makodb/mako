@@ -46,7 +46,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **RocksDB `ColumnFamily`.** A CF is a logical KV namespace within a single `DB`. All CFs in one DB share the WAL and block cache, but their key spaces are disjoint. Every put/get/delete/iterator takes a `ColumnFamilyHandle*`. A DB has at minimum one CF (`default`).
 
-**Silo tables.** Each table is a separate `abstract_ordered_index` (`src/mako/benchmarks/abstract_ordered_index.h`), most often instantiated as `typed_txn_btree<Schema>` (`src/mako/typed_txn_btree.h:8-16`) wrapping an `mbtree<concurrent_btree>`. TPC-C creates ~10 tables (`warehouse`, `district`, `customer`, `stock`, `item`, `order`, `order_line`, `new_order`, `history`, plus secondary indexes — `tpcc.cc:1372`).
+**Silo tables.** Each table is a separate `abstract_ordered_index` (`src/mako/storage/abstract_ordered_index.h`), most often instantiated as `typed_txn_btree<Schema>` (`src/mako/typed_txn_btree.h:8-16`) wrapping an `mbtree<concurrent_btree>`. TPC-C creates ~10 tables (`warehouse`, `district`, `customer`, `stock`, `item`, `order`, `order_line`, `new_order`, `history`, plus secondary indexes — `tpcc.cc:1372`).
 
 **Mapping.** RocksDB CF ↔ Silo table ↔ mbtree instance, all natural fits. `IDatabase::GetTable(name)` already returns an `ITable*` per name — this is functionally equivalent to `DB::CreateColumnFamily` / `DB::GetColumnFamilyHandle`.
 
@@ -60,7 +60,7 @@ The one meaningful mismatch: RocksDB's `DB` corresponds to a persistence directo
 
 **RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC, validates read-set at commit) and `TransactionDB` (pessimistic 2PL, locks acquired eagerly). Both use `class Transaction` with `Put`/`Get`/`GetForUpdate`/`Commit`/`Rollback`. Isolation: snapshot isolation by default; serializable with `SetSnapshot()` + `GetForUpdate()`. Supports 2PC (`Prepare`).
 
-**Silo.** OCC-only via opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/benchmarks/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation: **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
+**Silo.** OCC-only via opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation: **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
 
 **Mapping**:
 

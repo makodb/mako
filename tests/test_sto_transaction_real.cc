@@ -1,7 +1,7 @@
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
-#include "benchmarks/sto/Transaction.hh"
+#include "sto/Transaction.hh"
 
 import std;
 

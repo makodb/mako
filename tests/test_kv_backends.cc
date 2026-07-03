@@ -30,9 +30,9 @@
 #include "benchmarks/bench.h"
 // masstree_ordered_index must precede mbta_wrapper (MassTrans's
 // `#define RCU 1` vs imstring.h's template parameter).
-#include "benchmarks/masstree_ordered_index.hh"
-#include "benchmarks/mbta_wrapper.hh"
-#include "benchmarks/mbta_sharded_ordered_index.hh"
+#include "storage/masstree_ordered_index.hh"
+#include "storage/mbta_wrapper.hh"
+#include "storage/mbta_sharded_ordered_index.hh"
 
 #include <gtest/gtest.h>
 

@@ -7,14 +7,14 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/tpcc.h"
 #include "common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Transaction.hh"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/Transaction.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;

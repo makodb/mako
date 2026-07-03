@@ -221,7 +221,7 @@ consolidated into `abstract_ordered_index` itself:
   commit). Remote non-txn ops carry raw bytes on the wire; the owning
   shard encodes at its local L3.
 - The masstree adapter became `masstree_ordered_index`
-  (`src/mako/benchmarks/masstree_ordered_index.hh`), a real
+  (`src/mako/storage/masstree_ordered_index.hh`), a real
   `abstract_ordered_index` subclass: the six non-txn ops implemented
   (values owned in the RCU arena, overwrite/remove frees deferred,
   every op pins a `scoped_rcu_region`); the transactional/2PC
@@ -248,6 +248,6 @@ function exercised against all three (25 tests).
 
 - [`silo-masstree-api-unification.md`](silo-masstree-api-unification.md) — the Silo-level predecessor (implemented).
 - [`rocksdb_interface.md`](rocksdb_interface.md) — the L7 facade this plan's Phase 4 extends.
-- `src/mako/benchmarks/mbta_wrapper.hh`, `mbta_sharded_ordered_index.hh` — Phase 2 targets.
+- `src/mako/storage/mbta_wrapper.hh`, `mbta_sharded_ordered_index.hh` — Phase 2 targets.
 - `src/mako/lib/shardClient.cc`, `src/mako/lib/server.cc` — Phase 1 targets.
 - `src/rocks_interface/` (`remote_db.hh`, `idb.hh`, `local_table.hh`, ...) — Phase 4 targets; the facade moved to its own folder in 2026-07.

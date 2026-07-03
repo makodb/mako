@@ -9,7 +9,7 @@
 
 #include "../macros.h"
 #include "../str_arena.h"
-#include "tpcc_keys.h"
+#include "benchmarks/tpcc_keys.h"
 
 /**
  * The underlying index manages memory for keys/values, but

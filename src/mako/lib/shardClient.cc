@@ -10,7 +10,7 @@
 #include "lib/configuration.h"
 #include "lib/common.h"
 #include "lib/shard_router.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 
 import std;
 

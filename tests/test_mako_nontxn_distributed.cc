@@ -21,16 +21,16 @@
 #include <unistd.h>
 
 #include "benchmarks/bench.h"
-#include "benchmarks/mbta_wrapper.hh"
-#include "benchmarks/mbta_sharded_ordered_index.hh"
+#include "storage/mbta_wrapper.hh"
+#include "storage/mbta_sharded_ordered_index.hh"
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/shardClient.h"
 #include "rocks_interface/client_tcp_server.h"
 #include "rocks_interface/local_table.hh"
 #include "rocks_interface/remote_db.hh"
-#include "benchmarks/sto/Transaction.hh"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/Transaction.hh"
+#include "sto/sync_util.hh"
 
 #include <gtest/gtest.h>
 

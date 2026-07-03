@@ -3,19 +3,19 @@
 #include "lib/server.h"
 #include "lib/common.h"
 #include "lib/transport_request_handle.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
 // After bench.h so the textual std headers are already in (the
 // `import std;` below would otherwise make ticker.h/rcu.h's
 // unqualified lock_guard/allocator references ambiguous).
-#include "benchmarks/sto/Transaction.hh"
+#include "sto/Transaction.hh"
 #if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
 #include "deptran/s_main.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 

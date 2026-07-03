@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 #include "lib/configuration.h"
 #include "lib/common.h"
 

@@ -422,7 +422,7 @@ Mako wraps Masstree with OCC (Optimistic Concurrency Control) via the **STO** (S
 
 ### MassTrans
 
-`MassTrans<V>` (in `src/mako/benchmarks/sto/MassTrans.hh`) wraps a Masstree instance with transaction semantics:
+`MassTrans<V>` (in `src/mako/sto/MassTrans.hh`) wraps a Masstree instance with transaction semantics:
 
 ```cpp
 template <typename V>
@@ -600,7 +600,7 @@ struct MultiVersionValue {
 |------|---------|
 | `config.h` | Build-time settings: cache line size, jemalloc, NUMA, hugepages |
 
-### Mako Integration (`src/mako/benchmarks/sto/`)
+### Mako Integration (`src/mako/sto/`)
 
 | File | Purpose |
 |------|---------|

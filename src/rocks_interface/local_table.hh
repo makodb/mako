@@ -9,8 +9,8 @@
 
 #include "idb.hh"
 #include "status.hh"
-#include "mako/benchmarks/mbta_sharded_ordered_index.hh"
-#include "mako/benchmarks/abstract_db.h"
+#include "mako/storage/mbta_sharded_ordered_index.hh"
+#include "mako/storage/abstract_db.h"
 #include <string>
 
 namespace mako {

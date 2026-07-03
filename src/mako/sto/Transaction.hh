@@ -19,8 +19,8 @@
 #include <vector>
 #include <cstring> // for memcpy
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Interface.hh"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/Interface.hh"
+#include "sto/sync_util.hh"
 #include "benchmarks/benchmark_config.h"
 
 #ifndef STO_PROFILE_COUNTERS

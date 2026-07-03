@@ -13,8 +13,8 @@
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/common.h"
-#include "benchmarks/abstract_db.h"
-#include "benchmarks/abstract_ordered_index.h"
+#include "storage/abstract_db.h"
+#include "storage/abstract_ordered_index.h"
 #include "lib/helper_queue.h"
 
 void register_sync_util_ss(std::function<int()>);

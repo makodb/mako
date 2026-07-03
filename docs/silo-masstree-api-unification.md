@@ -48,7 +48,7 @@ The trade-off is documented so future readers understand: `remove` outside a tra
 
 ### Phase 1 — Extend MassTrans's non-txn API
 
-Add three new methods to `src/mako/benchmarks/sto/MassTrans.hh` that follow the same pattern as the existing `put` / `get`:
+Add three new methods to `src/mako/sto/MassTrans.hh` that follow the same pattern as the existing `put` / `get`:
 
 ```cpp
 // New — put-if-absent (implicit-txn wrap around transInsert)
@@ -87,7 +87,7 @@ Existing `get`, `put`, `remove` need no change.
 
 ### Phase 2 — Expose the non-txn API at L3
 
-Add six virtual methods to `src/mako/benchmarks/abstract_ordered_index.h`, each with signatures matching Masstree's shape:
+Add six virtual methods to `src/mako/storage/abstract_ordered_index.h`, each with signatures matching Masstree's shape:
 
 ```cpp
 class abstract_ordered_index {
@@ -118,11 +118,11 @@ public:
 
 Implement them in the two backends that matter for the compat facade path:
 
-**`src/mako/benchmarks/mbta_wrapper.hh`** (single-shard `abstract_ordered_index` impl over MassTrans):
+**`src/mako/storage/mbta_wrapper.hh`** (single-shard `abstract_ordered_index` impl over MassTrans):
 - Delegate directly to MassTrans's non-txn methods (`mbta.get(...)`, `mbta.put(...)`, etc.).
 - `scan` / `rscan` wrap the Callback conversion (L3's `scan_callback` → MassTrans's lambda).
 
-**`src/mako/benchmarks/mbta_sharded_ordered_index.hh`** (Mako's sharded `abstract_ordered_index` impl):
+**`src/mako/storage/mbta_sharded_ordered_index.hh`** (Mako's sharded `abstract_ordered_index` impl):
 - Delegate to `pick_shard(key)->get(...)` etc. — same pattern already used by the txn'd methods.
 
 `RemoteTable` in `src/rocks_interface/remote_db.hh` does not need to implement these (the remote client can't do non-txn ops against a remote shard — it always goes through RPC which is inherently boundary-crossing).
@@ -242,6 +242,6 @@ None of the current L3 consumers need code changes:
 
 - [`rocksdb_interface.md`](rocksdb_interface.md) — RocksDB-compat facade; the transactional L3 API sits under it.
 - [`masstree-book.md`](masstree-book.md) — Masstree's own API and internals.
-- `src/mako/benchmarks/abstract_ordered_index.h` — the interface this plan extends.
-- `src/mako/benchmarks/sto/MassTrans.hh` — the runtime that Phase 1 extends.
-- `src/mako/benchmarks/mbta_wrapper.hh` and `mbta_sharded_ordered_index.hh` — the two backends Phase 2 updates.
+- `src/mako/storage/abstract_ordered_index.h` — the interface this plan extends.
+- `src/mako/sto/MassTrans.hh` — the runtime that Phase 1 extends.
+- `src/mako/storage/mbta_wrapper.hh` and `mbta_sharded_ordered_index.hh` — the two backends Phase 2 updates.

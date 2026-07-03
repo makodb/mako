@@ -920,13 +920,13 @@ set(MAKO_SRCFILES
   #"${W}/benchmarks/tpcc_simple.cc"
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
-  "${W}/benchmarks/sto/Transaction.cc"
-  "${W}/benchmarks/sto/MassTrans.cc"
-  "${W}/benchmarks/sto/common.cc"
-  "${W}/benchmarks/sto/TRcu.cc"
-  "${W}/benchmarks/sto/Packer.cc"
-  "${W}/benchmarks/sto/ReplayDB.cc"
-  "${W}/benchmarks/sto/ThreadPool.cc"
+  "${W}/sto/Transaction.cc"
+  "${W}/sto/MassTrans.cc"
+  "${W}/sto/common.cc"
+  "${W}/sto/TRcu.cc"
+  "${W}/sto/Packer.cc"
+  "${W}/sto/ReplayDB.cc"
+  "${W}/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
@@ -944,7 +944,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/client.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/abstract_db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
@@ -960,7 +960,7 @@ if(MAKO_USING_FRAGILEC)
   # Exclude heavyweight benchmark modules that currently pull in unresolved
   # benchmark-config API surfaces and block `masstree_perf` builds.
   list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/(encstress|bid|queue|tpcc|rpc_setup|sync_util_init)\\.cc$")
-  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/sto/.*\\.cc$")
+  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/sto/.*\\.cc$")
 endif()
 
 # Benchmark flags
@@ -1374,8 +1374,8 @@ if(ENABLE_BORROW_CHECKING)
     #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/*.c"
     # )
     # file(GLOB_RECURSE STO_SRCS
-    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.cc"
-    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.c"
+    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/*.cc"
+    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/*.c"
     # )
     set(MAKO_ROOT_SRCS "")
     set(STO_SRCS "")
@@ -1385,7 +1385,7 @@ if(ENABLE_BORROW_CHECKING)
     
     # Debug output
     list(LENGTH TARGET_BORROW_SRCS FILE_COUNT)
-    message(STATUS "Found ${FILE_COUNT} files to check in src/mako/ and benchmarks/sto/")
+    message(STATUS "Found ${FILE_COUNT} files to check in src/mako/ and sto/")
 
     foreach(SRC ${TARGET_BORROW_SRCS})
         get_filename_component(STEM ${SRC} NAME_WE)
