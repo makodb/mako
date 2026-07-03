@@ -297,12 +297,22 @@ Phases:
   (the tree is non-movable; the synthesized move ctor requires
   movable fields), RCU bodies in unsafe blocks; possibly a small C++
   helper for the templated search_range callback bridge.
-- **T4** — `mbta_ordered_index` decision gate: its core is
-  try/catch on Transaction::Abort (STD_OP + non-txn retry loops),
-  which the DSL cannot express. Either (a) per-verb C++ `try_op`
-  helpers wrapping the catch sites with structure/fields/routing in
-  DSL, or (b) documented as floored (Event/ALock precedent).
-  Recommendation: (a).
+- **T4** — `mbta_ordered_index`: exception boundary via per-verb C++
+  kernels (user-approved 2026-07-03). Architecture forced by a
+  constraint T2/T3 didn't hit: mbta tables flow tree-wide as
+  `abstract_ordered_index*` (the open_tables map, tpcc's string-key
+  sugar arities), so the class MUST stay bridge-derived — and the
+  bridge is hand-written C++ (not cpp_inherit-able under the refined
+  rule). Shape: a DSL-authored `mbta_table_core` struct owns the
+  state (name, table_id, is_remote, db*, mbta: *mut mbta_table_t —
+  MassTrans is non-movable) and all expressible logic (remote/local
+  branching, delegation flow); C++ keeps (i) the try/catch kernels
+  (STD_OP translation + the non-txn retry-on-Abort loops + the
+  UPDATE_VS/transget_without_throw get path), (ii) the thin
+  `mbta_ordered_index : abstract_ordered_index` shell whose overrides
+  one-line-delegate into the core, (iii) put_mbta as a free fn
+  (fn-pointer params). T2 (sharded) and T3 (masstree) are full DSL
+  classes; T4 is DSL-core + C++ shell by structural necessity.
 
 Every phase gates on the full suite, as before.
 
