@@ -225,6 +225,52 @@ as-implemented notes.
   transpiler from upstream main (or any later rev with the `pub`
   linkage rule).
 
+## As implemented (2026-07-03) — P1–P4 delivered
+
+**P1 (c5f01bdd)** — 46 → 26 virtuals. The overload zoo had ZERO
+callers and was deleted outright; string-key spellings became
+non-virtual sugar (they are load-bearing — `lcdf::Str` has no
+implicit `std::string` ctor); txn'd put/insert normalized
+`const char*` → `void` (no consumer of the stable-pointer contract);
+`put_mbta` left the interface (two callers redirected to concrete
+mbta types). Latent ODR bug fixed en route (`thr_arena` / `arena()`
+defined non-inline in a multi-TU header).
+
+**P2 (the swap)** — `storage/abstract_ordered_index.h` now carries
+the three `pub trait`s in its `#if RUSTYCPP_RUST` block as the source
+of truth; the committed GEN block holds the lowered pure-virtual
+interface classes. `abstract_ordered_index` is a hand-written bridge
+(`: TxnOrderedIndex, ShardParticipant`) carrying exactly the
+Rust-inexpressible parts: default-arg forwarders, string-key sugar,
+legacy default bodies (txn insert→put, txn remove→put-empty, aborting
+non-txn defaults), the `scan_callback` compat alias
+(`oi_scan_callback` moved to namespace scope), and
+`clear()`/`print_stats()`. Lesson recorded: with same-name methods
+across the three bases, the bridge needs the full cross-base
+using-declaration set or C++ name hiding splits the overload
+families.
+
+**P3** — `masstree_ordered_index : public OrderedIndex` only; all 8
+transactional/2PC abort stubs deleted — "masstree has no
+transactions" is now unrepresentable rather than a runtime crash.
+`test_kv_backends` drives the three backends through `OrderedIndex*`.
+Wider consumer tightening (RunNontxnOp parameter types, the
+open_tables map) was left as follow-up: those consumers legitimately
+need the combined bridge today and the narrowing is mechanical.
+
+**P4** — regeneration/drift: `rusty-cpp-transpiler inline-rust
+--check --files src/mako/storage/abstract_ordered_index.h` (tool
+built from rusty-cpp upstream main ≥ a4bcff5f, out-of-tree — the
+submodule pin stays at bcd32358; the GEN output is plain C++ with no
+rusty-runtime dependencies). Borrow-checking the storage headers is
+deliberately NOT wired: they pull the MassTrans/masstree stack, which
+generates the documented class of third-party false positives
+(CLAUDE.md exclusion convention); the DSL block itself is the checked
+artifact.
+
+Every phase gated on: full tree build, 259 unit + 8×3 distributed +
+rocksdbInterfaceTest, all green.
+
 ## Effort: ~5–7 days
 
 ## Risks & open questions
