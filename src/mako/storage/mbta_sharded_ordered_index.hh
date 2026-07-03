@@ -423,51 +423,14 @@ inline bool mbta_sharded_ordered_index::get_is_remote() {
 /*RUSTYCPP:GEN-END id=mbta_sharded_ordered_index.1*/
 
 // ============================================================================
-// C++ sugar over the DSL class (not part of the interface):
-// RocksDB-style Status helpers (used by rocks_interface/LocalTable),
-// the open_fn build factory, put_mbta (mbta-specific compare-and-put;
+// C++ sugar over the DSL class (not part of the interface): the
+// open_fn build factory, put_mbta (mbta-specific compare-and-put;
 // defined in storage/mbta_wrapper.hh where mbta_ordered_index is
-// complete), and clear (test/teardown affordance).
+// complete), and clear. The RocksDB-style Status helpers
+// (mbta_sharded_Get/Put/Insert/Delete) live with their consumer in
+// rocks_interface/local_table.hh — facade-register names stay under
+// rocks_interface/.
 // ============================================================================
-
-inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
-                                     void *txn, const std::string &key,
-                                     std::string &value) {
-  bool found = t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
-                         std::string::npos);
-  return found ? mako::Status::OK() : mako::Status::NotFound();
-}
-
-// NOTE: the value must already be mako::Encode()'d by the caller and
-// outlive the commit (the txn'd path stores a pointer, no copy).
-inline mako::Status mbta_sharded_Put(mbta_sharded_ordered_index *t,
-                                     void *txn, const std::string &key,
-                                     const std::string &value) {
-  t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
-  return mako::Status::OK();
-}
-
-inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
-                                        void *txn, const std::string &key,
-                                        const std::string &value) {
-  // Check existence first: transInsert silently succeeds for
-  // duplicates, so dups are detected via Get — the staged read makes
-  // insert-if-absent serializable (commit validation catches a racing
-  // insert). Gated by rocksdbInterfaceTest I1.4.
-  std::string unused;
-  if (t->tx_get(txn, lcdf::Str(key.data(), key.size()), unused,
-                std::string::npos)) {
-    return mako::Status::InvalidArgument("Key already exists");
-  }
-  t->tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
-  return mako::Status::OK();
-}
-
-inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
-                                        void *txn, const std::string &key) {
-  t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
-  return mako::Status::OK();
-}
 
 // put_mbta is mbta-specific; per-key tables are mbta by construction.
 // Defined in storage/mbta_wrapper.hh (needs the complete mbta type).

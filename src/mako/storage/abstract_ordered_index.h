@@ -129,7 +129,7 @@ pub trait ShardParticipant {
 pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=f2b3919ff4b3135ad3def1925077a87538b4e693ba0946b5007f00779c018474*/
+/*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=c36262c7476b8b6a434a69826a128d044b17539ff63a8ad9ca5ff900b854ab47*/
 class ShardParticipant {
 public:
     virtual ~ShardParticipant() noexcept(false) {}

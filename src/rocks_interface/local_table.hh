@@ -15,6 +15,54 @@
 
 namespace mako {
 
+// ============================================================================
+// RocksDB-register glue over the sharded engine table: Status-returning
+// Get/Put/Insert/Delete used by LocalTable (and facade-style example
+// apps). Capitalized names are the rocks_interface convention
+// (mirroring rocksdb::DB); the engine interface itself is the
+// lowercase trait surface in storage/abstract_ordered_index.h.
+// ============================================================================
+
+inline mako::Status mbta_sharded_Get(mbta_sharded_ordered_index *t,
+                                     void *txn, const std::string &key,
+                                     std::string &value) {
+  bool found = t->tx_get(txn, lcdf::Str(key.data(), key.size()), value,
+                         std::string::npos);
+  return found ? mako::Status::OK() : mako::Status::NotFound();
+}
+
+// NOTE: the value must already be mako::Encode()'d by the caller and
+// outlive the commit (the txn'd path stores a pointer, no copy).
+inline mako::Status mbta_sharded_Put(mbta_sharded_ordered_index *t,
+                                     void *txn, const std::string &key,
+                                     const std::string &value) {
+  t->tx_put(txn, lcdf::Str(key.data(), key.size()), value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_Insert(mbta_sharded_ordered_index *t,
+                                        void *txn, const std::string &key,
+                                        const std::string &value) {
+  // Check existence first: transInsert silently succeeds for
+  // duplicates, so dups are detected via Get — the staged read makes
+  // insert-if-absent serializable (commit validation catches a racing
+  // insert). Gated by rocksdbInterfaceTest I1.4.
+  std::string unused;
+  if (t->tx_get(txn, lcdf::Str(key.data(), key.size()), unused,
+                std::string::npos)) {
+    return mako::Status::InvalidArgument("Key already exists");
+  }
+  t->tx_insert(txn, lcdf::Str(key.data(), key.size()), value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_Delete(mbta_sharded_ordered_index *t,
+                                        void *txn, const std::string &key) {
+  t->tx_remove(txn, lcdf::Str(key.data(), key.size()));
+  return mako::Status::OK();
+}
+
+
 /**
  * LocalTable - Wrapper around mbta_sharded_ordered_index implementing ITable
  *
