@@ -95,3 +95,41 @@ e.g. `ShardReceiver::open_tables_table_id`).
 
 `src/rocks_interface/` (RocksDB-style `ITable`/`IDatabase`/`Status`)
 consumes this interface; see `docs/rocksdb_interface.md`.
+
+## Cluster metadata port (`src/cluster/kv_store.h`)
+
+The cluster component's dependency on storage is a three-method
+`KvStore` port (`get`/`put`/`remove`, string keys, raw byte values).
+It is authored in this same DSL — a `pub trait KvStore` — and is in the
+`regen_storage_dsl.sh` FILES list, so the drift guard covers it. In
+production the port binds to the unified store via `OrderedIndexKvStore`
+(the `__mako_config__` system table on shard 0); tests bind an
+`InMemoryKvStore` fake. See
+[mako-book §3](mako-book.md#3-configuration-manager-master-shard) for
+the sharding design.
+
+**The DSL boundary in `cluster/` stops at this interface, deliberately.**
+The trait fits the DSL perfectly — a `pub trait` *is* an interface. The
+rest of the folder does not, and forcing it through the DSL is
+net-negative (verified by spiking both cases):
+
+- **Value types** (`sharding_policy.h`: `KeyExtractor`, `RangeMapping`,
+  `TableShardingPolicy`, `ShardingPolicySet`) must stay copyable and
+  default-constructible — they live in `std::map`/`std::vector` by value
+  and are copied by the marshal/cache/builder code. DSL structs are
+  move-only with a synthesized fieldwise ctor (see the lowering gotchas
+  above), which breaks exactly that. They are also pure POD with zero
+  raw-pointer/ownership hazards, so the borrow checker has nothing to
+  catch.
+- **Trait implementations** (`in_memory_kv_store.h`, `remote_kv_store.h`)
+  would lose default construction (the generated all-fields ctor breaks
+  `InMemoryKvStore kv;`) and need C++ kernels for trivial `std::map`
+  operations — more code and indirection than the ~10-line C++ impl,
+  for no safety gain.
+- **Stateful logic** (`config_manager`, `cluster_config`) is STL-backed
+  and already `@safe`; `config_watcher` (threading) and `config_store`
+  (RocksDB) stay C++ by the same reasoning the storage kernels do.
+
+The DSL earns its place at interfaces (this port; the `OrderedIndex`
+traits) and in genuine raw-pointer surgery (the masstree RCU kernels) —
+not in copyable POD or STL glue.
