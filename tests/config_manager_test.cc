@@ -348,6 +348,88 @@ TEST_F(ConfigManagerTest, KillShardRefusesTakerAlreadyDead) {
     EXPECT_EQ(cm_.GetShardStatus(0), "active");
 }
 
+// ===========================================================================
+// Sharding policy — opaque bytes storage on ConfigManager
+// ===========================================================================
+
+TEST_F(ConfigManagerTest, ShardingModeRoundTrip) {
+    EXPECT_EQ(cm_.GetShardingMode(), "");  // unset ~= default
+    ASSERT_TRUE(cm_.SetShardingMode("range"));
+    EXPECT_EQ(cm_.GetShardingMode(), "range");
+    ASSERT_TRUE(cm_.SetShardingMode("hash"));
+    EXPECT_EQ(cm_.GetShardingMode(), "hash");
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicyRoundTripOpaque) {
+    // Opaque bytes: ConfigManager doesn't parse them, we just check that
+    // whatever went in comes back out byte-for-byte, including the case
+    // where the payload contains embedded NUL bytes (must use the
+    // explicit-length std::string constructor — the const char* form
+    // would truncate at the first NUL).
+    static const char kPayloadA[] = {'\x00', '\x01', '\x02', 'A', 'B', 'C'};
+    static const char kPayloadB[] = {'e', '\x00', 'n', '\x00', 'd'};
+    const std::string payload_a(kPayloadA, sizeof(kPayloadA));
+    const std::string payload_b(kPayloadB, sizeof(kPayloadB));
+
+    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", payload_a));
+    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", payload_b));
+
+    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), payload_a);
+    EXPECT_EQ(cm_.GetShardingPolicy("DISTRICT"), payload_b);
+    EXPECT_EQ(cm_.GetShardingPolicy("STOCK"), "");  // never set
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicyRefusesEmptyAndBadInputs) {
+    EXPECT_FALSE(cm_.SetShardingPolicy("", "bytes"));
+    EXPECT_FALSE(cm_.SetShardingPolicy("WAREHOUSE", ""));
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicyTablesIndexTracks) {
+    EXPECT_TRUE(cm_.ListShardingPolicyTables().empty());
+
+    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
+    auto tables = cm_.ListShardingPolicyTables();
+    ASSERT_EQ(tables.size(), 1u);
+    EXPECT_EQ(tables[0], "WAREHOUSE");
+
+    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", "y"));
+    tables = cm_.ListShardingPolicyTables();
+    EXPECT_EQ(tables.size(), 2u);
+
+    // Overwrite an existing table's policy — index must NOT gain a duplicate.
+    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x2"));
+    tables = cm_.ListShardingPolicyTables();
+    EXPECT_EQ(tables.size(), 2u);
+    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), "x2");
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicyDeletePrunesIndex) {
+    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
+    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", "y"));
+
+    ASSERT_TRUE(cm_.DeleteShardingPolicy("WAREHOUSE"));
+    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), "");
+    auto tables = cm_.ListShardingPolicyTables();
+    ASSERT_EQ(tables.size(), 1u);
+    EXPECT_EQ(tables[0], "DISTRICT");
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicySetIsOneVersionBump) {
+    // A SetShardingPolicy is one BATCH — value key + index key + __version__
+    // — so __version__ advances by exactly one.
+    const uint64_t v_before = cm_.GetVersion();
+    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
+    EXPECT_EQ(cm_.GetVersion(), v_before + 1);
+}
+
+TEST_F(ConfigManagerTest, ShardingPolicyDeleteMissingIsNoop) {
+    const uint64_t v_before = cm_.GetVersion();
+    // Deleting a policy that was never set is a no-op — must NOT bump
+    // __version__, otherwise ConfigWatchers would refresh spuriously.
+    ASSERT_TRUE(cm_.DeleteShardingPolicy("NEVER_SET"));
+    EXPECT_EQ(cm_.GetVersion(), v_before);
+}
+
 TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // Belt-and-suspenders: even if a broken write path or stale cache
     // ever produced a cycle in the ShardInfo map, GetShardForKey must

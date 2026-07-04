@@ -331,3 +331,85 @@ std::string ConfigManager::GetNodeStatus(const std::string& site) {
 bool ConfigManager::SetNodeStatus(const std::string& site, const std::string& status) {
   return PutWithVersion(NodeKey(site, "status"), status);
 }
+
+// ===========================================================================
+// Sharding policy — opaque bytes
+// ===========================================================================
+
+// @unsafe - RocksDB read
+std::string ConfigManager::GetShardingMode() {
+  if (!db_) return "";
+  std::string value;
+  if (db_->Get(KEY_SHARDING_MODE, &value)) return value;
+  return "";
+}
+
+// @unsafe - RocksDB batch write via Raft
+bool ConfigManager::SetShardingMode(const std::string& mode) {
+  return PutWithVersion(KEY_SHARDING_MODE, mode);
+}
+
+// @unsafe - RocksDB read
+std::string ConfigManager::GetShardingPolicy(const std::string& table) {
+  if (!db_ || table.empty()) return "";
+  std::string value;
+  if (db_->Get(ShardingPolicyKey(table), &value)) return value;
+  return "";
+}
+
+// @unsafe - RocksDB batch write via Raft
+bool ConfigManager::SetShardingPolicy(const std::string& table,
+                                       const std::string& serialized_policy) {
+  if (!db_ || table.empty() || serialized_policy.empty()) return false;
+
+  // Maintain the tables index alongside the value so ClusterConfig can
+  // enumerate registered tables without a KV Scan primitive. We read the
+  // current list and append only if the table isn't already present.
+  auto tables = ListShardingPolicyTables();
+  bool present = false;
+  for (const auto& t : tables) {
+    if (t == table) { present = true; break; }
+  }
+
+  std::vector<KVOperation> ops;
+  ops.push_back({ReplicatedDBOp::PUT,
+                 ShardingPolicyKey(table), serialized_policy});
+  if (!present) {
+    tables.push_back(table);
+    ops.push_back({ReplicatedDBOp::PUT,
+                   KEY_SHARDING_POLICY_TABLES, JoinReplicas(tables)});
+  }
+  return BatchWithVersion(ops);
+}
+
+// @unsafe - RocksDB batch write via Raft
+bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
+  if (!db_ || table.empty()) return false;
+
+  auto tables = ListShardingPolicyTables();
+  std::vector<std::string> pruned;
+  pruned.reserve(tables.size());
+  for (const auto& t : tables) {
+    if (t != table) pruned.push_back(t);
+  }
+  // If nothing to remove and the value key is also absent, no-op the
+  // write to avoid a spurious version bump.
+  if (pruned.size() == tables.size() &&
+      GetShardingPolicy(table).empty()) {
+    return true;
+  }
+
+  std::vector<KVOperation> ops;
+  ops.push_back({ReplicatedDBOp::DELETE, ShardingPolicyKey(table), ""});
+  ops.push_back({ReplicatedDBOp::PUT,
+                 KEY_SHARDING_POLICY_TABLES, JoinReplicas(pruned)});
+  return BatchWithVersion(ops);
+}
+
+// @unsafe - RocksDB read
+std::vector<std::string> ConfigManager::ListShardingPolicyTables() {
+  if (!db_) return {};
+  std::string value;
+  if (!db_->Get(KEY_SHARDING_POLICY_TABLES, &value)) return {};
+  return SplitReplicas(value);  // comma-separated list, same encoding as replicas
+}

@@ -26,6 +26,16 @@ namespace janus {
  *   epoch                   — global speculative epoch number (uint64)
  *   node/<site>/addr        — node network address
  *   node/<site>/status      — alive, dead, decommissioning
+ *   sharding/mode           — default routing mode "hash" or "range"
+ *                             when no per-table policy is registered
+ *   sharding/policy/<table> — opaque serialized TableShardingPolicy
+ *                             bytes for one table. Absence means fall
+ *                             back to sharding/mode.
+ *   sharding/policy_tables  — comma-separated list of tables that
+ *                             currently have a policy (maintained by
+ *                             SetShardingPolicy / DeleteShardingPolicy
+ *                             so ClusterConfig can enumerate without a
+ *                             ReplicatedKV Scan primitive).
  */
 // @unsafe - Wraps a ReplicatedKV (raw pointer; concrete impl may touch
 // RocksDB/Raft).
@@ -130,6 +140,37 @@ public:
     // @unsafe - RocksDB batch write via Raft
     bool SetNodeStatus(const std::string& site, const std::string& status);
 
+    // =========================================================================
+    // Sharding policy — opaque bytes
+    // =========================================================================
+    //
+    // Callers serialize a TableShardingPolicy into a std::string and pass
+    // it as bytes; ConfigManager stores those bytes verbatim under
+    // sharding/policy/<table> and maintains sharding/policy_tables so the
+    // set of registered tables can be enumerated without a KV Scan
+    // primitive. This keeps ConfigManager free of the rrr::Marshal
+    // dependency the policy types drag in.
+
+    // @unsafe - RocksDB read
+    std::string GetShardingMode();  // "" if unset (treated as "hash")
+
+    // @unsafe - RocksDB batch write via Raft
+    bool SetShardingMode(const std::string& mode);  // "hash" | "range"
+
+    // @unsafe - RocksDB read. Returns empty string if unset.
+    std::string GetShardingPolicy(const std::string& table);
+
+    // @unsafe - RocksDB batch write via Raft. Serialized_policy is stored
+    // verbatim; empty policy is refused (use DeleteShardingPolicy).
+    bool SetShardingPolicy(const std::string& table,
+                           const std::string& serialized_policy);
+
+    // @unsafe - RocksDB batch write via Raft
+    bool DeleteShardingPolicy(const std::string& table);
+
+    // @unsafe - RocksDB read. Order is not stable across calls.
+    std::vector<std::string> ListShardingPolicyTables();
+
 private:
     ReplicatedKV* db_;  // Non-owning pointer, lifetime managed externally
 
@@ -157,6 +198,14 @@ private:
     static constexpr const char* KEY_VERSION = "__version__";
     static constexpr const char* KEY_SHARD_COUNT = "shard_count";
     static constexpr const char* KEY_EPOCH = "epoch";
+    static constexpr const char* KEY_SHARDING_MODE = "sharding/mode";
+    static constexpr const char* KEY_SHARDING_POLICY_TABLES =
+        "sharding/policy_tables";
+
+    // @safe - Pure string formatting
+    static std::string ShardingPolicyKey(const std::string& table) {
+        return std::string("sharding/policy/") + table;
+    }
 };
 
 } // namespace janus
