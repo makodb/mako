@@ -2,7 +2,6 @@
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
-#include "cluster/replicated_kv.h"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -14,9 +13,19 @@ namespace janus {
 
 class RaftServer;  // Forward declaration
 
-// ReplicatedDBOp and KVOperation are now defined in
-// cluster/replicated_kv.h so ConfigManager can depend on the
-// abstract interface without pulling in <rocksdb/c.h>.
+// @safe - Trivially copyable enum for operation type
+enum class ReplicatedDBOp : uint8_t {
+    PUT = 1,
+    DELETE = 2,
+    BATCH = 3
+};
+
+// @safe - Plain data struct for batch operations
+struct KVOperation {
+    ReplicatedDBOp op;
+    std::string key;
+    std::string value;  // empty for DELETE
+};
 
 // TypeList-derived kind. Wire payload preserved
 // byte-for-byte:
@@ -71,13 +80,13 @@ public:
  * committed entries to local RocksDB with idempotency tracking.
  */
 // @unsafe - Wraps RocksDB C API pointers and Raft server interaction
-class ReplicatedDB : public ReplicatedKV {
+class ReplicatedDB {
 public:
     // @unsafe - Opens RocksDB, stores raw pointers
     ReplicatedDB(RaftServer* raft, const std::string& db_path);
 
     // @unsafe - Closes RocksDB
-    ~ReplicatedDB() override;
+    ~ReplicatedDB();
 
     // Non-copyable, non-movable
     ReplicatedDB(const ReplicatedDB&) = delete;
@@ -85,17 +94,17 @@ public:
 
     // Write operations (go through Raft)
     // @unsafe - Submits command via Raft, blocks until committed
-    bool Put(const std::string& key, const std::string& value) override;
+    bool Put(const std::string& key, const std::string& value);
 
     // @unsafe - Submits delete command via Raft, blocks until committed
-    bool Delete(const std::string& key) override;
+    bool Delete(const std::string& key);
 
     // @unsafe - Submits batch command via Raft, blocks until committed
-    bool Batch(const std::vector<KVOperation>& ops) override;
+    bool Batch(const std::vector<KVOperation>& ops);
 
     // Read operation (local RocksDB, stale reads)
     // @unsafe - Direct RocksDB read
-    bool Get(const std::string& key, std::string* value) override;
+    bool Get(const std::string& key, std::string* value);
 
     // Linearizable read via ReadIndex protocol.
     // Confirms this server is still leader and all committed entries are applied,

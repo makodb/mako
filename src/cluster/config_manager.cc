@@ -2,8 +2,8 @@
 
 using namespace janus;
 
-// @unsafe - Stores non-owning raw pointer
-ConfigManager::ConfigManager(ReplicatedKV* db) : db_(db) {}
+// @unsafe - Stores non-owning raw pointer to the KvStore.
+ConfigManager::ConfigManager(KvStore* kv) : kv_(kv) {}
 
 // ===========================================================================
 // Key formatting helpers
@@ -49,22 +49,29 @@ std::vector<std::string> ConfigManager::SplitReplicas(const std::string& csv) {
 // Version-bumping write helpers
 // ===========================================================================
 
-// @unsafe - Reads current __version__, increments, writes both atomically via BATCH
+// @unsafe - Writes key then bumps __version__ last.
 bool ConfigManager::PutWithVersion(const std::string& key, const std::string& value) {
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT, key, value});
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::PUT, key, value});
   return BatchWithVersion(ops);
 }
 
-// @unsafe - Reads current __version__, increments, writes extra_ops + version atomically
-bool ConfigManager::BatchWithVersion(const std::vector<KVOperation>& extra_ops) {
-  if (!db_) return false;
+// @unsafe - Applies extra_ops as point writes, then bumps __version__.
+//
+// The __version__ key is written LAST. There is no cross-key atomicity
+// on the non-txn OrderedIndex surface, but writing version last gives
+// the guarantee cache invalidation relies on: a reader that observes a
+// new __version__ has necessarily observed every data key of that
+// version (they were written before the bump). See the ConfigManager
+// header for why this is sufficient under single-writer, "shard 0 never
+// fails" operation.
+bool ConfigManager::BatchWithVersion(const std::vector<ConfigWrite>& extra_ops) {
+  if (!kv_) return false;
 
-  // Read current version
-  // @unsafe { RocksDB read }
+  // Read current version.
   uint64_t version = 0;
   std::string version_str;
-  if (db_->Get(KEY_VERSION, &version_str)) {
+  if (kv_->get(KEY_VERSION, &version_str)) {
     try {
       version = std::stoull(version_str);
     } catch (...) {
@@ -73,23 +80,32 @@ bool ConfigManager::BatchWithVersion(const std::vector<KVOperation>& extra_ops) 
   }
   version++;
 
-  // Build batch: extra ops + version update
-  std::vector<KVOperation> batch = extra_ops;
-  batch.push_back({ReplicatedDBOp::PUT, KEY_VERSION, std::to_string(version)});
-
-  return db_->Batch(batch);
+  // Apply data ops first...
+  for (const auto& op : extra_ops) {
+    switch (op.op) {
+      case ConfigOp::PUT:
+        kv_->put(op.key, op.value);
+        break;
+      case ConfigOp::DELETE:
+        kv_->remove(op.key);
+        break;
+    }
+  }
+  // ...then bump the version so it's the last write to become visible.
+  kv_->put(KEY_VERSION, std::to_string(version));
+  return true;
 }
 
 // ===========================================================================
 // Version management
 // ===========================================================================
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 uint64_t ConfigManager::GetVersion() {
-  if (!db_) return 0;
+  if (!kv_) return 0;
 
   std::string value;
-  if (db_->Get(KEY_VERSION, &value)) {
+  if (kv_->get(KEY_VERSION, &value)) {
     try {
       return std::stoull(value);
     } catch (...) {
@@ -103,12 +119,12 @@ uint64_t ConfigManager::GetVersion() {
 // Shard management
 // ===========================================================================
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 uint32_t ConfigManager::GetShardCount() {
-  if (!db_) return 0;
+  if (!kv_) return 0;
 
   std::string value;
-  if (db_->Get(KEY_SHARD_COUNT, &value)) {
+  if (kv_->get(KEY_SHARD_COUNT, &value)) {
     try {
       return static_cast<uint32_t>(std::stoul(value));
     } catch (...) {
@@ -118,55 +134,55 @@ uint32_t ConfigManager::GetShardCount() {
   return 0;
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardCount(uint32_t count) {
   return PutWithVersion(KEY_SHARD_COUNT, std::to_string(count));
 }
 
-// @unsafe - RocksDB read, parses comma-separated string
+// @unsafe - KvStore read, parses comma-separated string
 std::vector<std::string> ConfigManager::GetShardReplicas(uint32_t shard_id) {
-  if (!db_) return {};
+  if (!kv_) return {};
 
   std::string value;
-  if (db_->Get(ShardKey(shard_id, "replicas"), &value)) {
+  if (kv_->get(ShardKey(shard_id, "replicas"), &value)) {
     return SplitReplicas(value);
   }
   return {};
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardReplicas(uint32_t shard_id, const std::vector<std::string>& replicas) {
   return PutWithVersion(ShardKey(shard_id, "replicas"), JoinReplicas(replicas));
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetShardLeader(uint32_t shard_id) {
-  if (!db_) return "";
+  if (!kv_) return "";
 
   std::string value;
-  if (db_->Get(ShardKey(shard_id, "leader"), &value)) {
+  if (kv_->get(ShardKey(shard_id, "leader"), &value)) {
     return value;
   }
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardLeader(uint32_t shard_id, const std::string& leader) {
   return PutWithVersion(ShardKey(shard_id, "leader"), leader);
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetShardStatus(uint32_t shard_id) {
-  if (!db_) return "";
+  if (!kv_) return "";
 
   std::string value;
-  if (db_->Get(ShardKey(shard_id, "status"), &value)) {
+  if (kv_->get(ShardKey(shard_id, "status"), &value)) {
     return value;
   }
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardStatus(uint32_t shard_id, const std::string& status) {
   return PutWithVersion(ShardKey(shard_id, "status"), status);
 }
@@ -175,45 +191,45 @@ bool ConfigManager::SetShardStatus(uint32_t shard_id, const std::string& status)
 // Shard lifecycle
 // ===========================================================================
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::AddShard(uint32_t shard_id, const std::vector<std::string>& replicas) {
-  if (!db_) return false;
+  if (!kv_) return false;
 
   // Read current shard count
   uint32_t count = GetShardCount();
 
   // Build batch: set replicas, status, increment shard_count
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT, ShardKey(shard_id, "replicas"), JoinReplicas(replicas)});
-  ops.push_back({ReplicatedDBOp::PUT, ShardKey(shard_id, "status"), "active"});
-  ops.push_back({ReplicatedDBOp::PUT, KEY_SHARD_COUNT, std::to_string(count + 1)});
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::PUT, ShardKey(shard_id, "replicas"), JoinReplicas(replicas)});
+  ops.push_back({ConfigOp::PUT, ShardKey(shard_id, "status"), "active"});
+  ops.push_back({ConfigOp::PUT, KEY_SHARD_COUNT, std::to_string(count + 1)});
 
   return BatchWithVersion(ops);
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::RemoveShard(uint32_t shard_id) {
-  if (!db_) return false;
+  if (!kv_) return false;
 
   // Read current shard count
   uint32_t count = GetShardCount();
   if (count == 0) return false;
 
   // Build batch: delete shard keys, decrement shard_count
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::DELETE, ShardKey(shard_id, "replicas"), ""});
-  ops.push_back({ReplicatedDBOp::DELETE, ShardKey(shard_id, "leader"), ""});
-  ops.push_back({ReplicatedDBOp::DELETE, ShardKey(shard_id, "status"), ""});
-  ops.push_back({ReplicatedDBOp::PUT, KEY_SHARD_COUNT, std::to_string(count - 1)});
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::DELETE, ShardKey(shard_id, "replicas"), ""});
+  ops.push_back({ConfigOp::DELETE, ShardKey(shard_id, "leader"), ""});
+  ops.push_back({ConfigOp::DELETE, ShardKey(shard_id, "status"), ""});
+  ops.push_back({ConfigOp::PUT, KEY_SHARD_COUNT, std::to_string(count - 1)});
 
   return BatchWithVersion(ops);
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
-  if (!db_) return 0;
+  if (!kv_) return 0;
   std::string value;
-  if (db_->Get(ShardKey(shard_id, "replacement"), &value)) {
+  if (kv_->get(ShardKey(shard_id, "replacement"), &value)) {
     try {
       return static_cast<uint32_t>(std::stoul(value));
     } catch (...) {
@@ -223,9 +239,9 @@ uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
   return 0;
 }
 
-// @unsafe - RocksDB batch write via Raft (multi-key atomic)
+// @unsafe - KvStore writes (status, replacement, replicas, epoch) + version
 bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
-  if (!db_) return false;
+  if (!kv_) return false;
 
   // Validate — refuse obviously nonsensical requests. These checks are
   // best-effort reads against the current (stale) state; the batch
@@ -251,14 +267,14 @@ bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
   //   - __version__ bump is folded in by BatchWithVersion
   uint64_t epoch = GetEpoch() + 1;
 
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT,
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::PUT,
                  ShardKey(dead_id, "status"), "dead"});
-  ops.push_back({ReplicatedDBOp::PUT,
+  ops.push_back({ConfigOp::PUT,
                  ShardKey(dead_id, "replacement"), std::to_string(taker_id)});
-  ops.push_back({ReplicatedDBOp::PUT,
+  ops.push_back({ConfigOp::PUT,
                  ShardKey(dead_id, "replicas"), ""});
-  ops.push_back({ReplicatedDBOp::PUT,
+  ops.push_back({ConfigOp::PUT,
                  KEY_EPOCH, std::to_string(epoch)});
 
   return BatchWithVersion(ops);
@@ -268,12 +284,12 @@ bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
 // Epoch management
 // ===========================================================================
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 uint64_t ConfigManager::GetEpoch() {
-  if (!db_) return 0;
+  if (!kv_) return 0;
 
   std::string value;
-  if (db_->Get(KEY_EPOCH, &value)) {
+  if (kv_->get(KEY_EPOCH, &value)) {
     try {
       return std::stoull(value);
     } catch (...) {
@@ -283,15 +299,15 @@ uint64_t ConfigManager::GetEpoch() {
   return 0;
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::AdvanceEpoch() {
-  if (!db_) return false;
+  if (!kv_) return false;
 
   uint64_t epoch = GetEpoch();
   epoch++;
 
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT, KEY_EPOCH, std::to_string(epoch)});
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::PUT, KEY_EPOCH, std::to_string(epoch)});
 
   return BatchWithVersion(ops);
 }
@@ -300,34 +316,34 @@ bool ConfigManager::AdvanceEpoch() {
 // Node management
 // ===========================================================================
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetNodeAddr(const std::string& site) {
-  if (!db_) return "";
+  if (!kv_) return "";
 
   std::string value;
-  if (db_->Get(NodeKey(site, "addr"), &value)) {
+  if (kv_->get(NodeKey(site, "addr"), &value)) {
     return value;
   }
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetNodeAddr(const std::string& site, const std::string& addr) {
   return PutWithVersion(NodeKey(site, "addr"), addr);
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetNodeStatus(const std::string& site) {
-  if (!db_) return "";
+  if (!kv_) return "";
 
   std::string value;
-  if (db_->Get(NodeKey(site, "status"), &value)) {
+  if (kv_->get(NodeKey(site, "status"), &value)) {
     return value;
   }
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetNodeStatus(const std::string& site, const std::string& status) {
   return PutWithVersion(NodeKey(site, "status"), status);
 }
@@ -336,31 +352,31 @@ bool ConfigManager::SetNodeStatus(const std::string& site, const std::string& st
 // Sharding policy — opaque bytes
 // ===========================================================================
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetShardingMode() {
-  if (!db_) return "";
+  if (!kv_) return "";
   std::string value;
-  if (db_->Get(KEY_SHARDING_MODE, &value)) return value;
+  if (kv_->get(KEY_SHARDING_MODE, &value)) return value;
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardingMode(const std::string& mode) {
   return PutWithVersion(KEY_SHARDING_MODE, mode);
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::string ConfigManager::GetShardingPolicy(const std::string& table) {
-  if (!db_ || table.empty()) return "";
+  if (!kv_ || table.empty()) return "";
   std::string value;
-  if (db_->Get(ShardingPolicyKey(table), &value)) return value;
+  if (kv_->get(ShardingPolicyKey(table), &value)) return value;
   return "";
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::SetShardingPolicy(const std::string& table,
                                        const std::string& serialized_policy) {
-  if (!db_ || table.empty() || serialized_policy.empty()) return false;
+  if (!kv_ || table.empty() || serialized_policy.empty()) return false;
 
   // Maintain the tables index alongside the value so ClusterConfig can
   // enumerate registered tables without a KV Scan primitive. We read the
@@ -371,20 +387,20 @@ bool ConfigManager::SetShardingPolicy(const std::string& table,
     if (t == table) { present = true; break; }
   }
 
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT,
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::PUT,
                  ShardingPolicyKey(table), serialized_policy});
   if (!present) {
     tables.push_back(table);
-    ops.push_back({ReplicatedDBOp::PUT,
+    ops.push_back({ConfigOp::PUT,
                    KEY_SHARDING_POLICY_TABLES, JoinReplicas(tables)});
   }
   return BatchWithVersion(ops);
 }
 
-// @unsafe - RocksDB batch write via Raft
+// @unsafe - KvStore write + version
 bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
-  if (!db_ || table.empty()) return false;
+  if (!kv_ || table.empty()) return false;
 
   auto tables = ListShardingPolicyTables();
   std::vector<std::string> pruned;
@@ -399,17 +415,17 @@ bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
     return true;
   }
 
-  std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::DELETE, ShardingPolicyKey(table), ""});
-  ops.push_back({ReplicatedDBOp::PUT,
+  std::vector<ConfigWrite> ops;
+  ops.push_back({ConfigOp::DELETE, ShardingPolicyKey(table), ""});
+  ops.push_back({ConfigOp::PUT,
                  KEY_SHARDING_POLICY_TABLES, JoinReplicas(pruned)});
   return BatchWithVersion(ops);
 }
 
-// @unsafe - RocksDB read
+// @unsafe - KvStore read
 std::vector<std::string> ConfigManager::ListShardingPolicyTables() {
-  if (!db_) return {};
+  if (!kv_) return {};
   std::string value;
-  if (!db_->Get(KEY_SHARDING_POLICY_TABLES, &value)) return {};
+  if (!kv_->get(KEY_SHARDING_POLICY_TABLES, &value)) return {};
   return SplitReplicas(value);  // comma-separated list, same encoding as replicas
 }

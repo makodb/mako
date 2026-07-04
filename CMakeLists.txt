@@ -1768,11 +1768,12 @@ if(BUILD_TESTS)
 
     # ConfigManager standalone unit tests
     #
-    # Deliberately does NOT link txlog_core / rrr / memdb / RocksDB. The
-    # three .cc sources compiled in (config_manager / cluster_config /
-    # config_watcher) depend only on stdlib + the ReplicatedKV interface,
-    # so the test drives the configuration-manager component against an
-    # in-memory fake without spinning up Raft or RocksDB.
+    # Truly standalone: links ONLY the three cluster .cc sources + gtest.
+    # ConfigManager talks to the cluster-owned KvStore port (get/put/
+    # remove, stdlib only), so this binary needs no storage engine, no
+    # masstree config, no CONFIG_H, no txlog_core / rrr / memdb / RocksDB.
+    # The mako binding (OrderedIndexKvStore) is verified separately by
+    # test_ordered_index_kv_store below.
     add_executable(test_config_manager
         tests/config_manager_test.cc
         src/cluster/config_manager.cc
@@ -1781,6 +1782,7 @@ if(BUILD_TESTS)
     )
     target_include_directories(test_config_manager PRIVATE
         src
+        src/cluster
         ${GTEST_INCLUDE_DIRS}
     )
     # The brew clang ships its own libc++ but does not add its lib dir
@@ -1797,6 +1799,33 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
+
+    # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
+    # Unlike test_config_manager (pure cluster), this TU pulls the
+    # storage interface header + an in-memory FullOrderedIndex fake, so
+    # it needs src/mako on the include path plus the masstree-config /
+    # CONFIG_H plumbing that abstract_ordered_index.h transitively wants.
+    # It still links NO storage library (the interface is pure-virtual;
+    # the fake provides the vtable).
+    add_executable(test_ordered_index_kv_store
+        tests/ordered_index_kv_store_test.cc
+    )
+    target_include_directories(test_ordered_index_kv_store PRIVATE
+        src
+        src/mako
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_BINARY_DIR}/generated
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_link_options(test_ordered_index_kv_store PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_ordered_index_kv_store
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    target_compile_definitions(test_ordered_index_kv_store PRIVATE CONFIG_H=\"${CONFIG_H}\")
+    add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
 
     # Sharding Policy Startup Tests
     add_executable(test_sharding_startup src/rrr/tests/sharding_startup_test.cc)
