@@ -354,6 +354,8 @@ The router lives entirely inside `ClusterConfig`. `ClusterConfig::GetShardForKey
 
 Callers are in `src/cluster/` — `shard_router.{h,cc}` is the public dispatcher; `sharding_policy.h`, `sharding_policy_cache.h`, `sharding_policy_builder.h` are the pure data types, cache, and fluent builder respectively.
 
+`compute_shard_for_key(table_id, key)` (`shard_router.cc`) consults a **process-global `ClusterConfig`** (`janus::get_cluster_config()`, populated by the `ConfigWatcher`'s update callback) as the single source of truth once it has a nonzero `shard_count` — resolving the `table_id` to a table name via `TableRegistry` and delegating to `ClusterConfig::GetShardForKey(table, key)`. Until the watcher populates that global (i.e. before the shard-0 config path is wired at a node), the router falls back to the legacy `ShardingPolicyCache` and, failing that, the table-ID heuristic `(table_id - 1) / NUM_TABLES_PER_SHARD`. This gate means the `ClusterConfig`-based path is a no-op until wired in, so it can land ahead of the runtime bootstrap without changing behavior.
+
 The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX`; callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
 
 For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs/reference/tpcc-sharding.md` — warehouse-based sharding yields ~5% remote NewOrder and ~8% remote Payment with 2 shards.

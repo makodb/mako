@@ -12,12 +12,33 @@
 #include "shard_router.h"
 #include "mako/lib/table_registry.h"
 #include "sharding_policy_cache.h"
+#include "cluster_config.h"
 
 namespace mako {
 
 // @safe - Uses thread-safe caches
 int compute_shard_for_key(int table_id, const std::string& key) {
-    // First, try policy-based routing
+    // Unified path: once the process-global ClusterConfig is populated
+    // (ConfigWatcher has loaded topology from shard 0's __mako_config__),
+    // it is the single source of truth for routing — per-table policy,
+    // hash-mod default, and dead-shard replacement reroute all live in
+    // ClusterConfig::GetShardForKey. Gated on a nonzero shard_count so
+    // this is a no-op until the watcher wiring lands (Stage 3d): with an
+    // empty ClusterConfig we fall through to the legacy cache below.
+    auto& cc = janus::get_cluster_config();
+    if (cc.GetShardCount() > 0) {
+        std::string table_name;
+        auto& table_registry = get_table_registry();
+        auto table_name_opt = table_registry.get_table_name(table_id);
+        if (table_name_opt.is_some()) {
+            table_name = table_name_opt.as_ref().unwrap();
+        }
+        // GetShardForKey always yields a valid shard (policy → hash-mod
+        // fallback), then chases any dead-shard replacement pointer.
+        return static_cast<int>(cc.GetShardForKey(table_name, key));
+    }
+
+    // Legacy path: ShardingPolicyCache + table-ID fallback.
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     if (policy_cache.is_initialized()) {

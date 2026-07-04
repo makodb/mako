@@ -8,6 +8,7 @@
 #include "mako/lib/table_registry.h"
 #include "cluster/sharding_policy_cache.h"
 #include "cluster/sharding_policy_builder.h"
+#include "cluster/cluster_config.h"
 
 namespace mako {
 
@@ -16,11 +17,16 @@ protected:
     void SetUp() override {
         // Clear registries before each test
         get_table_registry().clear();
+        // Empty the process-global ClusterConfig so routing uses the
+        // legacy ShardingPolicyCache path (shard_count 0 disables the
+        // ClusterConfig branch). The ClusterConfig routing test opts in
+        // explicitly by populating it.
+        janus::get_cluster_config().SetShardCount(0);
     }
 
     void TearDown() override {
-        // Clear registries after each test
         get_table_registry().clear();
+        janus::get_cluster_config().SetShardCount(0);
     }
 };
 
@@ -243,6 +249,58 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
     policy_cache.set_policy(policy);
 
     EXPECT_EQ(4, get_policy_num_shards());
+}
+
+// =============================================================================
+// Routing consults the process-global ClusterConfig when populated
+// =============================================================================
+
+TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigWhenPopulated) {
+    get_table_registry().register_table(1, "WAREHOUSE");
+
+    auto& cc = janus::get_cluster_config();
+    cc.SetShardCount(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.UpdateShard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.UpdateShard(1, s1);
+
+    // With ClusterConfig populated, compute_shard_for_key routes through
+    // it (hash-mod default here — no per-table policy). Stable + in range.
+    const int a = compute_shard_for_key(1, "warehouse/42");
+    const int b = compute_shard_for_key(1, "warehouse/42");
+    EXPECT_EQ(a, b);
+    EXPECT_GE(a, 0);
+    EXPECT_LT(a, 2);
+}
+
+TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig) {
+    get_table_registry().register_table(1, "WAREHOUSE");
+
+    auto& cc = janus::get_cluster_config();
+    cc.SetShardCount(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.UpdateShard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.UpdateShard(1, s1);
+
+    // Find a key that routes to shard 1.
+    std::string probe;
+    for (int i = 0; i < 64; ++i) {
+        const std::string k = "k" + std::to_string(i);
+        if (compute_shard_for_key(1, k) == 1) { probe = k; break; }
+    }
+    ASSERT_FALSE(probe.empty());
+
+    // Kill shard 1 -> taker 0. The router must reroute the probe key.
+    janus::ShardInfo dead; dead.id = 1; dead.status = "dead"; dead.replacement = 0;
+    cc.UpdateShard(1, dead);
+    EXPECT_EQ(compute_shard_for_key(1, probe), 0);
+}
+
+TEST_F(ShardRouterTest, EmptyClusterConfigFallsBackToLegacyPath) {
+    // With an empty ClusterConfig (shard_count 0), routing must use the
+    // legacy table-ID fallback, unchanged from before this wiring.
+    // Table 1 with no policy -> (1-1)/NUM_TABLES_PER_SHARD == 0.
+    EXPECT_EQ(0u, janus::get_cluster_config().GetShardCount());
+    EXPECT_EQ(compute_shard_for_key(1, "anykey"),
+              (1 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD);
 }
 
 }  // namespace mako

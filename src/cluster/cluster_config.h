@@ -102,4 +102,12 @@ private:
                                     const std::string& key);
 };
 
+// Process-global ClusterConfig — the routing cache the production shard
+// router consults. Populated by the ConfigWatcher update callback (a
+// LoadFromConfigManager into this instance). Until it has a nonzero
+// shard_count, the router falls back to the legacy ShardingPolicyCache
+// path, so this is a no-op until something wires the watcher in.
+// @safe - returns a reference to a function-local static
+ClusterConfig& get_cluster_config();
+
 } // namespace janus

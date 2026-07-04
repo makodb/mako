@@ -240,3 +240,15 @@ bool ClusterConfig::LoadFromConfigManager(ConfigManager* cm) {
 
     return true;
 }
+
+// @safe - function-local static; the process-global routing cache.
+// Wrapped in `namespace janus` (not just relying on `using namespace
+// janus`) so this free function is defined as janus::get_cluster_config,
+// matching its declaration — otherwise it lands in the global namespace
+// and the router's `janus::get_cluster_config()` call is undefined.
+namespace janus {
+ClusterConfig& get_cluster_config() {
+    static ClusterConfig instance;
+    return instance;
+}
+}  // namespace janus
