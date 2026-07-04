@@ -6,6 +6,10 @@
 #include "gtest/gtest.h"
 #include "cluster/sharding_policy.h"
 #include "cluster/sharding_policy_builder.h"
+// sharding_policy.h forward-declares rrr::Marshal so it stays
+// standalone-testable from ClusterConfig. This test constructs
+// Marshal locals directly, so we need the complete type.
+#include "rrr/rrr.hpp"
 
 namespace janus {
 

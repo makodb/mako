@@ -5,9 +5,8 @@
 // binary depend on the policy types without pulling the rrr module
 // into their link line.
 
-#include "sharding_policy.h"
-
 #include "rrr/rrr.hpp"
+#include "sharding_policy_marshal.h"
 
 namespace janus {
 

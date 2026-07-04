@@ -6,6 +6,7 @@
 #include "rcc_rpc.h"
 #include "config_schema.h"
 #include "cluster/sharding_policy.h"
+#include "cluster/sharding_policy_marshal.h"
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 

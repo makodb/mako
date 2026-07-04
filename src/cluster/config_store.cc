@@ -9,6 +9,7 @@
 #include "config_store.h"
 
 #include "rrr/rrr.hpp"
+#include "sharding_policy_marshal.h"
 
 import std;
 

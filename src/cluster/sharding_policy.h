@@ -17,13 +17,13 @@
 #include <vector>
 #include <map>
 
-// Forward declare rrr::Marshal so this header does not have to pull the
-// whole rrr framework in. The friend operator<< / operator>> declarations
-// below only need the type as a reference; call sites that actually
-// invoke the operators must include <rrr/rrr.hpp> themselves.
-namespace rrr {
-class Marshal;
-}
+// NOTE: sharding_policy.h has ZERO dependency on rrr on purpose so it
+// can be included from cluster/cluster_config.h without pulling the
+// rrr module in — that is what keeps test_config_manager standalone.
+// The rrr::Marshal serialization operators live in the separate
+// header sharding_policy_marshal.h with bodies in
+// sharding_policy_marshal.cc; anyone who needs to serialize should
+// include that header directly.
 
 namespace janus {
 
@@ -236,23 +236,5 @@ struct ShardingPolicySet {
 
     // Marshal serialization: see below at namespace scope.
 };
-
-// ==========================================================================
-// Marshal serialization — declarations only. Bodies live in
-// sharding_policy_marshal.cc so that including this header does not
-// require rrr/rrr.hpp to be complete. Callers who need to serialize
-// or deserialize must also include <rrr/rrr.hpp> and link the
-// sharding_policy_marshal.cc translation unit.
-// ==========================================================================
-
-// @unsafe - Marshal I/O
-rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e);
-rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e);
-rrr::Marshal& operator<<(rrr::Marshal& m, const RangeMapping& r);
-rrr::Marshal& operator>>(rrr::Marshal& m, RangeMapping& r);
-rrr::Marshal& operator<<(rrr::Marshal& m, const TableShardingPolicy& p);
-rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p);
-rrr::Marshal& operator<<(rrr::Marshal& m, const ShardingPolicySet& s);
-rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s);
 
 }  // namespace janus
