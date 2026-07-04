@@ -11,7 +11,7 @@
 
 #include "rcc_rpc.h"                    // ConfigKvServiceService / Proxy
 #include "cluster/kv_store.h"           // KvStore
-#include "cluster/remote_kv_store.h"    // RemoteKvStore::ReadFn
+#include "cluster/remote_kv_store.h"    // RemoteKvStoreReadFn
 
 #include <string>
 #include <utility>
@@ -51,14 +51,14 @@ private:
 };
 
 /**
- * Client side. Build a RemoteKvStore::ReadFn from a connected
+ * Client side. Build a RemoteKvStoreReadFn from a connected
  * ConfigKvServiceProxy. The proxy must outlive the returned function.
  * Production wires this on a non-shard-0 node, pointed at shard 0's
  * leader; the resulting ReadFn goes into a RemoteKvStore, which a
  * ConfigManager/ConfigWatcher reads through.
  */
 // @unsafe - issues an RPC per get.
-inline RemoteKvStore::ReadFn make_config_read_fn(ConfigKvServiceProxy* proxy) {
+inline RemoteKvStoreReadFn make_config_read_fn(ConfigKvServiceProxy* proxy) {
     return [proxy](const std::string& key, std::string* out) -> bool {
         if (proxy == nullptr || out == nullptr) return false;
         ConfigKvServiceProxy::RpcReadConfigKeyRequest req;

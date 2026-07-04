@@ -193,7 +193,7 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyValueFieldIndexOutOfBounds) {
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyValueNegativeFieldIndex) {
     KeyExtractor extractor;
-    extractor.type = KeyExtractorType::FIELD_INDEX;
+    extractor.kind = KeyExtractorType::FIELD_INDEX;
     extractor.field_index = -1;
     std::vector<int64_t> key_fields = {42};
 

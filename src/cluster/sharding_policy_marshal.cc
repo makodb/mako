@@ -12,7 +12,7 @@ namespace janus {
 
 // @unsafe - Marshal I/O
 rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e) {
-    m << static_cast<int32_t>(e.type);
+    m << static_cast<int32_t>(e.kind);
     m << e.field_index;
     m << e.prefix_length;
     return m;
@@ -22,7 +22,7 @@ rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e) {
 rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e) {
     int32_t type_val;
     m >> type_val;
-    e.type = static_cast<KeyExtractorType>(type_val);
+    e.kind = static_cast<KeyExtractorType>(type_val);
     m >> e.field_index;
     m >> e.prefix_length;
     return m;

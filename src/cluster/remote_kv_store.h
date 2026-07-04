@@ -17,40 +17,78 @@ namespace janus {
  *
  * Transport-agnostic on purpose: it depends only on the injected
  * ReadFn, so it stays in cluster/ (no RPC-layer dependency) and is
- * unit-testable standalone. The real RPC wiring lives on the mako side
- * and is passed in as the ReadFn.
+ * unit-testable standalone.
  *
- * Read-only: config mutation is shard-0-only (an operator/admin path
- * drives ConfigManager on shard 0's leader). A read-only consumer that
- * tries to Put/Delete is a bug, so we fail loudly (return / no-op)
- * rather than silently diverge from shard 0. Because ConfigManager and
- * ConfigWatcher only call get() when *loading* config, wrapping a
- * ConfigManager around a RemoteKvStore makes
- * ClusterConfig::LoadFromConfigManager work transparently against
- * shard 0 with no changes to either class.
+ * Read-only: config mutation is shard-0-only. A read-only consumer that
+ * tries to Put/Delete is a bug, so the writes are no-ops. Because
+ * ConfigManager and ConfigWatcher only call get() when loading config,
+ * wrapping a ConfigManager around a RemoteKvStore makes
+ * ClusterConfig::LoadFromConfigManager work transparently against shard 0.
+ *
+ * Authored in the inline-Rust DSL (docs/storage-interface.md): the
+ * `#if RUSTYCPP_RUST` block is the source of truth, the GEN block is the
+ * generated C++. Regenerate with scripts/regen_storage_dsl.sh. The read
+ * function type is now the namespace-scope RemoteKvStoreReadFn (was the
+ * nested RemoteKvStore::ReadFn) so the DSL struct can name it as a field
+ * type; invoking a std::function is the one thing the DSL can't spell, so
+ * it goes through the rkv_invoke kernel.
  */
-// @safe - delegates reads to an injected function; refuses writes.
-class RemoteKvStore : public KvStore {
-public:
-    // read_fn(key, out_value) -> found. In production this issues a
-    // ReadConfigKey RPC to shard 0's leader and fills *out on hit.
-    using ReadFn = std::function<bool(const std::string& key,
-                                      std::string* out_value)>;
 
-    explicit RemoteKvStore(ReadFn read_fn) : read_fn_(std::move(read_fn)) {}
+// read_fn(key, out_value) -> found. In production this issues a
+// ReadConfigKey RPC to shard 0's leader and fills *out on hit.
+using RemoteKvStoreReadFn =
+    std::function<bool(const std::string& key, std::string* out_value)>;
 
-    // @safe - delegates to the injected reader.
-    bool get(const std::string& key, std::string* out) override {
-        if (!read_fn_ || out == nullptr) return false;
-        return read_fn_(key, out);
+// @unsafe - invokes an injected std::function (a call through an
+// erased callable is not borrow-checkable).
+inline bool rkv_invoke(const RemoteKvStoreReadFn* fn,
+                       const std::string& key, std::string* out) {
+    if (fn == nullptr || !*fn || out == nullptr) return false;
+    return (*fn)(key, out);
+}
+
+#if RUSTYCPP_RUST
+pub struct RemoteKvStore {
+    read_fn: RemoteKvStoreReadFn,
+}
+#[cpp_inherit]
+impl KvStore for RemoteKvStore {
+    // Delegates to the injected reader.
+    fn get(&mut self, key: &std::string, out: *mut std::string) -> bool {
+        unsafe { rkv_invoke(&self.read_fn, key, out) }
     }
-
     // Read-only consumer: writes are not permitted (no-op).
-    void put(const std::string&, const std::string&) override {}
-    void remove(const std::string&) override {}
+    fn put(&mut self, key: &std::string, value: &std::string) {}
+    fn remove(&mut self, key: &std::string) {}
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=remote_kv_store.1 version=1 rust_sha256=3bcf00df6e9c66d5d9969d3f554cfb8ab6b2eb7e5544f2f9de734945dc075ddc*/
+struct RemoteKvStore;
 
-private:
-    ReadFn read_fn_;
+struct RemoteKvStore : public KvStore {
+    RemoteKvStoreReadFn read_fn;
+    RemoteKvStore(RemoteKvStoreReadFn read_fn_init) : KvStore(), read_fn(std::move(read_fn_init)) {}
+    RemoteKvStore(RemoteKvStore&& other) noexcept : KvStore(), read_fn(std::move(other.read_fn)) {}
+
+
+    bool get(const std::string& key, std::string* out);
+    void put(const std::string& key, const std::string& value);
+    void remove(const std::string& key);
 };
+
+
+inline bool RemoteKvStore::get(const std::string& key, std::string* out) {
+    // @unsafe
+    {
+        return rkv_invoke(&this->read_fn, key, out);
+    }
+}
+
+inline void RemoteKvStore::put(const std::string& key, const std::string& value) {
+}
+
+inline void RemoteKvStore::remove(const std::string& key) {
+}
+/*RUSTYCPP:GEN-END id=remote_kv_store.1*/
 
 }  // namespace janus

@@ -17,11 +17,13 @@
 #include <vector>
 #include <map>
 
-// deref_if_pointer_like, used by the DSL-generated method bodies below.
-// This is the rusty smart-pointer library, NOT rrr — the standalone
-// cluster test build already has this include path (sharding_policy_cache.h
-// pulls rusty too), so it does not break the no-rrr guarantee.
+// deref_if_pointer_like + rusty::clone, used by the DSL-generated method
+// bodies below (clone wraps the enum literals in the factory struct
+// literals). rusty, NOT rrr — the standalone cluster test build already
+// has this include path (sharding_policy_cache.h pulls rusty too), so it
+// does not break the no-rrr guarantee.
 #include <rusty/slice.hpp>
+#include <rusty/move.hpp>
 
 // NOTE: sharding_policy.h has ZERO dependency on rrr on purpose so it
 // can be included from cluster/cluster_config.h without pulling the
@@ -54,38 +56,76 @@ inline const char* key_extractor_type_to_string(KeyExtractorType type) {
 
 /**
  * Defines how to extract the sharding key from a composite row key.
+ *
+ * DSL value type (docs/storage-interface.md). The field is `kind`, not
+ * `type` — `type` is a Rust keyword the DSL can't spell. Copyable
+ * aggregate (plain struct + inherent impl); the marshal reader
+ * default-constructs + fills every field. Use KeyExtractor::defaults()
+ * for the old default-constructed values (FIELD_INDEX, 0, 4), or the
+ * byField/byPrefix/byHash factories.
  */
+#if RUSTYCPP_RUST
+pub struct KeyExtractor {
+    kind: KeyExtractorType,   // was `type`
+    field_index: i32,         // For FIELD_INDEX: which field (0-based)
+    prefix_length: i32,       // For PREFIX_BYTES: how many bytes to read
+}
+impl KeyExtractor {
+    // The old default-constructed values.
+    fn defaults() -> KeyExtractor {
+        KeyExtractor { kind: KeyExtractorType::FIELD_INDEX, field_index: 0, prefix_length: 4 }
+    }
+    // Replaces the old (kind, field, prefix) constructor.
+    fn make(kind: KeyExtractorType, field: i32, prefix: i32) -> KeyExtractor {
+        KeyExtractor { kind: kind, field_index: field, prefix_length: prefix }
+    }
+    fn byField(index: i32) -> KeyExtractor {
+        KeyExtractor { kind: KeyExtractorType::FIELD_INDEX, field_index: index, prefix_length: 0 }
+    }
+    fn byPrefix(length: i32) -> KeyExtractor {
+        KeyExtractor { kind: KeyExtractorType::PREFIX_BYTES, field_index: 0, prefix_length: length }
+    }
+    fn byHash() -> KeyExtractor {
+        KeyExtractor { kind: KeyExtractorType::HASH_MOD, field_index: 0, prefix_length: 0 }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=63e25ae66989b21861772976f0a9fc65653197f30139b6e00ce4a7e1b4ba63de*/
+struct KeyExtractor;
+
 struct KeyExtractor {
-    KeyExtractorType type = KeyExtractorType::FIELD_INDEX;
-    int32_t field_index = 0;      // For FIELD_INDEX: which field (0-based)
-    int32_t prefix_length = 4;    // For PREFIX_BYTES: how many bytes to read
+    KeyExtractorType kind;
+    int32_t field_index;
+    int32_t prefix_length;
 
-    // @safe - Default constructor
-    KeyExtractor() = default;
-
-    // @safe - Parameterized constructor
-    KeyExtractor(KeyExtractorType t, int32_t field = 0, int32_t prefix = 4)
-        : type(t), field_index(field), prefix_length(prefix) {}
-
-    // @safe - Create field-index extractor
-    static KeyExtractor byField(int32_t index) {
-        return KeyExtractor(KeyExtractorType::FIELD_INDEX, index, 0);
-    }
-
-    // @safe - Create prefix-bytes extractor
-    static KeyExtractor byPrefix(int32_t length) {
-        return KeyExtractor(KeyExtractorType::PREFIX_BYTES, 0, length);
-    }
-
-    // @safe - Create hash-mod extractor
-    static KeyExtractor byHash() {
-        return KeyExtractor(KeyExtractorType::HASH_MOD, 0, 0);
-    }
-
-    // Marshal serialization declared at namespace scope below — kept
-    // out of the class body so this header does not need rrr/rrr.hpp
-    // to be complete (see sharding_policy_marshal.cc for the bodies).
+    static KeyExtractor defaults();
+    static KeyExtractor make(KeyExtractorType kind, int32_t field, int32_t prefix);
+    static KeyExtractor byField(int32_t index);
+    static KeyExtractor byPrefix(int32_t length);
+    static KeyExtractor byHash();
 };
+
+
+inline KeyExtractor KeyExtractor::defaults() {
+    return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::FIELD_INDEX)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(4)};
+}
+
+inline KeyExtractor KeyExtractor::make(KeyExtractorType kind, int32_t field, int32_t prefix) {
+    return KeyExtractor{.kind = std::move(kind), .field_index = std::move(field), .prefix_length = std::move(prefix)};
+}
+
+inline KeyExtractor KeyExtractor::byField(int32_t index) {
+    return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::FIELD_INDEX)), .field_index = std::move(index), .prefix_length = static_cast<int32_t>(0)};
+}
+
+inline KeyExtractor KeyExtractor::byPrefix(int32_t length) {
+    return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::PREFIX_BYTES)), .field_index = static_cast<int32_t>(0), .prefix_length = std::move(length)};
+}
+
+inline KeyExtractor KeyExtractor::byHash() {
+    return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::HASH_MOD)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(0)};
+}
+/*RUSTYCPP:GEN-END id=sharding_policy.1*/
 
 /**
  * Maps a key range [start_key, end_key) to a specific shard.
@@ -118,7 +158,7 @@ impl RangeMapping {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=4b3baf906968525e8659e0c7149163b206e128fe66f8e554bd86de4475fea60e*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=4b3baf906968525e8659e0c7149163b206e128fe66f8e554bd86de4475fea60e*/
 struct RangeMapping;
 
 struct RangeMapping {
@@ -138,7 +178,7 @@ inline RangeMapping RangeMapping::make(int64_t start, int64_t end, int32_t shard
 inline bool RangeMapping::contains(int64_t key) const {
     return (rusty::detail::deref_if_pointer_like(((*this)).start_key) <= rusty::detail::deref_if_pointer_like(key)) && (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(((*this)).end_key));
 }
-/*RUSTYCPP:GEN-END id=sharding_policy.1*/
+/*RUSTYCPP:GEN-END id=sharding_policy.2*/
 
 /**
  * Sharding policy for a single table.
@@ -203,7 +243,7 @@ impl TableShardingPolicy {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=f813f18abb5b558610eebb7a125eca26d27d52ecc18b2efc295156b19c12b6e2*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=f813f18abb5b558610eebb7a125eca26d27d52ecc18b2efc295156b19c12b6e2*/
 struct TableShardingPolicy;
 
 struct TableShardingPolicy {
@@ -247,9 +287,7 @@ inline void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t s
         tsp_add_range_sorted(&this->ranges, std::move(start), std::move(end), std::move(shard));
     }
 }
-/*RUSTYCPP:GEN-END id=sharding_policy.2*/
-/*RUSTYCPP:GEN-BEGIN*/
-/*RUSTYCPP:GEN-END*/
+/*RUSTYCPP:GEN-END id=sharding_policy.3*/
 
 // @safe - factory body (TableShardingPolicy is a complete type here)
 inline TableShardingPolicy tsp_create(const std::string& name,
@@ -333,7 +371,7 @@ impl ShardingPolicySet {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=1e2b27c5b066b1eee90e27f8bd2b752ad2efd6aa73f8ad32f301e3400210cc7d*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=1e2b27c5b066b1eee90e27f8bd2b752ad2efd6aa73f8ad32f301e3400210cc7d*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -388,9 +426,7 @@ inline bool ShardingPolicySet::has_policy(const std::string& table_name) const {
 inline size_t ShardingPolicySet::table_count() const {
     return ((*this)).policies.size();
 }
-/*RUSTYCPP:GEN-END id=sharding_policy.3*/
-/*RUSTYCPP:GEN-BEGIN*/
-/*RUSTYCPP:GEN-END*/
+/*RUSTYCPP:GEN-END id=sharding_policy.4*/
 
 // @safe - factory body (ShardingPolicySet is a complete type here)
 inline ShardingPolicySet sps_with_shards(int32_t shards) {

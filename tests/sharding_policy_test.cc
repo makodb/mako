@@ -28,31 +28,31 @@ protected:
 // =============================================================================
 
 TEST_F(ShardingPolicyTest, KeyExtractorDefaultConstruction) {
-    KeyExtractor extractor;
-    EXPECT_EQ(extractor.type, KeyExtractorType::FIELD_INDEX);
+    KeyExtractor extractor = KeyExtractor::defaults();
+    EXPECT_EQ(extractor.kind, KeyExtractorType::FIELD_INDEX);
     EXPECT_EQ(extractor.field_index, 0);
     EXPECT_EQ(extractor.prefix_length, 4);
 }
 
 TEST_F(ShardingPolicyTest, KeyExtractorByField) {
     auto extractor = KeyExtractor::byField(2);
-    EXPECT_EQ(extractor.type, KeyExtractorType::FIELD_INDEX);
+    EXPECT_EQ(extractor.kind, KeyExtractorType::FIELD_INDEX);
     EXPECT_EQ(extractor.field_index, 2);
 }
 
 TEST_F(ShardingPolicyTest, KeyExtractorByPrefix) {
     auto extractor = KeyExtractor::byPrefix(8);
-    EXPECT_EQ(extractor.type, KeyExtractorType::PREFIX_BYTES);
+    EXPECT_EQ(extractor.kind, KeyExtractorType::PREFIX_BYTES);
     EXPECT_EQ(extractor.prefix_length, 8);
 }
 
 TEST_F(ShardingPolicyTest, KeyExtractorByHash) {
     auto extractor = KeyExtractor::byHash();
-    EXPECT_EQ(extractor.type, KeyExtractorType::HASH_MOD);
+    EXPECT_EQ(extractor.kind, KeyExtractorType::HASH_MOD);
 }
 
 TEST_F(ShardingPolicyTest, KeyExtractorSerialization) {
-    KeyExtractor original(KeyExtractorType::PREFIX_BYTES, 5, 16);
+    KeyExtractor original = KeyExtractor::make(KeyExtractorType::PREFIX_BYTES, 5, 16);
 
     // Serialize
     rrr::Marshal marshal;
@@ -62,7 +62,7 @@ TEST_F(ShardingPolicyTest, KeyExtractorSerialization) {
     KeyExtractor restored;
     marshal >> restored;
 
-    EXPECT_EQ(restored.type, original.type);
+    EXPECT_EQ(restored.kind, original.kind);
     EXPECT_EQ(restored.field_index, original.field_index);
     EXPECT_EQ(restored.prefix_length, original.prefix_length);
 }
@@ -157,7 +157,7 @@ TEST_F(ShardingPolicyTest, TableShardingPolicySerialization) {
     marshal >> restored;
 
     EXPECT_EQ(restored.table_name, original.table_name);
-    EXPECT_EQ(restored.key_extractor.type, original.key_extractor.type);
+    EXPECT_EQ(restored.key_extractor.kind, original.key_extractor.kind);
     EXPECT_EQ(restored.key_extractor.field_index, original.key_extractor.field_index);
     EXPECT_EQ(restored.ranges.size(), original.ranges.size());
     EXPECT_EQ(restored.default_shard, original.default_shard);
@@ -375,17 +375,17 @@ TEST_F(ShardingPolicyTest, BuilderDifferentKeyExtractors) {
     // Verify key extractors are correctly set
     const auto* field_policy = policy.get_policy("BY_FIELD");
     EXPECT_NE(field_policy, nullptr);
-    EXPECT_EQ(field_policy->key_extractor.type, KeyExtractorType::FIELD_INDEX);
+    EXPECT_EQ(field_policy->key_extractor.kind, KeyExtractorType::FIELD_INDEX);
     EXPECT_EQ(field_policy->key_extractor.field_index, 1);
 
     const auto* prefix_policy = policy.get_policy("BY_PREFIX");
     EXPECT_NE(prefix_policy, nullptr);
-    EXPECT_EQ(prefix_policy->key_extractor.type, KeyExtractorType::PREFIX_BYTES);
+    EXPECT_EQ(prefix_policy->key_extractor.kind, KeyExtractorType::PREFIX_BYTES);
     EXPECT_EQ(prefix_policy->key_extractor.prefix_length, 8);
 
     const auto* hash_policy = policy.get_policy("BY_HASH");
     EXPECT_NE(hash_policy, nullptr);
-    EXPECT_EQ(hash_policy->key_extractor.type, KeyExtractorType::HASH_MOD);
+    EXPECT_EQ(hash_policy->key_extractor.kind, KeyExtractorType::HASH_MOD);
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationInvalidShardId) {

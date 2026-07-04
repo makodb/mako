@@ -52,7 +52,7 @@ int64_t ClusterConfig::ExtractKeyValue_(const KeyExtractor& ext,
                                         const std::string& key) {
     if (key.empty()) return 0;
     std::size_t nbytes = 0;
-    switch (ext.type) {
+    switch (ext.kind) {
     case KeyExtractorType::FIELD_INDEX:
         // We only support field_index == 0 at this layer; higher-offset
         // fields need the caller to use the compute_shard_for_key_value

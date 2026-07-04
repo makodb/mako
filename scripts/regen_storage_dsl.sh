@@ -32,6 +32,9 @@ FILES=(
   # ConfigManager: struct + ~25 methods inline (kv calls via the
   # (*(*self).kv).m() deref form); cm_* kernels for no-throw parse etc.
   src/cluster/config_manager.h
+  # RemoteKvStore: KvStore impl (#[cpp_inherit]); rkv_invoke kernel for
+  # the injected std::function call.
+  src/cluster/remote_kv_store.h
 )
 
 post_pass() {

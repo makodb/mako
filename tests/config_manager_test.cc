@@ -595,7 +595,7 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
 // a local node uses.
 
 // A read closure over a "shard 0" store.
-static RemoteKvStore::ReadFn ReaderOver(InMemoryKvStore* shard0) {
+static RemoteKvStoreReadFn ReaderOver(InMemoryKvStore* shard0) {
     return [shard0](const std::string& key, std::string* out) -> bool {
         return shard0->get(key, out);
     };

@@ -169,7 +169,7 @@ int64_t ShardingPolicyCache::extract_key_value(
     const KeyExtractor& extractor,
     const std::vector<int64_t>& key_fields) {
 
-    switch (extractor.type) {
+    switch (extractor.kind) {
         case KeyExtractorType::FIELD_INDEX: {
             // Extract the nth field from the composite key
             int32_t field_index = extractor.field_index;
@@ -207,7 +207,7 @@ int64_t ShardingPolicyCache::extract_key_from_bytes(
     const char* key_bytes,
     size_t key_len) {
 
-    switch (extractor.type) {
+    switch (extractor.kind) {
         case KeyExtractorType::PREFIX_BYTES: {
             int32_t prefix_len = extractor.prefix_length;
             if (prefix_len <= 0 || static_cast<size_t>(prefix_len) > key_len) {
