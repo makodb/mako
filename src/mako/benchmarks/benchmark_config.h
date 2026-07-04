@@ -138,12 +138,6 @@ class BenchmarkConfig {
       std::string nfs_sync_dir_{defaultNfsSyncDir()};  // Shared directory for sync files
       int nfs_sync_timeout_sec_{60};                 // Timeout for waiting for other shards
 
-      // Config node settings (for centralized configuration)
-      bool is_config_node_{false};                   // True if this node is a c-node
-      std::string config_node_addr_;                 // Address of c-node (host:port) for clients
-      std::string config_db_path_{"/tmp/mako_config_db"};  // RocksDB path for c-node
-      int config_port_{8888};                        // RPC port for ConfigService
-
   public:
       // Delete copy/move constructors
       BenchmarkConfig(const BenchmarkConfig&) = delete;
@@ -303,16 +297,6 @@ class BenchmarkConfig {
       void setNfsSyncDir(const std::string& dir) { nfs_sync_dir_ = dir; }
       int getNfsSyncTimeoutSec() const { return nfs_sync_timeout_sec_; }
       void setNfsSyncTimeoutSec(int sec) { nfs_sync_timeout_sec_ = sec; }
-
-      // Config node getters and setters
-      bool isConfigNode() const { return is_config_node_; }
-      void setIsConfigNode(bool v) { is_config_node_ = v; }
-      const std::string& getConfigNodeAddr() const { return config_node_addr_; }
-      void setConfigNodeAddr(const std::string& addr) { config_node_addr_ = addr; }
-      const std::string& getConfigDbPath() const { return config_db_path_; }
-      void setConfigDbPath(const std::string& path) { config_db_path_ = path; }
-      int getConfigPort() const { return config_port_; }
-      void setConfigPort(int port) { config_port_ = port; }
 
       // NFS-based multi-shard barrier methods
       // Works for both single-process and distributed deployments

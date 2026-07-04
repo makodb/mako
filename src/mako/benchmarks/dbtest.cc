@@ -37,17 +37,13 @@ static void parse_command_line_args(int argc,
       {"throttle-cycle"             , required_argument , 0                          , 'Y'} ,
       {"sync-dir"                   , required_argument , 0                          , 'S'} ,
       {"replication"                , required_argument , 0                          , 'R'} ,
-      {"is-config-node"             , no_argument       , 0                          , 'X'} ,
-      {"config-node-addr"           , required_argument , 0                          , 'A'} ,
-      {"config-db-path"             , required_argument , 0                          , 'D'} ,
-      {"config-port"                , required_argument , 0                          , 'O'} ,
       {"startup-timeout-sec"        , required_argument , 0                          , 'T'} ,
       {"is-micro"                   , no_argument       , &is_micro                  ,   1} ,
       {"is-replicated"              , no_argument       , &is_replicated             ,   1} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:XA:D:O:T:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:T:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -120,31 +116,6 @@ static void parse_command_line_args(int argc,
 
     case 'R':
       replication_type = string(optarg);
-      break;
-
-    case 'X': {
-      auto& config = BenchmarkConfig::getInstance();
-      config.setIsConfigNode(true);
-      }
-      break;
-
-    case 'A': {
-      auto& config = BenchmarkConfig::getInstance();
-      config.setConfigNodeAddr(string(optarg));
-      }
-      break;
-
-    case 'D': {
-      auto& config = BenchmarkConfig::getInstance();
-      config.setConfigDbPath(string(optarg));
-      }
-      break;
-
-    case 'O': {
-      auto& config = BenchmarkConfig::getInstance();
-      config.setConfigPort(strtoul(optarg, NULL, 10));
-      ALWAYS_ASSERT(config.getConfigPort() > 0 && config.getConfigPort() < 65536);
-      }
       break;
 
     case 'T': {
