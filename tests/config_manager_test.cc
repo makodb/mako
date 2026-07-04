@@ -191,7 +191,7 @@ TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
 TEST_F(ConfigManagerTest, WatcherPollDetectsVersionBump) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ClusterConfig local = ClusterConfig::new_();
-    ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
+    auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
 
     // First Poll picks up the current config (version went 0 -> 1).
     EXPECT_TRUE(watcher.Poll());
@@ -209,7 +209,7 @@ TEST_F(ConfigManagerTest, WatcherPollDetectsVersionBump) {
 TEST_F(ConfigManagerTest, WatcherCallbackFiresOnlyOnChange) {
     int callback_count = 0;
     ClusterConfig local = ClusterConfig::new_();
-    ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
+    auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
     watcher.SetUpdateCallback(
         [&](const ClusterConfig&) { ++callback_count; });
 
@@ -227,7 +227,7 @@ TEST_F(ConfigManagerTest, WatcherCallbackFiresOnlyOnChange) {
 
 TEST_F(ConfigManagerTest, WatcherTracksPollCount) {
     ClusterConfig local = ClusterConfig::new_();
-    ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
+    auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
     EXPECT_EQ(watcher.GetPollCount(), 0u);
     watcher.Poll();
     watcher.Poll();
@@ -653,7 +653,7 @@ TEST(RemoteKvStoreTest, WatcherOnRemoteNodeTracksShard0Changes) {
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
     ClusterConfig local = ClusterConfig::new_();
-    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+    auto watcher = ConfigWatcher::new_(&remote_cm, &local, /*poll_interval_ms=*/1000);
 
     EXPECT_TRUE(watcher.Poll());
     EXPECT_EQ(local.GetShardCount(), 1u);
@@ -673,7 +673,7 @@ TEST(RemoteKvStoreTest, KillShardVisibleToRemoteNode) {
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
     ClusterConfig local = ClusterConfig::new_();
-    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+    auto watcher = ConfigWatcher::new_(&remote_cm, &local, /*poll_interval_ms=*/1000);
     ASSERT_TRUE(watcher.Poll());
 
     std::string probe;

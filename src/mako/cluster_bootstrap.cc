@@ -104,7 +104,7 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
              bind_addr.c_str());
 
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
-        cm, &get_cluster_config(), kConfigPollIntervalMs));
+        ConfigWatcher::new_(cm, &get_cluster_config(), kConfigPollIntervalMs)));
     g_cfg_watcher.as_ref().unwrap()->Poll();   // prime the cache immediately
     g_cfg_watcher.as_ref().unwrap()->Start();
 }
@@ -132,7 +132,7 @@ void StartRemoteWatcher() {
         g_cfg_kv_remote.as_ref().unwrap().get()));
     // Watcher retries on each poll, so a not-yet-ready shard 0 is fine.
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
-        g_cfg_cm.as_ref().unwrap().get(), &get_cluster_config(), kConfigPollIntervalMs));
+        ConfigWatcher::new_(g_cfg_cm.as_ref().unwrap().get(), &get_cluster_config(), kConfigPollIntervalMs)));
     g_cfg_watcher.as_ref().unwrap()->Start();
     Log_info("BootstrapClusterConfig: watching shard-0 config at %s", addr.c_str());
 }

@@ -41,6 +41,9 @@ FILES=(
   # ClusterConfig: rusty::Mutex<ClusterConfigState> guarded state;
   # cc_* kernels for map/routing surgery.
   src/cluster/cluster_config.h
+  # ConfigWatcher: struct + Poll + accessors DSL; thread lifecycle
+  # in a CwPollThread RAII helper (DSL can't emit a join-on-drop dtor).
+  src/cluster/config_watcher.h
 )
 
 post_pass() {
