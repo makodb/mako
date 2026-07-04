@@ -449,7 +449,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
     ClusterConfig cc;
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
     policy.add_range(0, 5, 0);
     policy.add_range(5, 10, 1);
     cc.SetTablePolicy("WAREHOUSE", policy);
@@ -494,7 +494,8 @@ TEST_F(ConfigManagerTest, PolicyRoutingFallsBackWhenGetShardIsNegative) {
     ClusterConfig cc;
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0), -1);
+    // default_shard defaults to -1 in create(), matching the old 3-arg ctor.
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
     policy.add_range(0, 5, 0);
     cc.SetTablePolicy("WAREHOUSE", policy);
 
@@ -514,7 +515,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingClearRevertsToDefault) {
     ClusterConfig cc;
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
     policy.add_range(0, 100, 1);  // everything → shard 1
     cc.SetTablePolicy("WAREHOUSE", policy);
     EXPECT_TRUE(cc.HasTablePolicy("WAREHOUSE"));
@@ -540,7 +541,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingComposesWithReplacement) {
     ClusterConfig cc;
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
     policy.add_range(0, 100, 1);
     cc.SetTablePolicy("WAREHOUSE", policy);
 

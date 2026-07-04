@@ -186,7 +186,7 @@ public:
         }
 
         // Build the policy set
-        ShardingPolicySet result(num_shards_);
+        ShardingPolicySet result = ShardingPolicySet::with_shards(num_shards_);
         result.version = 1;  // Initial version
 
         for (const auto& policy : policies_) {
