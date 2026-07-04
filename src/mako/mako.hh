@@ -33,6 +33,9 @@
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
 
+// Cluster-config runtime bootstrap (shard-0 config service + watcher).
+#include "cluster_bootstrap.h"
+
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
 #include "lib/multi_transport_manager.h"
@@ -885,7 +888,13 @@ static abstract_db * init_env() {
 
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
-    
+
+    // Wire the cluster-config read path (shard-0 config service +
+    // per-node ConfigWatcher into the routing cache). No-op unless
+    // MAKO_CLUSTER_CONFIG=1 and the cluster has >1 shard.
+    // @unsafe { RPC I/O, storage index open, background thread }
+    janus::BootstrapClusterConfig(db);
+
 #ifndef DISABLE_DISK
     // Initialize RocksDB persistence layer ONLY on the leader
     // Followers and learners don't need RocksDB since they only replay, not generate logs
