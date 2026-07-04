@@ -243,7 +243,7 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 
 ### Key Components
 
-**ConfigManager**: Thin wrapper around `ITable` on shard 0. Provides typed methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`, `AdvanceEpoch()`. Every write increments `__version__`.
+**ConfigManager**: Typed configuration over a `KvStore` port (`get`/`put`/`remove`), not a bespoke store. Provides methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`, `AdvanceEpoch()`. Every write increments `__version__` (written last). On shard 0's leader the port binds to the unified `FullOrderedIndex` — the `__mako_config__` system table — via the `OrderedIndexKvStore` adapter; other nodes bind a `RemoteKvStore` that reads shard 0 over RPC; unit tests bind an in-memory fake. The port keeps `cluster/` standalone-testable with no storage-engine dependency (see [The Storage Interface](storage-interface.md#cluster-metadata-port-srcclusterkv_storeh)).
 
 **ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `GetShardForKey()` routing helper.
 
@@ -254,6 +254,13 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 **First boot**: Shard 0 leader loads the static YAML config, populates `__mako_config__`, sets `__version__ = 1`. Other shards connect to shard 0 (via a static seed list: `--master-addrs=s1:8100,s2:8101,s3:8102`) and fetch the config.
 
 **Subsequent boots**: Shard 0 recovers its Masstree from Raft log + snapshot. Config is immediately available from the replicated state — the original YAML is not re-read. Other shards fetch the latest version from shard 0.
+
+**Runtime wiring** (`src/mako/cluster_bootstrap.cc`): `BootstrapClusterConfig(db)` runs once from `init_env()` after the RPC servers are up. It is the single seam that constructs and connects the read-side components on a live node, and is gated twice — no-op unless `MAKO_CLUSTER_CONFIG=1` **and** `nshards > 1` — so single-shard / unsharded runs keep the legacy routing path untouched. When active it branches on node identity (`BenchmarkConfig::getShardIndex/getLeaderConfig`):
+
+- **Shard 0's leader** opens its `__mako_config__` index, wraps it in an `OrderedIndexKvStore`, seeds it from the cluster-wide topology (`Config::SitesByPartitionId` / `LeaderSiteByPartitionId`), and stands up a dedicated `ConfigKvService` RPC server on `leader_port + 20000` (distinct from the `+10000` heartbeat control delta).
+- **Every other node** (shard-0 followers + all non-zero shards) resolves shard 0's leader from the same `Config`, connects there, and wraps the RPC in a `RemoteKvStore`.
+
+Both sides then run a `ConfigWatcher` that keeps the local `janus::get_cluster_config()` routing cache fresh — shard 0's leader watches its local store (no self-RPC), everyone else polls shard 0. Because server bind and client connect derive the address from the same `Config`, they stay symmetric. Functional verification needs a live multi-shard cluster, e.g. `./docker_build.sh ci shard2Replication` with `MAKO_CLUSTER_CONFIG=1`.
 
 ### Config Change Protocol
 
