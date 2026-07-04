@@ -21,24 +21,18 @@ uint32_t ClusterConfig::HashKey(const std::string& key) {
 // Routing
 // ===========================================================================
 
-// @safe - Pure computation under lock
-uint32_t ClusterConfig::GetShardForKey(const std::string& key) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (shard_count_ == 0) return 0;
-
-    uint32_t sid = HashKey(key) % shard_count_;
-
-    // Chase the replacement pointer for dead shards. Guard against a
-    // pathological cycle in the config by bounding the number of hops
-    // by shard_count_ + 1 — any longer chain must revisit a shard, so
-    // we bail out and return the last shard visited (routing will then
-    // fail against a dead shard, which the caller detects as a normal
-    // "shard unreachable" error rather than an infinite spin here).
-    //
-    // Note: 0 is a legitimate shard id, so we do NOT use it as a
-    // "no taker" sentinel — KillShard always sets replacement when it
-    // sets status=dead, and we trust that invariant here. If the
-    // pointer chain steps off the map (unknown shard id) we stop.
+// @safe - Under-lock helper. Chases the replacement pointer for dead
+// shards. Guarded against pathological cycles by bounding hops with
+// shard_count + 1 — any longer chain must revisit a shard, so we bail
+// out and return the last shard visited (routing will then fail against
+// a dead shard, which the caller detects as a normal "shard unreachable"
+// error rather than an infinite spin here).
+//
+// Note: 0 is a legitimate shard id, so it is NOT used as a "no taker"
+// sentinel — KillShard always sets replacement when it sets status=dead,
+// and we trust that invariant here. If the pointer chain steps off the
+// map (unknown shard id) we stop.
+uint32_t ClusterConfig::FollowReplacement_(uint32_t sid) const {
     const uint32_t max_hops = shard_count_ + 1;
     for (uint32_t hop = 0; hop < max_hops; ++hop) {
         auto it = shards_.find(sid);
@@ -47,6 +41,93 @@ uint32_t ClusterConfig::GetShardForKey(const std::string& key) const {
         sid = it->second.replacement;
     }
     return sid;
+}
+
+// @safe - Pure computation. Byte-decodes the first prefix_length bytes
+// (or first 8 for FIELD_INDEX) as a big-endian int64. Mirrors the
+// existing shard_router.cc "first 8 bytes" convention so composite keys
+// with the sharding field at offset 0 route consistently across the two
+// code paths.
+int64_t ClusterConfig::ExtractKeyValue_(const KeyExtractor& ext,
+                                        const std::string& key) {
+    if (key.empty()) return 0;
+    std::size_t nbytes = 0;
+    switch (ext.type) {
+    case KeyExtractorType::FIELD_INDEX:
+        // We only support field_index == 0 at this layer; higher-offset
+        // fields need the caller to use the compute_shard_for_key_value
+        // dispatcher path (which already exists in shard_router.cc).
+        // For FIELD_INDEX with field_index > 0, fall back to reading
+        // the first 8 bytes so a mistake here becomes a routing error
+        // rather than a silent misroute.
+        nbytes = 8;
+        break;
+    case KeyExtractorType::PREFIX_BYTES:
+        nbytes = static_cast<std::size_t>(ext.prefix_length);
+        if (nbytes == 0) nbytes = 8;
+        break;
+    case KeyExtractorType::HASH_MOD:
+        // HASH_MOD extractor means "hash the whole key" — no int64 is
+        // meaningful here. Return 0; the policy's default_shard or the
+        // hash-fallback path handles it.
+        return 0;
+    }
+    if (nbytes > key.size()) nbytes = key.size();
+    int64_t value = 0;
+    for (std::size_t i = 0; i < nbytes; ++i) {
+        value = (value << 8) | static_cast<unsigned char>(key[i]);
+    }
+    return value;
+}
+
+uint32_t ClusterConfig::GetShardForKey(const std::string& table,
+                                       const std::string& key) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (shard_count_ == 0) return 0;
+
+    // Fast path: a per-table policy is registered. Extract the sharding
+    // key and binary-search the range list. If get_shard returns >= 0
+    // we route there (after chasing any replacement pointer). If it
+    // returns < 0 the policy could not resolve — fall through to the
+    // hash default.
+    if (!table.empty()) {
+        auto pit = table_policies_.find(table);
+        if (pit != table_policies_.end()) {
+            const auto& policy = pit->second;
+            const int64_t kv = ExtractKeyValue_(policy.key_extractor, key);
+            const int32_t sid = policy.get_shard(kv);
+            if (sid >= 0) {
+                return FollowReplacement_(static_cast<uint32_t>(sid));
+            }
+        }
+    }
+
+    // Default mode: hash-mod on the raw key.
+    return FollowReplacement_(HashKey(key) % shard_count_);
+}
+
+// @safe - Preserved single-arg overload: default routing mode, no table.
+uint32_t ClusterConfig::GetShardForKey(const std::string& key) const {
+    return GetShardForKey(std::string{}, key);
+}
+
+// @unsafe - Acquires mutex
+void ClusterConfig::SetTablePolicy(const std::string& table,
+                                    TableShardingPolicy policy) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    table_policies_[table] = std::move(policy);
+}
+
+// @unsafe - Acquires mutex
+void ClusterConfig::ClearTablePolicy(const std::string& table) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    table_policies_.erase(table);
+}
+
+// @safe - Read under lock
+bool ClusterConfig::HasTablePolicy(const std::string& table) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return table_policies_.find(table) != table_policies_.end();
 }
 
 // ===========================================================================

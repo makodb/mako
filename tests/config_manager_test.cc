@@ -430,6 +430,127 @@ TEST_F(ConfigManagerTest, ShardingPolicyDeleteMissingIsNoop) {
     EXPECT_EQ(cm_.GetVersion(), v_before);
 }
 
+// ===========================================================================
+// ClusterConfig — per-table policy routing
+// ===========================================================================
+
+TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
+    // Two shards, a warehouse-style policy on table WAREHOUSE:
+    //   w_id in [0, 5)  -> shard 0
+    //   w_id in [5, 10) -> shard 1
+    // Encode w_id in the first 8 bytes big-endian (matches ExtractKeyValue_).
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    policy.add_range(0, 5, 0);
+    policy.add_range(5, 10, 1);
+    cc.SetTablePolicy("WAREHOUSE", policy);
+
+    auto encode_w = [](int64_t w) -> std::string {
+        std::string s(8, '\0');
+        for (int i = 7; i >= 0; --i) {
+            s[i] = static_cast<char>(w & 0xff);
+            w >>= 8;
+        }
+        return s;
+    };
+
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(0)), 0u);
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(3)), 0u);
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(5)), 1u);
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(9)), 1u);
+}
+
+TEST_F(ConfigManagerTest, PolicyRoutingFallsBackToHashForUnknownTable) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    // No policy registered for WAREHOUSE — routing must use the hash
+    // default, and be stable for a given key.
+    const uint32_t a = cc.GetShardForKey("WAREHOUSE", "k42");
+    const uint32_t b = cc.GetShardForKey("WAREHOUSE", "k42");
+    EXPECT_EQ(a, b);
+    EXPECT_LT(a, 2u);
+}
+
+TEST_F(ConfigManagerTest, PolicyRoutingFallsBackWhenGetShardIsNegative) {
+    // Policy exists but the key value doesn't match any range and
+    // default_shard is -1. Must fall through to the hash default rather
+    // than returning junk.
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0), -1);
+    policy.add_range(0, 5, 0);
+    cc.SetTablePolicy("WAREHOUSE", policy);
+
+    // A w_id of 100 doesn't match any range; default_shard = -1.
+    // Must still return a valid shard (from hash fallback), not
+    // uint32(-1) or garbage.
+    std::string k(8, '\0');
+    k[7] = 100;
+    const uint32_t sid = cc.GetShardForKey("WAREHOUSE", k);
+    EXPECT_LT(sid, 2u);
+}
+
+TEST_F(ConfigManagerTest, PolicyRoutingClearRevertsToDefault) {
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    policy.add_range(0, 100, 1);  // everything → shard 1
+    cc.SetTablePolicy("WAREHOUSE", policy);
+    EXPECT_TRUE(cc.HasTablePolicy("WAREHOUSE"));
+
+    std::string k(8, '\0');
+    k[7] = 3;
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", k), 1u);
+
+    cc.ClearTablePolicy("WAREHOUSE");
+    EXPECT_FALSE(cc.HasTablePolicy("WAREHOUSE"));
+    // After clearing, the routing decision drops back to hash-mod on
+    // the raw key. We don't know which shard that resolves to, but we
+    // do know it must be a valid shard.
+    EXPECT_LT(cc.GetShardForKey("WAREHOUSE", k), 2u);
+}
+
+TEST_F(ConfigManagerTest, PolicyRoutingComposesWithReplacement) {
+    // A per-table policy resolves to shard 1, which is dead → routing
+    // must chase the replacement pointer.
+    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+
+    ClusterConfig cc;
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+
+    TableShardingPolicy policy("WAREHOUSE", KeyExtractor::byField(0));
+    policy.add_range(0, 100, 1);
+    cc.SetTablePolicy("WAREHOUSE", policy);
+
+    std::string k(8, '\0');
+    k[7] = 42;
+    ASSERT_EQ(cc.GetShardForKey("WAREHOUSE", k), 1u);
+
+    ASSERT_TRUE(cm_.KillShard(1, 0));
+    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    // Policy hasn't changed — still resolves to 1 at the range-lookup
+    // step, but the FollowReplacement_ chase must land us on 0.
+    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", k), 0u);
+}
+
 TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // Belt-and-suspenders: even if a broken write path or stale cache
     // ever produced a cycle in the ShardInfo map, GetShardForKey must

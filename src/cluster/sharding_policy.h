@@ -17,7 +17,13 @@
 #include <vector>
 #include <map>
 
-#include "rrr/rrr.hpp"
+// Forward declare rrr::Marshal so this header does not have to pull the
+// whole rrr framework in. The friend operator<< / operator>> declarations
+// below only need the type as a reference; call sites that actually
+// invoke the operators must include <rrr/rrr.hpp> themselves.
+namespace rrr {
+class Marshal;
+}
 
 namespace janus {
 
@@ -70,23 +76,9 @@ struct KeyExtractor {
         return KeyExtractor(KeyExtractorType::HASH_MOD, 0, 0);
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e) {
-        m << static_cast<int32_t>(e.type);
-        m << e.field_index;
-        m << e.prefix_length;
-        return m;
-    }
-
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e) {
-        int32_t type_val;
-        m >> type_val;
-        e.type = static_cast<KeyExtractorType>(type_val);
-        m >> e.field_index;
-        m >> e.prefix_length;
-        return m;
-    }
+    // Marshal serialization declared at namespace scope below — kept
+    // out of the class body so this header does not need rrr/rrr.hpp
+    // to be complete (see sharding_policy_marshal.cc for the bodies).
 };
 
 /**
@@ -109,21 +101,7 @@ struct RangeMapping {
         return key >= start_key && key < end_key;
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const RangeMapping& r) {
-        m << r.start_key;
-        m << r.end_key;
-        m << r.shard_id;
-        return m;
-    }
-
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, RangeMapping& r) {
-        m >> r.start_key;
-        m >> r.end_key;
-        m >> r.shard_id;
-        return m;
-    }
+    // Marshal serialization: see below at namespace scope.
 };
 
 /**
@@ -187,34 +165,7 @@ struct TableShardingPolicy {
         ranges.insert(it, mapping);
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const TableShardingPolicy& p) {
-        m << p.table_name;
-        m << p.key_extractor;
-        m << static_cast<int32_t>(p.ranges.size());
-        for (const auto& range : p.ranges) {
-            m << range;
-        }
-        m << p.default_shard;
-        return m;
-    }
-
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p) {
-        m >> p.table_name;
-        m >> p.key_extractor;
-        int32_t num_ranges;
-        m >> num_ranges;
-        p.ranges.clear();
-        p.ranges.reserve(num_ranges);
-        for (int32_t i = 0; i < num_ranges; ++i) {
-            RangeMapping range;
-            m >> range;
-            p.ranges.push_back(range);
-        }
-        m >> p.default_shard;
-        return m;
-    }
+    // Marshal serialization: see below at namespace scope.
 };
 
 /**
@@ -283,31 +234,25 @@ struct ShardingPolicySet {
         return policies.size();
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const ShardingPolicySet& s) {
-        m << s.version;
-        m << s.num_shards;
-        m << static_cast<int32_t>(s.policies.size());
-        for (const auto& [name, policy] : s.policies) {
-            m << policy;
-        }
-        return m;
-    }
-
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s) {
-        m >> s.version;
-        m >> s.num_shards;
-        int32_t num_policies;
-        m >> num_policies;
-        s.policies.clear();
-        for (int32_t i = 0; i < num_policies; ++i) {
-            TableShardingPolicy policy;
-            m >> policy;
-            s.policies[policy.table_name] = policy;
-        }
-        return m;
-    }
+    // Marshal serialization: see below at namespace scope.
 };
+
+// ==========================================================================
+// Marshal serialization — declarations only. Bodies live in
+// sharding_policy_marshal.cc so that including this header does not
+// require rrr/rrr.hpp to be complete. Callers who need to serialize
+// or deserialize must also include <rrr/rrr.hpp> and link the
+// sharding_policy_marshal.cc translation unit.
+// ==========================================================================
+
+// @unsafe - Marshal I/O
+rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e);
+rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e);
+rrr::Marshal& operator<<(rrr::Marshal& m, const RangeMapping& r);
+rrr::Marshal& operator>>(rrr::Marshal& m, RangeMapping& r);
+rrr::Marshal& operator<<(rrr::Marshal& m, const TableShardingPolicy& p);
+rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p);
+rrr::Marshal& operator<<(rrr::Marshal& m, const ShardingPolicySet& s);
+rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s);
 
 }  // namespace janus
