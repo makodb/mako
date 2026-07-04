@@ -5,7 +5,7 @@
 #include "rcc/tx.h"
 #include "rcc_rpc.h"
 #include "config_schema.h"
-#include "sharding_policy.h"
+#include "cluster/sharding_policy.h"
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 

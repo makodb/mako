@@ -9,8 +9,8 @@
 #include "../src/deptran/config_service.h"
 #include "../src/cluster/config_store.h"
 #include "../src/deptran/config_schema.h"
-#include "../src/deptran/sharding_policy.h"
-#include "../src/deptran/sharding_policy_builder.h"
+#include "../src/cluster/sharding_policy.h"
+#include "../src/cluster/sharding_policy_builder.h"
 
 import std;
 

@@ -13,8 +13,8 @@
 #include <stdint.h>
 
 #include "mako/benchmarks/tpcc_sharding.h"
-#include "sharding_policy_cache.h"
-#include "sharding_policy_builder.h"
+#include "cluster/sharding_policy_cache.h"
+#include "cluster/sharding_policy_builder.h"
 #include "config_client.h"
 
 import std;

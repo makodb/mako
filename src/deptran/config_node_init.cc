@@ -7,7 +7,7 @@
 #include "cluster/config_store.h"
 #include "config_service.h"
 #include "config_client.h"
-#include "sharding_policy_cache.h"
+#include "cluster/sharding_policy_cache.h"
 #include "rrr/rrr.hpp"
 
 namespace janus {

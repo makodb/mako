@@ -4,10 +4,10 @@
  */
 
 #include "gtest/gtest.h"
-#include "mako/lib/shard_router.h"
-#include "mako/lib/table_registry.h"
-#include "deptran/sharding_policy_cache.h"
-#include "deptran/sharding_policy_builder.h"
+#include "cluster/shard_router.h"
+#include "cluster/table_registry.h"
+#include "cluster/sharding_policy_cache.h"
+#include "cluster/sharding_policy_builder.h"
 
 namespace mako {
 

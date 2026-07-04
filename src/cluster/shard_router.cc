@@ -9,8 +9,8 @@
  * to prevent symbol conflicts between mako and deptran.
  */
 
-#include "mako/lib/shard_router.h"
-#include "mako/lib/table_registry.h"
+#include "shard_router.h"
+#include "table_registry.h"
 #include "sharding_policy_cache.h"
 
 namespace mako {

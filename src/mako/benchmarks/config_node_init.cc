@@ -5,7 +5,7 @@
 
 #include "config_node_init.h"
 #include "deptran/config_converter.h"
-#include "deptran/sharding_policy_cache.h"
+#include "cluster/sharding_policy_cache.h"
 #include "rrr/rrr.hpp"
 
 namespace mako {

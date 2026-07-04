@@ -15,9 +15,9 @@
 #include "../rrr.hpp"
 #include "../src/cluster/config_store.h"
 #include "../src/deptran/config_service.h"
-#include "../src/deptran/sharding_policy.h"
-#include "../src/deptran/sharding_policy_builder.h"
-#include "../src/deptran/sharding_policy_cache.h"
+#include "../src/cluster/sharding_policy.h"
+#include "../src/cluster/sharding_policy_builder.h"
+#include "../src/cluster/sharding_policy_cache.h"
 #include "../src/deptran/config_client.h"
 #include "../src/mako/benchmarks/tpcc_sharding.h"
 

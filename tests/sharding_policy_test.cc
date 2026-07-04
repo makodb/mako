@@ -4,8 +4,8 @@
  */
 
 #include "gtest/gtest.h"
-#include "deptran/sharding_policy.h"
-#include "deptran/sharding_policy_builder.h"
+#include "cluster/sharding_policy.h"
+#include "cluster/sharding_policy_builder.h"
 
 namespace janus {
 

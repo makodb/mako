@@ -233,9 +233,9 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 | `shard/<id>/leader` | string | Current leader site name |
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
 | `epoch` | uint64 | Global speculative epoch number (all shards converge to this) |
-| `shard/<id>/range_start` | string | Key range start (range-based sharding) |
-| `shard/<id>/range_end` | string | Key range end (range-based sharding) |
-| `sharding/policy` | JSON | `{"type":"hash","func":"murmur3"}` or `{"type":"range"}` |
+| `shard/<id>/replacement` | uint32 | For `status=dead`: taker shard whose Raft group inherits routing that would hash to this shard. Chased transitively with a cycle guard. |
+| `sharding/mode` | string | `hash` (default) or `range` — the routing mode Path A of `GetShardForKey` uses when no per-table policy is registered |
+| `sharding/policy/<table>` | bytes | Serialized `TableShardingPolicy` for one table — its `KeyExtractor` plus a sorted vector of `RangeMapping`s. Absence means "fall back to `sharding/mode`". |
 | `node/<site>/addr` | string | Node address (`ip:port`) |
 | `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
 | `reshard/active` | bool | Whether resharding is in progress |
@@ -294,15 +294,67 @@ ShardingPolicyBuilder(num_shards)
 
 The full schema (KeyExtractor types, RangeMapping serialization, TableShardingPolicy lookup) was designed in `docs/plans/range-sharding/task{1..4}.md`.
 
-#### Routing Implementation
+#### Where the sharding policy lives
 
-The router itself lives in two layers — a fast path that tries the loaded policy, and a legacy fallback by table ID:
+The policy is **not** stored in a separate metadata service. It lives in the same `__mako_config__` system table on shard 0, under the `sharding/policy/<table>` key prefix — one key per table. Every shard and every client fetches the policy through **the standard KV interface** (`ITable::Get`), pointed at shard 0.
 
-- `src/mako/lib/shard_router.h` — public API: `compute_shard_for_key(table_id, key)` and `compute_shard_for_key_value(table_id, table_name, key_value)`.
-- `src/deptran/shard_router.cc:19` — implementation. Looks up the table name in `TableRegistry`, asks `ShardingPolicyCache` for the table's policy, extracts the key value, returns the matching shard. If no policy is loaded, falls back to `(table_id - 1) / NUM_TABLES_PER_SHARD`.
-- `src/deptran/sharding_policy_cache.h` — thread-safe cache (rusty::Mutex) populated from shard 0 on bootstrap and refreshed by `ConfigWatcher`.
+The one thing that has to be special-cased is *how you find shard 0 in the first place*. `__mako_config__` is **pinned to shard 0** by convention: any lookup against this table skips the normal hash routing and goes straight to shard 0's current leader (whose address the node knows from the initial YAML seed list). There is no chicken-and-egg problem because you know shard 0 before you know anything else.
 
-The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX` (`src/deptran/shard_router.cc:39`); callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
+Everything else flows from this:
+
+- A client that wants to route key `k` in table `T` fetches `sharding/policy/T` from `__mako_config__` (which lives on shard 0), plus `__version__`, and caches both.
+- If the client sees the same `__version__` on refresh, it keeps the cached policy.
+- If `__version__` bumped, the client re-fetches every table policy it cares about.
+- If the client has no cached policy for `T`, it uses the default `sharding/mode` (hash or range) plus `shard_count`.
+
+Because the storage medium is just replicated KV, everything about the policy is already **versioned, transactional, and durable** — no separate config-service RPC, no separate replication path.
+
+#### Cache invalidation: version bumps + wrong-shard errors
+
+Two mechanisms keep every node's routing table converging on the current policy.
+
+**Version-based polling (background, sub-second staleness).** Each node runs a `ConfigWatcher` fiber. It calls `ITable::Get(__mako_config__, __version__)` on shard 0's leader, default every 1 second. When the returned version differs from its cached value, the watcher refreshes the cluster topology and every registered per-table policy, then invokes update callbacks so anything that depends on routing (client shard picker, coordinator, gossip) can react.
+
+**Wrong-shard errors (foreground, single-request recovery).** Any shard that receives an RPC for a key it doesn't own returns a `WrongShard` error containing the `__version__` it thinks is current. The caller compares that version to its cached one:
+
+- Caller's version is behind: refresh immediately, retry the RPC against the shard the new policy resolves to.
+- Caller's version is equal to or ahead of the shard's: means the caller is right about routing and the shard is stale. Wait briefly and retry — the shard's own `ConfigWatcher` will catch up in <1 second.
+
+This is the "moved, retry" pattern from the resharding survey (`docs/reference/resharding-survey.md`), specifically the YugabyteDB flavor: the routing state is authoritative on shard 0, but every actor can independently detect its own staleness without needing a broadcast. Together with 1-second polling, a torn cluster reconverges in worst-case one RTT of the client's next request.
+
+#### Admin RPCs: kill_shard, merge_shard, split_shard, add_shard, remove_shard
+
+Cluster-lifecycle changes are exposed as RPCs on **every shard**, not just shard 0. A client (or an operator's admin CLI) can call `KillShard(dead, taker)` on any node without knowing which shard is the master:
+
+- **Non-shard-0 nodes** implement the RPC as a **forwarder**: they hold a client connection to shard 0's current leader and re-issue the RPC there. Return values propagate straight back.
+- **Shard 0's leader** implements the RPC as the actual mutation: it invokes `ConfigManager::KillShard(dead, taker)` (or the analogous method) which writes the atomic Raft batch to `__mako_config__`. Every write bumps `__version__`, which every other node's `ConfigWatcher` will pick up.
+
+The admin surface is:
+
+| RPC | Effect |
+|---|---|
+| `KillShard(dead, taker)` | Non-durable shard failure handoff. Flips `shard/<dead>/status` to `dead`, sets `shard/<dead>/replacement = taker`, clears replicas, advances epoch. Ongoing writes for the dead shard's key range get routed to `taker` on next resolution. Implemented today; see `src/cluster/config_manager.cc`. |
+| `AddShard(id, replicas)` | Registers a new shard with an initial replica set. Bumps `shard_count`. Implemented today. |
+| `RemoveShard(id)` | Removes a shard cleanly (assumes its range is already empty or has been drained). Implemented today. |
+| `SplitShard(source_id, split_key, dest_id)` | Splits `source_id`'s key range at `split_key`; the upper half becomes `dest_id`. Not yet implemented — corresponds to the Path 1 metadata-only split in the resharding survey. |
+| `MergeShard(a_id, b_id)` | Merges two adjacent shards. Not yet implemented. |
+| `SetShardingPolicy(table, policy)` | Publishes a new `TableShardingPolicy` for one table. Bumps `__version__`, triggering everyone else's `ConfigWatcher` to refresh. |
+
+Any admin RPC that mutates the shard map advances `__version__` as part of the same atomic batch. This is the single knob that drives cache invalidation across the cluster.
+
+#### Routing implementation
+
+The router lives entirely inside `ClusterConfig`. `ClusterConfig::GetShardForKey(table, key)`:
+
+1. If a `TableShardingPolicy` is loaded for `table`, extract the sharding key using its `KeyExtractor` (`FIELD_INDEX`, `PREFIX_BYTES`, or `HASH_MOD`) and binary-search the sorted range list. This is the **range-based** path.
+2. Otherwise, fall back to the default `sharding/mode`:
+   - `hash`: return `hash(key) % shard_count`.
+   - `range`: return the shard whose `range_start`/`range_end` covers the key.
+3. If the shard the previous step landed on is currently `dead`, follow its `replacement` pointer (transitively, with a cycle guard bounded by `shard_count + 1` hops).
+
+Callers are in `src/cluster/` — `shard_router.{h,cc}` is the public dispatcher; `sharding_policy.h`, `sharding_policy_cache.h`, `sharding_policy_builder.h` are the pure data types, cache, and fluent builder respectively.
+
+The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX`; callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
 
 For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs/reference/tpcc-sharding.md` — warehouse-based sharding yields ~5% remote NewOrder and ~8% remote Payment with 2 shards.
 

@@ -14,7 +14,7 @@
 #include "rcc_rpc.h"
 #include "cluster/config_store.h"
 #include "config_schema.h"
-#include "sharding_policy.h"
+#include "cluster/sharding_policy.h"
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 #include <rusty/mutex.hpp>
