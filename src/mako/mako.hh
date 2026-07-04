@@ -43,35 +43,6 @@
 #include "lib/server.h"
 #include "lib/rust_wrapper.h"
 
-// Config node initialization stubs
-// NOTE: The full implementation is in config_node_init.cc but cannot be linked
-// due to include conflicts between rrr/deptran and mako lib headers.
-// TODO: Resolve header conflicts to enable full config node support in mako.
-namespace mako {
-    inline bool init_config_node() {
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        if (benchConfig.isConfigNode()) {
-            Notice("Config node mode requested but not yet fully integrated with mako");
-            // TODO: Implement proper config node initialization
-        }
-        return true;  // Return success to not block startup
-    }
-
-    inline bool fetch_config_from_cnode() {
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        if (!benchConfig.getConfigNodeAddr().empty()) {
-            Notice("Config node client mode requested but not yet fully integrated with mako");
-            // TODO: Implement proper config fetching
-        }
-        return false;  // Return false to indicate no config was fetched
-    }
-
-    inline void shutdown_config_node() {
-        // Stub - nothing to shutdown yet
-    }
-}
-
-
 // Initialize Rust wrapper: communicate with rust-based redis client
 /*
 static void initialize_rust_wrapper()
@@ -844,17 +815,6 @@ static char** prepare_paxos_args(const vector<string>& paxos_config_file,
 static abstract_db * init_env() {
   auto& benchConfig = BenchmarkConfig::getInstance();
 
-  // Initialize config node if this is a c-node
-  // @unsafe { RocksDB and RPC I/O }
-  if (!mako::init_config_node()) {
-    Warning("Failed to initialize config node");
-    // Continue anyway - config node is optional
-  }
-
-  // Fetch config from c-node if specified and we don't have local config
-  // @unsafe { Network I/O }
-  mako::fetch_config_from_cnode();
-
   // Setup callbacks
   setup_sync_util_callbacks();
 
@@ -983,10 +943,6 @@ static void db_close() {
   // Cleanup and shutdown
   if (benchConfig.getIsReplicated())
     cleanup_and_shutdown();
-
-  // Shutdown config node if running
-  // @unsafe { RocksDB and RPC I/O }
-  mako::shutdown_config_node();
 }
 
 #endif

@@ -19,7 +19,6 @@
  */
 
 #include "sharding_policy.h"
-#include "config_client.h"
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
@@ -60,22 +59,6 @@ public:
     // =========================================================================
     // Initialization
     // =========================================================================
-
-    /**
-     * Fetch sharding policy from c-node.
-     * @param c_node_addr Address of configuration node (host:port)
-     * @return true if policy was fetched successfully, false otherwise
-     */
-    // @unsafe - Network I/O via ConfigClient
-    bool fetch_from_cnode(const std::string& c_node_addr);
-
-    /**
-     * Fetch sharding policy using an existing ConfigClient.
-     * @param client Connected ConfigClient
-     * @return true if policy was fetched successfully, false otherwise
-     */
-    // @unsafe - Network I/O via ConfigClient
-    bool fetch_from_client(ConfigClient& client);
 
     /**
      * Set the policy directly (for testing or offline initialization).

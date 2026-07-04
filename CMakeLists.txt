@@ -916,7 +916,6 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/queue.cc"
   "${W}/benchmarks/tpcc.cc"
   "${W}/benchmarks/rpc_setup.cc"
-  #"${W}/benchmarks/config_node_init.cc"  # TODO: Enable when rrr/mako header conflicts are resolved
   #"${W}/benchmarks/tpcc_simple.cc"
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
@@ -1265,9 +1264,6 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
     # Files below excluded due to violations from included headers (not the .cc files themselves):
-    # src/deptran/config_client.cc          # 6 violations from RPC proxy headers
-    # src/deptran/config_service.cc         # 7 violations from sharding_policy.h, RPC base class
-    # src/deptran/config_store.cc           # 12 violations from RocksDB/Marshal headers
     # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
     # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
     # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
@@ -1685,13 +1681,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
-    # Config Schema Serialization Tests
-    add_executable(test_config_schema tests/config_schema_test.cc)
-    target_include_directories(test_config_schema PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_config_schema PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_schema ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_config_schema COMMAND test_config_schema)
-
     # Sharding Policy Tests
     #
     # The 8 rrr::Marshal serialization operators used to live inline in
@@ -1737,21 +1726,6 @@ if(BUILD_TESTS)
     target_link_libraries(test_fiber rrr ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} pthread)
     add_test(NAME test_fiber COMMAND test_fiber)
 
-    # ConfigStore RocksDB Tests
-    add_executable(test_config_store tests/config_store_test.cc)
-    target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_config_store PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_store ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_store COMMAND test_config_store)
-
-    # ConfigService RPC Tests
-    # Note: Includes src/deptran for rcc_rpc.h dependencies (__dep__.h, rcc/tx.h, etc.)
-    add_executable(test_config_service tests/config_service_test.cc)
-    target_include_directories(test_config_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_service PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_service COMMAND test_config_service)
-
     # ConfigKvService server-handler read-logic tests (Stage 3d). The
     # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
     # links the txlog stack (rrr); it exercises DoReadConfigKey over an
@@ -1761,21 +1735,6 @@ if(BUILD_TESTS)
     target_compile_options(test_config_kv_service PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_kv_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_kv_service COMMAND test_config_kv_service)
-
-    # ConfigClient Tests
-    # Note: Includes src/deptran for rcc_rpc.h dependencies
-    add_executable(test_config_client tests/config_client_test.cc)
-    target_include_directories(test_config_client PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_client PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_client ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_client COMMAND test_config_client)
-
-    # Config Node Failure Scenario Tests
-    add_executable(test_config_failure tests/config_failure_test.cc)
-    target_include_directories(test_config_failure PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_failure PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_failure ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_failure COMMAND test_config_failure)
 
     # ConfigManager standalone unit tests
     #
@@ -1837,13 +1796,6 @@ if(BUILD_TESTS)
     )
     target_compile_definitions(test_ordered_index_kv_store PRIVATE CONFIG_H=\"${CONFIG_H}\")
     add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
-
-    # Sharding Policy Startup Tests
-    add_executable(test_sharding_startup src/rrr/tests/sharding_startup_test.cc)
-    target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
-    target_compile_options(test_sharding_startup PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_startup ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_sharding_startup COMMAND test_sharding_startup)
 
     # RPC Tests
     add_executable(test_rpc src/rrr/tests/test_rpc.cc src/rrr/tests/benchmark_service.cc)

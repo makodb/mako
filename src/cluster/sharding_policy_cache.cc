@@ -19,46 +19,6 @@ ShardingPolicyCache::ShardingPolicyCache()
       initialized_(false) {
 }
 
-// @unsafe - Network I/O via ConfigClient
-bool ShardingPolicyCache::fetch_from_cnode(const std::string& c_node_addr) {
-    ConfigClient client(c_node_addr);
-
-    if (!client.connect()) {
-        // @unsafe { logging I/O }
-        Log_error("ShardingPolicyCache: Failed to connect to c-node at %s",
-                  c_node_addr.c_str());
-        return false;
-    }
-
-    return fetch_from_client(client);
-}
-
-// @unsafe - Network I/O via ConfigClient
-bool ShardingPolicyCache::fetch_from_client(ConfigClient& client) {
-    auto policy_opt = client.fetch_sharding_policy();
-
-    if (policy_opt.is_none()) {
-        // @unsafe { logging I/O }
-        Log_warn("ShardingPolicyCache: No sharding policy available from c-node");
-        return false;
-    }
-
-    ShardingPolicySet policy = policy_opt.unwrap();
-    uint64_t version = policy.version;
-
-    // Update cache
-    {
-        auto guard = policy_.lock().unwrap();
-        *guard = rusty::Some(std::move(policy));
-    }
-    cached_version_.set(version);
-    initialized_.set(true);
-
-    // @unsafe { logging I/O }
-    Log_info("ShardingPolicyCache: Cached sharding policy version %lu", version);
-    return true;
-}
-
 // @safe
 void ShardingPolicyCache::set_policy(ShardingPolicySet policy) {
     uint64_t version = policy.version;
