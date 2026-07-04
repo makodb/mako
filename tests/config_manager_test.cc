@@ -154,7 +154,7 @@ TEST_F(ConfigManagerTest, ClusterConfigLoadMirrorsManager) {
     ASSERT_TRUE(cm_.SetShardLeader(1, "d"));
     ASSERT_TRUE(cm_.AdvanceEpoch());
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     EXPECT_EQ(cc.GetShardCount(), 2u);
@@ -166,7 +166,7 @@ TEST_F(ConfigManagerTest, ClusterConfigLoadMirrorsManager) {
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigLoadFromNullManagerFails) {
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     EXPECT_FALSE(cc.LoadFromConfigManager(nullptr));
 }
 
@@ -174,12 +174,12 @@ TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     // Hash-based routing: same key must always map to the same shard.
-    const uint32_t s1 = cc.GetShardForKey("warehouse/42");
-    const uint32_t s2 = cc.GetShardForKey("warehouse/42");
+    const uint32_t s1 = cc.GetShardForKeyDefault("warehouse/42");
+    const uint32_t s2 = cc.GetShardForKeyDefault("warehouse/42");
     EXPECT_EQ(s1, s2);
     EXPECT_LT(s1, cc.GetShardCount());
 }
@@ -190,7 +190,7 @@ TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
 
 TEST_F(ConfigManagerTest, WatcherPollDetectsVersionBump) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
 
     // First Poll picks up the current config (version went 0 -> 1).
@@ -208,7 +208,7 @@ TEST_F(ConfigManagerTest, WatcherPollDetectsVersionBump) {
 
 TEST_F(ConfigManagerTest, WatcherCallbackFiresOnlyOnChange) {
     int callback_count = 0;
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
     watcher.SetUpdateCallback(
         [&](const ClusterConfig&) { ++callback_count; });
@@ -226,7 +226,7 @@ TEST_F(ConfigManagerTest, WatcherCallbackFiresOnlyOnChange) {
 }
 
 TEST_F(ConfigManagerTest, WatcherTracksPollCount) {
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ConfigWatcher watcher(&cm_, &local, /*poll_interval_ms=*/1000);
     EXPECT_EQ(watcher.GetPollCount(), 0u);
     watcher.Poll();
@@ -288,7 +288,7 @@ TEST_F(ConfigManagerTest, ClusterConfigRoutesKilledShardToTaker) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     // Find a key whose hash lands on shard 1 so we can observe the
@@ -297,19 +297,19 @@ TEST_F(ConfigManagerTest, ClusterConfigRoutesKilledShardToTaker) {
     std::string probe;
     for (int i = 0; i < 32; ++i) {
         const std::string candidate = "k" + std::to_string(i);
-        if (cc.GetShardForKey(candidate) == 1u) {
+        if (cc.GetShardForKeyDefault(candidate) == 1u) {
             probe = candidate;
             break;
         }
     }
     ASSERT_FALSE(probe.empty()) << "no probe key hashed to shard 1";
-    ASSERT_EQ(cc.GetShardForKey(probe), 1u);
+    ASSERT_EQ(cc.GetShardForKeyDefault(probe), 1u);
 
     // Kill 1 -> handoff to 0.
     ASSERT_TRUE(cm_.KillShard(1, 0));
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    EXPECT_EQ(cc.GetShardForKey(probe), 0u)
+    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u)
         << "requests hashing to the dead shard should follow the pointer";
 }
 
@@ -320,12 +320,12 @@ TEST_F(ConfigManagerTest, ClusterConfigTransitivelyFollowsReplacement) {
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
     ASSERT_TRUE(cm_.AddShard(2, {"c"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
     std::string probe;
     for (int i = 0; i < 128; ++i) {
         const std::string candidate = "k" + std::to_string(i);
-        if (cc.GetShardForKey(candidate) == 2u) {
+        if (cc.GetShardForKeyDefault(candidate) == 2u) {
             probe = candidate;
             break;
         }
@@ -336,7 +336,7 @@ TEST_F(ConfigManagerTest, ClusterConfigTransitivelyFollowsReplacement) {
     ASSERT_TRUE(cm_.KillShard(1, 0));
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
-    EXPECT_EQ(cc.GetShardForKey(probe), 0u);
+    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u);
 }
 
 TEST_F(ConfigManagerTest, KillShardRefusesTakerAlreadyDead) {
@@ -446,7 +446,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
@@ -473,7 +473,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingFallsBackToHashForUnknownTable) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     // No policy registered for WAREHOUSE — routing must use the hash
@@ -491,7 +491,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingFallsBackWhenGetShardIsNegative) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     // default_shard defaults to -1 in create(), matching the old 3-arg ctor.
@@ -512,7 +512,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingClearRevertsToDefault) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
@@ -538,7 +538,7 @@ TEST_F(ConfigManagerTest, PolicyRoutingComposesWithReplacement) {
     ASSERT_TRUE(cm_.AddShard(0, {"a"}));
     ASSERT_TRUE(cm_.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
 
     TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
@@ -561,7 +561,7 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // ever produced a cycle in the ShardInfo map, GetShardForKey must
     // terminate. We build the cycle at the ClusterConfig layer
     // directly, bypassing ConfigManager's write-time guard.
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     cc.SetShardCount(2);
 
     ShardInfo s0;
@@ -579,7 +579,7 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // Any lookup must terminate. Both nodes are dead so the caller
     // treats the result as unreachable; what matters here is that
     // GetShardForKey does not infinite-loop.
-    const uint32_t landed = cc.GetShardForKey("anything");
+    const uint32_t landed = cc.GetShardForKeyDefault("anything");
     EXPECT_TRUE(landed == 0u || landed == 1u);
 }
 
@@ -635,7 +635,7 @@ TEST(RemoteKvStoreTest, ConfigManagerLoadsTopologyFromShard0) {
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
 
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ASSERT_TRUE(local.LoadFromConfigManager(&remote_cm));
 
     EXPECT_EQ(local.GetShardCount(), 2u);
@@ -652,7 +652,7 @@ TEST(RemoteKvStoreTest, WatcherOnRemoteNodeTracksShard0Changes) {
 
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
 
     EXPECT_TRUE(watcher.Poll());
@@ -672,20 +672,20 @@ TEST(RemoteKvStoreTest, KillShardVisibleToRemoteNode) {
 
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
-    ClusterConfig local;
+    ClusterConfig local = ClusterConfig::new_();
     ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
     ASSERT_TRUE(watcher.Poll());
 
     std::string probe;
     for (int i = 0; i < 64; ++i) {
         const std::string c = "k" + std::to_string(i);
-        if (local.GetShardForKey(c) == 1u) { probe = c; break; }
+        if (local.GetShardForKeyDefault(c) == 1u) { probe = c; break; }
     }
     ASSERT_FALSE(probe.empty());
 
     ASSERT_TRUE(shard0_cm.KillShard(1, 0));  // shard 0's leader kills 1
     ASSERT_TRUE(watcher.Poll());             // remote node observes it
-    EXPECT_EQ(local.GetShardForKey(probe), 0u)
+    EXPECT_EQ(local.GetShardForKeyDefault(probe), 0u)
         << "remote node must reroute the dead shard's keys to the taker";
 }
 

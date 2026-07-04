@@ -134,7 +134,7 @@ TEST_F(ConfigManagerMbtaTest, ClusterConfigLoadAndKillShardOnRealMbta) {
     ASSERT_TRUE(cm.AddShard(0, {"a"}));
     ASSERT_TRUE(cm.AddShard(1, {"b"}));
 
-    ClusterConfig cc;
+    ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm));
     EXPECT_EQ(cc.GetShardCount(), 2u);
 
@@ -142,13 +142,13 @@ TEST_F(ConfigManagerMbtaTest, ClusterConfigLoadAndKillShardOnRealMbta) {
     std::string probe;
     for (int i = 0; i < 64; ++i) {
         const std::string c = "k" + std::to_string(i);
-        if (cc.GetShardForKey(c) == 1u) { probe = c; break; }
+        if (cc.GetShardForKeyDefault(c) == 1u) { probe = c; break; }
     }
     ASSERT_FALSE(probe.empty());
 
     ASSERT_TRUE(cm.KillShard(1, 0));
     ASSERT_TRUE(cc.LoadFromConfigManager(&cm));
-    EXPECT_EQ(cc.GetShardForKey(probe), 0u)
+    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u)
         << "killed shard's keys must reroute to the taker, end to end on mbta";
 }
 

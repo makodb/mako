@@ -38,6 +38,9 @@ FILES=(
   # ShardingPolicyCache: rusty::Mutex/Cell/Option state, lock+guard
   # methods inline; spc_* kernels for pointer/raw-byte surgery.
   src/cluster/sharding_policy_cache.h
+  # ClusterConfig: rusty::Mutex<ClusterConfigState> guarded state;
+  # cc_* kernels for map/routing surgery.
+  src/cluster/cluster_config.h
 )
 
 post_pass() {
