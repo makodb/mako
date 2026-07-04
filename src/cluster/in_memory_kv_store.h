@@ -17,6 +17,13 @@ namespace janus {
 // @safe - std::map behind the port; no I/O.
 class InMemoryKvStore : public KvStore {
 public:
+    // Force noexcept: the DSL-generated KvStore base has a noexcept(false)
+    // destructor, which would otherwise propagate to any class holding an
+    // InMemoryKvStore by value (e.g. a gtest fixture) and clash with a
+    // noexcept(true) base like ::testing::Test::~Test. Narrowing a
+    // noexcept(false) base dtor is legal and this dtor never throws.
+    ~InMemoryKvStore() noexcept override {}
+
     bool get(const std::string& key, std::string* out) override {
         if (out == nullptr) return false;
         auto it = store_.find(key);

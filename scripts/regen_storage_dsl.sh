@@ -23,6 +23,9 @@ FILES=(
   src/mako/storage/mbta_sharded_ordered_index.hh
   src/mako/storage/masstree_ordered_index.hh
   src/mako/storage/mbta_wrapper.hh
+  # Cluster metadata port authored in the DSL (namespaced trait —
+  # generates cleanly under the a4bcff5f transpiler).
+  src/cluster/kv_store.h
 )
 
 post_pass() {
