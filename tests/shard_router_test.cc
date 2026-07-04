@@ -5,7 +5,7 @@
 
 #include "gtest/gtest.h"
 #include "cluster/shard_router.h"
-#include "cluster/table_registry.h"
+#include "mako/lib/table_registry.h"
 #include "cluster/sharding_policy_cache.h"
 #include "cluster/sharding_policy_builder.h"
 

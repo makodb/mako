@@ -9,7 +9,7 @@
 #include "lib/shardClient.h"
 #include "lib/configuration.h"
 #include "lib/common.h"
-#include "lib/shard_router.h"
+#include "cluster/shard_router.h"
 #include "sto/Interface.hh"
 
 import std;

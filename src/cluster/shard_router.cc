@@ -10,7 +10,7 @@
  */
 
 #include "shard_router.h"
-#include "table_registry.h"
+#include "mako/lib/table_registry.h"
 #include "sharding_policy_cache.h"
 
 namespace mako {

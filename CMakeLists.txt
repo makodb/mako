@@ -2692,6 +2692,32 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
 
+    # Test: ConfigManager over a REAL mbta index (integration).
+    # Unlike test_config_manager (pure cluster, std::map fake), this
+    # drives ConfigManager / ClusterConfig through the OrderedIndexKvStore
+    # adapter onto a real Silo/STO mbta index, with the mbta static_init +
+    # thread_init bring-up. Validates the storage path the eventual dbtest
+    # bootstrap relies on. Links the mako storage lib + the three cluster
+    # .cc sources (ConfigManager/ClusterConfig/ConfigWatcher live there,
+    # not in the mako lib).
+    add_executable(test_config_manager_mbta
+        tests/config_manager_mbta_integration_test.cc
+        src/cluster/config_manager.cc
+        src/cluster/cluster_config.cc
+        src/cluster/config_watcher.cc
+    )
+    target_include_directories(test_config_manager_mbta PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_config_manager_mbta PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_manager_mbta
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_config_manager_mbta COMMAND test_config_manager_mbta)
+
     # Test: the consolidated three-backend story — one TYPED_TEST body
     # drives masstree_ordered_index / mbta_ordered_index /
     # mbta_sharded_ordered_index through abstract_ordered_index*
