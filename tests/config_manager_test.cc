@@ -10,6 +10,7 @@
 #include "cluster/config_manager.h"
 #include "cluster/config_watcher.h"
 #include "cluster/in_memory_kv_store.h"
+#include "cluster/remote_kv_store.h"
 
 namespace janus {
 
@@ -579,6 +580,112 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // GetShardForKey does not infinite-loop.
     const uint32_t landed = cc.GetShardForKey("anything");
     EXPECT_TRUE(landed == 0u || landed == 1u);
+}
+
+// ===========================================================================
+// RemoteKvStore — a non-shard-0 node reads config from shard 0
+// ===========================================================================
+//
+// Models the distributed read path without RPC: an InMemoryKvStore
+// stands in for shard 0's config table; a RemoteKvStore wraps a closure
+// reading from it (production: a ReadConfigKey RPC to shard 0's leader).
+// A non-shard-0 node's ConfigManager is built on the RemoteKvStore and
+// its ClusterConfig hydrates through the same LoadFromConfigManager path
+// a local node uses.
+
+// A read closure over a "shard 0" store.
+static RemoteKvStore::ReadFn ReaderOver(InMemoryKvStore* shard0) {
+    return [shard0](const std::string& key, std::string* out) -> bool {
+        return shard0->get(key, out);
+    };
+}
+
+TEST(RemoteKvStoreTest, ReadsThroughToShard0) {
+    InMemoryKvStore shard0;
+    shard0.put("hello", "world");
+
+    RemoteKvStore remote(ReaderOver(&shard0));
+    std::string v;
+    EXPECT_TRUE(remote.get("hello", &v));
+    EXPECT_EQ(v, "world");
+    EXPECT_FALSE(remote.get("missing", &v));
+}
+
+TEST(RemoteKvStoreTest, RefusesWrites) {
+    InMemoryKvStore shard0;
+    RemoteKvStore remote(ReaderOver(&shard0));
+    // Read-only consumer: writes are no-ops, never reach shard 0.
+    remote.put("k", "v");
+    remote.remove("k");
+    EXPECT_EQ(shard0.size(), 0u);
+}
+
+TEST(RemoteKvStoreTest, ConfigManagerLoadsTopologyFromShard0) {
+    // Shard 0's leader writes the topology to its local config store.
+    InMemoryKvStore shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a", "s0b", "s0c"}));
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a", "s1b", "s1c"}));
+    ASSERT_TRUE(shard0_cm.SetShardLeader(0, "s0a"));
+    ASSERT_TRUE(shard0_cm.AdvanceEpoch());
+
+    // A non-shard-0 node reads it through a read-only ConfigManager over
+    // a RemoteKvStore pointing at shard 0.
+    RemoteKvStore remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+
+    ClusterConfig local;
+    ASSERT_TRUE(local.LoadFromConfigManager(&remote_cm));
+
+    EXPECT_EQ(local.GetShardCount(), 2u);
+    EXPECT_EQ(local.GetShardLeader(0), "s0a");
+    EXPECT_EQ(local.GetShardReplicas(1).size(), 3u);
+    EXPECT_EQ(local.GetEpoch(), 1u);
+    EXPECT_EQ(local.GetVersion(), shard0_cm.GetVersion());
+}
+
+TEST(RemoteKvStoreTest, WatcherOnRemoteNodeTracksShard0Changes) {
+    InMemoryKvStore shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
+
+    RemoteKvStore remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+    ClusterConfig local;
+    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+
+    EXPECT_TRUE(watcher.Poll());
+    EXPECT_EQ(local.GetShardCount(), 1u);
+    EXPECT_FALSE(watcher.Poll());  // no change
+
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
+    EXPECT_TRUE(watcher.Poll());
+    EXPECT_EQ(local.GetShardCount(), 2u);
+}
+
+TEST(RemoteKvStoreTest, KillShardVisibleToRemoteNode) {
+    InMemoryKvStore shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
+
+    RemoteKvStore remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+    ClusterConfig local;
+    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+    ASSERT_TRUE(watcher.Poll());
+
+    std::string probe;
+    for (int i = 0; i < 64; ++i) {
+        const std::string c = "k" + std::to_string(i);
+        if (local.GetShardForKey(c) == 1u) { probe = c; break; }
+    }
+    ASSERT_FALSE(probe.empty());
+
+    ASSERT_TRUE(shard0_cm.KillShard(1, 0));  // shard 0's leader kills 1
+    ASSERT_TRUE(watcher.Poll());             // remote node observes it
+    EXPECT_EQ(local.GetShardForKey(probe), 0u)
+        << "remote node must reroute the dead shard's keys to the taker";
 }
 
 }  // namespace janus
