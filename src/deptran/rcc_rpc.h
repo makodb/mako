@@ -11469,6 +11469,149 @@ public:
     }
 };
 
+class ConfigKvServiceService {
+public:
+    // Typed request/response scaffolding generated from RPC signature lists.
+    struct RpcReadConfigKeyRequest {
+        std::string key;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReadConfigKeyRequest& o) {
+        ar << o.key;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReadConfigKeyRequest& o) {
+        ar >> o.key;
+        return ar;
+    }
+
+    struct RpcReadConfigKeyResponse {
+        rrr::i32 found;
+        std::string value;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReadConfigKeyResponse& o) {
+        ar << o.found;
+        ar << o.value;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReadConfigKeyResponse& o) {
+        ar >> o.found;
+        ar >> o.value;
+        return ar;
+    }
+
+    enum {
+        READCONFIGKEY = 0x5a5886fc,
+    };
+    // Registers RPC IDs with server using service index
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+        int ret = 0;
+        if ((ret = svr.reg_rpc(READCONFIGKEY, svc_index)) != 0) {
+            goto err;
+        }
+        return 0;
+    err:
+        svr.unreg(READCONFIGKEY);
+        return ret;
+    }
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        switch (rpc_id) {
+        case READCONFIGKEY: __ReadConfigKey__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
+    }
+    // typed service signatures
+    // @safe
+    virtual void ReadConfigKey(const RpcReadConfigKeyRequest& req, RpcReadConfigKeyResponse& resp, rrr::DeferredReply defer) = 0;
+    // these RPC handler functions need to be implemented by user
+    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
+private:
+    // @safe
+    void __ReadConfigKey__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcReadConfigKeyRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.key;
+            auto __typed_resp__ = std::make_shared<RpcReadConfigKeyResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->found;
+                    m << __typed_resp__->value;
+                },
+                []() {});
+            this->ReadConfigKey(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+};
+
+class ConfigKvServiceProxy {
+protected:
+    rrr::Client* __cl__;
+public:
+    ConfigKvServiceProxy(rrr::Client* cl): __cl__(cl) { }
+    // Alias typed request/response structs from the sibling Service class.
+    using RpcReadConfigKeyRequest = ConfigKvServiceService::RpcReadConfigKeyRequest;
+    using RpcReadConfigKeyResponse = ConfigKvServiceService::RpcReadConfigKeyResponse;
+    class ReadConfigKeyTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit ReadConfigKeyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcReadConfigKeyResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcReadConfigKeyResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.found;
+            __reply_ar__ >> __typed_resp__.value;
+            return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<ReadConfigKeyTypedFuture, rrr::i32> async_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ConfigKvServiceService::READCONFIGKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.key;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Ok(ReadConfigKeyTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<ReadConfigKeyTypedFuture> await_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_ReadConfigKey(req, __fu_attr__));
+    }
+    rusty::Result<RpcReadConfigKeyResponse, rrr::i32> ReadConfigKey(const RpcReadConfigKeyRequest& req) {
+        auto __typed_fu_result__ = this->async_ReadConfigKey(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+};
+
 } // namespace janus
 
 

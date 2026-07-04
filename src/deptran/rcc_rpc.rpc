@@ -585,4 +585,16 @@ abstract service ConfigService {
     // Check if sharding policy is available (returns 1 if policy exists, 0 otherwise)
     defer HasShardingPolicy( | i32 has_policy);
 }
+
+// Config key-value read service - lets a non-shard-0 node read a single
+// key from shard 0's __mako_config__ system table (via a KvStore-backed
+// handler, i.e. an OrderedIndexKvStore over shard 0's FullOrderedIndex).
+// This is the transport for RemoteKvStore's ReadFn: cluster metadata
+// lives on shard 0, everyone else discovers it by reading these keys.
+// Distinct from ConfigService (which serves the c-node's ConfigStore).
+abstract service ConfigKvService {
+    // Point read of one config key. found=1 with value on hit, found=0
+    // (empty value) on miss.
+    defer ReadConfigKey(string key | i32 found, string value);
+}
 %%

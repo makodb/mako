@@ -1751,6 +1751,16 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_service COMMAND test_config_service)
 
+    # ConfigKvService server-handler read-logic tests (Stage 3d). The
+    # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
+    # links the txlog stack (rrr); it exercises DoReadConfigKey over an
+    # InMemoryKvStore (no socket). The wire transport is CI-verified.
+    add_executable(test_config_kv_service tests/config_kv_service_test.cc)
+    target_include_directories(test_config_kv_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(test_config_kv_service PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_kv_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_config_kv_service COMMAND test_config_kv_service)
+
     # ConfigClient Tests
     # Note: Includes src/deptran for rcc_rpc.h dependencies
     add_executable(test_config_client tests/config_client_test.cc)
