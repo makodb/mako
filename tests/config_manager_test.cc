@@ -7,6 +7,7 @@
 #include "cluster/config_manager.h"
 #include "cluster/config_watcher.h"
 #include "cluster/in_memory_replicated_kv.h"
+#include "cluster/remote_replicated_kv.h"
 
 namespace janus {
 
@@ -576,6 +577,132 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // GetShardForKey does not infinite-loop.
     const uint32_t landed = cc.GetShardForKey("anything");
     EXPECT_TRUE(landed == 0u || landed == 1u);
+}
+
+// ===========================================================================
+// RemoteReplicatedKV — non-shard-0 nodes read config from shard 0
+// ===========================================================================
+//
+// These model the real distributed bootstrap without any RPC: an
+// InMemoryReplicatedKV stands in for shard 0's Raft-replicated
+// ReplicatedDB, and a RemoteReplicatedKV wraps a closure that reads
+// from it — the closure is where a ReadConfigKey RPC to shard 0's
+// leader will live in production. A non-shard-0 node's ConfigManager
+// is built on the RemoteReplicatedKV, and its ClusterConfig hydrates
+// through the same LoadFromConfigManager path a local node uses.
+
+// A tiny helper that makes a read closure over a "shard 0" store.
+static RemoteReplicatedKV::ReadFn ReaderOver(InMemoryReplicatedKV* shard0) {
+    return [shard0](const std::string& key, std::string* out) -> bool {
+        return shard0->Get(key, out);
+    };
+}
+
+TEST(RemoteReplicatedKVTest, RefusesWrites) {
+    InMemoryReplicatedKV shard0;
+    RemoteReplicatedKV remote(ReaderOver(&shard0));
+
+    // A read-only consumer must never mutate shard 0's state.
+    EXPECT_FALSE(remote.Put("k", "v"));
+    EXPECT_FALSE(remote.Delete("k"));
+    EXPECT_FALSE(remote.Batch({{ReplicatedDBOp::PUT, "k", "v"}}));
+    EXPECT_EQ(shard0.size(), 0u);  // nothing leaked through
+}
+
+TEST(RemoteReplicatedKVTest, ReadsThroughToShard0) {
+    InMemoryReplicatedKV shard0;
+    shard0.Put("hello", "world");
+
+    RemoteReplicatedKV remote(ReaderOver(&shard0));
+    std::string v;
+    EXPECT_TRUE(remote.Get("hello", &v));
+    EXPECT_EQ(v, "world");
+    EXPECT_FALSE(remote.Get("missing", &v));
+}
+
+TEST(RemoteReplicatedKVTest, ConfigManagerLoadsTopologyFromShard0) {
+    // Shard 0's leader writes the cluster topology to its local
+    // ReplicatedDB via a read/write ConfigManager.
+    InMemoryReplicatedKV shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a", "s0b", "s0c"}));
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a", "s1b", "s1c"}));
+    ASSERT_TRUE(shard0_cm.SetShardLeader(0, "s0a"));
+    ASSERT_TRUE(shard0_cm.SetShardLeader(1, "s1a"));
+    ASSERT_TRUE(shard0_cm.AdvanceEpoch());
+
+    // A non-shard-0 node builds a read-only ConfigManager over a
+    // RemoteReplicatedKV pointing at shard 0, and hydrates its cache.
+    RemoteReplicatedKV remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+
+    ClusterConfig local;
+    ASSERT_TRUE(local.LoadFromConfigManager(&remote_cm));
+
+    // The remote node's view must match what shard 0 wrote.
+    EXPECT_EQ(local.GetShardCount(), 2u);
+    EXPECT_EQ(local.GetShardLeader(0), "s0a");
+    EXPECT_EQ(local.GetShardLeader(1), "s1a");
+    EXPECT_EQ(local.GetShardReplicas(0).size(), 3u);
+    EXPECT_EQ(local.GetEpoch(), 1u);
+    EXPECT_EQ(local.GetVersion(), shard0_cm.GetVersion());
+}
+
+TEST(RemoteReplicatedKVTest, WatcherOnRemoteNodeTracksShard0Changes) {
+    // The full loop: shard 0 mutates, a ConfigWatcher on a remote node
+    // (polling shard 0 through RemoteReplicatedKV) observes the version
+    // bump and refreshes.
+    InMemoryReplicatedKV shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
+
+    RemoteReplicatedKV remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+    ClusterConfig local;
+    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+
+    // First poll picks up the initial topology.
+    EXPECT_TRUE(watcher.Poll());
+    EXPECT_EQ(local.GetShardCount(), 1u);
+
+    // No shard-0 change -> no refresh.
+    EXPECT_FALSE(watcher.Poll());
+
+    // Shard 0 adds a shard; remote watcher must observe it next poll.
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
+    EXPECT_TRUE(watcher.Poll());
+    EXPECT_EQ(local.GetShardCount(), 2u);
+}
+
+TEST(RemoteReplicatedKVTest, KillShardVisibleToRemoteNode) {
+    // A KillShard on shard 0 must reach a remote node's routing cache,
+    // so the remote node reroutes to the taker.
+    InMemoryReplicatedKV shard0_store;
+    ConfigManager shard0_cm(&shard0_store);
+    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
+    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
+
+    RemoteReplicatedKV remote(ReaderOver(&shard0_store));
+    ConfigManager remote_cm(&remote);
+    ClusterConfig local;
+    ConfigWatcher watcher(&remote_cm, &local, /*poll_interval_ms=*/1000);
+    ASSERT_TRUE(watcher.Poll());
+
+    // Find a key that routes to shard 1 on the remote node.
+    std::string probe;
+    for (int i = 0; i < 64; ++i) {
+        const std::string c = "k" + std::to_string(i);
+        if (local.GetShardForKey(c) == 1u) { probe = c; break; }
+    }
+    ASSERT_FALSE(probe.empty());
+    ASSERT_EQ(local.GetShardForKey(probe), 1u);
+
+    // Shard 0's leader kills shard 1 -> taker 0.
+    ASSERT_TRUE(shard0_cm.KillShard(1, 0));
+    ASSERT_TRUE(watcher.Poll());  // remote node observes the version bump
+
+    EXPECT_EQ(local.GetShardForKey(probe), 0u)
+        << "remote node must reroute the dead shard's keys to the taker";
 }
 
 }  // namespace janus
