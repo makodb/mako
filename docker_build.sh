@@ -31,6 +31,12 @@ if [ -n "${MAKO_ASAN:-}" ]; then
     : "${ASAN_OPTIONS:=abort_on_error=0:halt_on_error=0:detect_leaks=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:strict_init_order=1}"
     DOCKER_ENV_OPTS+=(-e "ASAN_OPTIONS=${ASAN_OPTIONS}")
 fi
+# Forward MAKO_CLUSTER_CONFIG so a multi-shard CI run can exercise the
+# cluster-config bootstrap (shard-0 config service + per-node watcher).
+# Off by default; the dbtest children inherit it from the outer run.
+if [ -n "${MAKO_CLUSTER_CONFIG:-}" ]; then
+    DOCKER_ENV_OPTS+=(-e "MAKO_CLUSTER_CONFIG=${MAKO_CLUSTER_CONFIG}")
+fi
 DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
