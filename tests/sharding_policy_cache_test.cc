@@ -20,14 +20,14 @@ protected:
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, DefaultConstruction) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
     EXPECT_FALSE(cache.is_initialized());
     EXPECT_EQ(0u, cache.get_version());
     EXPECT_EQ(0, cache.get_num_shards());
 }
 
 TEST_F(ShardingPolicyCacheTest, SetPolicy) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("WAREHOUSE")
@@ -49,7 +49,7 @@ TEST_F(ShardingPolicyCacheTest, SetPolicy) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("WAREHOUSE")
@@ -74,7 +74,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("WAREHOUSE")
@@ -88,14 +88,14 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForKeyNotInitialized) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     // Should return -1 when not initialized
     EXPECT_EQ(-1, cache.get_shard_for_key("WAREHOUSE", 5));
 }
 
 TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("WAREHOUSE")
@@ -117,7 +117,7 @@ TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(3)
         .table("DISTRICT")
@@ -136,7 +136,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("SECONDARY")
@@ -153,7 +153,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeyInvalidFieldIndex) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     auto policy = ShardingPolicyBuilder(2)
         .table("TEST")
@@ -253,7 +253,7 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesHash) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, TpccStyleRouting) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     // Create TPC-C style policy: 10 warehouses across 2 shards
     // TPC-C uses 1-indexed warehouse IDs (w_id = 1, 2, ..., 10)

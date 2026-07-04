@@ -35,6 +35,9 @@ FILES=(
   # RemoteKvStore: KvStore impl (#[cpp_inherit]); rkv_invoke kernel for
   # the injected std::function call.
   src/cluster/remote_kv_store.h
+  # ShardingPolicyCache: rusty::Mutex/Cell/Option state, lock+guard
+  # methods inline; spc_* kernels for pointer/raw-byte surgery.
+  src/cluster/sharding_policy_cache.h
 )
 
 post_pass() {
