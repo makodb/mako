@@ -29,6 +29,9 @@ FILES=(
   # Sharding-policy value types (copyable aggregates + inherent-impl
   # methods; KeyExtractor stays hand-C++ for its `type` keyword field).
   src/cluster/sharding_policy.h
+  # ConfigManager: struct + ~25 methods inline (kv calls via the
+  # (*(*self).kv).m() deref form); cm_* kernels for no-throw parse etc.
+  src/cluster/config_manager.h
 )
 
 post_pass() {
