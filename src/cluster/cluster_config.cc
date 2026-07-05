@@ -15,7 +15,7 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
     uint32_t count = cm->GetShardCount();
     uint64_t ver = cm->GetVersion();
     uint64_t ep = cm->GetEpoch();
-    std::map<uint32_t, ShardInfo> new_shards;
+    btree_port::BTreeMap<uint32_t, ShardInfo> new_shards;
     for (uint32_t i = 0; i < count; i++) {
         ShardInfo info;
         info.id = i;
@@ -23,7 +23,7 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
         info.leader = cm->GetShardLeader(i);
         info.status = cm->GetShardStatus(i);
         info.replacement = cm->GetShardReplacement(i);
-        new_shards[i] = std::move(info);
+        new_shards.insert(i, std::move(info));
     }
     s.shard_count = count;
     s.version = ver;

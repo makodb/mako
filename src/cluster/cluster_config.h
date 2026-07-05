@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "sharding_policy.h"
+#include <btree_port/btreemap.hpp>  // native-API ordered maps (replace std::map)
 #include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>   // deref_if_pointer_like (guard bodies)
 
@@ -44,8 +45,8 @@ struct ClusterConfigState {
     uint32_t shard_count = 0;
     uint64_t version = 0;
     uint64_t epoch = 0;
-    std::map<uint32_t, ShardInfo> shards;
-    std::map<std::string, TableShardingPolicy> table_policies;
+    btree_port::BTreeMap<uint32_t, ShardInfo> shards;
+    btree_port::BTreeMap<std::string, TableShardingPolicy> table_policies;
 };
 
 class ClusterConfig;  // for the factory kernel
@@ -54,30 +55,20 @@ class ClusterConfig;  // for the factory kernel
 inline ClusterConfig cc_new();  // factory (Mutex CTAD needs explicit args)
 
 inline std::vector<std::string> cc_shard_replicas(const ClusterConfigState& s, uint32_t id) {
-    auto it = s.shards.find(id);
-    return it == s.shards.end() ? std::vector<std::string>{} : it->second.replicas;
+    auto found = s.shards.get(id);
+    return found.is_some() ? found.unwrap().get().replicas : std::vector<std::string>{};
 }
 inline std::string cc_shard_leader(const ClusterConfigState& s, uint32_t id) {
-    auto it = s.shards.find(id);
-    return it == s.shards.end() ? std::string() : it->second.leader;
+    auto found = s.shards.get(id);
+    return found.is_some() ? found.unwrap().get().leader : std::string();
 }
 inline std::string cc_shard_status(const ClusterConfigState& s, uint32_t id) {
-    auto it = s.shards.find(id);
-    return it == s.shards.end() ? std::string() : it->second.status;
+    auto found = s.shards.get(id);
+    return found.is_some() ? found.unwrap().get().status : std::string();
 }
-inline void cc_update_shard(ClusterConfigState& s, uint32_t id, const ShardInfo& info) {
-    s.shards[id] = info;
-}
-inline void cc_set_table_policy(ClusterConfigState& s, const std::string& table,
-                                TableShardingPolicy policy) {
-    s.table_policies[table] = std::move(policy);
-}
-inline void cc_clear_table_policy(ClusterConfigState& s, const std::string& table) {
-    s.table_policies.erase(table);
-}
-inline bool cc_has_table_policy(const ClusterConfigState& s, const std::string& table) {
-    return s.table_policies.find(table) != s.table_policies.end();
-}
+// cc_update_shard / cc_set_table_policy / cc_clear_table_policy /
+// cc_has_table_policy are gone: folded into the DSL methods below as direct
+// btree_port::BTreeMap insert / remove / contains_key calls on the guard.
 
 // FNV-1a over the raw key bytes.
 inline uint32_t cc_hash_key(const std::string& key) {
@@ -92,10 +83,11 @@ inline uint32_t cc_hash_key(const std::string& key) {
 inline uint32_t cc_follow_replacement(const ClusterConfigState& s, uint32_t sid) {
     const uint32_t max_hops = s.shard_count + 1;
     for (uint32_t hop = 0; hop < max_hops; ++hop) {
-        auto it = s.shards.find(sid);
-        if (it == s.shards.end()) return sid;
-        if (it->second.status != "dead") return sid;
-        sid = it->second.replacement;
+        auto found = s.shards.get(sid);
+        if (found.is_none()) return sid;
+        const ShardInfo& info = found.unwrap().get();
+        if (info.status != "dead") return sid;
+        sid = info.replacement;
     }
     return sid;
 }
@@ -123,10 +115,11 @@ inline uint32_t cc_route(const ClusterConfigState& s, const std::string& table,
                          const std::string& key) {
     if (s.shard_count == 0) return 0;
     if (!table.empty()) {
-        auto pit = s.table_policies.find(table);
-        if (pit != s.table_policies.end()) {
-            int64_t kv = cc_extract_key_value(pit->second.key_extractor, key);
-            int32_t sid = pit->second.get_shard(kv);
+        auto found = s.table_policies.get(table);
+        if (found.is_some()) {
+            const TableShardingPolicy& p = found.unwrap().get();
+            int64_t kv = cc_extract_key_value(p.key_extractor, key);
+            int32_t sid = p.get_shard(kv);
             if (sid >= 0) return cc_follow_replacement(s, static_cast<uint32_t>(sid));
         }
     }
@@ -158,15 +151,15 @@ impl ClusterConfig {
     }
     fn SetTablePolicy(&mut self, table: &std::string, policy: TableShardingPolicy) {
         let mut g = (*self).state.lock().unwrap();
-        unsafe { cc_set_table_policy((*g), table, policy) }
+        (*g).table_policies.insert(table, policy);
     }
     fn ClearTablePolicy(&mut self, table: &std::string) {
         let mut g = (*self).state.lock().unwrap();
-        unsafe { cc_clear_table_policy((*g), table) }
+        (*g).table_policies.remove(table);
     }
     fn HasTablePolicy(&self, table: &std::string) -> bool {
         let g = (*self).state.lock().unwrap();
-        unsafe { cc_has_table_policy((*g), table) }
+        (*g).table_policies.contains_key(table)
     }
     fn GetShardCount(&self) -> u32 {
         let g = (*self).state.lock().unwrap();
@@ -194,7 +187,7 @@ impl ClusterConfig {
     }
     fn UpdateShard(&mut self, id: u32, info: &ShardInfo) {
         let mut g = (*self).state.lock().unwrap();
-        unsafe { cc_update_shard((*g), id, info) }
+        (*g).shards.insert(id, info);
     }
     fn SetShardCount(&mut self, count: u32) {
         let mut g = (*self).state.lock().unwrap();
@@ -210,7 +203,7 @@ impl ClusterConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=5fa1ee0bf5cd41667374ead569f6d18c868170616c2771d63a97ce2379472de7*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=9dfe00a48cec974069a609dcee4831041a73a22608f415699b31e24281c1a2e6*/
 struct ClusterConfig;
 
 struct ClusterConfig {
@@ -266,26 +259,17 @@ inline uint32_t ClusterConfig::GetShardForKeyDefault(const std::string& key) con
 
 inline void ClusterConfig::SetTablePolicy(const std::string& table, TableShardingPolicy policy) {
     auto g = ((*this)).state.lock().unwrap();
-    // @unsafe
-    {
-        cc_set_table_policy((rusty::detail::deref_if_pointer_like(g)), table, std::move(policy));
-    }
+    (rusty::detail::deref_if_pointer_like(g)).table_policies.insert(table, std::move(policy));
 }
 
 inline void ClusterConfig::ClearTablePolicy(const std::string& table) {
     auto g = ((*this)).state.lock().unwrap();
-    // @unsafe
-    {
-        cc_clear_table_policy((rusty::detail::deref_if_pointer_like(g)), table);
-    }
+    (rusty::detail::deref_if_pointer_like(g)).table_policies.remove(table);
 }
 
 inline bool ClusterConfig::HasTablePolicy(const std::string& table) const {
     const auto g = ((*this)).state.lock().unwrap();
-    // @unsafe
-    {
-        return cc_has_table_policy((rusty::detail::deref_if_pointer_like(g)), table);
-    }
+    return (rusty::detail::deref_if_pointer_like(g)).table_policies.contains_key(table);
 }
 
 inline uint32_t ClusterConfig::GetShardCount() const {
@@ -329,10 +313,7 @@ inline uint64_t ClusterConfig::GetEpoch() const {
 
 inline void ClusterConfig::UpdateShard(uint32_t id, const ShardInfo& info) {
     auto g = ((*this)).state.lock().unwrap();
-    // @unsafe
-    {
-        cc_update_shard((rusty::detail::deref_if_pointer_like(g)), std::move(id), info);
-    }
+    (rusty::detail::deref_if_pointer_like(g)).shards.insert(std::move(id), std::move(info));
 }
 
 inline void ClusterConfig::SetShardCount(uint32_t count) {
