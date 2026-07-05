@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 #include <rusty/function.hpp>   // rusty::Function — DSL-invocable callable
+#include <rusty/option.hpp>     // get() / read_fn return rusty::Option<std::string>
 
 namespace janus {
 
@@ -29,19 +30,18 @@ namespace janus {
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the
  * `#if RUSTYCPP_RUST` block is the source of truth, the GEN block is the
  * generated C++. Regenerate with scripts/regen_storage_dsl.sh. The read
- * function type is now the namespace-scope RemoteKvStoreReadFn (was the
- * nested RemoteKvStore::ReadFn) so the DSL struct can name it as a field
- * type; invoking a std::function is the one thing the DSL can't spell, so
- * it goes through the rkv_invoke kernel.
+ * function type is the namespace-scope RemoteKvStoreReadFn (a
+ * rusty::Function) so the DSL struct can name it as a field type AND invoke
+ * it directly — ((*self).read_fn)(key, out). No erased-callable kernel.
  */
 
-// read_fn(key, out_value) -> found. In production this issues a
-// ReadConfigKey RPC to shard 0's leader and fills *out on hit. rusty::Function
-// (move-only) instead of std::function so the DSL can invoke it directly —
-// its operator() means `self.read_fn(key, out)` is plain-safe DSL, no
-// erased-callable kernel.
+// read_fn(key) -> Some(value) on hit, None on miss. In production this issues
+// a ReadConfigKey RPC to shard 0's leader. rusty::Function (move-only) instead
+// of std::function so the DSL can invoke it directly — its operator() means
+// `self.read_fn(key)` is plain-safe DSL, no erased-callable kernel. Returns an
+// Option (not a bool + out-pointer) so the whole read path is pointer-free.
 using RemoteKvStoreReadFn =
-    rusty::Function<bool(const std::string& key, std::string* out_value)>;
+    rusty::Function<rusty::Option<std::string>(const std::string& key)>;
 
 #if RUSTYCPP_RUST
 pub struct RemoteKvStore {
@@ -50,15 +50,15 @@ pub struct RemoteKvStore {
 #[cpp_inherit]
 impl KvStore for RemoteKvStore {
     // Delegates to the injected reader (called directly — rusty::Function).
-    fn get(&mut self, key: &std::string, out: *mut std::string) -> bool {
-        ((*self).read_fn)(key, out)
+    fn get(&mut self, key: &std::string) -> rusty::Option<std::string> {
+        ((*self).read_fn)(key)
     }
     // Read-only consumer: writes are not permitted (no-op).
     fn put(&mut self, key: &std::string, value: &std::string) {}
     fn remove(&mut self, key: &std::string) {}
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=remote_kv_store.1 version=1 rust_sha256=2890d4e2c217a3472467a2c1fd81ed5a86aa78e5718f05e906b88423a172834a*/
+/*RUSTYCPP:GEN-BEGIN id=remote_kv_store.1 version=1 rust_sha256=fccf08dd94fb20623f53a392fa432035dfc309953b1dd94cef9b7d35f249a619*/
 struct RemoteKvStore;
 
 struct RemoteKvStore : public KvStore {
@@ -67,14 +67,14 @@ struct RemoteKvStore : public KvStore {
     RemoteKvStore(RemoteKvStore&& other) noexcept : KvStore(), read_fn(std::move(other.read_fn)) {}
 
 
-    bool get(const std::string& key, std::string* out);
+    rusty::Option<std::string> get(const std::string& key);
     void put(const std::string& key, const std::string& value);
     void remove(const std::string& key);
 };
 
 
-inline bool RemoteKvStore::get(const std::string& key, std::string* out) {
-    return (((*this)).read_fn)(key, out);
+inline rusty::Option<std::string> RemoteKvStore::get(const std::string& key) {
+    return (((*this)).read_fn)(key);
 }
 
 inline void RemoteKvStore::put(const std::string& key, const std::string& value) {

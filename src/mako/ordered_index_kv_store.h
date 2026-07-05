@@ -16,6 +16,7 @@
 #include "storage/abstract_ordered_index.h"
 
 #include <string>
+#include <rusty/option.hpp>   // KvStore::get returns rusty::Option<std::string>
 
 namespace janus {
 
@@ -26,10 +27,14 @@ public:
     explicit OrderedIndexKvStore(::FullOrderedIndex* index) : index_(index) {}
 
     // @unsafe - FullOrderedIndex point read
-    bool get(const std::string& key, std::string* out) override {
-        if (index_ == nullptr || out == nullptr) return false;
-        return index_->get(lcdf::Str(key.data(), key.size()), *out,
-                           std::string::npos);
+    rusty::Option<std::string> get(const std::string& key) override {
+        if (index_ == nullptr) return rusty::None;
+        std::string out;
+        if (index_->get(lcdf::Str(key.data(), key.size()), out,
+                        std::string::npos)) {
+            return rusty::Some(std::move(out));
+        }
+        return rusty::None;
     }
 
     // @unsafe - FullOrderedIndex point put

@@ -108,9 +108,10 @@ impl ConfigManager {
     // Read __version__, write it back incremented (the last visible write).
     fn BumpVersion(&mut self) {
         let vkey: std::string = std::string("__version__");
-        let mut vs: std::string = std::string("");
         let mut cur: u64 = 0;
-        if unsafe { (*(*self).kv).get(&vkey, &mut vs) } {
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&vkey) };
+        if vopt.is_some() {
+            let vs: std::string = vopt.unwrap();
             cur = unsafe { cm_parse_u64(&vs) };
         }
         let nv: std::string = std::to_string(cur + 1);
@@ -121,8 +122,9 @@ impl ConfigManager {
     fn GetVersion(&mut self) -> u64 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let vkey: std::string = std::string("__version__");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&vkey, &mut value) } {
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&vkey) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
             return unsafe { cm_parse_u64(&value) };
         }
         0
@@ -132,8 +134,9 @@ impl ConfigManager {
     fn GetShardCount(&mut self) -> u32 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("shard_count");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } {
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
             return unsafe { cm_parse_u64(&value) } as u32;
         }
         0
@@ -147,7 +150,8 @@ impl ConfigManager {
         let mut value: std::string = std::string("");
         if !unsafe { cm_kv_absent((*self).kv) } {
             let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replicas");
-            unsafe { (*(*self).kv).get(&key, &mut value); }
+            let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+            if vopt.is_some() { value = vopt.unwrap(); }
         }
         unsafe { cm_split_csv(&value) }
     }
@@ -159,9 +163,8 @@ impl ConfigManager {
     fn GetShardLeader(&mut self, shard_id: u32) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/leader");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn SetShardLeader(&mut self, shard_id: u32, leader: &std::string) -> bool {
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/leader");
@@ -170,9 +173,8 @@ impl ConfigManager {
     fn GetShardStatus(&mut self, shard_id: u32) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/status");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn SetShardStatus(&mut self, shard_id: u32, status: &std::string) -> bool {
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/status");
@@ -214,8 +216,9 @@ impl ConfigManager {
     fn GetShardReplacement(&mut self, shard_id: u32) -> u32 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replacement");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } {
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
             return unsafe { cm_parse_u64(&value) } as u32;
         }
         0
@@ -246,8 +249,9 @@ impl ConfigManager {
     fn GetEpoch(&mut self) -> u64 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("epoch");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } {
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
             return unsafe { cm_parse_u64(&value) };
         }
         0
@@ -264,9 +268,8 @@ impl ConfigManager {
     fn GetNodeAddr(&mut self, site: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = (std::string("node/") + *site) + std::string("/addr");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn SetNodeAddr(&mut self, site: &std::string, addr: &std::string) -> bool {
         let key: std::string = (std::string("node/") + *site) + std::string("/addr");
@@ -275,9 +278,8 @@ impl ConfigManager {
     fn GetNodeStatus(&mut self, site: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = (std::string("node/") + *site) + std::string("/status");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn SetNodeStatus(&mut self, site: &std::string, status: &std::string) -> bool {
         let key: std::string = (std::string("node/") + *site) + std::string("/status");
@@ -288,9 +290,8 @@ impl ConfigManager {
     fn GetShardingMode(&mut self) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("sharding/mode");
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn SetShardingMode(&mut self, mode: &std::string) -> bool {
         let key: std::string = std::string("sharding/mode");
@@ -300,15 +301,15 @@ impl ConfigManager {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         if (*table).empty() { return std::string(""); }
         let key: std::string = std::string("sharding/policy/") + *table;
-        let mut value: std::string = std::string("");
-        if unsafe { (*(*self).kv).get(&key, &mut value) } { return value; }
-        std::string("")
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
     }
     fn ListShardingPolicyTables(&mut self) -> std::vector<std::string> {
         let mut value: std::string = std::string("");
         if !unsafe { cm_kv_absent((*self).kv) } {
             let key: std::string = std::string("sharding/policy_tables");
-            unsafe { (*(*self).kv).get(&key, &mut value); }
+            let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+            if vopt.is_some() { value = vopt.unwrap(); }
         }
         unsafe { cm_split_csv(&value) }
     }
@@ -357,7 +358,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=981b15d877560ea8ebeec276079a049645bb6aef3e7af5ce8b007442259a1f9b*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=485d03589f68878c147ff808dfda478304b2c374ddd564b1b6934ca7315277b4*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -421,9 +422,10 @@ inline bool ConfigManager::PutVersioned(const std::string& key, const std::strin
 
 inline void ConfigManager::BumpVersion() {
     const std::string vkey = std::string("__version__");
-    std::string vs = std::string("");
     uint64_t cur = static_cast<uint64_t>(0);
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(vkey, &vs)) {
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(vkey);
+    if (vopt.is_some()) {
+        const std::string vs = vopt.unwrap();
         cur = cm_parse_u64(vs);
     }
     const std::string nv = std::to_string(rusty::detail::deref_if_pointer_like(cur) + 1);
@@ -438,8 +440,9 @@ inline uint64_t ConfigManager::GetVersion() {
         return static_cast<uint64_t>(0);
     }
     const std::string vkey = std::string("__version__");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(vkey, &value)) {
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(vkey);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
         return cm_parse_u64(value);
     }
     return static_cast<uint64_t>(0);
@@ -450,8 +453,9 @@ inline uint32_t ConfigManager::GetShardCount() {
         return static_cast<uint32_t>(0);
     }
     const std::string key = std::string("shard_count");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
         return static_cast<uint32_t>(cm_parse_u64(value));
     }
     return static_cast<uint32_t>(0);
@@ -467,9 +471,9 @@ inline std::vector<std::string> ConfigManager::GetShardReplicas(uint32_t shard_i
     std::string value = std::string("");
     if (!cm_kv_absent(((*this)).kv)) {
         const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replicas");
-        // @unsafe
-        {
-            ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value);
+        rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+        if (vopt.is_some()) {
+            value = vopt.unwrap();
         }
     }
     // @unsafe
@@ -489,11 +493,8 @@ inline std::string ConfigManager::GetShardLeader(uint32_t shard_id) {
         return std::string("");
     }
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/leader");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline bool ConfigManager::SetShardLeader(uint32_t shard_id, const std::string& leader) {
@@ -506,11 +507,8 @@ inline std::string ConfigManager::GetShardStatus(uint32_t shard_id) {
         return std::string("");
     }
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/status");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline bool ConfigManager::SetShardStatus(uint32_t shard_id, const std::string& status) {
@@ -583,8 +581,9 @@ inline uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
         return static_cast<uint32_t>(0);
     }
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replacement");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
         return static_cast<uint32_t>(cm_parse_u64(value));
     }
     return static_cast<uint32_t>(0);
@@ -637,8 +636,9 @@ inline uint64_t ConfigManager::GetEpoch() {
         return static_cast<uint64_t>(0);
     }
     const std::string key = std::string("epoch");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
         return cm_parse_u64(value);
     }
     return static_cast<uint64_t>(0);
@@ -659,11 +659,8 @@ inline std::string ConfigManager::GetNodeAddr(const std::string& site) {
         return std::string("");
     }
     const std::string key = ((std::string("node/") + site)) + std::string("/addr");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline bool ConfigManager::SetNodeAddr(const std::string& site, const std::string& addr) {
@@ -676,11 +673,8 @@ inline std::string ConfigManager::GetNodeStatus(const std::string& site) {
         return std::string("");
     }
     const std::string key = ((std::string("node/") + site)) + std::string("/status");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline bool ConfigManager::SetNodeStatus(const std::string& site, const std::string& status) {
@@ -693,11 +687,8 @@ inline std::string ConfigManager::GetShardingMode() {
         return std::string("");
     }
     const std::string key = std::string("sharding/mode");
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline bool ConfigManager::SetShardingMode(const std::string& mode) {
@@ -713,20 +704,17 @@ inline std::string ConfigManager::GetShardingPolicy(const std::string& table) {
         return std::string("");
     }
     const std::string key = std::string("sharding/policy/") + table;
-    std::string value = std::string("");
-    if (((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value)) {
-        return std::move(value);
-    }
-    return std::string("");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
 }
 
 inline std::vector<std::string> ConfigManager::ListShardingPolicyTables() {
     std::string value = std::string("");
     if (!cm_kv_absent(((*this)).kv)) {
         const std::string key = std::string("sharding/policy_tables");
-        // @unsafe
-        {
-            ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key, &value);
+        rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+        if (vopt.is_some()) {
+            value = vopt.unwrap();
         }
     }
     // @unsafe

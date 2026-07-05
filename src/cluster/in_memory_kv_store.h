@@ -3,6 +3,7 @@
 #include "kv_store.h"
 
 #include <string>
+#include <rusty/option.hpp>         // KvStore::get returns rusty::Option<std::string>
 #include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
 
 namespace janus {
@@ -24,12 +25,10 @@ public:
     // noexcept(false) base dtor is legal and this dtor never throws.
     ~InMemoryKvStore() noexcept override {}
 
-    bool get(const std::string& key, std::string* out) override {
-        if (out == nullptr) return false;
+    rusty::Option<std::string> get(const std::string& key) override {
         auto found = store_.get(key);
-        if (found.is_none()) return false;
-        *out = found.unwrap().get();
-        return true;
+        if (found.is_none()) return rusty::None;
+        return rusty::Some(std::string(found.unwrap().get()));
     }
 
     void put(const std::string& key, const std::string& value) override {

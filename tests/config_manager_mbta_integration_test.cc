@@ -69,29 +69,25 @@ TEST_F(ConfigManagerMbtaTest, AdapterRoundTripsRawBytesOnRealMbta) {
     OrderedIndexKvStore kv(make_config_index());
 
     kv.put("shard_count", "3");
-    std::string out;
-    ASSERT_TRUE(kv.get("shard_count", &out));
-    EXPECT_EQ(out, "3");
+    { auto r = kv.get("shard_count"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "3"); }
 
     // Miss.
-    EXPECT_FALSE(kv.get("absent", &out));
+    EXPECT_TRUE(kv.get("absent").is_none());
 
     // Overwrite.
     kv.put("shard_count", "5");
-    ASSERT_TRUE(kv.get("shard_count", &out));
-    EXPECT_EQ(out, "5");
+    { auto r = kv.get("shard_count"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "5"); }
 
     // Embedded NULs (serialized sharding-policy bytes).
     static const char kBytes[] = {'a', '\x00', 'b', '\x00', 'c'};
     const std::string payload(kBytes, sizeof(kBytes));
     kv.put("sharding/policy/WAREHOUSE", payload);
-    ASSERT_TRUE(kv.get("sharding/policy/WAREHOUSE", &out));
-    EXPECT_EQ(out, payload);
-    EXPECT_EQ(out.size(), 5u);
+    { auto r = kv.get("sharding/policy/WAREHOUSE"); ASSERT_TRUE(r.is_some());
+      std::string got = r.unwrap(); EXPECT_EQ(got, payload); EXPECT_EQ(got.size(), 5u); }
 
     // Remove.
     kv.remove("shard_count");
-    EXPECT_FALSE(kv.get("shard_count", &out));
+    EXPECT_TRUE(kv.get("shard_count").is_none());
 }
 
 TEST_F(ConfigManagerMbtaTest, ShardLifecycleAndVersioningOnRealMbta) {

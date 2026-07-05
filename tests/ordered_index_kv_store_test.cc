@@ -18,17 +18,16 @@ TEST(OrderedIndexKvStoreTest, PutGetRoundTrip) {
     OrderedIndexKvStore kv(&index);
 
     kv.put("shard/0/replicas", "s1,s2,s3");
-    std::string out;
-    ASSERT_TRUE(kv.get("shard/0/replicas", &out));
-    EXPECT_EQ(out, "s1,s2,s3");
+    auto out = kv.get("shard/0/replicas");
+    ASSERT_TRUE(out.is_some());
+    EXPECT_EQ(out.unwrap(), "s1,s2,s3");
 }
 
 TEST(OrderedIndexKvStoreTest, GetMissReturnsFalse) {
     InMemoryOrderedIndex index;
     OrderedIndexKvStore kv(&index);
 
-    std::string out = "sentinel";
-    EXPECT_FALSE(kv.get("absent", &out));
+    EXPECT_TRUE(kv.get("absent").is_none());
 }
 
 TEST(OrderedIndexKvStoreTest, OverwriteAndRemove) {
@@ -37,12 +36,12 @@ TEST(OrderedIndexKvStoreTest, OverwriteAndRemove) {
 
     kv.put("__version__", "1");
     kv.put("__version__", "2");  // blind overwrite
-    std::string out;
-    ASSERT_TRUE(kv.get("__version__", &out));
-    EXPECT_EQ(out, "2");
+    auto out = kv.get("__version__");
+    ASSERT_TRUE(out.is_some());
+    EXPECT_EQ(out.unwrap(), "2");
 
     kv.remove("__version__");
-    EXPECT_FALSE(kv.get("__version__", &out));
+    EXPECT_TRUE(kv.get("__version__").is_none());
 }
 
 TEST(OrderedIndexKvStoreTest, RawByteValuesWithEmbeddedNul) {
@@ -55,8 +54,9 @@ TEST(OrderedIndexKvStoreTest, RawByteValuesWithEmbeddedNul) {
     const std::string payload(kBytes, sizeof(kBytes));
     kv.put("sharding/policy/WAREHOUSE", payload);
 
-    std::string out;
-    ASSERT_TRUE(kv.get("sharding/policy/WAREHOUSE", &out));
+    auto found = kv.get("sharding/policy/WAREHOUSE");
+    ASSERT_TRUE(found.is_some());
+    std::string out = found.unwrap();
     EXPECT_EQ(out, payload);
     EXPECT_EQ(out.size(), 5u);
 }
@@ -64,8 +64,7 @@ TEST(OrderedIndexKvStoreTest, RawByteValuesWithEmbeddedNul) {
 TEST(OrderedIndexKvStoreTest, NullIndexIsSafe) {
     // Defensive: a null backing index must not crash.
     OrderedIndexKvStore kv(nullptr);
-    std::string out;
-    EXPECT_FALSE(kv.get("k", &out));
+    EXPECT_TRUE(kv.get("k").is_none());
     kv.put("k", "v");     // no-op, no crash
     kv.remove("k");       // no-op, no crash
 }

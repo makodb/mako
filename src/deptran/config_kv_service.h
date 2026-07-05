@@ -30,9 +30,13 @@ public:
 
     // Read logic, factored out of the RPC handler so it can be unit
     // tested without the RPC machinery (no DeferredReply / socket).
-    // @unsafe - KvStore read
+    // @unsafe - KvStore read (port returns Option; adapt to found + out)
     bool DoReadConfigKey(const std::string& key, std::string* value) {
-        return kv_ != nullptr && value != nullptr && kv_->get(key, value);
+        if (kv_ == nullptr || value == nullptr) return false;
+        auto found = kv_->get(key);
+        if (found.is_none()) return false;
+        *value = found.unwrap();
+        return true;
     }
 
     // @unsafe - RPC handler; delegates to DoReadConfigKey then replies.
@@ -59,16 +63,15 @@ private:
  */
 // @unsafe - issues an RPC per get.
 inline RemoteKvStoreReadFn make_config_read_fn(ConfigKvServiceProxy* proxy) {
-    return [proxy](const std::string& key, std::string* out) -> bool {
-        if (proxy == nullptr || out == nullptr) return false;
+    return [proxy](const std::string& key) -> rusty::Option<std::string> {
+        if (proxy == nullptr) return rusty::None;
         ConfigKvServiceProxy::RpcReadConfigKeyRequest req;
         req.key = key;
         auto r = proxy->ReadConfigKey(req);   // synchronous
-        if (r.is_err()) return false;
+        if (r.is_err()) return rusty::None;
         auto resp = r.unwrap();
-        if (!resp.found) return false;
-        *out = std::move(resp.value);
-        return true;
+        if (!resp.found) return rusty::None;
+        return rusty::Some(std::move(resp.value));
     };
 }
 

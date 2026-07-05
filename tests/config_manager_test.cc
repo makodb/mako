@@ -596,8 +596,8 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
 
 // A read closure over a "shard 0" store.
 static RemoteKvStoreReadFn ReaderOver(InMemoryKvStore* shard0) {
-    return [shard0](const std::string& key, std::string* out) -> bool {
-        return shard0->get(key, out);
+    return [shard0](const std::string& key) -> rusty::Option<std::string> {
+        return shard0->get(key);
     };
 }
 
@@ -606,10 +606,10 @@ TEST(RemoteKvStoreTest, ReadsThroughToShard0) {
     shard0.put("hello", "world");
 
     RemoteKvStore remote(ReaderOver(&shard0));
-    std::string v;
-    EXPECT_TRUE(remote.get("hello", &v));
-    EXPECT_EQ(v, "world");
-    EXPECT_FALSE(remote.get("missing", &v));
+    auto hit = remote.get("hello");
+    ASSERT_TRUE(hit.is_some());
+    EXPECT_EQ(hit.unwrap(), "world");
+    EXPECT_TRUE(remote.get("missing").is_none());
 }
 
 TEST(RemoteKvStoreTest, RefusesWrites) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <rusty/option.hpp>   // get() returns rusty::Option<std::string>
 
 namespace janus {
 
@@ -25,19 +26,19 @@ namespace janus {
  */
 #if RUSTYCPP_RUST
 pub trait KvStore {
-    // Point read: returns true and fills *out on hit, false on miss.
-    fn get(&mut self, key: &std::string, out: *mut std::string) -> bool;
+    // Point read: the value on hit, None on miss (no out-pointer).
+    fn get(&mut self, key: &std::string) -> rusty::Option<std::string>;
     // Point write: blind overwrite (raw bytes).
     fn put(&mut self, key: &std::string, value: &std::string);
     // Point delete: no-op if the key is absent.
     fn remove(&mut self, key: &std::string);
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=85d2af37d5d95f7d173fd47a06d0738feed2843acd8769690c3109fe4db20390*/
+/*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
 class KvStore {
 public:
     virtual ~KvStore() noexcept(false) {}
-    virtual bool get(const std::string& key, std::string* out) = 0;
+    virtual rusty::Option<std::string> get(const std::string& key) = 0;
     virtual void put(const std::string& key, const std::string& value) = 0;
     virtual void remove(const std::string& key) = 0;
     KvStore(const KvStore&) = delete;
