@@ -30,31 +30,32 @@ bool initialize_tpcc_sharding_policy(int num_warehouses_total, int num_shards) {
         return false;
     }
 
-    try {
-        // Create TPC-C sharding policy
-        auto policy = janus::create_tpcc_sharding_policy(num_warehouses_total, num_shards);
-
-        // Set version to current timestamp for tracking
-        // @unsafe { std::chrono call }
-        policy.version = static_cast<uint64_t>(
-            std::chrono::system_clock::now().time_since_epoch().count() / 1000000);
-
-        // Initialize the global sharding policy cache
-        auto& cache = janus::get_sharding_policy_cache();
-        cache.set_policy(std::move(policy));
-
-        // @unsafe { std::cout I/O }
-        std::cout << "TPC-C Sharding: Initialized policy with "
-                  << num_warehouses_total << " warehouses across "
-                  << num_shards << " shards (version " << cache.get_version() << ")"
-                  << std::endl;
-
-        return true;
-    } catch (const std::exception& e) {
+    // Create TPC-C sharding policy (returns Err(message) instead of throwing).
+    auto result = janus::create_tpcc_sharding_policy(num_warehouses_total, num_shards);
+    if (result.is_err()) {
         // @unsafe { std::cerr I/O }
-        std::cerr << "TPC-C Sharding: Failed to initialize policy - " << e.what() << std::endl;
+        std::cerr << "TPC-C Sharding: Failed to initialize policy - "
+                  << result.unwrap_err() << std::endl;
         return false;
     }
+    auto policy = result.unwrap();
+
+    // Set version to current timestamp for tracking
+    // @unsafe { std::chrono call }
+    policy.version = static_cast<uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count() / 1000000);
+
+    // Initialize the global sharding policy cache
+    auto& cache = janus::get_sharding_policy_cache();
+    cache.set_policy(std::move(policy));
+
+    // @unsafe { std::cout I/O }
+    std::cout << "TPC-C Sharding: Initialized policy with "
+              << num_warehouses_total << " warehouses across "
+              << num_shards << " shards (version " << cache.get_version() << ")"
+              << std::endl;
+
+    return true;
 }
 
 // @safe - Read-only check

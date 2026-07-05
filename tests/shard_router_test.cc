@@ -9,6 +9,7 @@
 #include "cluster/sharding_policy_cache.h"
 #include "cluster/sharding_policy_builder.h"
 #include "cluster/cluster_config.h"
+#include "sharding_policy_test_util.h"  // janus::make_table_policy / make_policy_set
 
 namespace mako {
 
@@ -135,18 +136,12 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicy) {
 
     // Create and set policy: 10 warehouses across 2 shards
     // w_id 0-4 → shard 0, w_id 5-9 → shard 1
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .table("DISTRICT")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::byField(0),
+                                 {{0, 5, 0}, {5, 10, 1}}, 0),
+        janus::make_table_policy("DISTRICT", janus::KeyExtractor::byField(0),
+                                 {{0, 5, 0}, {5, 10, 1}}, 0),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -178,14 +173,10 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicyKeyValue) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Create and set policy
-    auto policy = janus::ShardingPolicyBuilder(3)
-        .table("STOCK")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-            .defaultShard(0)
-        .build();
+    auto policy = janus::make_policy_set(3, {
+        janus::make_table_policy("STOCK", janus::KeyExtractor::byField(0),
+                                 {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}, 0),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -206,12 +197,10 @@ TEST_F(ShardRouterTest, ComputeShardUnknownTableFallsBack) {
     registry.register_table(1, "UNKNOWN_TABLE");
 
     // Create policy for WAREHOUSE only
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::byField(0),
+                                 {{0, 5, 0}, {5, 10, 1}}),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -224,11 +213,10 @@ TEST_F(ShardRouterTest, HasPolicyRouting) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Set policy with a unique table name for this test
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("HAS_POLICY_TEST_TABLE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("HAS_POLICY_TEST_TABLE", janus::KeyExtractor::byField(0),
+                                 {{0, 10, 0}}),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -240,11 +228,10 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Set policy with 4 shards
-    auto policy = janus::ShardingPolicyBuilder(4)
-        .table("TEST")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = janus::make_policy_set(4, {
+        janus::make_table_policy("TEST", janus::KeyExtractor::byField(0),
+                                 {{0, 10, 0}}),
+    });
 
     policy_cache.set_policy(policy);
 

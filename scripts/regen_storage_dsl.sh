@@ -44,6 +44,9 @@ FILES=(
   # ConfigWatcher: struct + Poll + accessors DSL; thread lifecycle
   # in a CwPollThread RAII helper (DSL can't emit a join-on-drop dtor).
   src/cluster/config_watcher.h
+  # ShardingPolicyBuilder: DSL-friendly reshape (value struct +
+  # Result-based build; fluent TablePolicyBuilder deleted).
+  src/cluster/sharding_policy_builder.h
 )
 
 post_pass() {

@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #include "cluster/sharding_policy.h"
 #include "cluster/sharding_policy_builder.h"
+#include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
 // sharding_policy.h forward-declares rrr::Marshal so it stays
 // standalone-testable from ClusterConfig. This test constructs
 // Marshal locals directly, so we need the complete type.
@@ -298,13 +299,10 @@ TEST_F(ShardingPolicyTest, KeyExtractorTypeToString) {
 // =============================================================================
 
 TEST_F(ShardingPolicyTest, BuilderBasicUsage) {
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .build();
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "WAREHOUSE", KeyExtractor::byField(0), {{0, 5, 0}, {5, 10, 1}}, 0));
+    auto policy = builder.build().unwrap();
 
     EXPECT_EQ(policy.num_shards, 2);
     EXPECT_EQ(policy.table_count(), 1);
@@ -317,23 +315,12 @@ TEST_F(ShardingPolicyTest, BuilderBasicUsage) {
 }
 
 TEST_F(ShardingPolicyTest, BuilderMultipleTables) {
-    auto policy = ShardingPolicyBuilder(3)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-        .table("DISTRICT")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-        .table("CUSTOMER")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-        .build();
+    auto builder = ShardingPolicyBuilder::new_(3);
+    for (const char* t : {"WAREHOUSE", "DISTRICT", "CUSTOMER"}) {
+        builder.add_policy(make_table_policy(
+            t, KeyExtractor::byField(0), {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}));
+    }
+    auto policy = builder.build().unwrap();
 
     EXPECT_EQ(policy.num_shards, 3);
     EXPECT_EQ(policy.table_count(), 3);
@@ -356,19 +343,14 @@ TEST_F(ShardingPolicyTest, BuilderMultipleTables) {
 }
 
 TEST_F(ShardingPolicyTest, BuilderDifferentKeyExtractors) {
-    auto policy = ShardingPolicyBuilder(2)
-        .table("BY_FIELD")
-            .shardByField(1)
-            .addRange(0, 50, 0)
-            .addRange(50, 100, 1)
-        .table("BY_PREFIX")
-            .shardByPrefix(8)
-            .addRange(0, 50, 0)
-            .addRange(50, 100, 1)
-        .table("BY_HASH")
-            .shardByHash()
-            .defaultShard(0)
-        .build();
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "BY_FIELD", KeyExtractor::byField(1), {{0, 50, 0}, {50, 100, 1}}));
+    builder.add_policy(make_table_policy(
+        "BY_PREFIX", KeyExtractor::byPrefix(8), {{0, 50, 0}, {50, 100, 1}}));
+    builder.add_policy(make_table_policy(
+        "BY_HASH", KeyExtractor::byHash(), {}, 0));
+    auto policy = builder.build().unwrap();
 
     EXPECT_EQ(policy.table_count(), 3);
 
@@ -389,76 +371,56 @@ TEST_F(ShardingPolicyTest, BuilderDifferentKeyExtractors) {
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationInvalidShardId) {
-    // Shard ID >= num_shards should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(2)
-            .table("TEST")
-                .shardByField(0)
-                .addRange(0, 10, 2)  // Invalid: shard 2 with only 2 shards (0, 1)
-            .build();
-    }, std::invalid_argument);
+    // Shard ID >= num_shards should fail validation.
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {{0, 10, 2}}));  // shard 2, only 0/1 valid
+    EXPECT_TRUE(builder.build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationOverlappingRanges) {
-    // Overlapping ranges should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(2)
-            .table("TEST")
-                .shardByField(0)
-                .addRange(0, 10, 0)
-                .addRange(5, 15, 1)  // Overlaps with [0, 10)
-            .build();
-    }, std::invalid_argument);
+    // Overlapping ranges should fail validation.
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {{0, 10, 0}, {5, 15, 1}}));  // [0,10) vs [5,15)
+    EXPECT_TRUE(builder.build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationEmptyTableName) {
-    // Empty table name should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(2)
-            .table("")
-                .shardByField(0)
-                .addRange(0, 10, 0)
-            .build();
-    }, std::invalid_argument);
+    // Empty table name should fail validation.
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "", KeyExtractor::byField(0), {{0, 10, 0}}));
+    EXPECT_TRUE(builder.build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationNoTables) {
-    // No tables should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(2).build();
-    }, std::invalid_argument);
+    // No tables should fail validation.
+    EXPECT_TRUE(ShardingPolicyBuilder::new_(2).build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationInvalidNumShards) {
-    // Zero or negative shards should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(0);
-    }, std::invalid_argument);
-
-    EXPECT_THROW({
-        ShardingPolicyBuilder(-1);
-    }, std::invalid_argument);
+    // With zero shards, any table that references a shard is invalid.
+    auto builder = ShardingPolicyBuilder::new_(0);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {{0, 10, 0}}));
+    EXPECT_TRUE(builder.build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationInvalidDefaultShard) {
-    // Default shard >= num_shards should throw
-    EXPECT_THROW({
-        ShardingPolicyBuilder(2)
-            .table("TEST")
-                .shardByField(0)
-                .defaultShard(5)  // Invalid: shard 5 with only 2 shards
-            .build();
-    }, std::invalid_argument);
+    // Default shard >= num_shards should fail validation.
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {}, 5));  // default shard 5, only 0/1 valid
+    EXPECT_TRUE(builder.build().is_err());
 }
 
 TEST_F(ShardingPolicyTest, BuilderAdjacentRangesValid) {
     // Adjacent (non-overlapping) ranges should be valid
-    auto policy = ShardingPolicyBuilder(2)
-        .table("TEST")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)  // Starts where previous ends
-        .build();
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {{0, 5, 0}, {5, 10, 1}}));  // adjacent
+    auto policy = builder.build().unwrap();
 
     EXPECT_EQ(policy.get_shard_for_key("TEST", 4), 0);
     EXPECT_EQ(policy.get_shard_for_key("TEST", 5), 1);
@@ -466,13 +428,10 @@ TEST_F(ShardingPolicyTest, BuilderAdjacentRangesValid) {
 
 TEST_F(ShardingPolicyTest, BuilderGappedRangesValid) {
     // Gapped ranges should be valid (uses default for gaps)
-    auto policy = ShardingPolicyBuilder(2)
-        .table("TEST")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(10, 15, 1)  // Gap between 5 and 10
-            .defaultShard(0)
-        .build();
+    auto builder = ShardingPolicyBuilder::new_(2);
+    builder.add_policy(make_table_policy(
+        "TEST", KeyExtractor::byField(0), {{0, 5, 0}, {10, 15, 1}}, 0));  // gap 5..10
+    auto policy = builder.build().unwrap();
 
     EXPECT_EQ(policy.get_shard_for_key("TEST", 4), 0);
     EXPECT_EQ(policy.get_shard_for_key("TEST", 7), 0);  // In gap, uses default
@@ -484,7 +443,7 @@ TEST_F(ShardingPolicyTest, BuilderGappedRangesValid) {
 // =============================================================================
 
 TEST_F(ShardingPolicyTest, CreateTpccShardingPolicy) {
-    auto policy = create_tpcc_sharding_policy(10, 2);
+    auto policy = create_tpcc_sharding_policy(10, 2).unwrap();
 
     EXPECT_EQ(policy.num_shards, 2);
     EXPECT_EQ(policy.version, 1);
@@ -517,7 +476,7 @@ TEST_F(ShardingPolicyTest, CreateTpccShardingPolicy) {
 
 TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyUneven) {
     // Test with uneven distribution (7 warehouses, 3 shards)
-    auto policy = create_tpcc_sharding_policy(7, 3);
+    auto policy = create_tpcc_sharding_policy(7, 3).unwrap();
 
     EXPECT_EQ(policy.num_shards, 3);
 
@@ -533,13 +492,8 @@ TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyUneven) {
 }
 
 TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyValidation) {
-    EXPECT_THROW({
-        create_tpcc_sharding_policy(0, 2);
-    }, std::invalid_argument);
-
-    EXPECT_THROW({
-        create_tpcc_sharding_policy(10, 0);
-    }, std::invalid_argument);
+    EXPECT_TRUE(create_tpcc_sharding_policy(0, 2).is_err());
+    EXPECT_TRUE(create_tpcc_sharding_policy(10, 0).is_err());
 }
 
 // =============================================================================
@@ -547,7 +501,7 @@ TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyValidation) {
 // =============================================================================
 
 TEST_F(ShardingPolicyTest, CreateUniformShardingPolicy) {
-    auto policy = create_uniform_sharding_policy("MY_TABLE", 0, 100, 4);
+    auto policy = create_uniform_sharding_policy("MY_TABLE", 0, 100, 4).unwrap();
 
     EXPECT_EQ(policy.num_shards, 4);
     EXPECT_EQ(policy.table_count(), 1);
@@ -567,13 +521,8 @@ TEST_F(ShardingPolicyTest, CreateUniformShardingPolicy) {
 }
 
 TEST_F(ShardingPolicyTest, CreateUniformShardingPolicyValidation) {
-    EXPECT_THROW({
-        create_uniform_sharding_policy("TABLE", 0, 0, 2);
-    }, std::invalid_argument);
-
-    EXPECT_THROW({
-        create_uniform_sharding_policy("TABLE", 0, 100, 0);
-    }, std::invalid_argument);
+    EXPECT_TRUE(create_uniform_sharding_policy("TABLE", 0, 0, 2).is_err());
+    EXPECT_TRUE(create_uniform_sharding_policy("TABLE", 0, 100, 0).is_err());
 }
 
 }  // namespace janus

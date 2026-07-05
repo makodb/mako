@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 #include "cluster/sharding_policy_cache.h"
 #include "cluster/sharding_policy_builder.h"
+#include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
 
 namespace janus {
 
@@ -29,12 +30,10 @@ TEST_F(ShardingPolicyCacheTest, DefaultConstruction) {
 TEST_F(ShardingPolicyCacheTest, SetPolicy) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::byField(0),
+                          {{0, 5, 0}, {5, 10, 1}}),
+    });
     policy.version = 42;
 
     cache.set_policy(policy);
@@ -51,13 +50,10 @@ TEST_F(ShardingPolicyCacheTest, SetPolicy) {
 TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::byField(0),
+                          {{0, 5, 0}, {5, 10, 1}}, 0),
+    });
     cache.set_policy(policy);
 
     // Test range lookups
@@ -76,11 +72,9 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
 TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::byField(0), {{0, 10, 0}}),
+    });
     cache.set_policy(policy);
 
     // Unknown table should return -1
@@ -97,14 +91,10 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKeyNotInitialized) {
 TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .table("DISTRICT")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::byField(0), {{0, 10, 0}}),
+        make_table_policy("DISTRICT", KeyExtractor::byField(0), {{0, 10, 0}}),
+    });
     cache.set_policy(policy);
 
     EXPECT_TRUE(cache.has_policy_for_table("WAREHOUSE"));
@@ -119,13 +109,11 @@ TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(3)
-        .table("DISTRICT")
-            .shardByField(0)  // Shard by first field (w_id)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-        .build();
+    auto policy = make_policy_set(3, {
+        // Shard by first field (w_id).
+        make_table_policy("DISTRICT", KeyExtractor::byField(0),
+                          {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}),
+    });
     cache.set_policy(policy);
 
     // Composite key: [w_id, d_id]
@@ -138,12 +126,11 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("SECONDARY")
-            .shardByField(1)  // Shard by second field
-            .addRange(0, 50, 0)
-            .addRange(50, 100, 1)
-        .build();
+    auto policy = make_policy_set(2, {
+        // Shard by second field.
+        make_table_policy("SECONDARY", KeyExtractor::byField(1),
+                          {{0, 50, 0}, {50, 100, 1}}),
+    });
     cache.set_policy(policy);
 
     // Composite key: [first, second]
@@ -155,12 +142,10 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeyInvalidFieldIndex) {
     ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("TEST")
-            .shardByField(5)  // Invalid: field 5 doesn't exist
-            .addRange(0, 10, 0)
-            .defaultShard(1)
-        .build();
+    auto policy = make_policy_set(2, {
+        // Field 5 doesn't exist; extraction falls back to the default shard.
+        make_table_policy("TEST", KeyExtractor::byField(5), {{0, 10, 0}}, 1),
+    });
     cache.set_policy(policy);
 
     // Should use default shard when field extraction fails
@@ -260,7 +245,7 @@ TEST_F(ShardingPolicyCacheTest, TpccStyleRouting) {
     // With 10 warehouses, 2 shards: warehouses_per_shard = 5
     // Shard 0: w_id in [1, 6) → w_id 1, 2, 3, 4, 5
     // Shard 1: w_id in [6, 11) → w_id 6, 7, 8, 9, 10
-    auto policy = create_tpcc_sharding_policy(10, 2);
+    auto policy = create_tpcc_sharding_policy(10, 2).unwrap();
     cache.set_policy(policy);
 
     EXPECT_TRUE(cache.is_initialized());

@@ -1,381 +1,309 @@
-/**
- * @file sharding_policy_builder.h
- * @brief Fluent builder API for constructing sharding policies
- *
- * Example usage for TPC-C warehouse-based sharding:
- *
- *   auto policy = ShardingPolicyBuilder(2)  // 2 shards
- *       .table("WAREHOUSE")
- *           .shardByField(0)           // w_id is field 0
- *           .addRange(0, 5, 0)         // w_id 0-4 → shard 0
- *           .addRange(5, 10, 1)        // w_id 5-9 → shard 1
- *           .defaultShard(0)
- *       .table("DISTRICT")
- *           .shardByField(0)
- *           .addRange(0, 5, 0)
- *           .addRange(5, 10, 1)
- *       .build();
- */
-
 #pragma once
 
-#include <stdexcept>
-#include <algorithm>
+/**
+ * @file sharding_policy_builder.h
+ * @brief Builder for ShardingPolicySet, authored in the inline-Rust DSL.
+ *
+ * Reshaped to be DSL-friendly (docs/storage-interface.md): the old fluent
+ * TablePolicyBuilder (which returned `*this`, held a parent reference, and
+ * owned a raw TablePolicyBuilder* with manual delete) is gone. Callers now
+ * build a TableShardingPolicy directly via its DSL factory + add_range +
+ * default_shard, then hand it to ShardingPolicyBuilder::add_policy. And
+ * validation returns a `rusty::Result` (Err carries a message) rather than
+ * throwing — so the whole builder, including build() and the
+ * create_tpcc/create_uniform helpers, is DSL. The only C++ kernels are the
+ * two things the DSL can't spell: constructing the builder (empty vector +
+ * CTAD) and the literal TPC-C table-name list.
+ *
+ * Usage (non-fluent):
+ *   auto builder = ShardingPolicyBuilder::new_(num_shards);
+ *   auto p = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+ *   p.add_range(0, 5, 0); p.default_shard = 0;
+ *   builder.add_policy(p);
+ *   rusty::Result<ShardingPolicySet, std::string> r = builder.build();
+ */
+
 #include "sharding_policy.h"
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <rusty/result.hpp>
+#include <rusty/slice.hpp>
 
 namespace janus {
 
-// Forward declaration
 class ShardingPolicyBuilder;
+// @safe - factory: empty policies vector (the DSL struct literal can't
+// supply an empty std::vector with CTAD).
+inline ShardingPolicyBuilder spb_new(int32_t num_shards);
+// @safe - the fixed TPC-C table-name list (a C string-literal array the
+// DSL can't spell).
+inline std::vector<std::string> spb_tpcc_tables() {
+    return {"WAREHOUSE", "DISTRICT", "CUSTOMER", "STOCK",
+            "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM",
+            "warehouse", "district", "customer", "stock",
+            "oorder", "new_order", "order_line", "history", "item"};
+}
 
-/**
- * Helper class for building a single table's sharding policy.
- * Returned by ShardingPolicyBuilder::table().
- */
-class TablePolicyBuilder {
-public:
-    // @safe - Constructor
-    TablePolicyBuilder(ShardingPolicyBuilder& parent, const std::string& table_name)
-        : parent_(parent) {
-        policy_.table_name = table_name;
-        policy_.default_shard = -1;  // No default by default
+#if RUSTYCPP_RUST
+pub struct ShardingPolicyBuilder {
+    num_shards: i32,
+    policies: std::vector<TableShardingPolicy>,
+}
+impl ShardingPolicyBuilder {
+    fn new(num_shards: i32) -> ShardingPolicyBuilder {
+        unsafe { spb_new(num_shards) }
     }
-
-    /**
-     * Configure sharding by field index (most common for TPC-C).
-     * @param field_index Which field in the composite key to use (0-based)
-     */
-    // @safe - Modifies internal state
-    TablePolicyBuilder& shardByField(int32_t field_index) {
-        policy_.key_extractor = KeyExtractor::byField(field_index);
-        return *this;
+    fn add_policy(&mut self, policy: TableShardingPolicy) {
+        (*self).policies.push_back(policy);
     }
-
-    /**
-     * Configure sharding by key prefix bytes.
-     * @param prefix_length Number of bytes to extract from key start
-     */
-    // @safe - Modifies internal state
-    TablePolicyBuilder& shardByPrefix(int32_t prefix_length) {
-        policy_.key_extractor = KeyExtractor::byPrefix(prefix_length);
-        return *this;
+    fn get_num_shards(&self) -> i32 {
+        (*self).num_shards
     }
-
-    /**
-     * Configure sharding by hash (fallback for non-range sharding).
-     */
-    // @safe - Modifies internal state
-    TablePolicyBuilder& shardByHash() {
-        policy_.key_extractor = KeyExtractor::byHash();
-        return *this;
-    }
-
-    /**
-     * Add a range mapping for this table.
-     * @param start Inclusive start of range
-     * @param end Exclusive end of range
-     * @param shard Target shard ID
-     */
-    // @safe - Modifies internal state
-    TablePolicyBuilder& addRange(int64_t start, int64_t end, int32_t shard) {
-        policy_.add_range(start, end, shard);
-        return *this;
-    }
-
-    /**
-     * Set the default shard for keys not matching any range.
-     * @param shard Default shard ID (-1 means error on no match)
-     */
-    // @safe - Modifies internal state
-    TablePolicyBuilder& defaultShard(int32_t shard) {
-        policy_.default_shard = shard;
-        return *this;
-    }
-
-    /**
-     * Start configuring another table (finishes current table).
-     * @param name Name of the next table to configure
-     */
-    // @safe - Delegates to parent
-    TablePolicyBuilder& table(const std::string& name);
-
-    /**
-     * Build the final ShardingPolicySet.
-     * Validates all configurations and throws on error.
-     */
-    // @safe - Creates new objects, may throw
-    ShardingPolicySet build();
-
-    /**
-     * Get the built policy (for internal use by parent builder).
-     */
-    // @safe - Pure accessor
-    const TableShardingPolicy& getPolicy() const {
-        return policy_;
-    }
-
-private:
-    ShardingPolicyBuilder& parent_;
-    TableShardingPolicy policy_;
-};
-
-/**
- * Main builder class for constructing a ShardingPolicySet.
- */
-class ShardingPolicyBuilder {
-public:
-    /**
-     * Create a builder for a cluster with the specified number of shards.
-     * @param num_shards Total number of shards in the cluster
-     */
-    // @safe - Simple initialization
-    explicit ShardingPolicyBuilder(int32_t num_shards)
-        : num_shards_(num_shards), current_table_(nullptr) {
-        if (num_shards <= 0) {
-            throw std::invalid_argument("num_shards must be positive");
+    // Validate every table policy and assemble the ShardingPolicySet.
+    // Returns Err(message) instead of throwing.
+    fn build(&self) -> rusty::Result<ShardingPolicySet, std::string> {
+        if (*self).policies.empty() {
+            return rusty::Err(std::string("ShardingPolicySet must have at least one table"));
         }
-    }
-
-    // @safe - Destructor
-    ~ShardingPolicyBuilder() {
-        delete current_table_;
-    }
-
-    // Delete copy (has raw pointer)
-    ShardingPolicyBuilder(const ShardingPolicyBuilder&) = delete;
-    ShardingPolicyBuilder& operator=(const ShardingPolicyBuilder&) = delete;
-
-    // Allow move
-    // @safe - Move constructor
-    ShardingPolicyBuilder(ShardingPolicyBuilder&& other) noexcept
-        : num_shards_(other.num_shards_),
-          policies_(std::move(other.policies_)),
-          current_table_(other.current_table_) {
-        other.current_table_ = nullptr;
-    }
-
-    /**
-     * Start configuring a new table's sharding policy.
-     * @param name Name of the table
-     * @return Reference to TablePolicyBuilder for method chaining
-     */
-    // @safe - Creates new builder, may throw
-    TablePolicyBuilder& table(const std::string& name) {
-        // Finalize previous table if any
-        finishCurrentTable();
-
-        // Start new table
-        current_table_ = new TablePolicyBuilder(*this, name);
-        return *current_table_;
-    }
-
-    /**
-     * Build the final ShardingPolicySet.
-     * Validates all configurations and throws on error.
-     * @return Constructed and validated ShardingPolicySet
-     * @throws std::invalid_argument on validation failure
-     */
-    // @safe - Creates new objects, may throw
-    ShardingPolicySet build() {
-        // Finalize current table if any
-        finishCurrentTable();
-
-        // Validate we have at least one table
-        if (policies_.empty()) {
-            throw std::invalid_argument("ShardingPolicySet must have at least one table");
-        }
-
-        // Build the policy set
-        ShardingPolicySet result = ShardingPolicySet::with_shards(num_shards_);
-        result.version = 1;  // Initial version
-
-        for (const auto& policy : policies_) {
-            // Validate each policy
-            validatePolicy(policy);
-            result.set_policy(policy.table_name, policy);
-        }
-
-        return result;
-    }
-
-    /**
-     * Get the number of shards.
-     */
-    // @safe - Pure accessor
-    int32_t getNumShards() const {
-        return num_shards_;
-    }
-
-private:
-    friend class TablePolicyBuilder;
-
-    /**
-     * Finish the current table being built and add to policies list.
-     */
-    // @safe - Internal state management
-    void finishCurrentTable() {
-        if (current_table_ != nullptr) {
-            policies_.push_back(current_table_->getPolicy());
-            delete current_table_;
-            current_table_ = nullptr;
-        }
-    }
-
-    /**
-     * Validate a table's sharding policy.
-     * @throws std::invalid_argument on validation failure
-     */
-    // @safe - Pure validation, may throw
-    void validatePolicy(const TableShardingPolicy& policy) const {
-        // Check table name is not empty
-        if (policy.table_name.empty()) {
-            throw std::invalid_argument("Table name cannot be empty");
-        }
-
-        // Check all shard IDs are valid
-        for (const auto& range : policy.ranges) {
-            if (range.shard_id < 0 || range.shard_id >= num_shards_) {
-                throw std::invalid_argument(
-                    "Invalid shard_id " + std::to_string(range.shard_id) +
-                    " for table " + policy.table_name +
-                    " (must be 0-" + std::to_string(num_shards_ - 1) + ")");
+        let mut ti: usize = 0;
+        while ti < (*self).policies.size() {
+            if (*self).policies[ti].table_name.empty() {
+                return rusty::Err(std::string("Table name cannot be empty"));
             }
-        }
-
-        // Check default shard is valid (if set)
-        if (policy.default_shard >= 0 && policy.default_shard >= num_shards_) {
-            throw std::invalid_argument(
-                "Invalid default_shard " + std::to_string(policy.default_shard) +
-                " for table " + policy.table_name);
-        }
-
-        // Check for overlapping ranges
-        for (size_t i = 0; i < policy.ranges.size(); ++i) {
-            for (size_t j = i + 1; j < policy.ranges.size(); ++j) {
-                const auto& r1 = policy.ranges[i];
-                const auto& r2 = policy.ranges[j];
-                // Ranges overlap if one starts before the other ends
-                if (r1.start_key < r2.end_key && r2.start_key < r1.end_key) {
-                    throw std::invalid_argument(
-                        "Overlapping ranges for table " + policy.table_name +
-                        ": [" + std::to_string(r1.start_key) + "," +
-                        std::to_string(r1.end_key) + ") and [" +
-                        std::to_string(r2.start_key) + "," +
-                        std::to_string(r2.end_key) + ")");
+            let mut ri: usize = 0;
+            while ri < (*self).policies[ti].ranges.size() {
+                let sid: i32 = (*self).policies[ti].ranges[ri].shard_id;
+                if sid < 0 || sid >= (*self).num_shards {
+                    return rusty::Err(std::string("Invalid shard_id for table"));
                 }
+                ri = ri + 1;
             }
+            let ds: i32 = (*self).policies[ti].default_shard;
+            if ds >= 0 && ds >= (*self).num_shards {
+                return rusty::Err(std::string("Invalid default_shard for table"));
+            }
+            // Overlapping-range check (pairwise).
+            let mut a: usize = 0;
+            while a < (*self).policies[ti].ranges.size() {
+                let mut b: usize = a + 1;
+                while b < (*self).policies[ti].ranges.size() {
+                    let r1s: i64 = (*self).policies[ti].ranges[a].start_key;
+                    let r1e: i64 = (*self).policies[ti].ranges[a].end_key;
+                    let r2s: i64 = (*self).policies[ti].ranges[b].start_key;
+                    let r2e: i64 = (*self).policies[ti].ranges[b].end_key;
+                    if r1s < r2e && r2s < r1e {
+                        return rusty::Err(std::string("Overlapping ranges for table"));
+                    }
+                    b = b + 1;
+                }
+                a = a + 1;
+            }
+            ti = ti + 1;
         }
+        let mut result: ShardingPolicySet = ShardingPolicySet::with_shards((*self).num_shards);
+        result.version = 1;
+        let mut i: usize = 0;
+        while i < (*self).policies.size() {
+            result.set_policy(&(*self).policies[i].table_name, &(*self).policies[i]);
+            i = i + 1;
+        }
+        rusty::Ok(result)
     }
+}
 
-    int32_t num_shards_;
-    std::vector<TableShardingPolicy> policies_;
-    TablePolicyBuilder* current_table_;
+// TPC-C: all tables sharded by w_id (field 0), 1-indexed ranges.
+pub fn create_tpcc_sharding_policy(num_warehouses: i32, num_shards: i32)
+        -> rusty::Result<ShardingPolicySet, std::string> {
+    if num_warehouses <= 0 || num_shards <= 0 {
+        return rusty::Err(std::string("num_warehouses and num_shards must be positive"));
+    }
+    let wps: i32 = (num_warehouses + num_shards - 1) / num_shards;
+    let mut builder: ShardingPolicyBuilder = ShardingPolicyBuilder::new(num_shards);
+    let tables: std::vector<std::string> = unsafe { spb_tpcc_tables() };
+    let mut t: usize = 0;
+    while t < tables.size() {
+        let ext: KeyExtractor = KeyExtractor::byField(0);
+        let tname: &std::string = &tables[t];
+        let mut policy: TableShardingPolicy = TableShardingPolicy::create(tname, &ext);
+        let mut s: i32 = 0;
+        while s < num_shards {
+            let start: i64 = ((s * wps) + 1) as i64;
+            let end0: i64 = (((s + 1) * wps) + 1) as i64;
+            let endw: i64 = (num_warehouses + 1) as i64;
+            let end: i64 = if end0 < endw { end0 } else { endw };
+            if start < end {
+                policy.add_range(start, end, s);
+            }
+            s = s + 1;
+        }
+        policy.default_shard = 0;
+        builder.add_policy(policy);
+        t = t + 1;
+    }
+    builder.build()
+}
+
+// Uniform single-table sharding: keys 0..max_key split evenly.
+pub fn create_uniform_sharding_policy(table_name: &std::string, key_field: i32,
+                                      max_key: i64, num_shards: i32)
+        -> rusty::Result<ShardingPolicySet, std::string> {
+    if max_key <= 0 || num_shards <= 0 {
+        return rusty::Err(std::string("max_key and num_shards must be positive"));
+    }
+    let kps: i64 = (max_key + (num_shards as i64) - 1) / (num_shards as i64);
+    let mut builder: ShardingPolicyBuilder = ShardingPolicyBuilder::new(num_shards);
+    let ext: KeyExtractor = KeyExtractor::byField(key_field);
+    let mut policy: TableShardingPolicy = TableShardingPolicy::create(table_name, &ext);
+    let mut s: i32 = 0;
+    while s < num_shards {
+        let start: i64 = (s as i64) * kps;
+        let end0: i64 = ((s + 1) as i64) * kps;
+        let end: i64 = if end0 < max_key { end0 } else { max_key };
+        if start < end {
+            policy.add_range(start, end, s);
+        }
+        s = s + 1;
+    }
+    policy.default_shard = 0;
+    builder.add_policy(policy);
+    builder.build()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_builder.1 version=1 rust_sha256=29ce87bc862337d618518929932321915e1afe4d5281e5d52dcdf733b496da96*/
+struct ShardingPolicyBuilder;
+
+struct ShardingPolicyBuilder {
+    int32_t num_shards;
+    std::vector<TableShardingPolicy> policies;
+
+    static ShardingPolicyBuilder new_(int32_t num_shards);
+    void add_policy(TableShardingPolicy policy);
+    int32_t get_num_shards() const;
+    rusty::Result<ShardingPolicySet, std::string> build() const;
 };
 
-// Implementation of TablePolicyBuilder methods that need full ShardingPolicyBuilder definition
-
-inline TablePolicyBuilder& TablePolicyBuilder::table(const std::string& name) {
-    return parent_.table(name);
-}
-
-inline ShardingPolicySet TablePolicyBuilder::build() {
-    return parent_.build();
-}
-
-// =============================================================================
-// Helper functions for common sharding patterns
-// =============================================================================
-
-/**
- * Create a TPC-C style sharding policy where all tables are sharded by w_id.
- *
- * TPC-C uses 1-indexed warehouse IDs (w_id = 1, 2, ..., num_warehouses).
- * This function creates ranges that map:
- *   - Shard 0: w_id in [1, warehouses_per_shard]
- *   - Shard 1: w_id in [warehouses_per_shard + 1, 2 * warehouses_per_shard]
- *   - etc.
- *
- * @param num_warehouses Total number of warehouses (w_id ranges from 1 to num_warehouses)
- * @param num_shards Number of shards to distribute across
- * @return ShardingPolicySet for TPC-C workload
- */
-// @safe - Pure function creating objects
-inline ShardingPolicySet create_tpcc_sharding_policy(int num_warehouses, int num_shards) {
-    if (num_warehouses <= 0 || num_shards <= 0) {
-        throw std::invalid_argument("num_warehouses and num_shards must be positive");
+rusty::Result<ShardingPolicySet, std::string> create_tpcc_sharding_policy(int32_t num_warehouses, int32_t num_shards) {
+    if ((rusty::detail::deref_if_pointer_like(num_warehouses) <= 0) || (rusty::detail::deref_if_pointer_like(num_shards) <= 0)) {
+        return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("num_warehouses and num_shards must be positive"));
     }
-
-    // Calculate warehouses per shard (round up to handle uneven distribution)
-    int warehouses_per_shard = (num_warehouses + num_shards - 1) / num_shards;
-
-    auto builder = ShardingPolicyBuilder(num_shards);
-
-    // TPC-C tables all sharded by w_id (field 0 in composite keys)
-    // Note: ITEM table is read-only and not truly sharded, but we include it
-    // with shard 0 as default for consistency
-    const char* tables[] = {
-        "WAREHOUSE", "DISTRICT", "CUSTOMER", "STOCK",
-        "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM",
-        // Also include lowercase versions for compatibility
-        "warehouse", "district", "customer", "stock",
-        "oorder", "new_order", "order_line", "history", "item"
-    };
-
-    for (const char* table_name : tables) {
-        auto& table_builder = builder.table(table_name).shardByField(0);
-
-        // Add ranges for each shard (1-indexed warehouse IDs)
-        for (int s = 0; s < num_shards; ++s) {
-            // TPC-C w_id starts from 1, so:
-            // Shard 0: [1, warehouses_per_shard + 1)  = w_id 1..warehouses_per_shard
-            // Shard 1: [warehouses_per_shard + 1, 2 * warehouses_per_shard + 1)
-            int64_t start = s * warehouses_per_shard + 1;  // 1-indexed
-            int64_t end = std::min((s + 1) * warehouses_per_shard + 1, num_warehouses + 1);
-            if (start < end) {
-                table_builder.addRange(start, end, s);
+    const int32_t wps = (((rusty::detail::deref_if_pointer_like(num_warehouses) + rusty::detail::deref_if_pointer_like(num_shards)) - static_cast<int32_t>(1))) / rusty::detail::deref_if_pointer_like(num_shards);
+    ShardingPolicyBuilder builder = ShardingPolicyBuilder::new_(std::move(num_shards));
+    const std::vector<std::string> tables = spb_tpcc_tables();
+    size_t t = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(t) < tables.size()) {
+        const KeyExtractor ext = KeyExtractor::byField(0);
+        const std::string& tname = tables[t];
+        TableShardingPolicy policy = TableShardingPolicy::create(tname, ext);
+        int32_t s = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(s) < rusty::detail::deref_if_pointer_like(num_shards)) {
+            const int64_t start = static_cast<int64_t>((((rusty::detail::deref_if_pointer_like(s) * rusty::detail::deref_if_pointer_like(wps))) + 1));
+            const int64_t end0 = static_cast<int64_t>((((((rusty::detail::deref_if_pointer_like(s) + 1)) * rusty::detail::deref_if_pointer_like(wps))) + 1));
+            const int64_t endw = static_cast<int64_t>((rusty::detail::deref_if_pointer_like(num_warehouses) + 1));
+            const int64_t end = (rusty::detail::deref_if_pointer_like(end0) < rusty::detail::deref_if_pointer_like(endw) ? end0 : endw);
+            if (rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end)) {
+                policy.add_range(std::move(start), std::move(end), std::move(s));
             }
+            s = rusty::detail::deref_if_pointer_like(s) + static_cast<int32_t>(1);
         }
-
-        table_builder.defaultShard(0);  // Default to shard 0 for out-of-range
+        policy.default_shard = 0;
+        builder.add_policy(std::move(policy));
+        t = rusty::detail::deref_if_pointer_like(t) + static_cast<size_t>(1);
     }
-
     return builder.build();
 }
 
-/**
- * Create a simple uniform sharding policy for a single table.
- * @param table_name Name of the table
- * @param key_field Which field to shard by
- * @param max_key Maximum key value (keys from 0 to max_key-1)
- * @param num_shards Number of shards
- * @return ShardingPolicySet for the table
- */
-// @safe - Pure function creating objects
-inline ShardingPolicySet create_uniform_sharding_policy(
-    const std::string& table_name,
-    int key_field,
-    int64_t max_key,
-    int num_shards) {
-
-    if (max_key <= 0 || num_shards <= 0) {
-        throw std::invalid_argument("max_key and num_shards must be positive");
+rusty::Result<ShardingPolicySet, std::string> create_uniform_sharding_policy(const std::string& table_name, int32_t key_field, int64_t max_key, int32_t num_shards) {
+    if ((rusty::detail::deref_if_pointer_like(max_key) <= 0) || (rusty::detail::deref_if_pointer_like(num_shards) <= 0)) {
+        return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("max_key and num_shards must be positive"));
     }
-
-    int64_t keys_per_shard = (max_key + num_shards - 1) / num_shards;
-
-    auto builder = ShardingPolicyBuilder(num_shards);
-    auto& table_builder = builder.table(table_name).shardByField(key_field);
-
-    for (int s = 0; s < num_shards; ++s) {
-        int64_t start = s * keys_per_shard;
-        int64_t end = std::min((s + 1) * keys_per_shard, max_key);
-        if (start < end) {
-            table_builder.addRange(start, end, s);
+    const int64_t kps = (((rusty::detail::deref_if_pointer_like(max_key) + ((static_cast<int64_t>(num_shards)))) - static_cast<int64_t>(1))) / ((static_cast<int64_t>(num_shards)));
+    ShardingPolicyBuilder builder = ShardingPolicyBuilder::new_(std::move(num_shards));
+    const KeyExtractor ext = KeyExtractor::byField(std::move(key_field));
+    TableShardingPolicy policy = TableShardingPolicy::create(table_name, ext);
+    int32_t s = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(s) < rusty::detail::deref_if_pointer_like(num_shards)) {
+        const int64_t start = ((static_cast<int64_t>(s))) * rusty::detail::deref_if_pointer_like(kps);
+        const int64_t end0 = ((static_cast<int64_t>((rusty::detail::deref_if_pointer_like(s) + 1)))) * rusty::detail::deref_if_pointer_like(kps);
+        const int64_t end = (rusty::detail::deref_if_pointer_like(end0) < rusty::detail::deref_if_pointer_like(max_key) ? end0 : max_key);
+        if (rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end)) {
+            policy.add_range(std::move(start), std::move(end), std::move(s));
         }
+        s = rusty::detail::deref_if_pointer_like(s) + static_cast<int32_t>(1);
     }
-
-    table_builder.defaultShard(0);
+    policy.default_shard = 0;
+    builder.add_policy(std::move(policy));
     return builder.build();
+}
+
+
+inline ShardingPolicyBuilder ShardingPolicyBuilder::new_(int32_t num_shards) {
+    // @unsafe
+    {
+        return spb_new(std::move(num_shards));
+    }
+}
+
+inline void ShardingPolicyBuilder::add_policy(TableShardingPolicy policy) {
+    ((*this)).policies.push_back(std::move(policy));
+}
+
+inline int32_t ShardingPolicyBuilder::get_num_shards() const {
+    return ((*this)).num_shards;
+}
+
+inline rusty::Result<ShardingPolicySet, std::string> ShardingPolicyBuilder::build() const {
+    if (((*this)).policies.empty()) {
+        return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("ShardingPolicySet must have at least one table"));
+    }
+    size_t ti = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(ti) < ((*this)).policies.size()) {
+        if (((*this)).policies[ti].table_name.empty()) {
+            return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("Table name cannot be empty"));
+        }
+        size_t ri = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(ri) < ((*this)).policies[ti].ranges.size()) {
+            const int32_t sid = ((*this)).policies[ti].ranges[ri].shard_id;
+            if ((rusty::detail::deref_if_pointer_like(sid) < 0) || (rusty::detail::deref_if_pointer_like(sid) >= rusty::detail::deref_if_pointer_like(((*this)).num_shards))) {
+                return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("Invalid shard_id for table"));
+            }
+            ri = rusty::detail::deref_if_pointer_like(ri) + static_cast<size_t>(1);
+        }
+        const int32_t ds = ((*this)).policies[ti].default_shard;
+        if ((rusty::detail::deref_if_pointer_like(ds) >= 0) && (rusty::detail::deref_if_pointer_like(ds) >= rusty::detail::deref_if_pointer_like(((*this)).num_shards))) {
+            return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("Invalid default_shard for table"));
+        }
+        size_t a = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(a) < ((*this)).policies[ti].ranges.size()) {
+            size_t b = rusty::detail::deref_if_pointer_like(a) + static_cast<size_t>(1);
+            while (rusty::detail::deref_if_pointer_like(b) < ((*this)).policies[ti].ranges.size()) {
+                const int64_t r1s = ((*this)).policies[ti].ranges[a].start_key;
+                const int64_t r1e = ((*this)).policies[ti].ranges[a].end_key;
+                const int64_t r2s = ((*this)).policies[ti].ranges[b].start_key;
+                const int64_t r2e = ((*this)).policies[ti].ranges[b].end_key;
+                if ((rusty::detail::deref_if_pointer_like(r1s) < rusty::detail::deref_if_pointer_like(r2e)) && (rusty::detail::deref_if_pointer_like(r2s) < rusty::detail::deref_if_pointer_like(r1e))) {
+                    return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("Overlapping ranges for table"));
+                }
+                b = rusty::detail::deref_if_pointer_like(b) + static_cast<size_t>(1);
+            }
+            a = rusty::detail::deref_if_pointer_like(a) + static_cast<size_t>(1);
+        }
+        ti = rusty::detail::deref_if_pointer_like(ti) + static_cast<size_t>(1);
+    }
+    ShardingPolicySet result = ShardingPolicySet::with_shards(((*this)).num_shards);
+    result.version = 1;
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((*this)).policies.size()) {
+        result.set_policy(((*this)).policies[i].table_name, ((*this)).policies[i]);
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    return rusty::Result<ShardingPolicySet, std::string>::Ok(std::move(result));
+}
+/*RUSTYCPP:GEN-END id=sharding_policy_builder.1*/
+
+// @safe - factory body (ShardingPolicyBuilder complete here).
+inline ShardingPolicyBuilder spb_new(int32_t num_shards) {
+    return ShardingPolicyBuilder{num_shards, std::vector<TableShardingPolicy>{}};
 }
 
 }  // namespace janus
