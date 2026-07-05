@@ -55,15 +55,21 @@ FILES=(
 post_pass() {
   # Within RUSTYCPP:GEN regions, prefix `inline ` onto column-0
   # out-of-line definitions (`Ret Owner::name(...)`, `Owner Owner::new_`,
-  # free fns emitted by the DSL). Class bodies/virtuals are indented and
-  # class/template/namespace/comment lines are excluded, so they are
-  # untouched.
+  # `Owner::~Owner()` from impl Drop, free fns emitted by the DSL). Class
+  # bodies/virtuals are indented and class/template/namespace/comment lines
+  # are excluded, so they are untouched.
+  # NOTE: the `\w+::` has NO leading `\b` on purpose — a `\b` before it makes
+  # the pattern fail to match destructors (`Owner::~Owner()`), which then
+  # emit a non-inline out-of-line dtor and blow up with a multiple-definition
+  # link error in any header included by >1 TU. `^\S` already anchors these
+  # to column 0, so dropping `\b` is safe (statements inside bodies are
+  # indented and skipped).
   python3 - "$1" <<'EOF'
 import re, sys
 p = sys.argv[1]
 lines = open(p).read().split('\n')
 out, in_gen = [], False
-defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\b\w+::~?\w+\s*\(')
+defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
 for ln in lines:
     if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
         in_gen = True
