@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
 
 // deref_if_pointer_like + rusty::clone, used by the DSL-generated method
 // bodies below (clone wraps the enum literals in the factory struct
@@ -307,31 +308,15 @@ inline TableShardingPolicy tsp_create(const std::string& name,
 // replacing the (num_shards) constructor.
 struct ShardingPolicySet;  // for the factory kernel's forward declaration
 
-// @unsafe - map find -> pointer-or-null
+// @unsafe - BTreeMap get -> pointer-or-null. The one map op that stays a
+// kernel: it hands back a raw pointer into the map (the DSL should not
+// hand-roll pointer surgery). insert / contains_key / get-and-route now
+// live in the DSL bodies below as btree_port::BTreeMap method calls.
 inline const TableShardingPolicy* sps_get_policy(
-        const std::map<std::string, TableShardingPolicy>* policies,
+        const btree_port::BTreeMap<std::string, TableShardingPolicy>* policies,
         const std::string& table_name) {
-    auto it = policies->find(table_name);
-    return it != policies->end() ? &it->second : nullptr;
-}
-// @safe - blind map insert / overwrite
-inline void sps_set_policy(std::map<std::string, TableShardingPolicy>* policies,
-                           const std::string& table_name,
-                           const TableShardingPolicy& policy) {
-    (*policies)[table_name] = policy;
-}
-// @safe - delegate to the matched table policy's binary search
-inline int32_t sps_get_shard_for_key(
-        const std::map<std::string, TableShardingPolicy>* policies,
-        const std::string& table_name, int64_t key_value) {
-    const TableShardingPolicy* p = sps_get_policy(policies, table_name);
-    return p == nullptr ? -1 : p->get_shard(key_value);
-}
-// @safe - membership test
-inline bool sps_has_policy(
-        const std::map<std::string, TableShardingPolicy>* policies,
-        const std::string& table_name) {
-    return policies->find(table_name) != policies->end();
+    auto found = policies->get(table_name);
+    return found.is_some() ? &found.unwrap().get() : nullptr;
 }
 // @safe - factory: preserves the old ctor (num_shards = shards). Defined
 // below the struct; forward-declared here for the DSL body.
@@ -339,9 +324,9 @@ inline ShardingPolicySet sps_with_shards(int32_t shards);
 
 #if RUSTYCPP_RUST
 pub struct ShardingPolicySet {
-    version: u64,                                          // cache-invalidation version
-    num_shards: i32,                                       // total shards in the cluster
-    policies: std::map<std::string, TableShardingPolicy>,  // table_name -> policy
+    version: u64,                                                       // cache-invalidation version
+    num_shards: i32,                                                    // total shards in the cluster
+    policies: btree_port::BTreeMap<std::string, TableShardingPolicy>,   // table_name -> policy
 }
 impl ShardingPolicySet {
     // Factory replacing the old (shards) constructor. Sets num_shards
@@ -349,35 +334,40 @@ impl ShardingPolicySet {
     fn with_shards(shards: i32) -> ShardingPolicySet {
         unsafe { sps_with_shards(shards) }
     }
-    // Policy for a table, or null if none is registered.
+    // Policy for a table, or null if none is registered. The raw-pointer
+    // return keeps this one op a kernel (see sps_get_policy).
     fn get_policy(&self, table_name: &std::string) -> *const TableShardingPolicy {
         unsafe { sps_get_policy(&self.policies, table_name) }
     }
-    // Add or overwrite a table's policy.
+    // Add or overwrite a table's policy (BTreeMap::insert overwrites).
     fn set_policy(&mut self, table_name: &std::string, policy: &TableShardingPolicy) {
-        unsafe { sps_set_policy(&mut self.policies, table_name, policy) }
+        (*self).policies.insert(table_name, policy);
     }
     // Route: shard for (table, key), or -1 if the table has no policy.
     fn get_shard_for_key(&self, table_name: &std::string, key_value: i64) -> i32 {
-        unsafe { sps_get_shard_for_key(&self.policies, table_name, key_value) }
+        if (*self).policies.contains_key(table_name) {
+            return (*self).policies.get(table_name).unwrap().get().get_shard(key_value);
+        }
+        -1
     }
     // True if a policy is registered for the table.
     fn has_policy(&self, table_name: &std::string) -> bool {
-        unsafe { sps_has_policy(&self.policies, table_name) }
+        (*self).policies.contains_key(table_name)
     }
-    // Number of tables with a policy.
+    // Number of tables with a policy. (.size() lowers directly; .len()
+    // would map to rusty::len, which this pin doesn't provide.)
     fn table_count(&self) -> usize {
         (*self).policies.size()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=1e2b27c5b066b1eee90e27f8bd2b752ad2efd6aa73f8ad32f301e3400210cc7d*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=d144229f9f9f75ed49816ad241f52f883e93c30bd619bd71acce4c306d6e9ffc*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
     uint64_t version;
     int32_t num_shards;
-    std::map<std::string, TableShardingPolicy> policies;
+    btree_port::BTreeMap<std::string, TableShardingPolicy> policies;
 
     static ShardingPolicySet with_shards(int32_t shards);
     const TableShardingPolicy* get_policy(const std::string& table_name) const;
@@ -403,24 +393,18 @@ inline const TableShardingPolicy* ShardingPolicySet::get_policy(const std::strin
 }
 
 inline void ShardingPolicySet::set_policy(const std::string& table_name, const TableShardingPolicy& policy) {
-    // @unsafe
-    {
-        sps_set_policy(&this->policies, table_name, policy);
-    }
+    ((*this)).policies.insert(table_name, std::move(policy));
 }
 
 inline int32_t ShardingPolicySet::get_shard_for_key(const std::string& table_name, int64_t key_value) const {
-    // @unsafe
-    {
-        return sps_get_shard_for_key(&this->policies, table_name, std::move(key_value));
+    if (((*this)).policies.contains_key(table_name)) {
+        return ((*this)).policies.get(table_name).unwrap().get().get_shard(std::move(key_value));
     }
+    return -1;
 }
 
 inline bool ShardingPolicySet::has_policy(const std::string& table_name) const {
-    // @unsafe
-    {
-        return sps_has_policy(&this->policies, table_name);
-    }
+    return ((*this)).policies.contains_key(table_name);
 }
 
 inline size_t ShardingPolicySet::table_count() const {

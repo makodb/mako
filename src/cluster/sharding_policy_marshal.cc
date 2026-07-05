@@ -94,7 +94,7 @@ rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s) {
     for (int32_t i = 0; i < num_policies; ++i) {
         TableShardingPolicy policy;
         m >> policy;
-        s.policies[policy.table_name] = policy;
+        s.policies.insert(policy.table_name, policy);  // BTreeMap: overwrites
     }
     return m;
 }
