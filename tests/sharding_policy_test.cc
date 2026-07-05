@@ -343,19 +343,24 @@ TEST_F(ShardingPolicyTest, BuilderDifferentKeyExtractors) {
     EXPECT_EQ(policy.table_count(), 3);
 
     // Verify key extractors are correctly set
-    const auto* field_policy = policy.get_policy("BY_FIELD");
-    EXPECT_NE(field_policy, nullptr);
-    EXPECT_EQ(field_policy->key_extractor.kind, KeyExtractorType::FIELD_INDEX);
-    EXPECT_EQ(field_policy->key_extractor.field_index, 1);
+    // get_policy() now returns Option<&policy> (btree_port::BTreeMap::get),
+    // not a raw pointer -- is_some() + unwrap().get() instead of != nullptr.
+    auto field_policy = policy.get_policy("BY_FIELD");
+    ASSERT_TRUE(field_policy.is_some());
+    const TableShardingPolicy& fp = field_policy.unwrap().get();
+    EXPECT_EQ(fp.key_extractor.kind, KeyExtractorType::FIELD_INDEX);
+    EXPECT_EQ(fp.key_extractor.field_index, 1);
 
-    const auto* prefix_policy = policy.get_policy("BY_PREFIX");
-    EXPECT_NE(prefix_policy, nullptr);
-    EXPECT_EQ(prefix_policy->key_extractor.kind, KeyExtractorType::PREFIX_BYTES);
-    EXPECT_EQ(prefix_policy->key_extractor.prefix_length, 8);
+    auto prefix_policy = policy.get_policy("BY_PREFIX");
+    ASSERT_TRUE(prefix_policy.is_some());
+    const TableShardingPolicy& pp = prefix_policy.unwrap().get();
+    EXPECT_EQ(pp.key_extractor.kind, KeyExtractorType::PREFIX_BYTES);
+    EXPECT_EQ(pp.key_extractor.prefix_length, 8);
 
-    const auto* hash_policy = policy.get_policy("BY_HASH");
-    EXPECT_NE(hash_policy, nullptr);
-    EXPECT_EQ(hash_policy->key_extractor.kind, KeyExtractorType::HASH_MOD);
+    auto hash_policy = policy.get_policy("BY_HASH");
+    ASSERT_TRUE(hash_policy.is_some());
+    const TableShardingPolicy& hp = hash_policy.unwrap().get();
+    EXPECT_EQ(hp.key_extractor.kind, KeyExtractorType::HASH_MOD);
 }
 
 TEST_F(ShardingPolicyTest, BuilderValidationInvalidShardId) {

@@ -208,7 +208,9 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesPrefix) {
 
     // 4 bytes: 0x01 0x02 0x03 0x04 -> 0x01020304 = 16909060
     const char key_bytes[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
-    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 6);
+    // extract_key_from_bytes now takes the bytes as a std::string (safe DSL
+    // indexing) instead of a raw pointer + length.
+    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 6));
     EXPECT_EQ(16909060, value);
 }
 
@@ -217,7 +219,7 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesPrefixTooLong) {
 
     const char key_bytes[] = {0x01, 0x02, 0x03, 0x04};
     // Prefix longer than key should return -1
-    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 4);
+    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 4));
     EXPECT_EQ(-1, value);
 }
 
@@ -225,11 +227,11 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesHash) {
     KeyExtractor extractor = KeyExtractor::byHash();
 
     const char key_bytes[] = "hello world";
-    int64_t hash = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 11);
+    int64_t hash = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 11));
     EXPECT_GE(hash, 0);
 
     // Same input should produce same hash
-    int64_t hash2 = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 11);
+    int64_t hash2 = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 11));
     EXPECT_EQ(hash, hash2);
 }
 

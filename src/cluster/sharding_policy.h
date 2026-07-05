@@ -400,16 +400,13 @@ inline void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
 // replacing the (num_shards) constructor.
 struct ShardingPolicySet;  // for the factory kernel's forward declaration
 
-// @unsafe - BTreeMap get -> pointer-or-null. The one map op that stays a
-// kernel: it hands back a raw pointer into the map (the DSL should not
-// hand-roll pointer surgery). insert / contains_key / get-and-route now
-// live in the DSL bodies below as btree_port::BTreeMap method calls.
-inline const TableShardingPolicy* sps_get_policy(
-        const btree_port::BTreeMap<std::string, TableShardingPolicy>* policies,
-        const std::string& table_name) {
-    auto found = policies->get(table_name);
-    return found.is_some() ? &found.unwrap().get() : nullptr;
-}
+// A borrow of a table's policy, or None -- the natural return of
+// btree_port::BTreeMap::get(). Aliased so the DSL can name it with a single
+// identifier (the transpiler does not parse `const T` inside generic args).
+// get_policy() now forwards the map's Option<&V> directly: no raw pointer,
+// no kernel.
+using TableShardingPolicyRef =
+    rusty::Option<std::reference_wrapper<const TableShardingPolicy>>;
 
 #if RUSTYCPP_RUST
 pub struct ShardingPolicySet {
@@ -427,10 +424,10 @@ impl ShardingPolicySet {
             policies: btree_port::BTreeMap::<std::string, TableShardingPolicy>::new_(),
         }
     }
-    // Policy for a table, or null if none is registered. The raw-pointer
-    // return keeps this one op a kernel (see sps_get_policy).
-    fn get_policy(&self, table_name: &std::string) -> *const TableShardingPolicy {
-        unsafe { sps_get_policy(&self.policies, table_name) }
+    // Borrow of a table's policy, or None. Forwards btree_port::BTreeMap::get
+    // (Option<&V>) straight through -- no raw pointer, no kernel.
+    fn get_policy(&self, table_name: &std::string) -> TableShardingPolicyRef {
+        (*self).policies.get(table_name)
     }
     // Add or overwrite a table's policy (BTreeMap::insert overwrites).
     fn set_policy(&mut self, table_name: &std::string, policy: &TableShardingPolicy) {
@@ -482,7 +479,7 @@ impl ShardingPolicySet {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=01643e353bdf2aedd6f667ab86919c950b1b432be9932f59e3f042279b1d3299*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=61090ff7423ebc7c3d45ccc5068448413e41579495f74e59db936d90d6552794*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -491,7 +488,7 @@ struct ShardingPolicySet {
     btree_port::BTreeMap<std::string, TableShardingPolicy> policies;
 
     static ShardingPolicySet with_shards(int32_t shards);
-    const TableShardingPolicy* get_policy(const std::string& table_name) const;
+    TableShardingPolicyRef get_policy(const std::string& table_name) const;
     void set_policy(const std::string& table_name, const TableShardingPolicy& policy);
     int32_t get_shard_for_key(const std::string& table_name, int64_t key_value) const;
     bool has_policy(const std::string& table_name) const;
@@ -505,11 +502,8 @@ inline ShardingPolicySet ShardingPolicySet::with_shards(int32_t shards) {
     return ShardingPolicySet{.version = static_cast<uint64_t>(0), .num_shards = std::move(shards), .policies = btree_port::BTreeMap<std::string, TableShardingPolicy>::new_()};
 }
 
-inline const TableShardingPolicy* ShardingPolicySet::get_policy(const std::string& table_name) const {
-    // @unsafe
-    {
-        return sps_get_policy(&this->policies, table_name);
-    }
+inline TableShardingPolicyRef ShardingPolicySet::get_policy(const std::string& table_name) const {
+    return ((*this)).policies.get(table_name);
 }
 
 inline void ShardingPolicySet::set_policy(const std::string& table_name, const TableShardingPolicy& policy) {

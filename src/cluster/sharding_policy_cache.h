@@ -27,21 +27,6 @@
 
 namespace janus {
 
-// C `char` (8-bit) for the raw-bytes extractor param — the DSL maps the
-// bare `char` keyword to Rust's 32-bit char, so we pass this alias.
-using c_char = char;
-
-// @safe - composite-key route: find the table's policy (a get_policy()
-// pointer-or-null), extract its key with that table's extractor, route.
-// The raw-pointer + extractor dispatch stays in C++.
-inline int32_t spc_composite_route(const ShardingPolicySet& policy,
-                                   const std::string& table_name,
-                                   const std::vector<int64_t>& key_fields);
-
-// @safe - PREFIX_BYTES / HASH_MOD extraction over raw key bytes.
-inline int64_t spc_extract_from_bytes(const KeyExtractor& extractor,
-                                      const char* key_bytes, size_t key_len);
-
 #if RUSTYCPP_RUST
 pub struct ShardingPolicyCache {
     policy: rusty::Mutex<rusty::Option<ShardingPolicySet>>,
@@ -86,12 +71,21 @@ impl ShardingPolicyCache {
         if (*guard).is_none() { return -1; }
         (*guard).as_ref().unwrap().get_shard_for_key(table_name, key_value)
     }
-    // Route a composite key (extract with the table's extractor, then route).
+    // Route a composite key: find the table's policy, extract its key with
+    // that policy's extractor, then route. All DSL now -- get_policy hands
+    // back an Option<&policy> (no raw pointer) and extract_key_value is our
+    // own sibling, so the old spc_composite_route kernel is gone.
     fn get_shard_for_composite_key(&self, table_name: &std::string, key_fields: &std::vector<i64>) -> i32 {
         if !(*self).initialized.get() { return -1; }
         let guard = (*self).policy.lock().unwrap();
         if (*guard).is_none() { return -1; }
-        unsafe { spc_composite_route((*guard).as_ref().unwrap(), table_name, key_fields) }
+        let found = (*guard).as_ref().unwrap().get_policy(table_name);
+        if found.is_none() { return -1; }
+        let tp = found.unwrap().get();
+        let ext: KeyExtractor = tp.key_extractor;
+        let key_value: i64 = ShardingPolicyCache::extract_key_value(ext, key_fields);
+        if key_value < 0 { return tp.default_shard; }
+        tp.get_shard(key_value)
     }
     fn has_policy_for_table(&self, table_name: &std::string) -> bool {
         if !(*self).initialized.get() { return false; }
@@ -127,13 +121,41 @@ impl ShardingPolicyCache {
         }
         -1
     }
-    // Extract from raw bytes (PREFIX_BYTES / HASH_MOD). Raw-pointer work.
-    fn extract_key_from_bytes(extractor: &KeyExtractor, key_bytes: *const c_char, key_len: usize) -> i64 {
-        unsafe { spc_extract_from_bytes(extractor, key_bytes, key_len) }
+    // Extract a key value from raw key bytes (PREFIX_BYTES / HASH_MOD). Takes
+    // the bytes as a std::string (safe indexing) instead of a raw pointer, so
+    // the loop is DSL -- the spc_extract_from_bytes kernel is gone.
+    fn extract_key_from_bytes(extractor: &KeyExtractor, key: &std::string) -> i64 {
+        if (*extractor).kind == KeyExtractorType::PREFIX_BYTES {
+            let prefix_len: i32 = (*extractor).prefix_length;
+            if prefix_len <= 0 || (prefix_len as usize) > (*key).size() {
+                return -1;
+            }
+            let mut n: usize = prefix_len as usize;
+            if n > 8 { n = 8; }
+            let mut result: i64 = 0;
+            let mut i: usize = 0;
+            while i < n {
+                result = (result << 8) | (((*key)[i] as u8) as i64);
+                i = i + 1;
+            }
+            return result;
+        }
+        if (*extractor).kind == KeyExtractorType::HASH_MOD {
+            let mut hash: i64 = 0;
+            let mut i: usize = 0;
+            while i < (*key).size() {
+                hash = hash ^ (((*key)[i] as u8) as i64);
+                hash = (hash << 7) | (hash >> 57);
+                i = i + 1;
+            }
+            if hash < 0 { return -hash; }
+            return hash;
+        }
+        -1
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=53f343ed948e336ae558a6bec43f89cd0a6c5f615535323f1857aa07a37ce431*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=b4693a01261a565fbdb3c2b3ece1d3378f6aa798c2782af4d0a7ec31f6152bba*/
 struct ShardingPolicyCache;
 
 struct ShardingPolicyCache {
@@ -151,7 +173,7 @@ struct ShardingPolicyCache {
     bool has_policy_for_table(const std::string& table_name) const;
     int32_t get_num_shards() const;
     static int64_t extract_key_value(const KeyExtractor& extractor, const std::vector<int64_t>& key_fields);
-    static int64_t extract_key_from_bytes(const KeyExtractor& extractor, const c_char* key_bytes, size_t key_len);
+    static int64_t extract_key_from_bytes(const KeyExtractor& extractor, const std::string& key);
 };
 
 
@@ -201,10 +223,17 @@ inline int32_t ShardingPolicyCache::get_shard_for_composite_key(const std::strin
     if (((rusty::detail::deref_if_pointer_like(guard))).is_none()) {
         return -1;
     }
-    // @unsafe
-    {
-        return spc_composite_route(((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap(), table_name, key_fields);
+    auto found = ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap().get_policy(table_name);
+    if (found.is_none()) {
+        return -1;
     }
+    const auto tp = found.unwrap().get();
+    const KeyExtractor ext = tp.key_extractor;
+    const int64_t key_value = ShardingPolicyCache::extract_key_value(ext, key_fields);
+    if (rusty::detail::deref_if_pointer_like(key_value) < 0) {
+        return tp.default_shard;
+    }
+    return tp.get_shard(std::move(key_value));
 }
 
 inline bool ShardingPolicyCache::has_policy_for_table(const std::string& table_name) const {
@@ -253,51 +282,40 @@ inline int64_t ShardingPolicyCache::extract_key_value(const KeyExtractor& extrac
     return -1;
 }
 
-inline int64_t ShardingPolicyCache::extract_key_from_bytes(const KeyExtractor& extractor, const c_char* key_bytes, size_t key_len) {
-    // @unsafe
-    {
-        return spc_extract_from_bytes(extractor, key_bytes, std::move(key_len));
+inline int64_t ShardingPolicyCache::extract_key_from_bytes(const KeyExtractor& extractor, const std::string& key) {
+    if (rusty::detail::deref_if_pointer_like((extractor).kind) == rusty::clone(KeyExtractorType::PREFIX_BYTES)) {
+        const int32_t prefix_len = (extractor).prefix_length;
+        if ((rusty::detail::deref_if_pointer_like(prefix_len) <= 0) || (((static_cast<size_t>(prefix_len))) > ((key)).size())) {
+            return -1;
+        }
+        size_t n = static_cast<size_t>(prefix_len);
+        if (rusty::detail::deref_if_pointer_like(n) > 8) {
+            n = static_cast<size_t>(8);
+        }
+        int64_t result = static_cast<int64_t>(0);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+            result = ((rusty::detail::deref_if_pointer_like(result) << 8)) | ((static_cast<int64_t>((static_cast<uint8_t>((key)[i])))));
+            i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+        }
+        return std::move(result);
     }
+    if (rusty::detail::deref_if_pointer_like((extractor).kind) == rusty::clone(KeyExtractorType::HASH_MOD)) {
+        int64_t hash = static_cast<int64_t>(0);
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < ((key)).size()) {
+            hash = rusty::detail::deref_if_pointer_like(hash) ^ ((static_cast<int64_t>((static_cast<uint8_t>((key)[i])))));
+            hash = ((rusty::detail::deref_if_pointer_like(hash) << 7)) | ((rusty::detail::deref_if_pointer_like(hash) >> 57));
+            i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+        }
+        if (rusty::detail::deref_if_pointer_like(hash) < 0) {
+            return -hash;
+        }
+        return std::move(hash);
+    }
+    return -1;
 }
 /*RUSTYCPP:GEN-END id=sharding_policy_cache.1*/
-
-// @safe - kernel bodies (ShardingPolicyCache complete here).
-inline int32_t spc_composite_route(const ShardingPolicySet& policy,
-                                   const std::string& table_name,
-                                   const std::vector<int64_t>& key_fields) {
-    const TableShardingPolicy* table_policy = policy.get_policy(table_name);
-    if (table_policy == nullptr) return -1;
-    int64_t key_value =
-        ShardingPolicyCache::extract_key_value(table_policy->key_extractor, key_fields);
-    if (key_value < 0) return table_policy->default_shard;
-    return table_policy->get_shard(key_value);
-}
-
-inline int64_t spc_extract_from_bytes(const KeyExtractor& extractor,
-                                      const char* key_bytes, size_t key_len) {
-    switch (extractor.kind) {
-        case KeyExtractorType::PREFIX_BYTES: {
-            int32_t prefix_len = extractor.prefix_length;
-            if (prefix_len <= 0 || static_cast<size_t>(prefix_len) > key_len) return -1;
-            int64_t result = 0;
-            size_t n = std::min(static_cast<size_t>(prefix_len), sizeof(int64_t));
-            for (size_t i = 0; i < n; ++i)
-                result = (result << 8) | static_cast<uint8_t>(key_bytes[i]);
-            return result;
-        }
-        case KeyExtractorType::HASH_MOD: {
-            int64_t hash = 0;
-            for (size_t i = 0; i < key_len; ++i) {
-                hash ^= static_cast<uint8_t>(key_bytes[i]);
-                hash = (hash << 7) | (hash >> 57);
-            }
-            return hash < 0 ? -hash : hash;
-        }
-        case KeyExtractorType::FIELD_INDEX:
-        default:
-            return -1;
-    }
-}
 
 // ============================================================================
 // Global Sharding Policy Cache (Singleton)
