@@ -17,6 +17,7 @@
 #include <vector>
 #include <map>
 #include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
+#include <rusty/vec.hpp>            // native-API vector (replaces std::vector)
 
 // deref_if_pointer_like + rusty::clone, used by the DSL-generated method
 // bodies below (clone wraps the enum literals in the factory struct
@@ -184,42 +185,28 @@ inline bool RangeMapping::contains(int64_t key) const {
 /**
  * Sharding policy for a single table.
  */
-// C++ kernels for the TableShardingPolicy DSL bodies below. add_range does
-// an iterator insert (kept in C++ — the DSL should not hand-roll iterator
-// surgery); get_shard is expressed directly in the DSL as a plain binary
-// search. tsp_create is the factory replacing the old (name, extractor)
-// constructor; it returns a complete TableShardingPolicy so its body lives
-// below the generated struct.
-struct TableShardingPolicy;  // for the factory kernel's forward declaration
-
-// @unsafe - vector iterator insert, keeping ranges sorted by start_key
-inline void tsp_add_range_sorted(std::vector<RangeMapping>* ranges,
-                                 int64_t start, int64_t end, int32_t shard) {
-    RangeMapping mapping = RangeMapping::make(start, end, shard);
-    auto it = ranges->begin();
-    while (it != ranges->end() && it->start_key < start) {
-        ++it;
-    }
-    ranges->insert(it, mapping);
-}
-
-// @safe - factory: preserves the old ctor default (default_shard = -1),
-// which the DSL cannot express as a field initializer. Defined below the
-// struct; forward-declared here so the DSL body can call it.
-inline TableShardingPolicy tsp_create(const std::string& name,
-                                      const KeyExtractor& extractor);
+// TableShardingPolicy is fully DSL now (no C++ kernels): ranges is a
+// rusty::Vec<RangeMapping>, so create (struct literal with Vec::new_()),
+// get_shard (binary search), and add_range (sorted insert via
+// Vec::insert(index, value)) all live in the DSL bodies below.
 
 #if RUSTYCPP_RUST
 pub struct TableShardingPolicy {
     table_name: std::string,
     key_extractor: KeyExtractor,
-    ranges: std::vector<RangeMapping>,   // Sorted by start_key for binary search
+    ranges: rusty::Vec<RangeMapping>,    // Sorted by start_key for binary search
     default_shard: i32,                  // -1 means error if no range matches
 }
 impl TableShardingPolicy {
-    // Factory replacing the old (name, extractor) constructor.
+    // Factory replacing the old (name, extractor) constructor. Pure-DSL
+    // struct literal now that ranges is a rusty::Vec (has new_()).
     fn create(name: &std::string, extractor: &KeyExtractor) -> TableShardingPolicy {
-        unsafe { tsp_create(name, extractor) }
+        TableShardingPolicy {
+            table_name: name,
+            key_extractor: extractor,
+            ranges: rusty::Vec::<RangeMapping>::new_(),
+            default_shard: -1,
+        }
     }
     // Binary search for the range containing key_value (ranges are sorted
     // by start_key); returns default_shard when no range matches.
@@ -238,19 +225,25 @@ impl TableShardingPolicy {
         }
         (*self).default_shard
     }
-    // Insert a range, keeping ranges sorted by start_key.
+    // Insert a range, keeping ranges sorted by start_key (Vec::insert by
+    // index — the old tsp_add_range_sorted iterator kernel, now pure DSL).
     fn add_range(&mut self, start: i64, end: i64, shard: i32) {
-        unsafe { tsp_add_range_sorted(&mut self.ranges, start, end, shard) }
+        let mapping: RangeMapping = RangeMapping::make(start, end, shard);
+        let mut idx: usize = 0;
+        while idx < (*self).ranges.size() && (*self).ranges[idx].start_key < start {
+            idx = idx + 1;
+        }
+        (*self).ranges.insert(idx, mapping);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=f813f18abb5b558610eebb7a125eca26d27d52ecc18b2efc295156b19c12b6e2*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=53e350da4520b39398cebe188bc60921b834836792e1fcbd61383fdc7eb0786b*/
 struct TableShardingPolicy;
 
 struct TableShardingPolicy {
     std::string table_name;
     KeyExtractor key_extractor;
-    std::vector<RangeMapping> ranges;
+    rusty::Vec<RangeMapping> ranges;
     int32_t default_shard;
 
     static TableShardingPolicy create(const std::string& name, const KeyExtractor& extractor);
@@ -260,10 +253,7 @@ struct TableShardingPolicy {
 
 
 inline TableShardingPolicy TableShardingPolicy::create(const std::string& name, const KeyExtractor& extractor) {
-    // @unsafe
-    {
-        return tsp_create(name, extractor);
-    }
+    return TableShardingPolicy{.table_name = name, .key_extractor = extractor, .ranges = rusty::Vec<RangeMapping>::new_(), .default_shard = -1};
 }
 
 inline int32_t TableShardingPolicy::get_shard(int64_t key_value) const {
@@ -283,22 +273,14 @@ inline int32_t TableShardingPolicy::get_shard(int64_t key_value) const {
 }
 
 inline void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t shard) {
-    // @unsafe
-    {
-        tsp_add_range_sorted(&this->ranges, std::move(start), std::move(end), std::move(shard));
+    RangeMapping mapping = RangeMapping::make(std::move(start), std::move(end), std::move(shard));
+    size_t idx = static_cast<size_t>(0);
+    while ((rusty::detail::deref_if_pointer_like(idx) < ((*this)).ranges.size()) && (rusty::detail::deref_if_pointer_like(((*this)).ranges[idx].start_key) < rusty::detail::deref_if_pointer_like(start))) {
+        idx = rusty::detail::deref_if_pointer_like(idx) + static_cast<size_t>(1);
     }
+    ((*this)).ranges.insert(std::move(idx), std::move(mapping));
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.3*/
-
-// @safe - factory body (TableShardingPolicy is a complete type here)
-inline TableShardingPolicy tsp_create(const std::string& name,
-                                      const KeyExtractor& extractor) {
-    TableShardingPolicy p{};
-    p.table_name = name;
-    p.key_extractor = extractor;
-    p.default_shard = -1;
-    return p;
-}
 
 /**
  * Complete sharding policy set containing all table policies.

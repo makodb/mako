@@ -67,7 +67,7 @@ rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p) {
     for (int32_t i = 0; i < num_ranges; ++i) {
         RangeMapping range;
         m >> range;
-        p.ranges.push_back(range);
+        p.ranges.push(range);  // rusty::Vec: push, not push_back
     }
     m >> p.default_shard;
     return m;

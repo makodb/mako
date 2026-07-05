@@ -11,9 +11,10 @@
  * default_shard, then hand it to ShardingPolicyBuilder::add_policy. And
  * validation returns a `rusty::Result` (Err carries a message) rather than
  * throwing — so the whole builder, including build() and the
- * create_tpcc/create_uniform helpers, is DSL. The only C++ kernels are the
- * two things the DSL can't spell: constructing the builder (empty vector +
- * CTAD) and the literal TPC-C table-name list.
+ * create_tpcc/create_uniform helpers, is DSL. The only C++ kernel left is
+ * the literal TPC-C table-name list (spb_tpcc_tables) — a string-literal
+ * array the DSL can't spell. Construction is pure DSL now that policies is
+ * a rusty::Vec (Vec::<T>::new_() via turbofish).
  *
  * Usage (non-fluent):
  *   auto builder = ShardingPolicyBuilder::new_(num_shards);
@@ -29,13 +30,10 @@
 #include <cstdint>
 #include <rusty/result.hpp>
 #include <rusty/slice.hpp>
+#include <rusty/vec.hpp>   // rusty::Vec<TableShardingPolicy> field
 
 namespace janus {
 
-class ShardingPolicyBuilder;
-// @safe - factory: empty policies vector (the DSL struct literal can't
-// supply an empty std::vector with CTAD).
-inline ShardingPolicyBuilder spb_new(int32_t num_shards);
 // @safe - the fixed TPC-C table-name list (a C string-literal array the
 // DSL can't spell).
 inline std::vector<std::string> spb_tpcc_tables() {
@@ -48,14 +46,18 @@ inline std::vector<std::string> spb_tpcc_tables() {
 #if RUSTYCPP_RUST
 pub struct ShardingPolicyBuilder {
     num_shards: i32,
-    policies: std::vector<TableShardingPolicy>,
+    policies: rusty::Vec<TableShardingPolicy>,
 }
 impl ShardingPolicyBuilder {
+    // Pure-DSL struct literal now that policies is a rusty::Vec (has new_()).
     fn new(num_shards: i32) -> ShardingPolicyBuilder {
-        unsafe { spb_new(num_shards) }
+        ShardingPolicyBuilder {
+            num_shards: num_shards,
+            policies: rusty::Vec::<TableShardingPolicy>::new_(),
+        }
     }
     fn add_policy(&mut self, policy: TableShardingPolicy) {
-        (*self).policies.push_back(policy);
+        (*self).policies.push(policy);
     }
     fn get_num_shards(&self) -> i32 {
         (*self).num_shards
@@ -63,7 +65,7 @@ impl ShardingPolicyBuilder {
     // Validate every table policy and assemble the ShardingPolicySet.
     // Returns Err(message) instead of throwing.
     fn build(&self) -> rusty::Result<ShardingPolicySet, std::string> {
-        if (*self).policies.empty() {
+        if (*self).policies.size() == 0 {
             return rusty::Err(std::string("ShardingPolicySet must have at least one table"));
         }
         let mut ti: usize = 0;
@@ -170,12 +172,12 @@ pub fn create_uniform_sharding_policy(table_name: &std::string, key_field: i32,
     builder.build()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy_builder.1 version=1 rust_sha256=29ce87bc862337d618518929932321915e1afe4d5281e5d52dcdf733b496da96*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_builder.1 version=1 rust_sha256=d0691d4fcdeb78ecd128965e489484199510891cc32012d0a973c7a861a557fe*/
 struct ShardingPolicyBuilder;
 
 struct ShardingPolicyBuilder {
     int32_t num_shards;
-    std::vector<TableShardingPolicy> policies;
+    rusty::Vec<TableShardingPolicy> policies;
 
     static ShardingPolicyBuilder new_(int32_t num_shards);
     void add_policy(TableShardingPolicy policy);
@@ -238,14 +240,11 @@ rusty::Result<ShardingPolicySet, std::string> create_uniform_sharding_policy(con
 
 
 inline ShardingPolicyBuilder ShardingPolicyBuilder::new_(int32_t num_shards) {
-    // @unsafe
-    {
-        return spb_new(std::move(num_shards));
-    }
+    return ShardingPolicyBuilder{.num_shards = std::move(num_shards), .policies = rusty::Vec<TableShardingPolicy>::new_()};
 }
 
 inline void ShardingPolicyBuilder::add_policy(TableShardingPolicy policy) {
-    ((*this)).policies.push_back(std::move(policy));
+    ((*this)).policies.push(std::move(policy));
 }
 
 inline int32_t ShardingPolicyBuilder::get_num_shards() const {
@@ -253,7 +252,7 @@ inline int32_t ShardingPolicyBuilder::get_num_shards() const {
 }
 
 inline rusty::Result<ShardingPolicySet, std::string> ShardingPolicyBuilder::build() const {
-    if (((*this)).policies.empty()) {
+    if (((*this)).policies.size() == 0) {
         return rusty::Result<ShardingPolicySet, std::string>::Err(std::string("ShardingPolicySet must have at least one table"));
     }
     size_t ti = static_cast<size_t>(0);
@@ -302,8 +301,5 @@ inline rusty::Result<ShardingPolicySet, std::string> ShardingPolicyBuilder::buil
 /*RUSTYCPP:GEN-END id=sharding_policy_builder.1*/
 
 // @safe - factory body (ShardingPolicyBuilder complete here).
-inline ShardingPolicyBuilder spb_new(int32_t num_shards) {
-    return ShardingPolicyBuilder{num_shards, std::vector<TableShardingPolicy>{}};
-}
 
 }  // namespace janus
