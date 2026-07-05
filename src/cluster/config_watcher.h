@@ -24,10 +24,11 @@ namespace janus {
  * The stop flag + JoinHandle are DSL fields, and the stop-then-join on
  * destruction is a DSL `impl Drop` — the transpiler emits a real
  * ~ConfigWatcher() that runs the drop body (rusty::thread::JoinHandle
- * detaches on drop, so the join must be explicit). The one piece that stays
- * a C++ kernel is cw_spawn: spawning a thread that captures the
- * (stable-address) owner and calls back into Poll() is raw-pointer +
- * closure work the DSL should not hand-roll.
+ * detaches on drop, so the join must be explicit). Start() spawns the poll
+ * thread inline in the DSL too: `let op: *mut ConfigWatcher = &raw mut *self`
+ * recovers `this` as a raw pointer (the DSL otherwise lowers `self` to the
+ * object), which a `move ||` closure captures to call op->Poll() until
+ * op->stop. No C++ kernels remain.
  */
 
 struct ConfigWatcher;  // forward (the poll thread calls owner->Poll())
@@ -36,12 +37,6 @@ using CwCallback = rusty::Function<void(const ClusterConfig&)>;
 using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<void>>;
 
 inline ConfigWatcher cw_new(ConfigManager* cm, ClusterConfig* local, uint64_t ms);
-// @unsafe - spawn the poll loop, capturing the (stable-address) owner so the
-// thread can call owner->Poll() and observe owner->stop; returns the handle
-// for the DSL to store + join on Drop. Defined below the GEN block (needs a
-// complete ConfigWatcher). Takes a reference: the DSL lowers `self` to the
-// object, so Start() passes `(*this)`.
-inline CwJoinHandle cw_spawn(ConfigWatcher& owner, uint64_t interval_ms);
 
 #if RUSTYCPP_RUST
 pub struct ConfigWatcher {
@@ -78,14 +73,24 @@ impl ConfigWatcher {
         }
         true
     }
-    // Start the background poll thread (idempotent).
+    // Start the background poll thread (idempotent). The thread captures a
+    // raw pointer to self (stable: Start runs after the watcher is boxed) and
+    // loops until stop is set — the old cw_spawn kernel, now DSL.
     fn Start(&mut self) {
         if (*self).running.load() {
             return;
         }
         (*self).stop.store(false);
         (*self).running.store(true);
-        (*self).handle = unsafe { cw_spawn(self, (*self).poll_interval_ms) };
+        let op: *mut ConfigWatcher = &raw mut *self;
+        let interval: u64 = (*self).poll_interval_ms;
+        (*self).handle = rusty::Some(rusty::thread::spawn(move || {
+            while !unsafe { (*op).stop.load() } {
+                unsafe { (*op).Poll() };
+                rusty::thread::sleep(std::chrono::milliseconds(interval));
+            }
+            unsafe { (*op).running.store(false) };
+        }));
     }
     // Stop the thread and join it.
     fn Stop(&mut self) {
@@ -120,7 +125,7 @@ impl Drop for ConfigWatcher {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=74a54212930e2e04f9c7d64e163f8417f2029496f4afe2ca07801f4666de2d1d*/
+/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=c8f09b36bd6436e4214033acc4da944b236841b31b31fe566c06b6349d1ccdce*/
 struct ConfigWatcher;
 
 struct ConfigWatcher {
@@ -197,7 +202,21 @@ inline void ConfigWatcher::Start() {
     }
     ((*this)).stop.store(false);
     ((*this)).running.store(true);
-    ((*this)).handle = cw_spawn((*this), ((*this)).poll_interval_ms);
+    ConfigWatcher* const op = &(*this);
+    const uint64_t interval = ((*this)).poll_interval_ms;
+    ((*this)).handle = rusty::Some(rusty::thread::spawn([=, interval = std::move(interval), op = std::move(op)]() mutable {
+while (!(*op).stop.load()) {
+    // @unsafe
+    {
+        ((*op)).Poll();
+    }
+    rusty::thread::sleep(std::chrono::milliseconds(std::move(interval)));
+}
+// @unsafe
+{
+    (*op).running.store(false);
+}
+}));
 }
 
 inline void ConfigWatcher::Stop() {
@@ -241,21 +260,6 @@ inline ConfigWatcher cw_new(ConfigManager* cm, ClusterConfig* local, uint64_t ms
                          rusty::sync::atomic::AtomicBool(false),
                          rusty::sync::atomic::AtomicBool(false),
                          rusty::None};
-}
-
-// @unsafe - spawn the poll loop (owner is a complete ConfigWatcher here). The
-// thread captures a pointer to the owner — stable because Start() runs after
-// the watcher is boxed — and loops until owner->stop is set, then clears
-// owner->running. Mirrors the old CwPollThread::start exactly.
-inline CwJoinHandle cw_spawn(ConfigWatcher& owner, uint64_t interval_ms) {
-    ConfigWatcher* op = &owner;
-    return rusty::Some(rusty::thread::spawn([op, interval_ms]() {
-        while (!op->stop.load()) {
-            op->Poll();
-            rusty::thread::sleep(std::chrono::milliseconds(interval_ms));
-        }
-        op->running.store(false);
-    }));
 }
 
 }  // namespace janus
