@@ -2,19 +2,19 @@
 
 #include "kv_store.h"
 
-#include <map>
 #include <string>
+#include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
 
 namespace janus {
 
 /**
- * InMemoryKvStore — a std::map-backed KvStore for unit tests. This is
- * the test double of the KvStore port; it lets test_config_manager
+ * InMemoryKvStore — a btree_port::BTreeMap-backed KvStore for unit tests.
+ * This is the test double of the KvStore port; it lets test_config_manager
  * drive ConfigManager / ClusterConfig / ConfigWatcher with no storage
  * engine, no cluster, no masstree config — a genuinely standalone
  * binary.
  */
-// @safe - std::map behind the port; no I/O.
+// @safe - BTreeMap behind the port; no I/O.
 class InMemoryKvStore : public KvStore {
 public:
     // Force noexcept: the DSL-generated KvStore base has a noexcept(false)
@@ -26,27 +26,27 @@ public:
 
     bool get(const std::string& key, std::string* out) override {
         if (out == nullptr) return false;
-        auto it = store_.find(key);
-        if (it == store_.end()) return false;
-        *out = it->second;
+        auto found = store_.get(key);
+        if (found.is_none()) return false;
+        *out = found.unwrap().get();
         return true;
     }
 
     void put(const std::string& key, const std::string& value) override {
-        store_[key] = value;
+        store_.insert(key, value);  // BTreeMap::insert overwrites
     }
 
-    void remove(const std::string& key) override { store_.erase(key); }
+    void remove(const std::string& key) override { store_.remove(key); }
 
     // ---- Test helpers (not part of the KvStore port) ----
     size_t size() const { return store_.size(); }
     bool contains(const std::string& key) const {
-        return store_.find(key) != store_.end();
+        return store_.contains_key(key);
     }
     void clear() { store_.clear(); }
 
 private:
-    std::map<std::string, std::string> store_;
+    btree_port::BTreeMap<std::string, std::string> store_;
 };
 
 }  // namespace janus
