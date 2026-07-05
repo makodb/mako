@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <rusty/function.hpp>   // rusty::Function — DSL-invocable callable
 
 namespace janus {
 
@@ -35,17 +36,12 @@ namespace janus {
  */
 
 // read_fn(key, out_value) -> found. In production this issues a
-// ReadConfigKey RPC to shard 0's leader and fills *out on hit.
+// ReadConfigKey RPC to shard 0's leader and fills *out on hit. rusty::Function
+// (move-only) instead of std::function so the DSL can invoke it directly —
+// its operator() means `self.read_fn(key, out)` is plain-safe DSL, no
+// erased-callable kernel.
 using RemoteKvStoreReadFn =
-    std::function<bool(const std::string& key, std::string* out_value)>;
-
-// @unsafe - invokes an injected std::function (a call through an
-// erased callable is not borrow-checkable).
-inline bool rkv_invoke(const RemoteKvStoreReadFn* fn,
-                       const std::string& key, std::string* out) {
-    if (fn == nullptr || !*fn || out == nullptr) return false;
-    return (*fn)(key, out);
-}
+    rusty::Function<bool(const std::string& key, std::string* out_value)>;
 
 #if RUSTYCPP_RUST
 pub struct RemoteKvStore {
@@ -53,16 +49,16 @@ pub struct RemoteKvStore {
 }
 #[cpp_inherit]
 impl KvStore for RemoteKvStore {
-    // Delegates to the injected reader.
+    // Delegates to the injected reader (called directly — rusty::Function).
     fn get(&mut self, key: &std::string, out: *mut std::string) -> bool {
-        unsafe { rkv_invoke(&self.read_fn, key, out) }
+        ((*self).read_fn)(key, out)
     }
     // Read-only consumer: writes are not permitted (no-op).
     fn put(&mut self, key: &std::string, value: &std::string) {}
     fn remove(&mut self, key: &std::string) {}
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=remote_kv_store.1 version=1 rust_sha256=3bcf00df6e9c66d5d9969d3f554cfb8ab6b2eb7e5544f2f9de734945dc075ddc*/
+/*RUSTYCPP:GEN-BEGIN id=remote_kv_store.1 version=1 rust_sha256=2890d4e2c217a3472467a2c1fd81ed5a86aa78e5718f05e906b88423a172834a*/
 struct RemoteKvStore;
 
 struct RemoteKvStore : public KvStore {
@@ -78,10 +74,7 @@ struct RemoteKvStore : public KvStore {
 
 
 inline bool RemoteKvStore::get(const std::string& key, std::string* out) {
-    // @unsafe
-    {
-        return rkv_invoke(&this->read_fn, key, out);
-    }
+    return (((*this)).read_fn)(key, out);
 }
 
 inline void RemoteKvStore::put(const std::string& key, const std::string& value) {

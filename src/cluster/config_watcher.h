@@ -9,6 +9,7 @@
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/option.hpp>
+#include <rusty/function.hpp>   // rusty::Function callback (DSL-invocable)
 #include <rusty/slice.hpp>   // deref_if_pointer_like
 
 namespace janus {
@@ -31,14 +32,10 @@ namespace janus {
 
 struct ConfigWatcher;  // forward (the poll thread calls owner->Poll())
 
-using CwCallback = std::function<void(const ClusterConfig&)>;
+using CwCallback = rusty::Function<void(const ClusterConfig&)>;
 using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<void>>;
 
 inline ConfigWatcher cw_new(ConfigManager* cm, ClusterConfig* local, uint64_t ms);
-// @safe - invoke the (possibly empty) update callback.
-inline void cw_invoke(const CwCallback& cb, const ClusterConfig& cfg) {
-    if (cb) cb(cfg);
-}
 // @unsafe - spawn the poll loop, capturing the (stable-address) owner so the
 // thread can call owner->Poll() and observe owner->stop; returns the handle
 // for the DSL to store + join on Drop. Defined below the GEN block (needs a
@@ -74,7 +71,11 @@ impl ConfigWatcher {
             return false;
         }
         (*self).last_version = current_version;
-        unsafe { cw_invoke((*self).update_callback, (*(*self).local_config)) };
+        // Invoke the (possibly-empty) update callback directly — rusty::Function
+        // is bool-checkable + callable, so no erased-callable kernel.
+        if (*self).update_callback {
+            unsafe { ((*self).update_callback)((*(*self).local_config)) };
+        }
         true
     }
     // Start the background poll thread (idempotent).
@@ -119,7 +120,7 @@ impl Drop for ConfigWatcher {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=e7a414de14c134a46358d9084a1adafc154140bb5b572ea55b729b8c20c96e3b*/
+/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=74a54212930e2e04f9c7d64e163f8417f2029496f4afe2ca07801f4666de2d1d*/
 struct ConfigWatcher;
 
 struct ConfigWatcher {
@@ -181,9 +182,11 @@ inline bool ConfigWatcher::Poll() {
         return false;
     }
     ((*this)).last_version = std::move(current_version);
-    // @unsafe
-    {
-        cw_invoke(((*this)).update_callback, (rusty::detail::deref_if_pointer_like(((*this)).local_config)));
+    if (((*this)).update_callback) {
+        // @unsafe
+        {
+            (((*this)).update_callback)((rusty::detail::deref_if_pointer_like(((*this)).local_config)));
+        }
     }
     return true;
 }
