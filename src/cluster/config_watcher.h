@@ -36,8 +36,6 @@ struct ConfigWatcher;  // forward (the poll thread calls owner->Poll())
 using CwCallback = rusty::Function<void(const ClusterConfig&)>;
 using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<void>>;
 
-inline ConfigWatcher cw_new(ConfigManager* cm, ClusterConfig* local, uint64_t ms);
-
 #if RUSTYCPP_RUST
 pub struct ConfigWatcher {
     cm: *mut ConfigManager,
@@ -45,14 +43,26 @@ pub struct ConfigWatcher {
     poll_interval_ms: u64,
     last_version: u64,
     poll_count: u64,
-    update_callback: CwCallback,
+    update_callback: rusty::Option<CwCallback>,
     stop: rusty::sync::atomic::AtomicBool,
     running: rusty::sync::atomic::AtomicBool,
     handle: CwJoinHandle,
 }
 impl ConfigWatcher {
+    // Pure-DSL struct literal: AtomicBool has new_(), the callback is an empty
+    // Option (None), the handle is None. No factory kernel.
     fn new(cm: *mut ConfigManager, local_config: *mut ClusterConfig, poll_interval_ms: u64) -> ConfigWatcher {
-        unsafe { cw_new(cm, local_config, poll_interval_ms) }
+        ConfigWatcher {
+            cm: cm,
+            local_config: local_config,
+            poll_interval_ms: poll_interval_ms,
+            last_version: 0,
+            poll_count: 0,
+            update_callback: rusty::None,
+            stop: rusty::sync::atomic::AtomicBool::new_(false),
+            running: rusty::sync::atomic::AtomicBool::new_(false),
+            handle: rusty::None,
+        }
     }
     // One poll: reload the local ClusterConfig iff the version changed.
     fn Poll(&mut self) -> bool {
@@ -68,8 +78,8 @@ impl ConfigWatcher {
         (*self).last_version = current_version;
         // Invoke the (possibly-empty) update callback directly — rusty::Function
         // is bool-checkable + callable, so no erased-callable kernel.
-        if (*self).update_callback {
-            unsafe { ((*self).update_callback)((*(*self).local_config)) };
+        if (*self).update_callback.is_some() {
+            unsafe { ((*self).update_callback.as_mut().unwrap())((*(*self).local_config)) };
         }
         true
     }
@@ -101,7 +111,7 @@ impl ConfigWatcher {
         (*self).running.store(false);
     }
     fn SetUpdateCallback(&mut self, cb: CwCallback) {
-        (*self).update_callback = cb;
+        (*self).update_callback = rusty::Some(cb);
     }
     fn IsRunning(&self) -> bool {
         (*self).running.load()
@@ -125,7 +135,7 @@ impl Drop for ConfigWatcher {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=c8f09b36bd6436e4214033acc4da944b236841b31b31fe566c06b6349d1ccdce*/
+/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=9ed9b276980be7bc1f10117537a94292b72bb27a83168dce89e9e9a0d4e604c2*/
 struct ConfigWatcher;
 
 struct ConfigWatcher {
@@ -134,12 +144,12 @@ struct ConfigWatcher {
     uint64_t poll_interval_ms;
     uint64_t last_version;
     uint64_t poll_count;
-    CwCallback update_callback;
+    rusty::Option<CwCallback> update_callback;
     rusty::sync::atomic::AtomicBool stop;
     rusty::sync::atomic::AtomicBool running;
     CwJoinHandle handle;
     mutable bool _rusty_forgotten = false;
-    ConfigWatcher(ConfigManager* cm_init, ClusterConfig* local_config_init, uint64_t poll_interval_ms_init, uint64_t last_version_init, uint64_t poll_count_init, CwCallback update_callback_init, rusty::sync::atomic::AtomicBool stop_init, rusty::sync::atomic::AtomicBool running_init, CwJoinHandle handle_init) : cm(std::move(cm_init)), local_config(std::move(local_config_init)), poll_interval_ms(std::move(poll_interval_ms_init)), last_version(std::move(last_version_init)), poll_count(std::move(poll_count_init)), update_callback(std::move(update_callback_init)), stop(std::move(stop_init)), running(std::move(running_init)), handle(std::move(handle_init)) {}
+    ConfigWatcher(ConfigManager* cm_init, ClusterConfig* local_config_init, uint64_t poll_interval_ms_init, uint64_t last_version_init, uint64_t poll_count_init, rusty::Option<CwCallback> update_callback_init, rusty::sync::atomic::AtomicBool stop_init, rusty::sync::atomic::AtomicBool running_init, CwJoinHandle handle_init) : cm(std::move(cm_init)), local_config(std::move(local_config_init)), poll_interval_ms(std::move(poll_interval_ms_init)), last_version(std::move(last_version_init)), poll_count(std::move(poll_count_init)), update_callback(std::move(update_callback_init)), stop(std::move(stop_init)), running(std::move(running_init)), handle(std::move(handle_init)) {}
     ConfigWatcher(const ConfigWatcher&) = default;
     ConfigWatcher(ConfigWatcher&& other) noexcept : cm(std::move(other.cm)), local_config(std::move(other.local_config)), poll_interval_ms(std::move(other.poll_interval_ms)), last_version(std::move(other.last_version)), poll_count(std::move(other.poll_count)), update_callback(std::move(other.update_callback)), stop(std::move(other.stop)), running(std::move(other.running)), handle(std::move(other.handle)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -170,10 +180,7 @@ struct ConfigWatcher {
 
 
 inline ConfigWatcher ConfigWatcher::new_(ConfigManager* cm, ClusterConfig* local_config, uint64_t poll_interval_ms) {
-    // @unsafe
-    {
-        return cw_new(cm, local_config, std::move(poll_interval_ms));
-    }
+    return ConfigWatcher(cm, local_config, std::move(poll_interval_ms), static_cast<uint64_t>(0), static_cast<uint64_t>(0), rusty::None, rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::None);
 }
 
 inline bool ConfigWatcher::Poll() {
@@ -187,10 +194,10 @@ inline bool ConfigWatcher::Poll() {
         return false;
     }
     ((*this)).last_version = std::move(current_version);
-    if (((*this)).update_callback) {
+    if (((*this)).update_callback.is_some()) {
         // @unsafe
         {
-            (((*this)).update_callback)((rusty::detail::deref_if_pointer_like(((*this)).local_config)));
+            (((*this)).update_callback.as_mut().unwrap())((rusty::detail::deref_if_pointer_like(((*this)).local_config)));
         }
     }
     return true;
@@ -228,7 +235,7 @@ inline void ConfigWatcher::Stop() {
 }
 
 inline void ConfigWatcher::SetUpdateCallback(CwCallback cb) {
-    ((*this)).update_callback = std::move(cb);
+    ((*this)).update_callback = rusty::Option<CwCallback>(std::move(cb));
 }
 
 inline bool ConfigWatcher::IsRunning() const {
@@ -251,15 +258,5 @@ inline ConfigWatcher::~ConfigWatcher() noexcept(false) {
     }
 }
 /*RUSTYCPP:GEN-END id=config_watcher.1*/
-
-// @safe - factory (calls the transpiler-generated all-fields ctor;
-// ConfigWatcher is complete here). Atomics start false, handle empty.
-inline ConfigWatcher cw_new(ConfigManager* cm, ClusterConfig* local, uint64_t ms) {
-    return ConfigWatcher{cm, local, ms, /*last_version*/0, /*poll_count*/0,
-                         CwCallback(),
-                         rusty::sync::atomic::AtomicBool(false),
-                         rusty::sync::atomic::AtomicBool(false),
-                         rusty::None};
-}
 
 }  // namespace janus
