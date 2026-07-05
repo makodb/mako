@@ -47,6 +47,9 @@ FILES=(
   # ShardingPolicyBuilder: DSL-friendly reshape (value struct +
   # Result-based build; fluent TablePolicyBuilder deleted).
   src/cluster/sharding_policy_builder.h
+  # ShardRouter: the four routing free fns as DSL pub fns; generated
+  # definitions land in the .cc (compiled once), header stays decls.
+  src/cluster/shard_router.cc
 )
 
 post_pass() {
