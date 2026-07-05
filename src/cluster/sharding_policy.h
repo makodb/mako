@@ -26,14 +26,14 @@
 // does not break the no-rrr guarantee.
 #include <rusty/slice.hpp>
 #include <rusty/move.hpp>
+#include "rrr/misc/serializable.hpp"   // rrr Serializable (BinaryWrite/ReadArchive)
 
-// NOTE: sharding_policy.h has ZERO dependency on rrr on purpose so it
-// can be included from cluster/cluster_config.h without pulling the
-// rrr module in — that is what keeps test_config_manager standalone.
-// The rrr::Marshal serialization operators live in the separate
-// header sharding_policy_marshal.h with bodies in
-// sharding_policy_marshal.cc; anyone who needs to serialize should
-// include that header directly.
+// NOTE: the policy value types serialize via their rrr Serializable
+// save()/load() DSL methods (see each `impl` below) instead of free-function
+// rrr::Marshal operator<< / operator>>. That pulls the rrr.serializable
+// module into this header (so cluster_config.h / test_config_manager now
+// link rrr) — a deliberate trade to keep serialization authored in the DSL
+// rather than as C++ operator overloads the transpiler can't emit.
 
 namespace janus {
 
@@ -90,9 +90,22 @@ impl KeyExtractor {
     fn byHash() -> KeyExtractor {
         KeyExtractor { kind: KeyExtractorType::HASH_MOD, field_index: 0, prefix_length: 0 }
     }
+    // rrr Serializable value contract (save/load; no polymorphic kind()).
+    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
+        ar << ((*self).kind as i32);
+        ar << (*self).field_index;
+        ar << (*self).prefix_length;
+    }
+    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
+        let mut k: i32 = 0;
+        ar >> k;
+        (*self).kind = k as KeyExtractorType;
+        ar >> (*self).field_index;
+        ar >> (*self).prefix_length;
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=63e25ae66989b21861772976f0a9fc65653197f30139b6e00ce4a7e1b4ba63de*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=b7d60778e08800a81dd0a51bbbbb9767de47a4429330c404f705c4110d9667b4*/
 struct KeyExtractor;
 
 struct KeyExtractor {
@@ -105,6 +118,8 @@ struct KeyExtractor {
     static KeyExtractor byField(int32_t index);
     static KeyExtractor byPrefix(int32_t length);
     static KeyExtractor byHash();
+    void save(rrr::BinaryWriteArchive& ar) const;
+    void load(rrr::BinaryReadArchive& ar);
 };
 
 
@@ -126,6 +141,20 @@ inline KeyExtractor KeyExtractor::byPrefix(int32_t length) {
 
 inline KeyExtractor KeyExtractor::byHash() {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::HASH_MOD)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(0)};
+}
+
+inline void KeyExtractor::save(rrr::BinaryWriteArchive& ar) const {
+    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).kind)));
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).field_index);
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).prefix_length);
+}
+
+inline void KeyExtractor::load(rrr::BinaryReadArchive& ar) {
+    int32_t k = static_cast<int32_t>(0);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(k);
+    ((*this)).kind = static_cast<KeyExtractorType>(k);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).field_index);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).prefix_length);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.1*/
 
@@ -158,9 +187,19 @@ impl RangeMapping {
     fn contains(&self, key: i64) -> bool {
         (*self).start_key <= key && key < (*self).end_key
     }
+    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
+        ar << (*self).start_key;
+        ar << (*self).end_key;
+        ar << (*self).shard_id;
+    }
+    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
+        ar >> (*self).start_key;
+        ar >> (*self).end_key;
+        ar >> (*self).shard_id;
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=4b3baf906968525e8659e0c7149163b206e128fe66f8e554bd86de4475fea60e*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=5e81f5ff8d2bca5b747994799be87be944b1b5fe603c6f6c4e6c9adce2e57352*/
 struct RangeMapping;
 
 struct RangeMapping {
@@ -170,6 +209,8 @@ struct RangeMapping {
 
     static RangeMapping make(int64_t start, int64_t end, int32_t shard);
     bool contains(int64_t key) const;
+    void save(rrr::BinaryWriteArchive& ar) const;
+    void load(rrr::BinaryReadArchive& ar);
 };
 
 
@@ -179,6 +220,18 @@ inline RangeMapping RangeMapping::make(int64_t start, int64_t end, int32_t shard
 
 inline bool RangeMapping::contains(int64_t key) const {
     return (rusty::detail::deref_if_pointer_like(((*this)).start_key) <= rusty::detail::deref_if_pointer_like(key)) && (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(((*this)).end_key));
+}
+
+inline void RangeMapping::save(rrr::BinaryWriteArchive& ar) const {
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).start_key);
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).end_key);
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).shard_id);
+}
+
+inline void RangeMapping::load(rrr::BinaryReadArchive& ar) {
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).start_key);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).end_key);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).shard_id);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.2*/
 
@@ -235,9 +288,36 @@ impl TableShardingPolicy {
         }
         (*self).ranges.insert(idx, mapping);
     }
+    // rrr Serializable: name, extractor, range count + ranges, default_shard.
+    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
+        ar << (*self).table_name;
+        (*self).key_extractor.save(ar);
+        ar << ((*self).ranges.size() as i32);
+        let mut i: usize = 0;
+        while i < (*self).ranges.size() {
+            (*self).ranges[i].save(ar);
+            i = i + 1;
+        }
+        ar << (*self).default_shard;
+    }
+    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
+        ar >> (*self).table_name;
+        (*self).key_extractor.load(ar);
+        let mut n: i32 = 0;
+        ar >> n;
+        (*self).ranges.clear();
+        let mut i: i32 = 0;
+        while i < n {
+            let mut r: RangeMapping = RangeMapping::make(0, 0, 0);
+            r.load(ar);
+            (*self).ranges.push(r);
+            i = i + 1;
+        }
+        ar >> (*self).default_shard;
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=53e350da4520b39398cebe188bc60921b834836792e1fcbd61383fdc7eb0786b*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=356bf8820f6e82baa2a21ef1678718230cd931231cad2d6ae9b4ae726b276329*/
 struct TableShardingPolicy;
 
 struct TableShardingPolicy {
@@ -249,6 +329,8 @@ struct TableShardingPolicy {
     static TableShardingPolicy create(const std::string& name, const KeyExtractor& extractor);
     int32_t get_shard(int64_t key_value) const;
     void add_range(int64_t start, int64_t end, int32_t shard);
+    void save(rrr::BinaryWriteArchive& ar) const;
+    void load(rrr::BinaryReadArchive& ar);
 };
 
 
@@ -279,6 +361,34 @@ inline void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t s
         idx = rusty::detail::deref_if_pointer_like(idx) + static_cast<size_t>(1);
     }
     ((*this)).ranges.insert(std::move(idx), std::move(mapping));
+}
+
+inline void TableShardingPolicy::save(rrr::BinaryWriteArchive& ar) const {
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).table_name);
+    ((*this)).key_extractor.save(ar);
+    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).ranges.size())));
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((*this)).ranges.size()) {
+        ((*this)).ranges[i].save(ar);
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).default_shard);
+}
+
+inline void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).table_name);
+    ((*this)).key_extractor.load(ar);
+    int32_t n = static_cast<int32_t>(0);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(n);
+    ((*this)).ranges.clear();
+    int32_t i = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        RangeMapping r = RangeMapping::make(0, 0, 0);
+        r.load(ar);
+        ((*this)).ranges.push(std::move(r));
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<int32_t>(1);
+    }
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).default_shard);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.3*/
 
@@ -342,9 +452,37 @@ impl ShardingPolicySet {
     fn table_count(&self) -> usize {
         (*self).policies.size()
     }
+    // rrr Serializable: version, num_shards, then each policy (the key is
+    // rebuilt from policy.table_name on load, so only values are written).
+    fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
+        ar << (*self).version;
+        ar << (*self).num_shards;
+        ar << ((*self).policies.size() as i32);
+        for kv in (*self).policies {
+            kv.second.save(ar);
+        }
+    }
+    fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
+        ar >> (*self).version;
+        ar >> (*self).num_shards;
+        let mut n: i32 = 0;
+        ar >> n;
+        (*self).policies.clear();
+        let empty: std::string = std::string();
+        let ext: KeyExtractor = KeyExtractor::defaults();
+        let ename: &std::string = &empty;
+        let mut i: i32 = 0;
+        while i < n {
+            let mut p: TableShardingPolicy = TableShardingPolicy::create(ename, &ext);
+            p.load(ar);
+            let key: std::string = p.table_name;
+            (*self).policies.insert(key, p);
+            i = i + 1;
+        }
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=c7512dba64d11d76c6ef529d5e519c15e1f7ce03b82e19840d32da71a9f171ed*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=01643e353bdf2aedd6f667ab86919c950b1b432be9932f59e3f042279b1d3299*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -358,6 +496,8 @@ struct ShardingPolicySet {
     int32_t get_shard_for_key(const std::string& table_name, int64_t key_value) const;
     bool has_policy(const std::string& table_name) const;
     size_t table_count() const;
+    void save(rrr::BinaryWriteArchive& ar) const;
+    void load(rrr::BinaryReadArchive& ar);
 };
 
 
@@ -389,6 +529,34 @@ inline bool ShardingPolicySet::has_policy(const std::string& table_name) const {
 
 inline size_t ShardingPolicySet::table_count() const {
     return ((*this)).policies.size();
+}
+
+inline void ShardingPolicySet::save(rrr::BinaryWriteArchive& ar) const {
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).version);
+    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).num_shards);
+    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).policies.size())));
+    for (auto&& kv : rusty::for_in(((*this)).policies)) {
+        kv.second.save(ar);
+    }
+}
+
+inline void ShardingPolicySet::load(rrr::BinaryReadArchive& ar) {
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).version);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).num_shards);
+    int32_t n = static_cast<int32_t>(0);
+    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(n);
+    ((*this)).policies.clear();
+    const std::string empty = std::string();
+    const KeyExtractor ext = KeyExtractor::defaults();
+    const std::string& ename = empty;
+    int32_t i = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        TableShardingPolicy p = TableShardingPolicy::create(ename, ext);
+        p.load(ar);
+        const std::string key = p.table_name;
+        ((*this)).policies.insert(std::move(key), std::move(p));
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<int32_t>(1);
+    }
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.4*/
 

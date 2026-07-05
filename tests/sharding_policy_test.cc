@@ -7,14 +7,10 @@
 #include "cluster/sharding_policy.h"
 #include "cluster/sharding_policy_builder.h"
 #include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
-// sharding_policy.h forward-declares rrr::Marshal so it stays
-// standalone-testable from ClusterConfig. This test constructs
-// Marshal locals directly, so we need the complete type.
-#include "rrr/rrr.hpp"
-// The Marshal operator<< / operator>> for the policy value types are
-// declared here (bodies compiled from sharding_policy_marshal.cc, which
-// is also on this target's source list). Must follow rrr/rrr.hpp.
-#include "cluster/sharding_policy_marshal.h"
+// The policy value types serialize via their rrr Serializable save()/load()
+// methods (BinaryWriteArchive), pulled in transitively by sharding_policy.h.
+// No operator<< / rrr::Marshal.
+#include "rrr/misc/serializable.hpp"
 
 namespace janus {
 
@@ -23,6 +19,22 @@ protected:
     void SetUp() override {}
     void TearDown() override {}
 };
+
+// Round-trip a value type through its rrr Serializable save()/load(): save
+// into a BufferSink, then load from a BufferSource over those bytes.
+template <class T>
+static T serialize_roundtrip(const T& in) {
+    rrr::BufferSink sink;
+    {
+        rrr::BinaryWriteArchive w(&sink);
+        in.save(w);
+    }
+    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+    rrr::BinaryReadArchive r(&src);
+    T out;
+    out.load(r);
+    return out;
+}
 
 // =============================================================================
 // KeyExtractor Tests
@@ -55,13 +67,7 @@ TEST_F(ShardingPolicyTest, KeyExtractorByHash) {
 TEST_F(ShardingPolicyTest, KeyExtractorSerialization) {
     KeyExtractor original = KeyExtractor::make(KeyExtractorType::PREFIX_BYTES, 5, 16);
 
-    // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
-
-    // Deserialize
-    KeyExtractor restored;
-    marshal >> restored;
+    KeyExtractor restored = serialize_roundtrip(original);
 
     EXPECT_EQ(restored.kind, original.kind);
     EXPECT_EQ(restored.field_index, original.field_index);
@@ -89,13 +95,7 @@ TEST_F(ShardingPolicyTest, RangeMappingContains) {
 TEST_F(ShardingPolicyTest, RangeMappingSerialization) {
     RangeMapping original = RangeMapping::make(100, 200, 5);
 
-    // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
-
-    // Deserialize
-    RangeMapping restored;
-    marshal >> restored;
+    RangeMapping restored = serialize_roundtrip(original);
 
     EXPECT_EQ(restored.start_key, original.start_key);
     EXPECT_EQ(restored.end_key, original.end_key);
@@ -149,13 +149,7 @@ TEST_F(ShardingPolicyTest, TableShardingPolicySerialization) {
     original.add_range(50, 100, 1);
     original.default_shard = 0;
 
-    // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
-
-    // Deserialize
-    TableShardingPolicy restored;
-    marshal >> restored;
+    TableShardingPolicy restored = serialize_roundtrip(original);
 
     EXPECT_EQ(restored.table_name, original.table_name);
     EXPECT_EQ(restored.key_extractor.kind, original.key_extractor.kind);
@@ -235,13 +229,7 @@ TEST_F(ShardingPolicyTest, ShardingPolicySetSerialization) {
     p2.default_shard = 2;
     original.set_policy("TABLE_B", p2);
 
-    // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
-
-    // Deserialize
-    ShardingPolicySet restored;
-    marshal >> restored;
+    ShardingPolicySet restored = serialize_roundtrip(original);
 
     EXPECT_EQ(restored.version, original.version);
     EXPECT_EQ(restored.num_shards, original.num_shards);

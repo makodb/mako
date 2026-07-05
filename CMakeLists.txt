@@ -1683,15 +1683,13 @@ if(BUILD_TESTS)
 
     # Sharding Policy Tests
     #
-    # The 8 rrr::Marshal serialization operators used to live inline in
-    # sharding_policy.h; they were extracted to sharding_policy_marshal.cc
-    # so the header can be included without pulling in the full rrr module
-    # (this is what lets ClusterConfig and test_config_manager stay
-    # standalone). This test still exercises the serializers directly, so
-    # we need to compile the .cc alongside the test.
+    # The policy value types now serialize via their rrr Serializable
+    # save()/load() DSL methods (BinaryWriteArchive), so the old free-function
+    # rrr::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
+    # sharding_policy.h pulls in the rrr.serializable module directly, so this
+    # test just compiles the one source file.
     add_executable(test_sharding_policy
         tests/sharding_policy_test.cc
-        src/cluster/sharding_policy_marshal.cc
     )
     target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
@@ -1766,7 +1764,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_config_manager
-        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
 
