@@ -31,13 +31,6 @@ namespace janus {
 // bare `char` keyword to Rust's 32-bit char, so we pass this alias.
 using c_char = char;
 
-struct ShardingPolicyCache;  // for the factory kernel below
-
-// @safe - construct an empty cache (Mutex<Option<...>> holding None, zeroed
-// Cells). A kernel because the field types need explicit template args the
-// DSL's CTAD struct-literal can't supply. Defined below the struct.
-inline ShardingPolicyCache spc_new();
-
 // @safe - composite-key route: find the table's policy (a get_policy()
 // pointer-or-null), extract its key with that table's extractor, route.
 // The raw-pointer + extractor dispatch stays in C++.
@@ -56,9 +49,15 @@ pub struct ShardingPolicyCache {
     initialized: rusty::Cell<bool>,
 }
 impl ShardingPolicyCache {
-    // Replaces the old default constructor (Mutex needs an initial value).
+    // Replaces the old default constructor. Pure-DSL struct literal: every
+    // field type has a Rust-style constructor callable via turbofish
+    // (Mutex::default_ default-constructs the Option to None; Cell::new_).
     fn new() -> ShardingPolicyCache {
-        unsafe { spc_new() }
+        ShardingPolicyCache {
+            policy: rusty::Mutex::<rusty::Option<ShardingPolicySet>>::default_(),
+            cached_version: rusty::Cell::<u64>::new_(0),
+            initialized: rusty::Cell::<bool>::new_(false),
+        }
     }
     // Set the policy directly (offline init / tests).
     fn set_policy(&mut self, policy: ShardingPolicySet) {
@@ -134,7 +133,7 @@ impl ShardingPolicyCache {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=3261573c06d8f75a317ce6b3d4ef03bedfc78ef8013adf8fd7fe00be030c836a*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=53f343ed948e336ae558a6bec43f89cd0a6c5f615535323f1857aa07a37ce431*/
 struct ShardingPolicyCache;
 
 struct ShardingPolicyCache {
@@ -157,10 +156,7 @@ struct ShardingPolicyCache {
 
 
 inline ShardingPolicyCache ShardingPolicyCache::new_() {
-    // @unsafe
-    {
-        return spc_new();
-    }
+    return ShardingPolicyCache{.policy = rusty::Mutex<rusty::Option<ShardingPolicySet>>::default_(), .cached_version = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .initialized = rusty::Cell<bool>::new_(false)};
 }
 
 inline void ShardingPolicyCache::set_policy(ShardingPolicySet policy) {
@@ -266,13 +262,6 @@ inline int64_t ShardingPolicyCache::extract_key_from_bytes(const KeyExtractor& e
 /*RUSTYCPP:GEN-END id=sharding_policy_cache.1*/
 
 // @safe - kernel bodies (ShardingPolicyCache complete here).
-inline ShardingPolicyCache spc_new() {
-    return ShardingPolicyCache{
-        rusty::Mutex<rusty::Option<ShardingPolicySet>>(rusty::None),
-        rusty::Cell<uint64_t>(0),
-        rusty::Cell<bool>(false)};
-}
-
 inline int32_t spc_composite_route(const ShardingPolicySet& policy,
                                    const std::string& table_name,
                                    const std::vector<int64_t>& key_fields) {
