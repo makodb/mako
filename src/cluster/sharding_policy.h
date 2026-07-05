@@ -318,9 +318,6 @@ inline const TableShardingPolicy* sps_get_policy(
     auto found = policies->get(table_name);
     return found.is_some() ? &found.unwrap().get() : nullptr;
 }
-// @safe - factory: preserves the old ctor (num_shards = shards). Defined
-// below the struct; forward-declared here for the DSL body.
-inline ShardingPolicySet sps_with_shards(int32_t shards);
 
 #if RUSTYCPP_RUST
 pub struct ShardingPolicySet {
@@ -329,10 +326,14 @@ pub struct ShardingPolicySet {
     policies: btree_port::BTreeMap<std::string, TableShardingPolicy>,   // table_name -> policy
 }
 impl ShardingPolicySet {
-    // Factory replacing the old (shards) constructor. Sets num_shards
-    // (the DSL cannot express the `= 1` field initializer).
+    // Factory replacing the old (shards) constructor. Pure-DSL struct
+    // literal now that policies is a btree_port::BTreeMap with new_().
     fn with_shards(shards: i32) -> ShardingPolicySet {
-        unsafe { sps_with_shards(shards) }
+        ShardingPolicySet {
+            version: 0,
+            num_shards: shards,
+            policies: btree_port::BTreeMap::<std::string, TableShardingPolicy>::new_(),
+        }
     }
     // Policy for a table, or null if none is registered. The raw-pointer
     // return keeps this one op a kernel (see sps_get_policy).
@@ -361,7 +362,7 @@ impl ShardingPolicySet {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=d144229f9f9f75ed49816ad241f52f883e93c30bd619bd71acce4c306d6e9ffc*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=c7512dba64d11d76c6ef529d5e519c15e1f7ce03b82e19840d32da71a9f171ed*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -379,10 +380,7 @@ struct ShardingPolicySet {
 
 
 inline ShardingPolicySet ShardingPolicySet::with_shards(int32_t shards) {
-    // @unsafe
-    {
-        return sps_with_shards(std::move(shards));
-    }
+    return ShardingPolicySet{.version = static_cast<uint64_t>(0), .num_shards = std::move(shards), .policies = btree_port::BTreeMap<std::string, TableShardingPolicy>::new_()};
 }
 
 inline const TableShardingPolicy* ShardingPolicySet::get_policy(const std::string& table_name) const {
@@ -412,11 +410,5 @@ inline size_t ShardingPolicySet::table_count() const {
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.4*/
 
-// @safe - factory body (ShardingPolicySet is a complete type here)
-inline ShardingPolicySet sps_with_shards(int32_t shards) {
-    ShardingPolicySet s{};
-    s.num_shards = shards;
-    return s;
-}
 
 }  // namespace janus

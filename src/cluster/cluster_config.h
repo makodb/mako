@@ -49,11 +49,7 @@ struct ClusterConfigState {
     btree_port::BTreeMap<std::string, TableShardingPolicy> table_policies;
 };
 
-class ClusterConfig;  // for the factory kernel
-
 // ---- kernels: run under an already-held guard; own the map/routing ----
-inline ClusterConfig cc_new();  // factory (Mutex CTAD needs explicit args)
-
 inline std::vector<std::string> cc_shard_replicas(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
     return found.is_some() ? found.unwrap().get().replicas : std::vector<std::string>{};
@@ -135,7 +131,9 @@ pub struct ClusterConfig {
 }
 impl ClusterConfig {
     fn new() -> ClusterConfig {
-        unsafe { cc_new() }
+        ClusterConfig {
+            state: rusty::Mutex::<ClusterConfigState>::default_(),
+        }
     }
     fn LoadFromConfigManager(&mut self, cm: *mut ConfigManager) -> bool {
         let mut g = (*self).state.lock().unwrap();
@@ -203,7 +201,7 @@ impl ClusterConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=9dfe00a48cec974069a609dcee4831041a73a22608f415699b31e24281c1a2e6*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=5698fa11a7e5723b9a022ae7c2cd466f2313311e702d0fc54e30f5d6abd4295b*/
 struct ClusterConfig;
 
 struct ClusterConfig {
@@ -230,10 +228,7 @@ struct ClusterConfig {
 
 
 inline ClusterConfig ClusterConfig::new_() {
-    // @unsafe
-    {
-        return cc_new();
-    }
+    return ClusterConfig{.state = rusty::Mutex<ClusterConfigState>::default_()};
 }
 
 inline bool ClusterConfig::LoadFromConfigManager(ConfigManager* cm) {
@@ -331,11 +326,6 @@ inline void ClusterConfig::SetEpoch(uint64_t epoch) {
     (rusty::detail::deref_if_pointer_like(g)).epoch = std::move(epoch);
 }
 /*RUSTYCPP:GEN-END id=cluster_config.1*/
-
-// @safe - factory body (ClusterConfig complete here).
-inline ClusterConfig cc_new() {
-    return ClusterConfig{rusty::Mutex<ClusterConfigState>(ClusterConfigState{})};
-}
 
 // Process-global ClusterConfig — the routing cache the shard router
 // consults; populated by the ConfigWatcher. Until it has a nonzero
