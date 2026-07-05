@@ -50,6 +50,10 @@ FILES=(
   # ShardRouter: the four routing free fns as DSL pub fns; generated
   # definitions land in the .cc (compiled once), header stays decls.
   src/cluster/shard_router.cc
+  # ClusterConfig routing math (cc_hash_key/extract/follow/route) as DSL pub
+  # fns; generated defs in the .cc (header keeps decls). cc_load_from_cm stays
+  # a hand-C++ kernel (reads through a complete ConfigManager).
+  src/cluster/cluster_config.cc
 )
 
 post_pass() {

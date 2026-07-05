@@ -66,61 +66,15 @@ inline std::string cc_shard_status(const ClusterConfigState& s, uint32_t id) {
 // cc_has_table_policy are gone: folded into the DSL methods below as direct
 // btree_port::BTreeMap insert / remove / contains_key calls on the guard.
 
-// FNV-1a over the raw key bytes.
-inline uint32_t cc_hash_key(const std::string& key) {
-    uint32_t hash = 2166136261u;
-    for (char c : key) {
-        hash ^= static_cast<uint32_t>(static_cast<unsigned char>(c));
-        hash *= 16777619u;
-    }
-    return hash;
-}
-// Chase the dead-shard replacement pointer; cycle-guarded by shard_count+1.
-inline uint32_t cc_follow_replacement(const ClusterConfigState& s, uint32_t sid) {
-    const uint32_t max_hops = s.shard_count + 1;
-    for (uint32_t hop = 0; hop < max_hops; ++hop) {
-        auto found = s.shards.get(sid);
-        if (found.is_none()) return sid;
-        const ShardInfo& info = found.unwrap().get();
-        if (info.status != "dead") return sid;
-        sid = info.replacement;
-    }
-    return sid;
-}
-// Big-endian int64 decode mirroring shard_router.cc's convention.
-inline int64_t cc_extract_key_value(const KeyExtractor& ext, const std::string& key) {
-    if (key.empty()) return 0;
-    std::size_t nbytes = 0;
-    switch (ext.kind) {
-    case KeyExtractorType::FIELD_INDEX: nbytes = 8; break;
-    case KeyExtractorType::PREFIX_BYTES:
-        nbytes = static_cast<std::size_t>(ext.prefix_length);
-        if (nbytes == 0) nbytes = 8;
-        break;
-    case KeyExtractorType::HASH_MOD: return 0;
-    }
-    if (nbytes > key.size()) nbytes = key.size();
-    int64_t value = 0;
-    for (std::size_t i = 0; i < nbytes; ++i)
-        value = (value << 8) | static_cast<unsigned char>(key[i]);
-    return value;
-}
-// Full routing: per-table policy -> range shard, else hash-mod; then chase
-// any dead-shard replacement. Returns 0 when there are no shards.
-inline uint32_t cc_route(const ClusterConfigState& s, const std::string& table,
-                         const std::string& key) {
-    if (s.shard_count == 0) return 0;
-    if (!table.empty()) {
-        auto found = s.table_policies.get(table);
-        if (found.is_some()) {
-            const TableShardingPolicy& p = found.unwrap().get();
-            int64_t kv = cc_extract_key_value(p.key_extractor, key);
-            int32_t sid = p.get_shard(kv);
-            if (sid >= 0) return cc_follow_replacement(s, static_cast<uint32_t>(sid));
-        }
-    }
-    return cc_follow_replacement(s, cc_hash_key(key) % s.shard_count);
-}
+// Routing math — authored in the inline-Rust DSL in cluster_config.cc (FNV-1a
+// hash, big-endian key-byte decode, dead-shard replacement chase, and their
+// composition). Declared here so the DSL methods below can call them; the DSL
+// bodies live in the .cc (single TU -> no ODR issue for the non-inline defs).
+uint32_t cc_hash_key(const std::string& key);
+uint32_t cc_follow_replacement(const ClusterConfigState& s, uint32_t sid);
+int64_t cc_extract_key_value(KeyExtractor ext, const std::string& key);
+uint32_t cc_route(const ClusterConfigState& s, const std::string& table,
+                  const std::string& key);
 // Rebuild the topology from a ConfigManager (declared; defined in the .cc
 // where ConfigManager is a complete type).
 bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm);
