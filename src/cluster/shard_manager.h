@@ -408,6 +408,12 @@ impl ShardManager {
         if !(*self).shards.contains_key(id) { return false; }
         (*self).shards.get(id).unwrap().get().is_tombstoned(key)
     }
+    // Does shard `id`'s own (participant-side) freeze cover `key`? True only for
+    // keys inside its locked migrating range -- never for other keys it holds.
+    fn shard_frozen_for(&self, id: u32, key: &std::string) -> bool {
+        if !(*self).shards.contains_key(id) { return false; }
+        (*self).shards.get(id).unwrap().get().frozen_for(key)
+    }
     // Range checksum on shard `id` (test observability; the cutover check).
     fn shard_range_checksum(&self, id: u32, lo: &std::string, hi: &std::string) -> u64 {
         if !(*self).shards.contains_key(id) { return 0; }
@@ -441,7 +447,7 @@ impl ShardManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=d7f51e5ba9a607d75cf1dcc6673f725234ccbddd9d5d7064fe911b1e1da7b995*/
+/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=c5d10236fb50cb83b2da277d83946aba2bf54f448c2e42bbecac65f225d3a496*/
 struct ShardManager;
 
 struct ShardManager {
@@ -491,6 +497,7 @@ struct ShardManager {
     bool shard_migration_locked(uint32_t id) const;
     bool shard_migration_is_source(uint32_t id) const;
     bool shard_is_tombstoned(uint32_t id, const std::string& key) const;
+    bool shard_frozen_for(uint32_t id, const std::string& key) const;
     uint64_t shard_range_checksum(uint32_t id, const std::string& lo, const std::string& hi) const;
     size_t range_key_count(uint32_t id, const std::string& lo, const std::string& hi) const;
     uint32_t shard_count() const;
@@ -831,6 +838,13 @@ inline bool ShardManager::shard_is_tombstoned(uint32_t id, const std::string& ke
         return false;
     }
     return ((*this)).shards.get(id).unwrap().get().is_tombstoned(key);
+}
+
+inline bool ShardManager::shard_frozen_for(uint32_t id, const std::string& key) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return false;
+    }
+    return ((*this)).shards.get(id).unwrap().get().frozen_for(key);
 }
 
 inline uint64_t ShardManager::shard_range_checksum(uint32_t id, const std::string& lo, const std::string& hi) const {

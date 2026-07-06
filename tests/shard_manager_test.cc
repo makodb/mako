@@ -700,5 +700,32 @@ TEST_F(ShardManagerTest, ChecksumMismatchRefusesCommitAndAborts) {
     EXPECT_EQ(mgr_.route("m1"), 1u);            // never migrated
 }
 
+// The LOCK freezes only the migrating RANGE, not the whole source shard: keys
+// physically ON the source shard but OUTSIDE [lo,hi) are not frozen. (Placed
+// with put_direct so all three deterministically live on the source shard.)
+TEST_F(ShardManagerTest, LockScopesFreezeToTheRangeNotTheSourceShard) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "a1", "below");    // < lo,  on the source shard
+    mgr_.put_direct(1, "m5", "inside");   // in [lo,hi)
+    mgr_.put_direct(1, "z9", "above");    // >= hi, on the source shard
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.lock_range();
+
+    // The source shard's own freeze covers ONLY its migrating range.
+    EXPECT_TRUE(mgr_.shard_frozen_for(1, "m5"));    // inside the range -> frozen
+    EXPECT_FALSE(mgr_.shard_frozen_for(1, "a1"));   // same shard, below range -> NOT frozen
+    EXPECT_FALSE(mgr_.shard_frozen_for(1, "z9"));   // same shard, above range -> NOT frozen
+    // The destination is never the one freezing (only the source locks).
+    EXPECT_FALSE(mgr_.shard_frozen_for(2, "m5"));
+
+    // And through the manager's client view, the out-of-range keys route+serve.
+    EXPECT_FALSE(mgr_.frozen("a1"));
+    EXPECT_FALSE(mgr_.frozen("z9"));
+    EXPECT_TRUE(mgr_.frozen("m5"));
+}
+
 }  // namespace
 }  // namespace janus
