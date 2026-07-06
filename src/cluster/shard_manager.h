@@ -74,7 +74,9 @@ pub struct ShardManager {
     mig_dest: u32,                              // where the range is moving to
     mig_lo: std::string,                        // range [lo, hi)
     mig_hi: std::string,
-    mig_locked: bool,                           // false = Copying phase, true = Locked (2PC freeze)
+    mig_locked: bool,                           // source's 2PC vote: range frozen (prepared)
+    mig_dst_prepared: bool,                     // destination's 2PC vote: caught up (prepared)
+    mig_generation: u64,                        // per-attempt id; a stale (old-gen) vote is ignored
     mig_staged: btree_port::BTreeMap<std::string, std::string>,  // writes-during-copy delta
 }
 impl ShardManager {
@@ -90,6 +92,8 @@ impl ShardManager {
             mig_lo: std::string(""),
             mig_hi: std::string(""),
             mig_locked: false,
+            mig_dst_prepared: false,
+            mig_generation: 0,
             mig_staged: btree_port::BTreeMap::<std::string, std::string>::new_(),
         }
     }
@@ -204,7 +208,9 @@ impl ShardManager {
     }
     // ---- online migration protocol (docs/mako-book.md) ------------------
     // PREPARE: record the intent for range [lo, hi) source->dest. The range
-    // keeps routing to the source (Copying) until COMMIT.
+    // keeps routing to the source (Copying) until COMMIT. Each attempt gets a
+    // fresh generation so a vote from an earlier attempt can be recognized as
+    // stale and ignored.
     fn begin_migration(&mut self, source: u32, dest: u32, lo: &std::string, hi: &std::string) -> bool {
         if (*self).mig_active { return false; }
         (*self).mig_active = true;
@@ -213,6 +219,8 @@ impl ShardManager {
         (*self).mig_lo = (*lo);
         (*self).mig_hi = (*hi);
         (*self).mig_locked = false;
+        (*self).mig_dst_prepared = false;
+        (*self).mig_generation = (*self).mig_generation + 1;
         (*self).mig_staged.clear();
         // Pin the range to the source for the migration's duration (and if we
         // abort); COMMIT flips this override to the destination.
@@ -243,6 +251,7 @@ impl ShardManager {
         }
     }
     // FINAL SYNC: apply the captured delta (writes during copy) to the dest.
+    // Having received everything, the destination has now prepared (2PC vote).
     fn final_sync(&mut self) {
         if !(*self).mig_active { return; }
         let dst_id: u32 = (*self).mig_dest;
@@ -251,12 +260,34 @@ impl ShardManager {
                 (*self).shards.get_mut(dst_id).unwrap().get().put(kv.first, kv.second);
             }
         }
+        (*self).mig_dst_prepared = true;
     }
-    // COMMIT: source sheds the range, record the routing override so the range
-    // now points at the destination, clear migration state. The destination
-    // serves the range from here on.
+    // A generation-tagged prepare-ack from the destination (2PC vote). Accepted
+    // only for the CURRENT, still-active migration -- a late ack from an
+    // aborted or superseded attempt (wrong generation) is ignored. Returns
+    // whether the vote counted.
+    fn prepare_dest(&mut self, generation: u64) -> bool {
+        if (*self).mig_active && generation == (*self).mig_generation {
+            (*self).mig_dst_prepared = true;
+            return true;
+        }
+        false
+    }
+    fn migration_generation(&self) -> u64 {
+        (*self).mig_generation
+    }
+    // Both participants have voted to commit (source frozen + dest caught up).
+    fn both_prepared(&self) -> bool {
+        (*self).mig_active && (*self).mig_locked && (*self).mig_dst_prepared
+    }
+    // COMMIT: only when BOTH participants have prepared (2PC). Source sheds the
+    // range, the routing override flips to the destination, migration state
+    // clears. The destination serves the range from here on. Refused if either
+    // participant hasn't voted -- the master aborts in that case instead.
     fn commit_migration(&mut self) -> bool {
         if !(*self).mig_active { return false; }
+        if !(*self).mig_locked { return false; }
+        if !(*self).mig_dst_prepared { return false; }
         let src_id: u32 = (*self).mig_source;
         let dst_id: u32 = (*self).mig_dest;
         let lo: std::string = (*self).mig_lo;
@@ -314,7 +345,7 @@ impl ShardManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=6ba366e9ee1be6cc00ed7dbb950987d80c218a1594fb33afcec48bbf839d325d*/
+/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=8f1b0879dff71d52f2303d92b1840332502670fa213a65d7cf063e8ba3ab623d*/
 struct ShardManager;
 
 struct ShardManager {
@@ -328,6 +359,8 @@ struct ShardManager {
     std::string mig_lo;
     std::string mig_hi;
     bool mig_locked;
+    bool mig_dst_prepared;
+    uint64_t mig_generation;
     btree_port::BTreeMap<std::string, std::string> mig_staged;
 
     static ShardManager new_(ConfigManager* cm, ClusterConfig* cfg);
@@ -346,6 +379,9 @@ struct ShardManager {
     void background_copy();
     void lock_range();
     void final_sync();
+    bool prepare_dest(uint64_t generation);
+    uint64_t migration_generation() const;
+    bool both_prepared() const;
     bool commit_migration();
     void abort_migration();
     bool is_migrating() const;
@@ -359,7 +395,7 @@ struct ShardManager {
 
 
 inline ShardManager ShardManager::new_(ConfigManager* cm, ClusterConfig* cfg) {
-    return ShardManager{.cm = cm, .cfg = cfg, .shards = btree_port::BTreeMap<uint32_t, Shard>::new_(), .migrated = rusty::Vec<RangeOwner>::new_(), .mig_active = false, .mig_source = static_cast<uint32_t>(0), .mig_dest = static_cast<uint32_t>(0), .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_locked = false, .mig_staged = btree_port::BTreeMap<std::string, std::string>::new_()};
+    return ShardManager{.cm = cm, .cfg = cfg, .shards = btree_port::BTreeMap<uint32_t, Shard>::new_(), .migrated = rusty::Vec<RangeOwner>::new_(), .mig_active = false, .mig_source = static_cast<uint32_t>(0), .mig_dest = static_cast<uint32_t>(0), .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_locked = false, .mig_dst_prepared = false, .mig_generation = static_cast<uint64_t>(0), .mig_staged = btree_port::BTreeMap<std::string, std::string>::new_()};
 }
 
 inline void ShardManager::reload() {
@@ -476,6 +512,8 @@ inline bool ShardManager::begin_migration(uint32_t source, uint32_t dest, const 
     ((*this)).mig_lo = (lo);
     ((*this)).mig_hi = (hi);
     ((*this)).mig_locked = false;
+    ((*this)).mig_dst_prepared = false;
+    ((*this)).mig_generation = rusty::detail::deref_if_pointer_like(((*this)).mig_generation) + 1;
     ((*this)).mig_staged.clear();
     this->set_range_owner(lo, hi, std::move(source));
     return true;
@@ -515,10 +553,33 @@ inline void ShardManager::final_sync() {
             ((*this)).shards.get_mut(std::move(dst_id)).unwrap().get().put(kv.first, kv.second);
         }
     }
+    ((*this)).mig_dst_prepared = true;
+}
+
+inline bool ShardManager::prepare_dest(uint64_t generation) {
+    if (rusty::detail::deref_if_pointer_like(((*this)).mig_active) && (rusty::detail::deref_if_pointer_like(generation) == rusty::detail::deref_if_pointer_like(((*this)).mig_generation))) {
+        ((*this)).mig_dst_prepared = true;
+        return true;
+    }
+    return false;
+}
+
+inline uint64_t ShardManager::migration_generation() const {
+    return ((*this)).mig_generation;
+}
+
+inline bool ShardManager::both_prepared() const {
+    return (rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked)) && rusty::detail::deref_if_pointer_like(((*this)).mig_dst_prepared);
 }
 
 inline bool ShardManager::commit_migration() {
     if (!((*this)).mig_active) {
+        return false;
+    }
+    if (!((*this)).mig_locked) {
+        return false;
+    }
+    if (!((*this)).mig_dst_prepared) {
         return false;
     }
     const uint32_t src_id = ((*this)).mig_source;

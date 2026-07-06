@@ -443,5 +443,77 @@ TEST_F(ShardManagerTest, MasterAssignsMonotonicShardIds) {
     EXPECT_TRUE(mgr_.is_shard_alive(3));
 }
 
+// ===========================================================================
+// 2PC failure handling: prepare timeout + stale/late votes.
+// ===========================================================================
+
+// The final 2PC step: the source locks (prepares) but the destination times
+// out and never prepares. The master cannot commit, so it aborts. When the
+// timed-out destination's prepare-ack finally arrives, it is ignored (stale
+// generation) -- the migration stays aborted and never commits.
+TEST_F(ShardManagerTest, PrepareTimeoutAbortsAndIgnoresLateVote) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "v");
+
+    ASSERT_TRUE(mgr_.begin_migration(/*source=*/1, /*dest=*/2, lo, hi));
+    const uint64_t gen = mgr_.migration_generation();
+    mgr_.background_copy();
+    mgr_.lock_range();                       // SOURCE prepares (freezes the range)
+    EXPECT_TRUE(mgr_.get("m5").is_none());    // ...so the range is frozen
+
+    // DESTINATION times out -- it never prepares. Not both prepared, so the
+    // master must not commit.
+    EXPECT_FALSE(mgr_.both_prepared());
+    EXPECT_FALSE(mgr_.commit_migration());    // refused: dest hasn't voted
+    // The master aborts the migration.
+    mgr_.abort_migration();
+    EXPECT_FALSE(mgr_.is_migrating());
+
+    // The source resumed serving the range (unfrozen); nothing moved.
+    { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "v"); }
+    EXPECT_EQ(mgr_.route("m5"), 1u);
+
+    // LATE: the timed-out destination's prepare-ack finally arrives, tagged
+    // with the aborted attempt's generation. It must be ignored, and the
+    // migration must stay aborted -- it can never be committed now.
+    EXPECT_FALSE(mgr_.prepare_dest(gen));     // stale -> rejected
+    EXPECT_FALSE(mgr_.is_migrating());
+    EXPECT_FALSE(mgr_.both_prepared());
+    EXPECT_FALSE(mgr_.commit_migration());    // still nothing to commit
+    { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "v"); }
+    EXPECT_EQ(mgr_.route("m5"), 1u);          // the range never moved to the dest
+}
+
+// A late vote from an aborted attempt cannot influence a LATER migration of the
+// same range: the generation guard rejects it, and only the current-generation
+// vote lets the new migration commit.
+TEST_F(ShardManagerTest, StaleVoteCannotAffectALaterMigration) {
+    AddShards(3);
+    mgr_.put_direct(1, "m5", "v");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, "m", "t"));  // attempt #1 -> shard 2
+    const uint64_t old_gen = mgr_.migration_generation();
+    mgr_.abort_migration();                             // ...aborted
+
+    // A new migration of the same range starts (attempt #2 -> shard 0).
+    ASSERT_TRUE(mgr_.begin_migration(1, 0, "m", "t"));
+    const uint64_t new_gen = mgr_.migration_generation();
+    EXPECT_NE(old_gen, new_gen);
+    mgr_.background_copy();
+    mgr_.lock_range();
+
+    // The OLD attempt's late dest vote is rejected (wrong generation) and does
+    // not let the new migration commit prematurely.
+    EXPECT_FALSE(mgr_.prepare_dest(old_gen));
+    EXPECT_FALSE(mgr_.commit_migration());   // new dest hasn't prepared yet
+
+    // The correct, current-generation vote counts, and the migration commits.
+    EXPECT_TRUE(mgr_.prepare_dest(new_gen));
+    EXPECT_TRUE(mgr_.commit_migration());
+    EXPECT_EQ(mgr_.route("m5"), 0u);         // migrated to shard 0, not 2
+    { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "v"); }
+}
+
 }  // namespace
 }  // namespace janus
