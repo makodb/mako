@@ -403,17 +403,52 @@ The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-e
 
 For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs/reference/tpcc-sharding.md` — warehouse-based sharding yields ~5% remote NewOrder and ~8% remote Payment with 2 shards.
 
-### Resharding (2PC-Style)
+### Data Migration Protocol (Online Resharding)
 
-Adding, removing, or splitting shards uses a **two-phase commit** protocol where shard 0 acts as coordinator:
+Moving a key range (or hash bucket) from a **source** shard to a **destination** shard is the primitive under `move_range`, `remove_shard`/`drain_shard`, `rebalance`, and `set_sharding_policy`. Mako does it **online** — the source keeps serving the range until the very last moment — with a long background bulk copy followed by a short two-phase-commit cutover. Shard 0 (the master) is the coordinator; the source and destination are the participants. All phase state lives in `reshard/*` keys on `__mako_config__`, so it is replicated and crash-recoverable like any other config.
 
-**PREPARE**: Record the resharding intent in the config table (e.g., `shard/<id>/status = "adding"` or `"draining"`). Source shard enters dual-write or read-only mode. Data migration begins.
+**Design goals.**
+- The source serves reads *and* writes for the range throughout the (potentially long) bulk copy — no availability hit while the data moves.
+- **No lost writes**: writes that arrive during the copy are captured and applied before cutover.
+- The unavailability window is bounded to the *final delta* (small), not the whole dataset.
+- Crash-recoverable: every phase transition is a durable, versioned Raft write on shard 0, so a coordinator or participant crash resumes or aborts cleanly.
 
-**COMMIT**: After migration is verified complete, update the config (new shard becomes `active`, or removed shard is deleted). Increment `__version__`.
+```
+             PREPARE            LOCK            COMMIT
+                v                v                 v
+ source: serving ── serving ────┤ frozen ├──────── drops range
+                 (bulk copy)    │(final  │
+ dest:   building ── catching-up┤ sync)  ├──────── serving
+                 ^              ^                 ^
+          snapshot + delta   delta small     routing flips
+          (async, online)   (stop the range)  (version bump)
+```
 
-**CLEANUP**: ConfigWatchers detect the version change, all nodes update routing. Old shard shuts down (for remove) or source exits dual-write (for split).
+**Phase 0 — PREPARE (intent).** The master writes the migration intent in one atomic Raft batch — `reshard/active=1`, `reshard/src`, `reshard/dst`, `reshard/range=[lo,hi)`, `reshard/phase=copy` — bumping `__version__`. From here the operation is durable: a master crash re-reads the intent and resumes. The routing assignment still points at the **source**; the range is merely flagged *migrating*.
 
-The resharding state is stored in config keys (`reshard/phase`, `reshard/type`, etc.), so the protocol is crash-recoverable — shard 0 can resume or abort in-progress resharding on restart.
+**Phase 1 — BACKGROUND COPY (source live).** The destination pulls a consistent snapshot of the range from the source and bulk-loads it, in the background. Meanwhile the source **keeps serving reads and writes** for the range. Writes that land on the range after the snapshot point are captured as a **delta** — the source dual-writes them into a change buffer the destination tails — so the destination converges toward the source. This phase is unbounded in time and fully online. It ends when the destination has caught up to "most of the data" (the outstanding delta is small).
+
+**Phase 2 — LOCK (2PC prepare: freeze the range).** The master flips `reshard/phase=lock` and tells **both** participants to prepare:
+- The **source stops serving the range** — reads/writes for `[lo,hi)` are rejected with a `Migrating`/`WrongShard`-style error, so clients retry (blocking briefly on *that range only*; the rest of the source's key space is unaffected).
+- The **destination** stops tailing and readies to take ownership.
+
+This is the *only* window where the range is unavailable, and it covers just the final delta.
+
+**Phase 3 — FINAL SYNC.** The source ships the remaining delta (writes since the last applied point) to the destination, which applies it. Source and destination now hold identical data for the range; both ack "prepared" to the master.
+
+**Phase 4 — COMMIT.** The master writes the cutover atomically: the range→shard assignment now names the **destination**, `reshard/phase=committed` (then the `reshard/*` keys clear), and `__version__` bumps. On the new version every node's `ConfigWatcher` re-resolves routing — the range routes to the destination, which begins serving it — and the source **drops** the range's data. The unavailability window closes.
+
+**ABORT.** Any failure *before* COMMIT is safe. The master clears the intent / writes `reshard/phase=abort`; the source **resumes serving** the range (it never lost the data — it only stopped *serving* during LOCK), and the destination discards its partial copy. Because the assignment still points at the source until COMMIT, an abort is invisible to clients beyond the brief LOCK-window retry.
+
+**Crash recovery.** The `reshard/*` keys (Raft-replicated on shard 0) are authoritative. On master restart mid-migration: `phase=copy` → restart the copy (idempotent — re-snapshot); `phase=lock`/`final_sync` → roll forward (re-run final sync + commit) or abort; `phase=committed` → finish cleanup. A participant crash during COPY just restarts the copy; during LOCK the master aborts and the source resumes, since no commit was reached.
+
+**How the master commands use it.**
+- `move_range(table, range, from, to)` — one migration, `from`→`to`.
+- `remove_shard(id)` / `drain_shard(id)` — a *set* of migrations, one per range the leaving shard owns, spread across the remaining shards; the shard is removed only once all commit.
+- `rebalance()` — a batch of `move_range`s computed to even the load.
+- `set_sharding_policy(table, assignment)` — diff the new assignment against the current one; every moved partition becomes a migration.
+
+Only the COMMIT of each migration bumps the routing version, so clients observe a clean before/after per range — never a half-migrated state. (`kill_shard` skips this protocol entirely: the source is *dead*, so there is nothing to copy — it just reassigns the range via the `replacement` pointer and recovers data from the destination's own replicas.)
 
 ### Speculation Recovery (Epoch-Based)
 
