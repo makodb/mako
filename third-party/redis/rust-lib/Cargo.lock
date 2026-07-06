@@ -115,6 +115,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "itoa",
+ "libc",
  "redis-protocol",
  "socket2",
 ]

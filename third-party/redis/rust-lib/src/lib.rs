@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7716,18 +7717,22 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
     let host = env::var("MAKO_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = env::var("MAKO_PORT").unwrap_or_else(|_| "6380".to_string());
     let addr = format!("{host}:{port}");
+    let idle_wait_strategy = IdleWaitStrategy::from_env();
     let barrier = Arc::new(Barrier::new(n_threads));
     let ready_count = Arc::new(AtomicUsize::new(0));
 
     println!(
-        "Starting {} thread-per-core workers on {} (SO_REUSEPORT, nonblocking clients, MULTI/EXEC support)",
-        n_threads, addr
+        "Starting {} thread-per-core workers on {} (SO_REUSEPORT, nonblocking clients, MULTI/EXEC support, idle_wait={})",
+        n_threads,
+        addr,
+        idle_wait_strategy.name()
     );
 
     for thread_id in 0..n_threads {
         let barrier = Arc::clone(&barrier);
         let ready_count = Arc::clone(&ready_count);
         let addr = addr.clone();
+        let idle_wait_strategy = idle_wait_strategy;
 
         std::thread::Builder::new()
             .name(format!("mako-worker-{}", thread_id))
@@ -7833,7 +7838,14 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
                     }
 
                     if !made_progress {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        match idle_wait_strategy {
+                            IdleWaitStrategy::Poll => {
+                                if let Err(e) = wait_for_server_events(&listener, &clients) {
+                                    eprintln!("[thread-{}] Poll error: {e}", thread_id);
+                                }
+                            }
+                            IdleWaitStrategy::Yield => std::thread::yield_now(),
+                        }
                     }
                 }
             })
@@ -7841,6 +7853,87 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
     }
 
     true
+}
+
+#[derive(Clone, Copy)]
+enum IdleWaitStrategy {
+    Poll,
+    Yield,
+}
+
+impl IdleWaitStrategy {
+    fn from_env() -> Self {
+        match env::var("MAKO_REDIS_IDLE_STRATEGY") {
+            Ok(value) if value.eq_ignore_ascii_case("yield") => IdleWaitStrategy::Yield,
+            Ok(value) if value.eq_ignore_ascii_case("poll") => IdleWaitStrategy::Poll,
+            Ok(value) => {
+                eprintln!("Unknown MAKO_REDIS_IDLE_STRATEGY={value}; defaulting to poll");
+                IdleWaitStrategy::Poll
+            }
+            Err(_) => IdleWaitStrategy::Poll,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            IdleWaitStrategy::Poll => "poll",
+            IdleWaitStrategy::Yield => "yield",
+        }
+    }
+}
+
+fn wait_for_server_events(listener: &TcpListener, clients: &[ClientConn]) -> std::io::Result<()> {
+    let mut fds = Vec::with_capacity(clients.len() + 1);
+    fds.push(libc::pollfd {
+        fd: listener.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    });
+
+    for client in clients {
+        let mut events = libc::POLLIN;
+        if !client.write_buf.is_empty() {
+            events |= libc::POLLOUT;
+        }
+        fds.push(libc::pollfd {
+            fd: client.stream.as_raw_fd(),
+            events,
+            revents: 0,
+        });
+    }
+
+    let timeout_ms = idle_poll_timeout_ms(clients);
+    let result = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
+    if result < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == ErrorKind::Interrupted {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    } else {
+        Ok(())
+    }
+}
+
+fn idle_poll_timeout_ms(clients: &[ClientConn]) -> i32 {
+    let now_ms = unix_time_ms();
+    let mut nearest: Option<i64> = None;
+
+    for client in clients {
+        let Some(blocked) = client.blocked_command.as_ref() else {
+            continue;
+        };
+        let Some(deadline_ms) = blocked.deadline_ms else {
+            continue;
+        };
+        let remaining_ms = deadline_ms.saturating_sub(now_ms);
+        nearest = Some(nearest.map_or(remaining_ms, |current| current.min(remaining_ms)));
+    }
+
+    nearest
+        .map(|timeout| timeout.clamp(0, i32::MAX as i64) as i32)
+        .unwrap_or(-1)
 }
 
 struct ClientConn {
