@@ -255,5 +255,178 @@ TEST_F(ShardManagerTest, OnlyOneMigrationAtATime) {
     EXPECT_TRUE(mgr_.begin_migration(0, 2, "a", "c"));   // ok once cleared
 }
 
+// ===========================================================================
+// Migration edge cases -- the corners.
+// ===========================================================================
+
+// [lo, hi) is half-open: lo is included, hi is excluded. A key exactly at hi
+// stays put; a key exactly at lo moves.
+TEST_F(ShardManagerTest, RangeBoundariesAreHalfOpen) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m", "at-lo");      // == lo  -> in range
+    mgr_.put_direct(1, "sz", "below-hi");  // <  hi  -> in range
+    mgr_.put_direct(1, "t", "at-hi");      // == hi  -> OUT (half-open)
+    ASSERT_EQ(mgr_.range_key_count(1, lo, hi), 2u);
+    ASSERT_EQ(mgr_.range_key_count(1, "t", "u"), 1u);  // "t" sits just above
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_EQ(mgr_.range_key_count(1, lo, hi), 0u);    // "m","sz" left the source
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 2u);    // ...landed on the dest
+    EXPECT_EQ(mgr_.range_key_count(1, "t", "u"), 1u);  // "t" (== hi) untouched
+    EXPECT_EQ(mgr_.range_key_count(2, "t", "u"), 0u);  // ...and not copied over
+}
+
+// Writes to keys OUTSIDE the migrating range keep routing to their hash owner
+// throughout the migration and are never dragged onto the destination.
+TEST_F(ShardManagerTest, WritesOutsideRangeAreUnaffected) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "v");
+    mgr_.put("apple", "a");   // < lo
+    mgr_.put("zebra", "z");   // >= hi
+    const uint32_t apple_shard = mgr_.route("apple");
+    const uint32_t zebra_shard = mgr_.route("zebra");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.put("apple", "a2");  // out-of-range write during copy still works
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_EQ(mgr_.route("apple"), apple_shard);  // routing never changed
+    EXPECT_EQ(mgr_.route("zebra"), zebra_shard);
+    { auto a = mgr_.get("apple"); ASSERT_TRUE(a.is_some()); EXPECT_EQ(a.unwrap(), "a2"); }
+    { auto z = mgr_.get("zebra"); ASSERT_TRUE(z.is_some()); EXPECT_EQ(z.unwrap(), "z"); }
+}
+
+// The migration control verbs are safe no-ops when nothing is in flight.
+TEST_F(ShardManagerTest, MigrationControlIsSafeWithNoActiveMigration) {
+    AddShards(2);
+    mgr_.put_direct(0, "k", "v");
+    EXPECT_FALSE(mgr_.is_migrating());
+    mgr_.background_copy();               // all no-ops
+    mgr_.lock_range();
+    mgr_.final_sync();
+    mgr_.abort_migration();
+    EXPECT_FALSE(mgr_.commit_migration());  // returns false
+    EXPECT_FALSE(mgr_.is_migrating());
+    EXPECT_FALSE(mgr_.migration_locked());
+    EXPECT_EQ(mgr_.range_key_count(0, "k", "l"), 1u);  // data untouched
+}
+
+// A range can migrate again after a previous migration commits (the override
+// is updated in place, not stacked).
+TEST_F(ShardManagerTest, RangeCanMigrateAgainAfterCommit) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "orig");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));   // 1 -> 2
+    mgr_.background_copy(); mgr_.lock_range(); mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+    EXPECT_EQ(mgr_.route("m5"), 2u);
+
+    ASSERT_TRUE(mgr_.begin_migration(2, 0, lo, hi));   // 2 -> 0
+    mgr_.background_copy(); mgr_.lock_range(); mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_EQ(mgr_.route("m5"), 0u);
+    { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "orig"); }
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 0u);  // left shard 2
+    EXPECT_EQ(mgr_.range_key_count(0, lo, hi), 1u);  // now on shard 0
+}
+
+// Two disjoint ranges migrate independently; both overrides coexist.
+TEST_F(ShardManagerTest, DisjointRangesMigrateIndependently) {
+    AddShards(3);
+    mgr_.put_direct(0, "a5", "va");   // range [a,c) lives on shard 0
+    mgr_.put_direct(1, "m5", "vm");   // range [m,t) lives on shard 1
+
+    ASSERT_TRUE(mgr_.begin_migration(0, 2, "a", "c"));
+    mgr_.background_copy(); mgr_.lock_range(); mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, "m", "t"));
+    mgr_.background_copy(); mgr_.lock_range(); mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_EQ(mgr_.route("a5"), 2u);
+    EXPECT_EQ(mgr_.route("m5"), 2u);
+    { auto a = mgr_.get("a5"); ASSERT_TRUE(a.is_some()); EXPECT_EQ(a.unwrap(), "va"); }
+    { auto m = mgr_.get("m5"); ASSERT_TRUE(m.is_some()); EXPECT_EQ(m.unwrap(), "vm"); }
+}
+
+// An empty range migrates cleanly: no data moves, but the routing override is
+// still recorded so the destination owns the range afterward.
+TEST_F(ShardManagerTest, EmptyRangeMigrationCommitsCleanly) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    ASSERT_EQ(mgr_.range_key_count(1, lo, hi), 0u);
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_FALSE(mgr_.is_migrating());
+    EXPECT_EQ(mgr_.route("m5"), 2u);        // override recorded
+    EXPECT_TRUE(mgr_.get("m5").is_none());  // ...but no data there
+}
+
+// Repeated writes to a key during the copy collapse to the last value.
+TEST_F(ShardManagerTest, LastWriteDuringCopyWins) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "v0");
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.put("m5", "v1");
+    mgr_.put("m5", "v2");  // wins
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+    { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "v2"); }
+}
+
+// Volume: a 200-key range migrates with every key preserved and none stranded.
+TEST_F(ShardManagerTest, LargeRangeMigrationConservesEveryKey) {
+    AddShards(3);
+    const std::string lo = "m", hi = "n";  // all "m<i>" keys fall in [m,n)
+    for (int i = 0; i < 200; ++i) {
+        mgr_.put_direct(1, "m" + std::to_string(i), "v" + std::to_string(i));
+    }
+    ASSERT_EQ(mgr_.range_key_count(1, lo, hi), 200u);
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    EXPECT_EQ(mgr_.range_key_count(1, lo, hi), 0u);
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 200u);
+    for (int i = 0; i < 200; ++i) {
+        auto r = mgr_.get("m" + std::to_string(i));
+        ASSERT_TRUE(r.is_some()) << "lost m" << i;
+        EXPECT_EQ(r.unwrap(), "v" + std::to_string(i));
+    }
+}
+
+// Killing a shard into itself is rejected (dead == taker precondition).
+TEST_F(ShardManagerTest, KillSelfIsRejected) {
+    AddShards(3);
+    EXPECT_FALSE(mgr_.kill_shard(1, 1));
+    EXPECT_TRUE(mgr_.is_shard_alive(1));
+    EXPECT_EQ(mgr_.epoch(), 0u);
+}
+
 }  // namespace
 }  // namespace janus
