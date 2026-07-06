@@ -16,6 +16,7 @@
 
 #include <string>
 #include <btree_port/btreemap.hpp>   // native-API ordered map (the stub's data)
+#include <rusty/vec.hpp>             // drop_range's collect-then-remove buffer
 #include <rusty/option.hpp>          // get() -> Option<std::string>
 #include <rusty/slice.hpp>           // deref_if_pointer_like (generated bodies)
 
@@ -68,9 +69,53 @@ impl Shard {
             (*other).data.clear();
         }
     }
+    // ---- online migration primitives (lex range [lo, hi)) ----------------
+    // Bulk-copy the source's keys in [lo, hi) into self, leaving the source
+    // intact (it keeps serving during the background copy). `source` is a raw
+    // pointer for the same reason absorb's `other` is.
+    fn copy_range_from(&mut self, source: *mut Shard, lo: &std::string, hi: &std::string) {
+        unsafe {
+            for kv in (*source).data {
+                if kv.first >= (*lo) && kv.first < (*hi) {
+                    // COPY into locals (not a move of kv.*): the transpiler
+                    // moves by-value insert args, and moving out of `source`
+                    // would empty it -- but the source must stay intact to keep
+                    // serving the range during the background copy.
+                    let k: std::string = kv.first;
+                    let v: std::string = kv.second;
+                    (*self).data.insert(k, v);
+                }
+            }
+        }
+    }
+    // Drop the keys in [lo, hi) (the source sheds the range after COMMIT).
+    // Collect-then-remove: cannot mutate the map mid-iteration.
+    fn drop_range(&mut self, lo: &std::string, hi: &std::string) {
+        let mut victims: rusty::Vec<std::string> = rusty::Vec::<std::string>::new_();
+        for kv in (*self).data {
+            if kv.first >= (*lo) && kv.first < (*hi) {
+                victims.push(kv.first);
+            }
+        }
+        let mut i: usize = 0;
+        while i < victims.size() {
+            (*self).data.remove(victims[i]);
+            i = i + 1;
+        }
+    }
+    // How many keys this shard holds in [lo, hi) (test observability).
+    fn range_count(&self, lo: &std::string, hi: &std::string) -> usize {
+        let mut n: usize = 0;
+        for kv in (*self).data {
+            if kv.first >= (*lo) && kv.first < (*hi) {
+                n = n + 1;
+            }
+        }
+        n
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=af3ac68aae6093e7a02237fa3d02d0fb7ce49c501a6d9dd8ce2ca20332993a19*/
+/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=3501c5aca186e62bfd152cbd12774ab220602d7d956c49b9e8b31cea2f945a73*/
 struct Shard;
 
 struct Shard {
@@ -88,6 +133,9 @@ struct Shard {
     rusty::Option<std::string> get(const std::string& key) const;
     void remove(const std::string& key);
     void absorb(Shard* other);
+    void copy_range_from(Shard* source, const std::string& lo, const std::string& hi);
+    void drop_range(const std::string& lo, const std::string& hi);
+    size_t range_count(const std::string& lo, const std::string& hi) const;
 };
 
 
@@ -139,6 +187,43 @@ inline void Shard::absorb(Shard* other) {
         }
         (*other).data.clear();
     }
+}
+
+inline void Shard::copy_range_from(Shard* source, const std::string& lo, const std::string& hi) {
+    // @unsafe
+    {
+        for (auto&& kv : rusty::for_in((*source).data)) {
+            if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
+                const std::string k = kv.first;
+                std::string v = kv.second;
+                ((*this)).data.insert(std::move(k), std::move(v));
+            }
+        }
+    }
+}
+
+inline void Shard::drop_range(const std::string& lo, const std::string& hi) {
+    rusty::Vec<std::string> victims = rusty::Vec<std::string>::new_();
+    for (auto&& kv : rusty::for_in(((*this)).data)) {
+        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
+            victims.push(std::move(kv.first));
+        }
+    }
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < victims.size()) {
+        ((*this)).data.remove(victims[i]);
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+}
+
+inline size_t Shard::range_count(const std::string& lo, const std::string& hi) const {
+    size_t n = static_cast<size_t>(0);
+    for (auto&& kv : rusty::for_in(((*this)).data)) {
+        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
+            n = rusty::detail::deref_if_pointer_like(n) + static_cast<size_t>(1);
+        }
+    }
+    return std::move(n);
 }
 /*RUSTYCPP:GEN-END id=shard.1*/
 
