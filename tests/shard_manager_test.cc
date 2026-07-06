@@ -577,5 +577,58 @@ TEST_F(ShardManagerTest, AbortLeavesRangeOwnedBySourceInMetadata) {
     EXPECT_EQ(mgr_.shard_owned_ranges(2), 0u);
 }
 
+// ===========================================================================
+// Data transmission fidelity: the bytes moved source -> destination must be
+// exact, through BOTH the background snapshot and the during-copy delta, for
+// empty / embedded-NUL / high-byte binary values.
+// ===========================================================================
+TEST_F(ShardManagerTest, MigrationTransmitsExactBytes) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+
+    // Values with corners: empty, embedded NULs, and non-ASCII/high bytes.
+    static const char kNul[] = {'a', '\x00', 'b', '\x00', 'c'};
+    static const char kBin[] = {'\x00', '\x01', '\xff', '\x7f', '\x80'};
+    const std::string empty_val;
+    const std::string nul_val(kNul, sizeof(kNul));   // 5 bytes incl. NULs
+    const std::string bin_val(kBin, sizeof(kBin));   // 5 binary bytes
+
+    // Seeded on the source -> transmitted via the background snapshot.
+    mgr_.put_direct(1, "m_empty", empty_val);
+    mgr_.put_direct(1, "m_nul", nul_val);
+    mgr_.put_direct(1, "m_bin", bin_val);
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+
+    // A tricky value written DURING the copy -> transmitted via the delta.
+    static const char kDelta[] = {'d', '\x00', 'e'};
+    const std::string delta_val(kDelta, sizeof(kDelta));
+    mgr_.put("m_delta", delta_val);
+
+    mgr_.lock_range();
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    // Every value arrives on the destination byte-for-byte (length + content).
+    // (unwrap() consumes the Option, so bind it once.)
+    auto ge = mgr_.get("m_empty"); ASSERT_TRUE(ge.is_some());
+    const std::string ve = ge.unwrap();
+    EXPECT_EQ(ve, empty_val); EXPECT_EQ(ve.size(), 0u);
+    auto gn = mgr_.get("m_nul"); ASSERT_TRUE(gn.is_some());
+    const std::string vn = gn.unwrap();
+    EXPECT_EQ(vn, nul_val); EXPECT_EQ(vn.size(), 5u);
+    auto gb = mgr_.get("m_bin"); ASSERT_TRUE(gb.is_some());
+    const std::string vb = gb.unwrap();
+    EXPECT_EQ(vb, bin_val); EXPECT_EQ(vb.size(), 5u);
+    auto gd = mgr_.get("m_delta"); ASSERT_TRUE(gd.is_some());
+    const std::string vd = gd.unwrap();
+    EXPECT_EQ(vd, delta_val); EXPECT_EQ(vd.size(), 3u);
+
+    // All four landed on the destination; none stranded on the source.
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 4u);
+    EXPECT_EQ(mgr_.range_key_count(1, lo, hi), 0u);
+}
+
 }  // namespace
 }  // namespace janus
