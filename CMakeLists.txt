@@ -1768,6 +1768,30 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
 
+    # ShardManager control-plane test — stub Shards (in-memory KV stand-ins
+    # for masstree shards) driven through the REAL ConfigManager/ClusterConfig
+    # reconfiguration verbs (add/kill/remove). Pure cluster like
+    # test_config_manager: no storage engine, no RPC.
+    add_executable(test_shard_manager
+        tests/shard_manager_test.cc
+        src/cluster/config_manager.cc
+        src/cluster/cluster_config.cc
+        src/cluster/config_watcher.cc
+    )
+    target_include_directories(test_shard_manager PRIVATE
+        src
+        src/cluster
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_link_options(test_shard_manager PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_shard_manager
+        rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    add_test(NAME test_shard_manager COMMAND test_shard_manager)
+
     # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
     # Unlike test_config_manager (pure cluster), this TU pulls the
     # storage interface header + an in-memory FullOrderedIndex fake, so

@@ -47,6 +47,12 @@ FILES=(
   # ShardingPolicyBuilder: DSL-friendly reshape (value struct +
   # Result-based build; fluent TablePolicyBuilder deleted).
   src/cluster/sharding_policy_builder.h
+  # Shard: stub in-memory KV shard (stand-in for a masstree shard) — the
+  # data holder the ShardManager migrates on KillShard.
+  src/cluster/shard.h
+  # ShardManager: drives the real ConfigManager/ClusterConfig reconfiguration
+  # verbs against a map of stub Shards (add/kill/remove + route/put/get).
+  src/cluster/shard_manager.h
   # ShardRouter: the four routing free fns as DSL pub fns; generated
   # definitions land in the .cc (compiled once), header stays decls.
   src/cluster/shard_router.cc

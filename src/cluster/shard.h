@@ -1,0 +1,145 @@
+#pragma once
+
+// Shard — a stub stand-in for a masstree-backed data shard, used to test the
+// cluster reconfiguration flow (ShardManager driving ConfigManager /
+// ClusterConfig) end-to-end WITHOUT the storage engine. It is just an
+// in-memory key/value set plus a liveness flag; on KillShard the manager
+// migrates one shard's data into another the way a real range hand-off
+// eventually will. Swap this for a masstree-backed shard to run the same
+// manager against real storage.
+//
+// Authored in the inline-Rust DSL (docs/storage-interface.md): the
+// `#if RUSTYCPP_RUST` block is the source of truth; regenerate with
+// scripts/regen_storage_dsl.sh. Plain pub struct + inherent impl -> a
+// copyable aggregate, so a Shard lives in the ShardManager's
+// btree_port::BTreeMap<u32, Shard> by value.
+
+#include <string>
+#include <btree_port/btreemap.hpp>   // native-API ordered map (the stub's data)
+#include <rusty/option.hpp>          // get() -> Option<std::string>
+#include <rusty/slice.hpp>           // deref_if_pointer_like (generated bodies)
+
+namespace janus {
+
+#if RUSTYCPP_RUST
+pub struct Shard {
+    shard_id: u32,   // not `id`: a field named the same as the id() method clashes
+    alive: bool,
+    data: btree_port::BTreeMap<std::string, std::string>,
+}
+impl Shard {
+    // A fresh, live shard with no data.
+    fn new(id: u32) -> Shard {
+        Shard {
+            shard_id: id,
+            alive: true,
+            data: btree_port::BTreeMap::<std::string, std::string>::new_(),
+        }
+    }
+    fn id(&self) -> u32 { (*self).shard_id }
+    fn is_alive(&self) -> bool { (*self).alive }
+    fn mark_dead(&mut self) { (*self).alive = false; }
+    fn key_count(&self) -> usize { (*self).data.size() }
+    fn contains(&self, key: &std::string) -> bool {
+        (*self).data.contains_key(key)
+    }
+    // Store a value (blind overwrite).
+    fn put(&mut self, key: &std::string, value: &std::string) {
+        (*self).data.insert(key, value);
+    }
+    // Read a value, or None on miss.
+    fn get(&self, key: &std::string) -> rusty::Option<std::string> {
+        let found = (*self).data.get(key);
+        if found.is_none() { return rusty::None; }
+        rusty::Some(std::string(found.unwrap().get()))
+    }
+    fn remove(&mut self, key: &std::string) {
+        (*self).data.remove(key);
+    }
+    // Take over another shard's entire dataset (data migration on KillShard),
+    // leaving `other` empty. Stand-in for a masstree range hand-off. `other`
+    // is a raw pointer (not &mut Shard): the DSL lowers a `&mut local`
+    // argument to a pointer, which only binds to a pointer parameter.
+    fn absorb(&mut self, other: *mut Shard) {
+        unsafe {
+            for kv in (*other).data {
+                (*self).data.insert(kv.first, kv.second);
+            }
+            (*other).data.clear();
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=50582583983c47c713cb2bd434dc317cdf55d548e6fea028d21a21c64762a92d*/
+struct Shard;
+
+struct Shard {
+    uint32_t shard_id;
+    bool alive;
+    btree_port::BTreeMap<std::string, std::string> data;
+
+    static Shard new_(uint32_t id);
+    uint32_t id() const;
+    bool is_alive() const;
+    void mark_dead();
+    size_t key_count() const;
+    bool contains(const std::string& key) const;
+    void put(const std::string& key, const std::string& value);
+    rusty::Option<std::string> get(const std::string& key) const;
+    void remove(const std::string& key);
+    void absorb(Shard* other);
+};
+
+
+inline Shard Shard::new_(uint32_t id) {
+    return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_()};
+}
+
+inline uint32_t Shard::id() const {
+    return ((*this)).shard_id;
+}
+
+inline bool Shard::is_alive() const {
+    return ((*this)).alive;
+}
+
+inline void Shard::mark_dead() {
+    ((*this)).alive = false;
+}
+
+inline size_t Shard::key_count() const {
+    return ((*this)).data.size();
+}
+
+inline bool Shard::contains(const std::string& key) const {
+    return ((*this)).data.contains_key(key);
+}
+
+inline void Shard::put(const std::string& key, const std::string& value) {
+    ((*this)).data.insert(key, std::move(value));
+}
+
+inline rusty::Option<std::string> Shard::get(const std::string& key) const {
+    auto found = ((*this)).data.get(key);
+    if (found.is_none()) {
+        return rusty::None;
+    }
+    return rusty::Option<std::string>(std::string(found.unwrap().get()));
+}
+
+inline void Shard::remove(const std::string& key) {
+    ((*this)).data.remove(key);
+}
+
+inline void Shard::absorb(Shard* other) {
+    // @unsafe
+    {
+        for (auto&& kv : rusty::for_in((*other).data)) {
+            ((*this)).data.insert(std::move(kv.first), std::move(kv.second));
+        }
+        (*other).data.clear();
+    }
+}
+/*RUSTYCPP:GEN-END id=shard.1*/
+
+}  // namespace janus
