@@ -23,12 +23,12 @@ protected:
     ClusterConfig cfg_ = ClusterConfig::new_();                // routing cache reloaded from cm_
     ShardManager mgr_ = ShardManager::new_(&cm_, &cfg_);       // control plane under test
 
-    // Build an n-shard cluster by driving the real add_shard verb (which sets
-    // replicas + status=active + bumps shard_count).
+    // Build an n-shard cluster by registering shards with the master, which
+    // assigns ids monotonically from 0 -- so shard i gets id i here.
     void AddShards(uint32_t n) {
         for (uint32_t i = 0; i < n; ++i) {
             std::vector<std::string> reps{"s" + std::to_string(i)};
-            ASSERT_TRUE(mgr_.add_shard(i, reps));
+            EXPECT_EQ(mgr_.register_shard(reps), i);
         }
     }
 
@@ -426,6 +426,21 @@ TEST_F(ShardManagerTest, KillSelfIsRejected) {
     EXPECT_FALSE(mgr_.kill_shard(1, 1));
     EXPECT_TRUE(mgr_.is_shard_alive(1));
     EXPECT_EQ(mgr_.epoch(), 0u);
+}
+
+// The master assigns shard ids: a shard joins with no id and adopts the one it
+// gets back. Ids are monotonic and never recycled after a removal.
+TEST_F(ShardManagerTest, MasterAssignsMonotonicShardIds) {
+    EXPECT_EQ(mgr_.register_shard({"a"}), 0u);
+    EXPECT_EQ(mgr_.register_shard({"b"}), 1u);
+    EXPECT_EQ(mgr_.register_shard({"c"}), 2u);
+    EXPECT_EQ(mgr_.shard_count(), 3u);
+    EXPECT_TRUE(mgr_.is_shard_alive(2));
+
+    // Remove a shard: its id is NOT recycled -- the next registrant gets 3.
+    ASSERT_TRUE(mgr_.remove_shard(1));
+    EXPECT_EQ(mgr_.register_shard({"d"}), 3u);
+    EXPECT_TRUE(mgr_.is_shard_alive(3));
 }
 
 }  // namespace

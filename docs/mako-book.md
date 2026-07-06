@@ -228,7 +228,8 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 | Key Pattern | Value | Description |
 |-------------|-------|-------------|
 | `__version__` | uint64 | Monotonically increasing config version |
-| `shard_count` | uint32 | Total shard count |
+| `shard_count` | uint32 | Number of live shards |
+| `next_shard_id` | uint32 | Monotonic id allocator — the master hands out `next_shard_id` on `register_shard` and increments it; ids are never reused |
 | `bucket_count` | uint32 | Fixed hash-slot count for the consistent-hashing strategy — set once at cluster creation, never changes |
 | `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
 | `shard/<id>/leader` | string | Current leader site name |
@@ -267,8 +268,8 @@ Both sides then run a `ConfigWatcher` that keeps the local `janus::get_cluster_c
 
 All config changes are regular transactions on shard 0:
 
-1. Admin calls `ConfigManager::add_shard(id, replicas)`.
-2. ConfigManager begins a transaction, writes `shard/<id>/replicas`, increments `shard_count` and `__version__`.
+1. A joining shard calls `ConfigManager::register_shard(replicas)`; the master allocates its id from `next_shard_id` and returns it.
+2. ConfigManager begins a transaction, writes `shard/<id>/replicas`, advances `next_shard_id`, increments `shard_count` and `__version__`.
 3. Transaction commits (replicated via Raft).
 4. ConfigWatcher on other shards detects the version bump, fetches the new config.
 5. Shard router updates routing table.
@@ -350,7 +351,7 @@ The command surface (✅ implemented today · 🟡 partial · ⬜ not yet built)
 
 | Command | Effect | Status |
 |---|---|---|
-| `add_shard(id, replicas)` | Register a new shard (replica set, `status=active`, bump `shard_count`). | ✅ |
+| `register_shard(replicas) -> id` | **An empty shard joins.** The shard starts with no id, calls this with its replica set, and the **master allocates its id** — `next_shard_id` (monotonic, never reused) — records the replica set + `status=active`, bumps `shard_count`, and returns the id. | ✅ |
 | `kill_shard(dead, taker)` | **Brutal** failure handoff (the shard is usually dead): set `status=dead`, `replacement=taker`, clear replicas, advance epoch. The dead shard's range reroutes to `taker`; its data is recovered from replicas, not migrated. `shard_count` is left unchanged so only the dead shard's keys move. | ✅ |
 | `remove_shard(id)` | **Gentle** decommission: drain the shard's data onto the other shards *first*, then delete it and shrink the cluster. | 🟡 metadata-only delete today; the drain is not yet wired |
 | `drain_shard(id)` | Rebalance a shard's ranges/buckets onto the remaining shards without removing it. | ⬜ |

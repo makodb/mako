@@ -197,6 +197,32 @@ impl ConfigManager {
         self.bump_version();
         true
     }
+    // The next shard id the master will hand out. Monotonic and never reused,
+    // so a removed shard's id is not recycled (a fresh shard is not confused
+    // with a just-departed one).
+    fn next_shard_id(&mut self) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = std::string("next_shard_id");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    // Register a new shard: the MASTER allocates its id. An empty shard starts
+    // with no id, calls this with its replica set, and adopts the returned id.
+    // Records replicas + active status, advances the id allocator, and bumps
+    // shard_count (via add_shard, which writes __version__ last).
+    fn register_shard(&mut self, replicas: &std::vector<std::string>) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let id: u32 = self.next_shard_id();
+        let nkey: std::string = std::string("next_shard_id");
+        let nval: std::string = std::to_string(id + 1);
+        unsafe { (*(*self).kv).put(&nkey, &nval); }
+        self.add_shard(id, replicas);
+        id
+    }
     fn remove_shard(&mut self, shard_id: u32) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         let count: u32 = self.get_shard_count();
@@ -358,7 +384,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=fb6f5db3308f8f314774c03e12c7f625b9626d582475af0603da958f4dcad889*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=11b2ff6cf88966c14f5e052f80aab7443884da2482b848ff7efe970938c6d3a2*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -377,6 +403,8 @@ struct ConfigManager {
     std::string get_shard_status(uint32_t shard_id);
     bool set_shard_status(uint32_t shard_id, const std::string& status);
     bool add_shard(uint32_t shard_id, const std::vector<std::string>& replicas);
+    uint32_t next_shard_id();
+    uint32_t register_shard(const std::vector<std::string>& replicas);
     bool remove_shard(uint32_t shard_id);
     uint32_t get_shard_replacement(uint32_t shard_id);
     bool kill_shard(uint32_t dead_id, uint32_t taker_id);
@@ -541,6 +569,34 @@ inline bool ConfigManager::add_shard(uint32_t shard_id, const std::vector<std::s
     }
     this->bump_version();
     return true;
+}
+
+inline uint32_t ConfigManager::next_shard_id() {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = std::string("next_shard_id");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline uint32_t ConfigManager::register_shard(const std::vector<std::string>& replicas) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    uint32_t id = this->next_shard_id();
+    const std::string nkey = std::string("next_shard_id");
+    const std::string nval = std::to_string(rusty::detail::deref_if_pointer_like(id) + 1);
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(nkey, nval);
+    }
+    this->add_shard(std::move(id), replicas);
+    return std::move(id);
 }
 
 inline bool ConfigManager::remove_shard(uint32_t shard_id) {

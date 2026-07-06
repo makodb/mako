@@ -163,14 +163,14 @@ impl ShardManager {
             (*self).shards.get_mut(shard_id).unwrap().get().put(key, value);
         }
     }
-    // Add a shard: config verb + fresh stub + reload.
-    fn add_shard(&mut self, id: u32, replicas: &std::vector<std::string>) -> bool {
-        let ok: bool = unsafe { (*(*self).cm).add_shard(id, replicas) };
-        if ok {
-            (*self).shards.insert(id, Shard::new(id));
-            self.reload();
-        }
-        ok
+    // Register a new shard. The master (ConfigManager) allocates the id; we
+    // create the stub under that id and reload the routing cache. Returns the
+    // master-assigned id -- an empty shard joins with no id and adopts this.
+    fn register_shard(&mut self, replicas: &std::vector<std::string>) -> u32 {
+        let id: u32 = unsafe { (*(*self).cm).register_shard(replicas) };
+        (*self).shards.insert(id, Shard::new(id));
+        self.reload();
+        id
     }
     // Kill `dead`, handing its data AND its routing over to `taker`. The
     // ConfigManager marks dead + records the replacement pointer; we migrate
@@ -314,7 +314,7 @@ impl ShardManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=f9540be7f88201b586c613a620fea9e7f4f24b586096f882751571e6647fb20d*/
+/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=6ba366e9ee1be6cc00ed7dbb950987d80c218a1594fb33afcec48bbf839d325d*/
 struct ShardManager;
 
 struct ShardManager {
@@ -339,7 +339,7 @@ struct ShardManager {
     void put(const std::string& key, const std::string& value);
     rusty::Option<std::string> get(const std::string& key);
     void put_direct(uint32_t shard_id, const std::string& key, const std::string& value);
-    bool add_shard(uint32_t id, const std::vector<std::string>& replicas);
+    uint32_t register_shard(const std::vector<std::string>& replicas);
     bool kill_shard(uint32_t dead, uint32_t taker);
     bool remove_shard(uint32_t id);
     bool begin_migration(uint32_t source, uint32_t dest, const std::string& lo, const std::string& hi);
@@ -433,13 +433,11 @@ inline void ShardManager::put_direct(uint32_t shard_id, const std::string& key, 
     }
 }
 
-inline bool ShardManager::add_shard(uint32_t id, const std::vector<std::string>& replicas) {
-    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).add_shard(std::move(id), replicas);
-    if (ok) {
-        ((*this)).shards.insert(std::move(id), Shard::new_(std::move(id)));
-        this->reload();
-    }
-    return std::move(ok);
+inline uint32_t ShardManager::register_shard(const std::vector<std::string>& replicas) {
+    uint32_t id = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).register_shard(replicas);
+    ((*this)).shards.insert(std::move(id), Shard::new_(std::move(id)));
+    this->reload();
+    return std::move(id);
 }
 
 inline bool ShardManager::kill_shard(uint32_t dead, uint32_t taker) {

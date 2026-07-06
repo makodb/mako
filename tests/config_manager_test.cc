@@ -112,6 +112,19 @@ TEST_F(ConfigManagerTest, RemoveShardDecrementsCountAndClearsKeys) {
     EXPECT_EQ(cm_.get_shard_replicas(0).size(), 2u);
 }
 
+TEST_F(ConfigManagerTest, RegisterShardAssignsMonotonicIds) {
+    // The master hands out the id -- the caller does not pick it.
+    EXPECT_EQ(cm_.register_shard({"a", "b"}), 0u);
+    EXPECT_EQ(cm_.register_shard({"c", "d"}), 1u);
+    EXPECT_EQ(cm_.get_shard_count(), 2u);
+    EXPECT_EQ(cm_.get_shard_replicas(0).size(), 2u);
+    EXPECT_EQ(cm_.get_shard_status(1), "active");
+
+    // Ids are monotonic: removing shard 0 does not free id 0 for reuse.
+    ASSERT_TRUE(cm_.remove_shard(0));
+    EXPECT_EQ(cm_.register_shard({"e"}), 2u);
+}
+
 // ===========================================================================
 // ConfigManager — epoch
 // ===========================================================================
