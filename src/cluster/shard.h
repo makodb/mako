@@ -23,18 +23,62 @@
 namespace janus {
 
 #if RUSTYCPP_RUST
+// A key range [lo, hi) a shard is in charge of.
+pub struct ShardRange {
+    lo: std::string,
+    hi: std::string,
+}
+impl ShardRange {
+    fn make(lo: std::string, hi: std::string) -> ShardRange {
+        ShardRange { lo: lo, hi: hi }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=97ebf5fbfb28f7e77e59a82101064b92a4adcef2a8206f6e3f35bf02488d8173*/
+struct ShardRange;
+
+struct ShardRange {
+    std::string lo;
+    std::string hi;
+
+    static ShardRange make(std::string lo, std::string hi);
+};
+
+
+inline ShardRange ShardRange::make(std::string lo, std::string hi) {
+    return ShardRange{.lo = std::move(lo), .hi = std::move(hi)};
+}
+/*RUSTYCPP:GEN-END id=shard.1*/
+
+#if RUSTYCPP_RUST
 pub struct Shard {
     shard_id: u32,   // not `id`: a field named the same as the id() method clashes
     alive: bool,
     data: btree_port::BTreeMap<std::string, std::string>,
+    // ---- participant-side metadata: what this shard is in charge of, and its
+    // local view of any in-flight migration for one of its ranges ----
+    owned: rusty::Vec<ShardRange>,   // ranges this shard is responsible for
+    mig_active: bool,                // participating in a migration?
+    mig_lo: std::string,             // the migrating range [lo, hi)
+    mig_hi: std::string,
+    mig_is_source: bool,             // true = shedding it (source), false = receiving it (dest)
+    mig_locked: bool,                // source side: the range is frozen (2PC prepared)
+    mig_gen: u64,                    // the migration attempt id
 }
 impl Shard {
-    // A fresh, live shard with no data.
+    // A fresh, live shard: no data, no owned ranges, not migrating.
     fn new(id: u32) -> Shard {
         Shard {
             shard_id: id,
             alive: true,
             data: btree_port::BTreeMap::<std::string, std::string>::new_(),
+            owned: rusty::Vec::<ShardRange>::new_(),
+            mig_active: false,
+            mig_lo: std::string(""),
+            mig_hi: std::string(""),
+            mig_is_source: false,
+            mig_locked: false,
+            mig_gen: 0,
         }
     }
     fn id(&self) -> u32 { (*self).shard_id }
@@ -113,15 +157,84 @@ impl Shard {
         }
         n
     }
+    // ---- ownership metadata -------------------------------------------------
+    // The master tells the shard it is now in charge of [lo, hi).
+    fn assign_range(&mut self, lo: &std::string, hi: &std::string) {
+        let mut i: usize = 0;
+        while i < (*self).owned.size() {
+            if (*self).owned[i].lo == (*lo) && (*self).owned[i].hi == (*hi) { return; }
+            i = i + 1;
+        }
+        (*self).owned.push(ShardRange::make((*lo), (*hi)));
+    }
+    // The master tells the shard it no longer owns [lo, hi).
+    fn unassign_range(&mut self, lo: &std::string, hi: &std::string) {
+        let mut kept: rusty::Vec<ShardRange> = rusty::Vec::<ShardRange>::new_();
+        let mut i: usize = 0;
+        while i < (*self).owned.size() {
+            if !((*self).owned[i].lo == (*lo) && (*self).owned[i].hi == (*hi)) {
+                kept.push(ShardRange::make((*self).owned[i].lo, (*self).owned[i].hi));
+            }
+            i = i + 1;
+        }
+        (*self).owned = kept;
+    }
+    // Is `key` inside one of this shard's owned ranges?
+    fn owns(&self, key: &std::string) -> bool {
+        let mut i: usize = 0;
+        while i < (*self).owned.size() {
+            if (*key) >= (*self).owned[i].lo && (*key) < (*self).owned[i].hi { return true; }
+            i = i + 1;
+        }
+        false
+    }
+    fn owned_count(&self) -> usize { (*self).owned.size() }
+    // ---- migration participant metadata ------------------------------------
+    // The shard learns it is participating in a migration of [lo, hi): as the
+    // source (shedding it) or the destination (receiving it), tagged with the
+    // attempt's generation.
+    fn set_migration(&mut self, lo: &std::string, hi: &std::string, is_source: bool, gen: u64) {
+        (*self).mig_active = true;
+        (*self).mig_lo = (*lo);
+        (*self).mig_hi = (*hi);
+        (*self).mig_is_source = is_source;
+        (*self).mig_locked = false;
+        (*self).mig_gen = gen;
+    }
+    // Source side of the 2PC prepare: freeze the migrating range.
+    fn lock_migration(&mut self) {
+        if (*self).mig_active { (*self).mig_locked = true; }
+    }
+    fn clear_migration(&mut self) {
+        (*self).mig_active = false;
+        (*self).mig_locked = false;
+    }
+    fn is_migrating(&self) -> bool { (*self).mig_active }
+    fn migration_locked(&self) -> bool { (*self).mig_active && (*self).mig_locked }
+    fn migration_is_source(&self) -> bool { (*self).mig_active && (*self).mig_is_source }
+    fn migration_generation(&self) -> u64 { (*self).mig_gen }
+    // Is `key` in this shard's frozen (locked) migrating range?
+    fn frozen_for(&self, key: &std::string) -> bool {
+        (*self).mig_active
+            && (*self).mig_locked
+            && (*key) >= (*self).mig_lo && (*key) < (*self).mig_hi
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=3501c5aca186e62bfd152cbd12774ab220602d7d956c49b9e8b31cea2f945a73*/
+/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=370a11a38440f4c10ae7dba0405cf5941b0cacd13a66557016e4868e428bceae*/
 struct Shard;
 
 struct Shard {
     uint32_t shard_id;
     bool alive;
     btree_port::BTreeMap<std::string, std::string> data;
+    rusty::Vec<ShardRange> owned;
+    bool mig_active;
+    std::string mig_lo;
+    std::string mig_hi;
+    bool mig_is_source;
+    bool mig_locked;
+    uint64_t mig_gen;
 
     static Shard new_(uint32_t id);
     uint32_t id() const;
@@ -136,11 +249,23 @@ struct Shard {
     void copy_range_from(Shard* source, const std::string& lo, const std::string& hi);
     void drop_range(const std::string& lo, const std::string& hi);
     size_t range_count(const std::string& lo, const std::string& hi) const;
+    void assign_range(const std::string& lo, const std::string& hi);
+    void unassign_range(const std::string& lo, const std::string& hi);
+    bool owns(const std::string& key) const;
+    size_t owned_count() const;
+    void set_migration(const std::string& lo, const std::string& hi, bool is_source, uint64_t gen);
+    void lock_migration();
+    void clear_migration();
+    bool is_migrating() const;
+    bool migration_locked() const;
+    bool migration_is_source() const;
+    uint64_t migration_generation() const;
+    bool frozen_for(const std::string& key) const;
 };
 
 
 inline Shard Shard::new_(uint32_t id) {
-    return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_()};
+    return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_(), .owned = rusty::Vec<ShardRange>::new_(), .mig_active = false, .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_is_source = false, .mig_locked = false, .mig_gen = static_cast<uint64_t>(0)};
 }
 
 inline uint32_t Shard::id() const {
@@ -225,6 +350,84 @@ inline size_t Shard::range_count(const std::string& lo, const std::string& hi) c
     }
     return std::move(n);
 }
-/*RUSTYCPP:GEN-END id=shard.1*/
+
+inline void Shard::assign_range(const std::string& lo, const std::string& hi) {
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
+        if ((rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo) == (lo)) && (rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi) == (hi))) {
+            return;
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    ((*this)).owned.push(ShardRange::make((lo), (hi)));
+}
+
+inline void Shard::unassign_range(const std::string& lo, const std::string& hi) {
+    rusty::Vec<ShardRange> kept = rusty::Vec<ShardRange>::new_();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
+        if (!((rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo) == (lo)) && (rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi) == (hi)))) {
+            kept.push(ShardRange::make(((*this)).owned[i].lo, ((*this)).owned[i].hi));
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    ((*this)).owned = std::move(kept);
+}
+
+inline bool Shard::owns(const std::string& key) const {
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
+        if (((key) >= rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo)) && ((key) < rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi))) {
+            return true;
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    return false;
+}
+
+inline size_t Shard::owned_count() const {
+    return ((*this)).owned.size();
+}
+
+inline void Shard::set_migration(const std::string& lo, const std::string& hi, bool is_source, uint64_t gen) {
+    ((*this)).mig_active = true;
+    ((*this)).mig_lo = (lo);
+    ((*this)).mig_hi = (hi);
+    ((*this)).mig_is_source = std::move(is_source);
+    ((*this)).mig_locked = false;
+    ((*this)).mig_gen = std::move(gen);
+}
+
+inline void Shard::lock_migration() {
+    if (((*this)).mig_active) {
+        ((*this)).mig_locked = true;
+    }
+}
+
+inline void Shard::clear_migration() {
+    ((*this)).mig_active = false;
+    ((*this)).mig_locked = false;
+}
+
+inline bool Shard::is_migrating() const {
+    return ((*this)).mig_active;
+}
+
+inline bool Shard::migration_locked() const {
+    return rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked);
+}
+
+inline bool Shard::migration_is_source() const {
+    return rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_is_source);
+}
+
+inline uint64_t Shard::migration_generation() const {
+    return ((*this)).mig_gen;
+}
+
+inline bool Shard::frozen_for(const std::string& key) const {
+    return ((rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked)) && ((key) >= rusty::detail::deref_if_pointer_like(((*this)).mig_lo))) && ((key) < rusty::detail::deref_if_pointer_like(((*this)).mig_hi));
+}
+/*RUSTYCPP:GEN-END id=shard.2*/
 
 }  // namespace janus

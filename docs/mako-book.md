@@ -408,6 +408,8 @@ For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs
 
 Moving a key range (or hash bucket) from a **source** shard to a **destination** shard is the primitive under `move_range`, `remove_shard`/`drain_shard`, `rebalance`, and `set_sharding_policy`. Mako does it **online** — the source keeps serving the range until the very last moment — with a long background bulk copy followed by a short two-phase-commit cutover. Shard 0 (the master) is the coordinator; the source and destination are the participants. All phase state lives in `reshard/*` keys on `__mako_config__`, so it is replicated and crash-recoverable like any other config.
 
+Besides the master's global view, **each shard also keeps a small piece of local metadata**: the set of key ranges it is currently in charge of, and — for any migration it is participating in — its role (source or destination), the stage (copying vs. locked), and the attempt's generation. This participant-local state is what lets a shard reject a request for a key it no longer owns (a `WrongShard` error), freeze *its* range at LOCK, and cast its own prepare vote — without consulting the master on every request.
+
 **Design goals.**
 - The source serves reads *and* writes for the range throughout the (potentially long) bulk copy — no availability hit while the data moves.
 - **No lost writes**: writes that arrive during the copy are captured and applied before cutover.

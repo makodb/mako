@@ -225,6 +225,16 @@ impl ShardManager {
         // Pin the range to the source for the migration's duration (and if we
         // abort); COMMIT flips this override to the destination.
         self.set_range_owner(lo, hi, source);
+        // Participant-side metadata: the source owns the range it is shedding,
+        // and both shards learn their role in this attempt (tagged with gen).
+        let gen: u64 = (*self).mig_generation;
+        if (*self).shards.contains_key(source) {
+            (*self).shards.get_mut(source).unwrap().get().assign_range(lo, hi);
+            (*self).shards.get_mut(source).unwrap().get().set_migration(lo, hi, true, gen);
+        }
+        if (*self).shards.contains_key(dest) {
+            (*self).shards.get_mut(dest).unwrap().get().set_migration(lo, hi, false, gen);
+        }
         true
     }
     // BACKGROUND COPY: snapshot the source's [lo, hi) into the destination,
@@ -244,10 +254,15 @@ impl ShardManager {
             (*self).shards.insert(src_id, src);
         }
     }
-    // LOCK: 2PC prepare -- freeze the range (the source stops serving it).
+    // LOCK: 2PC prepare -- freeze the range (the source stops serving it). The
+    // source shard also freezes it in its own metadata (participant view).
     fn lock_range(&mut self) {
         if (*self).mig_active {
             (*self).mig_locked = true;
+            let src: u32 = (*self).mig_source;
+            if (*self).shards.contains_key(src) {
+                (*self).shards.get_mut(src).unwrap().get().lock_migration();
+            }
         }
     }
     // FINAL SYNC: apply the captured delta (writes during copy) to the dest.
@@ -294,6 +309,12 @@ impl ShardManager {
         let hi: std::string = (*self).mig_hi;
         if (*self).shards.contains_key(src_id) {
             (*self).shards.get_mut(src_id).unwrap().get().drop_range(&lo, &hi);
+            (*self).shards.get_mut(src_id).unwrap().get().unassign_range(&lo, &hi);
+            (*self).shards.get_mut(src_id).unwrap().get().clear_migration();
+        }
+        if (*self).shards.contains_key(dst_id) {
+            (*self).shards.get_mut(dst_id).unwrap().get().assign_range(&lo, &hi);
+            (*self).shards.get_mut(dst_id).unwrap().get().clear_migration();
         }
         self.set_range_owner(&lo, &hi, dst_id);
         (*self).mig_active = false;
@@ -301,14 +322,20 @@ impl ShardManager {
         true
     }
     // ABORT (before COMMIT): the dest discards its partial copy, the source
-    // resumes serving (it never lost data), migration state clears.
+    // resumes serving (it never lost data), migration state clears. The source
+    // keeps ownership of the range; both shards clear their participant state.
     fn abort_migration(&mut self) {
         if !(*self).mig_active { return; }
+        let src_id: u32 = (*self).mig_source;
         let dst_id: u32 = (*self).mig_dest;
         let lo: std::string = (*self).mig_lo;
         let hi: std::string = (*self).mig_hi;
         if (*self).shards.contains_key(dst_id) {
             (*self).shards.get_mut(dst_id).unwrap().get().drop_range(&lo, &hi);
+            (*self).shards.get_mut(dst_id).unwrap().get().clear_migration();
+        }
+        if (*self).shards.contains_key(src_id) {
+            (*self).shards.get_mut(src_id).unwrap().get().clear_migration();
         }
         (*self).mig_active = false;
         (*self).mig_staged.clear();
@@ -316,6 +343,27 @@ impl ShardManager {
     fn is_migrating(&self) -> bool { (*self).mig_active }
     fn migration_locked(&self) -> bool {
         (*self).mig_active && (*self).mig_locked
+    }
+    // ---- per-shard metadata queries (delegate to the shard) --------------
+    fn shard_owns(&self, id: u32, key: &std::string) -> bool {
+        if !(*self).shards.contains_key(id) { return false; }
+        (*self).shards.get(id).unwrap().get().owns(key)
+    }
+    fn shard_owned_ranges(&self, id: u32) -> usize {
+        if !(*self).shards.contains_key(id) { return 0; }
+        (*self).shards.get(id).unwrap().get().owned_count()
+    }
+    fn shard_is_migrating(&self, id: u32) -> bool {
+        if !(*self).shards.contains_key(id) { return false; }
+        (*self).shards.get(id).unwrap().get().is_migrating()
+    }
+    fn shard_migration_locked(&self, id: u32) -> bool {
+        if !(*self).shards.contains_key(id) { return false; }
+        (*self).shards.get(id).unwrap().get().migration_locked()
+    }
+    fn shard_migration_is_source(&self, id: u32) -> bool {
+        if !(*self).shards.contains_key(id) { return false; }
+        (*self).shards.get(id).unwrap().get().migration_is_source()
     }
     // Keys shard `id` holds in [lo, hi) (test observability).
     fn range_key_count(&self, id: u32, lo: &std::string, hi: &std::string) -> usize {
@@ -345,7 +393,7 @@ impl ShardManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=8f1b0879dff71d52f2303d92b1840332502670fa213a65d7cf063e8ba3ab623d*/
+/*RUSTYCPP:GEN-BEGIN id=shard_manager.2 version=1 rust_sha256=d575bd13bb1dc0b629cf18ccae2a99540d7845e001d30caca994522287cbc23b*/
 struct ShardManager;
 
 struct ShardManager {
@@ -386,6 +434,11 @@ struct ShardManager {
     void abort_migration();
     bool is_migrating() const;
     bool migration_locked() const;
+    bool shard_owns(uint32_t id, const std::string& key) const;
+    size_t shard_owned_ranges(uint32_t id) const;
+    bool shard_is_migrating(uint32_t id) const;
+    bool shard_migration_locked(uint32_t id) const;
+    bool shard_migration_is_source(uint32_t id) const;
     size_t range_key_count(uint32_t id, const std::string& lo, const std::string& hi) const;
     uint32_t shard_count() const;
     uint64_t epoch();
@@ -516,6 +569,14 @@ inline bool ShardManager::begin_migration(uint32_t source, uint32_t dest, const 
     ((*this)).mig_generation = rusty::detail::deref_if_pointer_like(((*this)).mig_generation) + 1;
     ((*this)).mig_staged.clear();
     this->set_range_owner(lo, hi, std::move(source));
+    const uint64_t gen = ((*this)).mig_generation;
+    if (((*this)).shards.contains_key(std::move(source))) {
+        ((*this)).shards.get_mut(std::move(source)).unwrap().get().assign_range(lo, hi);
+        ((*this)).shards.get_mut(std::move(source)).unwrap().get().set_migration(lo, hi, true, std::move(gen));
+    }
+    if (((*this)).shards.contains_key(std::move(dest))) {
+        ((*this)).shards.get_mut(std::move(dest)).unwrap().get().set_migration(lo, hi, false, std::move(gen));
+    }
     return true;
 }
 
@@ -540,6 +601,10 @@ inline void ShardManager::background_copy() {
 inline void ShardManager::lock_range() {
     if (((*this)).mig_active) {
         ((*this)).mig_locked = true;
+        const uint32_t src = ((*this)).mig_source;
+        if (((*this)).shards.contains_key(std::move(src))) {
+            ((*this)).shards.get_mut(std::move(src)).unwrap().get().lock_migration();
+        }
     }
 }
 
@@ -588,6 +653,12 @@ inline bool ShardManager::commit_migration() {
     const std::string hi = ((*this)).mig_hi;
     if (((*this)).shards.contains_key(std::move(src_id))) {
         ((*this)).shards.get_mut(std::move(src_id)).unwrap().get().drop_range(lo, hi);
+        ((*this)).shards.get_mut(std::move(src_id)).unwrap().get().unassign_range(lo, hi);
+        ((*this)).shards.get_mut(std::move(src_id)).unwrap().get().clear_migration();
+    }
+    if (((*this)).shards.contains_key(std::move(dst_id))) {
+        ((*this)).shards.get_mut(std::move(dst_id)).unwrap().get().assign_range(lo, hi);
+        ((*this)).shards.get_mut(std::move(dst_id)).unwrap().get().clear_migration();
     }
     this->set_range_owner(lo, hi, std::move(dst_id));
     ((*this)).mig_active = false;
@@ -599,11 +670,16 @@ inline void ShardManager::abort_migration() {
     if (!((*this)).mig_active) {
         return;
     }
+    const uint32_t src_id = ((*this)).mig_source;
     const uint32_t dst_id = ((*this)).mig_dest;
     const std::string lo = ((*this)).mig_lo;
     const std::string hi = ((*this)).mig_hi;
     if (((*this)).shards.contains_key(std::move(dst_id))) {
         ((*this)).shards.get_mut(std::move(dst_id)).unwrap().get().drop_range(lo, hi);
+        ((*this)).shards.get_mut(std::move(dst_id)).unwrap().get().clear_migration();
+    }
+    if (((*this)).shards.contains_key(std::move(src_id))) {
+        ((*this)).shards.get_mut(std::move(src_id)).unwrap().get().clear_migration();
     }
     ((*this)).mig_active = false;
     ((*this)).mig_staged.clear();
@@ -615,6 +691,41 @@ inline bool ShardManager::is_migrating() const {
 
 inline bool ShardManager::migration_locked() const {
     return rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked);
+}
+
+inline bool ShardManager::shard_owns(uint32_t id, const std::string& key) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return false;
+    }
+    return ((*this)).shards.get(id).unwrap().get().owns(key);
+}
+
+inline size_t ShardManager::shard_owned_ranges(uint32_t id) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return static_cast<size_t>(0);
+    }
+    return ((*this)).shards.get(id).unwrap().get().owned_count();
+}
+
+inline bool ShardManager::shard_is_migrating(uint32_t id) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return false;
+    }
+    return ((*this)).shards.get(id).unwrap().get().is_migrating();
+}
+
+inline bool ShardManager::shard_migration_locked(uint32_t id) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return false;
+    }
+    return ((*this)).shards.get(id).unwrap().get().migration_locked();
+}
+
+inline bool ShardManager::shard_migration_is_source(uint32_t id) const {
+    if (!((*this)).shards.contains_key(std::move(id))) {
+        return false;
+    }
+    return ((*this)).shards.get(id).unwrap().get().migration_is_source();
 }
 
 inline size_t ShardManager::range_key_count(uint32_t id, const std::string& lo, const std::string& hi) const {

@@ -515,5 +515,67 @@ TEST_F(ShardManagerTest, StaleVoteCannotAffectALaterMigration) {
     { auto r = mgr_.get("m5"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "v"); }
 }
 
+// ===========================================================================
+// Per-shard metadata: each shard knows which ranges it is in charge of and its
+// own view of any migration it participates in (role + stage).
+// ===========================================================================
+
+// Through a full migration, the source and destination shards' OWN metadata
+// tracks their role, the lock stage, and the ownership hand-off.
+TEST_F(ShardManagerTest, ShardTracksItsRangesAndMigrationStatus) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "v");
+
+    // Fresh shards own no ranges and aren't migrating.
+    EXPECT_EQ(mgr_.shard_owned_ranges(1), 0u);
+    EXPECT_FALSE(mgr_.shard_is_migrating(1));
+
+    // BEGIN: the source owns the range it's shedding and knows it's the source;
+    // the destination knows it's receiving. Neither is locked yet (copy phase).
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    EXPECT_TRUE(mgr_.shard_owns(1, "m5"));            // source is in charge
+    EXPECT_TRUE(mgr_.shard_is_migrating(1));
+    EXPECT_TRUE(mgr_.shard_migration_is_source(1));
+    EXPECT_TRUE(mgr_.shard_is_migrating(2));
+    EXPECT_FALSE(mgr_.shard_migration_is_source(2));  // dest, not source
+    EXPECT_FALSE(mgr_.shard_migration_locked(1));      // still copying
+
+    mgr_.background_copy();
+    mgr_.lock_range();
+    EXPECT_TRUE(mgr_.shard_migration_locked(1));        // source froze its range
+
+    mgr_.final_sync();
+    ASSERT_TRUE(mgr_.commit_migration());
+
+    // COMMIT: ownership handed to the destination; neither is migrating anymore.
+    EXPECT_FALSE(mgr_.shard_is_migrating(1));
+    EXPECT_FALSE(mgr_.shard_is_migrating(2));
+    EXPECT_FALSE(mgr_.shard_owns(1, "m5"));            // source no longer in charge
+    EXPECT_TRUE(mgr_.shard_owns(2, "m5"));             // dest now owns the range
+    EXPECT_EQ(mgr_.shard_owned_ranges(2), 1u);
+    EXPECT_EQ(mgr_.shard_owned_ranges(1), 0u);
+}
+
+// On ABORT, the source keeps the range in its metadata (it never gave it up)
+// and clears its migration state; the destination owns nothing.
+TEST_F(ShardManagerTest, AbortLeavesRangeOwnedBySourceInMetadata) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m5", "v");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    mgr_.lock_range();
+    EXPECT_TRUE(mgr_.shard_migration_locked(1));
+    mgr_.abort_migration();
+
+    EXPECT_FALSE(mgr_.shard_is_migrating(1));
+    EXPECT_FALSE(mgr_.shard_migration_locked(1));
+    EXPECT_TRUE(mgr_.shard_owns(1, "m5"));    // source still in charge of the range
+    EXPECT_FALSE(mgr_.shard_owns(2, "m5"));   // dest never took ownership
+    EXPECT_EQ(mgr_.shard_owned_ranges(2), 0u);
+}
+
 }  // namespace
 }  // namespace janus
