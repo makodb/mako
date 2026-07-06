@@ -64,7 +64,7 @@ inline const char* key_extractor_type_to_string(KeyExtractorType type) {
  * aggregate (plain struct + inherent impl); the marshal reader
  * default-constructs + fills every field. Use KeyExtractor::defaults()
  * for the old default-constructed values (FIELD_INDEX, 0, 4), or the
- * byField/byPrefix/byHash factories.
+ * by_field/by_prefix/by_hash factories.
  */
 #if RUSTYCPP_RUST
 pub struct KeyExtractor {
@@ -81,13 +81,13 @@ impl KeyExtractor {
     fn make(kind: KeyExtractorType, field: i32, prefix: i32) -> KeyExtractor {
         KeyExtractor { kind: kind, field_index: field, prefix_length: prefix }
     }
-    fn byField(index: i32) -> KeyExtractor {
+    fn by_field(index: i32) -> KeyExtractor {
         KeyExtractor { kind: KeyExtractorType::FIELD_INDEX, field_index: index, prefix_length: 0 }
     }
-    fn byPrefix(length: i32) -> KeyExtractor {
+    fn by_prefix(length: i32) -> KeyExtractor {
         KeyExtractor { kind: KeyExtractorType::PREFIX_BYTES, field_index: 0, prefix_length: length }
     }
-    fn byHash() -> KeyExtractor {
+    fn by_hash() -> KeyExtractor {
         KeyExtractor { kind: KeyExtractorType::HASH_MOD, field_index: 0, prefix_length: 0 }
     }
     // rrr Serializable value contract (save/load; no polymorphic kind()).
@@ -105,7 +105,7 @@ impl KeyExtractor {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=b7d60778e08800a81dd0a51bbbbb9767de47a4429330c404f705c4110d9667b4*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=1b9c973f8334febd19bdbc360f4ea01c504bdd36e3cff5293b1fb684777e2ba2*/
 struct KeyExtractor;
 
 struct KeyExtractor {
@@ -115,9 +115,9 @@ struct KeyExtractor {
 
     static KeyExtractor defaults();
     static KeyExtractor make(KeyExtractorType kind, int32_t field, int32_t prefix);
-    static KeyExtractor byField(int32_t index);
-    static KeyExtractor byPrefix(int32_t length);
-    static KeyExtractor byHash();
+    static KeyExtractor by_field(int32_t index);
+    static KeyExtractor by_prefix(int32_t length);
+    static KeyExtractor by_hash();
     void save(rrr::BinaryWriteArchive& ar) const;
     void load(rrr::BinaryReadArchive& ar);
 };
@@ -131,15 +131,15 @@ inline KeyExtractor KeyExtractor::make(KeyExtractorType kind, int32_t field, int
     return KeyExtractor{.kind = std::move(kind), .field_index = std::move(field), .prefix_length = std::move(prefix)};
 }
 
-inline KeyExtractor KeyExtractor::byField(int32_t index) {
+inline KeyExtractor KeyExtractor::by_field(int32_t index) {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::FIELD_INDEX)), .field_index = std::move(index), .prefix_length = static_cast<int32_t>(0)};
 }
 
-inline KeyExtractor KeyExtractor::byPrefix(int32_t length) {
+inline KeyExtractor KeyExtractor::by_prefix(int32_t length) {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::PREFIX_BYTES)), .field_index = static_cast<int32_t>(0), .prefix_length = std::move(length)};
 }
 
-inline KeyExtractor KeyExtractor::byHash() {
+inline KeyExtractor KeyExtractor::by_hash() {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::HASH_MOD)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(0)};
 }
 

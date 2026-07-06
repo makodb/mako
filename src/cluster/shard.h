@@ -3,7 +3,7 @@
 // Shard — a stub stand-in for a masstree-backed data shard, used to test the
 // cluster reconfiguration flow (ShardManager driving ConfigManager /
 // ClusterConfig) end-to-end WITHOUT the storage engine. It is just an
-// in-memory key/value set plus a liveness flag; on KillShard the manager
+// in-memory key/value set plus a liveness flag; on kill_shard the manager
 // migrates one shard's data into another the way a real range hand-off
 // eventually will. Swap this for a masstree-backed shard to run the same
 // manager against real storage.
@@ -56,7 +56,7 @@ impl Shard {
     fn remove(&mut self, key: &std::string) {
         (*self).data.remove(key);
     }
-    // Take over another shard's entire dataset (data migration on KillShard),
+    // Take over another shard's entire dataset (data migration on kill_shard),
     // leaving `other` empty. Stand-in for a masstree range hand-off. `other`
     // is a raw pointer (not &mut Shard): the DSL lowers a `&mut local`
     // argument to a pointer, which only binds to a pointer parameter.
@@ -70,7 +70,7 @@ impl Shard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=50582583983c47c713cb2bd434dc317cdf55d548e6fea028d21a21c64762a92d*/
+/*RUSTYCPP:GEN-BEGIN id=shard.1 version=1 rust_sha256=af3ac68aae6093e7a02237fa3d02d0fb7ce49c501a6d9dd8ce2ca20332993a19*/
 struct Shard;
 
 struct Shard {

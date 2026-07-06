@@ -55,7 +55,7 @@ bool cluster_config_enabled() {
 
 // Seed shard 0's config store from the static YAML topology so other
 // nodes have a complete snapshot to read on their first poll. Blind
-// puts; __version__ is bumped last (SetShardCount), so a reader that
+// puts; __version__ is bumped last (set_shard_count), so a reader that
 // observes the new version sees every key of it.
 // @unsafe - KvStore writes via ConfigManager
 void SeedTopology(ConfigManager* cm, uint32_t nshards) {
@@ -65,12 +65,12 @@ void SeedTopology(ConfigManager* cm, uint32_t nshards) {
         for (auto& site : cfg->SitesByPartitionId(sid)) {
             replica_names.push_back(site.name);
         }
-        cm->SetShardReplicas(sid, replica_names);
-        cm->SetShardLeader(sid, cfg->LeaderSiteByPartitionId(sid).name);
-        cm->SetShardStatus(sid, "active");
+        cm->set_shard_replicas(sid, replica_names);
+        cm->set_shard_leader(sid, cfg->LeaderSiteByPartitionId(sid).name);
+        cm->set_shard_status(sid, "active");
     }
-    cm->SetShardingMode("hash");
-    cm->SetShardCount(nshards);  // version-bumping write, done last
+    cm->set_sharding_mode("hash");
+    cm->set_shard_count(nshards);  // version-bumping write, done last
 }
 
 // Shard 0's leader: owns the config store, serves reads, and keeps its
@@ -105,8 +105,8 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
 
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
         ConfigWatcher::new_(cm, &get_cluster_config(), kConfigPollIntervalMs)));
-    g_cfg_watcher.as_ref().unwrap()->Poll();   // prime the cache immediately
-    g_cfg_watcher.as_ref().unwrap()->Start();
+    g_cfg_watcher.as_ref().unwrap()->poll();   // prime the cache immediately
+    g_cfg_watcher.as_ref().unwrap()->start();
 }
 
 // Every other node (shard-0 followers + all non-zero shards): read shard
@@ -133,7 +133,7 @@ void StartRemoteWatcher() {
     // Watcher retries on each poll, so a not-yet-ready shard 0 is fine.
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
         ConfigWatcher::new_(g_cfg_cm.as_ref().unwrap().get(), &get_cluster_config(), kConfigPollIntervalMs)));
-    g_cfg_watcher.as_ref().unwrap()->Start();
+    g_cfg_watcher.as_ref().unwrap()->start();
     Log_info("BootstrapClusterConfig: watching shard-0 config at %s", addr.c_str());
 }
 

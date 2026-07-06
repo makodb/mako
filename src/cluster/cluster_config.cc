@@ -168,17 +168,17 @@ uint32_t cc_route(const ClusterConfigState& s, const std::string& table, const s
 // RPC) and rebuilds the topology maps. Runs under the caller's held guard.
 bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
     if (cm == nullptr) return false;
-    uint32_t count = cm->GetShardCount();
-    uint64_t ver = cm->GetVersion();
-    uint64_t ep = cm->GetEpoch();
+    uint32_t count = cm->get_shard_count();
+    uint64_t ver = cm->get_version();
+    uint64_t ep = cm->get_epoch();
     btree_port::BTreeMap<uint32_t, ShardInfo> new_shards;
     for (uint32_t i = 0; i < count; i++) {
         ShardInfo info;
         info.id = i;
-        info.replicas = cm->GetShardReplicas(i);
-        info.leader = cm->GetShardLeader(i);
-        info.status = cm->GetShardStatus(i);
-        info.replacement = cm->GetShardReplacement(i);
+        info.replicas = cm->get_shard_replicas(i);
+        info.leader = cm->get_shard_leader(i);
+        info.status = cm->get_shard_status(i);
+        info.replacement = cm->get_shard_replacement(i);
         new_shards.insert(i, std::move(info));
     }
     s.shard_count = count;

@@ -25,21 +25,21 @@ class ConfigManagerTest : public ::testing::Test {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, FreshStoreHasZeroVersion) {
-    EXPECT_EQ(cm_.GetVersion(), 0u);
+    EXPECT_EQ(cm_.get_version(), 0u);
 }
 
 TEST_F(ConfigManagerTest, FirstWriteBumpsVersionToOne) {
-    ASSERT_TRUE(cm_.SetShardCount(1));
-    EXPECT_EQ(cm_.GetVersion(), 1u);
+    ASSERT_TRUE(cm_.set_shard_count(1));
+    EXPECT_EQ(cm_.get_version(), 1u);
 }
 
 TEST_F(ConfigManagerTest, ConsecutiveWritesIncrementVersion) {
-    ASSERT_TRUE(cm_.SetShardCount(1));
-    const uint64_t v1 = cm_.GetVersion();
-    ASSERT_TRUE(cm_.SetShardCount(2));
-    EXPECT_EQ(cm_.GetVersion(), v1 + 1);
-    ASSERT_TRUE(cm_.SetShardCount(3));
-    EXPECT_EQ(cm_.GetVersion(), v1 + 2);
+    ASSERT_TRUE(cm_.set_shard_count(1));
+    const uint64_t v1 = cm_.get_version();
+    ASSERT_TRUE(cm_.set_shard_count(2));
+    EXPECT_EQ(cm_.get_version(), v1 + 1);
+    ASSERT_TRUE(cm_.set_shard_count(3));
+    EXPECT_EQ(cm_.get_version(), v1 + 2);
 }
 
 // ===========================================================================
@@ -47,32 +47,32 @@ TEST_F(ConfigManagerTest, ConsecutiveWritesIncrementVersion) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, ShardCountRoundTrip) {
-    ASSERT_TRUE(cm_.SetShardCount(7));
-    EXPECT_EQ(cm_.GetShardCount(), 7u);
+    ASSERT_TRUE(cm_.set_shard_count(7));
+    EXPECT_EQ(cm_.get_shard_count(), 7u);
 }
 
 TEST_F(ConfigManagerTest, ShardReplicasRoundTrip) {
     const std::vector<std::string> replicas = {"site-a", "site-b", "site-c"};
-    ASSERT_TRUE(cm_.SetShardReplicas(0, replicas));
-    EXPECT_EQ(cm_.GetShardReplicas(0), replicas);
+    ASSERT_TRUE(cm_.set_shard_replicas(0, replicas));
+    EXPECT_EQ(cm_.get_shard_replicas(0), replicas);
 }
 
 TEST_F(ConfigManagerTest, ShardReplicasHandleEmptyAndSingle) {
-    ASSERT_TRUE(cm_.SetShardReplicas(0, {}));
-    EXPECT_TRUE(cm_.GetShardReplicas(0).empty());
-    ASSERT_TRUE(cm_.SetShardReplicas(1, {"solo"}));
-    ASSERT_EQ(cm_.GetShardReplicas(1).size(), 1u);
-    EXPECT_EQ(cm_.GetShardReplicas(1)[0], "solo");
+    ASSERT_TRUE(cm_.set_shard_replicas(0, {}));
+    EXPECT_TRUE(cm_.get_shard_replicas(0).empty());
+    ASSERT_TRUE(cm_.set_shard_replicas(1, {"solo"}));
+    ASSERT_EQ(cm_.get_shard_replicas(1).size(), 1u);
+    EXPECT_EQ(cm_.get_shard_replicas(1)[0], "solo");
 }
 
 TEST_F(ConfigManagerTest, ShardLeaderRoundTrip) {
-    ASSERT_TRUE(cm_.SetShardLeader(2, "leader-node"));
-    EXPECT_EQ(cm_.GetShardLeader(2), "leader-node");
+    ASSERT_TRUE(cm_.set_shard_leader(2, "leader-node"));
+    EXPECT_EQ(cm_.get_shard_leader(2), "leader-node");
 }
 
 TEST_F(ConfigManagerTest, ShardStatusRoundTrip) {
-    ASSERT_TRUE(cm_.SetShardStatus(0, "draining"));
-    EXPECT_EQ(cm_.GetShardStatus(0), "draining");
+    ASSERT_TRUE(cm_.set_shard_status(0, "draining"));
+    EXPECT_EQ(cm_.get_shard_status(0), "draining");
 }
 
 // ===========================================================================
@@ -80,36 +80,36 @@ TEST_F(ConfigManagerTest, ShardStatusRoundTrip) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, AddShardWritesReplicasStatusAndCount) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a", "b", "c"}));
-    EXPECT_EQ(cm_.GetShardCount(), 1u);
-    EXPECT_EQ(cm_.GetShardReplicas(0).size(), 3u);
-    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+    ASSERT_TRUE(cm_.add_shard(0, {"a", "b", "c"}));
+    EXPECT_EQ(cm_.get_shard_count(), 1u);
+    EXPECT_EQ(cm_.get_shard_replicas(0).size(), 3u);
+    EXPECT_EQ(cm_.get_shard_status(0), "active");
 
-    ASSERT_TRUE(cm_.AddShard(1, {"d", "e", "f"}));
-    EXPECT_EQ(cm_.GetShardCount(), 2u);
+    ASSERT_TRUE(cm_.add_shard(1, {"d", "e", "f"}));
+    EXPECT_EQ(cm_.get_shard_count(), 2u);
 }
 
 TEST_F(ConfigManagerTest, AddShardIsAtomicForVersion) {
-    // A single AddShard issues three logical key-writes plus the
+    // A single add_shard issues three logical key-writes plus the
     // __version__ bump. From the CM's perspective the whole batch is
     // one transaction — version should advance by exactly one.
-    const uint64_t before = cm_.GetVersion();
-    ASSERT_TRUE(cm_.AddShard(0, {"a", "b"}));
-    EXPECT_EQ(cm_.GetVersion(), before + 1);
+    const uint64_t before = cm_.get_version();
+    ASSERT_TRUE(cm_.add_shard(0, {"a", "b"}));
+    EXPECT_EQ(cm_.get_version(), before + 1);
 }
 
 TEST_F(ConfigManagerTest, RemoveShardDecrementsCountAndClearsKeys) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a", "b"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"c", "d"}));
-    ASSERT_EQ(cm_.GetShardCount(), 2u);
+    ASSERT_TRUE(cm_.add_shard(0, {"a", "b"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"c", "d"}));
+    ASSERT_EQ(cm_.get_shard_count(), 2u);
 
-    ASSERT_TRUE(cm_.RemoveShard(1));
-    EXPECT_EQ(cm_.GetShardCount(), 1u);
-    EXPECT_TRUE(cm_.GetShardReplicas(1).empty());
-    EXPECT_TRUE(cm_.GetShardStatus(1).empty());
+    ASSERT_TRUE(cm_.remove_shard(1));
+    EXPECT_EQ(cm_.get_shard_count(), 1u);
+    EXPECT_TRUE(cm_.get_shard_replicas(1).empty());
+    EXPECT_TRUE(cm_.get_shard_status(1).empty());
 
     // The surviving shard's data is untouched.
-    EXPECT_EQ(cm_.GetShardReplicas(0).size(), 2u);
+    EXPECT_EQ(cm_.get_shard_replicas(0).size(), 2u);
 }
 
 // ===========================================================================
@@ -117,16 +117,16 @@ TEST_F(ConfigManagerTest, RemoveShardDecrementsCountAndClearsKeys) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, EpochStartsAtZero) {
-    EXPECT_EQ(cm_.GetEpoch(), 0u);
+    EXPECT_EQ(cm_.get_epoch(), 0u);
 }
 
 TEST_F(ConfigManagerTest, AdvanceEpochIsMonotonic) {
-    ASSERT_TRUE(cm_.AdvanceEpoch());
-    EXPECT_EQ(cm_.GetEpoch(), 1u);
-    ASSERT_TRUE(cm_.AdvanceEpoch());
-    EXPECT_EQ(cm_.GetEpoch(), 2u);
-    ASSERT_TRUE(cm_.AdvanceEpoch());
-    EXPECT_EQ(cm_.GetEpoch(), 3u);
+    ASSERT_TRUE(cm_.advance_epoch());
+    EXPECT_EQ(cm_.get_epoch(), 1u);
+    ASSERT_TRUE(cm_.advance_epoch());
+    EXPECT_EQ(cm_.get_epoch(), 2u);
+    ASSERT_TRUE(cm_.advance_epoch());
+    EXPECT_EQ(cm_.get_epoch(), 3u);
 }
 
 // ===========================================================================
@@ -134,13 +134,13 @@ TEST_F(ConfigManagerTest, AdvanceEpochIsMonotonic) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, NodeAddrRoundTrip) {
-    ASSERT_TRUE(cm_.SetNodeAddr("site-a", "10.0.0.1:31000"));
-    EXPECT_EQ(cm_.GetNodeAddr("site-a"), "10.0.0.1:31000");
+    ASSERT_TRUE(cm_.set_node_addr("site-a", "10.0.0.1:31000"));
+    EXPECT_EQ(cm_.get_node_addr("site-a"), "10.0.0.1:31000");
 }
 
 TEST_F(ConfigManagerTest, NodeStatusRoundTrip) {
-    ASSERT_TRUE(cm_.SetNodeStatus("site-a", "alive"));
-    EXPECT_EQ(cm_.GetNodeStatus("site-a"), "alive");
+    ASSERT_TRUE(cm_.set_node_status("site-a", "alive"));
+    EXPECT_EQ(cm_.get_node_status("site-a"), "alive");
 }
 
 // ===========================================================================
@@ -148,40 +148,40 @@ TEST_F(ConfigManagerTest, NodeStatusRoundTrip) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, ClusterConfigLoadMirrorsManager) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a", "b", "c"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"d", "e", "f"}));
-    ASSERT_TRUE(cm_.SetShardLeader(0, "a"));
-    ASSERT_TRUE(cm_.SetShardLeader(1, "d"));
-    ASSERT_TRUE(cm_.AdvanceEpoch());
+    ASSERT_TRUE(cm_.add_shard(0, {"a", "b", "c"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"d", "e", "f"}));
+    ASSERT_TRUE(cm_.set_shard_leader(0, "a"));
+    ASSERT_TRUE(cm_.set_shard_leader(1, "d"));
+    ASSERT_TRUE(cm_.advance_epoch());
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    EXPECT_EQ(cc.GetShardCount(), 2u);
-    EXPECT_EQ(cc.GetShardLeader(0), "a");
-    EXPECT_EQ(cc.GetShardLeader(1), "d");
-    EXPECT_EQ(cc.GetShardReplicas(0).size(), 3u);
-    EXPECT_EQ(cc.GetEpoch(), 1u);
-    EXPECT_EQ(cc.GetVersion(), cm_.GetVersion());
+    EXPECT_EQ(cc.get_shard_count(), 2u);
+    EXPECT_EQ(cc.get_shard_leader(0), "a");
+    EXPECT_EQ(cc.get_shard_leader(1), "d");
+    EXPECT_EQ(cc.get_shard_replicas(0).size(), 3u);
+    EXPECT_EQ(cc.get_epoch(), 1u);
+    EXPECT_EQ(cc.get_version(), cm_.get_version());
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigLoadFromNullManagerFails) {
     ClusterConfig cc = ClusterConfig::new_();
-    EXPECT_FALSE(cc.LoadFromConfigManager(nullptr));
+    EXPECT_FALSE(cc.load_from_config_manager(nullptr));
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
     // Hash-based routing: same key must always map to the same shard.
-    const uint32_t s1 = cc.GetShardForKeyDefault("warehouse/42");
-    const uint32_t s2 = cc.GetShardForKeyDefault("warehouse/42");
+    const uint32_t s1 = cc.get_shard_for_key_default("warehouse/42");
+    const uint32_t s2 = cc.get_shard_for_key_default("warehouse/42");
     EXPECT_EQ(s1, s2);
-    EXPECT_LT(s1, cc.GetShardCount());
+    EXPECT_LT(s1, cc.get_shard_count());
 }
 
 // ===========================================================================
@@ -189,107 +189,107 @@ TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, WatcherPollDetectsVersionBump) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
     ClusterConfig local = ClusterConfig::new_();
     auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
 
-    // First Poll picks up the current config (version went 0 -> 1).
-    EXPECT_TRUE(watcher.Poll());
-    EXPECT_EQ(local.GetShardCount(), 1u);
+    // First poll picks up the current config (version went 0 -> 1).
+    EXPECT_TRUE(watcher.poll());
+    EXPECT_EQ(local.get_shard_count(), 1u);
 
     // Idempotent: no new writes -> no change.
-    EXPECT_FALSE(watcher.Poll());
+    EXPECT_FALSE(watcher.poll());
 
-    // Mutate; next Poll must observe.
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
-    EXPECT_TRUE(watcher.Poll());
-    EXPECT_EQ(local.GetShardCount(), 2u);
+    // Mutate; next poll must observe.
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
+    EXPECT_TRUE(watcher.poll());
+    EXPECT_EQ(local.get_shard_count(), 2u);
 }
 
 TEST_F(ConfigManagerTest, WatcherCallbackFiresOnlyOnChange) {
     int callback_count = 0;
     ClusterConfig local = ClusterConfig::new_();
     auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
-    watcher.SetUpdateCallback(
+    watcher.set_update_callback(
         [&](const ClusterConfig&) { ++callback_count; });
 
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    EXPECT_TRUE(watcher.Poll());
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    EXPECT_TRUE(watcher.poll());
     EXPECT_EQ(callback_count, 1);
 
-    EXPECT_FALSE(watcher.Poll());
+    EXPECT_FALSE(watcher.poll());
     EXPECT_EQ(callback_count, 1);
 
-    ASSERT_TRUE(cm_.AdvanceEpoch());
-    EXPECT_TRUE(watcher.Poll());
+    ASSERT_TRUE(cm_.advance_epoch());
+    EXPECT_TRUE(watcher.poll());
     EXPECT_EQ(callback_count, 2);
 }
 
 TEST_F(ConfigManagerTest, WatcherTracksPollCount) {
     ClusterConfig local = ClusterConfig::new_();
     auto watcher = ConfigWatcher::new_(&cm_, &local, /*poll_interval_ms=*/1000);
-    EXPECT_EQ(watcher.GetPollCount(), 0u);
-    watcher.Poll();
-    watcher.Poll();
-    watcher.Poll();
-    EXPECT_EQ(watcher.GetPollCount(), 3u);
+    EXPECT_EQ(watcher.get_poll_count(), 0u);
+    watcher.poll();
+    watcher.poll();
+    watcher.poll();
+    EXPECT_EQ(watcher.get_poll_count(), 3u);
 }
 
 // ===========================================================================
-// KillShard — non-durable-shard failure handoff
+// kill_shard — non-durable-shard failure handoff
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, KillShardFlipsStatusAndSetsReplacement) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a", "b"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"c", "d"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a", "b"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"c", "d"}));
 
-    const uint64_t epoch_before = cm_.GetEpoch();
-    ASSERT_TRUE(cm_.KillShard(/*dead=*/1, /*taker=*/0));
+    const uint64_t epoch_before = cm_.get_epoch();
+    ASSERT_TRUE(cm_.kill_shard(/*dead=*/1, /*taker=*/0));
 
-    EXPECT_EQ(cm_.GetShardStatus(1), "dead");
-    EXPECT_EQ(cm_.GetShardReplacement(1), 0u);
-    EXPECT_TRUE(cm_.GetShardReplicas(1).empty());
+    EXPECT_EQ(cm_.get_shard_status(1), "dead");
+    EXPECT_EQ(cm_.get_shard_replacement(1), 0u);
+    EXPECT_TRUE(cm_.get_shard_replicas(1).empty());
     // The speculative-epoch bump is part of the kill batch — this is
     // what other shards will use to invalidate in-flight speculative
     // state that touched the dead shard.
-    EXPECT_EQ(cm_.GetEpoch(), epoch_before + 1);
+    EXPECT_EQ(cm_.get_epoch(), epoch_before + 1);
 }
 
 TEST_F(ConfigManagerTest, KillShardIsOneVersionBump) {
     // The five key writes + epoch bump collapse into a single BATCH,
     // so __version__ advances by exactly one.
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
-    const uint64_t v_before = cm_.GetVersion();
-    ASSERT_TRUE(cm_.KillShard(1, 0));
-    EXPECT_EQ(cm_.GetVersion(), v_before + 1);
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
+    const uint64_t v_before = cm_.get_version();
+    ASSERT_TRUE(cm_.kill_shard(1, 0));
+    EXPECT_EQ(cm_.get_version(), v_before + 1);
 }
 
 TEST_F(ConfigManagerTest, KillShardRefusesSelfKill) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    EXPECT_FALSE(cm_.KillShard(0, 0));
-    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    EXPECT_FALSE(cm_.kill_shard(0, 0));
+    EXPECT_EQ(cm_.get_shard_status(0), "active");
 }
 
 TEST_F(ConfigManagerTest, KillShardRefusesUnknownDead) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
     // dead_id=99 was never added.
-    EXPECT_FALSE(cm_.KillShard(99, 0));
+    EXPECT_FALSE(cm_.kill_shard(99, 0));
 }
 
 TEST_F(ConfigManagerTest, KillShardRefusesUnknownTaker) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
     // taker_id=99 was never added.
-    EXPECT_FALSE(cm_.KillShard(0, 99));
-    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+    EXPECT_FALSE(cm_.kill_shard(0, 99));
+    EXPECT_EQ(cm_.get_shard_status(0), "active");
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigRoutesKilledShardToTaker) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
     // Find a key whose hash lands on shard 1 so we can observe the
     // handoff. Deterministic probe — the FNV-1a hash of "k<i>" cycles
@@ -297,59 +297,59 @@ TEST_F(ConfigManagerTest, ClusterConfigRoutesKilledShardToTaker) {
     std::string probe;
     for (int i = 0; i < 32; ++i) {
         const std::string candidate = "k" + std::to_string(i);
-        if (cc.GetShardForKeyDefault(candidate) == 1u) {
+        if (cc.get_shard_for_key_default(candidate) == 1u) {
             probe = candidate;
             break;
         }
     }
     ASSERT_FALSE(probe.empty()) << "no probe key hashed to shard 1";
-    ASSERT_EQ(cc.GetShardForKeyDefault(probe), 1u);
+    ASSERT_EQ(cc.get_shard_for_key_default(probe), 1u);
 
     // Kill 1 -> handoff to 0.
-    ASSERT_TRUE(cm_.KillShard(1, 0));
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cm_.kill_shard(1, 0));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u)
+    EXPECT_EQ(cc.get_shard_for_key_default(probe), 0u)
         << "requests hashing to the dead shard should follow the pointer";
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigTransitivelyFollowsReplacement) {
     // Chain: shard 2 -> shard 1 -> shard 0. A key that hashes to 2
     // must resolve all the way through to 0.
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
-    ASSERT_TRUE(cm_.AddShard(2, {"c"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(2, {"c"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
     std::string probe;
     for (int i = 0; i < 128; ++i) {
         const std::string candidate = "k" + std::to_string(i);
-        if (cc.GetShardForKeyDefault(candidate) == 2u) {
+        if (cc.get_shard_for_key_default(candidate) == 2u) {
             probe = candidate;
             break;
         }
     }
     ASSERT_FALSE(probe.empty());
 
-    ASSERT_TRUE(cm_.KillShard(2, 1));
-    ASSERT_TRUE(cm_.KillShard(1, 0));
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cm_.kill_shard(2, 1));
+    ASSERT_TRUE(cm_.kill_shard(1, 0));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u);
+    EXPECT_EQ(cc.get_shard_for_key_default(probe), 0u);
 }
 
 TEST_F(ConfigManagerTest, KillShardRefusesTakerAlreadyDead) {
     // The taker-existence guard is (has_replicas). Killing a shard
     // clears its replicas, so a subsequent kill *into* the freshly
     // killed shard is refused. This is the write-time cycle prevention.
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
-    ASSERT_TRUE(cm_.KillShard(1, 0));           // 1 -> 0, kills 1
-    EXPECT_FALSE(cm_.KillShard(0, 1))           // 1 is dead + empty replicas
+    ASSERT_TRUE(cm_.kill_shard(1, 0));           // 1 -> 0, kills 1
+    EXPECT_FALSE(cm_.kill_shard(0, 1))           // 1 is dead + empty replicas
         << "must refuse kill into dead taker";
-    EXPECT_EQ(cm_.GetShardStatus(0), "active");
+    EXPECT_EQ(cm_.get_shard_status(0), "active");
 }
 
 // ===========================================================================
@@ -357,11 +357,11 @@ TEST_F(ConfigManagerTest, KillShardRefusesTakerAlreadyDead) {
 // ===========================================================================
 
 TEST_F(ConfigManagerTest, ShardingModeRoundTrip) {
-    EXPECT_EQ(cm_.GetShardingMode(), "");  // unset ~= default
-    ASSERT_TRUE(cm_.SetShardingMode("range"));
-    EXPECT_EQ(cm_.GetShardingMode(), "range");
-    ASSERT_TRUE(cm_.SetShardingMode("hash"));
-    EXPECT_EQ(cm_.GetShardingMode(), "hash");
+    EXPECT_EQ(cm_.get_sharding_mode(), "");  // unset ~= default
+    ASSERT_TRUE(cm_.set_sharding_mode("range"));
+    EXPECT_EQ(cm_.get_sharding_mode(), "range");
+    ASSERT_TRUE(cm_.set_sharding_mode("hash"));
+    EXPECT_EQ(cm_.get_sharding_mode(), "hash");
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicyRoundTripOpaque) {
@@ -375,63 +375,63 @@ TEST_F(ConfigManagerTest, ShardingPolicyRoundTripOpaque) {
     const std::string payload_a(kPayloadA, sizeof(kPayloadA));
     const std::string payload_b(kPayloadB, sizeof(kPayloadB));
 
-    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", payload_a));
-    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", payload_b));
+    ASSERT_TRUE(cm_.set_sharding_policy("WAREHOUSE", payload_a));
+    ASSERT_TRUE(cm_.set_sharding_policy("DISTRICT", payload_b));
 
-    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), payload_a);
-    EXPECT_EQ(cm_.GetShardingPolicy("DISTRICT"), payload_b);
-    EXPECT_EQ(cm_.GetShardingPolicy("STOCK"), "");  // never set
+    EXPECT_EQ(cm_.get_sharding_policy("WAREHOUSE"), payload_a);
+    EXPECT_EQ(cm_.get_sharding_policy("DISTRICT"), payload_b);
+    EXPECT_EQ(cm_.get_sharding_policy("STOCK"), "");  // never set
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicyRefusesEmptyAndBadInputs) {
-    EXPECT_FALSE(cm_.SetShardingPolicy("", "bytes"));
-    EXPECT_FALSE(cm_.SetShardingPolicy("WAREHOUSE", ""));
+    EXPECT_FALSE(cm_.set_sharding_policy("", "bytes"));
+    EXPECT_FALSE(cm_.set_sharding_policy("WAREHOUSE", ""));
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicyTablesIndexTracks) {
-    EXPECT_TRUE(cm_.ListShardingPolicyTables().empty());
+    EXPECT_TRUE(cm_.list_sharding_policy_tables().empty());
 
-    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
-    auto tables = cm_.ListShardingPolicyTables();
+    ASSERT_TRUE(cm_.set_sharding_policy("WAREHOUSE", "x"));
+    auto tables = cm_.list_sharding_policy_tables();
     ASSERT_EQ(tables.size(), 1u);
     EXPECT_EQ(tables[0], "WAREHOUSE");
 
-    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", "y"));
-    tables = cm_.ListShardingPolicyTables();
+    ASSERT_TRUE(cm_.set_sharding_policy("DISTRICT", "y"));
+    tables = cm_.list_sharding_policy_tables();
     EXPECT_EQ(tables.size(), 2u);
 
     // Overwrite an existing table's policy — index must NOT gain a duplicate.
-    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x2"));
-    tables = cm_.ListShardingPolicyTables();
+    ASSERT_TRUE(cm_.set_sharding_policy("WAREHOUSE", "x2"));
+    tables = cm_.list_sharding_policy_tables();
     EXPECT_EQ(tables.size(), 2u);
-    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), "x2");
+    EXPECT_EQ(cm_.get_sharding_policy("WAREHOUSE"), "x2");
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicyDeletePrunesIndex) {
-    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
-    ASSERT_TRUE(cm_.SetShardingPolicy("DISTRICT", "y"));
+    ASSERT_TRUE(cm_.set_sharding_policy("WAREHOUSE", "x"));
+    ASSERT_TRUE(cm_.set_sharding_policy("DISTRICT", "y"));
 
-    ASSERT_TRUE(cm_.DeleteShardingPolicy("WAREHOUSE"));
-    EXPECT_EQ(cm_.GetShardingPolicy("WAREHOUSE"), "");
-    auto tables = cm_.ListShardingPolicyTables();
+    ASSERT_TRUE(cm_.delete_sharding_policy("WAREHOUSE"));
+    EXPECT_EQ(cm_.get_sharding_policy("WAREHOUSE"), "");
+    auto tables = cm_.list_sharding_policy_tables();
     ASSERT_EQ(tables.size(), 1u);
     EXPECT_EQ(tables[0], "DISTRICT");
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicySetIsOneVersionBump) {
-    // A SetShardingPolicy is one BATCH — value key + index key + __version__
+    // A set_sharding_policy is one BATCH — value key + index key + __version__
     // — so __version__ advances by exactly one.
-    const uint64_t v_before = cm_.GetVersion();
-    ASSERT_TRUE(cm_.SetShardingPolicy("WAREHOUSE", "x"));
-    EXPECT_EQ(cm_.GetVersion(), v_before + 1);
+    const uint64_t v_before = cm_.get_version();
+    ASSERT_TRUE(cm_.set_sharding_policy("WAREHOUSE", "x"));
+    EXPECT_EQ(cm_.get_version(), v_before + 1);
 }
 
 TEST_F(ConfigManagerTest, ShardingPolicyDeleteMissingIsNoop) {
-    const uint64_t v_before = cm_.GetVersion();
+    const uint64_t v_before = cm_.get_version();
     // Deleting a policy that was never set is a no-op — must NOT bump
     // __version__, otherwise ConfigWatchers would refresh spuriously.
-    ASSERT_TRUE(cm_.DeleteShardingPolicy("NEVER_SET"));
-    EXPECT_EQ(cm_.GetVersion(), v_before);
+    ASSERT_TRUE(cm_.delete_sharding_policy("NEVER_SET"));
+    EXPECT_EQ(cm_.get_version(), v_before);
 }
 
 // ===========================================================================
@@ -443,16 +443,16 @@ TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
     //   w_id in [0, 5)  -> shard 0
     //   w_id in [5, 10) -> shard 1
     // Encode w_id in the first 8 bytes big-endian (matches ExtractKeyValue_).
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
     policy.add_range(0, 5, 0);
     policy.add_range(5, 10, 1);
-    cc.SetTablePolicy("WAREHOUSE", policy);
+    cc.set_table_policy("WAREHOUSE", policy);
 
     auto encode_w = [](int64_t w) -> std::string {
         std::string s(8, '\0');
@@ -463,23 +463,23 @@ TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
         return s;
     };
 
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(0)), 0u);
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(3)), 0u);
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(5)), 1u);
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", encode_w(9)), 1u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(0)), 0u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(3)), 0u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(5)), 1u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(9)), 1u);
 }
 
 TEST_F(ConfigManagerTest, PolicyRoutingFallsBackToHashForUnknownTable) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
     // No policy registered for WAREHOUSE — routing must use the hash
     // default, and be stable for a given key.
-    const uint32_t a = cc.GetShardForKey("WAREHOUSE", "k42");
-    const uint32_t b = cc.GetShardForKey("WAREHOUSE", "k42");
+    const uint32_t a = cc.get_shard_for_key("WAREHOUSE", "k42");
+    const uint32_t b = cc.get_shard_for_key("WAREHOUSE", "k42");
     EXPECT_EQ(a, b);
     EXPECT_LT(a, 2u);
 }
@@ -488,98 +488,98 @@ TEST_F(ConfigManagerTest, PolicyRoutingFallsBackWhenGetShardIsNegative) {
     // Policy exists but the key value doesn't match any range and
     // default_shard is -1. Must fall through to the hash default rather
     // than returning junk.
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
     // default_shard defaults to -1 in create(), matching the old 3-arg ctor.
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
     policy.add_range(0, 5, 0);
-    cc.SetTablePolicy("WAREHOUSE", policy);
+    cc.set_table_policy("WAREHOUSE", policy);
 
     // A w_id of 100 doesn't match any range; default_shard = -1.
     // Must still return a valid shard (from hash fallback), not
     // uint32(-1) or garbage.
     std::string k(8, '\0');
     k[7] = 100;
-    const uint32_t sid = cc.GetShardForKey("WAREHOUSE", k);
+    const uint32_t sid = cc.get_shard_for_key("WAREHOUSE", k);
     EXPECT_LT(sid, 2u);
 }
 
 TEST_F(ConfigManagerTest, PolicyRoutingClearRevertsToDefault) {
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
     policy.add_range(0, 100, 1);  // everything → shard 1
-    cc.SetTablePolicy("WAREHOUSE", policy);
-    EXPECT_TRUE(cc.HasTablePolicy("WAREHOUSE"));
+    cc.set_table_policy("WAREHOUSE", policy);
+    EXPECT_TRUE(cc.has_table_policy("WAREHOUSE"));
 
     std::string k(8, '\0');
     k[7] = 3;
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", k), 1u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", k), 1u);
 
-    cc.ClearTablePolicy("WAREHOUSE");
-    EXPECT_FALSE(cc.HasTablePolicy("WAREHOUSE"));
+    cc.clear_table_policy("WAREHOUSE");
+    EXPECT_FALSE(cc.has_table_policy("WAREHOUSE"));
     // After clearing, the routing decision drops back to hash-mod on
     // the raw key. We don't know which shard that resolves to, but we
     // do know it must be a valid shard.
-    EXPECT_LT(cc.GetShardForKey("WAREHOUSE", k), 2u);
+    EXPECT_LT(cc.get_shard_for_key("WAREHOUSE", k), 2u);
 }
 
 TEST_F(ConfigManagerTest, PolicyRoutingComposesWithReplacement) {
     // A per-table policy resolves to shard 1, which is dead → routing
     // must chase the replacement pointer.
-    ASSERT_TRUE(cm_.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm_.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
 
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
     policy.add_range(0, 100, 1);
-    cc.SetTablePolicy("WAREHOUSE", policy);
+    cc.set_table_policy("WAREHOUSE", policy);
 
     std::string k(8, '\0');
     k[7] = 42;
-    ASSERT_EQ(cc.GetShardForKey("WAREHOUSE", k), 1u);
+    ASSERT_EQ(cc.get_shard_for_key("WAREHOUSE", k), 1u);
 
-    ASSERT_TRUE(cm_.KillShard(1, 0));
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm_));
+    ASSERT_TRUE(cm_.kill_shard(1, 0));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
     // Policy hasn't changed — still resolves to 1 at the range-lookup
     // step, but the FollowReplacement_ chase must land us on 0.
-    EXPECT_EQ(cc.GetShardForKey("WAREHOUSE", k), 0u);
+    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", k), 0u);
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
     // Belt-and-suspenders: even if a broken write path or stale cache
-    // ever produced a cycle in the ShardInfo map, GetShardForKey must
+    // ever produced a cycle in the ShardInfo map, get_shard_for_key must
     // terminate. We build the cycle at the ClusterConfig layer
     // directly, bypassing ConfigManager's write-time guard.
     ClusterConfig cc = ClusterConfig::new_();
-    cc.SetShardCount(2);
+    cc.set_shard_count(2);
 
     ShardInfo s0;
     s0.id = 0;
     s0.status = "dead";
     s0.replacement = 1;
-    cc.UpdateShard(0, s0);
+    cc.update_shard(0, s0);
 
     ShardInfo s1;
     s1.id = 1;
     s1.status = "dead";
     s1.replacement = 0;
-    cc.UpdateShard(1, s1);
+    cc.update_shard(1, s1);
 
     // Any lookup must terminate. Both nodes are dead so the caller
     // treats the result as unreachable; what matters here is that
-    // GetShardForKey does not infinite-loop.
-    const uint32_t landed = cc.GetShardForKeyDefault("anything");
+    // get_shard_for_key does not infinite-loop.
+    const uint32_t landed = cc.get_shard_for_key_default("anything");
     EXPECT_TRUE(landed == 0u || landed == 1u);
 }
 
@@ -591,7 +591,7 @@ TEST_F(ConfigManagerTest, ClusterConfigCycleGuardTerminates) {
 // stands in for shard 0's config table; a RemoteKvStore wraps a closure
 // reading from it (production: a ReadConfigKey RPC to shard 0's leader).
 // A non-shard-0 node's ConfigManager is built on the RemoteKvStore and
-// its ClusterConfig hydrates through the same LoadFromConfigManager path
+// its ClusterConfig hydrates through the same load_from_config_manager path
 // a local node uses.
 
 // A read closure over a "shard 0" store.
@@ -625,10 +625,10 @@ TEST(RemoteKvStoreTest, ConfigManagerLoadsTopologyFromShard0) {
     // Shard 0's leader writes the topology to its local config store.
     InMemoryKvStore shard0_store;
     ConfigManager shard0_cm(&shard0_store);
-    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a", "s0b", "s0c"}));
-    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a", "s1b", "s1c"}));
-    ASSERT_TRUE(shard0_cm.SetShardLeader(0, "s0a"));
-    ASSERT_TRUE(shard0_cm.AdvanceEpoch());
+    ASSERT_TRUE(shard0_cm.add_shard(0, {"s0a", "s0b", "s0c"}));
+    ASSERT_TRUE(shard0_cm.add_shard(1, {"s1a", "s1b", "s1c"}));
+    ASSERT_TRUE(shard0_cm.set_shard_leader(0, "s0a"));
+    ASSERT_TRUE(shard0_cm.advance_epoch());
 
     // A non-shard-0 node reads it through a read-only ConfigManager over
     // a RemoteKvStore pointing at shard 0.
@@ -636,56 +636,56 @@ TEST(RemoteKvStoreTest, ConfigManagerLoadsTopologyFromShard0) {
     ConfigManager remote_cm(&remote);
 
     ClusterConfig local = ClusterConfig::new_();
-    ASSERT_TRUE(local.LoadFromConfigManager(&remote_cm));
+    ASSERT_TRUE(local.load_from_config_manager(&remote_cm));
 
-    EXPECT_EQ(local.GetShardCount(), 2u);
-    EXPECT_EQ(local.GetShardLeader(0), "s0a");
-    EXPECT_EQ(local.GetShardReplicas(1).size(), 3u);
-    EXPECT_EQ(local.GetEpoch(), 1u);
-    EXPECT_EQ(local.GetVersion(), shard0_cm.GetVersion());
+    EXPECT_EQ(local.get_shard_count(), 2u);
+    EXPECT_EQ(local.get_shard_leader(0), "s0a");
+    EXPECT_EQ(local.get_shard_replicas(1).size(), 3u);
+    EXPECT_EQ(local.get_epoch(), 1u);
+    EXPECT_EQ(local.get_version(), shard0_cm.get_version());
 }
 
 TEST(RemoteKvStoreTest, WatcherOnRemoteNodeTracksShard0Changes) {
     InMemoryKvStore shard0_store;
     ConfigManager shard0_cm(&shard0_store);
-    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
+    ASSERT_TRUE(shard0_cm.add_shard(0, {"s0a"}));
 
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
     ClusterConfig local = ClusterConfig::new_();
     auto watcher = ConfigWatcher::new_(&remote_cm, &local, /*poll_interval_ms=*/1000);
 
-    EXPECT_TRUE(watcher.Poll());
-    EXPECT_EQ(local.GetShardCount(), 1u);
-    EXPECT_FALSE(watcher.Poll());  // no change
+    EXPECT_TRUE(watcher.poll());
+    EXPECT_EQ(local.get_shard_count(), 1u);
+    EXPECT_FALSE(watcher.poll());  // no change
 
-    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
-    EXPECT_TRUE(watcher.Poll());
-    EXPECT_EQ(local.GetShardCount(), 2u);
+    ASSERT_TRUE(shard0_cm.add_shard(1, {"s1a"}));
+    EXPECT_TRUE(watcher.poll());
+    EXPECT_EQ(local.get_shard_count(), 2u);
 }
 
 TEST(RemoteKvStoreTest, KillShardVisibleToRemoteNode) {
     InMemoryKvStore shard0_store;
     ConfigManager shard0_cm(&shard0_store);
-    ASSERT_TRUE(shard0_cm.AddShard(0, {"s0a"}));
-    ASSERT_TRUE(shard0_cm.AddShard(1, {"s1a"}));
+    ASSERT_TRUE(shard0_cm.add_shard(0, {"s0a"}));
+    ASSERT_TRUE(shard0_cm.add_shard(1, {"s1a"}));
 
     RemoteKvStore remote(ReaderOver(&shard0_store));
     ConfigManager remote_cm(&remote);
     ClusterConfig local = ClusterConfig::new_();
     auto watcher = ConfigWatcher::new_(&remote_cm, &local, /*poll_interval_ms=*/1000);
-    ASSERT_TRUE(watcher.Poll());
+    ASSERT_TRUE(watcher.poll());
 
     std::string probe;
     for (int i = 0; i < 64; ++i) {
         const std::string c = "k" + std::to_string(i);
-        if (local.GetShardForKeyDefault(c) == 1u) { probe = c; break; }
+        if (local.get_shard_for_key_default(c) == 1u) { probe = c; break; }
     }
     ASSERT_FALSE(probe.empty());
 
-    ASSERT_TRUE(shard0_cm.KillShard(1, 0));  // shard 0's leader kills 1
-    ASSERT_TRUE(watcher.Poll());             // remote node observes it
-    EXPECT_EQ(local.GetShardForKeyDefault(probe), 0u)
+    ASSERT_TRUE(shard0_cm.kill_shard(1, 0));  // shard 0's leader kills 1
+    ASSERT_TRUE(watcher.poll());             // remote node observes it
+    EXPECT_EQ(local.get_shard_for_key_default(probe), 0u)
         << "remote node must reroute the dead shard's keys to the taker";
 }
 

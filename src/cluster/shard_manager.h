@@ -5,9 +5,9 @@
 // routing) against a map of stub Shards, so the add/kill/remove lifecycle can
 // be exercised end-to-end without the storage engine or RPC. Each verb calls
 // the authoritative ConfigManager verb, applies the matching effect to the
-// stub shards (KillShard migrates the dead shard's data into the taker), and
+// stub shards (kill_shard migrates the dead shard's data into the taker), and
 // reloads the routing cache; route/put/get then go through
-// ClusterConfig::GetShardForKey (hash-mod default + dead->taker follow).
+// ClusterConfig::get_shard_for_key (hash-mod default + dead->taker follow).
 //
 // ConfigManager and ClusterConfig are borrowed (the caller owns them,
 // ConfigManager over an InMemoryKvStore) — the same *mut dependency-injection
@@ -46,11 +46,11 @@ impl ShardManager {
     }
     // Pull the authoritative config into the routing cache.
     fn reload(&mut self) {
-        unsafe { (*(*self).cfg).LoadFromConfigManager((*self).cm) };
+        unsafe { (*(*self).cfg).load_from_config_manager((*self).cm) };
     }
     // Route a key to a live shard: hash-mod default, then dead->taker chase.
     fn route(&self, key: &std::string) -> u32 {
-        unsafe { (*(*self).cfg).GetShardForKeyDefault(key) }
+        unsafe { (*(*self).cfg).get_shard_for_key_default(key) }
     }
     // Client write: route then store on the owning shard.
     fn put(&mut self, key: &std::string, value: &std::string) {
@@ -69,7 +69,7 @@ impl ShardManager {
     }
     // Add a shard: config verb + fresh stub + reload.
     fn add_shard(&mut self, id: u32, replicas: &std::vector<std::string>) -> bool {
-        let ok: bool = unsafe { (*(*self).cm).AddShard(id, replicas) };
+        let ok: bool = unsafe { (*(*self).cm).add_shard(id, replicas) };
         if ok {
             (*self).shards.insert(id, Shard::new(id));
             self.reload();
@@ -81,7 +81,7 @@ impl ShardManager {
     // the stub data into the taker and mark the dead stub, then reload so
     // routing chases dead->taker.
     fn kill_shard(&mut self, dead: u32, taker: u32) -> bool {
-        let ok: bool = unsafe { (*(*self).cm).KillShard(dead, taker) };
+        let ok: bool = unsafe { (*(*self).cm).kill_shard(dead, taker) };
         if ok {
             let removed: rusty::Option<Shard> = (*self).shards.remove(dead);
             if removed.is_some() {
@@ -99,7 +99,7 @@ impl ShardManager {
     // Remove a shard entirely (config verb + drop the stub + reload). Unlike
     // kill, this does not migrate data — callers use it for clean teardown.
     fn remove_shard(&mut self, id: u32) -> bool {
-        let ok: bool = unsafe { (*(*self).cm).RemoveShard(id) };
+        let ok: bool = unsafe { (*(*self).cm).remove_shard(id) };
         if ok {
             (*self).shards.remove(id);
             self.reload();
@@ -108,10 +108,10 @@ impl ShardManager {
     }
     // ---- observers (for tests) ------------------------------------------
     fn shard_count(&self) -> u32 {
-        unsafe { (*(*self).cfg).GetShardCount() }
+        unsafe { (*(*self).cfg).get_shard_count() }
     }
     fn epoch(&mut self) -> u64 {
-        unsafe { (*(*self).cm).GetEpoch() }
+        unsafe { (*(*self).cm).get_epoch() }
     }
     fn is_shard_alive(&self, id: u32) -> bool {
         if !(*self).shards.contains_key(id) {
@@ -127,7 +127,7 @@ impl ShardManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_manager.1 version=1 rust_sha256=613b90ca9c6eddb3f5a2af9a86a0c71b2c9320a7079d8dcb92552728d9c3c428*/
+/*RUSTYCPP:GEN-BEGIN id=shard_manager.1 version=1 rust_sha256=37ffbca69ba7c9b945ae3245b2e3515be2b8c549e475181e71fea0de32341781*/
 struct ShardManager;
 
 struct ShardManager {
@@ -157,14 +157,14 @@ inline ShardManager ShardManager::new_(ConfigManager* cm, ClusterConfig* cfg) {
 inline void ShardManager::reload() {
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).LoadFromConfigManager(((*this)).cm);
+        ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).load_from_config_manager(((*this)).cm);
     }
 }
 
 inline uint32_t ShardManager::route(const std::string& key) const {
     // @unsafe
     {
-        return ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).GetShardForKeyDefault(key);
+        return ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).get_shard_for_key_default(key);
     }
 }
 
@@ -184,7 +184,7 @@ inline rusty::Option<std::string> ShardManager::get(const std::string& key) {
 }
 
 inline bool ShardManager::add_shard(uint32_t id, const std::vector<std::string>& replicas) {
-    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).AddShard(std::move(id), replicas);
+    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).add_shard(std::move(id), replicas);
     if (ok) {
         ((*this)).shards.insert(std::move(id), Shard::new_(std::move(id)));
         this->reload();
@@ -193,7 +193,7 @@ inline bool ShardManager::add_shard(uint32_t id, const std::vector<std::string>&
 }
 
 inline bool ShardManager::kill_shard(uint32_t dead, uint32_t taker) {
-    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).KillShard(std::move(dead), std::move(taker));
+    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).kill_shard(std::move(dead), std::move(taker));
     if (ok) {
         rusty::Option<Shard> removed = ((*this)).shards.remove(std::move(dead));
         if (removed.is_some()) {
@@ -210,7 +210,7 @@ inline bool ShardManager::kill_shard(uint32_t dead, uint32_t taker) {
 }
 
 inline bool ShardManager::remove_shard(uint32_t id) {
-    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).RemoveShard(std::move(id));
+    bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).remove_shard(std::move(id));
     if (ok) {
         ((*this)).shards.remove(std::move(id));
         this->reload();
@@ -221,14 +221,14 @@ inline bool ShardManager::remove_shard(uint32_t id) {
 inline uint32_t ShardManager::shard_count() const {
     // @unsafe
     {
-        return ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).GetShardCount();
+        return ((rusty::detail::deref_if_pointer_like(((*this)).cfg))).get_shard_count();
     }
 }
 
 inline uint64_t ShardManager::epoch() {
     // @unsafe
     {
-        return ((rusty::detail::deref_if_pointer_like(((*this)).cm))).GetEpoch();
+        return ((rusty::detail::deref_if_pointer_like(((*this)).cm))).get_epoch();
     }
 }
 

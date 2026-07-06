@@ -22,7 +22,7 @@ namespace janus {
  * in the unified store; this is a decoupling seam, not a parallel one.
  *
  * Consistency: multi-key writes are applied as a sequence of point puts
- * with the __version__ key written LAST (BumpVersion, called after the
+ * with the __version__ key written LAST (bump_version, called after the
  * data writes), so a reader that observes a new __version__ is
  * guaranteed to see all keys of that version. This is not atomic across
  * keys the way a transaction would be, but config is single-writer
@@ -88,7 +88,7 @@ pub struct ConfigManager {
 impl ConfigManager {
     // ---- private helpers -------------------------------------------------
     // Join replicas into a comma-separated string.
-    fn JoinReplicas(&self, replicas: &std::vector<std::string>) -> std::string {
+    fn join_replicas(&self, replicas: &std::vector<std::string>) -> std::string {
         let mut result: std::string = std::string("");
         let mut i: usize = 0;
         while i < (*replicas).size() {
@@ -99,14 +99,14 @@ impl ConfigManager {
         result
     }
     // Write key=value then bump __version__ (written last).
-    fn PutVersioned(&mut self, key: &std::string, value: &std::string) -> bool {
+    fn put_versioned(&mut self, key: &std::string, value: &std::string) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         unsafe { (*(*self).kv).put(key, value); }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
     // Read __version__, write it back incremented (the last visible write).
-    fn BumpVersion(&mut self) {
+    fn bump_version(&mut self) {
         let vkey: std::string = std::string("__version__");
         let mut cur: u64 = 0;
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&vkey) };
@@ -119,7 +119,7 @@ impl ConfigManager {
     }
 
     // ---- version ---------------------------------------------------------
-    fn GetVersion(&mut self) -> u64 {
+    fn get_version(&mut self) -> u64 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let vkey: std::string = std::string("__version__");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&vkey) };
@@ -131,7 +131,7 @@ impl ConfigManager {
     }
 
     // ---- shard management ------------------------------------------------
-    fn GetShardCount(&mut self) -> u32 {
+    fn get_shard_count(&mut self) -> u32 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("shard_count");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
@@ -141,12 +141,12 @@ impl ConfigManager {
         }
         0
     }
-    fn SetShardCount(&mut self, count: u32) -> bool {
+    fn set_shard_count(&mut self, count: u32) -> bool {
         let key: std::string = std::string("shard_count");
         let val: std::string = std::to_string(count);
-        self.PutVersioned(&key, &val)
+        self.put_versioned(&key, &val)
     }
-    fn GetShardReplicas(&mut self, shard_id: u32) -> std::vector<std::string> {
+    fn get_shard_replicas(&mut self, shard_id: u32) -> std::vector<std::string> {
         let mut value: std::string = std::string("");
         if !unsafe { cm_kv_absent((*self).kv) } {
             let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replicas");
@@ -155,38 +155,38 @@ impl ConfigManager {
         }
         unsafe { cm_split_csv(&value) }
     }
-    fn SetShardReplicas(&mut self, shard_id: u32, replicas: &std::vector<std::string>) -> bool {
+    fn set_shard_replicas(&mut self, shard_id: u32, replicas: &std::vector<std::string>) -> bool {
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replicas");
-        let val: std::string = self.JoinReplicas(replicas);
-        self.PutVersioned(&key, &val)
+        let val: std::string = self.join_replicas(replicas);
+        self.put_versioned(&key, &val)
     }
-    fn GetShardLeader(&mut self, shard_id: u32) -> std::string {
+    fn get_shard_leader(&mut self, shard_id: u32) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/leader");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn SetShardLeader(&mut self, shard_id: u32, leader: &std::string) -> bool {
+    fn set_shard_leader(&mut self, shard_id: u32, leader: &std::string) -> bool {
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/leader");
-        self.PutVersioned(&key, leader)
+        self.put_versioned(&key, leader)
     }
-    fn GetShardStatus(&mut self, shard_id: u32) -> std::string {
+    fn get_shard_status(&mut self, shard_id: u32) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/status");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn SetShardStatus(&mut self, shard_id: u32, status: &std::string) -> bool {
+    fn set_shard_status(&mut self, shard_id: u32, status: &std::string) -> bool {
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/status");
-        self.PutVersioned(&key, status)
+        self.put_versioned(&key, status)
     }
 
     // ---- shard lifecycle -------------------------------------------------
-    fn AddShard(&mut self, shard_id: u32, replicas: &std::vector<std::string>) -> bool {
+    fn add_shard(&mut self, shard_id: u32, replicas: &std::vector<std::string>) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
-        let count: u32 = self.GetShardCount();
+        let count: u32 = self.get_shard_count();
         let rkey: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replicas");
-        let rval: std::string = self.JoinReplicas(replicas);
+        let rval: std::string = self.join_replicas(replicas);
         unsafe { (*(*self).kv).put(&rkey, &rval); }
         let skey: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/status");
         let sval: std::string = std::string("active");
@@ -194,12 +194,12 @@ impl ConfigManager {
         let ckey: std::string = std::string("shard_count");
         let cval: std::string = std::to_string(count + 1);
         unsafe { (*(*self).kv).put(&ckey, &cval); }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
-    fn RemoveShard(&mut self, shard_id: u32) -> bool {
+    fn remove_shard(&mut self, shard_id: u32) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
-        let count: u32 = self.GetShardCount();
+        let count: u32 = self.get_shard_count();
         if count == 0 { return false; }
         let rkey: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replicas");
         unsafe { (*(*self).kv).remove(&rkey); }
@@ -210,10 +210,10 @@ impl ConfigManager {
         let ckey: std::string = std::string("shard_count");
         let cval: std::string = std::to_string(count - 1);
         unsafe { (*(*self).kv).put(&ckey, &cval); }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
-    fn GetShardReplacement(&mut self, shard_id: u32) -> u32 {
+    fn get_shard_replacement(&mut self, shard_id: u32) -> u32 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("shard/") + std::to_string(shard_id) + std::string("/replacement");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
@@ -223,12 +223,12 @@ impl ConfigManager {
         }
         0
     }
-    fn KillShard(&mut self, dead_id: u32, taker_id: u32) -> bool {
+    fn kill_shard(&mut self, dead_id: u32, taker_id: u32) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         if dead_id == taker_id { return false; }
-        if self.GetShardStatus(dead_id).empty() { return false; }
-        if self.GetShardReplicas(taker_id).empty() { return false; }
-        let epoch: u64 = self.GetEpoch() + 1;
+        if self.get_shard_status(dead_id).empty() { return false; }
+        if self.get_shard_replicas(taker_id).empty() { return false; }
+        let epoch: u64 = self.get_epoch() + 1;
         let dkey: std::string = std::string("shard/") + std::to_string(dead_id) + std::string("/status");
         let dval: std::string = std::string("dead");
         unsafe { (*(*self).kv).put(&dkey, &dval); }
@@ -241,12 +241,12 @@ impl ConfigManager {
         let ekey: std::string = std::string("epoch");
         let eval: std::string = std::to_string(epoch);
         unsafe { (*(*self).kv).put(&ekey, &eval); }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
 
     // ---- epoch -----------------------------------------------------------
-    fn GetEpoch(&mut self) -> u64 {
+    fn get_epoch(&mut self) -> u64 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
         let key: std::string = std::string("epoch");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
@@ -256,55 +256,55 @@ impl ConfigManager {
         }
         0
     }
-    fn AdvanceEpoch(&mut self) -> bool {
+    fn advance_epoch(&mut self) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
-        let epoch: u64 = self.GetEpoch() + 1;
+        let epoch: u64 = self.get_epoch() + 1;
         let key: std::string = std::string("epoch");
         let val: std::string = std::to_string(epoch);
-        self.PutVersioned(&key, &val)
+        self.put_versioned(&key, &val)
     }
 
     // ---- node management -------------------------------------------------
-    fn GetNodeAddr(&mut self, site: &std::string) -> std::string {
+    fn get_node_addr(&mut self, site: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = (std::string("node/") + *site) + std::string("/addr");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn SetNodeAddr(&mut self, site: &std::string, addr: &std::string) -> bool {
+    fn set_node_addr(&mut self, site: &std::string, addr: &std::string) -> bool {
         let key: std::string = (std::string("node/") + *site) + std::string("/addr");
-        self.PutVersioned(&key, addr)
+        self.put_versioned(&key, addr)
     }
-    fn GetNodeStatus(&mut self, site: &std::string) -> std::string {
+    fn get_node_status(&mut self, site: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = (std::string("node/") + *site) + std::string("/status");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn SetNodeStatus(&mut self, site: &std::string, status: &std::string) -> bool {
+    fn set_node_status(&mut self, site: &std::string, status: &std::string) -> bool {
         let key: std::string = (std::string("node/") + *site) + std::string("/status");
-        self.PutVersioned(&key, status)
+        self.put_versioned(&key, status)
     }
 
     // ---- sharding policy (opaque bytes) ----------------------------------
-    fn GetShardingMode(&mut self) -> std::string {
+    fn get_sharding_mode(&mut self) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         let key: std::string = std::string("sharding/mode");
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn SetShardingMode(&mut self, mode: &std::string) -> bool {
+    fn set_sharding_mode(&mut self, mode: &std::string) -> bool {
         let key: std::string = std::string("sharding/mode");
-        self.PutVersioned(&key, mode)
+        self.put_versioned(&key, mode)
     }
-    fn GetShardingPolicy(&mut self, table: &std::string) -> std::string {
+    fn get_sharding_policy(&mut self, table: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
         if (*table).empty() { return std::string(""); }
         let key: std::string = std::string("sharding/policy/") + *table;
         let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
         vopt.unwrap_or(std::string(""))
     }
-    fn ListShardingPolicyTables(&mut self) -> std::vector<std::string> {
+    fn list_sharding_policy_tables(&mut self) -> std::vector<std::string> {
         let mut value: std::string = std::string("");
         if !unsafe { cm_kv_absent((*self).kv) } {
             let key: std::string = std::string("sharding/policy_tables");
@@ -313,11 +313,11 @@ impl ConfigManager {
         }
         unsafe { cm_split_csv(&value) }
     }
-    fn SetShardingPolicy(&mut self, table: &std::string, serialized_policy: &std::string) -> bool {
+    fn set_sharding_policy(&mut self, table: &std::string, serialized_policy: &std::string) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         if (*table).empty() { return false; }
         if (*serialized_policy).empty() { return false; }
-        let mut tables: std::vector<std::string> = self.ListShardingPolicyTables();
+        let mut tables: std::vector<std::string> = self.list_sharding_policy_tables();
         let mut present: bool = false;
         let mut i: usize = 0;
         while i < tables.size() {
@@ -329,73 +329,73 @@ impl ConfigManager {
         if !present {
             tables.push_back(*table);
             let tkey: std::string = std::string("sharding/policy_tables");
-            let tval: std::string = self.JoinReplicas(&tables);
+            let tval: std::string = self.join_replicas(&tables);
             unsafe { (*(*self).kv).put(&tkey, &tval); }
         }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
-    fn DeleteShardingPolicy(&mut self, table: &std::string) -> bool {
+    fn delete_sharding_policy(&mut self, table: &std::string) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         if (*table).empty() { return false; }
-        let tables: std::vector<std::string> = self.ListShardingPolicyTables();
+        let tables: std::vector<std::string> = self.list_sharding_policy_tables();
         let mut pruned: std::vector<std::string> = cm_split_csv(&std::string(""));
         let mut i: usize = 0;
         while i < tables.size() {
             if tables[i] != *table { pruned.push_back(tables[i]); }
             i = i + 1;
         }
-        if pruned.size() == tables.size() && self.GetShardingPolicy(table).empty() {
+        if pruned.size() == tables.size() && self.get_sharding_policy(table).empty() {
             return true;
         }
         let pkey: std::string = std::string("sharding/policy/") + *table;
         unsafe { (*(*self).kv).remove(&pkey); }
         let tkey: std::string = std::string("sharding/policy_tables");
-        let tval: std::string = self.JoinReplicas(&pruned);
+        let tval: std::string = self.join_replicas(&pruned);
         unsafe { (*(*self).kv).put(&tkey, &tval); }
-        self.BumpVersion();
+        self.bump_version();
         true
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=485d03589f68878c147ff808dfda478304b2c374ddd564b1b6934ca7315277b4*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=fb6f5db3308f8f314774c03e12c7f625b9626d582475af0603da958f4dcad889*/
 struct ConfigManager;
 
 struct ConfigManager {
     KvStore* kv;
 
-    std::string JoinReplicas(const std::vector<std::string>& replicas) const;
-    bool PutVersioned(const std::string& key, const std::string& value);
-    void BumpVersion();
-    uint64_t GetVersion();
-    uint32_t GetShardCount();
-    bool SetShardCount(uint32_t count);
-    std::vector<std::string> GetShardReplicas(uint32_t shard_id);
-    bool SetShardReplicas(uint32_t shard_id, const std::vector<std::string>& replicas);
-    std::string GetShardLeader(uint32_t shard_id);
-    bool SetShardLeader(uint32_t shard_id, const std::string& leader);
-    std::string GetShardStatus(uint32_t shard_id);
-    bool SetShardStatus(uint32_t shard_id, const std::string& status);
-    bool AddShard(uint32_t shard_id, const std::vector<std::string>& replicas);
-    bool RemoveShard(uint32_t shard_id);
-    uint32_t GetShardReplacement(uint32_t shard_id);
-    bool KillShard(uint32_t dead_id, uint32_t taker_id);
-    uint64_t GetEpoch();
-    bool AdvanceEpoch();
-    std::string GetNodeAddr(const std::string& site);
-    bool SetNodeAddr(const std::string& site, const std::string& addr);
-    std::string GetNodeStatus(const std::string& site);
-    bool SetNodeStatus(const std::string& site, const std::string& status);
-    std::string GetShardingMode();
-    bool SetShardingMode(const std::string& mode);
-    std::string GetShardingPolicy(const std::string& table);
-    std::vector<std::string> ListShardingPolicyTables();
-    bool SetShardingPolicy(const std::string& table, const std::string& serialized_policy);
-    bool DeleteShardingPolicy(const std::string& table);
+    std::string join_replicas(const std::vector<std::string>& replicas) const;
+    bool put_versioned(const std::string& key, const std::string& value);
+    void bump_version();
+    uint64_t get_version();
+    uint32_t get_shard_count();
+    bool set_shard_count(uint32_t count);
+    std::vector<std::string> get_shard_replicas(uint32_t shard_id);
+    bool set_shard_replicas(uint32_t shard_id, const std::vector<std::string>& replicas);
+    std::string get_shard_leader(uint32_t shard_id);
+    bool set_shard_leader(uint32_t shard_id, const std::string& leader);
+    std::string get_shard_status(uint32_t shard_id);
+    bool set_shard_status(uint32_t shard_id, const std::string& status);
+    bool add_shard(uint32_t shard_id, const std::vector<std::string>& replicas);
+    bool remove_shard(uint32_t shard_id);
+    uint32_t get_shard_replacement(uint32_t shard_id);
+    bool kill_shard(uint32_t dead_id, uint32_t taker_id);
+    uint64_t get_epoch();
+    bool advance_epoch();
+    std::string get_node_addr(const std::string& site);
+    bool set_node_addr(const std::string& site, const std::string& addr);
+    std::string get_node_status(const std::string& site);
+    bool set_node_status(const std::string& site, const std::string& status);
+    std::string get_sharding_mode();
+    bool set_sharding_mode(const std::string& mode);
+    std::string get_sharding_policy(const std::string& table);
+    std::vector<std::string> list_sharding_policy_tables();
+    bool set_sharding_policy(const std::string& table, const std::string& serialized_policy);
+    bool delete_sharding_policy(const std::string& table);
 };
 
 
-inline std::string ConfigManager::JoinReplicas(const std::vector<std::string>& replicas) const {
+inline std::string ConfigManager::join_replicas(const std::vector<std::string>& replicas) const {
     std::string result = std::string("");
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((replicas)).size()) {
@@ -408,7 +408,7 @@ inline std::string ConfigManager::JoinReplicas(const std::vector<std::string>& r
     return std::move(result);
 }
 
-inline bool ConfigManager::PutVersioned(const std::string& key, const std::string& value) {
+inline bool ConfigManager::put_versioned(const std::string& key, const std::string& value) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
@@ -416,11 +416,11 @@ inline bool ConfigManager::PutVersioned(const std::string& key, const std::strin
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(key, value);
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 
-inline void ConfigManager::BumpVersion() {
+inline void ConfigManager::bump_version() {
     const std::string vkey = std::string("__version__");
     uint64_t cur = static_cast<uint64_t>(0);
     rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(vkey);
@@ -435,7 +435,7 @@ inline void ConfigManager::BumpVersion() {
     }
 }
 
-inline uint64_t ConfigManager::GetVersion() {
+inline uint64_t ConfigManager::get_version() {
     if (cm_kv_absent(((*this)).kv)) {
         return static_cast<uint64_t>(0);
     }
@@ -448,7 +448,7 @@ inline uint64_t ConfigManager::GetVersion() {
     return static_cast<uint64_t>(0);
 }
 
-inline uint32_t ConfigManager::GetShardCount() {
+inline uint32_t ConfigManager::get_shard_count() {
     if (cm_kv_absent(((*this)).kv)) {
         return static_cast<uint32_t>(0);
     }
@@ -461,13 +461,13 @@ inline uint32_t ConfigManager::GetShardCount() {
     return static_cast<uint32_t>(0);
 }
 
-inline bool ConfigManager::SetShardCount(uint32_t count) {
+inline bool ConfigManager::set_shard_count(uint32_t count) {
     const std::string key = std::string("shard_count");
     const std::string val = std::to_string(std::move(count));
-    return this->PutVersioned(key, val);
+    return this->put_versioned(key, val);
 }
 
-inline std::vector<std::string> ConfigManager::GetShardReplicas(uint32_t shard_id) {
+inline std::vector<std::string> ConfigManager::get_shard_replicas(uint32_t shard_id) {
     std::string value = std::string("");
     if (!cm_kv_absent(((*this)).kv)) {
         const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replicas");
@@ -482,13 +482,13 @@ inline std::vector<std::string> ConfigManager::GetShardReplicas(uint32_t shard_i
     }
 }
 
-inline bool ConfigManager::SetShardReplicas(uint32_t shard_id, const std::vector<std::string>& replicas) {
+inline bool ConfigManager::set_shard_replicas(uint32_t shard_id, const std::vector<std::string>& replicas) {
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replicas");
-    const std::string val = this->JoinReplicas(replicas);
-    return this->PutVersioned(key, val);
+    const std::string val = this->join_replicas(replicas);
+    return this->put_versioned(key, val);
 }
 
-inline std::string ConfigManager::GetShardLeader(uint32_t shard_id) {
+inline std::string ConfigManager::get_shard_leader(uint32_t shard_id) {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -497,12 +497,12 @@ inline std::string ConfigManager::GetShardLeader(uint32_t shard_id) {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline bool ConfigManager::SetShardLeader(uint32_t shard_id, const std::string& leader) {
+inline bool ConfigManager::set_shard_leader(uint32_t shard_id, const std::string& leader) {
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/leader");
-    return this->PutVersioned(key, leader);
+    return this->put_versioned(key, leader);
 }
 
-inline std::string ConfigManager::GetShardStatus(uint32_t shard_id) {
+inline std::string ConfigManager::get_shard_status(uint32_t shard_id) {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -511,18 +511,18 @@ inline std::string ConfigManager::GetShardStatus(uint32_t shard_id) {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline bool ConfigManager::SetShardStatus(uint32_t shard_id, const std::string& status) {
+inline bool ConfigManager::set_shard_status(uint32_t shard_id, const std::string& status) {
     const std::string key = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/status");
-    return this->PutVersioned(key, status);
+    return this->put_versioned(key, status);
 }
 
-inline bool ConfigManager::AddShard(uint32_t shard_id, const std::vector<std::string>& replicas) {
+inline bool ConfigManager::add_shard(uint32_t shard_id, const std::vector<std::string>& replicas) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
-    const uint32_t count = this->GetShardCount();
+    const uint32_t count = this->get_shard_count();
     const std::string rkey = (std::string("shard/") + std::to_string(std::move(shard_id))) + std::string("/replicas");
-    const std::string rval = this->JoinReplicas(replicas);
+    const std::string rval = this->join_replicas(replicas);
     // @unsafe
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(rkey, rval);
@@ -539,15 +539,15 @@ inline bool ConfigManager::AddShard(uint32_t shard_id, const std::vector<std::st
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(ckey, cval);
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 
-inline bool ConfigManager::RemoveShard(uint32_t shard_id) {
+inline bool ConfigManager::remove_shard(uint32_t shard_id) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
-    const uint32_t count = this->GetShardCount();
+    const uint32_t count = this->get_shard_count();
     if (rusty::detail::deref_if_pointer_like(count) == static_cast<uint32_t>(0)) {
         return false;
     }
@@ -572,11 +572,11 @@ inline bool ConfigManager::RemoveShard(uint32_t shard_id) {
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(ckey, cval);
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 
-inline uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
+inline uint32_t ConfigManager::get_shard_replacement(uint32_t shard_id) {
     if (cm_kv_absent(((*this)).kv)) {
         return static_cast<uint32_t>(0);
     }
@@ -589,20 +589,20 @@ inline uint32_t ConfigManager::GetShardReplacement(uint32_t shard_id) {
     return static_cast<uint32_t>(0);
 }
 
-inline bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
+inline bool ConfigManager::kill_shard(uint32_t dead_id, uint32_t taker_id) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
     if (rusty::detail::deref_if_pointer_like(dead_id) == rusty::detail::deref_if_pointer_like(taker_id)) {
         return false;
     }
-    if (this->GetShardStatus(std::move(dead_id)).empty()) {
+    if (this->get_shard_status(std::move(dead_id)).empty()) {
         return false;
     }
-    if (this->GetShardReplicas(std::move(taker_id)).empty()) {
+    if (this->get_shard_replicas(std::move(taker_id)).empty()) {
         return false;
     }
-    const uint64_t epoch = this->GetEpoch() + static_cast<uint64_t>(1);
+    const uint64_t epoch = this->get_epoch() + static_cast<uint64_t>(1);
     const std::string dkey = (std::string("shard/") + std::to_string(std::move(dead_id))) + std::string("/status");
     const std::string dval = std::string("dead");
     // @unsafe
@@ -627,11 +627,11 @@ inline bool ConfigManager::KillShard(uint32_t dead_id, uint32_t taker_id) {
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(ekey, eval);
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 
-inline uint64_t ConfigManager::GetEpoch() {
+inline uint64_t ConfigManager::get_epoch() {
     if (cm_kv_absent(((*this)).kv)) {
         return static_cast<uint64_t>(0);
     }
@@ -644,17 +644,17 @@ inline uint64_t ConfigManager::GetEpoch() {
     return static_cast<uint64_t>(0);
 }
 
-inline bool ConfigManager::AdvanceEpoch() {
+inline bool ConfigManager::advance_epoch() {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
-    const uint64_t epoch = this->GetEpoch() + static_cast<uint64_t>(1);
+    const uint64_t epoch = this->get_epoch() + static_cast<uint64_t>(1);
     const std::string key = std::string("epoch");
     const std::string val = std::to_string(std::move(epoch));
-    return this->PutVersioned(key, val);
+    return this->put_versioned(key, val);
 }
 
-inline std::string ConfigManager::GetNodeAddr(const std::string& site) {
+inline std::string ConfigManager::get_node_addr(const std::string& site) {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -663,12 +663,12 @@ inline std::string ConfigManager::GetNodeAddr(const std::string& site) {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline bool ConfigManager::SetNodeAddr(const std::string& site, const std::string& addr) {
+inline bool ConfigManager::set_node_addr(const std::string& site, const std::string& addr) {
     const std::string key = ((std::string("node/") + site)) + std::string("/addr");
-    return this->PutVersioned(key, addr);
+    return this->put_versioned(key, addr);
 }
 
-inline std::string ConfigManager::GetNodeStatus(const std::string& site) {
+inline std::string ConfigManager::get_node_status(const std::string& site) {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -677,12 +677,12 @@ inline std::string ConfigManager::GetNodeStatus(const std::string& site) {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline bool ConfigManager::SetNodeStatus(const std::string& site, const std::string& status) {
+inline bool ConfigManager::set_node_status(const std::string& site, const std::string& status) {
     const std::string key = ((std::string("node/") + site)) + std::string("/status");
-    return this->PutVersioned(key, status);
+    return this->put_versioned(key, status);
 }
 
-inline std::string ConfigManager::GetShardingMode() {
+inline std::string ConfigManager::get_sharding_mode() {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -691,12 +691,12 @@ inline std::string ConfigManager::GetShardingMode() {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline bool ConfigManager::SetShardingMode(const std::string& mode) {
+inline bool ConfigManager::set_sharding_mode(const std::string& mode) {
     const std::string key = std::string("sharding/mode");
-    return this->PutVersioned(key, mode);
+    return this->put_versioned(key, mode);
 }
 
-inline std::string ConfigManager::GetShardingPolicy(const std::string& table) {
+inline std::string ConfigManager::get_sharding_policy(const std::string& table) {
     if (cm_kv_absent(((*this)).kv)) {
         return std::string("");
     }
@@ -708,7 +708,7 @@ inline std::string ConfigManager::GetShardingPolicy(const std::string& table) {
     return vopt.unwrap_or(std::string(""));
 }
 
-inline std::vector<std::string> ConfigManager::ListShardingPolicyTables() {
+inline std::vector<std::string> ConfigManager::list_sharding_policy_tables() {
     std::string value = std::string("");
     if (!cm_kv_absent(((*this)).kv)) {
         const std::string key = std::string("sharding/policy_tables");
@@ -723,7 +723,7 @@ inline std::vector<std::string> ConfigManager::ListShardingPolicyTables() {
     }
 }
 
-inline bool ConfigManager::SetShardingPolicy(const std::string& table, const std::string& serialized_policy) {
+inline bool ConfigManager::set_sharding_policy(const std::string& table, const std::string& serialized_policy) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
@@ -733,7 +733,7 @@ inline bool ConfigManager::SetShardingPolicy(const std::string& table, const std
     if (((serialized_policy)).empty()) {
         return false;
     }
-    std::vector<std::string> tables = this->ListShardingPolicyTables();
+    std::vector<std::string> tables = this->list_sharding_policy_tables();
     bool present = false;
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < tables.size()) {
@@ -750,24 +750,24 @@ inline bool ConfigManager::SetShardingPolicy(const std::string& table, const std
     if (!present) {
         tables.push_back(table);
         const std::string tkey = std::string("sharding/policy_tables");
-        const std::string tval = this->JoinReplicas(tables);
+        const std::string tval = this->join_replicas(tables);
         // @unsafe
         {
             ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(tkey, tval);
         }
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 
-inline bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
+inline bool ConfigManager::delete_sharding_policy(const std::string& table) {
     if (cm_kv_absent(((*this)).kv)) {
         return false;
     }
     if (((table)).empty()) {
         return false;
     }
-    const std::vector<std::string> tables = this->ListShardingPolicyTables();
+    const std::vector<std::string> tables = this->list_sharding_policy_tables();
     std::vector<std::string> pruned = cm_split_csv(std::string(""));
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < tables.size()) {
@@ -776,7 +776,7 @@ inline bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
         }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
-    if ((pruned.size() == tables.size()) && this->GetShardingPolicy(table).empty()) {
+    if ((pruned.size() == tables.size()) && this->get_sharding_policy(table).empty()) {
         return true;
     }
     const std::string pkey = std::string("sharding/policy/") + table;
@@ -785,12 +785,12 @@ inline bool ConfigManager::DeleteShardingPolicy(const std::string& table) {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).remove(pkey);
     }
     const std::string tkey = std::string("sharding/policy_tables");
-    const std::string tval = this->JoinReplicas(pruned);
+    const std::string tval = this->join_replicas(pruned);
     // @unsafe
     {
         ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(tkey, tval);
     }
-    this->BumpVersion();
+    this->bump_version();
     return true;
 }
 /*RUSTYCPP:GEN-END id=config_manager.1*/

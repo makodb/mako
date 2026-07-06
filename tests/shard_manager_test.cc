@@ -23,7 +23,7 @@ protected:
     ClusterConfig cfg_ = ClusterConfig::new_();                // routing cache reloaded from cm_
     ShardManager mgr_ = ShardManager::new_(&cm_, &cfg_);       // control plane under test
 
-    // Build an n-shard cluster by driving the real AddShard verb (which sets
+    // Build an n-shard cluster by driving the real add_shard verb (which sets
     // replicas + status=active + bumps shard_count).
     void AddShards(uint32_t n) {
         for (uint32_t i = 0; i < n; ++i) {
@@ -55,7 +55,7 @@ protected:
     }
 };
 
-// AddShard grows the cluster and the router spreads keys across every shard.
+// add_shard grows the cluster and the router spreads keys across every shard.
 TEST_F(ShardManagerTest, AddShardsGrowClusterAndRouteAcrossThem) {
     AddShards(3);
     EXPECT_EQ(mgr_.shard_count(), 3u);
@@ -132,7 +132,7 @@ TEST_F(ShardManagerTest, ChainedKillsAdvanceEpoch) {
     EXPECT_TRUE(mgr_.is_shard_alive(1));
 }
 
-// RemoveShard drops a shard from both the config and the manager.
+// remove_shard drops a shard from both the config and the manager.
 TEST_F(ShardManagerTest, RemoveShardShrinksCluster) {
     AddShards(3);
     EXPECT_EQ(mgr_.shard_count(), 3u);
@@ -146,7 +146,7 @@ TEST_F(ShardManagerTest, RemoveShardShrinksCluster) {
 // precondition, so nothing changes.
 TEST_F(ShardManagerTest, KillIntoUnknownTakerIsRejected) {
     AddShards(2);
-    // Taker 9 was never added -> no replicas -> KillShard refuses.
+    // Taker 9 was never added -> no replicas -> kill_shard refuses.
     EXPECT_FALSE(mgr_.kill_shard(1, 9));
     EXPECT_TRUE(mgr_.is_shard_alive(1));
     EXPECT_EQ(mgr_.epoch(), 0u);  // unchanged

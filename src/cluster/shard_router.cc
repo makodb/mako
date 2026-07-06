@@ -33,20 +33,20 @@ namespace mako {
 // (ConfigWatcher has loaded topology from shard 0's __mako_config__) it is
 // the single source of truth for routing — per-table policy, hash-mod
 // default, and dead-shard replacement reroute all live in
-// ClusterConfig::GetShardForKey. Gated on a nonzero shard_count; an empty
+// ClusterConfig::get_shard_for_key. Gated on a nonzero shard_count; an empty
 // ClusterConfig falls through to the legacy ShardingPolicyCache + table-ID
 // path below.
 pub fn compute_shard_for_key(table_id: i32, key: &std::string) -> i32 {
-    if janus::get_cluster_config().GetShardCount() > 0 {
+    if janus::get_cluster_config().get_shard_count() > 0 {
         let mut table_name: std::string = std::string();
         let name_opt: rusty::Option<std::string> =
             get_table_registry().get_table_name(table_id);
         if name_opt.is_some() {
             table_name = name_opt.as_ref().unwrap();
         }
-        // GetShardForKey always yields a valid shard (policy → hash-mod
+        // get_shard_for_key always yields a valid shard (policy → hash-mod
         // fallback), then chases any dead-shard replacement pointer.
-        return janus::get_cluster_config().GetShardForKey(&table_name, key) as i32;
+        return janus::get_cluster_config().get_shard_for_key(&table_name, key) as i32;
     }
 
     // Legacy path: ShardingPolicyCache + table-ID fallback.
@@ -106,20 +106,20 @@ pub fn get_policy_num_shards() -> i32 {
     0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_router.1 version=1 rust_sha256=257a7faf9535f5be7f7ff522abb028df33d02f9cdb42ec113dd51bc2a25a22c5*/
+/*RUSTYCPP:GEN-BEGIN id=shard_router.1 version=1 rust_sha256=986f9e872702b44d7cd427ef3404d58117db3570243631189ea1f6a857a09e76*/
 int32_t compute_shard_for_key(int32_t table_id, const std::string& key);
 int32_t compute_shard_for_key_value(int32_t table_id, const std::string& table_name, int64_t key_value);
 bool has_policy_routing(const std::string& table_name);
 int32_t get_policy_num_shards();
 
 int32_t compute_shard_for_key(int32_t table_id, const std::string& key) {
-    if (janus::get_cluster_config().GetShardCount() > 0) {
+    if (janus::get_cluster_config().get_shard_count() > 0) {
         std::string table_name = std::string();
         const rusty::Option<std::string> name_opt = get_table_registry().get_table_name(std::move(table_id));
         if (name_opt.is_some()) {
             table_name = name_opt.as_ref().unwrap();
         }
-        return static_cast<int32_t>(janus::get_cluster_config().GetShardForKey(table_name, key));
+        return static_cast<int32_t>(janus::get_cluster_config().get_shard_for_key(table_name, key));
     }
     if (janus::get_sharding_policy_cache().is_initialized()) {
         const rusty::Option<std::string> name_opt = get_table_registry().get_table_name(std::move(table_id));

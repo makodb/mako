@@ -19,19 +19,19 @@ namespace janus {
  * version and refreshes a local ClusterConfig when it changes.
  *
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the struct,
- * the Poll() logic, the accessors, AND the thread lifecycle are all the
+ * the poll() logic, the accessors, AND the thread lifecycle are all the
  * `#if RUSTYCPP_RUST` block (regenerate with scripts/regen_storage_dsl.sh).
  * The stop flag + JoinHandle are DSL fields, and the stop-then-join on
  * destruction is a DSL `impl Drop` — the transpiler emits a real
  * ~ConfigWatcher() that runs the drop body (rusty::thread::JoinHandle
- * detaches on drop, so the join must be explicit). Start() spawns the poll
+ * detaches on drop, so the join must be explicit). start() spawns the poll
  * thread inline in the DSL too: `let op: *mut ConfigWatcher = &raw mut *self`
  * recovers `this` as a raw pointer (the DSL otherwise lowers `self` to the
- * object), which a `move ||` closure captures to call op->Poll() until
+ * object), which a `move ||` closure captures to call op->poll() until
  * op->stop. No C++ kernels remain.
  */
 
-struct ConfigWatcher;  // forward (the poll thread calls owner->Poll())
+struct ConfigWatcher;  // forward (the poll thread calls owner->poll())
 
 using CwCallback = rusty::Function<void(const ClusterConfig&)>;
 using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<void>>;
@@ -44,7 +44,7 @@ pub struct ConfigWatcher {
     last_version: u64,
     poll_count: u64,
     update_callback: rusty::Option<CwCallback>,
-    stop: rusty::sync::atomic::AtomicBool,
+    stop_flag: rusty::sync::atomic::AtomicBool,
     running: rusty::sync::atomic::AtomicBool,
     handle: CwJoinHandle,
 }
@@ -59,19 +59,19 @@ impl ConfigWatcher {
             last_version: 0,
             poll_count: 0,
             update_callback: rusty::None,
-            stop: rusty::sync::atomic::AtomicBool::new_(false),
+            stop_flag: rusty::sync::atomic::AtomicBool::new_(false),
             running: rusty::sync::atomic::AtomicBool::new_(false),
             handle: rusty::None,
         }
     }
     // One poll: reload the local ClusterConfig iff the version changed.
-    fn Poll(&mut self) -> bool {
+    fn poll(&mut self) -> bool {
         (*self).poll_count = (*self).poll_count + 1;
-        let current_version: u64 = unsafe { (*(*self).cm).GetVersion() };
+        let current_version: u64 = unsafe { (*(*self).cm).get_version() };
         if current_version == (*self).last_version {
             return false;
         }
-        let ok: bool = unsafe { (*(*self).local_config).LoadFromConfigManager((*self).cm) };
+        let ok: bool = unsafe { (*(*self).local_config).load_from_config_manager((*self).cm) };
         if !ok {
             return false;
         }
@@ -83,59 +83,59 @@ impl ConfigWatcher {
         }
         true
     }
-    // Start the background poll thread (idempotent). The thread captures a
-    // raw pointer to self (stable: Start runs after the watcher is boxed) and
+    // start the background poll thread (idempotent). The thread captures a
+    // raw pointer to self (stable: start runs after the watcher is boxed) and
     // loops until stop is set — the old cw_spawn kernel, now DSL.
-    fn Start(&mut self) {
+    fn start(&mut self) {
         if (*self).running.load() {
             return;
         }
-        (*self).stop.store(false);
+        (*self).stop_flag.store(false);
         (*self).running.store(true);
         let op: *mut ConfigWatcher = &raw mut *self;
         let interval: u64 = (*self).poll_interval_ms;
         (*self).handle = rusty::Some(rusty::thread::spawn(move || {
-            while !unsafe { (*op).stop.load() } {
-                unsafe { (*op).Poll() };
+            while !unsafe { (*op).stop_flag.load() } {
+                unsafe { (*op).poll() };
                 rusty::thread::sleep(std::chrono::milliseconds(interval));
             }
             unsafe { (*op).running.store(false) };
         }));
     }
-    // Stop the thread and join it.
-    fn Stop(&mut self) {
-        (*self).stop.store(true);
+    // stop the thread and join it.
+    fn stop(&mut self) {
+        (*self).stop_flag.store(true);
         if (*self).handle.is_some() {
             (*self).handle.take().unwrap().join();
         }
         (*self).running.store(false);
     }
-    fn SetUpdateCallback(&mut self, cb: CwCallback) {
+    fn set_update_callback(&mut self, cb: CwCallback) {
         (*self).update_callback = rusty::Some(cb);
     }
-    fn IsRunning(&self) -> bool {
+    fn is_running(&self) -> bool {
         (*self).running.load()
     }
-    fn GetLastVersion(&self) -> u64 {
+    fn get_last_version(&self) -> u64 {
         (*self).last_version
     }
-    fn GetPollCount(&self) -> u64 {
+    fn get_poll_count(&self) -> u64 {
         (*self).poll_count
     }
 }
-// Stop-then-join the poll thread on destruction so it never outlives the
+// stop-then-join the poll thread on destruction so it never outlives the
 // watcher. This is the join that used to live in a C++ CwPollThread RAII
 // helper — now a DSL impl Drop (the transpiler emits ~ConfigWatcher()).
 impl Drop for ConfigWatcher {
     fn drop(&mut self) {
-        (*self).stop.store(true);
+        (*self).stop_flag.store(true);
         if (*self).handle.is_some() {
             (*self).handle.take().unwrap().join();
         }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=9ed9b276980be7bc1f10117537a94292b72bb27a83168dce89e9e9a0d4e604c2*/
+/*RUSTYCPP:GEN-BEGIN id=config_watcher.1 version=1 rust_sha256=68fccc9d1df432067443a11cdf5c4346a5acded40eebedef42eb17b6bd7c4432*/
 struct ConfigWatcher;
 
 struct ConfigWatcher {
@@ -145,13 +145,13 @@ struct ConfigWatcher {
     uint64_t last_version;
     uint64_t poll_count;
     rusty::Option<CwCallback> update_callback;
-    rusty::sync::atomic::AtomicBool stop;
+    rusty::sync::atomic::AtomicBool stop_flag;
     rusty::sync::atomic::AtomicBool running;
     CwJoinHandle handle;
     mutable bool _rusty_forgotten = false;
-    ConfigWatcher(ConfigManager* cm_init, ClusterConfig* local_config_init, uint64_t poll_interval_ms_init, uint64_t last_version_init, uint64_t poll_count_init, rusty::Option<CwCallback> update_callback_init, rusty::sync::atomic::AtomicBool stop_init, rusty::sync::atomic::AtomicBool running_init, CwJoinHandle handle_init) : cm(std::move(cm_init)), local_config(std::move(local_config_init)), poll_interval_ms(std::move(poll_interval_ms_init)), last_version(std::move(last_version_init)), poll_count(std::move(poll_count_init)), update_callback(std::move(update_callback_init)), stop(std::move(stop_init)), running(std::move(running_init)), handle(std::move(handle_init)) {}
+    ConfigWatcher(ConfigManager* cm_init, ClusterConfig* local_config_init, uint64_t poll_interval_ms_init, uint64_t last_version_init, uint64_t poll_count_init, rusty::Option<CwCallback> update_callback_init, rusty::sync::atomic::AtomicBool stop_flag_init, rusty::sync::atomic::AtomicBool running_init, CwJoinHandle handle_init) : cm(std::move(cm_init)), local_config(std::move(local_config_init)), poll_interval_ms(std::move(poll_interval_ms_init)), last_version(std::move(last_version_init)), poll_count(std::move(poll_count_init)), update_callback(std::move(update_callback_init)), stop_flag(std::move(stop_flag_init)), running(std::move(running_init)), handle(std::move(handle_init)) {}
     ConfigWatcher(const ConfigWatcher&) = default;
-    ConfigWatcher(ConfigWatcher&& other) noexcept : cm(std::move(other.cm)), local_config(std::move(other.local_config)), poll_interval_ms(std::move(other.poll_interval_ms)), last_version(std::move(other.last_version)), poll_count(std::move(other.poll_count)), update_callback(std::move(other.update_callback)), stop(std::move(other.stop)), running(std::move(other.running)), handle(std::move(other.handle)) {
+    ConfigWatcher(ConfigWatcher&& other) noexcept : cm(std::move(other.cm)), local_config(std::move(other.local_config)), poll_interval_ms(std::move(other.poll_interval_ms)), last_version(std::move(other.last_version)), poll_count(std::move(other.poll_count)), update_callback(std::move(other.update_callback)), stop_flag(std::move(other.stop_flag)), running(std::move(other.running)), handle(std::move(other.handle)) {
         this->_rusty_forgotten = other._rusty_forgotten;
         other._rusty_forgotten = true;
     }
@@ -168,13 +168,13 @@ struct ConfigWatcher {
 
 
     static ConfigWatcher new_(ConfigManager* cm, ClusterConfig* local_config, uint64_t poll_interval_ms);
-    bool Poll();
-    void Start();
-    void Stop();
-    void SetUpdateCallback(CwCallback cb);
-    bool IsRunning() const;
-    uint64_t GetLastVersion() const;
-    uint64_t GetPollCount() const;
+    bool poll();
+    void start();
+    void stop();
+    void set_update_callback(CwCallback cb);
+    bool is_running() const;
+    uint64_t get_last_version() const;
+    uint64_t get_poll_count() const;
     ~ConfigWatcher() noexcept(false);
 };
 
@@ -183,13 +183,13 @@ inline ConfigWatcher ConfigWatcher::new_(ConfigManager* cm, ClusterConfig* local
     return ConfigWatcher(cm, local_config, std::move(poll_interval_ms), static_cast<uint64_t>(0), static_cast<uint64_t>(0), rusty::None, rusty::sync::atomic::AtomicBool::new_(false), rusty::sync::atomic::AtomicBool::new_(false), rusty::None);
 }
 
-inline bool ConfigWatcher::Poll() {
+inline bool ConfigWatcher::poll() {
     ((*this)).poll_count = rusty::detail::deref_if_pointer_like(((*this)).poll_count) + 1;
-    const uint64_t current_version = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).GetVersion();
+    const uint64_t current_version = ((rusty::detail::deref_if_pointer_like(((*this)).cm))).get_version();
     if (rusty::detail::deref_if_pointer_like(current_version) == rusty::detail::deref_if_pointer_like(((*this)).last_version)) {
         return false;
     }
-    const bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).local_config))).LoadFromConfigManager(((*this)).cm);
+    const bool ok = ((rusty::detail::deref_if_pointer_like(((*this)).local_config))).load_from_config_manager(((*this)).cm);
     if (!ok) {
         return false;
     }
@@ -203,19 +203,19 @@ inline bool ConfigWatcher::Poll() {
     return true;
 }
 
-inline void ConfigWatcher::Start() {
+inline void ConfigWatcher::start() {
     if (((*this)).running.load()) {
         return;
     }
-    ((*this)).stop.store(false);
+    ((*this)).stop_flag.store(false);
     ((*this)).running.store(true);
     ConfigWatcher* const op = &(*this);
     const uint64_t interval = ((*this)).poll_interval_ms;
     ((*this)).handle = rusty::Some(rusty::thread::spawn([=, interval = std::move(interval), op = std::move(op)]() mutable {
-while (!(*op).stop.load()) {
+while (!(*op).stop_flag.load()) {
     // @unsafe
     {
-        ((*op)).Poll();
+        ((*op)).poll();
     }
     rusty::thread::sleep(std::chrono::milliseconds(std::move(interval)));
 }
@@ -226,33 +226,33 @@ while (!(*op).stop.load()) {
 }));
 }
 
-inline void ConfigWatcher::Stop() {
-    ((*this)).stop.store(true);
+inline void ConfigWatcher::stop() {
+    ((*this)).stop_flag.store(true);
     if (((*this)).handle.is_some()) {
         ((*this)).handle.take().unwrap().join();
     }
     ((*this)).running.store(false);
 }
 
-inline void ConfigWatcher::SetUpdateCallback(CwCallback cb) {
+inline void ConfigWatcher::set_update_callback(CwCallback cb) {
     ((*this)).update_callback = rusty::Option<CwCallback>(std::move(cb));
 }
 
-inline bool ConfigWatcher::IsRunning() const {
+inline bool ConfigWatcher::is_running() const {
     return ((*this)).running.load();
 }
 
-inline uint64_t ConfigWatcher::GetLastVersion() const {
+inline uint64_t ConfigWatcher::get_last_version() const {
     return ((*this)).last_version;
 }
 
-inline uint64_t ConfigWatcher::GetPollCount() const {
+inline uint64_t ConfigWatcher::get_poll_count() const {
     return ((*this)).poll_count;
 }
 
 inline ConfigWatcher::~ConfigWatcher() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    ((*this)).stop.store(true);
+    ((*this)).stop_flag.store(true);
     if (((*this)).handle.is_some()) {
         ((*this)).handle.take().unwrap().join();
     }

@@ -18,7 +18,7 @@
  *
  * Usage (non-fluent):
  *   auto builder = ShardingPolicyBuilder::new_(num_shards);
- *   auto p = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::byField(0));
+ *   auto p = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
  *   p.add_range(0, 5, 0); p.default_shard = 0;
  *   builder.add_policy(p);
  *   rusty::Result<ShardingPolicySet, std::string> r = builder.build();
@@ -125,7 +125,7 @@ pub fn create_tpcc_sharding_policy(num_warehouses: i32, num_shards: i32)
     let tables: std::vector<std::string> = unsafe { spb_tpcc_tables() };
     let mut t: usize = 0;
     while t < tables.size() {
-        let ext: KeyExtractor = KeyExtractor::byField(0);
+        let ext: KeyExtractor = KeyExtractor::by_field(0);
         let tname: &std::string = &tables[t];
         let mut policy: TableShardingPolicy = TableShardingPolicy::create(tname, &ext);
         let mut s: i32 = 0;
@@ -155,7 +155,7 @@ pub fn create_uniform_sharding_policy(table_name: &std::string, key_field: i32,
     }
     let kps: i64 = (max_key + (num_shards as i64) - 1) / (num_shards as i64);
     let mut builder: ShardingPolicyBuilder = ShardingPolicyBuilder::new(num_shards);
-    let ext: KeyExtractor = KeyExtractor::byField(key_field);
+    let ext: KeyExtractor = KeyExtractor::by_field(key_field);
     let mut policy: TableShardingPolicy = TableShardingPolicy::create(table_name, &ext);
     let mut s: i32 = 0;
     while s < num_shards {
@@ -172,7 +172,7 @@ pub fn create_uniform_sharding_policy(table_name: &std::string, key_field: i32,
     builder.build()
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy_builder.1 version=1 rust_sha256=d0691d4fcdeb78ecd128965e489484199510891cc32012d0a973c7a861a557fe*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_builder.1 version=1 rust_sha256=c54692f9ca4d6ab8096f37ad91352d9f53817f8533984710bb073aaaad653618*/
 struct ShardingPolicyBuilder;
 
 struct ShardingPolicyBuilder {
@@ -194,7 +194,7 @@ rusty::Result<ShardingPolicySet, std::string> create_tpcc_sharding_policy(int32_
     const std::vector<std::string> tables = spb_tpcc_tables();
     size_t t = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(t) < tables.size()) {
-        const KeyExtractor ext = KeyExtractor::byField(0);
+        const KeyExtractor ext = KeyExtractor::by_field(0);
         const std::string& tname = tables[t];
         TableShardingPolicy policy = TableShardingPolicy::create(tname, ext);
         int32_t s = static_cast<int32_t>(0);
@@ -221,7 +221,7 @@ rusty::Result<ShardingPolicySet, std::string> create_uniform_sharding_policy(con
     }
     const int64_t kps = (((rusty::detail::deref_if_pointer_like(max_key) + ((static_cast<int64_t>(num_shards)))) - static_cast<int64_t>(1))) / ((static_cast<int64_t>(num_shards)));
     ShardingPolicyBuilder builder = ShardingPolicyBuilder::new_(std::move(num_shards));
-    const KeyExtractor ext = KeyExtractor::byField(std::move(key_field));
+    const KeyExtractor ext = KeyExtractor::by_field(std::move(key_field));
     TableShardingPolicy policy = TableShardingPolicy::create(table_name, ext);
     int32_t s = static_cast<int32_t>(0);
     while (rusty::detail::deref_if_pointer_like(s) < rusty::detail::deref_if_pointer_like(num_shards)) {

@@ -24,8 +24,8 @@ struct ShardInfo {
 /**
  * ClusterConfig - In-memory read-only cache of the cluster topology.
  *
- * Every node holds a local copy. Provides GetShardForKey() routing.
- * Updated by ConfigWatcher / LoadFromConfigManager.
+ * Every node holds a local copy. Provides get_shard_for_key() routing.
+ * Updated by ConfigWatcher / load_from_config_manager.
  *
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the
  * `#if RUSTYCPP_RUST` block is the source of truth; regenerate with
@@ -38,7 +38,7 @@ struct ShardInfo {
  * hash, dead-shard replacement chase with a cycle guard, big-endian key
  * decode) lives in the kernels too.
  */
-class ConfigManager;  // forward (LoadFromConfigManager reads through it)
+class ConfigManager;  // forward (load_from_config_manager reads through it)
 
 // The guarded state (bare struct; the Mutex is the ClusterConfig field).
 struct ClusterConfigState {
@@ -89,95 +89,95 @@ impl ClusterConfig {
             state: rusty::Mutex::<ClusterConfigState>::default_(),
         }
     }
-    fn LoadFromConfigManager(&mut self, cm: *mut ConfigManager) -> bool {
+    fn load_from_config_manager(&mut self, cm: *mut ConfigManager) -> bool {
         let mut g = (*self).state.lock().unwrap();
         unsafe { cc_load_from_cm((*g), cm) }
     }
-    fn GetShardForKey(&self, table: &std::string, key: &std::string) -> u32 {
+    fn get_shard_for_key(&self, table: &std::string, key: &std::string) -> u32 {
         let g = (*self).state.lock().unwrap();
         unsafe { cc_route((*g), table, key) }
     }
-    fn GetShardForKeyDefault(&self, key: &std::string) -> u32 {
+    fn get_shard_for_key_default(&self, key: &std::string) -> u32 {
         let empty: std::string = std::string("");
-        self.GetShardForKey(&empty, key)
+        self.get_shard_for_key(&empty, key)
     }
-    fn SetTablePolicy(&mut self, table: &std::string, policy: TableShardingPolicy) {
+    fn set_table_policy(&mut self, table: &std::string, policy: TableShardingPolicy) {
         let mut g = (*self).state.lock().unwrap();
         (*g).table_policies.insert(table, policy);
     }
-    fn ClearTablePolicy(&mut self, table: &std::string) {
+    fn clear_table_policy(&mut self, table: &std::string) {
         let mut g = (*self).state.lock().unwrap();
         (*g).table_policies.remove(table);
     }
-    fn HasTablePolicy(&self, table: &std::string) -> bool {
+    fn has_table_policy(&self, table: &std::string) -> bool {
         let g = (*self).state.lock().unwrap();
         (*g).table_policies.contains_key(table)
     }
-    fn GetShardCount(&self) -> u32 {
+    fn get_shard_count(&self) -> u32 {
         let g = (*self).state.lock().unwrap();
         (*g).shard_count
     }
-    fn GetShardReplicas(&self, shard_id: u32) -> std::vector<std::string> {
+    fn get_shard_replicas(&self, shard_id: u32) -> std::vector<std::string> {
         let g = (*self).state.lock().unwrap();
         unsafe { cc_shard_replicas((*g), shard_id) }
     }
-    fn GetShardLeader(&self, shard_id: u32) -> std::string {
+    fn get_shard_leader(&self, shard_id: u32) -> std::string {
         let g = (*self).state.lock().unwrap();
         unsafe { cc_shard_leader((*g), shard_id) }
     }
-    fn GetShardStatus(&self, shard_id: u32) -> std::string {
+    fn get_shard_status(&self, shard_id: u32) -> std::string {
         let g = (*self).state.lock().unwrap();
         unsafe { cc_shard_status((*g), shard_id) }
     }
-    fn GetVersion(&self) -> u64 {
+    fn get_version(&self) -> u64 {
         let g = (*self).state.lock().unwrap();
         (*g).version
     }
-    fn GetEpoch(&self) -> u64 {
+    fn get_epoch(&self) -> u64 {
         let g = (*self).state.lock().unwrap();
         (*g).epoch
     }
-    fn UpdateShard(&mut self, id: u32, info: &ShardInfo) {
+    fn update_shard(&mut self, id: u32, info: &ShardInfo) {
         let mut g = (*self).state.lock().unwrap();
         (*g).shards.insert(id, info);
     }
-    fn SetShardCount(&mut self, count: u32) {
+    fn set_shard_count(&mut self, count: u32) {
         let mut g = (*self).state.lock().unwrap();
         (*g).shard_count = count;
     }
-    fn SetVersion(&mut self, version: u64) {
+    fn set_version(&mut self, version: u64) {
         let mut g = (*self).state.lock().unwrap();
         (*g).version = version;
     }
-    fn SetEpoch(&mut self, epoch: u64) {
+    fn set_epoch(&mut self, epoch: u64) {
         let mut g = (*self).state.lock().unwrap();
         (*g).epoch = epoch;
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=5698fa11a7e5723b9a022ae7c2cd466f2313311e702d0fc54e30f5d6abd4295b*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=74f9e5f747d8354805866ec529132911c9ebd82e2aed38d5ab61cd2dee48f134*/
 struct ClusterConfig;
 
 struct ClusterConfig {
     rusty::Mutex<ClusterConfigState> state;
 
     static ClusterConfig new_();
-    bool LoadFromConfigManager(ConfigManager* cm);
-    uint32_t GetShardForKey(const std::string& table, const std::string& key) const;
-    uint32_t GetShardForKeyDefault(const std::string& key) const;
-    void SetTablePolicy(const std::string& table, TableShardingPolicy policy);
-    void ClearTablePolicy(const std::string& table);
-    bool HasTablePolicy(const std::string& table) const;
-    uint32_t GetShardCount() const;
-    std::vector<std::string> GetShardReplicas(uint32_t shard_id) const;
-    std::string GetShardLeader(uint32_t shard_id) const;
-    std::string GetShardStatus(uint32_t shard_id) const;
-    uint64_t GetVersion() const;
-    uint64_t GetEpoch() const;
-    void UpdateShard(uint32_t id, const ShardInfo& info);
-    void SetShardCount(uint32_t count);
-    void SetVersion(uint64_t version);
-    void SetEpoch(uint64_t epoch);
+    bool load_from_config_manager(ConfigManager* cm);
+    uint32_t get_shard_for_key(const std::string& table, const std::string& key) const;
+    uint32_t get_shard_for_key_default(const std::string& key) const;
+    void set_table_policy(const std::string& table, TableShardingPolicy policy);
+    void clear_table_policy(const std::string& table);
+    bool has_table_policy(const std::string& table) const;
+    uint32_t get_shard_count() const;
+    std::vector<std::string> get_shard_replicas(uint32_t shard_id) const;
+    std::string get_shard_leader(uint32_t shard_id) const;
+    std::string get_shard_status(uint32_t shard_id) const;
+    uint64_t get_version() const;
+    uint64_t get_epoch() const;
+    void update_shard(uint32_t id, const ShardInfo& info);
+    void set_shard_count(uint32_t count);
+    void set_version(uint64_t version);
+    void set_epoch(uint64_t epoch);
 };
 
 
@@ -185,7 +185,7 @@ inline ClusterConfig ClusterConfig::new_() {
     return ClusterConfig{.state = rusty::Mutex<ClusterConfigState>::default_()};
 }
 
-inline bool ClusterConfig::LoadFromConfigManager(ConfigManager* cm) {
+inline bool ClusterConfig::load_from_config_manager(ConfigManager* cm) {
     auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -193,7 +193,7 @@ inline bool ClusterConfig::LoadFromConfigManager(ConfigManager* cm) {
     }
 }
 
-inline uint32_t ClusterConfig::GetShardForKey(const std::string& table, const std::string& key) const {
+inline uint32_t ClusterConfig::get_shard_for_key(const std::string& table, const std::string& key) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -201,32 +201,32 @@ inline uint32_t ClusterConfig::GetShardForKey(const std::string& table, const st
     }
 }
 
-inline uint32_t ClusterConfig::GetShardForKeyDefault(const std::string& key) const {
+inline uint32_t ClusterConfig::get_shard_for_key_default(const std::string& key) const {
     const std::string empty = std::string("");
-    return this->GetShardForKey(empty, key);
+    return this->get_shard_for_key(empty, key);
 }
 
-inline void ClusterConfig::SetTablePolicy(const std::string& table, TableShardingPolicy policy) {
+inline void ClusterConfig::set_table_policy(const std::string& table, TableShardingPolicy policy) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).table_policies.insert(table, std::move(policy));
 }
 
-inline void ClusterConfig::ClearTablePolicy(const std::string& table) {
+inline void ClusterConfig::clear_table_policy(const std::string& table) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).table_policies.remove(table);
 }
 
-inline bool ClusterConfig::HasTablePolicy(const std::string& table) const {
+inline bool ClusterConfig::has_table_policy(const std::string& table) const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).table_policies.contains_key(table);
 }
 
-inline uint32_t ClusterConfig::GetShardCount() const {
+inline uint32_t ClusterConfig::get_shard_count() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).shard_count;
 }
 
-inline std::vector<std::string> ClusterConfig::GetShardReplicas(uint32_t shard_id) const {
+inline std::vector<std::string> ClusterConfig::get_shard_replicas(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -234,7 +234,7 @@ inline std::vector<std::string> ClusterConfig::GetShardReplicas(uint32_t shard_i
     }
 }
 
-inline std::string ClusterConfig::GetShardLeader(uint32_t shard_id) const {
+inline std::string ClusterConfig::get_shard_leader(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -242,7 +242,7 @@ inline std::string ClusterConfig::GetShardLeader(uint32_t shard_id) const {
     }
 }
 
-inline std::string ClusterConfig::GetShardStatus(uint32_t shard_id) const {
+inline std::string ClusterConfig::get_shard_status(uint32_t shard_id) const {
     const auto g = ((*this)).state.lock().unwrap();
     // @unsafe
     {
@@ -250,32 +250,32 @@ inline std::string ClusterConfig::GetShardStatus(uint32_t shard_id) const {
     }
 }
 
-inline uint64_t ClusterConfig::GetVersion() const {
+inline uint64_t ClusterConfig::get_version() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).version;
 }
 
-inline uint64_t ClusterConfig::GetEpoch() const {
+inline uint64_t ClusterConfig::get_epoch() const {
     const auto g = ((*this)).state.lock().unwrap();
     return (rusty::detail::deref_if_pointer_like(g)).epoch;
 }
 
-inline void ClusterConfig::UpdateShard(uint32_t id, const ShardInfo& info) {
+inline void ClusterConfig::update_shard(uint32_t id, const ShardInfo& info) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).shards.insert(std::move(id), std::move(info));
 }
 
-inline void ClusterConfig::SetShardCount(uint32_t count) {
+inline void ClusterConfig::set_shard_count(uint32_t count) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).shard_count = std::move(count);
 }
 
-inline void ClusterConfig::SetVersion(uint64_t version) {
+inline void ClusterConfig::set_version(uint64_t version) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).version = std::move(version);
 }
 
-inline void ClusterConfig::SetEpoch(uint64_t epoch) {
+inline void ClusterConfig::set_epoch(uint64_t epoch) {
     auto g = ((*this)).state.lock().unwrap();
     (rusty::detail::deref_if_pointer_like(g)).epoch = std::move(epoch);
 }

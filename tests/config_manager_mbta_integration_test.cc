@@ -94,20 +94,20 @@ TEST_F(ConfigManagerMbtaTest, ShardLifecycleAndVersioningOnRealMbta) {
     OrderedIndexKvStore kv(make_config_index());
     ConfigManager cm(&kv);
 
-    EXPECT_EQ(cm.GetVersion(), 0u);
-    ASSERT_TRUE(cm.AddShard(0, {"s1", "s2", "s3"}));
-    ASSERT_TRUE(cm.AddShard(1, {"s4", "s5", "s6"}));
-    EXPECT_EQ(cm.GetShardCount(), 2u);
-    EXPECT_EQ(cm.GetShardReplicas(0).size(), 3u);
-    EXPECT_EQ(cm.GetShardReplicas(1)[0], "s4");
+    EXPECT_EQ(cm.get_version(), 0u);
+    ASSERT_TRUE(cm.add_shard(0, {"s1", "s2", "s3"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s4", "s5", "s6"}));
+    EXPECT_EQ(cm.get_shard_count(), 2u);
+    EXPECT_EQ(cm.get_shard_replicas(0).size(), 3u);
+    EXPECT_EQ(cm.get_shard_replicas(1)[0], "s4");
 
-    ASSERT_TRUE(cm.SetShardLeader(0, "s1"));
-    EXPECT_EQ(cm.GetShardLeader(0), "s1");
+    ASSERT_TRUE(cm.set_shard_leader(0, "s1"));
+    EXPECT_EQ(cm.get_shard_leader(0), "s1");
 
-    const uint64_t v = cm.GetVersion();
-    ASSERT_TRUE(cm.AdvanceEpoch());
-    EXPECT_EQ(cm.GetEpoch(), 1u);
-    EXPECT_EQ(cm.GetVersion(), v + 1);
+    const uint64_t v = cm.get_version();
+    ASSERT_TRUE(cm.advance_epoch());
+    EXPECT_EQ(cm.get_epoch(), 1u);
+    EXPECT_EQ(cm.get_version(), v + 1);
 }
 
 TEST_F(ConfigManagerMbtaTest, ShardingPolicyBytesRoundTripOnRealMbta) {
@@ -116,10 +116,10 @@ TEST_F(ConfigManagerMbtaTest, ShardingPolicyBytesRoundTripOnRealMbta) {
 
     static const char kPolicy[] = {'\x00', '\x01', 'p', '\x00', 'q'};
     const std::string bytes(kPolicy, sizeof(kPolicy));
-    ASSERT_TRUE(cm.SetShardingPolicy("WAREHOUSE", bytes));
-    EXPECT_EQ(cm.GetShardingPolicy("WAREHOUSE"), bytes);
+    ASSERT_TRUE(cm.set_sharding_policy("WAREHOUSE", bytes));
+    EXPECT_EQ(cm.get_sharding_policy("WAREHOUSE"), bytes);
 
-    auto tables = cm.ListShardingPolicyTables();
+    auto tables = cm.list_sharding_policy_tables();
     ASSERT_EQ(tables.size(), 1u);
     EXPECT_EQ(tables[0], "WAREHOUSE");
 }
@@ -127,24 +127,24 @@ TEST_F(ConfigManagerMbtaTest, ShardingPolicyBytesRoundTripOnRealMbta) {
 TEST_F(ConfigManagerMbtaTest, ClusterConfigLoadAndKillShardOnRealMbta) {
     OrderedIndexKvStore kv(make_config_index());
     ConfigManager cm(&kv);
-    ASSERT_TRUE(cm.AddShard(0, {"a"}));
-    ASSERT_TRUE(cm.AddShard(1, {"b"}));
+    ASSERT_TRUE(cm.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm.add_shard(1, {"b"}));
 
     ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm));
-    EXPECT_EQ(cc.GetShardCount(), 2u);
+    ASSERT_TRUE(cc.load_from_config_manager(&cm));
+    EXPECT_EQ(cc.get_shard_count(), 2u);
 
     // Find a key that routes to shard 1, then kill 1 -> taker 0.
     std::string probe;
     for (int i = 0; i < 64; ++i) {
         const std::string c = "k" + std::to_string(i);
-        if (cc.GetShardForKeyDefault(c) == 1u) { probe = c; break; }
+        if (cc.get_shard_for_key_default(c) == 1u) { probe = c; break; }
     }
     ASSERT_FALSE(probe.empty());
 
-    ASSERT_TRUE(cm.KillShard(1, 0));
-    ASSERT_TRUE(cc.LoadFromConfigManager(&cm));
-    EXPECT_EQ(cc.GetShardForKeyDefault(probe), 0u)
+    ASSERT_TRUE(cm.kill_shard(1, 0));
+    ASSERT_TRUE(cc.load_from_config_manager(&cm));
+    EXPECT_EQ(cc.get_shard_for_key_default(probe), 0u)
         << "killed shard's keys must reroute to the taker, end to end on mbta";
 }
 

@@ -22,12 +22,12 @@ protected:
         // legacy ShardingPolicyCache path (shard_count 0 disables the
         // ClusterConfig branch). The ClusterConfig routing test opts in
         // explicitly by populating it.
-        janus::get_cluster_config().SetShardCount(0);
+        janus::get_cluster_config().set_shard_count(0);
     }
 
     void TearDown() override {
         get_table_registry().clear();
-        janus::get_cluster_config().SetShardCount(0);
+        janus::get_cluster_config().set_shard_count(0);
     }
 };
 
@@ -137,9 +137,9 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicy) {
     // Create and set policy: 10 warehouses across 2 shards
     // w_id 0-4 → shard 0, w_id 5-9 → shard 1
     auto policy = janus::make_policy_set(2, {
-        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::by_field(0),
                                  {{0, 5, 0}, {5, 10, 1}}, 0),
-        janus::make_table_policy("DISTRICT", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("DISTRICT", janus::KeyExtractor::by_field(0),
                                  {{0, 5, 0}, {5, 10, 1}}, 0),
     });
 
@@ -174,7 +174,7 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicyKeyValue) {
 
     // Create and set policy
     auto policy = janus::make_policy_set(3, {
-        janus::make_table_policy("STOCK", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("STOCK", janus::KeyExtractor::by_field(0),
                                  {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}, 0),
     });
 
@@ -198,7 +198,7 @@ TEST_F(ShardRouterTest, ComputeShardUnknownTableFallsBack) {
 
     // Create policy for WAREHOUSE only
     auto policy = janus::make_policy_set(2, {
-        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::by_field(0),
                                  {{0, 5, 0}, {5, 10, 1}}),
     });
 
@@ -214,7 +214,7 @@ TEST_F(ShardRouterTest, HasPolicyRouting) {
 
     // Set policy with a unique table name for this test
     auto policy = janus::make_policy_set(2, {
-        janus::make_table_policy("HAS_POLICY_TEST_TABLE", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("HAS_POLICY_TEST_TABLE", janus::KeyExtractor::by_field(0),
                                  {{0, 10, 0}}),
     });
 
@@ -229,7 +229,7 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
 
     // Set policy with 4 shards
     auto policy = janus::make_policy_set(4, {
-        janus::make_table_policy("TEST", janus::KeyExtractor::byField(0),
+        janus::make_table_policy("TEST", janus::KeyExtractor::by_field(0),
                                  {{0, 10, 0}}),
     });
 
@@ -246,9 +246,9 @@ TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigWhenPopulated) {
     get_table_registry().register_table(1, "WAREHOUSE");
 
     auto& cc = janus::get_cluster_config();
-    cc.SetShardCount(2);
-    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.UpdateShard(0, s0);
-    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.UpdateShard(1, s1);
+    cc.set_shard_count(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
 
     // With ClusterConfig populated, compute_shard_for_key routes through
     // it (hash-mod default here — no per-table policy). Stable + in range.
@@ -263,9 +263,9 @@ TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig)
     get_table_registry().register_table(1, "WAREHOUSE");
 
     auto& cc = janus::get_cluster_config();
-    cc.SetShardCount(2);
-    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.UpdateShard(0, s0);
-    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.UpdateShard(1, s1);
+    cc.set_shard_count(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
 
     // Find a key that routes to shard 1.
     std::string probe;
@@ -277,7 +277,7 @@ TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig)
 
     // Kill shard 1 -> taker 0. The router must reroute the probe key.
     janus::ShardInfo dead; dead.id = 1; dead.status = "dead"; dead.replacement = 0;
-    cc.UpdateShard(1, dead);
+    cc.update_shard(1, dead);
     EXPECT_EQ(compute_shard_for_key(1, probe), 0);
 }
 
@@ -285,7 +285,7 @@ TEST_F(ShardRouterTest, EmptyClusterConfigFallsBackToLegacyPath) {
     // With an empty ClusterConfig (shard_count 0), routing must use the
     // legacy table-ID fallback, unchanged from before this wiring.
     // Table 1 with no policy -> (1-1)/NUM_TABLES_PER_SHARD == 0.
-    EXPECT_EQ(0u, janus::get_cluster_config().GetShardCount());
+    EXPECT_EQ(0u, janus::get_cluster_config().get_shard_count());
     EXPECT_EQ(compute_shard_for_key(1, "anykey"),
               (1 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD);
 }
