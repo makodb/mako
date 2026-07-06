@@ -22,6 +22,17 @@
 
 namespace janus {
 
+// @safe - FNV-1a 64-bit hash of a byte string; the building block for a range
+// checksum. Kept as a small C++ kernel (byte loop over raw bytes).
+inline uint64_t sh_hash64(const std::string& s) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < s.size(); ++i) {
+        h ^= static_cast<uint8_t>(s[i]);
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
 #if RUSTYCPP_RUST
 // A key range [lo, hi) a shard is in charge of.
 pub struct ShardRange {
@@ -54,7 +65,8 @@ inline ShardRange ShardRange::make(std::string lo, std::string hi) {
 pub struct Shard {
     shard_id: u32,   // not `id`: a field named the same as the id() method clashes
     alive: bool,
-    data: btree_port::BTreeMap<std::string, std::string>,
+    data: btree_port::BTreeMap<std::string, std::string>,      // live key -> value
+    tombstones: btree_port::BTreeMap<std::string, bool>,       // deleted keys (a "null write")
     // ---- participant-side metadata: what this shard is in charge of, and its
     // local view of any in-flight migration for one of its ranges ----
     owned: rusty::Vec<ShardRange>,   // ranges this shard is responsible for
@@ -72,6 +84,7 @@ impl Shard {
             shard_id: id,
             alive: true,
             data: btree_port::BTreeMap::<std::string, std::string>::new_(),
+            tombstones: btree_port::BTreeMap::<std::string, bool>::new_(),
             owned: rusty::Vec::<ShardRange>::new_(),
             mig_active: false,
             mig_lo: std::string(""),
@@ -88,18 +101,26 @@ impl Shard {
     fn contains(&self, key: &std::string) -> bool {
         (*self).data.contains_key(key)
     }
-    // Store a value (blind overwrite).
+    // Store a value (blind overwrite). A live write clears any prior tombstone.
     fn put(&mut self, key: &std::string, value: &std::string) {
         (*self).data.insert(key, value);
+        (*self).tombstones.remove(key);
     }
-    // Read a value, or None on miss.
+    // Read a value, or None on miss (a tombstoned key is absent from `data`).
     fn get(&self, key: &std::string) -> rusty::Option<std::string> {
         let found = (*self).data.get(key);
         if found.is_none() { return rusty::None; }
         rusty::Some(std::string(found.unwrap().get()))
     }
+    // Delete = a "null write": drop the live value and record a tombstone, so
+    // the deletion is a positive fact that copies + checksums like any write.
     fn remove(&mut self, key: &std::string) {
         (*self).data.remove(key);
+        (*self).tombstones.insert(key, true);
+    }
+    // True iff `key` is currently tombstoned (deleted) on this shard.
+    fn is_tombstoned(&self, key: &std::string) -> bool {
+        (*self).tombstones.contains_key(key)
     }
     // Take over another shard's entire dataset (data migration on kill_shard),
     // leaving `other` empty. Stand-in for a masstree range hand-off. `other`
@@ -130,10 +151,19 @@ impl Shard {
                     (*self).data.insert(k, v);
                 }
             }
+            // Carry the source's tombstones too, so a deletion transmits (the
+            // destination learns the key is gone, not just "not copied").
+            for tk in (*source).tombstones {
+                if tk.first >= (*lo) && tk.first < (*hi) {
+                    let tkk: std::string = tk.first;
+                    (*self).data.remove(tkk);
+                    (*self).tombstones.insert(tkk, true);
+                }
+            }
         }
     }
-    // Drop the keys in [lo, hi) (the source sheds the range after COMMIT).
-    // Collect-then-remove: cannot mutate the map mid-iteration.
+    // Drop the keys in [lo, hi) -- live AND tombstoned (the source sheds the
+    // range after COMMIT). Collect-then-remove: cannot mutate mid-iteration.
     fn drop_range(&mut self, lo: &std::string, hi: &std::string) {
         let mut victims: rusty::Vec<std::string> = rusty::Vec::<std::string>::new_();
         for kv in (*self).data {
@@ -146,6 +176,17 @@ impl Shard {
             (*self).data.remove(victims[i]);
             i = i + 1;
         }
+        let mut tvictims: rusty::Vec<std::string> = rusty::Vec::<std::string>::new_();
+        for tk in (*self).tombstones {
+            if tk.first >= (*lo) && tk.first < (*hi) {
+                tvictims.push(tk.first);
+            }
+        }
+        let mut j: usize = 0;
+        while j < tvictims.size() {
+            (*self).tombstones.remove(tvictims[j]);
+            j = j + 1;
+        }
     }
     // How many keys this shard holds in [lo, hi) (test observability).
     fn range_count(&self, lo: &std::string, hi: &std::string) -> usize {
@@ -156,6 +197,26 @@ impl Shard {
             }
         }
         n
+    }
+    // Order-independent checksum over the range's live entries AND tombstones.
+    // Two shards agree iff they hold exactly the same key->value pairs and the
+    // same set of deletions -- the migration's cutover verification.
+    fn checksum(&self, lo: &std::string, hi: &std::string) -> u64 {
+        let mut sum: u64 = 0;
+        for kv in (*self).data {
+            if kv.first >= (*lo) && kv.first < (*hi) {
+                let kh: u64 = unsafe { sh_hash64(&kv.first) };
+                let vh: u64 = unsafe { sh_hash64(&kv.second) };
+                sum = sum + (kh * 1000003) + vh;
+            }
+        }
+        for tk in (*self).tombstones {
+            if tk.first >= (*lo) && tk.first < (*hi) {
+                let th: u64 = unsafe { sh_hash64(&tk.first) };
+                sum = sum + (th * 2000029) + 1;
+            }
+        }
+        sum
     }
     // ---- ownership metadata -------------------------------------------------
     // The master tells the shard it is now in charge of [lo, hi).
@@ -221,13 +282,14 @@ impl Shard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=370a11a38440f4c10ae7dba0405cf5941b0cacd13a66557016e4868e428bceae*/
+/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=4c5aa0560586ec7a1984f848176c54d236328d37894f74d92b5c34d5d29632d3*/
 struct Shard;
 
 struct Shard {
     uint32_t shard_id;
     bool alive;
     btree_port::BTreeMap<std::string, std::string> data;
+    btree_port::BTreeMap<std::string, bool> tombstones;
     rusty::Vec<ShardRange> owned;
     bool mig_active;
     std::string mig_lo;
@@ -245,10 +307,12 @@ struct Shard {
     void put(const std::string& key, const std::string& value);
     rusty::Option<std::string> get(const std::string& key) const;
     void remove(const std::string& key);
+    bool is_tombstoned(const std::string& key) const;
     void absorb(Shard* other);
     void copy_range_from(Shard* source, const std::string& lo, const std::string& hi);
     void drop_range(const std::string& lo, const std::string& hi);
     size_t range_count(const std::string& lo, const std::string& hi) const;
+    uint64_t checksum(const std::string& lo, const std::string& hi) const;
     void assign_range(const std::string& lo, const std::string& hi);
     void unassign_range(const std::string& lo, const std::string& hi);
     bool owns(const std::string& key) const;
@@ -265,7 +329,7 @@ struct Shard {
 
 
 inline Shard Shard::new_(uint32_t id) {
-    return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_(), .owned = rusty::Vec<ShardRange>::new_(), .mig_active = false, .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_is_source = false, .mig_locked = false, .mig_gen = static_cast<uint64_t>(0)};
+    return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_(), .tombstones = btree_port::BTreeMap<std::string, bool>::new_(), .owned = rusty::Vec<ShardRange>::new_(), .mig_active = false, .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_is_source = false, .mig_locked = false, .mig_gen = static_cast<uint64_t>(0)};
 }
 
 inline uint32_t Shard::id() const {
@@ -290,6 +354,7 @@ inline bool Shard::contains(const std::string& key) const {
 
 inline void Shard::put(const std::string& key, const std::string& value) {
     ((*this)).data.insert(key, std::move(value));
+    ((*this)).tombstones.remove(key);
 }
 
 inline rusty::Option<std::string> Shard::get(const std::string& key) const {
@@ -302,6 +367,11 @@ inline rusty::Option<std::string> Shard::get(const std::string& key) const {
 
 inline void Shard::remove(const std::string& key) {
     ((*this)).data.remove(key);
+    ((*this)).tombstones.insert(key, true);
+}
+
+inline bool Shard::is_tombstoned(const std::string& key) const {
+    return ((*this)).tombstones.contains_key(key);
 }
 
 inline void Shard::absorb(Shard* other) {
@@ -324,6 +394,13 @@ inline void Shard::copy_range_from(Shard* source, const std::string& lo, const s
                 ((*this)).data.insert(std::move(k), std::move(v));
             }
         }
+        for (auto&& tk : rusty::for_in((*source).tombstones)) {
+            if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
+                const std::string tkk = tk.first;
+                ((*this)).data.remove(tkk);
+                ((*this)).tombstones.insert(std::move(tkk), true);
+            }
+        }
     }
 }
 
@@ -339,6 +416,17 @@ inline void Shard::drop_range(const std::string& lo, const std::string& hi) {
         ((*this)).data.remove(victims[i]);
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
+    rusty::Vec<std::string> tvictims = rusty::Vec<std::string>::new_();
+    for (auto&& tk : rusty::for_in(((*this)).tombstones)) {
+        if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
+            tvictims.push(std::move(tk.first));
+        }
+    }
+    size_t j = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(j) < tvictims.size()) {
+        ((*this)).tombstones.remove(tvictims[j]);
+        j = rusty::detail::deref_if_pointer_like(j) + static_cast<size_t>(1);
+    }
 }
 
 inline size_t Shard::range_count(const std::string& lo, const std::string& hi) const {
@@ -349,6 +437,24 @@ inline size_t Shard::range_count(const std::string& lo, const std::string& hi) c
         }
     }
     return std::move(n);
+}
+
+inline uint64_t Shard::checksum(const std::string& lo, const std::string& hi) const {
+    uint64_t sum = static_cast<uint64_t>(0);
+    for (auto&& kv : rusty::for_in(((*this)).data)) {
+        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
+            const uint64_t kh = sh_hash64(kv.first);
+            const uint64_t vh = sh_hash64(kv.second);
+            sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(kh) * static_cast<uint64_t>(1000003)))) + rusty::detail::deref_if_pointer_like(vh);
+        }
+    }
+    for (auto&& tk : rusty::for_in(((*this)).tombstones)) {
+        if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
+            const uint64_t th = sh_hash64(tk.first);
+            sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(th) * static_cast<uint64_t>(2000029)))) + static_cast<uint64_t>(1);
+        }
+    }
+    return std::move(sum);
 }
 
 inline void Shard::assign_range(const std::string& lo, const std::string& hi) {

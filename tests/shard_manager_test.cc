@@ -630,5 +630,75 @@ TEST_F(ShardManagerTest, MigrationTransmitsExactBytes) {
     EXPECT_EQ(mgr_.range_key_count(1, lo, hi), 0u);
 }
 
+// ===========================================================================
+// Delete-as-tombstone transmission + checksum-gated 2PC commit.
+// ===========================================================================
+
+// A key deleted DURING the copy transmits to the destination (as a tombstone),
+// so the destination doesn't keep a key the source deleted.
+TEST_F(ShardManagerTest, DeleteDuringCopyTransmitsAsTombstone) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m1", "a");
+    mgr_.put_direct(1, "m2", "b");
+    mgr_.put_direct(1, "m3", "c");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();                     // dest snapshots m1,m2,m3
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 3u);
+
+    mgr_.remove("m2");                          // delete AFTER the snapshot
+    EXPECT_TRUE(mgr_.get("m2").is_none());      // gone on the source
+
+    mgr_.lock_range();
+    mgr_.final_sync();                          // ships the tombstone to the dest
+    ASSERT_TRUE(mgr_.commit_migration());       // checksums matched (both hold the tombstone)
+
+    EXPECT_TRUE(mgr_.get("m2").is_none());              // gone on the destination too
+    EXPECT_TRUE(mgr_.shard_is_tombstoned(2, "m2"));     // ...as a recorded tombstone
+    EXPECT_EQ(mgr_.range_key_count(2, lo, hi), 2u);     // m1, m3 remain live
+    { auto r = mgr_.get("m1"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "a"); }
+    { auto r = mgr_.get("m3"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "c"); }
+}
+
+// After a faithful snapshot the source and destination range checksums agree.
+TEST_F(ShardManagerTest, ChecksumsMatchAfterCleanCopy) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    for (int i = 0; i < 20; ++i) {
+        mgr_.put_direct(1, "m" + std::to_string(i), "v" + std::to_string(i));
+    }
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+    EXPECT_EQ(mgr_.shard_range_checksum(1, lo, hi), mgr_.shard_range_checksum(2, lo, hi));
+    EXPECT_NE(mgr_.shard_range_checksum(1, lo, hi), 0u);  // non-trivial checksum
+}
+
+// If the destination's copy diverges from the source (a lost/garbled
+// transmission), the checksums differ, the destination cannot vote prepared,
+// commit is refused, and the master aborts -- the source keeps the truth.
+TEST_F(ShardManagerTest, ChecksumMismatchRefusesCommitAndAborts) {
+    AddShards(3);
+    const std::string lo = "m", hi = "t";
+    mgr_.put_direct(1, "m1", "a");
+    mgr_.put_direct(1, "m2", "b");
+
+    ASSERT_TRUE(mgr_.begin_migration(1, 2, lo, hi));
+    mgr_.background_copy();
+
+    // Corrupt a snapshot key on the destination that the delta won't overwrite.
+    mgr_.put_direct(2, "m1", "CORRUPT");
+
+    mgr_.lock_range();
+    mgr_.final_sync();                          // no delta fixes m1 -> checksums differ
+    EXPECT_NE(mgr_.shard_range_checksum(1, lo, hi), mgr_.shard_range_checksum(2, lo, hi));
+    EXPECT_FALSE(mgr_.both_prepared());         // dest could not verify -> no vote
+    EXPECT_FALSE(mgr_.commit_migration());      // commit refused
+
+    mgr_.abort_migration();                     // master aborts on the mismatch
+    { auto r = mgr_.get("m1"); ASSERT_TRUE(r.is_some()); EXPECT_EQ(r.unwrap(), "a"); }  // source truth
+    EXPECT_EQ(mgr_.route("m1"), 1u);            // never migrated
+}
+
 }  // namespace
 }  // namespace janus
