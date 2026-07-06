@@ -229,12 +229,13 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 |-------------|-------|-------------|
 | `__version__` | uint64 | Monotonically increasing config version |
 | `shard_count` | uint32 | Total shard count |
+| `bucket_count` | uint32 | Fixed hash-slot count for the consistent-hashing strategy — set once at cluster creation, never changes |
 | `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
 | `shard/<id>/leader` | string | Current leader site name |
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
 | `epoch` | uint64 | Global speculative epoch number (all shards converge to this) |
 | `shard/<id>/replacement` | uint32 | For `status=dead`: taker shard whose Raft group inherits routing that would hash to this shard. Chased transitively with a cycle guard. |
-| `sharding/mode` | string | `hash` (default) or `range` — the routing mode Path A of `GetShardForKey` uses when no per-table policy is registered |
+| `sharding/mode` | string | `hash` (default) or `range` — the routing mode Path A of `get_shard_for_key` uses when no per-table policy is registered |
 | `sharding/policy/<table>` | bytes | Serialized `TableShardingPolicy` for one table — its `KeyExtractor` plus a sorted vector of `RangeMapping`s. Absence means "fall back to `sharding/mode`". |
 | `node/<site>/addr` | string | Node address (`ip:port`) |
 | `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
@@ -243,9 +244,9 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 
 ### Key Components
 
-**ConfigManager**: Typed configuration over a `KvStore` port (`get`/`put`/`remove`), not a bespoke store. Provides methods like `GetShardReplicas()`, `AddShard()`, `SetShardLeader()`, `AdvanceEpoch()`. Every write increments `__version__` (written last). On shard 0's leader the port binds to the unified `FullOrderedIndex` — the `__mako_config__` system table — via the `OrderedIndexKvStore` adapter; other nodes bind a `RemoteKvStore` that reads shard 0 over RPC; unit tests bind an in-memory fake. The port keeps `cluster/` standalone-testable with no storage-engine dependency (see [The Storage Interface](storage-interface.md#cluster-metadata-port-srcclusterkv_storeh)).
+**ConfigManager**: Typed configuration over a `KvStore` port (`get`/`put`/`remove`), not a bespoke store. Provides methods like `get_shard_replicas()`, `add_shard()`, `set_shard_leader()`, `advance_epoch()`. Every write increments `__version__` (written last). On shard 0's leader the port binds to the unified `FullOrderedIndex` — the `__mako_config__` system table — via the `OrderedIndexKvStore` adapter; other nodes bind a `RemoteKvStore` that reads shard 0 over RPC; unit tests bind an in-memory fake. The port keeps `cluster/` standalone-testable with no storage-engine dependency (see [The Storage Interface](storage-interface.md#cluster-metadata-port-srcclusterkv_storeh)).
 
-**ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `GetShardForKey()` routing helper.
+**ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `get_shard_for_key()` routing helper.
 
 **ConfigWatcher**: Background fiber on non-master shards. Polls shard 0's `__version__` key periodically (default: 1 second). On version change, fetches the full `ClusterConfig` and invokes a callback to update local routing.
 
@@ -266,7 +267,7 @@ Both sides then run a `ConfigWatcher` that keeps the local `janus::get_cluster_c
 
 All config changes are regular transactions on shard 0:
 
-1. Admin calls `ConfigManager::AddShard(id, replicas)`.
+1. Admin calls `ConfigManager::add_shard(id, replicas)`.
 2. ConfigManager begins a transaction, writes `shard/<id>/replicas`, increments `shard_count` and `__version__`.
 3. Transaction commits (replicated via Raft).
 4. ConfigWatcher on other shards detects the version bump, fetches the new config.
@@ -276,24 +277,31 @@ All config changes are regular transactions on shard 0:
 
 The Configuration Manager is the authority on how the key space is divided among shards. Two strategies are supported:
 
-**Hash-based** (default): `shard_id = hash(key) % shard_count`. Even distribution, no range queries across shards.
+**Lex-order ranges** (default): each shard owns a contiguous slice of the raw key space in lexicographic order, `[start_key, end_key) → shard`. This is the natural partitioning for an ordered store (Masstree) — it keeps range scans shard-local. The range→shard assignment *is* the sharding policy (below); publishing a new assignment triggers a rebalance.
 
-**Range-based**: Each shard owns a contiguous key range `[range_start, range_end)`. Supports efficient range scans. Stored as `shard/<id>/range_start` and `shard/<id>/range_end` in the config table.
+**Consistent hashing** (second strategy): for workloads that want even spread without range locality. Crucially this is **not** `hash(key) % shard_count` — dividing by the live shard count remaps the *entire* key space every time the cluster grows or shrinks (which is exactly why a naive `remove_shard` that decrements the count would reshuffle everything). Instead:
 
-Every node caches the shard map via `ClusterConfig::GetShardForKey()` for routing.
+1. `bucket = hash(key) % bucket_count`, where `bucket_count` is **fixed once at cluster creation and never changes** (a fixed slot space, à la Redis Cluster's 16384 hash slots).
+2. Each shard is placed on a hash ring at `hash(shard_id)` positions; a bucket is owned by the shard that succeeds it on the ring.
+
+Because `key → bucket` is frozen, only the `bucket → shard` map moves on a membership change, and consistent hashing bounds that to ≈`bucket_count / N` buckets — never a full reshuffle. Adding or removing a shard migrates only its arc of the ring.
+
+Every node caches the shard map via `ClusterConfig::get_shard_for_key()` for routing.
+
+> **Current vs target.** The routing described here is the target model. The code today still takes the naive `hash(key) % shard_count` path when no per-table policy is registered (`cc_route`, `src/cluster/cluster_config.cc`), and range policies are keyed on an *extracted int64* (via `KeyExtractor`, below) rather than raw-key lex order. The fixed-`bucket_count` ring and the raw-key lex default are not yet built.
 
 #### Key Extractors
 
-For range-based sharding, the policy doesn't operate on the raw row key directly — it operates on an *extracted* sharding key. `KeyExtractor` (`src/deptran/sharding_policy.h:46`) supports three strategies:
+For range-based sharding, the policy doesn't operate on the raw row key directly — it operates on an *extracted* sharding key. `KeyExtractor` (`src/cluster/sharding_policy.h:46`) supports three strategies:
 
 - **`FIELD_INDEX`** — extract the *n*th field from a composite key. TPC-C uses this: `w_id` is field 0 of every table that's keyed off a warehouse.
 - **`PREFIX_BYTES`** — read the first N bytes as a big-endian int64.
 - **`HASH_MOD`** — hash the whole key, mod `num_shards`. Used as the default fallback.
 
-A `TableShardingPolicy` holds a sorted `vector<RangeMapping>` (each `[start_key, end_key) → shard_id`) and looks up shards via binary search (`src/deptran/sharding_policy.h:152`). Policies are built at startup with a fluent builder:
+A `TableShardingPolicy` holds a sorted `vector<RangeMapping>` (each `[start_key, end_key) → shard_id`) and looks up shards via binary search (`src/cluster/sharding_policy.h:152`). Policies are built at startup with a fluent builder:
 
 ```cpp
-// From src/deptran/sharding_policy_builder.h
+// From src/cluster/sharding_policy_builder.h
 ShardingPolicyBuilder(num_shards)
     .table("WAREHOUSE").shardByField(0)
         .addRange(0, 5, 0).addRange(5, 10, 1);
@@ -329,39 +337,67 @@ Two mechanisms keep every node's routing table converging on the current policy.
 
 This is the "moved, retry" pattern from the resharding survey (`docs/reference/resharding-survey.md`), specifically the YugabyteDB flavor: the routing state is authoritative on shard 0, but every actor can independently detect its own staleness without needing a broadcast. Together with 1-second polling, a torn cluster reconverges in worst-case one RTT of the client's next request.
 
-#### Admin RPCs: kill_shard, merge_shard, split_shard, add_shard, remove_shard
+#### Master API: the shardmaster commands
 
-Cluster-lifecycle changes are exposed as RPCs on **every shard**, not just shard 0. A client (or an operator's admin CLI) can call `KillShard(dead, taker)` on any node without knowing which shard is the master:
+Cluster-lifecycle changes are exposed as RPCs on **every shard**, not just shard 0, so a client (or an operator's admin CLI) can issue them on any node without knowing which shard is the master:
 
-- **Non-shard-0 nodes** implement the RPC as a **forwarder**: they hold a client connection to shard 0's current leader and re-issue the RPC there. Return values propagate straight back.
-- **Shard 0's leader** implements the RPC as the actual mutation: it invokes `ConfigManager::KillShard(dead, taker)` (or the analogous method) which writes the atomic Raft batch to `__mako_config__`. Every write bumps `__version__`, which every other node's `ConfigWatcher` will pick up.
+- **Non-shard-0 nodes** implement each RPC as a **forwarder**: they hold a client connection to shard 0's current leader and re-issue the RPC there. Return values propagate straight back.
+- **Shard 0's leader** implements the RPC as the actual mutation — it invokes the corresponding `ConfigManager` verb, which writes the atomic Raft batch to `__mako_config__`. Every write bumps `__version__`, which every other node's `ConfigWatcher` picks up.
 
-The admin surface is:
+The command surface (✅ implemented today · 🟡 partial · ⬜ not yet built):
 
-| RPC | Effect |
-|---|---|
-| `KillShard(dead, taker)` | Non-durable shard failure handoff. Flips `shard/<dead>/status` to `dead`, sets `shard/<dead>/replacement = taker`, clears replicas, advances epoch. Ongoing writes for the dead shard's key range get routed to `taker` on next resolution. Implemented today; see `src/cluster/config_manager.cc`. |
-| `AddShard(id, replicas)` | Registers a new shard with an initial replica set. Bumps `shard_count`. Implemented today. |
-| `RemoveShard(id)` | Removes a shard cleanly (assumes its range is already empty or has been drained). Implemented today. |
-| `SplitShard(source_id, split_key, dest_id)` | Splits `source_id`'s key range at `split_key`; the upper half becomes `dest_id`. Not yet implemented — corresponds to the Path 1 metadata-only split in the resharding survey. |
-| `MergeShard(a_id, b_id)` | Merges two adjacent shards. Not yet implemented. |
-| `SetShardingPolicy(table, policy)` | Publishes a new `TableShardingPolicy` for one table. Bumps `__version__`, triggering everyone else's `ConfigWatcher` to refresh. |
+**Membership & lifecycle**
 
-Any admin RPC that mutates the shard map advances `__version__` as part of the same atomic batch. This is the single knob that drives cache invalidation across the cluster.
+| Command | Effect | Status |
+|---|---|---|
+| `add_shard(id, replicas)` | Register a new shard (replica set, `status=active`, bump `shard_count`). | ✅ |
+| `kill_shard(dead, taker)` | **Brutal** failure handoff (the shard is usually dead): set `status=dead`, `replacement=taker`, clear replicas, advance epoch. The dead shard's range reroutes to `taker`; its data is recovered from replicas, not migrated. `shard_count` is left unchanged so only the dead shard's keys move. | ✅ |
+| `remove_shard(id)` | **Gentle** decommission: drain the shard's data onto the other shards *first*, then delete it and shrink the cluster. | 🟡 metadata-only delete today; the drain is not yet wired |
+| `drain_shard(id)` | Rebalance a shard's ranges/buckets onto the remaining shards without removing it. | ⬜ |
+| `revive_shard(id, replicas)` | Promote a dead shard's replacement back to a first-class shard. | ⬜ |
+| `split_shard(source, split_key, dest)` | Split `source`'s range at `split_key`; the upper half becomes `dest`. | ⬜ |
+| `merge_shard(a, b)` | Merge two adjacent shards into one. | ⬜ |
+
+**Placement & policy**
+
+| Command | Effect | Status |
+|---|---|---|
+| `set_sharding_policy(table, assignment)` | Publish a table's `[range) → shard` (or `bucket → shard`) assignment. **Triggers a rebalance** — the affected partitions migrate to match — and bumps `__version__`. | 🟡 stores the policy today; the migration is not yet wired |
+| `get_sharding_policy(table)` · `list_sharding_policy_tables()` · `delete_sharding_policy(table)` | Read / list / drop per-table policies. | ✅ |
+| `set_sharding_mode(lex \| hash)` | Select the default strategy for tables with no policy. | ✅ |
+| `move_range(table, range, from, to)` · `move_bucket(bucket, to)` | Move a single partition between shards — the migration primitive `remove_shard`/`rebalance` build on. | ⬜ |
+| `rebalance()` | Even out ranges/buckets across shards after a membership change. | ⬜ |
+
+**Replica set, leadership & epoch**
+
+| Command | Effect | Status |
+|---|---|---|
+| `set_shard_replicas(id, replicas)` · `set_shard_leader(id, site)` · `set_shard_status(id, status)` | Manage a shard's replica set, Raft/Paxos leader, and lifecycle status. | ✅ |
+| `advance_epoch()` | Bump the global speculative epoch (a speculation barrier; see below). | ✅ |
+| `set_node_addr(site, addr)` · `set_node_status(site, status)` | Physical node registry. | ✅ |
+
+**Read plane (queries)**
+
+| Command | Effect | Status |
+|---|---|---|
+| `get_version()` | Current config version — clients poll it to invalidate their routing cache. | ✅ |
+| `get_shard_count()` · `get_shard_replicas(id)` · `get_shard_leader(id)` · `get_shard_status(id)` · `get_shard_replacement(id)` | Per-shard topology reads. | ✅ |
+
+Any command that mutates the shard map advances `__version__` in the same atomic batch — the single knob that drives cache invalidation across the cluster. `kill_shard` is the *brutal* verb (a shard died, reassign its range, don't move data); `remove_shard` is the *gentle* one (drain data out, then remove) — see [Resharding](#resharding-2pc-style) for how the migration runs.
 
 #### Routing implementation
 
-The router lives entirely inside `ClusterConfig`. `ClusterConfig::GetShardForKey(table, key)`:
+The router lives entirely inside `ClusterConfig`. `ClusterConfig::get_shard_for_key(table, key)`:
 
 1. If a `TableShardingPolicy` is loaded for `table`, extract the sharding key using its `KeyExtractor` (`FIELD_INDEX`, `PREFIX_BYTES`, or `HASH_MOD`) and binary-search the sorted range list. This is the **range-based** path.
 2. Otherwise, fall back to the default `sharding/mode`:
-   - `hash`: return `hash(key) % shard_count`.
-   - `range`: return the shard whose `range_start`/`range_end` covers the key.
+   - `lex` (default): return the shard whose `[start_key, end_key)` range covers the raw key.
+   - `hash`: `bucket = hash(key) % bucket_count` (fixed slot space), then the shard that owns that bucket on the `hash(shard_id)` ring. *(Target model — the code today still computes the naive `hash(key) % shard_count`; see Data Partitioning.)*
 3. If the shard the previous step landed on is currently `dead`, follow its `replacement` pointer (transitively, with a cycle guard bounded by `shard_count + 1` hops).
 
 Callers are in `src/cluster/` — `shard_router.{h,cc}` is the public dispatcher; `sharding_policy.h`, `sharding_policy_cache.h`, `sharding_policy_builder.h` are the pure data types, cache, and fluent builder respectively.
 
-`compute_shard_for_key(table_id, key)` (`shard_router.cc`) consults a **process-global `ClusterConfig`** (`janus::get_cluster_config()`, populated by the `ConfigWatcher`'s update callback) as the single source of truth once it has a nonzero `shard_count` — resolving the `table_id` to a table name via `TableRegistry` and delegating to `ClusterConfig::GetShardForKey(table, key)`. Until the watcher populates that global (i.e. before the shard-0 config path is wired at a node), the router falls back to the legacy `ShardingPolicyCache` and, failing that, the table-ID heuristic `(table_id - 1) / NUM_TABLES_PER_SHARD`. This gate means the `ClusterConfig`-based path is a no-op until wired in, so it can land ahead of the runtime bootstrap without changing behavior.
+`compute_shard_for_key(table_id, key)` (`shard_router.cc`) consults a **process-global `ClusterConfig`** (`janus::get_cluster_config()`, populated by the `ConfigWatcher`'s update callback) as the single source of truth once it has a nonzero `shard_count` — resolving the `table_id` to a table name via `TableRegistry` and delegating to `ClusterConfig::get_shard_for_key(table, key)`. Until the watcher populates that global (i.e. before the shard-0 config path is wired at a node), the router falls back to the legacy `ShardingPolicyCache` and, failing that, the table-ID heuristic `(table_id - 1) / NUM_TABLES_PER_SHARD`. This gate means the `ClusterConfig`-based path is a no-op until wired in, so it can land ahead of the runtime bootstrap without changing behavior.
 
 The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX`; callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
 
