@@ -22,17 +22,6 @@
 
 namespace janus {
 
-// @safe - FNV-1a 64-bit hash of a byte string; the building block for a range
-// checksum. Kept as a small C++ kernel (byte loop over raw bytes).
-inline uint64_t sh_hash64(const std::string& s) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (size_t i = 0; i < s.size(); ++i) {
-        h ^= static_cast<uint8_t>(s[i]);
-        h *= 0x100000001b3ULL;
-    }
-    return h;
-}
-
 #if RUSTYCPP_RUST
 // A key range [lo, hi) a shard is in charge of.
 pub struct ShardRange {
@@ -198,6 +187,18 @@ impl Shard {
         }
         n
     }
+    // FNV-1a-style 64-bit byte hash (a checksum building block). The mixing
+    // constants stay under 2^63 so they are well-formed DSL integer literals.
+    fn hash64(s: &std::string) -> u64 {
+        let mut h: u64 = 1469598103934665603;
+        let mut i: usize = 0;
+        while i < (*s).size() {
+            h = h ^ (((*s)[i] as u8) as u64);
+            h = h * 1099511628211;
+            i = i + 1;
+        }
+        h
+    }
     // Order-independent checksum over the range's live entries AND tombstones.
     // Two shards agree iff they hold exactly the same key->value pairs and the
     // same set of deletions -- the migration's cutover verification.
@@ -205,14 +206,14 @@ impl Shard {
         let mut sum: u64 = 0;
         for kv in (*self).data {
             if kv.first >= (*lo) && kv.first < (*hi) {
-                let kh: u64 = unsafe { sh_hash64(&kv.first) };
-                let vh: u64 = unsafe { sh_hash64(&kv.second) };
+                let kh: u64 = Shard::hash64(kv.first);
+                let vh: u64 = Shard::hash64(kv.second);
                 sum = sum + (kh * 1000003) + vh;
             }
         }
         for tk in (*self).tombstones {
             if tk.first >= (*lo) && tk.first < (*hi) {
-                let th: u64 = unsafe { sh_hash64(&tk.first) };
+                let th: u64 = Shard::hash64(tk.first);
                 sum = sum + (th * 2000029) + 1;
             }
         }
@@ -282,7 +283,7 @@ impl Shard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=4c5aa0560586ec7a1984f848176c54d236328d37894f74d92b5c34d5d29632d3*/
+/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=f000ce37f6d27833cdd10f2bb9d7f9f08e4b6c9e5474f7689af3a0606e493128*/
 struct Shard;
 
 struct Shard {
@@ -312,6 +313,7 @@ struct Shard {
     void copy_range_from(Shard* source, const std::string& lo, const std::string& hi);
     void drop_range(const std::string& lo, const std::string& hi);
     size_t range_count(const std::string& lo, const std::string& hi) const;
+    static uint64_t hash64(const std::string& s);
     uint64_t checksum(const std::string& lo, const std::string& hi) const;
     void assign_range(const std::string& lo, const std::string& hi);
     void unassign_range(const std::string& lo, const std::string& hi);
@@ -439,18 +441,29 @@ inline size_t Shard::range_count(const std::string& lo, const std::string& hi) c
     return std::move(n);
 }
 
+inline uint64_t Shard::hash64(const std::string& s) {
+    uint64_t h = static_cast<uint64_t>(1469598103934665603);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < ((s)).size()) {
+        h = rusty::detail::deref_if_pointer_like(h) ^ ((static_cast<uint64_t>((static_cast<uint8_t>((s)[i])))));
+        h = rusty::detail::deref_if_pointer_like(h) * static_cast<uint64_t>(1099511628211);
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    return std::move(h);
+}
+
 inline uint64_t Shard::checksum(const std::string& lo, const std::string& hi) const {
     uint64_t sum = static_cast<uint64_t>(0);
     for (auto&& kv : rusty::for_in(((*this)).data)) {
         if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
-            const uint64_t kh = sh_hash64(kv.first);
-            const uint64_t vh = sh_hash64(kv.second);
+            const uint64_t kh = Shard::hash64(kv.first);
+            const uint64_t vh = Shard::hash64(kv.second);
             sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(kh) * static_cast<uint64_t>(1000003)))) + rusty::detail::deref_if_pointer_like(vh);
         }
     }
     for (auto&& tk : rusty::for_in(((*this)).tombstones)) {
         if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
-            const uint64_t th = sh_hash64(tk.first);
+            const uint64_t th = Shard::hash64(tk.first);
             sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(th) * static_cast<uint64_t>(2000029)))) + static_cast<uint64_t>(1);
         }
     }
