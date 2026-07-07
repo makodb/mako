@@ -95,3 +95,57 @@ e.g. `ShardReceiver::open_tables_table_id`).
 
 `src/rocks_interface/` (RocksDB-style `ITable`/`IDatabase`/`Status`)
 consumes this interface; see `docs/rocksdb_interface.md`.
+
+## Cluster metadata port (`src/cluster/kv_store.h`)
+
+The cluster component's dependency on storage is a three-method
+`KvStore` port (`get`/`put`/`remove`, string keys, raw byte values).
+It is authored in this same DSL — a `pub trait KvStore` — and is in the
+`regen_storage_dsl.sh` FILES list, so the drift guard covers it. In
+production the port binds to the unified store via `OrderedIndexKvStore`
+(the `__mako_config__` system table on shard 0); tests bind an
+`InMemoryKvStore` fake. See
+[mako-book §3](mako-book.md#3-configuration-manager-master-shard) for
+the sharding design.
+
+### Value types too (`sharding_policy.h`)
+
+`RangeMapping`, `TableShardingPolicy` and `ShardingPolicySet` are also
+authored in the DSL, as `pub struct` + **inherent** `impl`. The lowering
+subtlety that makes this work: a struct is move-only *only* when it
+attaches a trait via `#[cpp_inherit] impl Trait for X` (inheritance). A
+plain struct with an inherent `impl X` lowers to a **copyable aggregate**
+(no synthesized ctor/move) — so these keep living in `std::map`/
+`std::vector` by value, and the rrr marshal reader (default-construct +
+field fill, which stays C++ at the boundary) is unchanged. `get_shard`'s
+binary search is expressed directly in the DSL; the iterator insert and
+map lookups stay as C++ kernels the DSL calls (the same "DSL owns shape,
+C++ owns pointer surgery" split as the masstree header).
+
+Two sharp edges, both handled — and worth knowing before converting more
+POD:
+- The DSL cannot express default member initializers (`= -1` is a parse
+  error), so the old constructors become factories that set them
+  (`RangeMapping::make`, `TableShardingPolicy::create`,
+  `ShardingPolicySet::with_shards`).
+- Because of that, **every construction site must move to the factories** —
+  not for compilation (C++20 parenthesized aggregate init means
+  `ShardingPolicySet(2)` still *compiles*) but for correctness: paren-init
+  fills fields in declaration order, so `ShardingPolicySet(2)` would set
+  `version = 2`, not `num_shards`. The compiler will not flag this.
+
+### What stays C++, and why
+
+- `KeyExtractor` — its `type` field is a Rust keyword; the DSL emits
+  `r#type` verbatim, which is invalid C++. Left as a hand-written struct
+  (referenced by name as a field type from the DSL structs, which works).
+- `config_manager` / `cluster_config` — stateful, STL-backed, already
+  `@safe`; a DSL rewrite would relocate 400+ lines of logic into
+  `@unsafe` C++ kernels for no borrow-checking gain.
+- `config_watcher` (threads) and `config_store` (RocksDB) — same
+  reasoning as the storage kernels.
+
+The DSL earns its place at interfaces (this port; the `OrderedIndex`
+traits), in copyable value types whose bodies are simple enough to
+express directly, and in genuine raw-pointer surgery (the masstree RCU
+kernels) — not in stateful STL glue.

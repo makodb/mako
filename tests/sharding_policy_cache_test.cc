@@ -4,8 +4,8 @@
  */
 
 #include "gtest/gtest.h"
-#include "deptran/sharding_policy_cache.h"
-#include "deptran/sharding_policy_builder.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
+#include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
 
 namespace janus {
 
@@ -20,21 +20,19 @@ protected:
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, DefaultConstruction) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
     EXPECT_FALSE(cache.is_initialized());
     EXPECT_EQ(0u, cache.get_version());
     EXPECT_EQ(0, cache.get_num_shards());
 }
 
 TEST_F(ShardingPolicyCacheTest, SetPolicy) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::by_field(0),
+                          {{0, 5, 0}, {5, 10, 1}}),
+    });
     policy.version = 42;
 
     cache.set_policy(policy);
@@ -48,16 +46,13 @@ TEST_F(ShardingPolicyCacheTest, SetPolicy) {
 // Routing Tests
 // =============================================================================
 
-TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
-    ShardingPolicyCache cache;
+TEST_F(ShardingPolicyCacheTest, get_shard_for_key) {
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::by_field(0),
+                          {{0, 5, 0}, {5, 10, 1}}, 0),
+    });
     cache.set_policy(policy);
 
     // Test range lookups
@@ -74,13 +69,11 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKey) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::by_field(0), {{0, 10, 0}}),
+    });
     cache.set_policy(policy);
 
     // Unknown table should return -1
@@ -88,23 +81,19 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForKeyNotInitialized) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     // Should return -1 when not initialized
     EXPECT_EQ(-1, cache.get_shard_for_key("WAREHOUSE", 5));
 }
 
 TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .table("DISTRICT")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = make_policy_set(2, {
+        make_table_policy("WAREHOUSE", KeyExtractor::by_field(0), {{0, 10, 0}}),
+        make_table_policy("DISTRICT", KeyExtractor::by_field(0), {{0, 10, 0}}),
+    });
     cache.set_policy(policy);
 
     EXPECT_TRUE(cache.has_policy_for_table("WAREHOUSE"));
@@ -117,15 +106,13 @@ TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(3)
-        .table("DISTRICT")
-            .shardByField(0)  // Shard by first field (w_id)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-        .build();
+    auto policy = make_policy_set(3, {
+        // Shard by first field (w_id).
+        make_table_policy("DISTRICT", KeyExtractor::by_field(0),
+                          {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}),
+    });
     cache.set_policy(policy);
 
     // Composite key: [w_id, d_id]
@@ -136,14 +123,13 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("SECONDARY")
-            .shardByField(1)  // Shard by second field
-            .addRange(0, 50, 0)
-            .addRange(50, 100, 1)
-        .build();
+    auto policy = make_policy_set(2, {
+        // Shard by second field.
+        make_table_policy("SECONDARY", KeyExtractor::by_field(1),
+                          {{0, 50, 0}, {50, 100, 1}}),
+    });
     cache.set_policy(policy);
 
     // Composite key: [first, second]
@@ -153,14 +139,12 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
 }
 
 TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeyInvalidFieldIndex) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
-    auto policy = ShardingPolicyBuilder(2)
-        .table("TEST")
-            .shardByField(5)  // Invalid: field 5 doesn't exist
-            .addRange(0, 10, 0)
-            .defaultShard(1)
-        .build();
+    auto policy = make_policy_set(2, {
+        // Field 5 doesn't exist; extraction falls back to the default shard.
+        make_table_policy("TEST", KeyExtractor::by_field(5), {{0, 10, 0}}, 1),
+    });
     cache.set_policy(policy);
 
     // Should use default shard when field extraction fails
@@ -172,20 +156,20 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeyInvalidFieldIndex) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyValueFieldIndex) {
-    KeyExtractor extractor = KeyExtractor::byField(0);
+    KeyExtractor extractor = KeyExtractor::by_field(0);
     std::vector<int64_t> key_fields = {42, 100, 200};
 
     EXPECT_EQ(42, ShardingPolicyCache::extract_key_value(extractor, key_fields));
 
-    extractor = KeyExtractor::byField(1);
+    extractor = KeyExtractor::by_field(1);
     EXPECT_EQ(100, ShardingPolicyCache::extract_key_value(extractor, key_fields));
 
-    extractor = KeyExtractor::byField(2);
+    extractor = KeyExtractor::by_field(2);
     EXPECT_EQ(200, ShardingPolicyCache::extract_key_value(extractor, key_fields));
 }
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyValueFieldIndexOutOfBounds) {
-    KeyExtractor extractor = KeyExtractor::byField(5);
+    KeyExtractor extractor = KeyExtractor::by_field(5);
     std::vector<int64_t> key_fields = {42, 100};
 
     EXPECT_EQ(-1, ShardingPolicyCache::extract_key_value(extractor, key_fields));
@@ -193,7 +177,7 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyValueFieldIndexOutOfBounds) {
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyValueNegativeFieldIndex) {
     KeyExtractor extractor;
-    extractor.type = KeyExtractorType::FIELD_INDEX;
+    extractor.kind = KeyExtractorType::FIELD_INDEX;
     extractor.field_index = -1;
     std::vector<int64_t> key_fields = {42};
 
@@ -201,7 +185,7 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyValueNegativeFieldIndex) {
 }
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyValueHash) {
-    KeyExtractor extractor = KeyExtractor::byHash();
+    KeyExtractor extractor = KeyExtractor::by_hash();
     std::vector<int64_t> key_fields = {42, 100, 200};
 
     // Hash should return non-negative value
@@ -219,32 +203,34 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyValueHash) {
 }
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesPrefix) {
-    KeyExtractor extractor = KeyExtractor::byPrefix(4);
+    KeyExtractor extractor = KeyExtractor::by_prefix(4);
 
     // 4 bytes: 0x01 0x02 0x03 0x04 -> 0x01020304 = 16909060
     const char key_bytes[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
-    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 6);
+    // extract_key_from_bytes now takes the bytes as a std::string (safe DSL
+    // indexing) instead of a raw pointer + length.
+    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 6));
     EXPECT_EQ(16909060, value);
 }
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesPrefixTooLong) {
-    KeyExtractor extractor = KeyExtractor::byPrefix(10);
+    KeyExtractor extractor = KeyExtractor::by_prefix(10);
 
     const char key_bytes[] = {0x01, 0x02, 0x03, 0x04};
     // Prefix longer than key should return -1
-    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 4);
+    int64_t value = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 4));
     EXPECT_EQ(-1, value);
 }
 
 TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesHash) {
-    KeyExtractor extractor = KeyExtractor::byHash();
+    KeyExtractor extractor = KeyExtractor::by_hash();
 
     const char key_bytes[] = "hello world";
-    int64_t hash = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 11);
+    int64_t hash = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 11));
     EXPECT_GE(hash, 0);
 
     // Same input should produce same hash
-    int64_t hash2 = ShardingPolicyCache::extract_key_from_bytes(extractor, key_bytes, 11);
+    int64_t hash2 = ShardingPolicyCache::extract_key_from_bytes(extractor, std::string(key_bytes, 11));
     EXPECT_EQ(hash, hash2);
 }
 
@@ -253,14 +239,14 @@ TEST_F(ShardingPolicyCacheTest, ExtractKeyFromBytesHash) {
 // =============================================================================
 
 TEST_F(ShardingPolicyCacheTest, TpccStyleRouting) {
-    ShardingPolicyCache cache;
+    ShardingPolicyCache cache = ShardingPolicyCache::new_();
 
     // Create TPC-C style policy: 10 warehouses across 2 shards
     // TPC-C uses 1-indexed warehouse IDs (w_id = 1, 2, ..., 10)
     // With 10 warehouses, 2 shards: warehouses_per_shard = 5
     // Shard 0: w_id in [1, 6) → w_id 1, 2, 3, 4, 5
     // Shard 1: w_id in [6, 11) → w_id 6, 7, 8, 9, 10
-    auto policy = create_tpcc_sharding_policy(10, 2);
+    auto policy = create_tpcc_sharding_policy(10, 2).unwrap();
     cache.set_policy(policy);
 
     EXPECT_TRUE(cache.is_initialized());

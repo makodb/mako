@@ -13,13 +13,14 @@
  * headers. Implementation is in src/deptran/shard_router.cc.
  */
 
-#ifndef _MAKO_SHARD_ROUTER_H_
-#define _MAKO_SHARD_ROUTER_H_
+module;
 
 #include <string>
 #include <cstdint>
 
-namespace mako {
+export module cluster:shard_router;
+
+export namespace mako {
 
 // Number of tables pre-allocated per shard (for table-ID-based routing fallback)
 // This must match NUM_TABLES_PER_SHARD in lib/common.h
@@ -72,5 +73,3 @@ bool has_policy_routing(const std::string& table_name);
 int get_policy_num_shards();
 
 }  // namespace mako
-
-#endif  // _MAKO_SHARD_ROUTER_H_

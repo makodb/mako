@@ -4,12 +4,12 @@
 [submodule "third-party/erpc"]
 	path = third-party/erpc
 	url = https://github.com/shuaimu/eRPC
-[submodule "third-party/makocon"]
-	path = third-party/makocon
-	url = https://github.com/Jiyang-Wu/MakoCon
 [submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp
 [submodule "third-party/googletest"]
 	path = third-party/googletest
 	url = https://github.com/google/googletest.git
+[submodule "third-party/mako-redis"]
+	path = third-party/mako-redis
+	url = https://github.com/makodb/mako-redis
