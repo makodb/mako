@@ -33,9 +33,11 @@ template <typename N, bool CONCURRENT = N::concurrent> struct btree_leaflink {};
 // operations.
 template <typename N> struct btree_leaflink<N, true> {
   private:
+    // @unsafe - tags raw leaf pointers by setting the low address bit
     static inline N *mark(N *n) {
         return reinterpret_cast<N *>(reinterpret_cast<uintptr_t>(n) + 1);
     }
+    // @unsafe - inspects low-bit tag on raw leaf pointer representation
     static inline bool is_marked(N *n) {
         return reinterpret_cast<uintptr_t>(n) & 1;
     }
@@ -65,6 +67,7 @@ template <typename N> struct btree_leaflink<N, true> {
     }
     /** @overload */
     template <typename SF>
+    // @unsafe - rewires raw leaf links and publishes with compiler fences
     static void link_split(N *n, N *nr, SF spin_function) {
         nr->prev_ = n;
         N *next = lock_next(n, spin_function);
@@ -87,6 +90,7 @@ template <typename N> struct btree_leaflink<N, true> {
     }
     /** @overload */
     template <typename SF>
+    // @unsafe - rewires raw leaf links using CAS and compiler fences
     static void unlink(N *n, SF spin_function) {
         // Assume node order A <-> N <-> B. Since n is locked, n cannot split;
         // next node will always be B or one of its successors.
@@ -108,10 +112,12 @@ template <typename N> struct btree_leaflink<N, true> {
 
 // This is the single-threaded-only fast version of btree_leaflink.
 template <typename N> struct btree_leaflink<N, false> {
+    // @unsafe - delegates to raw single-threaded leaf link rewiring
     static void link_split(N *n, N *nr) {
         link_split(n, nr, do_nothing());
     }
     template <typename SF>
+    // @unsafe - rewires raw prev/next leaf links without borrow tracking
     static void link_split(N *n, N *nr, SF) {
         nr->prev_ = n;
         nr->next_.ptr = n->next_.ptr;
@@ -119,10 +125,12 @@ template <typename N> struct btree_leaflink<N, false> {
         if (nr->next_.ptr)
             nr->next_.ptr->prev_ = nr;
     }
+    // @unsafe - delegates to raw single-threaded leaf unlink rewiring
     static void unlink(N *n) {
         unlink(n, do_nothing());
     }
     template <typename SF>
+    // @unsafe - rewires raw prev/next leaf links without borrow tracking
     static void unlink(N *n, SF) {
         if (n->next_.ptr)
             n->next_.ptr->prev_ = n->prev_;

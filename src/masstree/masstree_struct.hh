@@ -61,7 +61,7 @@ class node_base : public make_nodeversion<P>::type {
         : nodeversion_type(isleaf) {
     }
 
-    // @safe - returns parent pointer
+    // @unsafe - downcasts this and returns a raw parent pointer
     inline base_type* parent() const {
         // almost always an internode
         if (this->isleaf())
@@ -73,7 +73,7 @@ class node_base : public make_nodeversion<P>::type {
     inline bool parent_exists(base_type* p) const {
         return p != 0;
     }
-    // @safe - delegates to parent() and parent_exists()
+    // @unsafe - delegates to parent(), which downcasts this to raw node storage
     inline bool has_parent() const {
         return parent_exists(parent());
     }
@@ -101,7 +101,7 @@ class node_base : public make_nodeversion<P>::type {
     inline leaf_type* reach_leaf(const key_type& k, nodeversion_type& version,
                                  threadinfo& ti) const;
 
-    // @safe - prefetch hint for CPU cache
+    // @unsafe - casts this to raw bytes and prefetches by address
     void prefetch_full() const {
         for (int i = 0; i < std::min(16 * std::min(P::leaf_width, P::internode_width) + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -166,7 +166,7 @@ class internode : public node_base<P> {
     inline int stable_last_key_compare(const key_type& k, nodeversion_type v,
                                        threadinfo& ti) const;
 
-    // @safe - prefetch hint
+    // @unsafe - casts this to raw bytes and prefetches by address
     void prefetch() const {
         for (int i = 64; i < std::min(16 * width + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -395,7 +395,7 @@ class leaf : public node_base<P> {
         return this->has_changed(oldv) || oldperm != permutation_;
     }
 
-    // @safe - returns key from stored data
+    // @unsafe - may read key suffix through raw stringbag storage
     key_type get_key(int p) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
@@ -438,24 +438,24 @@ class leaf : public node_base<P> {
     bool has_ksuf(int p) const {
         return keylenx_has_ksuf(keylenx_[p]);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix view from raw stringbag storage
     Str ksuf(int p, int keylenx) const {
         (void) keylenx;
         masstree_precondition(keylenx_has_ksuf(keylenx));
         // @unsafe - ksuf_->get / iksuf_->get
         { return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p); }
     }
-    // @safe - returns suffix string view
+    // @unsafe - delegates to ksuf(), which reads raw suffix storage
     Str ksuf(int p) const {
         // @unsafe - calls ksuf(p, keylenx)
         { return ksuf(p, keylenx_[p]); }
     }
-    // @safe - suffix comparison
+    // @unsafe - delegates to suffix comparison using raw suffix storage
     bool ksuf_equals(int p, const key_type& ka) const {
         // @unsafe - calls ksuf_equals
         { return ksuf_equals(p, ka, keylenx_[p]); }
     }
-    // @safe - suffix comparison
+    // @unsafe - compares suffix bytes from raw stringbag storage
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
@@ -466,7 +466,7 @@ class leaf : public node_base<P> {
                 && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
         }
     }
-    // @safe - suffix matching
+    // @unsafe - compares suffix bytes from raw stringbag storage
     // Returns 1 if match & not layer, 0 if no match, <0 if match and layer
     int ksuf_matches(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
@@ -481,7 +481,7 @@ class leaf : public node_base<P> {
                 && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
         }
     }
-    // @safe - suffix comparison
+    // @unsafe - compares suffix view from raw stringbag storage
     int ksuf_compare(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
@@ -489,7 +489,7 @@ class leaf : public node_base<P> {
         return ksuf(p, keylenx).compare(ka.suffix());
     }
 
-    // @safe - returns capacity
+    // @unsafe - reads capacity from raw stringbag storage
     size_t ksuf_used_capacity() const {
         if (ksuf_)
             return ksuf_->used_capacity();
@@ -498,7 +498,7 @@ class leaf : public node_base<P> {
         else
             return 0;
     }
-    // @safe - returns capacity
+    // @unsafe - reads capacity from raw stringbag storage
     size_t ksuf_capacity() const {
         if (ksuf_)
             return ksuf_->capacity();
@@ -511,7 +511,7 @@ class leaf : public node_base<P> {
     bool ksuf_external() const {
         return ksuf_;
     }
-    // @safe - returns string view
+    // @unsafe - returns string view from raw stringbag storage
     Str ksuf_storage(int p) const {
         if (ksuf_)
             return ksuf_->get(p);
@@ -526,7 +526,7 @@ class leaf : public node_base<P> {
         return modstate_ == modstate_deleted_layer;
     }
 
-    // @safe - prefetch hint
+    // @unsafe - casts raw leaf and suffix storage pointers for prefetch
     void prefetch() const {
         for (int i = 64; i < std::min(16 * width + 1, 4 * 64); i += 64)
             ::prefetch((const char *) this + i);
@@ -845,7 +845,7 @@ inline basic_table<P>::basic_table(basic_table<P>&& other) noexcept
     other.root_ = 0;
 }
 
-// @safe - move assignment: source must not own a tree after this returns.
+// @unsafe - transfers raw root pointer ownership and returns a reference without lifetime annotation.
 // Caller is responsible for having destroy()'d the destination's prior
 // tree if it had one (we can't do it here without a threadinfo).
 template <typename P>
@@ -863,7 +863,7 @@ inline rusty::MutPtr<node_base<P>> basic_table<P>::root() const {
     return root_;
 }
 
-// @safe - Returns rusty::MutPtr, uses atomic CAS internally
+// @unsafe - walks raw root parent pointers and performs atomic CAS
 template <typename P>
 inline rusty::MutPtr<node_base<P>> basic_table<P>::fix_root() {
     rusty::MutPtr<node_base<P>> root = root_;

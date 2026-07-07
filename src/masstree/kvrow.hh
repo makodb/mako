@@ -157,14 +157,14 @@ bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) 
 
 
 template <typename R>
-// @safe - updates timestamp via threadinfo
+// @unsafe - calls threadinfo::update_timestamp, which mutates timestamp state
 inline void query<R>::assign_timestamp(threadinfo& ti) {
     qtimes_.ts = ti.update_timestamp();
     qtimes_.prev_ts = 0;
 }
 
 template <typename R>
-// @safe - updates timestamp via threadinfo with minimum
+// @unsafe - calls threadinfo::update_timestamp, which mutates timestamp state
 inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
     qtimes_.ts = ti.update_timestamp(min_ts);
     qtimes_.prev_ts = min_ts;
