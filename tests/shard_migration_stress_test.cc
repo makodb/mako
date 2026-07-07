@@ -262,4 +262,82 @@ TEST_F(Stress, MigrationCapturesConcurrentRangeWrites) {
     EXPECT_EQ(src.range_count(lo, hi), 0u);   // source shed the range after commit
 }
 
+// (4) SUSTAINED: ping-pong a range between the two shards CONTINUOUSLY for a few
+// seconds while the workers hammer disjoint keys -- a migration is ALWAYS in
+// flight, so this measures the true steady-state throughput cost of continuous
+// migration (vs the ~7M/s baseline), and correctness across hundreds of cutovers.
+TEST_F(Stress, SustainedMigrationPingPong) {
+    janus::OrderedIndexShardData shard0(fresh_index("pp_s0"));
+    janus::OrderedIndexShardData shard1(fresh_index("pp_s1"));
+    janus::OrderedIndexShardData* shards[2] = {&shard0, &shard1};
+    for (int i = 0; i < KEYSPACE; i++) shard0.put(g_keys[i], "v");
+
+    const int PP_LO = 50000, PP_HI = 52000;         // 2k-key range, frequent migrations
+    const std::string lo = g_keys[PP_LO], hi = g_keys[PP_HI];
+
+    std::atomic<int>  owner{0};                       // shard currently holding the range
+    std::atomic<bool> stop{false};
+    std::atomic<long> total_ops{0}, migrations{0};
+
+    // Workers hammer keys OUTSIDE the ping-pong range (on shard0).
+    std::vector<std::thread> ws;
+    for (int t = 0; t < NUM_WORKERS; t++) {
+        ws.emplace_back([&, t] {
+            thread_init_once();
+            uint64_t rng = 0xABCDEFull * (uint64_t)(t + 1);
+            std::string out; long n = 0;
+            while (!stop.load(std::memory_order_acquire)) {
+                rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                int k = (int)(rng % KEYSPACE);
+                if (k >= PP_LO && k < PP_HI) continue;            // never touch the range
+                if (n & 1) shard0.get(g_keys[k], out);
+                else       shard0.put(g_keys[k], "v2");
+                n++;
+            }
+            total_ops += n;
+        });
+    }
+
+    // Migration thread: ping-pong the range back and forth until stop.
+    std::thread mig([&] {
+        thread_init_once();
+        uint64_t gen = 0;
+        while (!stop.load(std::memory_order_acquire)) {
+            int from = owner.load(std::memory_order_acquire), to = 1 - from;
+            janus::ShardMigrator m(shards[from], shards[to], lo, hi, ++gen);
+            m.background_copy();
+            m.lock();
+            if (m.final_sync_and_verify()) {   // empty delta (no range writes) -> always matches
+                m.commit();
+                owner.store(to, std::memory_order_release);
+                migrations += 1;
+            } else {
+                m.abort();
+            }
+        }
+    });
+
+    auto t0 = std::chrono::steady_clock::now();
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+    stop.store(true, std::memory_order_release);
+    mig.join();
+    for (auto& w : ws) w.join();
+    double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+    printf("[STRESS] SUSTAINED ping-pong: %.0f ops/sec  (%ld ops, %.1fs) with %ld migrations "
+           "completed (%d-key range)\n",
+           total_ops.load() / sec, total_ops.load(), sec, migrations.load(), PP_HI - PP_LO);
+    fflush(stdout);
+
+    // Correctness after hundreds of cutovers: the range is intact on its current
+    // owner, absent on the other, and its data survived every ping-pong.
+    const int fo = owner.load();
+    EXPECT_EQ(shards[fo]->range_count(lo, hi), (size_t)(PP_HI - PP_LO));
+    EXPECT_EQ(shards[1 - fo]->range_count(lo, hi), 0u);
+    EXPECT_GT(migrations.load(), 10);
+    std::string out;
+    EXPECT_TRUE(shards[fo]->get(g_keys[PP_LO], out));     EXPECT_EQ(out, "v");
+    EXPECT_TRUE(shards[fo]->get(g_keys[PP_HI - 1], out)); EXPECT_EQ(out, "v");
+}
+
 }  // namespace
