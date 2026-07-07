@@ -29,7 +29,7 @@
 // is unchanged. The config-plane writes (reshard/* keys, version bump) are
 // layered on top by the caller via ConfigManager, which already works on mbta.
 
-#include "ordered_index_shard_data.h"
+#include "shard_data.h"
 
 #include <cstdint>
 #include <map>
@@ -42,7 +42,7 @@ namespace janus {
 // @unsafe - orchestrates two OrderedIndexShardData (storage-backed) participants.
 class ShardMigrator {
 public:
-    ShardMigrator(OrderedIndexShardData* source, OrderedIndexShardData* dest,
+    ShardMigrator(ShardData* source, ShardData* dest,
                   std::string lo, std::string hi, uint64_t generation)
         : src_(source), dst_(dest), lo_(std::move(lo)), hi_(std::move(hi)),
           gen_(generation) {}
@@ -95,8 +95,8 @@ public:
     const std::string& hi() const { return hi_; }
 
 private:
-    OrderedIndexShardData* src_;
-    OrderedIndexShardData* dst_;
+    ShardData* src_;
+    ShardData* dst_;
     std::string lo_, hi_;
     uint64_t gen_;
     bool locked_ = false;
