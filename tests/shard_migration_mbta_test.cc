@@ -313,4 +313,88 @@ TEST_F(ShardMigrationMbta, MigratorAbortOnDivergenceLeavesSourceIntact) {
     ASSERT_TRUE(src.get(k(14), got)); EXPECT_EQ(got, "v14");
 }
 
+// ---------------------------------------------------------------------------
+// END TO END: a multi-shard WORKLOAD that dynamically re-shards by MIGRATING a
+// key-range between two real mbta shards mid-run, then routes to the new owner
+// -- dynamic sharding INCLUDING migration, on the real engine, single-process.
+// The lex range map is the routing "assignment" a migration updates -- the
+// plain-C++ stand-in for the runtime's eventual ClusterConfig lex-range routing.
+// ---------------------------------------------------------------------------
+
+// A contiguous lex-range -> owner assignment ([lo,hi); hi=="" means +inf).
+struct RangeMap {
+    struct R { std::string lo, hi; int owner; };
+    std::vector<R> ranges;
+    int route(const std::string& key) const {
+        for (const auto& r : ranges)
+            if (key >= r.lo && (r.hi.empty() || key < r.hi)) return r.owner;
+        return -1;
+    }
+    // Reassign [lo,hi) (assumed fully within one existing range) to new_owner,
+    // splitting that range -- the routing effect of a committed migration.
+    void reassign(const std::string& lo, const std::string& hi, int new_owner) {
+        std::vector<R> out;
+        for (const auto& r : ranges) {
+            const bool contains = lo >= r.lo && (r.hi.empty() || hi <= r.hi);
+            if (contains) {
+                if (lo > r.lo)       out.push_back({r.lo, lo, r.owner});
+                out.push_back({lo, hi, new_owner});
+                if (r.hi.empty() || hi < r.hi) out.push_back({hi, r.hi, r.owner});
+            } else {
+                out.push_back(r);
+            }
+        }
+        ranges = std::move(out);
+    }
+};
+
+TEST_F(ShardMigrationMbta, EndToEndDynamicReshardWithLiveMigration) {
+    janus::OrderedIndexShardData shard0(fresh_index("e2e_s0"));
+    janus::OrderedIndexShardData shard1(fresh_index("e2e_s1"));
+    janus::OrderedIndexShardData* shards[2] = {&shard0, &shard1};
+
+    // Initial assignment: shard0 owns [,k50), shard1 owns [k50,).
+    RangeMap rmap;
+    rmap.ranges = {{"", k(50), 0}, {k(50), "", 1}};
+
+    // The workload routes every op through the current assignment.
+    auto W = [&](const std::string& key, const std::string& v) {
+        shards[rmap.route(key)]->put(key, v);
+    };
+    auto Rd = [&](const std::string& key) {
+        std::string out; shards[rmap.route(key)]->get(key, out); return out;
+    };
+
+    // Phase 1 -- steady state: keys land on their owner shard.
+    for (int i = 0; i < 50; i++) W(k(i), "v" + std::to_string(i));   // -> shard0
+    for (int i = 50; i < 70; i++) W(k(i), "v" + std::to_string(i));  // -> shard1
+    ASSERT_EQ(Rd(k(15)), "v15");   // served by shard0
+    ASSERT_EQ(Rd(k(60)), "v60");   // served by shard1
+
+    // Phase 2 -- RE-SHARD: migrate [k10,k20) from shard0 to shard1, ONLINE.
+    janus::ShardMigrator m(&shard0, &shard1, k(10), k(20), /*generation=*/1);
+    m.background_copy();                     // source keeps serving during copy
+    // Writes to the migrating range during the copy are captured by the source
+    // (dual-write into the delta) so none are lost across the cutover:
+    m.staged_put(k(15), "v15-hot");          // a hot overwrite
+    m.staged_delete(k(13));                  // a delete
+    m.lock();                                // freeze the range
+    ASSERT_TRUE(m.final_sync_and_verify());  // replay delta + checksum-equality gate
+    m.commit();                              // source drops the range
+    rmap.reassign(k(10), k(20), 1);          // cutover: routing flips to shard1
+
+    // Phase 3 -- after cutover: the migrated range is served by shard1, with the
+    // live writes applied, and NO write was lost; everything else is unchanged.
+    EXPECT_EQ(rmap.route(k(15)), 1);
+    EXPECT_EQ(Rd(k(15)), "v15-hot");         // hot write survived + rerouted
+    EXPECT_EQ(Rd(k(18)), "v18");             // migrated normally
+    EXPECT_EQ(Rd(k(13)), "");                // deleted key is gone
+    EXPECT_EQ(rmap.route(k(5)),  0); EXPECT_EQ(Rd(k(5)),  "v5");   // below range: shard0
+    EXPECT_EQ(rmap.route(k(25)), 0); EXPECT_EQ(Rd(k(25)), "v25");  // above range: shard0
+    EXPECT_EQ(rmap.route(k(60)), 1); EXPECT_EQ(Rd(k(60)), "v60");  // shard1 untouched
+    // Data physically moved: shard0 shed the range, shard1 holds it.
+    EXPECT_EQ(shard0.range_count(k(10), k(20)), 0u);
+    EXPECT_EQ(shard1.range_count(k(10), k(20)), 9u);   // 10 - 1 delete
+}
+
 }  // namespace
