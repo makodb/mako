@@ -2779,6 +2779,21 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_shard_migration_mbta COMMAND test_shard_migration_mbta)
 
+    # Non-transactional STRESS: raw non-txn throughput on real mbta + an online
+    # migration under heavy concurrent load (throughput + correctness).
+    add_executable(test_shard_migration_stress tests/shard_migration_stress_test.cc)
+    target_include_directories(test_shard_migration_stress PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_shard_migration_stress PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_shard_migration_stress
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_shard_migration_stress COMMAND test_shard_migration_stress)
+
     # Test: distributed (two-shards-in-one-process) non-txn API — the
     # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
