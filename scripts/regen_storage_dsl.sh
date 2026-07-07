@@ -32,9 +32,16 @@ FILES=(
   # ConfigManager: struct + ~25 methods inline (kv calls via the
   # (*(*self).kv).m() deref form); cm_* kernels for no-throw parse etc.
   src/cluster/config_manager.h
-  # RemoteKvStore: KvStore impl (#[cpp_inherit]); rkv_invoke kernel for
-  # the injected std::function call.
-  src/cluster/remote_kv_store.h
+  # RemoteKvStore: EXCLUDED from regen after the C++23 module conversion. It
+  # uses `#[cpp_inherit] impl KvStore`, which needs the KvStore trait DEFINITION
+  # visible to the transpiler. KvStore now lives in the sibling
+  # `cluster:kv_store` module partition, reached via `import :kv_store;` — and
+  # the transpiler does not follow module imports, so a regen drops
+  # `: public KvStore` and the base constructors (verified). The committed GEN
+  # block (generated pre-conversion, when kv_store.h was #included) is correct
+  # and now hand-maintained. Re-enable if the transpiler learns to resolve
+  # imported traits.
+  # src/cluster/remote_kv_store.h
   # ShardingPolicyCache: rusty::Mutex/Cell/Option state, lock+guard
   # methods inline; spc_* kernels for pointer/raw-byte surgery.
   src/cluster/sharding_policy_cache.h

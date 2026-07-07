@@ -1,10 +1,9 @@
-#pragma once
-
-#include "kv_store.h"
-
+module;
 #include <string>
 #include <rusty/option.hpp>         // KvStore::get returns rusty::Option<std::string>
 #include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
+export module cluster:in_memory_kv_store;
+import :kv_store;
 
 namespace janus {
 
@@ -16,7 +15,7 @@ namespace janus {
  * binary.
  */
 // @safe - BTreeMap behind the port; no I/O.
-class InMemoryKvStore : public KvStore {
+export class InMemoryKvStore : public KvStore {
 public:
     // Force noexcept: the DSL-generated KvStore base has a noexcept(false)
     // destructor, which would otherwise propagate to any class holding an

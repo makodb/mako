@@ -10,7 +10,7 @@
  *   - Warehouses 0-4 go to shard 0, warehouses 5-9 go to shard 1
  */
 
-#pragma once
+module;
 
 #include <cstdint>
 #include <string>
@@ -26,16 +26,18 @@
 // does not break the no-rrr guarantee.
 #include <rusty/slice.hpp>
 #include <rusty/move.hpp>
-#include "rrr/misc/serializable.hpp"   // rrr Serializable (BinaryWrite/ReadArchive)
 
-// NOTE: the policy value types serialize via their rrr Serializable
-// save()/load() DSL methods (see each `impl` below) instead of free-function
-// rrr::Marshal operator<< / operator>>. That pulls the rrr.serializable
-// module into this header (so cluster_config.h / test_config_manager now
-// link rrr) — a deliberate trade to keep serialization authored in the DSL
-// rather than as C++ operator overloads the transpiler can't emit.
+export module cluster:sharding_policy;
 
-namespace janus {
+// The policy value types serialize via their rrr Serializable save()/load()
+// DSL methods (see each `impl` below) instead of free-function rrr::Marshal
+// operator<< / operator>>. rrr::BinaryWrite/ReadArchive come from the
+// rrr.serializable C++23 module, imported here in the module purview (an
+// import cannot live in the global module fragment above) — a deliberate
+// trade to keep serialization authored in the DSL.
+import rrr.serializable;
+
+export namespace janus {
 
 /**
  * Defines how to extract the sharding key from a row key.

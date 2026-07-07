@@ -4,11 +4,8 @@
  */
 
 #include "gtest/gtest.h"
-#include "cluster/shard_router.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "mako/lib/table_registry.h"
-#include "cluster/sharding_policy_cache.h"
-#include "cluster/sharding_policy_builder.h"
-#include "cluster/cluster_config.h"
 #include "sharding_policy_test_util.h"  // janus::make_table_policy / make_policy_set
 
 namespace mako {

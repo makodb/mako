@@ -12,7 +12,7 @@
 // mako::Encode) — see abstract_ordered_index.h. So the adapter is a
 // straight std::string <-> lcdf::Str shim.
 
-#include "cluster/kv_store.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "storage/abstract_ordered_index.h"
 
 #include <string>

@@ -1,7 +1,4 @@
-#pragma once
-#include "config_manager.h"
-#include "cluster_config.h"
-
+module;
 #include <functional>
 #include <cstdint>
 #include <chrono>
@@ -12,7 +9,11 @@
 #include <rusty/function.hpp>   // rusty::Function callback (DSL-invocable)
 #include <rusty/slice.hpp>   // deref_if_pointer_like
 
-namespace janus {
+export module cluster:config_watcher;
+import :config_manager;
+import :cluster_config;
+
+export namespace janus {
 
 /**
  * ConfigWatcher - Background polling that watches shard 0's config

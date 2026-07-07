@@ -20,8 +20,7 @@
 #include "benchmarks/bench.h"            // pulls storage + TThread
 #include "storage/mbta_wrapper.hh"       // mbta_index_build, mbta_table
 #include "ordered_index_kv_store.h"      // src/mako adapter
-#include "cluster/config_manager.h"
-#include "cluster/cluster_config.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 namespace janus {
 namespace {

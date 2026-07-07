@@ -9,7 +9,7 @@
 #include "lib/shardClient.h"
 #include "lib/configuration.h"
 #include "lib/common.h"
-#include "cluster/shard_router.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "sto/Interface.hh"
 
 import std;

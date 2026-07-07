@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 // Shard — a stub stand-in for a masstree-backed data shard, used to test the
 // cluster reconfiguration flow (ShardManager driving ConfigManager /
@@ -20,7 +20,9 @@
 #include <rusty/option.hpp>          // get() -> Option<std::string>
 #include <rusty/slice.hpp>           // deref_if_pointer_like (generated bodies)
 
-namespace janus {
+export module cluster:shard;
+
+export namespace janus {
 
 #if RUSTYCPP_RUST
 // A key range [lo, hi) a shard is in charge of.

@@ -10,8 +10,7 @@
 // their own focused service.
 
 #include "rcc_rpc.h"                    // ConfigKvServiceService / Proxy
-#include "cluster/kv_store.h"           // KvStore
-#include "cluster/remote_kv_store.h"    // RemoteKvStoreReadFn
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 #include <string>
 #include <utility>

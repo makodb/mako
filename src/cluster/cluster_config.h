@@ -1,15 +1,18 @@
-#pragma once
+module;
 #include <string>
 #include <vector>
 #include <map>
 #include <cstdint>
 
-#include "sharding_policy.h"
 #include <btree_port/btreemap.hpp>  // native-API ordered maps (replace std::map)
 #include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>   // deref_if_pointer_like (guard bodies)
 
-namespace janus {
+export module cluster:cluster_config;
+import :sharding_policy;
+import :config_manager;   // ConfigManager named in load_from_config_manager / cc_load_from_cm
+
+export namespace janus {
 
 struct ShardInfo {
     uint32_t id = 0;
@@ -38,7 +41,9 @@ struct ShardInfo {
  * hash, dead-shard replacement chase with a cycle guard, big-endian key
  * decode) lives in the kernels too.
  */
-class ConfigManager;  // forward (load_from_config_manager reads through it)
+// ConfigManager is named (as a pointer) below; imported from
+// cluster:config_manager above — modules forbid forward-declaring a foreign
+// module's entity, so the old `class ConfigManager;` forward decl is gone.
 
 // The guarded state (bare struct; the Mutex is the ClusterConfig field).
 struct ClusterConfigState {

@@ -16,8 +16,7 @@
 #include <initializer_list>
 #include <string>
 
-#include "cluster/sharding_policy.h"
-#include "cluster/sharding_policy_builder.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 namespace janus {
 

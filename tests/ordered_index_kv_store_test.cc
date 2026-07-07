@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-#include "cluster/kv_store.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "mako/in_memory_ordered_index.h"
 #include "mako/ordered_index_kv_store.h"
 

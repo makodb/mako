@@ -9,10 +9,7 @@
 #include "ordered_index_kv_store.h"        // OrderedIndexKvStore
 #include "benchmarks/benchmark_config.h"   // BenchmarkConfig
 
-#include "cluster/config_manager.h"        // ConfigManager
-#include "cluster/cluster_config.h"        // ClusterConfig, get_cluster_config
-#include "cluster/config_watcher.h"        // ConfigWatcher
-#include "cluster/remote_kv_store.h"       // RemoteKvStore
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 #include "deptran/config.h"                // Config
 #include "deptran/config_kv_service.h"     // ConfigKvServiceImpl, make_config_read_fn,

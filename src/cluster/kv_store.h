@@ -1,7 +1,7 @@
-#pragma once
-
+module;
 #include <string>
 #include <rusty/option.hpp>   // get() returns rusty::Option<std::string>
+export module cluster:kv_store;
 
 namespace janus {
 
@@ -34,6 +34,7 @@ pub trait KvStore {
     fn remove(&mut self, key: &std::string);
 }
 #endif
+export {
 /*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
 class KvStore {
 public:
@@ -53,5 +54,6 @@ template <class U> class KvStoreAdapter;
 template <class U> class KvStoreAdapterRef;
 template <class U> class KvStoreAdapterRefMut;
 /*RUSTYCPP:GEN-END id=kv_store.1*/
+}
 
 }  // namespace janus

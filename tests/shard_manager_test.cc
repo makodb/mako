@@ -9,9 +9,9 @@
 
 #include <string>
 #include <vector>
+#include <rusty/option.hpp>   // tests inspect rusty::Option<std::string> results
 
-#include "cluster/shard_manager.h"       // ShardManager (+ shard.h, config_manager.h, cluster_config.h)
-#include "cluster/in_memory_kv_store.h"  // InMemoryKvStore (the config store the manager writes to)
+import cluster;   // ShardManager / Shard / ConfigManager / ClusterConfig / InMemoryKvStore
 
 namespace janus {
 namespace {

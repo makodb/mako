@@ -1,13 +1,14 @@
-#pragma once
-
-#include "kv_store.h"
+module;
 
 #include <functional>
 #include <string>
 #include <rusty/function.hpp>   // rusty::Function — DSL-invocable callable
 #include <rusty/option.hpp>     // get() / read_fn return rusty::Option<std::string>
 
-namespace janus {
+export module cluster:remote_kv_store;
+import :kv_store;
+
+export namespace janus {
 
 /**
  * RemoteKvStore — the KvStore a non-shard-0 node uses to read cluster

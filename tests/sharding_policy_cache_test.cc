@@ -4,8 +4,7 @@
  */
 
 #include "gtest/gtest.h"
-#include "cluster/sharding_policy_cache.h"
-#include "cluster/sharding_policy_builder.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
 
 namespace janus {

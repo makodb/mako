@@ -1029,8 +1029,12 @@ file(GLOB MEMDB_SRC
 file(GLOB_RECURSE DEPTRAN_CORE_SRC
     "src/deptran/*.cc"
     "src/deptran/*/*.cc"
-    "src/cluster/*.cc"
 )
+# NOTE: src/cluster/*.cc are C++23 module units of the `cluster` module (owned
+# by the `cluster` target's FILE_SET below), NOT plain deptran sources.
+# Compiling them here would re-emit module units outside their fileset (same
+# reason rrr's .cpp are kept out of txlog_core). Downstream code reaches the
+# cluster component by `import cluster;` and linking the `cluster` target.
 # Exclude specific deptran files (standalone binaries / optional backends)
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
@@ -1053,6 +1057,53 @@ set(TXLOG_HELPER_SRC
     src/deptran/raft_main_helper.cc
 )
 
+# ---------------------------------------------------------------------------
+# `cluster` — Mako's config/sharding metadata + control-plane component,
+# authored as a C++23 named module. src/cluster/*.h are module partition
+# interface units (NOT headers — never #included); src/cluster/cluster.ccm is
+# the primary interface unit re-exporting them; the two .cc are module
+# implementation units. Mirrors the `rrr` module library: consumers write
+# `import cluster;` and link this target. See src/cluster/cluster.ccm.
+set(CLUSTER_MODULE_INTERFACES
+    ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_builder.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_cache.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/config_manager.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_manager.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
+)
+# .h / .ccm module units are not auto-detected as C++ (only .cc/.cpp/.cxx are);
+# tell CMake they compile as C++ so the CXX_MODULES fileset schedules them.
+set_source_files_properties(${CLUSTER_MODULE_INTERFACES} PROPERTIES LANGUAGE CXX)
+# Module implementation units (module cluster;) — regular C++ sources.
+set(CLUSTER_MODULE_IMPLS
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.cc
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.cc
+)
+add_library(cluster STATIC ${CLUSTER_MODULE_IMPLS})
+target_sources(cluster PUBLIC
+    FILE_SET cluster_modules TYPE CXX_MODULES FILES ${CLUSTER_MODULE_INTERFACES}
+)
+# cluster's module units include STL textually in their global module fragment
+# (not `import std;`), so opt out of the global CXX_MODULE_STD (std.pcm) default.
+set_target_properties(cluster PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_MODULE_STD OFF)
+# src/compat rusty shims must win over third-party/rusty-cpp (see rrr's note).
+target_include_directories(cluster BEFORE PUBLIC ${CMAKE_SOURCE_DIR}/src/compat)
+target_include_directories(cluster PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/mako          # shard_router.cc includes lib/table_registry.h
+    ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
+)
+target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
+target_link_libraries(cluster PUBLIC rrr pthread)
+
 # Build txlog in layers:
 #   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
 #   - txlog_bench: benchmark implementations from src/bench/*
@@ -1070,7 +1121,7 @@ add_dependencies(txlog_core_obj rcc_rpc_gen)
 # Pull in rrr's PUBLIC include dirs + module BMI paths so deptran/
 # memdb .cc files that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC rrr)
+target_link_libraries(txlog_core_obj PUBLIC rrr cluster)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -1119,6 +1170,7 @@ add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
 target_link_libraries(txlog_core
     PUBLIC
     rrr
+    cluster
     yaml-cpp
     pthread
     rocksdb
@@ -1693,7 +1745,7 @@ if(BUILD_TESTS)
     )
     target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_sharding_policy cluster ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
 
     # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
@@ -1744,13 +1796,9 @@ if(BUILD_TESTS)
     # test_ordered_index_kv_store below.
     add_executable(test_config_manager
         tests/config_manager_test.cc
-        src/cluster/config_manager.cc
-        src/cluster/cluster_config.cc
-        src/cluster/config_watcher.cc
     )
     target_include_directories(test_config_manager PRIVATE
         src
-        src/cluster
         ${GTEST_INCLUDE_DIRS}
     )
     # The brew clang ships its own libc++ but does not add its lib dir
@@ -1764,7 +1812,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_config_manager
-        rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
 
@@ -1774,13 +1822,9 @@ if(BUILD_TESTS)
     # test_config_manager: no storage engine, no RPC.
     add_executable(test_shard_manager
         tests/shard_manager_test.cc
-        src/cluster/config_manager.cc
-        src/cluster/cluster_config.cc
-        src/cluster/config_watcher.cc
     )
     target_include_directories(test_shard_manager PRIVATE
         src
-        src/cluster
         ${GTEST_INCLUDE_DIRS}
     )
     target_link_options(test_shard_manager PRIVATE
@@ -1788,7 +1832,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_shard_manager
-        rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_shard_manager COMMAND test_shard_manager)
 
@@ -1814,7 +1858,7 @@ if(BUILD_TESTS)
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
     target_link_libraries(test_ordered_index_kv_store
-        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+        cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     target_compile_definitions(test_ordered_index_kv_store PRIVATE CONFIG_H=\"${CONFIG_H}\")
     add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
@@ -2687,9 +2731,6 @@ if(BUILD_TESTS)
     # not in the mako lib).
     add_executable(test_config_manager_mbta
         tests/config_manager_mbta_integration_test.cc
-        src/cluster/config_manager.cc
-        src/cluster/cluster_config.cc
-        src/cluster/config_watcher.cc
     )
     target_include_directories(test_config_manager_mbta PRIVATE
         ${TEST_INCLUDE_DIRS}
@@ -2697,7 +2738,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_config_manager_mbta PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_manager_mbta
-        mako ${TEST_LINK_LIBS}
+        cluster mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)

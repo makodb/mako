@@ -5,12 +5,11 @@
 // Raft, no RocksDB, no rrr, no cluster, no masstree config.
 
 #include <gtest/gtest.h>
+#include <string>
+#include <vector>
+#include <rusty/option.hpp>   // tests inspect rusty::Option<std::string> results
 
-#include "cluster/cluster_config.h"
-#include "cluster/config_manager.h"
-#include "cluster/config_watcher.h"
-#include "cluster/in_memory_kv_store.h"
-#include "cluster/remote_kv_store.h"
+import cluster;   // ConfigManager / ClusterConfig / ConfigWatcher / InMemoryKvStore / RemoteKvStore
 
 namespace janus {
 

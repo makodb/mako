@@ -13,8 +13,7 @@
 #include <stdint.h>
 
 #include "mako/benchmarks/tpcc_sharding.h"
-#include "cluster/sharding_policy_cache.h"
-#include "cluster/sharding_policy_builder.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 import std;
 

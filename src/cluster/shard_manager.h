@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 // ShardManager — the control plane under test. It drives the REAL cluster
 // reconfiguration path (janus::ConfigManager writes + janus::ClusterConfig
@@ -18,10 +18,6 @@
 // `#if RUSTYCPP_RUST` block is the source of truth; regenerate with
 // scripts/regen_storage_dsl.sh.
 
-#include "shard.h"
-#include "config_manager.h"
-#include "cluster_config.h"
-
 #include <string>
 #include <vector>
 #include <btree_port/btreemap.hpp>
@@ -29,7 +25,12 @@
 #include <rusty/option.hpp>
 #include <rusty/slice.hpp>   // deref_if_pointer_like (generated bodies)
 
-namespace janus {
+export module cluster:shard_manager;
+import :shard;
+import :config_manager;
+import :cluster_config;
+
+export namespace janus {
 
 #if RUSTYCPP_RUST
 // A committed range->shard override: once a migration commits, keys in [lo, hi)

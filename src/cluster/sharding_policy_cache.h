@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 /**
  * @file sharding_policy_cache.h
@@ -15,7 +15,6 @@
  * PREFIX_BYTES/HASH_MOD decode over a const char*).
  */
 
-#include "sharding_policy.h"
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
@@ -25,7 +24,10 @@
 #include <vector>
 #include <algorithm>
 
-namespace janus {
+export module cluster:sharding_policy_cache;
+import :sharding_policy;
+
+export namespace janus {
 
 #if RUSTYCPP_RUST
 pub struct ShardingPolicyCache {

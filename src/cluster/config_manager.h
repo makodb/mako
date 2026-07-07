@@ -1,5 +1,4 @@
-#pragma once
-#include "kv_store.h"
+module;
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -9,7 +8,10 @@
 // DSL-generated bodies below. rusty, not rrr.
 #include <rusty/slice.hpp>
 
-namespace janus {
+export module cluster:config_manager;
+import :kv_store;
+
+export namespace janus {
 
 /**
  * ConfigManager - Typed configuration management over a KvStore.

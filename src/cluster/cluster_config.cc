@@ -1,14 +1,21 @@
 // ClusterConfig is authored in the inline-Rust DSL in cluster_config.h
 // (struct + methods generate there, plus the get_cluster_config() singleton).
-// This TU holds the DSL bodies of the routing free fns (cc_hash_key /
-// cc_extract_key_value / cc_follow_replacement / cc_route) — free pub fns
-// whose generated definitions must live in a .cc (one TU, no ODR hazard),
-// like shard_router.cc — and the one true kernel, cc_load_from_cm (it reads
-// through a *complete* ConfigManager, so it can't be a header inline).
-#include "cluster_config.h"
-#include "config_manager.h"
-
-#include <rusty/slice.hpp>   // deref_if_pointer_like (generated DSL bodies)
+// This is a module IMPLEMENTATION unit of `cluster`: it holds the DSL bodies of
+// the routing free fns (cc_hash_key / cc_extract_key_value /
+// cc_follow_replacement / cc_route), whose declarations are exported by the
+// cluster:cluster_config partition, plus the one true kernel cc_load_from_cm
+// (it reads through a *complete* ConfigManager). Under modules there is no ODR
+// hazard: the definitions are owned once by module `cluster`.
+module;
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <btree_port/btreemap.hpp>   // cc_load_from_cm builds a local BTreeMap
+#include <rusty/slice.hpp>           // deref_if_pointer_like (generated DSL bodies)
+module cluster;
+import :sharding_policy;   // KeyExtractor(Type) used by cc_extract_key_value / cc_route
+import :cluster_config;    // ClusterConfigState / ShardInfo / cc_* declarations
+import :config_manager;    // ConfigManager (cc_load_from_cm reads through it)
 
 namespace janus {
 

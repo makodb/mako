@@ -1,4 +1,4 @@
-#pragma once
+module;
 
 /**
  * @file sharding_policy_builder.h
@@ -24,7 +24,6 @@
  *   rusty::Result<ShardingPolicySet, std::string> r = builder.build();
  */
 
-#include "sharding_policy.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -32,7 +31,10 @@
 #include <rusty/slice.hpp>
 #include <rusty/vec.hpp>   // rusty::Vec<TableShardingPolicy> field
 
-namespace janus {
+export module cluster:sharding_policy_builder;
+import :sharding_policy;
+
+export namespace janus {
 
 // @safe - the fixed TPC-C table-name list (a C string-literal array the
 // DSL can't spell).

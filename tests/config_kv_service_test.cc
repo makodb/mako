@@ -12,7 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "config_kv_service.h"
-#include "cluster/in_memory_kv_store.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 namespace janus {
 namespace {

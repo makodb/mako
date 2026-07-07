@@ -19,12 +19,16 @@
  * minimal set of declarations.
  */
 
-#include "shard_router.h"
-#include "mako/lib/table_registry.h"
-#include "sharding_policy_cache.h"
-#include "cluster_config.h"
-
-#include <rusty/slice.hpp>   // deref_if_pointer_like (generated bodies)
+module;
+#include <string>
+#include <cstdint>
+#include "mako/lib/table_registry.h"   // plain header: mako::get_table_registry()
+#include <rusty/slice.hpp>             // deref_if_pointer_like (generated bodies)
+#include <rusty/option.hpp>            // get_table_name() -> rusty::Option<std::string>
+module cluster;
+import :shard_router;            // this partition's decls + SHARD_ROUTER_NUM_TABLES_PER_SHARD
+import :cluster_config;          // janus::get_cluster_config()
+import :sharding_policy_cache;   // janus::get_sharding_policy_cache()
 
 namespace mako {
 
