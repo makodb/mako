@@ -28,6 +28,8 @@ static PUBSUB_REGISTRY: OnceLock<Mutex<PubSubRegistry>> = OnceLock::new();
 static UNBLOCK_REQUESTS: OnceLock<Mutex<HashMap<usize, bool>>> = OnceLock::new();
 static KEY_VERSIONS: OnceLock<Mutex<HashMap<Bytes, usize>>> = OnceLock::new();
 static WATCHED_EXISTING_KEYS: OnceLock<Mutex<HashSet<Bytes>>> = OnceLock::new();
+static REDIS_BACKEND: OnceLock<RedisBackend> = OnceLock::new();
+static MEMORY_STORE: OnceLock<Mutex<HashMap<Bytes, MemoryEntry>>> = OnceLock::new();
 const MAKO_HASH_DUMP_PREFIX: &[u8] = b"MAKO_HASH_DUMP\0";
 const MAKO_LIST_DUMP_PREFIX: &[u8] = b"MAKO_LIST_DUMP\0";
 
@@ -195,6 +197,47 @@ struct MakoMetrics {
     txn_aborts: u64,
     txn_retries: u64,
     uptime_seconds: u64,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum RedisBackend {
+    Mako,
+    Memory,
+}
+
+impl RedisBackend {
+    fn from_env() -> Self {
+        match env::var("MAKO_REDIS_BACKEND").or_else(|_| env::var("MAKO_REDIS_MODE")) {
+            Ok(value)
+                if value.eq_ignore_ascii_case("memory") || value.eq_ignore_ascii_case("cache") =>
+            {
+                RedisBackend::Memory
+            }
+            Ok(value) if value.eq_ignore_ascii_case("mako") => RedisBackend::Mako,
+            Ok(value) => {
+                eprintln!("Unknown MAKO_REDIS_BACKEND={value}; defaulting to mako");
+                RedisBackend::Mako
+            }
+            Err(_) => RedisBackend::Mako,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            RedisBackend::Mako => "mako",
+            RedisBackend::Memory => "memory",
+        }
+    }
+}
+
+fn redis_backend() -> RedisBackend {
+    *REDIS_BACKEND.get_or_init(RedisBackend::from_env)
+}
+
+#[derive(Clone)]
+struct MemoryEntry {
+    value: Vec<u8>,
+    expire_at_ms: Option<i64>,
 }
 
 #[cfg(not(test))]
@@ -6246,7 +6289,411 @@ fn command_needs_retry(cmd: &Command) -> bool {
 const WRITING_TXN_MAX_ATTEMPTS: usize = 32;
 const SET_RANDOM_COUNT_LIMIT: i64 = 1_000_000;
 
+struct OwnedTxnResponse {
+    response: TxnResponse,
+    _results: Vec<TxnOpResult>,
+    _data: Vec<Vec<u8>>,
+}
+
+impl OwnedTxnResponse {
+    fn new(mut results: Vec<TxnOpResult>, data: Vec<Vec<u8>>) -> Self {
+        let response = TxnResponse {
+            transaction_success: true,
+            num_results: results.len(),
+            results: results.as_mut_ptr(),
+        };
+        OwnedTxnResponse {
+            response,
+            _results: results,
+            _data: data,
+        }
+    }
+
+    fn as_response(&self) -> &TxnResponse {
+        &self.response
+    }
+}
+
+fn memory_store() -> &'static Mutex<HashMap<Bytes, MemoryEntry>> {
+    MEMORY_STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ptr_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
+    if len == 0 {
+        Some(&[])
+    } else if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+    }
+}
+
+fn memory_entry_live(entry: &MemoryEntry, now_ms: i64) -> bool {
+    entry
+        .expire_at_ms
+        .map(|deadline| deadline > now_ms)
+        .unwrap_or(true)
+}
+
+fn memory_get_live(
+    store: &mut HashMap<Bytes, MemoryEntry>,
+    key: &[u8],
+    now_ms: i64,
+) -> Option<Vec<u8>> {
+    let key_bytes = Bytes::copy_from_slice(key);
+    match store.get(&key_bytes) {
+        Some(entry) if memory_entry_live(entry, now_ms) => Some(entry.value.clone()),
+        Some(_) => {
+            store.remove(&key_bytes);
+            None
+        }
+        None => None,
+    }
+}
+
+fn memory_exists_live(store: &mut HashMap<Bytes, MemoryEntry>, key: &[u8], now_ms: i64) -> bool {
+    let key_bytes = Bytes::copy_from_slice(key);
+    match store.get(&key_bytes) {
+        Some(entry) if memory_entry_live(entry, now_ms) => true,
+        Some(_) => {
+            store.remove(&key_bytes);
+            false
+        }
+        None => false,
+    }
+}
+
+fn push_memory_result(
+    results: &mut Vec<TxnOpResult>,
+    data: &mut Vec<Vec<u8>>,
+    success: bool,
+    value: Option<Vec<u8>>,
+    int_value: i64,
+) {
+    let (value_present, data_ptr, data_len) = if let Some(value) = value {
+        data.push(value);
+        let stored = data.last_mut().unwrap();
+        (true, stored.as_mut_ptr(), stored.len())
+    } else {
+        (false, std::ptr::null_mut(), 0)
+    };
+
+    results.push(TxnOpResult {
+        success,
+        value_present,
+        data_ptr,
+        data_len,
+        int_value,
+    });
+}
+
+fn memory_expire_at(expire_at_ms: i64) -> Option<i64> {
+    if expire_at_ms >= 0 {
+        Some(expire_at_ms)
+    } else {
+        None
+    }
+}
+
+fn memory_execute_transaction(ops: &[TxnOperation]) -> OwnedTxnResponse {
+    let mut results = Vec::with_capacity(ops.len());
+    let mut data = Vec::new();
+    let mut store = memory_store().lock().unwrap();
+    let now_ms = unix_time_ms();
+    let mut absent_groups: HashMap<u32, bool> = HashMap::new();
+
+    for op in ops {
+        if op.op != TXN_OP_SET
+            || op.group_id == 0
+            || (op.flags & TXN_FLAG_SET_REQUIRE_ABSENT_GROUP) == 0
+        {
+            continue;
+        }
+        let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+            absent_groups.insert(op.group_id, false);
+            continue;
+        };
+        let exists = memory_exists_live(&mut store, key, now_ms);
+        let entry = absent_groups.entry(op.group_id).or_insert(true);
+        *entry &= !exists;
+    }
+
+    for op in ops {
+        match op.op {
+            TXN_OP_GET => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let value = memory_get_live(&mut store, key, now_ms);
+                push_memory_result(&mut results, &mut data, true, value, 0);
+            }
+            TXN_OP_SET => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let Some(value) = ptr_slice(op.val_ptr, op.val_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let key_bytes = Bytes::copy_from_slice(key);
+                let needs_old_value = (op.flags
+                    & (TXN_FLAG_SET_NX
+                        | TXN_FLAG_SET_XX
+                        | TXN_FLAG_SET_RETURN_OLD
+                        | TXN_FLAG_SET_KEEP_TTL))
+                    != 0
+                    || (op.group_id != 0 && (op.flags & TXN_FLAG_SET_REQUIRE_ABSENT_GROUP) != 0);
+
+                if !needs_old_value {
+                    store.insert(
+                        key_bytes,
+                        MemoryEntry {
+                            value: value.to_vec(),
+                            expire_at_ms: memory_expire_at(op.expire_at_ms),
+                        },
+                    );
+                    push_memory_result(&mut results, &mut data, true, Some(Vec::new()), 1);
+                    continue;
+                }
+
+                let old_value = memory_get_live(&mut store, key, now_ms);
+                let group_ok =
+                    if op.group_id != 0 && (op.flags & TXN_FLAG_SET_REQUIRE_ABSENT_GROUP) != 0 {
+                        absent_groups.get(&op.group_id).copied().unwrap_or(false)
+                    } else {
+                        true
+                    };
+                let condition_ok = group_ok
+                    && if (op.flags & TXN_FLAG_SET_NX) != 0 {
+                        old_value.is_none()
+                    } else if (op.flags & TXN_FLAG_SET_XX) != 0 {
+                        old_value.is_some()
+                    } else {
+                        true
+                    };
+
+                if condition_ok {
+                    let expire_at_ms = if (op.flags & TXN_FLAG_SET_KEEP_TTL) != 0 {
+                        store.get(&key_bytes).and_then(|entry| entry.expire_at_ms)
+                    } else {
+                        memory_expire_at(op.expire_at_ms)
+                    };
+                    store.insert(
+                        key_bytes,
+                        MemoryEntry {
+                            value: value.to_vec(),
+                            expire_at_ms,
+                        },
+                    );
+                }
+
+                if (op.flags & TXN_FLAG_SET_RETURN_OLD) != 0 {
+                    push_memory_result(&mut results, &mut data, true, old_value, 0);
+                } else {
+                    push_memory_result(
+                        &mut results,
+                        &mut data,
+                        true,
+                        condition_ok.then(Vec::new),
+                        if condition_ok { 1 } else { 0 },
+                    );
+                }
+            }
+            TXN_OP_DEL => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let existed = memory_exists_live(&mut store, key, now_ms);
+                if existed {
+                    store.remove(&Bytes::copy_from_slice(key));
+                }
+                push_memory_result(
+                    &mut results,
+                    &mut data,
+                    true,
+                    existed.then(Vec::new),
+                    if existed { 1 } else { 0 },
+                );
+            }
+            TXN_OP_EXISTS => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let exists = memory_exists_live(&mut store, key, now_ms);
+                push_memory_result(
+                    &mut results,
+                    &mut data,
+                    true,
+                    exists.then(Vec::new),
+                    if exists { 1 } else { 0 },
+                );
+            }
+            TXN_OP_APPEND => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let Some(value) = ptr_slice(op.val_ptr, op.val_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let mut current = memory_get_live(&mut store, key, now_ms).unwrap_or_default();
+                current.extend_from_slice(value);
+                let len = current.len() as i64;
+                store.insert(
+                    Bytes::copy_from_slice(key),
+                    MemoryEntry {
+                        value: current,
+                        expire_at_ms: None,
+                    },
+                );
+                push_memory_result(&mut results, &mut data, true, None, len);
+            }
+            TXN_OP_STRLEN => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let len = memory_get_live(&mut store, key, now_ms)
+                    .map(|value| value.len() as i64)
+                    .unwrap_or(0);
+                push_memory_result(&mut results, &mut data, true, None, len);
+            }
+            TXN_OP_INCRBY => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let Some(delta_bytes) = ptr_slice(op.val_ptr, op.val_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let delta = std::str::from_utf8(delta_bytes)
+                    .ok()
+                    .and_then(|text| text.parse::<i64>().ok());
+                let current = memory_get_live(&mut store, key, now_ms)
+                    .map(|value| String::from_utf8(value).ok())
+                    .flatten()
+                    .and_then(|text| text.parse::<i64>().ok())
+                    .unwrap_or(0);
+                let Some(next) = delta.and_then(|delta| current.checked_add(delta)) else {
+                    push_memory_result(&mut results, &mut data, false, None, -1);
+                    continue;
+                };
+                store.insert(
+                    Bytes::copy_from_slice(key),
+                    MemoryEntry {
+                        value: next.to_string().into_bytes(),
+                        expire_at_ms: None,
+                    },
+                );
+                push_memory_result(&mut results, &mut data, true, None, next);
+            }
+            TXN_OP_EXPIRE => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let key_bytes = Bytes::copy_from_slice(key);
+                let exists = memory_exists_live(&mut store, key, now_ms);
+                if exists {
+                    if op.expire_at_ms <= now_ms {
+                        store.remove(&key_bytes);
+                    } else if let Some(entry) = store.get_mut(&key_bytes) {
+                        entry.expire_at_ms = Some(op.expire_at_ms);
+                    }
+                }
+                push_memory_result(
+                    &mut results,
+                    &mut data,
+                    true,
+                    None,
+                    if exists { 1 } else { 0 },
+                );
+            }
+            TXN_OP_TTL => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let key_bytes = Bytes::copy_from_slice(key);
+                let ttl = if !memory_exists_live(&mut store, key, now_ms) {
+                    -2
+                } else if let Some(expire_at_ms) =
+                    store.get(&key_bytes).and_then(|entry| entry.expire_at_ms)
+                {
+                    let remaining_ms = expire_at_ms.saturating_sub(now_ms);
+                    if (op.flags & TXN_FLAG_TTL_MILLISECONDS) != 0 {
+                        remaining_ms
+                    } else {
+                        (remaining_ms + 999) / 1000
+                    }
+                } else {
+                    -1
+                };
+                push_memory_result(&mut results, &mut data, true, None, ttl);
+            }
+            TXN_OP_PERSIST => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let key_bytes = Bytes::copy_from_slice(key);
+                let existed = memory_exists_live(&mut store, key, now_ms);
+                let changed = if existed {
+                    if let Some(entry) = store.get_mut(&key_bytes) {
+                        let had_ttl = entry.expire_at_ms.is_some();
+                        entry.expire_at_ms = None;
+                        had_ttl
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                push_memory_result(
+                    &mut results,
+                    &mut data,
+                    true,
+                    None,
+                    if changed { 1 } else { 0 },
+                );
+            }
+            TXN_OP_FLUSHDB => {
+                store.clear();
+                push_memory_result(&mut results, &mut data, true, None, 0);
+            }
+            TXN_OP_TYPE => {
+                let Some(key) = ptr_slice(op.key_ptr, op.key_len) else {
+                    push_memory_result(&mut results, &mut data, false, None, 0);
+                    continue;
+                };
+                let kind = if memory_exists_live(&mut store, key, now_ms) {
+                    1
+                } else {
+                    0
+                };
+                push_memory_result(&mut results, &mut data, true, None, kind);
+            }
+            _ => {
+                push_memory_result(&mut results, &mut data, false, None, 0);
+            }
+        }
+    }
+
+    OwnedTxnResponse::new(results, data)
+}
+
 fn key_exists_now(key: &Bytes) -> bool {
+    if redis_backend() == RedisBackend::Memory {
+        let mut store = memory_store().lock().unwrap();
+        return memory_exists_live(&mut store, key, unix_time_ms());
+    }
+
     let op = TxnOperation {
         op: TXN_OP_EXISTS,
         key_ptr: key.as_ptr(),
@@ -6300,6 +6747,18 @@ fn ffi_execute_single<W: Write>(
 
     if ops.is_empty() {
         write_command_result(cmd, None, spans[0], protocol_version, writer)?;
+        return Ok(());
+    }
+
+    if redis_backend() == RedisBackend::Memory {
+        let response = memory_execute_transaction(&ops);
+        write_command_result(
+            cmd,
+            Some(response.as_response()),
+            spans[0],
+            protocol_version,
+            writer,
+        )?;
         return Ok(());
     }
 
@@ -6368,6 +6827,21 @@ fn ffi_execute_transaction<W: Write>(
         write_array_header(writer, commands.len())?;
         for (cmd, span) in commands.iter().zip(spans.iter().copied()) {
             write_command_result(cmd, None, span, protocol_version, writer)?;
+        }
+        return Ok(());
+    }
+
+    if redis_backend() == RedisBackend::Memory {
+        let response = memory_execute_transaction(&ops);
+        write_array_header(writer, commands.len())?;
+        for (cmd, span) in commands.iter().zip(spans.iter().copied()) {
+            write_command_result(
+                cmd,
+                Some(response.as_response()),
+                span,
+                protocol_version,
+                writer,
+            )?;
         }
         return Ok(());
     }
@@ -7718,13 +8192,15 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
     let port = env::var("MAKO_PORT").unwrap_or_else(|_| "6380".to_string());
     let addr = format!("{host}:{port}");
     let idle_wait_strategy = IdleWaitStrategy::from_env();
+    let backend = redis_backend();
     let barrier = Arc::new(Barrier::new(n_threads));
     let ready_count = Arc::new(AtomicUsize::new(0));
 
     println!(
-        "Starting {} thread-per-core workers on {} (SO_REUSEPORT, nonblocking clients, MULTI/EXEC support, idle_wait={})",
+        "Starting {} thread-per-core workers on {} (SO_REUSEPORT, nonblocking clients, MULTI/EXEC support, backend={}, idle_wait={})",
         n_threads,
         addr,
+        backend.name(),
         idle_wait_strategy.name()
     );
 
@@ -9502,6 +9978,80 @@ mod tests {
         }
 
         out
+    }
+
+    fn txn_set<'a>(key: &'a [u8], value: &'a [u8], flags: u32) -> TxnOperation {
+        TxnOperation {
+            op: TXN_OP_SET,
+            key_ptr: key.as_ptr(),
+            key_len: key.len(),
+            val_ptr: value.as_ptr(),
+            val_len: value.len(),
+            flags,
+            expire_at_ms: -1,
+            group_id: 0,
+        }
+    }
+
+    fn txn_get(key: &[u8]) -> TxnOperation {
+        TxnOperation {
+            op: TXN_OP_GET,
+            key_ptr: key.as_ptr(),
+            key_len: key.len(),
+            val_ptr: std::ptr::null(),
+            val_len: 0,
+            flags: 0,
+            expire_at_ms: -1,
+            group_id: 0,
+        }
+    }
+
+    fn response_bytes(response: &TxnResponse, index: usize) -> Option<Vec<u8>> {
+        let result = unsafe { &*response.results.add(index) };
+        if !result.value_present {
+            return None;
+        }
+        if result.data_len == 0 {
+            return Some(Vec::new());
+        }
+        Some(unsafe { std::slice::from_raw_parts(result.data_ptr, result.data_len) }.to_vec())
+    }
+
+    #[test]
+    fn memory_backend_get_set_round_trip() {
+        memory_store().lock().unwrap().clear();
+        let set = txn_set(b"mem-key", b"value", 0);
+        let get = txn_get(b"mem-key");
+        let response = memory_execute_transaction(&[set, get]);
+
+        assert!(response.as_response().transaction_success);
+        assert_eq!(response.as_response().num_results, 2);
+        assert_eq!(response_bytes(response.as_response(), 1).unwrap(), b"value");
+    }
+
+    #[test]
+    fn memory_backend_set_nx_and_del_use_redis_presence_semantics() {
+        memory_store().lock().unwrap().clear();
+        let set = txn_set(b"nx-key", b"first", 0);
+        let set_nx = txn_set(b"nx-key", b"second", TXN_FLAG_SET_NX);
+        let del = TxnOperation {
+            op: TXN_OP_DEL,
+            key_ptr: b"nx-key".as_ptr(),
+            key_len: b"nx-key".len(),
+            val_ptr: std::ptr::null(),
+            val_len: 0,
+            flags: 0,
+            expire_at_ms: -1,
+            group_id: 0,
+        };
+        let get = txn_get(b"nx-key");
+        let response = memory_execute_transaction(&[set, set_nx, del, get]);
+
+        assert!(response.as_response().transaction_success);
+        assert!(response_bytes(response.as_response(), 0).is_some());
+        assert!(response_bytes(response.as_response(), 1).is_none());
+        assert!(response_bytes(response.as_response(), 2).is_some());
+        assert!(response_bytes(response.as_response(), 3).is_none());
     }
 
     #[test]

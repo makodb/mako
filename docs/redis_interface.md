@@ -171,23 +171,34 @@ This state affects Redis-visible replies inside the current batch; persistent st
 
 ---
 
-## Optional Cache Mode
+## Optional Memory Backend
 
 The default Redis path is not a cache. It executes supported commands through
-Mako transactions. The current phase plan adds Redis command compatibility for
-cache-style workloads, but it does not add an in-process Redis-layer cache.
-Cache mode means cache-hit reads can return from Redis-layer memory before
-calling Mako; cache misses still read Mako and may populate the cache.
-The table below is a future design note only. If cache mode is added later,
-Mako remains the source of truth and cache benchmarks must be reported
-separately from the default transactional path.
+Mako transactions. For cache-style performance experiments, `makoCon` also
+supports an explicit in-process memory backend:
 
-Why cache mode is not in the current plan: Mako's claim is transactional,
-distributed consistency. A Redis-layer cache would need a coherence mechanism
-such as invalidation, version checks, or epoch checks so it does not return stale
-hits after writes through another Mako path, shard movement, or failover. Without
-that mechanism, cache mode could violate Mako's serializability and failover
-claims.
+```sh
+MAKO_REDIS_BACKEND=memory ./makoCon
+```
+
+`MAKO_REDIS_BACKEND=mako` is the default transactional path. The memory backend
+keeps Redis string/key state inside the Rust RESP server and bypasses Mako for
+supported string operations such as `GET`, `SET`, `MGET`, `MSET`, `DEL`,
+`EXISTS`, `APPEND`, `STRLEN`, `INCR*`, simple TTL commands, `TYPE`, and
+`FLUSHDB`. Unsupported commands return a backend error in memory mode rather
+than silently falling through to Mako.
+
+This mode is a separate cache-like backend for benchmarking and cache workloads;
+it is not a coherent read-through cache in front of Mako. Mako remains the
+source of truth for the default Redis-compatible database path, and memory-mode
+benchmarks must be reported separately from the transactional path.
+
+Why this is not a transparent Mako cache: Mako's claim is transactional,
+distributed consistency. A coherent Redis-layer cache would need a coherence
+mechanism such as invalidation, version checks, or epoch checks so it does not
+return stale hits after writes through another Mako path, shard movement, or
+failover. Without that mechanism, a transparent cache could violate Mako's
+serializability and failover claims.
 
 | Cache scope | Possible implementation | Shortcoming | Mako claim at risk if wrong |
 |-------------|-------------------------|-------------|-----------------------------|
@@ -209,11 +220,11 @@ claims.
 | Shared cache | One process-wide cache with locking/sharding | Lock contention can erase performance gains | High-performance claim |
 | Admission/eviction policy | Cache hot keys only; evict by size/TTL | Bad policy can add overhead without hit-rate gain | High-performance claim |
 
-If a new cache phase is approved later, cache mode should start with read-through
+If a coherent read-through cache phase is approved later, it should start with
 `GET` / `MGET` outside transactions, plus invalidation or write-through for
 every Redis write command that can change cached keys. It should not be used for
-performance claims unless the benchmark reports hit rate, command mix, cache
-size, and whether external Mako writers were present.
+transactional performance claims unless the benchmark reports hit rate, command
+mix, cache size, and whether external Mako writers were present.
 
 ---
 

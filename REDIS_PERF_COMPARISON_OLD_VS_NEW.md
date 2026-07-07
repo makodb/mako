@@ -107,6 +107,43 @@ single-client median numbers, but `poll` remains preferred because it avoids
 intentional idle spinning while staying in the old implementation's
 single-client performance range.
 
+## MakoCon Reference Benchmark: Mako Backend vs Memory Backend
+
+The new Redis adapter now has an explicit backend selector:
+
+- `MAKO_REDIS_BACKEND=mako`: default path, Redis commands execute through Mako
+  transactions.
+- `MAKO_REDIS_BACKEND=memory`: cache-style in-process memory backend for
+  supported string/key commands. This is a separate benchmark mode, not a
+  coherent cache in front of Mako.
+
+The benchmark below uses the raw RESP harness from the MakoCon benchmark
+reference repository, matching its simple Figure-13-style workload shape:
+1,000,000 preloaded 1-to-10-byte decimal keys, 8-byte values, 60-second timed
+GET and PUT windows, and client counts 1/4/16.
+
+CSV outputs:
+
+- Previous implementation: `/home/users/ssoumojit/MakoCon-benchmark-ref/benchmark/mako_results.csv`
+- New Mako backend: `/home/users/ssoumojit/MakoCon-benchmark-ref/benchmark/mako_new_backend_mako_results.csv`
+- New memory backend: `/home/users/ssoumojit/MakoCon-benchmark-ref/benchmark/mako_new_backend_memory_results.csv`
+
+| Workload | Clients | Previous impl ops/s | New Mako backend ops/s | New memory backend ops/s | Memory vs Mako | Memory vs previous |
+|---|---:|---:|---:|---:|---:|---:|
+| GET | 1 | 20,739.55 | 17,999.40 | 19,535.04 | 108.5% / +8.5% | 94.2% / -5.8% |
+| GET | 4 | 82,153.32 | 69,263.71 | 86,923.01 | 125.5% / +25.5% | 105.8% / +5.8% |
+| GET | 16 | 86,884.83 | 237,396.71 | 293,111.85 | 123.5% / +23.5% | 337.4% / +237.4% |
+| PUT | 1 | 20,587.81 | 16,532.40 | 17,987.43 | 108.8% / +8.8% | 87.4% / -12.6% |
+| PUT | 4 | 80,691.77 | 65,826.43 | 80,890.55 | 122.9% / +22.9% | 100.2% / +0.2% |
+| PUT | 16 | 85,906.14 | 214,003.42 | 251,320.08 | 117.4% / +17.4% | 292.6% / +192.6% |
+
+Interpretation: the memory backend improves the new adapter in every measured
+row for this simple cache-like workload. It nearly matches but does not beat
+the previous implementation at one client, matches or beats it at four clients,
+and is roughly 2.9x-3.4x faster at sixteen clients. The remaining one-client
+gap is not from Mako transaction cost, because memory mode bypasses Mako; it is
+the cost of the new RESP/server path plus the shared memory-map implementation.
+
 ## New-Only Completed Concurrency Runs
 
 The old implementation did not produce a completed `redis-benchmark` result
