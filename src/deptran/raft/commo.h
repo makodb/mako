@@ -6,6 +6,9 @@
 #include "messages.hpp"
 #include <map>
 #include <mutex>
+#include <rusty/function.hpp>
+#include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -203,10 +206,10 @@ friend class RaftProxy;
 
   // @unsafe - C-style cast, std::function
   void SendTimeoutNow(siteid_t site_id,
-                      parid_t par_id,
-                      uint64_t leader_term,
-                      siteid_t leader_site_id,
-                      std::function<void(bool success, uint64_t follower_term)> callback);
+                    parid_t par_id,
+                    uint64_t leader_term,
+                    siteid_t leader_site_id,
+                    rusty::Function<void(bool, uint64_t)> callback);
 
   /**
    * SendVoteDurable - Send VoteDurable RPC to candidate after vote is persisted
