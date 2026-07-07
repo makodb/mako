@@ -14,6 +14,7 @@
 
 #include "benchmarks/bench.h"
 #include "storage/mbta_wrapper.hh"
+#include "ordered_index_shard_data.h"   // the real shard-data class under test
 
 #include <gtest/gtest.h>
 
@@ -43,7 +44,7 @@ void engine_thread_init() {
 
 // Fresh mbta (Silo) table, leaked like the other Silo unit tests (MassTrans
 // teardown wants an RCU quiescence a unit test can't provide; tiny tables).
-OrderedIndex* fresh_index(const std::string& name) {
+::FullOrderedIndex* fresh_index(const std::string& name) {
     return mbta_index_build(name, g_table_id.fetch_add(1));
 }
 
@@ -193,6 +194,74 @@ TEST_F(ShardMigrationMbta, ChecksumDetectsDivergence) {
     dst->remove(lcdf::Str(k(14)));   // a dropped row in transfer
     EXPECT_NE(range_checksum(src, lo, hi), range_checksum(dst, lo, hi))
         << "checksum must catch a divergent copy so the cutover aborts";
+}
+
+// ---------------------------------------------------------------------------
+// The FULL 2PC migration protocol, phase by phase, over OrderedIndexShardData
+// (the real mbta-backed shard-data class) -- the stub ShardManager's protocol
+// (docs/mako-book.md §3) run against real storage, single-process.
+// ---------------------------------------------------------------------------
+
+// Migrate [k10,k20) src->dst ONLINE: the source serves through the copy, a
+// delta (overwrite + insert + delete) is captured, the range is frozen, the
+// delta is synced, checksums match, and the cutover drops the range on src.
+TEST_F(ShardMigrationMbta, FullProtocolCommitPath) {
+    janus::OrderedIndexShardData src(fresh_index("fm_src"));
+    janus::OrderedIndexShardData dst(fresh_index("fm_dst"));
+    for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
+    const std::string lo = k(10), hi = k(20);   // [k10,k20) = 10 keys
+
+    // PHASE 1 -- BACKGROUND COPY (source live): snapshot bulk copy.
+    dst.copy_range_from(src, lo, hi);
+
+    // Writes land on the range AFTER the snapshot -> captured as the delta at
+    // the coordinator; the source keeps serving the whole time.
+    std::vector<janus::OrderedIndexShardData::KvPair> staged_puts;
+    std::vector<std::string> staged_dels;
+    src.put(k(15), "hot");   staged_puts.push_back({k(15), "hot"});    // overwrite
+    src.put("k18b", "new");  staged_puts.push_back({"k18b", "new"});   // in-range insert
+    src.remove(k(13));       staged_dels.push_back(k(13));             // delete
+
+    // PHASE 2 -- LOCK: freeze [lo,hi) on the source (a control-plane gate; here
+    // the point is simply that no new writes join the delta after this).
+
+    // PHASE 3 -- FINAL SYNC + VERIFY: replay the delta to dst, then checksum.
+    for (const auto& p : staged_puts) dst.put(p.first, p.second);
+    for (const auto& d : staged_dels) dst.remove(d);
+    ASSERT_EQ(src.checksum(lo, hi), dst.checksum(lo, hi))
+        << "prepare must see byte-identical ranges before cutover";
+
+    // PHASE 4 -- COMMIT: routing flips to dst; the source drops the range.
+    src.drop_range(lo, hi);
+
+    EXPECT_EQ(src.range_count(lo, hi), 0u);          // source shed the range
+    EXPECT_EQ(dst.range_count(lo, hi), 10u);         // 10 - 1 delete + 1 insert
+    EXPECT_EQ(src.range_count(k(0), k(10)), 10u);    // neighbors untouched
+    EXPECT_EQ(src.range_count(k(20), k(30)), 10u);
+    std::string got;                                 // dst holds the post-delta data
+    ASSERT_TRUE(dst.get(k(15), got)); EXPECT_EQ(got, "hot");
+    EXPECT_FALSE(dst.get(k(13), got));               // deleted key really gone
+}
+
+// A garbled transfer diverges the copy; the checksum gate fails, so the master
+// ABORTS -- and because the source never dropped the range, it resumes intact.
+TEST_F(ShardMigrationMbta, FullProtocolAbortLeavesSourceIntact) {
+    janus::OrderedIndexShardData src(fresh_index("fa_src"));
+    janus::OrderedIndexShardData dst(fresh_index("fa_dst"));
+    for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
+    const std::string lo = k(10), hi = k(20);
+
+    dst.copy_range_from(src, lo, hi);
+    dst.remove(k(14));   // a dropped row in transfer -> divergent copy
+
+    // PREPARE fails the checksum-equality gate -> ABORT (no cutover happens).
+    ASSERT_NE(src.checksum(lo, hi), dst.checksum(lo, hi));
+
+    // ABORT: the source never ran drop_range, so it still serves the full
+    // range; the destination's partial copy is simply discarded.
+    EXPECT_EQ(src.range_count(lo, hi), 10u);
+    std::string got;
+    ASSERT_TRUE(src.get(k(14), got)); EXPECT_EQ(got, "v14");
 }
 
 }  // namespace
