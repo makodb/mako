@@ -89,6 +89,56 @@ long hammer(janus::OrderedIndexShardData* shard, int seed, bool avoid_range,
     return n;
 }
 
+// A migration-aware write path: captures concurrent writes to the migrating
+// range (dual-write into the delta) and freezes the range at LOCK, so an online
+// migration loses NO write even when the workload writes the range under it.
+// Thread-safe via one mutex; only range writes contend (workload writes outside
+// the range still go straight to the source).
+class MigratingSource {
+public:
+    MigratingSource(janus::OrderedIndexShardData* src, janus::OrderedIndexShardData* dst)
+        : src_(src), dst_(dst) {}
+
+    // Workload write. Returns false if the key is frozen (LOCK) -> caller drops it.
+    bool put(const std::string& k, const std::string& v) {
+        std::lock_guard<std::mutex> g(mu_);
+        if (active_ && k >= lo_ && k < hi_) {
+            if (locked_) return false;          // frozen during LOCK
+            src_->put(k, v);
+            staged_[k] = v;                     // capture into the delta
+            return true;
+        }
+        src_->put(k, v);                        // outside the migrating range
+        return true;
+    }
+
+    // ---- coordinator side (single migration thread) ----
+    void begin(std::string lo, std::string hi) {
+        std::lock_guard<std::mutex> g(mu_);
+        lo_ = std::move(lo); hi_ = std::move(hi);
+        active_ = true; locked_ = false; staged_.clear();
+    }
+    void copy() { dst_->copy_range_from(*src_, lo_, hi_); }   // scans src concurrently
+    void lock() { std::lock_guard<std::mutex> g(mu_); locked_ = true; }
+    bool final_sync_and_verify() {
+        std::lock_guard<std::mutex> g(mu_);
+        for (const auto& kv : staged_) dst_->put(kv.first, kv.second);   // replay the delta
+        return src_->checksum(lo_, hi_) == dst_->checksum(lo_, hi_);
+    }
+    void commit() {
+        std::lock_guard<std::mutex> g(mu_);
+        src_->drop_range(lo_, hi_); active_ = false;
+    }
+
+private:
+    janus::OrderedIndexShardData* src_;
+    janus::OrderedIndexShardData* dst_;
+    std::mutex mu_;
+    bool active_ = false, locked_ = false;
+    std::string lo_, hi_;
+    std::map<std::string, std::string> staged_;
+};
+
 // (1) How fast is the raw non-txn path under concurrency?
 TEST_F(Stress, NonTxnThroughputBaseline) {
     janus::OrderedIndexShardData shard(fresh_index("stress_base"));
@@ -155,6 +205,61 @@ TEST_F(Stress, MigrationUnderLoad) {
     std::string out;
     EXPECT_TRUE(src.get(g_keys[100], out));    // a workload key outside the range survived
     EXPECT_TRUE(src.get(g_keys[90000], out));
+}
+
+// (3) The HARD case: the workload overwrites keys IN the migrating range while
+// the migration runs. Proves the online migration captures those writes (no
+// lost/stale write) via the dual-write delta + freeze. Each key is written by a
+// single worker (key-partitioned), so "last accepted write" is well-defined.
+TEST_F(Stress, MigrationCapturesConcurrentRangeWrites) {
+    janus::OrderedIndexShardData src(fresh_index("cap_src"));
+    janus::OrderedIndexShardData dst(fresh_index("cap_dst"));
+    const std::string lo = g_keys[RANGE_LO], hi = g_keys[RANGE_HI];
+    for (int i = RANGE_LO; i < RANGE_HI; i++) src.put(g_keys[i], "base");
+
+    MigratingSource ms(&src, &dst);
+    ms.begin(lo, hi);   // enable capture BEFORE the copy starts
+
+    // Each worker overwrites its OWN partition of the range (keys where
+    // idx % NUM_WORKERS == t), so the last write per key is unambiguous. Bounded
+    // to one pass -- the non-txn OCC scan the copy uses retries while the range
+    // is written, so an unbounded write loop starves the copy (measured ~25s);
+    // one pass lets the copy converge once the writers finish.
+    std::vector<std::map<std::string, std::string>> expect(NUM_WORKERS);
+    std::vector<std::thread> ws;
+    for (int t = 0; t < NUM_WORKERS; t++) {
+        ws.emplace_back([&, t] {
+            thread_init_once();
+            for (int idx = RANGE_LO + t; idx < RANGE_HI; idx += NUM_WORKERS) {
+                std::string val = "w" + std::to_string(t) + "_" + std::to_string(idx);
+                if (ms.put(g_keys[idx], val)) expect[t][g_keys[idx]] = val;  // accepted -> remember
+            }
+        });
+    }
+
+    // The copy runs WHILE the workers write the range (concurrent stress + capture).
+    ms.copy();
+    for (auto& w : ws) w.join();   // workers finish their (bounded) range writes
+    ms.lock();                     // freeze the range
+    const bool ok = ms.final_sync_and_verify();  // replay the delta + checksum gate
+    ASSERT_TRUE(ok) << "post-sync checksums must match (delta replayed correctly)";
+    ms.commit();
+
+    // No lost or stale writes: every accepted write's value is on the destination.
+    long checked = 0;
+    for (int t = 0; t < NUM_WORKERS; t++) {
+        for (const auto& kv : expect[t]) {
+            std::string out;
+            ASSERT_TRUE(dst.get(kv.first, out)) << "lost write: " << kv.first;
+            ASSERT_EQ(out, kv.second) << "stale write: " << kv.first;
+            checked++;
+        }
+    }
+    printf("[STRESS] concurrent range-write capture: %ld accepted writes, all present + latest on dst\n",
+           checked);
+    fflush(stdout);
+    EXPECT_GT(checked, 0);
+    EXPECT_EQ(src.range_count(lo, hi), 0u);   // source shed the range after commit
 }
 
 }  // namespace
