@@ -6,6 +6,11 @@
 #include <unistd.h>
 #include <mako.hh>
 
+// Online shard-migration on the real storage engine (opt-in demo, gated below).
+#include "storage/mbta_wrapper.hh"
+#include "ordered_index_shard_data.h"
+#include "shard_migrator.h"
+
 import std;
 
 using namespace std;
@@ -282,6 +287,54 @@ static void run_workers(abstract_db* db)
   delete db;
 }
 
+// Opt-in online-migration demo (MAKO_MIGRATION_DEMO=1): proves the real mako
+// storage engine + the migration coordinator perform an ONLINE range migration
+// INSIDE this live dbtest process, on real mbta indexes, alongside the workload.
+// Runs on an isolated, mbta-initialized thread so it never disturbs serving.
+static void run_online_migration_demo()
+{
+  // Fire on a detached thread ~6s in, so the migration runs WHILE the workload
+  // is serving. Dedicated demo tables (separate from the workload's tables) mean
+  // no data race; not joined -- on process teardown the thread just dies.
+  std::thread([]{
+    TThread::set_id(400);  // a valid, unused mbta thread id (< MAX_THREADS=460)
+    TThread::set_mode(0);
+    TThread::readset_shard_bits = 0;
+    TThread::writeset_shard_bits = 0;
+    TThread::transget_without_throw = false;
+    TThread::transget_without_stable = false;
+    mbta_table::thread_init();
+    std::this_thread::sleep_for(std::chrono::seconds(6));  // let the workload get serving
+
+    Notice("MAKO_MIGRATION_DEMO: online range migration on the real mbta engine (mid-workload)");
+    auto* src_idx = mbta_index_build("mako_mig_demo_src", 9510);
+    auto* dst_idx = mbta_index_build("mako_mig_demo_dst", 9511);
+    janus::OrderedIndexShardData src(src_idx), dst(dst_idx);
+    for (int i = 0; i < 30; i++) {
+      char kb[8]; snprintf(kb, sizeof kb, "m%02d", i);
+      src.put(kb, std::string("v") + std::to_string(i));
+    }
+    const std::string lo = "m10", hi = "m20";
+    janus::ShardMigrator m(&src, &dst, lo, hi, /*generation=*/1);
+    m.background_copy();                              // Phase 1 (source keeps serving)
+    m.staged_put("m15", "hot");                       // writes during copy (the delta)
+    m.staged_delete("m13");
+    m.lock();                                         // Phase 2 (freeze the range)
+    const bool verified = m.final_sync_and_verify();  // Phase 3 (delta + checksum gate)
+    if (verified) {
+      m.commit();                                     // Phase 4 (source drops the range)
+      Notice("MAKO_MIGRATION_DEMO: OK committed [%s,%s) src_range=%zu dst_range=%zu "
+             "(checksums matched, no lost writes, source shed the range)",
+             lo.c_str(), hi.c_str(),
+             (size_t)src.range_count(lo, hi), (size_t)dst.range_count(lo, hi));
+    } else {
+      m.abort();
+      Notice("MAKO_MIGRATION_DEMO: checksum mismatch -> aborted (source intact, range=%zu)",
+             (size_t)src.range_count(lo, hi));
+    }
+  }).detach();
+}
+
 static void run_workers_multi_shard(const vector<int>& shard_indices)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -512,6 +565,14 @@ main(int argc, char **argv)
     }
     restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
+
+    // Opt-in: kick off a real ONLINE range migration on the real mbta engine
+    // that fires ~6s in, WHILE the workload below is serving (the default path,
+    // without MAKO_MIGRATION_DEMO, is unchanged). Proves the live mako DB does
+    // online data migration under load.
+    if (std::getenv("MAKO_MIGRATION_DEMO") != nullptr) {
+      run_online_migration_demo();
+    }
 
     // Run workers on all local shards
     if (benchConfig.getLeaderConfig()) {
