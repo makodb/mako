@@ -2762,6 +2762,23 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_kv_backends COMMAND test_kv_backends)
 
+    # Test: the online data-migration DATA PLANE on the real mbta engine —
+    # copy_range / range_checksum / range_count / drop_range via scan + point
+    # ops (the future OrderedIndexShardData). Foundation for making the real
+    # mako DB support dynamic sharding + migration (not just the stub Shards).
+    add_executable(test_shard_migration_mbta tests/shard_migration_mbta_test.cc)
+    target_include_directories(test_shard_migration_mbta PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_shard_migration_mbta PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_shard_migration_mbta
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_shard_migration_mbta COMMAND test_shard_migration_mbta)
+
     # Test: distributed (two-shards-in-one-process) non-txn API — the
     # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
