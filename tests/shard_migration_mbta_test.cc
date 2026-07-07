@@ -15,6 +15,7 @@
 #include "benchmarks/bench.h"
 #include "storage/mbta_wrapper.hh"
 #include "ordered_index_shard_data.h"   // the real shard-data class under test
+#include "shard_migrator.h"             // the migration coordinator
 
 #include <gtest/gtest.h>
 
@@ -260,6 +261,54 @@ TEST_F(ShardMigrationMbta, FullProtocolAbortLeavesSourceIntact) {
     // ABORT: the source never ran drop_range, so it still serves the full
     // range; the destination's partial copy is simply discarded.
     EXPECT_EQ(src.range_count(lo, hi), 10u);
+    std::string got;
+    ASSERT_TRUE(src.get(k(14), got)); EXPECT_EQ(got, "v14");
+}
+
+// ---------------------------------------------------------------------------
+// The same protocol driven through the ShardMigrator COORDINATOR (the real
+// counterpart to ShardManager's migration methods) instead of inline steps --
+// this is the reusable coordinator the RPC (Stage 3) and runtime (Stage 4)
+// paths will drive; the participants just become RPC proxies.
+// ---------------------------------------------------------------------------
+
+TEST_F(ShardMigrationMbta, MigratorCommitPath) {
+    janus::OrderedIndexShardData src(fresh_index("mg_src"));
+    janus::OrderedIndexShardData dst(fresh_index("mg_dst"));
+    for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
+
+    janus::ShardMigrator m(&src, &dst, k(10), k(20), /*generation=*/1);
+    m.background_copy();                       // Phase 1 (source live)
+    m.staged_put(k(15), "hot");                // delta: overwrite
+    m.staged_delete(k(13));                    // delta: delete
+    EXPECT_FALSE(m.frozen_for(k(15)));         // not locked yet -> not frozen
+    m.lock();                                  // Phase 2
+    EXPECT_TRUE(m.frozen_for(k(15)));          // in-range key now frozen
+    EXPECT_FALSE(m.frozen_for(k(25)));         // out-of-range key never frozen
+    ASSERT_TRUE(m.final_sync_and_verify());    // Phase 3: delta replay + checksum
+    m.commit();                                // Phase 4
+
+    EXPECT_EQ(src.range_count(k(10), k(20)), 0u);   // source shed the range
+    EXPECT_EQ(dst.range_count(k(10), k(20)), 9u);   // 10 - 1 delete
+    std::string got;
+    ASSERT_TRUE(dst.get(k(15), got)); EXPECT_EQ(got, "hot");
+    EXPECT_FALSE(dst.get(k(13), got));
+}
+
+TEST_F(ShardMigrationMbta, MigratorAbortOnDivergenceLeavesSourceIntact) {
+    janus::OrderedIndexShardData src(fresh_index("ma_src"));
+    janus::OrderedIndexShardData dst(fresh_index("ma_dst"));
+    for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
+
+    janus::ShardMigrator m(&src, &dst, k(10), k(20), /*generation=*/2);
+    m.background_copy();
+    dst.remove(k(14));                         // garbled transfer -> divergence
+    m.lock();
+    EXPECT_FALSE(m.final_sync_and_verify());    // checksum gate fails -> no cutover
+    m.abort();
+
+    EXPECT_EQ(src.range_count(k(10), k(20)), 10u);  // source keeps the full range
+    EXPECT_EQ(dst.range_count(k(10), k(20)), 0u);   // dest partial copy discarded
     std::string got;
     ASSERT_TRUE(src.get(k(14), got)); EXPECT_EQ(got, "v14");
 }
