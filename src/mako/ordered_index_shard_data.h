@@ -51,7 +51,8 @@ public:
     // whole range (avoids the hot-range scan-retry starvation; still a
     // memory-safe OCC read). Returns fewer than `limit` iff the range ended.
     std::vector<KvPair> scan_range_limited(const std::string& lo,
-                                           const std::string& hi, size_t limit) {
+                                           const std::string& hi,
+                                           size_t limit) override {
         LimitedCollector cb(limit);
         index_->scan(lo, &hi, cb, nullptr);
         return std::move(cb.pairs);

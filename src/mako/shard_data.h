@@ -33,6 +33,13 @@ public:
     // Enumerate every live key->value pair in [lo, hi).
     virtual std::vector<KvPair> scan_range(const std::string& lo,
                                            const std::string& hi) = 0;
+    // Scan up to `limit` live pairs from [lo, hi). Backends with an OCC/retrying
+    // scan (mbta) implement this to stop early at the engine level, so a
+    // concurrent-write conflict only re-scans a small window -- copy_range_from
+    // chunks over it and never starves on a hot range.
+    virtual std::vector<KvPair> scan_range_limited(const std::string& lo,
+                                                   const std::string& hi,
+                                                   size_t limit) = 0;
 
     // ---- migration ops, defined over the primitives (backend-agnostic) ----
     size_t range_count(const std::string& lo, const std::string& hi) {
@@ -48,10 +55,22 @@ public:
         }
         return sum;
     }
-    // Background bulk copy: pull the source's [lo,hi) into this shard.
+    // Background bulk copy: pull the source's [lo,hi) into this shard, CHUNKED --
+    // scan the source in small windows so a concurrent write invalidates only one
+    // window, not the whole range. On an OCC-backed source (mbta) this turns a
+    // hot-range whole-scan starvation into guaranteed progress; on a cold range
+    // it is just a handful of extra scans. Correctness is unchanged.
     void copy_range_from(ShardData& source, const std::string& lo,
                          const std::string& hi) {
-        for (const auto& kv : source.scan_range(lo, hi)) put(kv.first, kv.second);
+        static const size_t kCopyChunk = 512;
+        std::string cur = lo;
+        while (cur < hi) {
+            std::vector<KvPair> batch = source.scan_range_limited(cur, hi, kCopyChunk);
+            if (batch.empty()) break;
+            for (const auto& kv : batch) put(kv.first, kv.second);
+            cur = batch.back().first;
+            cur.push_back('\0');   // resume strictly after the last key copied
+        }
     }
     // Post-commit shed: drop the range from this shard.
     void drop_range(const std::string& lo, const std::string& hi) {
