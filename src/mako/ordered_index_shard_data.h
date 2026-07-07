@@ -46,6 +46,17 @@ public:
         return std::move(cb.pairs);
     }
 
+    // Scan up to `limit` live pairs from [lo, hi). Used to CHUNK a range copy so
+    // a concurrent-write OCC conflict only re-scans one small window, not the
+    // whole range (avoids the hot-range scan-retry starvation; still a
+    // memory-safe OCC read). Returns fewer than `limit` iff the range ended.
+    std::vector<KvPair> scan_range_limited(const std::string& lo,
+                                           const std::string& hi, size_t limit) {
+        LimitedCollector cb(limit);
+        index_->scan(lo, &hi, cb, nullptr);
+        return std::move(cb.pairs);
+    }
+
 private:
     // Collects (key, value) pairs from a scan; never stops early.
     class Collector : public oi_scan_callback {
@@ -56,6 +67,20 @@ private:
             return true;
         }
         std::vector<KvPair> pairs;
+    };
+
+    // Like Collector but stops after `limit` pairs (for chunked scans).
+    class LimitedCollector : public oi_scan_callback {
+    public:
+        explicit LimitedCollector(size_t limit) : limit_(limit) {}
+        bool invoke(const char* keyp, size_t keylen,
+                    const std::string& value) override {
+            pairs.emplace_back(std::string(keyp, keylen), value);
+            return pairs.size() < limit_;   // stop once we have `limit`
+        }
+        std::vector<KvPair> pairs;
+    private:
+        size_t limit_;
     };
 
     ::FullOrderedIndex* index_;

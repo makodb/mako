@@ -119,6 +119,21 @@ public:
         active_ = true; locked_ = false; staged_.clear();
     }
     void copy() { dst_->copy_range_from(*src_, lo_, hi_); }   // scans src concurrently
+    // Chunked copy: scan the range in small windows so a concurrent-write OCC
+    // conflict only re-scans one chunk (not the whole range) -> the cursor
+    // always advances -> guaranteed progress under UNBOUNDED range writes.
+    long copy_chunked(size_t chunk) {
+        std::string cur = lo_;
+        long scans = 0;
+        while (cur < hi_) {
+            auto batch = src_->scan_range_limited(cur, hi_, chunk);
+            ++scans;
+            if (batch.empty()) break;
+            for (const auto& kv : batch) dst_->put(kv.first, kv.second);
+            cur = batch.back().first; cur.push_back('\0');   // start strictly after last key
+        }
+        return scans;
+    }
     void lock() { std::lock_guard<std::mutex> g(mu_); locked_ = true; }
     bool final_sync_and_verify() {
         std::lock_guard<std::mutex> g(mu_);
@@ -338,6 +353,67 @@ TEST_F(Stress, SustainedMigrationPingPong) {
     std::string out;
     EXPECT_TRUE(shards[fo]->get(g_keys[PP_LO], out));     EXPECT_EQ(out, "v");
     EXPECT_TRUE(shards[fo]->get(g_keys[PP_HI - 1], out)); EXPECT_EQ(out, "v");
+}
+
+// (5) The starvation FIX (option B1): hammer the migrating range UNBOUNDED while
+// a CHUNKED copy runs. A whole-range OCC scan starves (~25s+ / never advances,
+// per the earlier commit); the chunked copy re-scans only a 64-key window per
+// conflict, so the cursor always advances -> the copy COMPLETES, stays
+// memory-safe (it's still an OCC read, just windowed), and -- because writes are
+// captured in the delta -- loses nothing.
+TEST_F(Stress, ChunkedCopyDoesNotStarveOnHotRange) {
+    janus::OrderedIndexShardData src(fresh_index("chunk_src"));
+    janus::OrderedIndexShardData dst(fresh_index("chunk_dst"));
+    const std::string lo = g_keys[RANGE_LO], hi = g_keys[RANGE_HI];   // 10k-key range
+    for (int i = RANGE_LO; i < RANGE_HI; i++) src.put(g_keys[i], "base");
+
+    MigratingSource ms(&src, &dst);
+    ms.begin(lo, hi);
+
+    std::atomic<bool> stop{false};
+    std::vector<std::map<std::string, std::string>> expect(NUM_WORKERS);
+    std::vector<std::thread> ws;
+    for (int t = 0; t < NUM_WORKERS; t++) {
+        ws.emplace_back([&, t] {
+            thread_init_once();
+            uint64_t rng = 0xDEADull * (uint64_t)(t + 1);
+            long ctr = 0;
+            while (!stop.load(std::memory_order_acquire)) {          // UNBOUNDED hammer
+                rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17;
+                int idx = RANGE_LO + (int)(rng % (RANGE_HI - RANGE_LO));
+                if (idx % NUM_WORKERS != t) continue;
+                std::string val = "w" + std::to_string(t) + "_" + std::to_string(ctr++);
+                if (ms.put(g_keys[idx], val)) expect[t][g_keys[idx]] = val;
+            }
+        });
+    }
+
+    // Chunked copy runs while the range is hammered UNBOUNDED. It must COMPLETE.
+    auto t0 = std::chrono::steady_clock::now();
+    long scans = ms.copy_chunked(/*chunk=*/64);
+    double copy_sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    ms.lock();
+    stop.store(true, std::memory_order_release);
+    for (auto& w : ws) w.join();
+    ASSERT_TRUE(ms.final_sync_and_verify());
+    ms.commit();
+
+    printf("[STRESS] chunked copy of a HOT range under UNBOUNDED writers: completed in %.3fs "
+           "(%ld chunk-scans, chunk=64) -- no starvation\n", copy_sec, scans);
+    fflush(stdout);
+
+    long checked = 0;
+    for (int t = 0; t < NUM_WORKERS; t++)
+        for (const auto& kv : expect[t]) {
+            std::string out;
+            ASSERT_TRUE(dst.get(kv.first, out)) << "lost: " << kv.first;
+            ASSERT_EQ(out, kv.second) << "stale: " << kv.first;
+            checked++;
+        }
+    printf("[STRESS] ...and no lost/stale writes: %ld accepted writes verified on dst\n", checked);
+    fflush(stdout);
+    EXPECT_GT(checked, 0);
+    EXPECT_EQ(src.range_count(lo, hi), 0u);
 }
 
 }  // namespace
