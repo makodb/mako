@@ -12,6 +12,7 @@ module;
 #include <cstdint>
 #include <btree_port/btreemap.hpp>   // cc_load_from_cm builds a local BTreeMap
 #include <rusty/slice.hpp>           // deref_if_pointer_like (generated DSL bodies)
+#include <rusty/move.hpp>            // rusty::clone (enum-literal comparisons in the GEN block)
 module cluster;
 import :sharding_policy;   // KeyExtractor(Type) used by cc_extract_key_value / cc_route
 import :cluster_config;    // ClusterConfigState / ShardInfo / cc_* declarations

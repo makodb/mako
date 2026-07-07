@@ -19,6 +19,7 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/slice.hpp>   // deref_if_pointer_like (guard/pointer bodies)
+#include <rusty/move.hpp>    // rusty::clone (enum-literal factories in the GEN block)
 #include <cstdint>
 #include <string>
 #include <vector>
