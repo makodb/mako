@@ -3,6 +3,7 @@
 
 #include <rusty/box.hpp>
 #include <rusty/hashmap.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -270,18 +271,18 @@ class BenchmarkHarness {
 
   template <typename WorkerFn>
   static std::chrono::nanoseconds RunParallel(size_t threads, WorkerFn&& fn) {
-    std::atomic<bool> go{false};
+    rusty::sync::atomic::Atomic<bool> go{false};
     auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(threads);
     for (size_t t = 0; t < threads; ++t) {
       workers.push(rusty::thread::spawn([&, t]() {
-        while (!go.load(std::memory_order_acquire)) {
+        while (!go.load(rusty::sync::atomic::Ordering::Acquire)) {
           rusty::thread::yield_now();
         }
         fn(t);
       }));
     }
     auto wall_start = std::chrono::steady_clock::now();
-    go.store(true, std::memory_order_release);
+    go.store(true, rusty::sync::atomic::Ordering::Release);
     for (auto& w : workers) { auto _ = w.join(); }
     return std::chrono::steady_clock::now() - wall_start;
   }

@@ -23,7 +23,6 @@
 #include "misc.hh"
 #include "kvproto.hh"
 #include <rusty/vec.hpp>
-#include <vector>
 #include <fstream>
 
 using lcdf::Str;

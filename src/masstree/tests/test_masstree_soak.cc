@@ -32,6 +32,7 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -78,7 +79,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
   }
 
   const auto deadline = std::chrono::steady_clock::now() + SoakDuration();
-  std::atomic<bool> stop{false};
+  rusty::sync::atomic::Atomic<bool> stop{false};
 
   constexpr int kWriters = 4;
   constexpr int kRemovers = 2;
@@ -87,13 +88,13 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
   constexpr uint64_t kChurnBase = 1ull << 40;
   constexpr uint64_t kPerWriter = 8192;
 
-  std::atomic<uint64_t> reader_failures{0};
-  std::atomic<uint64_t> reader_ops{0};
-  std::atomic<uint64_t> scanner_ops{0};
+  rusty::sync::atomic::Atomic<uint64_t> reader_failures{0};
+  rusty::sync::atomic::Atomic<uint64_t> reader_ops{0};
+  rusty::sync::atomic::Atomic<uint64_t> scanner_ops{0};
 
   auto writer_body = [&](int wid) {
     const uint64_t base = kChurnBase + static_cast<uint64_t>(wid) * kPerWriter;
-    while (!stop.load(std::memory_order_acquire)) {
+    while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
       for (uint64_t i = 0; i < kPerWriter; ++i) {
         tree.insert(K(base + i), ToValue(base + i));
       }
@@ -101,14 +102,14 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
   };
   auto remover_body = [&](int rid) {
     const uint64_t base = kChurnBase + static_cast<uint64_t>(rid) * kPerWriter;
-    while (!stop.load(std::memory_order_acquire)) {
+    while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
       for (uint64_t i = 0; i < kPerWriter; ++i) {
         tree.remove(K(base + i));
       }
     }
   };
   auto reader_body = [&]() {
-    while (!stop.load(std::memory_order_acquire)) {
+    while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
       for (uint64_t k = 0; k < kStable; ++k) {
         TestTree::value_type out = nullptr;
         if (!tree.search(K(k), out) || FromValue(out) != k) {
@@ -121,7 +122,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
   auto scanner_body = [&]() {
     class Cb : public TestTree::search_range_callback {
      public:
-      std::atomic<uint64_t>* failures;
+      rusty::sync::atomic::Atomic<uint64_t>* failures;
       bool bad_order = false;
       uint64_t last = 0;
       bool first = true;
@@ -138,7 +139,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
         return true;
       }
     };
-    while (!stop.load(std::memory_order_acquire)) {
+    while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
       Cb cb;
       cb.failures = &reader_failures;
       u64_varkey lo(0);
@@ -159,7 +160,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
   while (std::chrono::steady_clock::now() < deadline) {
     rusty::thread::sleep(std::chrono::milliseconds(200));
   }
-  stop.store(true, std::memory_order_release);
+  stop.store(true, rusty::sync::atomic::Ordering::Release);
 
   for (auto& t : threads) { auto _ = t.join(); }
 

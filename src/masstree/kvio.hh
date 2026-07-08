@@ -20,7 +20,6 @@
 #ifndef KVIO_H
 #define KVIO_H
 #include <string>
-#include <vector>
 #include <stdlib.h>
 #include "string.hh"
 #include "str.hh"

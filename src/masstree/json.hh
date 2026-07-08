@@ -22,7 +22,7 @@
 #define JSON_HH
 #include "straccum.hh"
 #include "str.hh"
-#include <vector>
+#include <rusty/vec.hpp>
 #include <utility>
 #include <stdlib.h>
 namespace lcdf {
@@ -96,7 +96,7 @@ class Json {
     inline Json(const std::string& x);
     inline Json(Str x);
     inline Json(const char* x);
-    template <typename T> inline Json(const std::vector<T>& x);
+    template <typename T> inline Json(const rusty::Vec<T>& x);
     template <typename T> inline Json(T first, T last);
     inline ~Json();
 
@@ -449,7 +449,7 @@ struct Json::ObjectJson : public ComplexJson {
     ObjectItem *os_;
     int n_;
     int capacity_;
-    std::vector<int> hash_;
+    rusty::Vec<int> hash_;
     ObjectJson()
         : os_(), n_(0), capacity_(0) {
         size = 0;
@@ -1579,11 +1579,10 @@ inline Json::Json(const char* x) {
 }
 /** @brief Construct an array Json containing the elements of @a x. */
 template <typename T>
-inline Json::Json(const std::vector<T> &x) {
+inline Json::Json(const rusty::Vec<T> &x) {
     u_.a.type = j_array;
     u_.a.x = ArrayJson::make(int(x.size()));
-    for (typename std::vector<T>::const_iterator it = x.begin();
-         it != x.end(); ++it) {
+    for (const T* it = x.begin(); it != x.end(); ++it) {
         new((void*) &u_.a.x->a[u_.a.x->size]) Json(*it);
         ++u_.a.x->size;
     }
@@ -2843,7 +2842,7 @@ class Json::streaming_parser {
     };
 
     int state_;
-    std::vector<Json*> stack_;
+    rusty::Vec<Json*> stack_;
     String str_;
     Json json_;
 

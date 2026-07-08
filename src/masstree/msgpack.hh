@@ -7,7 +7,7 @@
 #include "json.hh"
 #include "small_vector.hh"
 #include "straccum.hh"
-#include <vector>
+#include <rusty/vec.hpp>
 namespace msgpack {
 using lcdf::Json;
 using lcdf::Str;
@@ -468,7 +468,7 @@ class parser {
         }
         return *this;
     }
-    template <typename T> parser& operator>>(::std::vector<T>& x);
+    template <typename T> parser& operator>>(rusty::Vec<T>& x);
     inline parser& operator>>(Json& j);
 
     inline parser& skip_primitives(unsigned n) {
@@ -607,7 +607,7 @@ inline T& unparse_wide(T& s, const X& x) {
 }
 
 template <typename T>
-parser& parser::operator>>(::std::vector<T>& x) {
+parser& parser::operator>>(rusty::Vec<T>& x) {
     uint32_t sz;
     if ((uint32_t) *s_ - format::ffixarray < format::nfixarray) {
         sz = *s_ - format::ffixarray;
@@ -621,7 +621,7 @@ parser& parser::operator>>(::std::vector<T>& x) {
         s_ += 5;
     }
     for (; sz != 0; --sz) {
-        x.push_back(T());
+        x.push(T());
         parse(x.back());
     }
     return *this;

@@ -25,7 +25,7 @@
 #include "json.hh"
 #include <algorithm>
 #include <rusty/ptr.hpp>
-
+#include <rusty/vec.hpp>
 #if MASSTREE_ROW_TYPE_ARRAY
 # include "value_array.hh"
 typedef value_array row_type;
@@ -43,7 +43,7 @@ typedef value_bag<uint16_t> row_type;
 template <typename R>
 struct query_helper {
     // @safe - Returns rusty::Ptr (borrow-checked pointer type)
-    inline rusty::Ptr<R> snapshot(rusty::Ptr<R> row, const std::vector<typename R::index_type>&, threadinfo&) {
+    inline rusty::Ptr<R> snapshot(rusty::Ptr<R> row, const rusty::Vec<typename R::index_type>&, threadinfo&) {
         return row;
     }
 };
@@ -78,7 +78,7 @@ class query {
     }
 
   private:
-    std::vector<typename R::index_type> f_;
+    rusty::Vec<typename R::index_type> f_;
     loginfo::query_times qtimes_;
     query_helper<R> helper_;
     lcdf::String scankey_;
@@ -102,11 +102,11 @@ template <typename R>
 // @unsafe { Accesses row columns via pointer snapshot }
 void query<R>::emit_fields(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
     rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
-    if (f_.empty()) {
+    if (f_.is_empty()) {
         for (int i = 0; i != snapshot->ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(i)));
     } else {
-        for (int i = 0; i != (int) f_.size(); ++i)
+        for (int i = 0; i != (int) f_.len(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
     }
 }
@@ -115,13 +115,13 @@ template <typename R>
 // @unsafe { Accesses row columns via pointer snapshot }
 void query<R>::emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
     rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
-    if ((f_.empty() && snapshot->ncol() == 1) || f_.size() == 1)
-        req = lcdf::String::make_stable(snapshot->col(f_.empty() ? 0 : f_[0]));
-    else if (f_.empty()) {
+    if ((f_.is_empty() && snapshot->ncol() == 1) || f_.len() == 1)
+        req = lcdf::String::make_stable(snapshot->col(f_.is_empty() ? 0 : f_[0]));
+    else if (f_.is_empty()) {
         for (int i = 0; i != snapshot->ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(i)));
     } else {
-        for (int i = 0; i != (int) f_.size(); ++i)
+        for (int i = 0; i != (int) f_.len(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
     }
 }
@@ -323,7 +323,7 @@ void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
     for (int i = 4; i != request.size(); ++i)
-        f_.push_back(request[i].as_i());
+        f_.push(request[i].as_i());
     query_json_scanner<R> scanf(*this, request);
     table.scan(scanf.firstkey(), true, scanf, ti);
 }
@@ -334,7 +334,7 @@ void query<R>::run_rscan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
     for (int i = 4; i != request.size(); ++i)
-        f_.push_back(request[i].as_i());
+        f_.push(request[i].as_i());
     query_json_scanner<R> scanf(*this, request);
     table.rscan(scanf.firstkey(), true, scanf, ti);
 }

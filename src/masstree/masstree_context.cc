@@ -7,8 +7,8 @@
  * - Uses rusty::MutPtr<T> for borrow-checked pointer semantics
  * - Uses rusty::Mutex<T> + rusty::Once instead of std::mutex /
  *   std::lock_guard / std::call_once.
- * - std::atomic remains for the epoch counter and the context-ID
- *   counter; both are annotated @unsafe at their use sites.
+ * - Uses rusty::sync::atomic::Atomic for the epoch counter and the
+ *   context-ID counter.
  * - Remaining @unsafe blocks gate the C++ `new` operator and the
  *   LockResult::unwrap() call (Result types' unwrap is @unsafe in
  *   rusty-cpp because they can panic).
@@ -25,15 +25,15 @@ import std;
 thread_local rusty::MutPtr<MasstreeContext> tl_masstree_context = nullptr;
 
 // Static ID counter (thread-safe atomic, hot only at Create() time).
-std::atomic<int> MasstreeContext::s_next_context_id_{0};
+rusty::sync::atomic::Atomic<int> MasstreeContext::s_next_context_id_{0};
 
 // Global default context, lazily initialized via rusty::Once.
 static rusty::MutPtr<MasstreeContext> g_default_context = nullptr;
 static rusty::Once g_default_context_init;
 
-// @unsafe { std::atomic::fetch_add is not borrow-checked }
+// @safe - Uses Rusty atomic fetch_add wrapper
 MasstreeContext::MasstreeContext()
-    : context_id_(s_next_context_id_.fetch_add(1))
+    : context_id_(s_next_context_id_.fetch_add(1, rusty::sync::atomic::Ordering::AcqRel))
     , epoch_(1)
     , allthreads_(nullptr) {
 }

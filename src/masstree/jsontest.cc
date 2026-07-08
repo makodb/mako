@@ -26,6 +26,8 @@
 #include <stdlib.h>
 
 #include "json.hh"
+#include <rusty/hashmap.hpp>
+#include <rusty/vec.hpp>
 
 import std;
 using namespace lcdf;
@@ -43,12 +45,12 @@ void incr(T& x) {
 #endif
 
 void benchmark_parse() {
-    std::vector<String> parse_examples;
-    parse_examples.push_back("{}");
-    parse_examples.push_back("{\"foo\":\"bar\",\"baz\":\"flim\"}");
-    parse_examples.push_back("[1,2,3,4,5]");
-    parse_examples.push_back("[]");
-    parse_examples.push_back("[{},{\"b\":[]}]");
+    rusty::Vec<String> parse_examples;
+    parse_examples.push("{}");
+    parse_examples.push("{\"foo\":\"bar\",\"baz\":\"flim\"}");
+    parse_examples.push("[1,2,3,4,5]");
+    parse_examples.push("[]");
+    parse_examples.push("[{},{\"b\":[]}]");
     Json j;
 #if 0
     for (int i = 0; i < 10000000; ++i)
@@ -534,16 +536,16 @@ int main(int argc, char** argv) {
     }
 
     {
-        std::vector<int> v = {1, 2, 3, 4, 5};
+        rusty::Vec<int> v = {1, 2, 3, 4, 5};
         Json j(v.begin(), v.end());
         CHECK(j.unparse() == "[1,2,3,4,5]");
     }
 
     {
-        std::unordered_map<String, String> h;
-        h["a"] = "b";
-        h["c"] = "d";
-        h["x"] = "e";
+        rusty::HashMap<String, String> h;
+        h.insert("a", "b");
+        h.insert("c", "d");
+        h.insert("x", "e");
         Json j(h.begin(), h.end());
         CHECK(j.is_o());
         CHECK(j.size() == 3);
