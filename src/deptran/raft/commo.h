@@ -203,7 +203,9 @@ friend class RaftProxy;
    * @param callback - Called when RPC completes (success/failure)
    */
 
-  // @unsafe - C-style cast, std::function
+  // @unsafe - legacy RPC boundary: implementation uses raw RaftProxy casts and
+  // async FutureAttr callbacks. Public completion handler has been migrated to
+  // rusty::Function, but the implementation still bridges into legacy RPC code.
   void SendTimeoutNow(siteid_t site_id,
                     parid_t par_id,
                     uint64_t leader_term,
@@ -268,6 +270,8 @@ friend class RaftProxy;
    * Peers in DOWN state are skipped (they will reconnect when they restart).
    * Peers in ACKNOWLEDGED state are skipped (already done).
    */
+  // @unsafe - retries legacy async RPCs and reads/writes notify_restart_status_
+  // under std::mutex.
   void RetryPendingNotifyRestart();
 
   /**
@@ -283,6 +287,8 @@ friend class RaftProxy;
    *
    * @return true if any peer is still in PENDING state
    */
+  // @unsafe - reads notify_restart_status_ under std::mutex, which is outside
+  // RustyCpp borrow checking.
   bool HasPendingNotifyRestart();
 
   /**
@@ -300,7 +306,8 @@ friend class RaftProxy;
    * @param data - Serialized snapshot data
    * @param callback - Called when RPC completes with follower's term
    */
-  // @unsafe - C-style cast, std::function
+  // @unsafe - legacy RPC boundary: single-target snapshot RPC uses raw RaftProxy
+  // casts and async FutureAttr callback. Completion callback uses rusty::Function.
   void SendInstallSnapshot(siteid_t site_id,
                            parid_t par_id,
                            uint64_t term,
@@ -321,12 +328,9 @@ friend class RaftProxy;
   // variants are merely a different projection of the reply.
   // ==========================================================================
 
-  // @unsafe - C-style cast, std::function
-  // Called once per reply (for the single target site). `on_reply` fires
-  // with the site_id that replied; on error, it does not fire at all, so
-  // callers should treat absence of reply as a timeout.
-  // take janus::Command (was shared_ptr<Marshallable>);
-  // shared_ptr<Marshallable> callers auto-convert via implicit Command ctor.
+  // @unsafe - legacy RPC boundary: single-target AppendEntries callback API.
+  // on_reply fires once for the target site if a reply arrives; on transport
+  // error, it does not fire, so callers should treat absence as timeout.
   void SendAppendEntriesCb(
       siteid_t site_id,
       parid_t par_id,
@@ -343,9 +347,9 @@ friend class RaftProxy;
       bool trigger_election_now,
       rusty::Function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
 
-  // @unsafe - C-style cast, std::function
-  // Broadcasts to every peer in the partition except self. `on_reply`
-  // fires once per replying peer with that peer's site_id.
+  // @unsafe - legacy RPC fanout boundary: broadcasts to every peer except self.
+  // on_reply is shared across multiple async replies using the implementation's
+  // shared_ptr bridge because rusty::Function is move-only.
   void BroadcastVoteCb(
       parid_t par_id,
       slotid_t lst_log_idx,
