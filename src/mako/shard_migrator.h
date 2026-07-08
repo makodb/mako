@@ -78,7 +78,13 @@ public:
     bool final_sync_and_verify() {
         for (const auto& kv : staged_) dst_->put(kv.first, kv.second);
         for (const auto& k : del_)     dst_->remove(k);
-        return src_->checksum(lo_, hi_) == dst_->checksum(lo_, hi_);
+        // Distributed 2PC shape: the SOURCE computes its checksum (its "prepared"
+        // proof), the coordinator ships that scalar to the DESTINATION, and the
+        // destination verifies its own range against it. For a remote dst this is
+        // a single RPC -- the dst's checksum never leaves it, only the bool vote
+        // comes back. (Local dst: verify_range just does the == in-process.)
+        const uint64_t src_ck = src_->checksum(lo_, hi_);
+        return dst_->verify_range(lo_, hi_, src_ck);
     }
 
     // Phase 4 — COMMIT: the source drops the migrated range (its data now lives

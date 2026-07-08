@@ -557,4 +557,29 @@ abstract service ConfigKvService {
     // (empty value) on miss.
     defer ReadConfigKey(string key | i32 found, string value);
 }
+
+// Shard data-transfer service — lets a migration coordinator read / write /
+// checksum a REMOTE shard's key range over RPC (the transport behind
+// RemoteShardData). Cross-process online migration uses it: copy a range from
+// the source shard to the destination, ship the write-delta, then run the 2PC
+// checksum-verify + commit, all over these calls. Values are raw bytes (NUL-safe
+// rrr string marshalling), matching the non-txn OrderedIndex surface.
+abstract service ShardDataService {
+    // Bulk read up to `limit` live pairs from [lo,hi) -- the migration copy /
+    // final-sync source read. rows is empty once the range is exhausted.
+    defer ScanRange(string lo, string hi, i32 limit | map<string, string> rows);
+    // Fold the range into a scalar (the source's 2PC vote).
+    defer Checksum(string lo, string hi | i64 checksum);
+    // Compute this shard's range checksum and compare to `expected` (the
+    // source's): ok=1 iff byte-identical -- the destination's 2PC prepare vote.
+    defer VerifyRange(string lo, string hi, i64 expected | i32 ok);
+    // Point write / delete -- the coordinator replays the migration delta to the
+    // destination through these.
+    defer PutKey(string key, string value | i32 ok);
+    defer RemoveKey(string key | i32 ok);
+    // Post-commit shed: drop the whole range on the shard in one call.
+    defer DropRange(string lo, string hi | i32 ok);
+    // Point read (verification).
+    defer GetKey(string key | i32 found, string value);
+}
 %%

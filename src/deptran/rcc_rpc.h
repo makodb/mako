@@ -10852,6 +10852,814 @@ public:
     }
 };
 
+class ShardDataServiceService {
+public:
+    // Typed request/response scaffolding generated from RPC signature lists.
+    struct RpcScanRangeRequest {
+        std::string lo;
+        std::string hi;
+        rrr::i32 limit;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcScanRangeRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        ar << o.limit;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcScanRangeRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        ar >> o.limit;
+        return ar;
+    }
+
+    struct RpcScanRangeResponse {
+        std::map<std::string, std::string> rows;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcScanRangeResponse& o) {
+        ar << o.rows;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcScanRangeResponse& o) {
+        ar >> o.rows;
+        return ar;
+    }
+
+    struct RpcChecksumRequest {
+        std::string lo;
+        std::string hi;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcChecksumRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcChecksumRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        return ar;
+    }
+
+    struct RpcChecksumResponse {
+        rrr::i64 checksum;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcChecksumResponse& o) {
+        ar << o.checksum;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcChecksumResponse& o) {
+        ar >> o.checksum;
+        return ar;
+    }
+
+    struct RpcVerifyRangeRequest {
+        std::string lo;
+        std::string hi;
+        rrr::i64 expected;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVerifyRangeRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        ar << o.expected;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVerifyRangeRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        ar >> o.expected;
+        return ar;
+    }
+
+    struct RpcVerifyRangeResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVerifyRangeResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVerifyRangeResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
+    struct RpcPutKeyRequest {
+        std::string key;
+        std::string value;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPutKeyRequest& o) {
+        ar << o.key;
+        ar << o.value;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPutKeyRequest& o) {
+        ar >> o.key;
+        ar >> o.value;
+        return ar;
+    }
+
+    struct RpcPutKeyResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPutKeyResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPutKeyResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
+    struct RpcRemoveKeyRequest {
+        std::string key;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveKeyRequest& o) {
+        ar << o.key;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveKeyRequest& o) {
+        ar >> o.key;
+        return ar;
+    }
+
+    struct RpcRemoveKeyResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveKeyResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveKeyResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
+    struct RpcDropRangeRequest {
+        std::string lo;
+        std::string hi;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDropRangeRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDropRangeRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        return ar;
+    }
+
+    struct RpcDropRangeResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDropRangeResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDropRangeResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
+    struct RpcGetKeyRequest {
+        std::string key;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetKeyRequest& o) {
+        ar << o.key;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetKeyRequest& o) {
+        ar >> o.key;
+        return ar;
+    }
+
+    struct RpcGetKeyResponse {
+        rrr::i32 found;
+        std::string value;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetKeyResponse& o) {
+        ar << o.found;
+        ar << o.value;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetKeyResponse& o) {
+        ar >> o.found;
+        ar >> o.value;
+        return ar;
+    }
+
+    enum {
+        SCANRANGE = 0x431847f1,
+        CHECKSUM = 0x11430399,
+        VERIFYRANGE = 0x6470b600,
+        PUTKEY = 0x13bc684a,
+        REMOVEKEY = 0x458b0310,
+        DROPRANGE = 0x13a070d5,
+        GETKEY = 0x24134f12,
+    };
+    // Registers RPC IDs with server using service index
+    // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
+    int __reg_to__(rrr::Server& svr, size_t svc_index) {
+        int ret = 0;
+        if ((ret = svr.reg_rpc(SCANRANGE, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(CHECKSUM, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(VERIFYRANGE, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(PUTKEY, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(REMOVEKEY, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(DROPRANGE, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(GETKEY, svc_index)) != 0) {
+            goto err;
+        }
+        return 0;
+    err:
+        svr.unreg(SCANRANGE);
+        svr.unreg(CHECKSUM);
+        svr.unreg(VERIFYRANGE);
+        svr.unreg(PUTKEY);
+        svr.unreg(REMOVEKEY);
+        svr.unreg(DROPRANGE);
+        svr.unreg(GETKEY);
+        return ret;
+    }
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        switch (rpc_id) {
+        case SCANRANGE: __ScanRange__wrapper__(std::move(req), weak_sconn); break;
+        case CHECKSUM: __Checksum__wrapper__(std::move(req), weak_sconn); break;
+        case VERIFYRANGE: __VerifyRange__wrapper__(std::move(req), weak_sconn); break;
+        case PUTKEY: __PutKey__wrapper__(std::move(req), weak_sconn); break;
+        case REMOVEKEY: __RemoveKey__wrapper__(std::move(req), weak_sconn); break;
+        case DROPRANGE: __DropRange__wrapper__(std::move(req), weak_sconn); break;
+        case GETKEY: __GetKey__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
+    }
+    // typed service signatures
+    // @safe
+    virtual void ScanRange(const RpcScanRangeRequest& req, RpcScanRangeResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void Checksum(const RpcChecksumRequest& req, RpcChecksumResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void VerifyRange(const RpcVerifyRangeRequest& req, RpcVerifyRangeResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void PutKey(const RpcPutKeyRequest& req, RpcPutKeyResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void RemoveKey(const RpcRemoveKeyRequest& req, RpcRemoveKeyResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void DropRange(const RpcDropRangeRequest& req, RpcDropRangeResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void GetKey(const RpcGetKeyRequest& req, RpcGetKeyResponse& resp, rrr::DeferredReply defer) = 0;
+    // these RPC handler functions need to be implemented by user
+    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
+private:
+    // @safe
+    void __ScanRange__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcScanRangeRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            __req_ar__ >> __typed_req__.limit;
+            auto __typed_resp__ = std::make_shared<RpcScanRangeResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->rows;
+                },
+                []() {});
+            this->ScanRange(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __Checksum__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcChecksumRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            auto __typed_resp__ = std::make_shared<RpcChecksumResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->checksum;
+                },
+                []() {});
+            this->Checksum(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __VerifyRange__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcVerifyRangeRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            __req_ar__ >> __typed_req__.expected;
+            auto __typed_resp__ = std::make_shared<RpcVerifyRangeResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->VerifyRange(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __PutKey__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcPutKeyRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.key;
+            __req_ar__ >> __typed_req__.value;
+            auto __typed_resp__ = std::make_shared<RpcPutKeyResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->PutKey(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __RemoveKey__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcRemoveKeyRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.key;
+            auto __typed_resp__ = std::make_shared<RpcRemoveKeyResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->RemoveKey(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __DropRange__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcDropRangeRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            auto __typed_resp__ = std::make_shared<RpcDropRangeResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->DropRange(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __GetKey__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcGetKeyRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.key;
+            auto __typed_resp__ = std::make_shared<RpcGetKeyResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->found;
+                    m << __typed_resp__->value;
+                },
+                []() {});
+            this->GetKey(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+};
+
+class ShardDataServiceProxy {
+protected:
+    rrr::Client* __cl__;
+public:
+    ShardDataServiceProxy(rrr::Client* cl): __cl__(cl) { }
+    // Alias typed request/response structs from the sibling Service class.
+    using RpcScanRangeRequest = ShardDataServiceService::RpcScanRangeRequest;
+    using RpcScanRangeResponse = ShardDataServiceService::RpcScanRangeResponse;
+    using RpcChecksumRequest = ShardDataServiceService::RpcChecksumRequest;
+    using RpcChecksumResponse = ShardDataServiceService::RpcChecksumResponse;
+    using RpcVerifyRangeRequest = ShardDataServiceService::RpcVerifyRangeRequest;
+    using RpcVerifyRangeResponse = ShardDataServiceService::RpcVerifyRangeResponse;
+    using RpcPutKeyRequest = ShardDataServiceService::RpcPutKeyRequest;
+    using RpcPutKeyResponse = ShardDataServiceService::RpcPutKeyResponse;
+    using RpcRemoveKeyRequest = ShardDataServiceService::RpcRemoveKeyRequest;
+    using RpcRemoveKeyResponse = ShardDataServiceService::RpcRemoveKeyResponse;
+    using RpcDropRangeRequest = ShardDataServiceService::RpcDropRangeRequest;
+    using RpcDropRangeResponse = ShardDataServiceService::RpcDropRangeResponse;
+    using RpcGetKeyRequest = ShardDataServiceService::RpcGetKeyRequest;
+    using RpcGetKeyResponse = ShardDataServiceService::RpcGetKeyResponse;
+    class ScanRangeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit ScanRangeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcScanRangeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcScanRangeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcScanRangeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.rows;
+            return rusty::Result<RpcScanRangeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<ScanRangeTypedFuture, rrr::i32> async_ScanRange(const RpcScanRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::SCANRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+            __m__ << req.limit;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<ScanRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<ScanRangeTypedFuture, rrr::i32>::Ok(ScanRangeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<ScanRangeTypedFuture> await_ScanRange(const RpcScanRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_ScanRange(req, __fu_attr__));
+    }
+    rusty::Result<RpcScanRangeResponse, rrr::i32> ScanRange(const RpcScanRangeRequest& req) {
+        auto __typed_fu_result__ = this->async_ScanRange(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcScanRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class ChecksumTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit ChecksumTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcChecksumResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcChecksumResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcChecksumResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.checksum;
+            return rusty::Result<RpcChecksumResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<ChecksumTypedFuture, rrr::i32> async_Checksum(const RpcChecksumRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::CHECKSUM, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<ChecksumTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<ChecksumTypedFuture, rrr::i32>::Ok(ChecksumTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<ChecksumTypedFuture> await_Checksum(const RpcChecksumRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_Checksum(req, __fu_attr__));
+    }
+    rusty::Result<RpcChecksumResponse, rrr::i32> Checksum(const RpcChecksumRequest& req) {
+        auto __typed_fu_result__ = this->async_Checksum(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcChecksumResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class VerifyRangeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit VerifyRangeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcVerifyRangeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcVerifyRangeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcVerifyRangeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcVerifyRangeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<VerifyRangeTypedFuture, rrr::i32> async_VerifyRange(const RpcVerifyRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::VERIFYRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+            __m__ << req.expected;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<VerifyRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<VerifyRangeTypedFuture, rrr::i32>::Ok(VerifyRangeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<VerifyRangeTypedFuture> await_VerifyRange(const RpcVerifyRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_VerifyRange(req, __fu_attr__));
+    }
+    rusty::Result<RpcVerifyRangeResponse, rrr::i32> VerifyRange(const RpcVerifyRangeRequest& req) {
+        auto __typed_fu_result__ = this->async_VerifyRange(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcVerifyRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class PutKeyTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit PutKeyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcPutKeyResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcPutKeyResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcPutKeyResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcPutKeyResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<PutKeyTypedFuture, rrr::i32> async_PutKey(const RpcPutKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::PUTKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.key;
+            __m__ << req.value;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<PutKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<PutKeyTypedFuture, rrr::i32>::Ok(PutKeyTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<PutKeyTypedFuture> await_PutKey(const RpcPutKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_PutKey(req, __fu_attr__));
+    }
+    rusty::Result<RpcPutKeyResponse, rrr::i32> PutKey(const RpcPutKeyRequest& req) {
+        auto __typed_fu_result__ = this->async_PutKey(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcPutKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class RemoveKeyTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit RemoveKeyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcRemoveKeyResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcRemoveKeyResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcRemoveKeyResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcRemoveKeyResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<RemoveKeyTypedFuture, rrr::i32> async_RemoveKey(const RpcRemoveKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::REMOVEKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.key;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<RemoveKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<RemoveKeyTypedFuture, rrr::i32>::Ok(RemoveKeyTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<RemoveKeyTypedFuture> await_RemoveKey(const RpcRemoveKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_RemoveKey(req, __fu_attr__));
+    }
+    rusty::Result<RpcRemoveKeyResponse, rrr::i32> RemoveKey(const RpcRemoveKeyRequest& req) {
+        auto __typed_fu_result__ = this->async_RemoveKey(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcRemoveKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class DropRangeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit DropRangeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcDropRangeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcDropRangeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcDropRangeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcDropRangeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<DropRangeTypedFuture, rrr::i32> async_DropRange(const RpcDropRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::DROPRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<DropRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<DropRangeTypedFuture, rrr::i32>::Ok(DropRangeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<DropRangeTypedFuture> await_DropRange(const RpcDropRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_DropRange(req, __fu_attr__));
+    }
+    rusty::Result<RpcDropRangeResponse, rrr::i32> DropRange(const RpcDropRangeRequest& req) {
+        auto __typed_fu_result__ = this->async_DropRange(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcDropRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class GetKeyTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit GetKeyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcGetKeyResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcGetKeyResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcGetKeyResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.found;
+            __reply_ar__ >> __typed_resp__.value;
+            return rusty::Result<RpcGetKeyResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<GetKeyTypedFuture, rrr::i32> async_GetKey(const RpcGetKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::GETKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.key;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<GetKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<GetKeyTypedFuture, rrr::i32>::Ok(GetKeyTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<GetKeyTypedFuture> await_GetKey(const RpcGetKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_GetKey(req, __fu_attr__));
+    }
+    rusty::Result<RpcGetKeyResponse, rrr::i32> GetKey(const RpcGetKeyRequest& req) {
+        auto __typed_fu_result__ = this->async_GetKey(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcGetKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+};
+
 } // namespace janus
 
 

@@ -48,12 +48,21 @@ public:
     // Order-independent u64 fold over live pairs in [lo, hi). A deleted key
     // drops out of the scan on both sides, so deletes keep source and
     // destination checksums equal without any tombstone.
-    uint64_t checksum(const std::string& lo, const std::string& hi) {
+    virtual uint64_t checksum(const std::string& lo, const std::string& hi) {
         uint64_t sum = 0;
         for (const auto& kv : scan_range(lo, hi)) {
             sum += fnv(kv.first) * 1000003ull + fnv(kv.second);
         }
         return sum;
+    }
+    // Verify this shard's [lo,hi) against a checksum computed ELSEWHERE (the
+    // source's, in a migration's 2PC prepare): returns true iff this shard's
+    // range is byte-identical to the source's. On a remote backend this is one
+    // RPC -- the source's checksum goes in, a bool comes out, and this shard's
+    // own checksum never leaves it.
+    virtual bool verify_range(const std::string& lo, const std::string& hi,
+                              uint64_t expected_checksum) {
+        return checksum(lo, hi) == expected_checksum;
     }
     // Background bulk copy: pull the source's [lo,hi) into this shard, CHUNKED --
     // scan the source in small windows so a concurrent write invalidates only one
@@ -73,7 +82,7 @@ public:
         }
     }
     // Post-commit shed: drop the range from this shard.
-    void drop_range(const std::string& lo, const std::string& hi) {
+    virtual void drop_range(const std::string& lo, const std::string& hi) {
         for (const auto& kv : scan_range(lo, hi)) remove(kv.first);
     }
 

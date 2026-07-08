@@ -2794,6 +2794,30 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_shard_migration_stress COMMAND test_shard_migration_stress)
 
+    # DISTRIBUTED migration over RPC: ShardDataService (source<->dest data plane)
+    # + a real rrr server/client loopback driving ShardMigrator with a REMOTE
+    # source participant. The gtest TU (shard_migration_rpc_test.cc) sees only
+    # rcc_rpc.h (via shard_data_service.h) over an in-memory ShardData -- the
+    # known-good config_kv_service_test.cc profile; the full rrr/rrr.hpp
+    # server/client wiring is isolated in shard_data_rpc_harness.cc, because any
+    # two of {masstree, rrr/rrr.hpp, gtest} in one -O3 TU compile pathologically.
+    # Backend is in-memory here (mbta as a ShardData is covered by
+    # test_shard_migration_mbta); links the txlog stack (rrr) like config_kv.
+    add_executable(test_shard_migration_rpc
+        tests/shard_migration_rpc_test.cc
+        tests/shard_data_rpc_harness.cc)
+    target_include_directories(test_shard_migration_rpc PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+        src/deptran
+    )
+    target_compile_options(test_shard_migration_rpc PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_shard_migration_rpc
+        ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        rocksdb pthread)
+    add_test(NAME test_shard_migration_rpc COMMAND test_shard_migration_rpc)
+
     # Test: distributed (two-shards-in-one-process) non-txn API — the
     # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
