@@ -342,7 +342,7 @@ friend class RaftProxy;
       const janus::Command& cmd,
       uint64_t cmdLogTerm,
       bool trigger_election_now,
-      std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
+      rusty::Function<void(siteid_t, raft::AppendEntriesReply)> on_reply);
 
   // @unsafe - C-style cast, std::function
   // Broadcasts to every peer in the partition except self. `on_reply`
@@ -353,7 +353,7 @@ friend class RaftProxy;
       ballot_t lst_log_term,
       siteid_t self_id,
       ballot_t cur_term,
-      std::function<void(siteid_t, raft::VoteReply)> on_reply);
+      rusty::Function<void(siteid_t, raft::VoteReply)> on_reply);
 };
 
 } // namespace janus

@@ -862,10 +862,13 @@ namespace janus
         const janus::Command &cmd,
         uint64_t cmdLogTerm,
         bool trigger_election_now,
-        std::function<void(siteid_t, raft::AppendEntriesReply)> on_reply)
+        rusty::Function<void(siteid_t, raft::AppendEntriesReply)> on_reply)
     {
       auto proxies = rpc_par_proxies_[par_id];
       WAN_WAIT;
+
+      auto on_reply_ptr = std::make_shared<rusty::Function<void(siteid_t, raft::AppendEntriesReply)>>(std::move(on_reply));
+
       for (auto &p : proxies)
       {
         if (p.first != site_id)
@@ -878,7 +881,7 @@ namespace janus
         }
         FutureAttr fuattr;
         auto cmd_keep = cmd; // keep alive across the async boundary
-        fuattr.callback = [on_reply, cmd_keep, follower_id](rusty::Arc<Future> fu)
+        fuattr.callback = [on_reply_ptr, cmd_keep, follower_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
           {
@@ -891,7 +894,9 @@ namespace janus
           fu->get_reply() >> r.follower_current_term;
           fu->get_reply() >> r.follower_last_log_index;
           fu->get_reply() >> r.follower_ack_type;
-          on_reply(follower_id, r);
+          if (*on_reply_ptr) {
+            (*on_reply_ptr)(follower_id, r);
+          }
         };
 
         if (!cmd.has_value())
@@ -943,10 +948,12 @@ namespace janus
         ballot_t lst_log_term,
         siteid_t self_id,
         ballot_t cur_term,
-        std::function<void(siteid_t, raft::VoteReply)> on_reply)
+        rusty::Function<void(siteid_t, raft::VoteReply)> on_reply)
     {
       auto proxies = rpc_par_proxies_[par_id];
       WAN_WAIT;
+
+      auto on_reply_ptr = std::make_shared<rusty::Function<void(siteid_t, raft::VoteReply)>>(std::move(on_reply));
       for (auto &p : proxies)
       {
         auto site_id = p.first;
@@ -958,7 +965,7 @@ namespace janus
           proxy = (RaftProxy *)p.second;
         }
         FutureAttr fuattr;
-        fuattr.callback = [on_reply, site_id](rusty::Arc<Future> fu)
+        fuattr.callback = [on_reply_ptr, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
           {
@@ -973,7 +980,10 @@ namespace janus
           fu->get_reply() >> vote;
           r.max_ballot = term;
           r.vote_granted = vote;
-          on_reply(site_id, r);
+          if (*on_reply_ptr)
+          {
+            (*on_reply_ptr)(site_id, r);
+          }
         };
         RaftProxy::RpcVoteRequest req{};
         req.lst_log_idx = lst_log_idx;
