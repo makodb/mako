@@ -3,7 +3,7 @@
  *
  * fasttransport.h:
  *   High-performance transport layer with pluggable backends
- *   Supports eRPC (RDMA) and rrr/rpc (TCP/IP)
+ *   Supports RPC (RDMA) and rrr/rpc (TCP/IP)
  *
  **********************************************************************/
 
@@ -35,7 +35,7 @@ void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
  * Class FastTransport implements a multi-threaded transport layer
- * with pluggable backends (eRPC for RDMA, rrr/rpc for TCP/IP).
+ * with pluggable backends (RPC for RDMA, rrr/rpc for TCP/IP).
  *
  * This class delegates to a TransportBackend implementation selected
  * at runtime based on configuration. It maintains API compatibility
@@ -101,7 +101,7 @@ public:
     mako::HelperQueue* GetHelperQueueResponse(uint16_t id);
 
 private:
-    // Transport backend (eRPC, rrr/rpc, etc.)
+    // Transport backend (RPC, rrr/rpc, etc.)
     mako::TransportBackend* backend_{nullptr};
 
     // Mutex to protect backend_ during concurrent access (stats vs destructor)

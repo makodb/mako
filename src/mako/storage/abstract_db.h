@@ -88,7 +88,7 @@ public:
     HINT_TPCC_STOCK_LEVEL,
     HINT_TPCC_STOCK_LEVEL_READ_ONLY,
 
-    // erpc server profiles
+    // rpc server profiles
     HINT_TPCC_BASIC,
   };
 

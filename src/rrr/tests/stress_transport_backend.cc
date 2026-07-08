@@ -6,7 +6,7 @@
  *   Tests throughput, concurrency, memory stability using mock implementations
  *
  *   NOTE: These tests use mock implementations to avoid pulling in
- *   full mako/eRPC dependencies. They test the interface contract and
+ *   full mako dependencies. They test the interface contract and
  *   performance characteristics that backends must satisfy.
  *
  **********************************************************************/
@@ -29,24 +29,20 @@ using namespace std::chrono;
 namespace mako {
 
 enum class TransportType {
-    ERPC = 0,
-    RRR_RPC = 1
+    RRR_RPC = 0
 };
 
 inline TransportType ParseTransportType(const std::string& type_str) {
-    if (type_str == "erpc" || type_str == "ERPC") {
-        return TransportType::ERPC;
-    } else if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
+    if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
         return TransportType::RRR_RPC;
     } else {
         throw std::runtime_error("Invalid transport type: " + type_str +
-                                " (valid: erpc, rrr)");
+                                " (valid: rrr)");
     }
 }
 
 inline const char* TransportTypeToString(TransportType type) {
     switch (type) {
-        case TransportType::ERPC: return "erpc";
         case TransportType::RRR_RPC: return "rrr";
         default: return "unknown";
     }
@@ -431,12 +427,10 @@ TEST_F(TransportStressTest, TypeParsingPerformance) {
     volatile int dummy = 0;
     for (int i = 0; i < iterations; i++) {
         mako::TransportType type;
-        switch (i % 5) {
-            case 0: type = mako::ParseTransportType("erpc"); break;
-            case 1: type = mako::ParseTransportType("ERPC"); break;
-            case 2: type = mako::ParseTransportType("rrr"); break;
-            case 3: type = mako::ParseTransportType("RRR"); break;
-            case 4: type = mako::ParseTransportType("rrr_rpc"); break;
+        switch (i % 3) {
+            case 0: type = mako::ParseTransportType("rrr"); break;
+            case 1: type = mako::ParseTransportType("RRR"); break;
+            case 2: type = mako::ParseTransportType("rrr_rpc"); break;
         }
         dummy += static_cast<int>(type);
     }

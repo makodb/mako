@@ -9,9 +9,6 @@
 #include <cstddef>
 #include <functional>
 #include <sys/file.h>
-#ifdef MAKO_ENABLE_ERPC
-#include "rpc.h"
-#endif
 #include <mutex>
 #include <condition_variable>
 #include <stdlib.h>
@@ -176,7 +173,7 @@ namespace mako
         return dist(gen);
     }
 
-    // --------------------------- for erpc APIs
+    // --------------------------- for RPC APIs
     const uint8_t getReqType = 1;
     const uint8_t lockReqType = 2;
     const uint8_t validateReqType = 3;

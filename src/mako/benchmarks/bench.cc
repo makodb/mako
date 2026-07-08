@@ -387,7 +387,7 @@ bench_runner::get_open_tables() {
 
 void
 bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
-  Warning("stop all erpc clients. set stop=false");
+  Warning("stop all rpc clients. set stop=false");
   auto& benchConfig = BenchmarkConfig::getInstance();
   for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
    auto it = shardClientAll.find(par_id);
@@ -562,7 +562,7 @@ bench_runner::run()
   }
   // notify other leaders to shutdown as well
   // if it is the learner ==> it's the new leader and so it should be terminated faster than others
-  // the eRPC client has to be used in the same thread that created it, so we can't use client_control
+  // the RPC client has to be used in the same thread that created it, so we can't use client_control
   if (benchConfig.getCluster().compare("learner")==0) {
    sync_util::sync_logger::client_control2(3, benchConfig.getShardIndex());
   }
@@ -571,7 +571,7 @@ bench_runner::run()
     benchConfig.setRunning(false);  // stop database worker threads
   }
   cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
-  stop(); // stop erpc clients (unblocks outstanding RPCs)
+  stop(); // stop rpc clients (unblocks outstanding RPCs)
   cerr << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
 
@@ -584,9 +584,9 @@ bench_runner::run()
   cerr << "[SHUTDOWN] All workers joined" << endl;
 
   // Stop server transports AFTER workers exit to ensure they can finish processing
-  cerr << "[SHUTDOWN] Calling stop_erpc_server()" << endl;
-  mako::stop_erpc_server();
-  cerr << "[SHUTDOWN] stop_erpc_server() completed" << endl;
+  cerr << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
+  mako::stop_rpc_server();
+  cerr << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
   cerr << "[SHUTDOWN] Calling second stop()" << endl;
   stop(); // ensure transports are torn down after workers exit

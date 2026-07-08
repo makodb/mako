@@ -6,7 +6,7 @@
  *
  * Purpose:
  *   Provides a common interface for accessing request/response buffers
- *   across different transport backends (eRPC, rrr/rpc, etc.)
+ *   across different transport backends (RPC, rrr/rpc, etc.)
  *
  **********************************************************************/
 
@@ -22,7 +22,7 @@ namespace mako {
  * Abstract interface for transport request handles
  *
  * This interface allows worker threads to process requests without
- * knowing the underlying transport implementation (eRPC, rrr/rpc, etc.)
+ * knowing the underlying transport implementation (RPC, rrr/rpc, etc.)
  */
 class TransportRequestHandle {
 public:
@@ -57,7 +57,7 @@ public:
     /**
      * Enqueue response for sending back to client
      * Called by worker thread after processing request and filling response buffer.
-     * For eRPC: No-op (eRPC handles response enqueueing automatically)
+     * For RPC: No-op (RPC handles response enqueueing automatically)
      * For rrr/rpc: Enqueues to response queue for RunEventLoop to process
      * @param msg_size Size of response data in bytes
      */

@@ -47,9 +47,6 @@ make -j32
 ./ci/ci.sh all
 ```
 
-Notes:
-- On macOS, eRPC is disabled; `./ci/ci.sh all` skips the eRPC variants and runs the rrr/rpc-based tests.
-
 ---
 
 ## Performance
@@ -122,4 +119,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 - **Research Team**: Mako research and development team
-- **Dependencies**: Built on Janus, Masstree, RocksDB, eRPC, and other open-source projects
+- **Dependencies**: Built on Janus, Masstree, RocksDB, and other open-source projects

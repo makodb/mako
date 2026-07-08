@@ -2,7 +2,7 @@
 /***********************************************************************
  *
  * transport_backend.h:
- *   Abstract interface for transport backends (eRPC, rrr/rpc, etc.)
+ *   Abstract interface for transport backends (rrr/rpc)
  *   Allows runtime/build-time selection of transport implementation
  *
  **********************************************************************/
@@ -24,12 +24,10 @@ namespace mako {
 /**
  * Transport backend type enumeration
  *
- * ERPC:    High-performance RDMA-based transport (1-2 μs latency)
  * RRR_RPC: TCP/IP-based transport for portability (10-50 μs latency)
  */
 enum class TransportType {
-    ERPC = 0,      // eRPC - RDMA-based, high performance
-    RRR_RPC = 1    // rrr/rpc - TCP/IP-based, portable
+    RRR_RPC = 0    // rrr/rpc - TCP/IP-based, portable
 };
 
 /**
@@ -59,7 +57,7 @@ public:
      *
      * @param local_uri Local address to bind (e.g., "192.168.1.1:31850")
      * @param numa_node NUMA node for memory allocation (0-N)
-     * @param phy_port Physical port for RDMA (eRPC only, 0 for TCP)
+     * @param phy_port Physical port (0 for TCP)
      * @param st_nr_req_types Starting request type ID to register
      * @param end_nr_req_types Ending request type ID to register
      * @return 0 on success, error code on failure
@@ -221,11 +219,10 @@ public:
     /**
      * Get a human-readable name for the backend
      *
-     * @return Backend name string (e.g., "eRPC", "rrr/rpc")
+     * @return Backend name string (e.g., "rrr/rpc")
      */
     virtual const char* GetName() const {
         switch (GetType()) {
-            case TransportType::ERPC: return "eRPC";
             case TransportType::RRR_RPC: return "rrr/rpc";
             default: return "unknown";
         }
@@ -235,18 +232,16 @@ public:
 /**
  * Parse transport type from string
  *
- * @param type_str String representation ("erpc" or "rrr")
+ * @param type_str String representation ("rrr")
  * @return TransportType enum value
  * @throws If type_str is invalid
  */
 inline TransportType ParseTransportType(const std::string& type_str) {
-    if (type_str == "erpc" || type_str == "ERPC") {
-        return TransportType::ERPC;
-    } else if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
+    if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
         return TransportType::RRR_RPC;
     } else {
         throw std::runtime_error("Invalid transport type: " + type_str +
-                                " (valid: erpc, rrr)");
+                                " (valid: rrr)");
     }
 }
 
@@ -254,11 +249,10 @@ inline TransportType ParseTransportType(const std::string& type_str) {
  * Convert transport type to string
  *
  * @param type TransportType enum value
- * @return String representation ("erpc" or "rrr")
+ * @return String representation ("rrr")
  */
 inline const char* TransportTypeToString(TransportType type) {
     switch (type) {
-        case TransportType::ERPC: return "erpc";
         case TransportType::RRR_RPC: return "rrr";
         default: return "unknown";
     }

@@ -244,7 +244,7 @@ private:
     std::atomic<int> msg_counter_resp_sent_{0};
 
     // Rrr request handle storage for helper queue processing
-    // Maps erpc::ReqHandle* (used as key) to RrrRequestHandle data
+    // Maps the opaque request handle (used as key) to RrrRequestHandle data
     std::map<void*, std::unique_ptr<RrrRequestHandle>> rrr_request_map_;
     std::mutex rrr_request_map_lock_;
 

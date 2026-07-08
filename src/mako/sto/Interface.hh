@@ -31,7 +31,7 @@ class TThread {
     // counter for reclaim 
     static __thread int the_counter;
     // number of erpc servers
-    static __thread int the_num_erpc_server;
+    static __thread int the_num_rpc_server;
     // if run micro-based benchmark
     static __thread int the_is_micro;
 
@@ -69,9 +69,9 @@ public:
         the_mode = mode;
     }
 
-    static int get_num_erpc_server() { 
-        if (the_num_erpc_server)
-            return the_num_erpc_server;
+    static int get_num_rpc_server() { 
+        if (the_num_rpc_server)
+            return the_num_rpc_server;
         else{
             Warning("using default erpc_num, please ensure it is expected");
             return 2;
@@ -82,7 +82,7 @@ public:
         return is_worker_leader;
     }
 
-    static void set_num_eprc_server(int nn) { the_num_erpc_server = nn; }
+    static void set_num_eprc_server(int nn) { the_num_rpc_server = nn; }
 
     static void set_is_micro(int is_micro) { the_is_micro = is_micro; }
 

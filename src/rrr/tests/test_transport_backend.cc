@@ -6,7 +6,7 @@
  *   Tests type utilities and mock implementations
  *
  *   NOTE: These tests use mock implementations to avoid pulling in
- *   full mako/eRPC dependencies. The mock tests verify the interface
+ *   full mako dependencies. The mock tests verify the interface
  *   contract that all backends must satisfy.
  *
  **********************************************************************/
@@ -30,24 +30,20 @@ using namespace std::chrono;
 namespace mako {
 
 enum class TransportType {
-    ERPC = 0,
-    RRR_RPC = 1
+    RRR_RPC = 0
 };
 
 inline TransportType ParseTransportType(const std::string& type_str) {
-    if (type_str == "erpc" || type_str == "ERPC") {
-        return TransportType::ERPC;
-    } else if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
+    if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
         return TransportType::RRR_RPC;
     } else {
         throw std::runtime_error("Invalid transport type: " + type_str +
-                                " (valid: erpc, rrr)");
+                                " (valid: rrr)");
     }
 }
 
 inline const char* TransportTypeToString(TransportType type) {
     switch (type) {
-        case TransportType::ERPC: return "erpc";
         case TransportType::RRR_RPC: return "rrr";
         default: return "unknown";
     }
@@ -155,7 +151,6 @@ public:
 
     virtual const char* GetName() const {
         switch (GetType()) {
-            case mako::TransportType::ERPC: return "eRPC";
             case mako::TransportType::RRR_RPC: return "rrr/rpc";
             default: return "unknown";
         }
@@ -195,11 +190,6 @@ public:
 
 // ============= Parse Transport Type Tests =============
 
-TEST(TransportTypeTest, ParseErpc) {
-    EXPECT_EQ(mako::ParseTransportType("erpc"), mako::TransportType::ERPC);
-    EXPECT_EQ(mako::ParseTransportType("ERPC"), mako::TransportType::ERPC);
-}
-
 TEST(TransportTypeTest, ParseRrr) {
     EXPECT_EQ(mako::ParseTransportType("rrr"), mako::TransportType::RRR_RPC);
     EXPECT_EQ(mako::ParseTransportType("RRR"), mako::TransportType::RRR_RPC);
@@ -214,16 +204,12 @@ TEST(TransportTypeTest, ParseInvalid) {
 }
 
 TEST(TransportTypeTest, TypeToString) {
-    EXPECT_STREQ(mako::TransportTypeToString(mako::TransportType::ERPC), "erpc");
     EXPECT_STREQ(mako::TransportTypeToString(mako::TransportType::RRR_RPC), "rrr");
 }
 
 TEST(TransportTypeTest, RoundTrip) {
-    auto type1 = mako::ParseTransportType("erpc");
-    EXPECT_STREQ(mako::TransportTypeToString(type1), "erpc");
-
-    auto type2 = mako::ParseTransportType("rrr");
-    EXPECT_STREQ(mako::TransportTypeToString(type2), "rrr");
+    auto type = mako::ParseTransportType("rrr");
+    EXPECT_STREQ(mako::TransportTypeToString(type), "rrr");
 }
 
 // ============= Mock Backend Tests =============
@@ -317,17 +303,11 @@ TEST(MockBackendTest, EventLoopStartStop) {
 TEST(MockBackendTest, GetType) {
     MockTransportBackend rrr_backend(mako::TransportType::RRR_RPC);
     EXPECT_EQ(rrr_backend.GetType(), mako::TransportType::RRR_RPC);
-
-    MockTransportBackend erpc_backend(mako::TransportType::ERPC);
-    EXPECT_EQ(erpc_backend.GetType(), mako::TransportType::ERPC);
 }
 
 TEST(MockBackendTest, GetName) {
     MockTransportBackend rrr_backend(mako::TransportType::RRR_RPC);
     EXPECT_STREQ(rrr_backend.GetName(), "rrr/rpc");
-
-    MockTransportBackend erpc_backend(mako::TransportType::ERPC);
-    EXPECT_STREQ(erpc_backend.GetName(), "eRPC");
 }
 
 // ============= MockTransportReceiver Tests =============
@@ -406,10 +386,8 @@ TEST(PolymorphismTest, MultipleBackends) {
     std::vector<rusty::Box<MockTransportBackend>> backends;
 
     backends.push_back(rusty::make_box<MockTransportBackend>(mako::TransportType::RRR_RPC));
-    backends.push_back(rusty::make_box<MockTransportBackend>(mako::TransportType::ERPC));
 
     EXPECT_EQ(backends[0]->GetType(), mako::TransportType::RRR_RPC);
-    EXPECT_EQ(backends[1]->GetType(), mako::TransportType::ERPC);
 
     for (auto& backend : backends) {
         int result = backend->Initialize("127.0.0.1:8080", 0, 0, 1, 10);

@@ -106,20 +106,12 @@ The system implements multiple distributed transaction protocols:
 
 ### Transport Layer Architecture
 
-**Mako supports two RPC backends** (switchable at runtime):
-- **rrr/rpc** (default): Portable TCP/IP-based RPC (~10-50 μs latency)
-- **eRPC**: High-performance RDMA-based RPC (~1-2 μs latency)
+Mako uses the **rrr/rpc** TCP/IP transport (portable, ~10-50 μs latency) via the
+`TransportBackend` interface for transport-agnostic request/response handling:
 
-**Switching backends:**
 ```bash
-# Use rrr/rpc (default)
 ./build/dbtest config/tpcc.yml
-
-# Use eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
-
-Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
 
 **See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 

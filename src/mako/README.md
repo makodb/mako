@@ -8,8 +8,7 @@ https://aju9mlkupe.feishu.cn/docx/SafudaEdzostF6xFXr2cGgxBnpg?from=from_copylink
 ### Different ratio on Microbenchmark
 ### In the same DC or different DC
 1. We run different with ratio [0, 5, 20, 50, 90, 100]
-2. We need to disable warmup in benchmarks/tpcc.cc, otherwise too many erpc connections are created!
-3. Run examples 
+2. Run examples 
 ```
 bash ~/mako/bash/run_x.sh
 ```

@@ -54,7 +54,7 @@ class BenchmarkConfig {
       // Private constructor with default values
       BenchmarkConfig() : 
           nthreads_(1),
-          num_erpc_server_(2), // number of erpc pull threads
+          num_rpc_server_(2), // number of rpc pull threads
           scale_factor_(1.0),
           nshards_(1), // default 1 shard
           shardIndex_(0), // default on the shard-0
@@ -86,7 +86,7 @@ class BenchmarkConfig {
       // Member variables from dbtest.cc
       size_t nthreads_;
       size_t nshards_;
-      size_t num_erpc_server_;
+      size_t num_rpc_server_;
       size_t shardIndex_;
       std::string cluster_;
       int clusterRole_;
@@ -156,7 +156,7 @@ class BenchmarkConfig {
       // Getters
       size_t getNthreads() const { return nthreads_; }
       size_t getNshards() const { return nshards_; }
-      size_t getNumErpcServer() const { return num_erpc_server_; }
+      size_t getNumRpcServer() const { return num_rpc_server_; }
       // In multi-shard mode, returns thread-local shard index if set
       size_t getShardIndex() const {
         if (tl_shard_index_ >= 0) {
@@ -207,7 +207,7 @@ class BenchmarkConfig {
       // Setters
       void setNthreads(size_t n) { nthreads_ = n; setScaleFactor(n); }
       void setNshards(size_t n) { nshards_ = n; }
-      void setNumErpcServer(size_t n) { num_erpc_server_ = n; }
+      void setNumRpcServer(size_t n) { num_rpc_server_ = n; }
       void setShardIndex(size_t idx) { shardIndex_ = idx; }
       // Set thread-local shard index for multi-shard mode
       // Call with -1 to clear and revert to global shardIndex_

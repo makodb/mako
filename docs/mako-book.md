@@ -103,7 +103,7 @@ Mako has a layered architecture:
 |  | TCP/IP   | Fibers    | Reactor  | Event    |               |
 |  | Sockets  |           | Pattern  | Loop     |               |
 |  +----------+----------+----------+----------+               |
-|         (Optional: DPDK / RDMA / eRPC)                        |
+|         (Optional: DPDK / RDMA)                               |
 +------------------------------+-------------------------------+
                                |
 +------------------------------v-------------------------------+
@@ -141,7 +141,7 @@ Mako has a layered architecture:
 **RRR Communication Layer** (`src/rrr/`):
 - Custom RPC framework with asynchronous, fiber-based I/O
 - Reactor pattern for event-driven networking
-- Supports TCP/IP, DPDK, RDMA, eRPC
+- Supports TCP/IP, DPDK, RDMA
 
 **Storage Engines** (`src/mako/masstree/`):
 - Masstree: in-memory concurrent B+tree for primary storage
@@ -170,7 +170,7 @@ mako/
   ci/                 # CI test scripts
   examples/           # Example scripts and tests
   tests/              # Unit and integration tests
-  third-party/        # Dependencies (rusty-cpp, eRPC, etc.)
+  third-party/        # Dependencies (rusty-cpp, etc.)
   rust-lib/           # Rust components
 ```
 
@@ -802,27 +802,22 @@ Design and semantics: [`storage-interface.md`](storage-interface.md).
 
 ## 7. Networking and RPC
 
-### Transport Backends
+### Transport Backend
 
-Mako supports two RPC backends, switchable at runtime:
+Mako uses the `rrr/rpc` TCP/IP transport:
 
-| Feature | rrr/rpc (default) | eRPC |
-|---------|-------------------|------|
-| Latency | ~10-50 us (TCP/IP) | ~1-2 us (RDMA) |
-| Hardware | Standard Ethernet | RDMA-capable NICs |
-| Portability | Any platform | Linux + RDMA drivers |
-| Use case | Dev, testing, cloud | Production clusters |
+| Feature | rrr/rpc |
+|---------|---------|
+| Latency | ~10-50 us (TCP/IP) |
+| Hardware | Standard Ethernet |
+| Portability | Any platform |
+| Use case | Dev, testing, cloud |
 
-**Switching backends:**
 ```bash
-# Default (rrr/rpc)
 ./build/dbtest config/tpcc.yml
-
-# eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
-Both backends implement the `TransportBackend` interface, making worker threads transport-agnostic:
+The transport sits behind the `TransportBackend` interface, keeping worker threads transport-agnostic:
 
 ```cpp
 class TransportRequestHandle {
@@ -1088,9 +1083,6 @@ make -j$(nproc)
 | `shardFaultTolerance` | Shard crash/reboot resilience |
 | `multiShardSingleProcess` | Multi-shard in one process |
 | `cpuThrottlingScaling` | CPU throttle scaling test |
-| `eRPCshardNoReplication` | eRPC transport test |
-| `eRPCshard1Replication` | eRPC with replication |
-| `eRPCshard2Replication` | eRPC with 2 shards + replication |
 
 ### Optional Quick Build Path
 
@@ -1280,7 +1272,6 @@ jemalloc for optimized allocation; per-CPU memory allocators for reduced content
 | Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
 | Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
 | Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
-| eRPC "Failed to create Nexus" | Check RDMA drivers (`ibstat`), configure hugepages |
 
 ### Debugging
 
@@ -1310,7 +1301,6 @@ perf report
 | **ACID** | Atomicity, Consistency, Isolation, Durability |
 | **Ballot** | Unique proposal identifier in Paxos, ordered for precedence |
 | **Epoch** | Time period for garbage collection and failure recovery |
-| **eRPC** | High-performance RDMA-based RPC library |
 | **Fiber** | Lightweight cooperative thread used by Mako |
 | **Follower** | Replica that accepts proposals from the leader |
 | **Frame** | Protocol-specific transaction processing module |

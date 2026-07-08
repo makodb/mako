@@ -11,7 +11,7 @@
 /***********************************************************************
  *
  * test_transport_integration.cc:
- *   Integration tests for transport backends (RrrRpcBackend, ErpcBackend)
+ *   Integration tests for transport backends (RrrRpcBackend)
  *   Tests actual network I/O and request/response cycles
  *
  *   This test uses the underlying rrr/rpc library directly to test
@@ -50,24 +50,20 @@ constexpr int32_t TEST_REQ_TYPE_END = static_cast<int32_t>(10);
 namespace mako {
 
 enum class TransportType {
-    ERPC = 0,
-    RRR_RPC = 1
+    RRR_RPC = 0
 };
 
 inline TransportType ParseTransportType(const std::string& type_str) {
-    if (type_str == "erpc" || type_str == "ERPC") {
-        return TransportType::ERPC;
-    } else if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
+    if (type_str == "rrr" || type_str == "RRR" || type_str == "rrr_rpc") {
         return TransportType::RRR_RPC;
     } else {
         throw std::runtime_error("Invalid transport type: " + type_str +
-                                " (valid: erpc, rrr)");
+                                " (valid: rrr)");
     }
 }
 
 inline const char* TransportTypeToString(TransportType type) {
     switch (type) {
-        case TransportType::ERPC: return "erpc";
         case TransportType::RRR_RPC: return "rrr";
         default: return "unknown";
     }
@@ -147,15 +143,8 @@ TEST_F(TransportTypeIntegrationTest, ParseAndConvertRrrRpc) {
     EXPECT_STREQ(mako::TransportTypeToString(type), "rrr");
 }
 
-TEST_F(TransportTypeIntegrationTest, ParseAndConvertErpc) {
-    auto type = mako::ParseTransportType("erpc");
-    EXPECT_EQ(type, mako::TransportType::ERPC);
-    EXPECT_STREQ(mako::TransportTypeToString(type), "erpc");
-}
-
 TEST_F(TransportTypeIntegrationTest, CaseInsensitiveParsing) {
     EXPECT_EQ(mako::ParseTransportType("RRR"), mako::TransportType::RRR_RPC);
-    EXPECT_EQ(mako::ParseTransportType("ERPC"), mako::TransportType::ERPC);
     EXPECT_EQ(mako::ParseTransportType("rrr_rpc"), mako::TransportType::RRR_RPC);
 }
 

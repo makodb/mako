@@ -38,7 +38,6 @@ Implemented and usable today:
 - Paxos replication tests (`simplePaxos`, `dbtest` with replication enabled)
 - Optional Raft replication path via runtime flag (`--replication=raft`) and `make mako-raft`
 - Multi-shard execution, including single-process multi-shard mode (`--local-shards`)
-- Runtime transport switch (`MAKO_TRANSPORT=rrr|erpc`)
 - CPU throttling flags in `dbtest` (`--cpu-limit`, `--throttle-cycle`)
 - RocksDB persistence path in replicated leader mode
 
@@ -263,7 +262,6 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 ### Helpful environment variables
 
 - `MAKO_CONFIG`: used by some example binaries/scripts to override default config path
-- `MAKO_TRANSPORT`: runtime transport backend (`rrr` default, or `erpc`)
 - `MAKO_STARTUP_TIMEOUT_SEC`: optional startup watchdog timeout for replicated localhost startup (`0` disables)
 - `BUILD_DIR`: lets CI/scripts use non-default build directories
 
@@ -292,18 +290,13 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 Note: `dbtest` does not currently expose a standard `--help` output.
 
-## Transport Backends
+## Transport Backend
 
-Runtime selection:
+Mako uses the `rrr/rpc` TCP/IP transport:
 
 ```bash
-MAKO_TRANSPORT=rrr  ./${BUILD_DIR:-build}/dbtest ...   # default behavior
-MAKO_TRANSPORT=erpc ./${BUILD_DIR:-build}/dbtest ...
+./${BUILD_DIR:-build}/dbtest ...
 ```
-
-Additional build context:
-- `env.txt` influences eRPC transport build settings (`eth`, `ib`, `dpdk`)
-- default `env.txt` value is `eth`
 
 ## Persistence and CPU Throttling
 
@@ -349,10 +342,8 @@ Primary CI script (`ci/ci.sh`) supports:
 - `simpleTransaction`
 - `simplePaxos`
 - `shardNoReplication`
-- `shardNoReplicationErpc`
 - `shard1Replication`
 - `shard2Replication`
-- `shard2ReplicationErpc`
 - `shard1ReplicationSimple`
 - `shard2ReplicationSimple`
 - `shard1ReplicationRaft`
@@ -510,10 +501,8 @@ rm -f nfs_sync_*
 
 ```bash
 echo "$MAKO_TRANSPORT"
-# unset or set explicitly:
+# unset to use the default (rrr/rpc):
 unset MAKO_TRANSPORT
-# or
-export MAKO_TRANSPORT=erpc
 ```
 
 ## Documentation Map

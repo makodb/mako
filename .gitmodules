@@ -1,9 +1,6 @@
 [submodule "third-party/yaml-cpp"]
 	path = third-party/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp/
-[submodule "third-party/erpc"]
-	path = third-party/erpc
-	url = https://github.com/shuaimu/eRPC
 [submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp
