@@ -8,7 +8,6 @@
 #include <mutex>
 #include <rusty/function.hpp>
 #include <rusty/arc.hpp>
-#include <rusty/cell.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
