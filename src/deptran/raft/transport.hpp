@@ -80,6 +80,8 @@ class TransportBase {
   virtual siteid_t                 self_site_id() const = 0;
 };
 
+// @safe - owning transport handle. The pointed-to implementation may still
+// contain unsafe RPC/channel boundaries.
 using TransportProxy = rusty::Box<TransportBase>;
 
 }  // namespace raft
