@@ -22,6 +22,7 @@
 #include "json.hh"
 #include "misc.hh"
 #include "kvproto.hh"
+#include <rusty/vec.hpp>
 #include <vector>
 #include <fstream>
 
@@ -1350,7 +1351,7 @@ void kvtest_scan1(C &client, double writer_quiet)
 
         int pos = 0, mypos = 0, scansteps = 0;
         quick_istr key;
-        std::vector<Str> keys, values;
+        rusty::Vec<Str> keys, values;
         Json errj;
         while (!client.timeout(0) && errj.size() < 1000) {
             key.set(pos, 8);
@@ -1428,7 +1429,7 @@ void kvtest_rscan1(C &client, double writer_quiet)
 
         int pos = (n + 1) * 1024, mypos = n * 1024, scansteps = 0;
         quick_istr key;
-        std::vector<Str> keys, values;
+        rusty::Vec<Str> keys, values;
         Json errj;
         while (!client.timeout(0) && errj.size() < 1000) {
             key.set(pos, 8);
