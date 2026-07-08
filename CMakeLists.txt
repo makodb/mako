@@ -16,86 +16,91 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# Mako pins its compiler to Clang 21 specifically. Different minor
-# versions of clang 21 are fine (21.0 .. 21.x), but anything else is
+# Mako pins its compiler to Clang 22 specifically. Different minor
+# versions of clang 22 are fine (22.0 .. 22.x), but anything else is
 # rejected — see the explicit version check after project() below.
-# The reason for pinning rather than "21 or newer":
-#   * Clang 22's libc++ moved __hash_memory out of line, which leaks
-#     into hashing-heavy link surfaces and breaks every gtest-based
-#     binary on this codebase.
+# The reason for pinning rather than "22 or newer":
 #   * Clang 20 and earlier lack alias-template CTAD support that
-#     rusty-cpp's platform::threading aliases depend on.
-#   * CI standardizes on clang-21 (apt.llvm.org noble repo).
+#     rusty-cpp's platform::threading aliases depend on, and clang 21
+#     predates library/module fixes this codebase now relies on.
+#   * A future Clang 23 is untested here.
+#   * The local/CI toolchain is Homebrew/Linuxbrew clang 22 (llvm@22).
+# Clang 22's libc++ moves __hash_memory out of line; we point the linker
+# at the keg's own matching libc++ (see MAKO_BREW_LIBCXX_FLAGS below) so
+# gtest-based binaries link cleanly. Borrow checking is off (see
+# ENABLE_BORROW_CHECKING), so clang 22's libclang parse-time crash on
+# module-purview template instantiations does not gate builds.
 #
 # To install on Ubuntu:
-#     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 21
-#     sudo apt install -y clang-21 libc++-21-dev libc++abi-21-dev
+#     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 22
+#     sudo apt install -y clang-22 libc++-22-dev libc++abi-22-dev
 #
 # If the caller pre-set CMAKE_CXX_COMPILER (e.g. `cmake -DCMAKE_CXX_COMPILER=...`),
 # respect that — but still gate it on the version check below.
-# Search hints for the brew llvm@21 keg. Brew on macOS / Linuxbrew
-# doesn't symlink versioned names (clang++-21) — it only installs
-# `clang` / `clang++` inside the keg, which points at clang-21. So
+# Search hints for the brew llvm@22 keg. Brew on macOS / Linuxbrew
+# doesn't symlink versioned names (clang++-22) — it only installs
+# `clang` / `clang++` inside the keg, which points at clang-22. So
 # we add the keg's bin dir as an explicit HINT, and accept both
-# `clang++-21` (apt.llvm.org convention) and `clang++` from inside
-# the llvm@21 keg.
-set(MAKO_CLANG21_HINTS
-    /home/linuxbrew/.linuxbrew/opt/llvm@21/bin
-    $ENV{HOMEBREW_PREFIX}/opt/llvm@21/bin
-    /opt/homebrew/opt/llvm@21/bin
-    /usr/local/opt/llvm@21/bin
+# `clang++-22` (apt.llvm.org convention) and `clang++` from inside
+# the llvm@22 keg.
+set(MAKO_CLANG22_HINTS
+    /home/linuxbrew/.linuxbrew/opt/llvm@22/bin
+    $ENV{HOMEBREW_PREFIX}/opt/llvm@22/bin
+    /opt/homebrew/opt/llvm@22/bin
+    /usr/local/opt/llvm@22/bin
 )
 # Many users have a per-user brew root under their home dir.
 if(DEFINED ENV{HOME})
-    list(APPEND MAKO_CLANG21_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@21/bin)
+    list(APPEND MAKO_CLANG22_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@22/bin)
 endif()
 
 if(NOT DEFINED CMAKE_C_COMPILER)
-    find_program(MAKO_CLANG_21 NAMES clang-21 clang HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
-    if(NOT MAKO_CLANG_21)
-        find_program(MAKO_CLANG_21 NAMES clang-21)
+    find_program(MAKO_CLANG_22 NAMES clang-22 clang HINTS ${MAKO_CLANG22_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANG_22)
+        find_program(MAKO_CLANG_22 NAMES clang-22)
     endif()
-    if(NOT MAKO_CLANG_21)
+    if(NOT MAKO_CLANG_22)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang-21` on PATH or in "
+            "Mako requires Clang 22 (could not find `clang-22` on PATH or in "
             "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
-            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
-            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-21 to cmake. "
+            "(`apt install -y clang-22`) or brew (`brew install llvm@22`), or "
+            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-22 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
-    set(CMAKE_C_COMPILER "${MAKO_CLANG_21}" CACHE STRING "C compiler")
+    set(CMAKE_C_COMPILER "${MAKO_CLANG_22}" CACHE STRING "C compiler")
 endif()
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    find_program(MAKO_CLANGXX_21 NAMES clang++-21 clang++ HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
-    if(NOT MAKO_CLANGXX_21)
-        find_program(MAKO_CLANGXX_21 NAMES clang++-21)
+    find_program(MAKO_CLANGXX_22 NAMES clang++-22 clang++ HINTS ${MAKO_CLANG22_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANGXX_22)
+        find_program(MAKO_CLANGXX_22 NAMES clang++-22)
     endif()
-    if(NOT MAKO_CLANGXX_21)
+    if(NOT MAKO_CLANGXX_22)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang++-21` on PATH or in "
+            "Mako requires Clang 22 (could not find `clang++-22` on PATH or in "
             "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
-            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
-            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-21 to cmake. "
+            "(`apt install -y clang-22`) or brew (`brew install llvm@22`), or "
+            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-22 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
-    set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_21}" CACHE STRING "C++ compiler")
+    set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_22}" CACHE STRING "C++ compiler")
 endif()
 
 # Enable compile_commands.json generation for language servers (clangd, etc.)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Brew's llvm@21 keg on Linux does NOT auto-add its own lib/ to the
+# Brew's llvm@22 keg on Linux does NOT auto-add its own lib/ to the
 # linker's search path. Headers from the keg's libc++ inline-reference
-# symbols (e.g. std::__1::__hash_memory) that the system's apt
-# /usr/lib/x86_64-linux-gnu/libc++.so (from llvm-19) doesn't export, so
-# `clang++ -stdlib=libc++ -lc++` resolves to the wrong libc++ and the
-# link fails on hash-table code (gtest, rusty::HashMap, etc.).
+# symbols (e.g. std::__1::__hash_memory, which clang 22 moved out of
+# line) that the system's apt /usr/lib/x86_64-linux-gnu/libc++.so
+# doesn't export, so `clang++ -stdlib=libc++ -lc++` resolves to the
+# wrong libc++ and the link fails on hash-table code (gtest,
+# rusty::HashMap, etc.).
 #
 # Workaround: if the selected clang lives inside a Homebrew keg, add
 # the keg's lib/ to the linker search path with an rpath so binaries
 # can find the right libc++ at runtime too. apt.llvm.org installs are
-# unaffected — clang-21 there ships in /usr/bin and uses the matching
-# /usr/lib/llvm-21/lib/libc++.so via its built-in search.
+# unaffected — clang-22 there ships in /usr/bin and uses the matching
+# /usr/lib/llvm-22/lib/libc++.so via its built-in search.
 get_filename_component(MAKO_CLANG_BINDIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
 get_filename_component(MAKO_CLANG_ROOT "${MAKO_CLANG_BINDIR}" DIRECTORY)
 set(MAKO_BREW_LIBCXX_FLAGS "")
@@ -164,30 +169,30 @@ endif()
 # intrinsics), the checker must be linked against the matching libclang version
 # to avoid "Fatal parsing errors" from unknown builtins.
 #
-# Production toolchain is Homebrew/Linuxbrew clang 21 (llvm@21). clang 22's
-# libclang has a parse-time crash on first-time user-type template
-# instantiations in module purview — see docs/dev/libclang22_parse_crash.md.
-# Pick clang 21 first when present, then fall back to system clang.
+# Production toolchain is Homebrew/Linuxbrew clang 22 (llvm@22). clang 22's
+# libclang has a known parse-time crash on first-time user-type template
+# instantiations in module purview (see docs/dev/libclang22_parse_crash.md),
+# but borrow checking is OFF here (ENABLE_BORROW_CHECKING), so libclang is not
+# invoked during the build. Pick clang 22 first when present, then fall back.
 if(NOT DEFINED ENV{LIBCLANG_PATH})
     set(_LIBCLANG_CANDIDATES
-        # Linuxbrew clang 21 (current production)
-        "/home/users/shuai/.linuxbrew/opt/llvm@21/lib"
-        # macOS Homebrew clang 21
-        "/opt/homebrew/opt/llvm@21/lib"
-        "/usr/local/opt/llvm@21/lib"
+        # Linuxbrew clang 22 (current production)
+        "/home/users/shuai/.linuxbrew/opt/llvm@22/lib"
+        # macOS Homebrew clang 22
+        "/opt/homebrew/opt/llvm@22/lib"
+        "/usr/local/opt/llvm@22/lib"
     )
     foreach(_CAND ${_LIBCLANG_CANDIDATES})
         if(EXISTS "${_CAND}/libclang.so" OR EXISTS "${_CAND}/libclang.dylib")
             set(ENV{LIBCLANG_PATH} "${_CAND}")
-            message(STATUS "Auto-detected LIBCLANG_PATH=${_CAND} (Homebrew clang 21)")
+            message(STATUS "Auto-detected LIBCLANG_PATH=${_CAND} (Homebrew clang 22)")
             break()
         endif()
     endforeach()
 endif()
 if(NOT DEFINED ENV{LIBCLANG_PATH})
     # Fall back to the newest system-installed libclang, preferring higher versions.
-    # We deliberately stop at 21 — see comment above re: clang 22 libclang crash.
-    foreach(_CLANG_VER 21 19 18 17 16 15 14)
+    foreach(_CLANG_VER 22 21 19 18 17 16 15 14)
         set(_CLANG_LIB_DIR "/usr/lib/llvm-${_CLANG_VER}/lib")
         if(EXISTS "${_CLANG_LIB_DIR}/libclang-${_CLANG_VER}.so" OR
            EXISTS "${_CLANG_LIB_DIR}/libclang.so")
@@ -277,30 +282,30 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 # rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Mako pins to Clang 21 specifically (not "21 or newer"). See the
-    # rationale in the comment at CMakeLists.txt:19. Accept any 21.x
+    # Mako pins to Clang 22 specifically (not "22 or newer"). See the
+    # rationale in the comment at CMakeLists.txt:19. Accept any 22.x
     # minor version; reject everything else.
-    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "21.0"
-        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0")
+    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0"
+        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "23.0")
         message(FATAL_ERROR
-            "Mako requires Clang 21 exactly (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
-            "Newer Clang (22+) ships a libc++ that moves __hash_memory out of line, "
-            "which breaks linking of gtest-based binaries against system libc++. "
-            "Older Clang (<21) lacks alias-template CTAD support that rusty-cpp's "
-            "platform::threading aliases depend on. "
-            "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+            "Mako requires Clang 22 exactly (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
+            "Clang 22's libc++ moves __hash_memory out of line; we link against the "
+            "keg's own matching libc++ (MAKO_BREW_LIBCXX_FLAGS) so gtest binaries link. "
+            "Older Clang (<22) predates library/module fixes this codebase relies on, "
+            "and <21 also lacks alias-template CTAD for rusty-cpp's threading aliases. "
+            "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
     endif()
 else()
     # Reject GCC, AppleClang, Intel, MSVC: the project's safety
     # annotations, `import std;` integration, and rusty-cpp are all
-    # exercised only against Clang 21.
+    # exercised only against Clang 22.
     message(FATAL_ERROR
-        "Mako requires Clang 21 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+        "Mako requires Clang 22 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
         "at ${CMAKE_CXX_COMPILER}). Other compilers are untested and unsupported. "
-        "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+        "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
 endif()
 # The remaining libc++/codegen flags below run only after we've established
-# we are on Clang 21. The original `if (...Clang)` block continues to gate
+# we are on Clang 22. The original `if (...Clang)` block continues to gate
 # them in case someone widens the supported compiler set later — but for
 # now the FATAL_ERROR above guarantees we never reach the else-branch.
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -328,14 +333,14 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # default to including `<immintrin.h>` for SSE2 intrinsics. That
     # header reaches the rrr module's global module fragment via
     # `#include <rusty/rusty.hpp>` in module-interface units, and
-    # under clang21+ collides with the consumer's own
+    # under clang 22 collides with the consumer's own
     # `<immintrin.h>` (e.g. via masstree headers in deptran code) —
     # see rusty-cpp commit 49e794d for the full diagnosis. Defining
     # this macro project-wide swaps both to scalar / builtin
     # fallbacks consistently across every TU, eliminating the
     # collision and preserving ODR across the program. The
     # measurable cost is tiny (single-digit-percent on hot hashmap
-    # paths); the build wins are clang21+ compatibility today.
+    # paths); the build wins are clang 22 compatibility today.
     add_compile_definitions(RUSTY_PORTABLE_INTRINSICS=1)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR

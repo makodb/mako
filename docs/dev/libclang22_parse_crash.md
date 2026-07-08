@@ -3,12 +3,13 @@
 ## Status
 
 - **Open** upstream LLVM bug — not yet reported (collected here for filing).
-- **Production toolchain switched to clang 21.1.8** (Homebrew
-  `llvm@21`). clang 21 doesn't have the parse crash and also doesn't
-  have the clang-19 multi-attachment trap, so both server.cpp and
-  fiber_channel.cpp borrow-check with full-info findings. See
-  [`srpc_module_migration_plan.md`](srpc_module_migration_plan.md) for
-  the build invocation.
+- **Production toolchain is now clang 22** (Homebrew `llvm@22`; see
+  CMakeLists.txt / apt_packages.sh). This parse crash only affects
+  libclang — i.e. the rusty-cpp borrow checker — NOT the compiler, and
+  borrow checking is currently OFF (`ENABLE_BORROW_CHECKING`, during the
+  native-module migration), so the crash does not gate builds. The
+  earlier clang 21.1.8 pin avoided it while borrow checking was on; if
+  borrow checking is re-enabled on clang 22, use the workaround below.
 - **Workaround landed** (kept for the record / clang-22 fallback):
   rusty-cpp's parser detects the libclang `Crash` error and retries
   the parse with module args dropped (keeps `import std;` only). The

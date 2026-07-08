@@ -105,8 +105,15 @@ namespace mako
         std::cout << "[" << prefix << "] printStringAsBit:" << std::endl;
         for (size_t i = 0; i < len; ++i) {
             unsigned char c = str[i];
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << " ";
-            
+            // snprintf hex rather than std::hex/std::setw/std::setfill: the
+            // iomanip operator<< overloads don't resolve in TUs that mix
+            // `import std;` (via module imports) with textual <iomanip> under
+            // clang 22 (the __iom_t* type and its operator<< end up in
+            // different module-ownership states).
+            char hexbuf[4];
+            snprintf(hexbuf, sizeof hexbuf, "%02x ", static_cast<unsigned>(c));
+            std::cout << hexbuf;
+
             // Print newline every 8 bytes
             if ((i + 1) % 8 == 0) {
                 std::cout << std::endl;
@@ -609,9 +616,12 @@ namespace mako
     }
 
     static std::string intToString(long long num) {
-        std::ostringstream ss;
-        ss << std::setw(16) << std::setfill('0') << num;
-        return ss.str();
+        // snprintf zero-pad rather than std::setw/std::setfill (their iomanip
+        // operator<< doesn't resolve under clang 22 when a TU mixes `import
+        // std;` with textual <iomanip>; see printStringAsBit above).
+        char buf[32];
+        snprintf(buf, sizeof buf, "%016lld", num);
+        return buf;
     }
 
     static size_t parse_memory_spec(const std::string &s)
