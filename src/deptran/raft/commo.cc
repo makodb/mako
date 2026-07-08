@@ -9,6 +9,7 @@
 #include "../command_marshaler.h"
 #include "../rcc_rpc.h"
 #include "macros.h"
+#include <rusty/vec.hpp>
 
 import std;
 
@@ -53,7 +54,7 @@ namespace janus
     response->event = Reactor::create_sp_event<IntEvent>();
 
     auto proxies = rpc_par_proxies_[par_id];
-    vector<rusty::Arc<Future>> fus;
+    // vector<rusty::Arc<Future>> fus;
     WAN_WAIT;
     for (auto &p : proxies)
     {
@@ -152,7 +153,7 @@ namespace janus
       res = shared_ptr<SendAppendEntriesResults>(new SendAppendEntriesResults());
     }
     auto proxies = rpc_par_proxies_[par_id];
-    vector<rusty::Arc<Future>> fus;
+    // vector<rusty::Arc<Future>> fus;
     WAN_WAIT;
     for (auto &p : proxies)
     {
@@ -636,7 +637,7 @@ namespace janus
      */
     void RaftCommo::RetryPendingNotifyRestart()
     {
-      std::vector<siteid_t> pending_sites;
+      rusty::Vec<siteid_t> pending_sites;
 
       // Get list of pending sites
       {
@@ -645,12 +646,12 @@ namespace janus
         {
           if (pair.second == NotifyRestartStatus::PENDING)
           {
-            pending_sites.push_back(pair.first);
+            pending_sites.push(pair.first);
           }
         }
       }
 
-      if (pending_sites.empty())
+      if (pending_sites.size() == 0)
       {
         Log_debug("[NOTIFY-RESTART] No pending sites to retry");
         return;
