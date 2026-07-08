@@ -17,9 +17,13 @@
 
 #include <gtest/gtest.h>
 
+#include <stdio.h>
+
 #include "benchmarks/bench.h"            // pulls storage + TThread
 #include "storage/mbta_wrapper.hh"       // mbta_index_build, mbta_table
 #include "ordered_index_kv_store.h"      // src/mako adapter
+#include "ordered_index_shard_data.h"    // OrderedIndexShardData (migration participant)
+#include "shard_migrator.h"              // the migration coordinator
 import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
 namespace janus {
@@ -145,6 +149,55 @@ TEST_F(ConfigManagerMbtaTest, ClusterConfigLoadAndKillShardOnRealMbta) {
     ASSERT_TRUE(cc.load_from_config_manager(&cm));
     EXPECT_EQ(cc.get_shard_for_key_default(probe), 0u)
         << "killed shard's keys must reroute to the taker, end to end on mbta";
+}
+
+// End-to-end Stage 4: a REAL mbta range migration + publishing the route
+// override flips runtime routing to the new owner. This is the full cutover
+// loop the runtime performs: ShardMigrator moves the data (2PC), the
+// coordinator writes the [lo,hi)->owner override via ConfigManager (version
+// bumped last), and ClusterConfig -- what compute_shard_for_key consults --
+// reroutes the range on its next load (the ConfigWatcher's action).
+TEST_F(ConfigManagerMbtaTest, MigrationCommitPublishesRouteOverrideOnRealMbta) {
+    static long sid = 9500;
+    OrderedIndexShardData src(mbta_index_build("shard_src", sid++));
+    OrderedIndexShardData dst(mbta_index_build("shard_dst", sid++));
+    for (int i = 0; i < 200; ++i) {
+        char k[16]; snprintf(k, sizeof k, "k%05d", i);
+        src.put(k, std::string("v") + std::to_string(i));
+    }
+
+    // Config topology: shard 0 (source), shard 1 (destination).
+    OrderedIndexKvStore kv(make_config_index());
+    ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"src"}));
+    ASSERT_TRUE(cm.add_shard(1, {"dst"}));
+
+    ClusterConfig cc = ClusterConfig::new_();
+    ASSERT_TRUE(cc.load_from_config_manager(&cm));
+
+    const std::string lo = "k00050", hi = "k00150";
+    const std::string probe = "k00099";                 // inside the migrated range
+    uint32_t out_before = cc.get_shard_for_key_default("k00400");  // outside; baseline
+
+    // ---- migrate [lo,hi) src -> dst on the real engine (2PC) ----
+    ShardMigrator m(&src, &dst, lo, hi, /*generation=*/1);
+    m.background_copy();
+    m.lock();
+    ASSERT_TRUE(m.final_sync_and_verify());
+    m.commit();
+    EXPECT_EQ(dst.range_count(lo, hi), 100u);            // data really moved
+    EXPECT_EQ(src.range_count(lo, hi), 0u);
+
+    // ---- publish the cutover: [lo,hi) now routes to the destination (shard 1) ----
+    std::string any_table = "";
+    ASSERT_TRUE(cm.set_range_owner(any_table, m.lo(), m.hi(), 1));
+
+    // ---- ClusterConfig reload -> runtime routing flips the range to shard 1 ----
+    ASSERT_TRUE(cc.load_from_config_manager(&cm));
+    EXPECT_EQ(cc.get_shard_for_key_default(probe), 1u)
+        << "migrated range must route to the destination shard, end to end on mbta";
+    EXPECT_EQ(cc.get_shard_for_key_default("k00400"), out_before)  // outside unchanged
+        << "keys outside the migrated range keep their hash owner";
 }
 
 }  // namespace

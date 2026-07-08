@@ -45,6 +45,16 @@ struct ShardInfo {
 // cluster:config_manager above — modules forbid forward-declaring a foreign
 // module's entity, so the old `class ConfigManager;` forward decl is gone.
 
+// A committed migration override: keys in [lo, hi) for `table` (empty = any
+// table) route to `owner`, ahead of the sharding policy / hash default. Loaded
+// from ConfigManager (range/<i>/* keys) and published by a migration's commit.
+struct RangeOverride {
+    std::string table;
+    std::string lo;
+    std::string hi;
+    uint32_t owner = 0;
+};
+
 // The guarded state (bare struct; the Mutex is the ClusterConfig field).
 struct ClusterConfigState {
     uint32_t shard_count = 0;
@@ -52,6 +62,7 @@ struct ClusterConfigState {
     uint64_t epoch = 0;
     btree_port::BTreeMap<uint32_t, ShardInfo> shards;
     btree_port::BTreeMap<std::string, TableShardingPolicy> table_policies;
+    std::vector<RangeOverride> range_overrides;
 };
 
 // ---- kernels: run under an already-held guard; own the map/routing ----
@@ -66,6 +77,18 @@ inline std::string cc_shard_leader(const ClusterConfigState& s, uint32_t id) {
 inline std::string cc_shard_status(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
     return found.is_some() ? found.unwrap().get().status : std::string();
+}
+// Committed migration override: first [lo,hi) match wins; -1 if none. cc_route
+// consults this before the policy/hash default so a migrated range routes to
+// its new owner.
+inline int32_t cc_range_owner(const ClusterConfigState& s, const std::string& table,
+                              const std::string& key) {
+    for (const auto& ro : s.range_overrides) {
+        if ((ro.table.empty() || ro.table == table) && key >= ro.lo && key < ro.hi) {
+            return static_cast<int32_t>(ro.owner);
+        }
+    }
+    return -1;
 }
 // cc_update_shard / cc_set_table_policy / cc_clear_table_policy /
 // cc_has_table_policy are gone: folded into the DSL methods below as direct

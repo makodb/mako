@@ -273,6 +273,66 @@ impl ConfigManager {
         true
     }
 
+    // ---- migration range overrides (committed [lo,hi) -> owner) -----------
+    // A migration's commit publishes an override so routing sends keys in
+    // [lo,hi) to the new owner; ClusterConfig loads these and cc_route consults
+    // them ahead of the policy/hash default. Stored as range/<i>/{table,lo,hi,
+    // owner} plus a range_count, mirroring the shard/<id>/* layout.
+    fn get_range_override_count(&mut self) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = std::string("range_count");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    fn get_range_table(&mut self, idx: u32) -> std::string {
+        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
+        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/table");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
+    }
+    fn get_range_lo(&mut self, idx: u32) -> std::string {
+        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
+        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/lo");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
+    }
+    fn get_range_hi(&mut self, idx: u32) -> std::string {
+        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
+        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/hi");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
+    }
+    fn get_range_owner(&mut self, idx: u32) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/owner");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    fn set_range_owner(&mut self, table: &std::string, lo: &std::string, hi: &std::string, owner: u32) -> bool {
+        if unsafe { cm_kv_absent((*self).kv) } { return false; }
+        let n: u32 = self.get_range_override_count();
+        let tkey: std::string = std::string("range/") + std::to_string(n) + std::string("/table");
+        unsafe { (*(*self).kv).put(&tkey, table); }
+        let lkey: std::string = std::string("range/") + std::to_string(n) + std::string("/lo");
+        unsafe { (*(*self).kv).put(&lkey, lo); }
+        let hkey: std::string = std::string("range/") + std::to_string(n) + std::string("/hi");
+        unsafe { (*(*self).kv).put(&hkey, hi); }
+        let okey: std::string = std::string("range/") + std::to_string(n) + std::string("/owner");
+        let oval: std::string = std::to_string(owner);
+        unsafe { (*(*self).kv).put(&okey, &oval); }
+        let ckey: std::string = std::string("range_count");
+        let cval: std::string = std::to_string(n + 1);
+        self.put_versioned(&ckey, &cval)
+    }
+
     // ---- epoch -----------------------------------------------------------
     fn get_epoch(&mut self) -> u64 {
         if unsafe { cm_kv_absent((*self).kv) } { return 0; }
@@ -386,7 +446,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=11b2ff6cf88966c14f5e052f80aab7443884da2482b848ff7efe970938c6d3a2*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=6875fe12543f2ab5d30b476cebc823ed91ec267dfb30c4ebf7905c34fd12d385*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -410,6 +470,12 @@ struct ConfigManager {
     bool remove_shard(uint32_t shard_id);
     uint32_t get_shard_replacement(uint32_t shard_id);
     bool kill_shard(uint32_t dead_id, uint32_t taker_id);
+    uint32_t get_range_override_count();
+    std::string get_range_table(uint32_t idx);
+    std::string get_range_lo(uint32_t idx);
+    std::string get_range_hi(uint32_t idx);
+    uint32_t get_range_owner(uint32_t idx);
+    bool set_range_owner(const std::string& table, const std::string& lo, const std::string& hi, uint32_t owner);
     uint64_t get_epoch();
     bool advance_epoch();
     std::string get_node_addr(const std::string& site);
@@ -687,6 +753,90 @@ inline bool ConfigManager::kill_shard(uint32_t dead_id, uint32_t taker_id) {
     }
     this->bump_version();
     return true;
+}
+
+inline uint32_t ConfigManager::get_range_override_count() {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = std::string("range_count");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline std::string ConfigManager::get_range_table(uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return std::string("");
+    }
+    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/table");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
+}
+
+inline std::string ConfigManager::get_range_lo(uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return std::string("");
+    }
+    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/lo");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
+}
+
+inline std::string ConfigManager::get_range_hi(uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return std::string("");
+    }
+    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/hi");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
+}
+
+inline uint32_t ConfigManager::get_range_owner(uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/owner");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline bool ConfigManager::set_range_owner(const std::string& table, const std::string& lo, const std::string& hi, uint32_t owner) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return false;
+    }
+    const uint32_t n = this->get_range_override_count();
+    const std::string tkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/table");
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(tkey, table);
+    }
+    const std::string lkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/lo");
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(lkey, lo);
+    }
+    const std::string hkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/hi");
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(hkey, hi);
+    }
+    const std::string okey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/owner");
+    const std::string oval = std::to_string(std::move(owner));
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(okey, oval);
+    }
+    const std::string ckey = std::string("range_count");
+    const std::string cval = std::to_string(rusty::detail::deref_if_pointer_like(n) + 1);
+    return this->put_versioned(ckey, cval);
 }
 
 inline uint64_t ConfigManager::get_epoch() {

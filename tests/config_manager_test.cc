@@ -182,6 +182,54 @@ TEST_F(ConfigManagerTest, ClusterConfigLoadFromNullManagerFails) {
     EXPECT_FALSE(cc.load_from_config_manager(nullptr));
 }
 
+// ===========================================================================
+// ConfigManager — migration range overrides (Stage 4 runtime routing)
+// ===========================================================================
+TEST_F(ConfigManagerTest, RangeOverrideRoundTrip) {
+    std::string any_table = "";
+    EXPECT_EQ(cm_.get_range_override_count(), 0u);
+    ASSERT_TRUE(cm_.set_range_owner(any_table, "k00050", "k00150", 2));
+    EXPECT_EQ(cm_.get_range_override_count(), 1u);
+    EXPECT_EQ(cm_.get_range_lo(0), "k00050");
+    EXPECT_EQ(cm_.get_range_hi(0), "k00150");
+    EXPECT_EQ(cm_.get_range_owner(0), 2u);
+    // set_range_owner bumps the version last (so a watcher sees a complete record).
+    EXPECT_EQ(cm_.get_version(), 1u);
+}
+
+// A committed migration override flips runtime routing for the moved range to
+// the new owner once ClusterConfig reloads (what the ConfigWatcher does on a
+// version bump), and leaves keys outside the range on their hash owner.
+TEST_F(ConfigManagerTest, RangeOverrideRoutesMigratedRangeToNewOwner) {
+    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
+    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
+    ASSERT_TRUE(cm_.add_shard(2, {"c"}));
+
+    ClusterConfig cc = ClusterConfig::new_();
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
+
+    const std::string in_key = "k00099";    // inside [k00050, k00150)
+    const std::string out_key = "k00200";   // outside
+    uint32_t in_default = cc.get_shard_for_key_default(in_key);
+    uint32_t out_default = cc.get_shard_for_key_default(out_key);
+    uint32_t hi_default = cc.get_shard_for_key_default("k00150");  // hi is exclusive
+
+    // Publish the migration cutover: [k00050,k00150) -> a NEW owner (!= hash).
+    uint32_t new_owner = (in_default + 1u) % 3u;
+    std::string any_table = "";
+    ASSERT_TRUE(cm_.set_range_owner(any_table, "k00050", "k00150", new_owner));
+
+    // Stale in-memory config still routes by hash until reload.
+    EXPECT_EQ(cc.get_shard_for_key_default(in_key), in_default);
+
+    // Reload (the ConfigWatcher's action) -> the range routes to the new owner.
+    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
+    EXPECT_EQ(cc.get_shard_for_key_default(in_key), new_owner);
+    EXPECT_EQ(cc.get_shard_for_key_default("k00050"), new_owner);   // lo inclusive
+    EXPECT_EQ(cc.get_shard_for_key_default("k00150"), hi_default);  // hi exclusive -> unchanged
+    EXPECT_EQ(cc.get_shard_for_key_default(out_key), out_default);  // outside -> unchanged
+}
+
 TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
     ASSERT_TRUE(cm_.add_shard(0, {"a"}));
     ASSERT_TRUE(cm_.add_shard(1, {"b"}));

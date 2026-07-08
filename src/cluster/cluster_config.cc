@@ -84,6 +84,12 @@ pub fn cc_route(s: &ClusterConfigState, table: &std::string, key: &std::string) 
     if s.shard_count == 0 {
         return 0;
     }
+    // Committed migration overrides win over the policy / hash default: a range
+    // whose migration has committed routes to its new owner.
+    let ro: i32 = janus::cc_range_owner(s, table, key);
+    if ro >= 0 {
+        return janus::cc_follow_replacement(s, ro as u32);
+    }
     if !table.empty() {
         if s.table_policies.contains_key(table) {
             let kv: i64 = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
@@ -96,7 +102,7 @@ pub fn cc_route(s: &ClusterConfigState, table: &std::string, key: &std::string) 
     janus::cc_follow_replacement(s, janus::cc_hash_key(key) % s.shard_count)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=bbce2b2a3aaaf4af883bb95e9724103d5daa89f759e48a770b64371d728d2ef6*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=2637cbdc5a7924e192df53f0364380a10e5c817cbb653bbfea5084350ca99204*/
 uint32_t cc_hash_key(const std::string& key);
 
 uint32_t cc_hash_key(const std::string& key) {
@@ -159,6 +165,10 @@ uint32_t cc_route(const ClusterConfigState& s, const std::string& table, const s
     if (rusty::detail::deref_if_pointer_like(s.shard_count) == 0) {
         return static_cast<uint32_t>(0);
     }
+    const int32_t ro = janus::cc_range_owner(s, table, key);
+    if (rusty::detail::deref_if_pointer_like(ro) >= 0) {
+        return janus::cc_follow_replacement(s, static_cast<uint32_t>(ro));
+    }
     if (!table.empty()) {
         if (s.table_policies.contains_key(table)) {
             const int64_t kv = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
@@ -189,10 +199,22 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
         info.replacement = cm->get_shard_replacement(i);
         new_shards.insert(i, std::move(info));
     }
+    // Committed migration range->owner overrides (published on cutover).
+    uint32_t rcount = cm->get_range_override_count();
+    std::vector<RangeOverride> new_overrides;
+    for (uint32_t i = 0; i < rcount; i++) {
+        RangeOverride ro;
+        ro.table = cm->get_range_table(i);
+        ro.lo = cm->get_range_lo(i);
+        ro.hi = cm->get_range_hi(i);
+        ro.owner = cm->get_range_owner(i);
+        new_overrides.push_back(std::move(ro));
+    }
     s.shard_count = count;
     s.version = ver;
     s.epoch = ep;
     s.shards = std::move(new_shards);
+    s.range_overrides = std::move(new_overrides);
     return true;
 }
 
