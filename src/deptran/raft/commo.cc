@@ -764,9 +764,16 @@ namespace janus
                                         uint64_t last_included_index,
                                         uint64_t last_included_term,
                                         const std::string &data,
-                                        std::function<void(uint64_t follower_term)> callback)
+                                        rusty::Function<void(uint64_t)> callback)
     {
       auto proxies = rpc_par_proxies_[par_id];
+
+
+      // FutureAttr::callback needs a copyable/const-callable wrapper.
+      // rusty::Function is move-only, so keep it behind shared_ptr at this boundary.
+      auto callback_ptr =
+          std::make_shared<rusty::Function<void(uint64_t)>>(std::move(callback));
+
 
       // Find the target proxy
       for (auto &p : proxies)
@@ -783,15 +790,15 @@ namespace janus
         }
         FutureAttr fuattr;
 
-        fuattr.callback = [callback, site_id](rusty::Arc<Future> fu)
+        fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
           {
             Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site %d - error code %d",
                       site_id, fu->get_error_code());
-            if (callback)
+            if (*callback_ptr)
             {
-              callback(0);
+              (*callback_ptr)(0);
             }
             return;
           }
@@ -802,9 +809,9 @@ namespace janus
           Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site %d: term=%lu",
                    site_id, follower_term);
 
-          if (callback)
+          if (*callback_ptr)
           {
-            callback(follower_term);
+            (*callback_ptr)(follower_term);
           }
         };
 
@@ -830,9 +837,9 @@ namespace janus
       // Target not found in proxy list
       Log_warn("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot - site %d not found in proxies",
                site_id);
-      if (callback)
+      if (*callback_ptr)
       {
-        callback(0);
+        (*callback_ptr)(0);
       }
     }
 

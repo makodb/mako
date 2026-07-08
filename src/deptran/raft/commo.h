@@ -309,7 +309,7 @@ friend class RaftProxy;
                            uint64_t last_included_index,
                            uint64_t last_included_term,
                            const std::string& data,
-                           std::function<void(uint64_t follower_term)> callback);
+                           rusty::Function<void(uint64_t)> callback);
 
   // ==========================================================================
   // callback-shaped variants of the quorum RPCs.
