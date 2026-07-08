@@ -313,8 +313,10 @@ namespace janus
    * - RPC succeeds but target rejects → callback(false, follower_term)
    * - RPC succeeds and target starts election → callback(true, follower_term)
    */
-  // @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
-  // @unsafe - async RPC boundary; uses legacy rrr proxy casts internally
+  // @unsafe - legacy RPC boundary: raw RaftProxy cast and async FutureAttr callback.
+  // The public callback has been migrated to rusty::Function, but it is stored
+  // behind std::shared_ptr because FutureAttr::callback requires a copyable,
+  // const-callable callback wrapper.
   void RaftCommo::SendTimeoutNow(
       siteid_t site_id,
       parid_t par_id,
@@ -335,7 +337,8 @@ namespace janus
       }
 
       RaftProxy* proxy;
-      // @unsafe
+      // @unsafe - rpc_par_proxies_ stores legacy untyped proxy pointers.
+      // The Raft transport layer guarantees this entry is a RaftProxy*.
       {
         proxy = (RaftProxy*)p.second;
       }
@@ -756,7 +759,9 @@ namespace janus
      * Sends the full snapshot in one RPC. The follower replaces its state
      * machine state and discards old log entries covered by the snapshot.
      */
-    // @unsafe - C-style cast, std::function
+    // @unsafe - legacy RPC boundary: raw RaftProxy cast and async FutureAttr callback.
+    // Single-target RPC. The rusty::Function callback is moved into shared_ptr
+    // so the legacy async callback can copy it and keep it alive until completion.
     void RaftCommo::SendInstallSnapshot(siteid_t site_id,
                                         parid_t par_id,
                                         uint64_t term,
@@ -769,8 +774,9 @@ namespace janus
       auto proxies = rpc_par_proxies_[par_id];
 
 
-      // FutureAttr::callback needs a copyable/const-callable wrapper.
-      // rusty::Function is move-only, so keep it behind shared_ptr at this boundary.
+      // @safe - Moves the user callback exactly once into shared ownership.
+      // Needed because rusty::Function is move-only, while FutureAttr callback storage
+      // expects a copyable lambda.
       auto callback_ptr =
           std::make_shared<rusty::Function<void(uint64_t)>>(std::move(callback));
 
@@ -784,12 +790,15 @@ namespace janus
         }
 
         RaftProxy *proxy;
-        // @unsafe
+        // @unsafe - legacy proxy table stores void/base proxy pointers;
+        // this RPC path expects the entry to be a RaftProxy*.
         {
           proxy = (RaftProxy *)p.second;
         }
         FutureAttr fuattr;
-
+        
+        // @unsafe - callback runs later through the legacy RPC runtime.
+        // Captures only copyable values/shared ownership.
         fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
@@ -847,7 +856,9 @@ namespace janus
     // callback-shaped quorum RPCs
     // ============================================================================
 
-    // @unsafe - C-style casts, std::function captures
+    // @unsafe - legacy RPC boundary: raw RaftProxy cast and async FutureAttr callback.
+    // Single-target callback-shaped AppendEntries RPC. The rusty::Function callback
+    // is moved into shared_ptr so the async lambda remains copyable.
     void RaftCommo::SendAppendEntriesCb(
         siteid_t site_id,
         parid_t par_id,
@@ -866,7 +877,9 @@ namespace janus
     {
       auto proxies = rpc_par_proxies_[par_id];
       WAN_WAIT;
-
+      // @safe - Moves the move-only rusty::Function into shared ownership.
+      // FutureAttr::callback needs a copyable lambda, so the lambda captures the
+      // shared_ptr instead of copying the Function.
       auto on_reply_ptr = std::make_shared<rusty::Function<void(siteid_t, raft::AppendEntriesReply)>>(std::move(on_reply));
 
       for (auto &p : proxies)
@@ -875,12 +888,17 @@ namespace janus
           continue;
         auto follower_id = p.first;
         RaftProxy *proxy;
-        // @unsafe
+        // @unsafe - legacy proxy table stores untyped proxy pointers;
+        // this path assumes the selected proxy is a RaftProxy*.
         {
           proxy = (RaftProxy *)p.second;
         }
         FutureAttr fuattr;
+        // @safe - Keep a value copy of cmd alive across the async boundary.
+        // The request itself is sent immediately, but the callback may run later.
         auto cmd_keep = cmd; // keep alive across the async boundary
+
+        // @unsafe - callback is invoked by the legacy RPC runtime after this function returns.
         fuattr.callback = [on_reply_ptr, cmd_keep, follower_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
@@ -941,7 +959,9 @@ namespace janus
       }
     }
 
-    // @unsafe - C-style casts, std::function captures
+    // @unsafe - legacy RPC boundary with fanout: raw RaftProxy casts and async
+    // FutureAttr callbacks. The same rusty::Function callback is shared across
+    // multiple peer replies through shared_ptr.
     void RaftCommo::BroadcastVoteCb(
         parid_t par_id,
         slotid_t lst_log_idx,
@@ -953,6 +973,9 @@ namespace janus
       auto proxies = rpc_par_proxies_[par_id];
       WAN_WAIT;
 
+      // @safe - BroadcastVoteCb fans out to many peers, so the move-only
+      // rusty::Function cannot be moved into each lambda. shared_ptr gives each
+      // async callback shared access to the same reply handler.
       auto on_reply_ptr = std::make_shared<rusty::Function<void(siteid_t, raft::VoteReply)>>(std::move(on_reply));
       for (auto &p : proxies)
       {
@@ -960,11 +983,14 @@ namespace janus
         if (site_id == self_id)
           continue;
         RaftProxy *proxy;
-        // @unsafe
+        // @unsafe - legacy proxy table stores untyped proxy pointers;
+        // each peer entry is expected to be a RaftProxy*.
         {
           proxy = (RaftProxy *)p.second;
         }
         FutureAttr fuattr;
+        // @unsafe - callback is invoked asynchronously by the legacy RPC runtime.
+        // Captures only site_id and shared ownership of the reply handler.
         fuattr.callback = [on_reply_ptr, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
