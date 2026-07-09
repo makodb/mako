@@ -48,9 +48,15 @@ pub fn compute_shard_for_key(table_id: i32, key: &std::string) -> i32 {
         if name_opt.is_some() {
             table_name = name_opt.as_ref().unwrap();
         }
-        // get_shard_for_key always yields a valid shard (policy → hash-mod
-        // fallback), then chases any dead-shard replacement pointer.
-        return janus::get_cluster_config().get_shard_for_key(&table_name, key) as i32;
+        // Route through the ClusterConfig ONLY for tables it explicitly governs
+        // (map mode + a partition table present). Everything else falls through
+        // to the legacy path below -- otherwise merely POPULATING the config
+        // (the ConfigWatcher coming up) hijacks routing for tables that never
+        // onboarded, e.g. TPC-C's warehouse-policy tables (observed live: 98%
+        // remote-abort ratio on the one node whose watcher ran).
+        if janus::get_cluster_config().routes_table(&table_name) {
+            return janus::get_cluster_config().get_shard_for_key(&table_name, key) as i32;
+        }
     }
 
     // Legacy path: ShardingPolicyCache + table-ID fallback.
@@ -110,7 +116,7 @@ pub fn get_policy_num_shards() -> i32 {
     0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_router.1 version=1 rust_sha256=986f9e872702b44d7cd427ef3404d58117db3570243631189ea1f6a857a09e76*/
+/*RUSTYCPP:GEN-BEGIN id=shard_router.1 version=1 rust_sha256=6ffc13f5cabc93ad4321f03dcd483d5716cbdbd878956abbc46ab0fb98dc33a8*/
 int32_t compute_shard_for_key(int32_t table_id, const std::string& key);
 int32_t compute_shard_for_key_value(int32_t table_id, const std::string& table_name, int64_t key_value);
 bool has_policy_routing(const std::string& table_name);
@@ -123,7 +129,9 @@ int32_t compute_shard_for_key(int32_t table_id, const std::string& key) {
         if (name_opt.is_some()) {
             table_name = name_opt.as_ref().unwrap();
         }
-        return static_cast<int32_t>(janus::get_cluster_config().get_shard_for_key(table_name, key));
+        if (janus::get_cluster_config().routes_table(table_name)) {
+            return static_cast<int32_t>(janus::get_cluster_config().get_shard_for_key(table_name, key));
+        }
     }
     if (janus::get_sharding_policy_cache().is_initialized()) {
         const rusty::Option<std::string> name_opt = get_table_registry().get_table_name(std::move(table_id));

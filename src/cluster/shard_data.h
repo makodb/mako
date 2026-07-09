@@ -90,6 +90,23 @@ public:
         for (const auto& kv : scan_range(lo, hi)) remove(kv.first);
     }
 
+    // ---- migration freeze (write fence) on THIS participant ----
+    // The coordinator (ShardMaster) freezes the SOURCE's [lo,hi) at lock_range so
+    // no write slips between the final copy and the cutover, and unfreezes only on
+    // abort. On commit the source is left frozen on purpose: it no longer owns the
+    // range, and the standing freeze keeps rejecting stale-routed writers
+    // (SERVER_BUSY -> retry) until their config reloads and lands them on the new
+    // owner. Backends where a freeze is meaningful override these: the local mbta
+    // participant fences its process-global MigrationGuard (which the shard's
+    // non-txn write handler enforces); the RPC participant forwards to the remote
+    // shard's service. In-memory test doubles keep the no-op default.
+    virtual void freeze_range(const std::string& lo, const std::string& hi) {
+        (void)lo; (void)hi;
+    }
+    virtual void unfreeze_range(const std::string& lo, const std::string& hi) {
+        (void)lo; (void)hi;
+    }
+
     static uint64_t fnv(const std::string& s) {
         uint64_t h = 1469598103934665603ull;  // < 2^63
         for (unsigned char c : s) { h ^= c; h *= 1099511628211ull; }

@@ -210,11 +210,21 @@ impl ShardMaster {
         let dst: *mut ShardData = (*self).shards.get(dst_id).unwrap().get();
         unsafe { (*dst).copy_range_from(src, &lo, &hi) };
     }
-    // Phase 2 — LOCK: 2PC prepare on the source, freeze the range (stop serving).
+    // Phase 2 — LOCK: 2PC prepare on the source. Sets the master's lock flag AND
+    // freezes [lo,hi) on the SOURCE participant (its write fence): on a local
+    // participant that lands in the process-global MigrationGuard the shard's
+    // non-txn write handler enforces (SERVER_BUSY); on a remote participant it is
+    // one FreezeRange RPC to the source's process. From here the source takes no
+    // writes in the range, so the final copy + checksum see a stable range.
     fn lock_range(&mut self) {
-        if (*self).mig_active {
-            (*self).mig_locked = true;
-        }
+        if !(*self).mig_active { return; }
+        (*self).mig_locked = true;
+        let src_id: u32 = (*self).mig_source;
+        if !(*self).shards.contains_key(src_id) { return; }
+        let lo: std::string = (*self).mig_lo;
+        let hi: std::string = (*self).mig_hi;
+        let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
+        unsafe { (*src).freeze_range(&lo, &hi) };
     }
     // True iff source and destination hold identical data over [lo, hi): the
     // source computes its checksum (its "prepared" proof) and the destination
@@ -288,14 +298,19 @@ impl ShardMaster {
         // last). Requires the table's partition to be seeded (map mode).
         unsafe { janus::cm_split_and_reassign((*self).cm, &table, &lo, &hi, dst_id) };
         self.reload();
+        // The SOURCE's freeze (set at lock_range) is deliberately NOT lifted: the
+        // source no longer owns [lo, hi), and the standing fence keeps rejecting
+        // stale-routed writers (SERVER_BUSY -> client retries) until their config
+        // reloads and lands them on the destination -- closing the cutover race.
+        // The destination was never frozen, so it serves immediately.
         (*self).mig_active = false;
         (*self).mig_staged.clear();
         (*self).mig_deleted.clear();
         true
     }
     // ABORT (before COMMIT): the destination discards its partial copy; the
-    // source keeps the range (it only stopped serving at lock). No config change,
-    // so routing never moved.
+    // source keeps the range and RESUMES serving it -- its write fence (set at
+    // lock_range) is lifted. No config change, so routing never moved.
     fn abort_migration(&mut self) {
         if !(*self).mig_active { return; }
         let dst_id: u32 = (*self).mig_dest;
@@ -304,6 +319,11 @@ impl ShardMaster {
         if (*self).shards.contains_key(dst_id) {
             let dst: *mut ShardData = (*self).shards.get(dst_id).unwrap().get();
             unsafe { (*dst).drop_range(&lo, &hi) };
+        }
+        let src_id: u32 = (*self).mig_source;
+        if (*self).mig_locked && (*self).shards.contains_key(src_id) {
+            let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
+            unsafe { (*src).unfreeze_range(&lo, &hi) };
         }
         (*self).mig_active = false;
         (*self).mig_staged.clear();
@@ -351,7 +371,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=2ad88d7024b7bd3fb877f2afb568114d888d5410ff727aa68c01dd2342b67d69*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=7b5ed1ccb4d140d2f431f44131c984a858d34fefe60da6d657dd4fa409cad634*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -565,8 +585,20 @@ inline void ShardMaster::background_copy() {
 }
 
 inline void ShardMaster::lock_range() {
-    if (((*this)).mig_active) {
-        ((*this)).mig_locked = true;
+    if (!((*this)).mig_active) {
+        return;
+    }
+    ((*this)).mig_locked = true;
+    const uint32_t src_id = ((*this)).mig_source;
+    if (!((*this)).shards.contains_key(std::move(src_id))) {
+        return;
+    }
+    const std::string lo = ((*this)).mig_lo;
+    const std::string hi = ((*this)).mig_hi;
+    ShardData* const src = ((*this)).shards.get(std::move(src_id)).unwrap().get();
+    // @unsafe
+    {
+        ((*src)).freeze_range(lo, hi);
     }
 }
 
@@ -686,6 +718,14 @@ inline void ShardMaster::abort_migration() {
         // @unsafe
         {
             ((*dst)).drop_range(lo, hi);
+        }
+    }
+    const uint32_t src_id = ((*this)).mig_source;
+    if (rusty::detail::deref_if_pointer_like(((*this)).mig_locked) && ((*this)).shards.contains_key(std::move(src_id))) {
+        ShardData* const src = ((*this)).shards.get(std::move(src_id)).unwrap().get();
+        // @unsafe
+        {
+            ((*src)).unfreeze_range(lo, hi);
         }
     }
     ((*this)).mig_active = false;

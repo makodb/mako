@@ -809,6 +809,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/shard_data_plane.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/migration_demo_endpoint.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
@@ -1650,6 +1651,14 @@ if(BUILD_TESTS)
     target_include_directories(test_config_kv_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_kv_service PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_config_kv_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+
+    # Operator CLI: drives the standing shard-0 ShardMaster over the
+    # MigrationAdmin rrr service (cluster_bootstrap.cc). Same lean TU profile
+    # as the config-kv test (rcc_rpc.h + rrr.hpp, no Masstree, no gtest).
+    add_executable(mako_admin src/mako/mako_admin.cc)
+    target_include_directories(mako_admin PRIVATE ${TEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(mako_admin PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(mako_admin ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} rocksdb pthread)
     add_test(NAME test_config_kv_service COMMAND test_config_kv_service)
 
     # ConfigManager standalone unit tests

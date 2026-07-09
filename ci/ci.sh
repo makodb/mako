@@ -343,6 +343,37 @@ run_2shard_no_replication() {
     return 1
 }
 
+# Function: live operator-driven migration on the replicated multi-process bed.
+# MAKO_CLUSTER_CONFIG=1 + map routing + seeded migratable rows on shard 1; once
+# both shard leaders' data planes are up, mako_admin fires ONE Migrate RPC at
+# shard 0's MigrationAdmin service, which drives the STANDING shard-0
+# ShardMaster through the full online 2PC (remote source over ShardDataService)
+# while TPC-C serves. The script asserts the commit + the usual bed checks.
+run_2shard_migration_admin() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shardMigrationAdmin"
+    echo "========================================="
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        bash ./examples/test_2shard_migration_admin.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "shardMigrationAdmin"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shardMigrationAdmin (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 # Function: 2-shard no-replication run WITH the cross-process migration demo.
 # Same bed as shardNoReplication, plus MAKO_XPROC_MIGRATION_DEMO=1 so shard 1
 # serves isolated demo data over a ShardDataService rrr socket and shard 0 drives
@@ -721,6 +752,9 @@ case "${1:-}" in
         ;;
     shardMigrationXproc)
         run_2shard_migration_xproc
+        ;;
+    shardMigrationAdmin)
+        run_2shard_migration_admin
         ;;
     shard1Replication)
         run_1shard_replication

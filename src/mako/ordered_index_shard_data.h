@@ -58,6 +58,18 @@ public:
         return std::move(cb.pairs);
     }
 
+    // Migration write fence on the LOCAL shard: this participant lives in the
+    // serving process, so the freeze goes to the process-global MigrationGuard --
+    // the registry the shard's non-txn write handler (RunNontxnOp) enforces with
+    // SERVER_BUSY. Table-agnostic "" (one service per index), matching
+    // ShardDataServiceImpl::DoFreezeRange on the remote side.
+    void freeze_range(const std::string& lo, const std::string& hi) override {
+        get_migration_guard().freeze(std::string(), lo, hi);
+    }
+    void unfreeze_range(const std::string& lo, const std::string& hi) override {
+        get_migration_guard().unfreeze(std::string(), lo, hi);
+    }
+
 private:
     // Collects (key, value) pairs from a scan; never stops early.
     class Collector : public oi_scan_callback {

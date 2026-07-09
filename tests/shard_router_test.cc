@@ -239,43 +239,51 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
 // Routing consults the process-global ClusterConfig when populated
 // =============================================================================
 
-TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigWhenPopulated) {
-    get_table_registry().register_table(1, "WAREHOUSE");
+// The ClusterConfig routes ONLY tables it explicitly governs (map mode + a
+// partition table present); everything else keeps its legacy path even on a
+// node whose config is populated. The negative half is the regression guard
+// for the live incident: the moment the ConfigWatcher populated the config,
+// ungoverned (TPC-C) tables were hijacked onto config routing (98% remote
+// aborts on that node).
+TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigOnlyForGovernedTables) {
+    get_table_registry().register_table(1, "GOVERNED");
+    get_table_registry().register_table(300, "UNGOVERNED");
 
-    auto& cc = janus::get_cluster_config();
-    cc.set_shard_count(2);
-    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
-    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(cm.seed_partition("GOVERNED", 1));   // whole keyspace -> shard 1
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
 
-    // With ClusterConfig populated, compute_shard_for_key routes through
-    // it (hash-mod default here — no per-table policy). Stable + in range.
-    const int a = compute_shard_for_key(1, "warehouse/42");
-    const int b = compute_shard_for_key(1, "warehouse/42");
-    EXPECT_EQ(a, b);
-    EXPECT_GE(a, 0);
-    EXPECT_LT(a, 2);
+    // Governed table: routed by the config's partition table.
+    EXPECT_EQ(1, compute_shard_for_key(1, "anykey"));
+
+    // Ungoverned table: falls through to the legacy table-ID fallback,
+    // exactly as if the config were empty: (300-1)/NUM_TABLES_PER_SHARD.
+    EXPECT_EQ((300 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD,
+              compute_shard_for_key(300, "anykey"));
 }
 
 TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig) {
-    get_table_registry().register_table(1, "WAREHOUSE");
+    get_table_registry().register_table(1, "GOVERNED");
 
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(cm.seed_partition("GOVERNED", 1));   // whole keyspace -> shard 1
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+    ASSERT_EQ(1, compute_shard_for_key(1, "probe"));
+
+    // Kill shard 1 -> taker 0. The router must chase the replacement pointer
+    // for the governed table's partition owner.
     auto& cc = janus::get_cluster_config();
-    cc.set_shard_count(2);
-    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
-    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
-
-    // Find a key that routes to shard 1.
-    std::string probe;
-    for (int i = 0; i < 64; ++i) {
-        const std::string k = "k" + std::to_string(i);
-        if (compute_shard_for_key(1, k) == 1) { probe = k; break; }
-    }
-    ASSERT_FALSE(probe.empty());
-
-    // Kill shard 1 -> taker 0. The router must reroute the probe key.
     janus::ShardInfo dead; dead.id = 1; dead.status = "dead"; dead.replacement = 0;
     cc.update_shard(1, dead);
-    EXPECT_EQ(compute_shard_for_key(1, probe), 0);
+    EXPECT_EQ(compute_shard_for_key(1, "probe"), 0);
 }
 
 TEST_F(ShardRouterTest, EmptyClusterConfigFallsBackToLegacyPath) {

@@ -588,4 +588,17 @@ abstract service ShardDataService {
     defer FreezeRange(string lo, string hi | i32 ok);
     defer UnfreezeRange(string lo, string hi | i32 ok);
 }
+
+// Operator-facing migration trigger, served by shard 0's leader (the node that
+// hosts the standing ShardMaster). One call runs the full online 2PC range
+// migration on that master: attach participants -> background copy -> lock
+// (freezes the source's range) -> catch-up copy -> checksum-gated final sync ->
+// commit (source sheds the range; the cutover publishes through ConfigManager
+// and reroutes on every node's next config reload).
+abstract service MigrationAdmin {
+    // ok=1 iff the migration COMMITTED. moved = rows in [lo,hi) on the
+    // destination after commit. msg carries failure detail on ok=0.
+    defer Migrate(string table_name, string lo, string hi, i32 src, i32 dst |
+                  i32 ok, i64 moved, string msg);
+}
 %%

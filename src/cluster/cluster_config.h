@@ -110,6 +110,17 @@ inline int32_t cc_partition_lookup(const ClusterConfigState& s, const std::strin
     }
     return owner;
 }
+// Does this config explicitly GOVERN `table`'s routing? True only in map mode
+// with a partition table present for it. The runtime bridge
+// (mako::compute_shard_for_key) consults ClusterConfig only for governed
+// tables, so tables not yet onboarded to partition routing keep their legacy
+// path (ShardingPolicyCache / table-id fallback) even on a node whose
+// ClusterConfig is populated -- a populated config must not hijack e.g. the
+// TPC-C warehouse-policy routing.
+inline bool cc_routes_table(const ClusterConfigState& s, const std::string& table) {
+    return s.mode == ShardingMode::MAP && s.partitions.contains_key(table);
+}
+
 // cc_update_shard / cc_set_table_policy / cc_clear_table_policy /
 // cc_has_table_policy are gone: folded into the DSL methods below as direct
 // btree_port::BTreeMap insert / remove / contains_key calls on the guard.
@@ -148,6 +159,12 @@ impl ClusterConfig {
     fn get_shard_for_key_default(&self, key: &std::string) -> u32 {
         let empty: std::string = std::string("");
         self.get_shard_for_key(&empty, key)
+    }
+    // Does this config explicitly govern `table`'s routing? (map mode + a
+    // partition table present -- see cc_routes_table.)
+    fn routes_table(&self, table: &std::string) -> bool {
+        let g = (*self).state.lock().unwrap();
+        unsafe { cc_routes_table((*g), table) }
     }
     fn set_table_policy(&mut self, table: &std::string, policy: TableShardingPolicy) {
         let mut g = (*self).state.lock().unwrap();
@@ -203,7 +220,7 @@ impl ClusterConfig {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=74f9e5f747d8354805866ec529132911c9ebd82e2aed38d5ab61cd2dee48f134*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=855cdffeafb42c590ac193e1282f809d2fd48f6e12a011afd2d38e1479da4e04*/
 struct ClusterConfig;
 
 struct ClusterConfig {
@@ -213,6 +230,7 @@ struct ClusterConfig {
     bool load_from_config_manager(ConfigManager* cm);
     uint32_t get_shard_for_key(const std::string& table, const std::string& key) const;
     uint32_t get_shard_for_key_default(const std::string& key) const;
+    bool routes_table(const std::string& table) const;
     void set_table_policy(const std::string& table, TableShardingPolicy policy);
     void clear_table_policy(const std::string& table);
     bool has_table_policy(const std::string& table) const;
@@ -252,6 +270,14 @@ inline uint32_t ClusterConfig::get_shard_for_key(const std::string& table, const
 inline uint32_t ClusterConfig::get_shard_for_key_default(const std::string& key) const {
     const std::string empty = std::string("");
     return this->get_shard_for_key(empty, key);
+}
+
+inline bool ClusterConfig::routes_table(const std::string& table) const {
+    const auto g = ((*this)).state.lock().unwrap();
+    // @unsafe
+    {
+        return cc_routes_table((rusty::detail::deref_if_pointer_like(g)), table);
+    }
 }
 
 inline void ClusterConfig::set_table_policy(const std::string& table, TableShardingPolicy policy) {

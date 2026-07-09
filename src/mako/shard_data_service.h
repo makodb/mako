@@ -190,13 +190,14 @@ public:
         (void)proxy_->DropRange(req);
     }
 
-    // Control-plane (not ShardData ops): freeze/unfreeze the range on the remote
-    // shard for a migration -- the coordinator calls these on the SOURCE.
-    void freeze_range(const std::string& lo, const std::string& hi) {
+    // Migration write fence on the REMOTE shard (ShardData overrides): one RPC to
+    // the remote service, which freezes ITS process-global MigrationGuard. The
+    // coordinator's lock_range() calls this on the source participant.
+    void freeze_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcFreezeRangeRequest req; req.lo = lo; req.hi = hi;
         (void)proxy_->FreezeRange(req);
     }
-    void unfreeze_range(const std::string& lo, const std::string& hi) {
+    void unfreeze_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcUnfreezeRangeRequest req; req.lo = lo; req.hi = hi;
         (void)proxy_->UnfreezeRange(req);
     }
