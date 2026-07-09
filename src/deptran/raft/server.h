@@ -11,6 +11,7 @@
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
+#include <rusty/function.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -204,7 +205,7 @@ class RaftServer : public TxLogServer {
   uint64_t heartbeat_interval_us_ = HEARTBEAT_INTERVAL;  // Runtime-configurable heartbeat interval (microseconds)
   uint64_t log_retention_window_ = 5000;  // Configurable log retention window (entries to keep after compaction)
 	enum { STOPPED, RUNNING } status_;
-	std::function<void(bool)> leader_change_cb_{};
+	rusty::Function<void(bool)> leader_change_cb_;
 
   // ============================================================================
   // PREFERRED REPLICA SYSTEM - Leadership Transfer
@@ -582,7 +583,7 @@ class RaftServer : public TxLogServer {
   void setIsLeader(bool isLeader);
 
   // @safe - stores callback for later invocation
-  void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
+  void RegisterLeaderChangeCallback(rusty::Function<void(bool)> cb);
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   // take janus::Command;

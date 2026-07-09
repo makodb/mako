@@ -2736,7 +2736,7 @@ void RaftServer::removeCmd(slotid_t slot) {
 }
 
 // @unsafe - Stores callback for later invocation
-void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
+void RaftServer::RegisterLeaderChangeCallback(rusty::Function<void(bool)> cb) {
   leader_change_cb_ = std::move(cb);
 }
 
