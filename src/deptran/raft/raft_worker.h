@@ -14,6 +14,7 @@
 #include <deque>
 #include <map>
 #include <thread>
+#include <rusty/function.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -46,22 +47,26 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
 // Watermark callback type used for per-partition leader/follower routing
-using watermark_callback_t = std::function<int(const char*&, int, int, int,
-    std::queue<std::tuple<int, int, int, int, const char*>>&)>;
+using watermark_callback_t = rusty::Function<int(
+    const char*&,
+    int,
+    int,
+    int,
+    std::queue<std::tuple<int, int, int, int, const char*>>&
+)>;
 
 // @unsafe - class contains raw pointers and manual memory management
 class RaftWorker {
 private:
-  // Callbacks for log application
+  // TODO(RustyCpp): legacy simple callbacks are currently only stored,
+  // not invoked by Next(). Leave as std::function until deletion/compat cleanup.
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
 
   // RAFT CHANGE: Store separate callbacks for leader and follower roles
   // The Next() method will choose which to call based on current leadership
-  std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
-    leader_callback_par_id_return_ = nullptr;
-  std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
-    follower_callback_par_id_return_ = nullptr;
+  watermark_callback_t leader_callback_par_id_return_;
+  watermark_callback_t follower_callback_par_id_return_;
 
   // SINGLE-RAFT: Per-partition callback maps for routing apply callbacks
   // When a single RaftWorker handles all partitions, Next() extracts par_id
@@ -182,15 +187,9 @@ public:
 
   // RAFT CHANGE: Separate registration for leader and follower callbacks
   // @safe - stores callback for later invocation
-  void register_leader_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_leader_callback_par_id_return(watermark_callback_t cb);
   // @safe - stores callback for later invocation
-  void register_follower_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_follower_callback_par_id_return(watermark_callback_t cb);
 
   // SINGLE-RAFT: Per-partition callback registration
   // Used when a single RaftWorker handles all partitions
@@ -201,10 +200,7 @@ public:
 
   // Legacy method for compatibility (deprecated - use leader/follower specific methods)
   // @safe - delegates to register_follower_callback_par_id_return
-  void register_apply_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
-  );
+  void register_apply_callback_par_id_return(watermark_callback_t cb);
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy

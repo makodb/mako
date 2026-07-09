@@ -508,11 +508,11 @@ void RaftWorker::register_apply_callback_par_id(
 }
 
 // @unsafe
-void RaftWorker::register_leader_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_leader_callback_par_id_return(watermark_callback_t cb) {
   // @unsafe
-  { this->leader_callback_par_id_return_ = cb; }
+  {
+  this->leader_callback_par_id_return_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {
@@ -536,11 +536,11 @@ void RaftWorker::register_leader_callback_par_id_return(
 }
 
 // @unsafe
-void RaftWorker::register_follower_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_follower_callback_par_id_return(watermark_callback_t cb) {
   // @unsafe
-  { this->follower_callback_par_id_return_ = cb; }
+  {
+    this->follower_callback_par_id_return_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {
@@ -563,11 +563,9 @@ void RaftWorker::register_follower_callback_par_id_return(
 }
 
 // @unsafe - delegates to register_follower_callback_par_id_return
-void RaftWorker::register_apply_callback_par_id_return(
-    std::function<int(const char*&, int, int, int,
-                      std::queue<std::tuple<int, int, int, int, const char*>>&)> cb) {
+void RaftWorker::register_apply_callback_par_id_return(watermark_callback_t cb) {
   Log_warn("[RAFT-CALLBACK] Using deprecated register_apply_callback_par_id_return - use register_leader/follower_callback_par_id_return instead");
-  register_follower_callback_par_id_return(cb);
+  register_follower_callback_par_id_return(std::move(cb));
 }
 
 // @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
@@ -687,7 +685,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 // SINGLE-RAFT: Per-partition callback registration methods
 // @unsafe
 void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
-  leader_callbacks_by_partition_[par_id] = cb;
+  leader_callbacks_by_partition_[par_id] = std::move(cb);
 
   if (!rep_sched_) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d", par_id);
@@ -707,7 +705,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
 
 // @unsafe
 void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
-  follower_callbacks_by_partition_[par_id] = cb;
+  follower_callbacks_by_partition_[par_id] = std::move(cb);
 
   if (!rep_sched_) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d", par_id);
