@@ -223,10 +223,8 @@ void RaftWorker::ShutDown() {
 
   StopSubmitThread();
 
-  if (rep_sched_) {
-    delete rep_sched_;
-    rep_sched_ = nullptr;
-  }
+  // rep_sched_ is borrowed from RaftFrame::svr_; RaftWorker must not delete it.
+  rep_sched_ = nullptr;
 
   // IMPORTANT: Shutdown poll threads AFTER servers are destroyed.
   // Server::~Server() enqueues remove commands to the poll thread; keeping the
