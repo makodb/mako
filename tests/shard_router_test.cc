@@ -287,6 +287,60 @@ TEST_F(ShardRouterTest, EmptyClusterConfigFallsBackToLegacyPath) {
               (1 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD);
 }
 
+// =============================================================================
+// End-to-end reroute: a live migration reroutes the REAL runtime routing entry.
+// =============================================================================
+
+// A migration through the long-lived ShardMaster reassigns a range in the
+// map-mode partition table and reloads the process-global ClusterConfig, so the
+// runtime routing entry (compute_shard_for_key -> get_cluster_config) sends the
+// migrated range to its new owner. Two in-process participants stand in for the
+// shards' data planes; the routing plane is the real one.
+TEST_F(ShardRouterTest, MigrationReroutesComputeShardForKey) {
+    auto key = [](int i) {
+        return std::string("k") + (i < 10 ? "0" : "") + std::to_string(i);
+    };
+
+    // Map-mode routing plane: the whole "" keyspace starts on shard 0 (source).
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(cm.seed_partition("", 0));
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+
+    // An unregistered table_id -> table_name "" -> the "" partition. The real
+    // routing entry sends the whole range to shard 0 initially.
+    EXPECT_EQ(0, compute_shard_for_key(999, key(15)));
+    EXPECT_EQ(0, compute_shard_for_key(999, key(5)));
+
+    // Seed the range's data on shard 0, then migrate [k10,k20) 0 -> 1 through the
+    // master, which publishes the cutover to cm and reloads THIS ClusterConfig.
+    janus::InMemoryShardData d0, d1;
+    for (int i = 0; i < 30; i++) d0.put(key(i), "v");
+    janus::ShardMaster master =
+        janus::ShardMaster::new_(&cm, &janus::get_cluster_config());
+    master.attach_shard(0, &d0);
+    master.attach_shard(1, &d1);
+    ASSERT_TRUE(master.begin_migration(0, 1, "", key(10), key(20)));
+    master.background_copy();
+    master.lock_range();
+    master.final_sync();
+    ASSERT_TRUE(master.both_prepared());
+    ASSERT_TRUE(master.commit_migration());
+
+    // The runtime routing entry now reroutes the migrated range to shard 1;
+    // neighbors keep routing to shard 0.
+    EXPECT_EQ(1, compute_shard_for_key(999, key(15)));  // inside -> destination
+    EXPECT_EQ(0, compute_shard_for_key(999, key(5)));   // below -> source
+    EXPECT_EQ(0, compute_shard_for_key(999, key(25)));  // above -> source
+
+    // And the data really moved.
+    EXPECT_EQ(10u, master.shard_range_count(1, key(10), key(20)));
+    EXPECT_EQ(0u, master.shard_range_count(0, key(10), key(20)));
+}
+
 }  // namespace mako
 
 int main(int argc, char** argv) {
