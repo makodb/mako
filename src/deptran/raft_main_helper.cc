@@ -970,7 +970,7 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
   raft_impl::handle_leader_change_impl(partition_id);
 
   // Call the callback for BOTH gaining and losing leadership
-  // @safe - leader_callback_ is a std::function, invoking is safe
+  // @unsafe - invokes global compatibility leader-change callback if present.
   if (leader_callback_) {
     leader_callback_(is_leader ? 1 : 0);  // 1 = became leader, 0 = lost leadership
   }

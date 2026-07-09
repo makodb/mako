@@ -186,7 +186,7 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
 }
 
 bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                                       std::function<void(CommitStatus)> callback) {
+                                       rusty::Function<void(CommitStatus)> callback) {
   // First, call Start to submit the command
   bool result = Start(svr, cmd, index, term);
   if (!result) {

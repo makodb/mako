@@ -39,11 +39,15 @@
 
 namespace janus {
 
-// Runtime replication switching - always declare raft functions
+// Runtime replication switching - always declare raft functions.
+// Compatibility boundary: the global leader-change callback is defined
+// outside raft_worker and may still use the legacy callback type.
 extern std::function<void(int)> leader_callback_;
-// @unsafe - uses raw global std::function, unbounded callback invocation
+
+// @unsafe - invokes raw global compatibility callback with unbounded user code
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
-// @unsafe - uses raw global std::function, unbounded callback invocation
+
+// @unsafe - invokes raw global compatibility callback with unbounded user code
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
 // Watermark callback type used for per-partition leader/follower routing
@@ -59,7 +63,7 @@ using watermark_callback_t = rusty::Function<int(
 class RaftWorker {
 private:
   // TODO(RustyCpp): legacy simple callbacks are currently only stored,
-  // not invoked by Next(). Leave as std::function until deletion/compat cleanup.
+  // not invoked by Next(). Keep until deletion/compat cleanup.
   rusty::Function<void(const char*, int)> callback_;
   rusty::Function<void(const char*&, int, int)> callback_par_id_;
 
@@ -95,7 +99,7 @@ public:
   std::atomic<int> n_current{0};   // Current in-flight requests
   std::atomic<int> n_submit{0};    // Total submitted
   std::atomic<int> n_tot{0};       // Total processed
-  // removed `std::atomic<int> submit_num{0};`
+  // removed old submit counter
   // `int submit_tot_sec_ = 0;` / `int submit_tot_usec_ = 0;` — these
   // fed only the now-deleted `microbench_paxos` / `microbench_paxos_queue`
   // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place

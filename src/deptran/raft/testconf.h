@@ -3,6 +3,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include <map>
+#include <rusty/function.hpp>
 
 namespace janus {
 
@@ -46,8 +47,8 @@ class RaftTestConfig {
 
  private:
   static std::map<siteid_t, RaftFrame*> replicas;
-  // take janus::Command (matching the
-  // RegLearnerAction signature change in deptran/scheduler.h).
+  // Compatibility boundary: RegLearnerAction still stores the shared scheduler
+  // callback type.
   static std::map<siteid_t, std::function<int(int, janus::Command)>> commit_callbacks;
   static std::map<siteid_t, std::vector<int>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
@@ -167,7 +168,7 @@ class RaftTestConfig {
   // Starts a command with a callback for commit status notification
   // Returns same values as Start()
   bool StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
-                         std::function<void(CommitStatus)> callback);
+                         rusty::Function<void(CommitStatus)> callback);
 
  private:
   // vars & subroutine for unreliable network setting

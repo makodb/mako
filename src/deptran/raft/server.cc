@@ -897,7 +897,7 @@ void RaftServer::StartApplyThread() {
   });
   // Keep the thread joinable so the destructor can await it. Detaching here
   // causes use-after-free: the thread captures `this` and keeps running after
-  // ~RaftServer destroys the RaftServer, resulting in an empty std::function
+  // ~RaftServer destroys the RaftServer, resulting in an empty apply callback
   // invocation when it next pulls from apply_queue_.
 }
 
