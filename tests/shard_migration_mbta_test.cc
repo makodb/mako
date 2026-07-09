@@ -14,8 +14,7 @@
 
 #include "benchmarks/bench.h"
 #include "storage/mbta_wrapper.hh"
-#include "ordered_index_shard_data.h"   // the real shard-data class under test
-#include "shard_migrator.h"             // the migration coordinator
+#include "ordered_index_shard_data.h"   // the real shard-data class under test (import cluster: ShardMaster)
 
 #include <gtest/gtest.h>
 
@@ -48,6 +47,24 @@ void engine_thread_init() {
 ::FullOrderedIndex* fresh_index(const std::string& name) {
     return mbta_index_build(name, g_table_id.fetch_add(1));
 }
+
+// A ShardMaster over an isolated in-memory config store, driving two real
+// mbta-backed participants (shard 0 = src, shard 1 = dst). This is the ONE
+// migration coordinator the whole cluster uses -- here over real storage. Held
+// in place (the master borrows cm_/cfg_), so it is non-movable; construct it as
+// a local in each test.
+struct MasterRig {
+    janus::InMemoryKvStore kv_;
+    janus::ConfigManager cm_{&kv_};
+    janus::ClusterConfig cfg_ = janus::ClusterConfig::new_();
+    janus::ShardMaster master = janus::ShardMaster::new_(&cm_, &cfg_);
+    MasterRig(janus::ShardData* s0, janus::ShardData* s1) {
+        master.register_shard({"s0"}, s0);   // id 0
+        master.register_shard({"s1"}, s1);   // id 1
+    }
+    MasterRig(const MasterRig&) = delete;
+    MasterRig& operator=(const MasterRig&) = delete;
+};
 
 // ---------------------------------------------------------------------------
 // Range primitives = the future OrderedIndexShardData methods, over the
@@ -213,7 +230,7 @@ TEST_F(ShardMigrationMbta, FullProtocolCommitPath) {
     const std::string lo = k(10), hi = k(20);   // [k10,k20) = 10 keys
 
     // PHASE 1 -- BACKGROUND COPY (source live): snapshot bulk copy.
-    dst.copy_range_from(src, lo, hi);
+    dst.copy_range_from(&src, lo, hi);
 
     // Writes land on the range AFTER the snapshot -> captured as the delta at
     // the coordinator; the source keeps serving the whole time.
@@ -252,7 +269,7 @@ TEST_F(ShardMigrationMbta, FullProtocolAbortLeavesSourceIntact) {
     for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
     const std::string lo = k(10), hi = k(20);
 
-    dst.copy_range_from(src, lo, hi);
+    dst.copy_range_from(&src, lo, hi);
     dst.remove(k(14));   // a dropped row in transfer -> divergent copy
 
     // PREPARE fails the checksum-equality gate -> ABORT (no cutover happens).
@@ -277,16 +294,19 @@ TEST_F(ShardMigrationMbta, MigratorCommitPath) {
     janus::OrderedIndexShardData dst(fresh_index("mg_dst"));
     for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
 
-    janus::ShardMigrator m(&src, &dst, k(10), k(20), /*generation=*/1);
+    MasterRig rig(&src, &dst);
+    auto& m = rig.master;
+    ASSERT_TRUE(m.begin_migration(/*source=*/0, /*dest=*/1, /*table=*/"", k(10), k(20)));
     m.background_copy();                       // Phase 1 (source live)
-    m.staged_put(k(15), "hot");                // delta: overwrite
-    m.staged_delete(k(13));                    // delta: delete
-    EXPECT_FALSE(m.frozen_for(k(15)));         // not locked yet -> not frozen
-    m.lock();                                  // Phase 2
-    EXPECT_TRUE(m.frozen_for(k(15)));          // in-range key now frozen
-    EXPECT_FALSE(m.frozen_for(k(25)));         // out-of-range key never frozen
-    ASSERT_TRUE(m.final_sync_and_verify());    // Phase 3: delta replay + checksum
-    m.commit();                                // Phase 4
+    m.client_put(k(15), "hot");                // delta: overwrite
+    m.client_remove(k(13));                    // delta: delete
+    EXPECT_FALSE(m.shard_frozen_for(0, k(15))); // not locked yet -> not frozen
+    m.lock_range();                            // Phase 2
+    EXPECT_TRUE(m.shard_frozen_for(0, k(15)));  // in-range key now frozen
+    EXPECT_FALSE(m.shard_frozen_for(0, k(25))); // out-of-range key never frozen
+    m.final_sync();                            // Phase 3: delta replay + checksum
+    ASSERT_TRUE(m.both_prepared());
+    ASSERT_TRUE(m.commit_migration());         // Phase 4
 
     EXPECT_EQ(src.range_count(k(10), k(20)), 0u);   // source shed the range
     EXPECT_EQ(dst.range_count(k(10), k(20)), 9u);   // 10 - 1 delete
@@ -300,12 +320,15 @@ TEST_F(ShardMigrationMbta, MigratorAbortOnDivergenceLeavesSourceIntact) {
     janus::OrderedIndexShardData dst(fresh_index("ma_dst"));
     for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
 
-    janus::ShardMigrator m(&src, &dst, k(10), k(20), /*generation=*/2);
+    MasterRig rig(&src, &dst);
+    auto& m = rig.master;
+    ASSERT_TRUE(m.begin_migration(0, 1, "", k(10), k(20)));
     m.background_copy();
     dst.remove(k(14));                         // garbled transfer -> divergence
-    m.lock();
-    EXPECT_FALSE(m.final_sync_and_verify());    // checksum gate fails -> no cutover
-    m.abort();
+    m.lock_range();
+    m.final_sync();
+    EXPECT_FALSE(m.both_prepared());            // checksum gate fails -> no cutover
+    m.abort_migration();
 
     EXPECT_EQ(src.range_count(k(10), k(20)), 10u);  // source keeps the full range
     EXPECT_EQ(dst.range_count(k(10), k(20)), 0u);   // dest partial copy discarded
@@ -372,15 +395,18 @@ TEST_F(ShardMigrationMbta, EndToEndDynamicReshardWithLiveMigration) {
     ASSERT_EQ(Rd(k(60)), "v60");   // served by shard1
 
     // Phase 2 -- RE-SHARD: migrate [k10,k20) from shard0 to shard1, ONLINE.
-    janus::ShardMigrator m(&shard0, &shard1, k(10), k(20), /*generation=*/1);
+    MasterRig rig(&shard0, &shard1);
+    auto& m = rig.master;
+    ASSERT_TRUE(m.begin_migration(0, 1, "", k(10), k(20)));
     m.background_copy();                     // source keeps serving during copy
     // Writes to the migrating range during the copy are captured by the source
     // (dual-write into the delta) so none are lost across the cutover:
-    m.staged_put(k(15), "v15-hot");          // a hot overwrite
-    m.staged_delete(k(13));                  // a delete
-    m.lock();                                // freeze the range
-    ASSERT_TRUE(m.final_sync_and_verify());  // replay delta + checksum-equality gate
-    m.commit();                              // source drops the range
+    m.client_put(k(15), "v15-hot");          // a hot overwrite
+    m.client_remove(k(13));                  // a delete
+    m.lock_range();                          // freeze the range
+    m.final_sync();                          // replay delta + checksum-equality gate
+    ASSERT_TRUE(m.both_prepared());
+    ASSERT_TRUE(m.commit_migration());       // source drops the range
     rmap.reassign(k(10), k(20), 1);          // cutover: routing flips to shard1
 
     // Phase 3 -- after cutover: the migrated range is served by shard1, with the

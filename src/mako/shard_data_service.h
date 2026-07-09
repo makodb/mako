@@ -18,7 +18,7 @@
 //                          those; only ScanRange (the bulk copy) ships pairs.
 
 #include "rcc_rpc.h"        // ShardDataServiceService / ShardDataServiceProxy
-#include "shard_data.h"     // ShardData
+import cluster;             // ShardData participant port (janus::ShardData; was #include "shard_data.h")
 
 #include <cstdint>
 #include <map>

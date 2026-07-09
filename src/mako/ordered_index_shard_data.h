@@ -14,7 +14,7 @@
 // data plane — freeze / owned ranges / migration role live in the control
 // plane (ShardMigrator / the config manager), per the storage recon.
 
-#include "shard_data.h"
+import cluster;   // ShardData participant port (janus::ShardData; was #include "shard_data.h")
 #include "storage/abstract_ordered_index.h"
 
 #include <string>

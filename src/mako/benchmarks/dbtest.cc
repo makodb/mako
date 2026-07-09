@@ -7,9 +7,10 @@
 #include <mako.hh>
 
 // Online shard-migration on the real storage engine (opt-in demo, gated below).
+// The migration coordinator is the cluster ShardMaster (import cluster, pulled
+// in transitively via ordered_index_shard_data.h).
 #include "storage/mbta_wrapper.hh"
 #include "ordered_index_shard_data.h"
-#include "shard_migrator.h"
 
 import std;
 
@@ -315,20 +316,31 @@ static void run_online_migration_demo()
       src.put(kb, std::string("v") + std::to_string(i));
     }
     const std::string lo = "m10", hi = "m20";
-    janus::ShardMigrator m(&src, &dst, lo, hi, /*generation=*/1);
-    m.background_copy();                              // Phase 1 (source keeps serving)
-    m.staged_put("m15", "hot");                       // writes during copy (the delta)
-    m.staged_delete("m13");
-    m.lock();                                         // Phase 2 (freeze the range)
-    const bool verified = m.final_sync_and_verify();  // Phase 3 (delta + checksum gate)
+    // Drive the migration through the ShardMaster coordinator (the same one the
+    // cluster uses), here over an ISOLATED in-memory config store so the demo
+    // never perturbs the real cluster config. The two demo shards are its
+    // participants (ids 0 = src, 1 = dst).
+    janus::InMemoryKvStore demo_kv;
+    janus::ConfigManager demo_cm(&demo_kv);
+    janus::ClusterConfig demo_cfg = janus::ClusterConfig::new_();
+    janus::ShardMaster master = janus::ShardMaster::new_(&demo_cm, &demo_cfg);
+    master.register_shard({"demo_src"}, &src);        // shard 0
+    master.register_shard({"demo_dst"}, &dst);        // shard 1
+    master.begin_migration(0, 1, /*table=*/"", lo, hi);
+    master.background_copy();                          // Phase 1 (source keeps serving)
+    master.client_put("m15", "hot");                  // writes during copy (the delta)
+    master.client_remove("m13");
+    master.lock_range();                              // Phase 2 (freeze the range)
+    master.final_sync();                             // Phase 3 (delta replay + checksum gate)
+    const bool verified = master.both_prepared();
     if (verified) {
-      m.commit();                                     // Phase 4 (source drops the range)
+      master.commit_migration();                     // Phase 4 (source drops the range)
       Notice("MAKO_MIGRATION_DEMO: OK committed [%s,%s) src_range=%zu dst_range=%zu "
              "(checksums matched, no lost writes, source shed the range)",
              lo.c_str(), hi.c_str(),
              (size_t)src.range_count(lo, hi), (size_t)dst.range_count(lo, hi));
     } else {
-      m.abort();
+      master.abort_migration();
       Notice("MAKO_MIGRATION_DEMO: checksum mismatch -> aborted (source intact, range=%zu)",
              (size_t)src.range_count(lo, hi));
     }

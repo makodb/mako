@@ -930,15 +930,16 @@ set(TXLOG_HELPER_SRC
 set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_data.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_shard_data.h
     ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h
     ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_builder.h
     ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_cache.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard.h
     ${CMAKE_SOURCE_DIR}/src/cluster/config_manager.h
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
     ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard_manager.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_master.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
 )
@@ -1683,21 +1684,24 @@ if(BUILD_TESTS)
     # for masstree shards) driven through the REAL ConfigManager/ClusterConfig
     # reconfiguration verbs (add/kill/remove). Pure cluster like
     # test_config_manager: no storage engine, no RPC.
-    add_executable(test_shard_manager
-        tests/shard_manager_test.cc
+    # test_shard_master — the long-lived ShardMaster (the ONE migration
+    # coordinator) driving the real ConfigManager/ClusterConfig over in-memory
+    # ShardData participants. Same profile as test_shard_manager (pure cluster).
+    add_executable(test_shard_master
+        tests/shard_master_test.cc
     )
-    target_include_directories(test_shard_manager PRIVATE
+    target_include_directories(test_shard_master PRIVATE
         src
         ${GTEST_INCLUDE_DIRS}
     )
-    target_link_options(test_shard_manager PRIVATE
+    target_link_options(test_shard_master PRIVATE
         "-L${_CXX_COMPILER_ROOT}/lib"
         "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
     )
-    target_link_libraries(test_shard_manager
+    target_link_libraries(test_shard_master
         cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
-    add_test(NAME test_shard_manager COMMAND test_shard_manager)
+    add_test(NAME test_shard_master COMMAND test_shard_master)
 
     # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
     # Unlike test_config_manager (pure cluster), this TU pulls the
@@ -2615,7 +2619,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_shard_migration_mbta PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_migration_mbta
-        mako ${TEST_LINK_LIBS}
+        cluster mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
@@ -2630,7 +2634,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_shard_migration_stress PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_migration_stress
-        mako ${TEST_LINK_LIBS}
+        cluster mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
@@ -2655,7 +2659,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_shard_migration_rpc PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_migration_rpc
-        ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS}
+        cluster ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         rocksdb pthread)
     add_test(NAME test_shard_migration_rpc COMMAND test_shard_migration_rpc)

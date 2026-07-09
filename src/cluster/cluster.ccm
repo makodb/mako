@@ -13,13 +13,14 @@ export module cluster;
 
 export import :kv_store;
 export import :in_memory_kv_store;
+export import :shard_data;            // migration participant port (peer of :kv_store)
+export import :in_memory_shard_data;  // in-memory ShardData fake (peer of :in_memory_kv_store)
 export import :sharding_policy;
 export import :sharding_policy_builder;
 export import :sharding_policy_cache;
-export import :shard;
 export import :config_manager;
 export import :cluster_config;
 export import :config_watcher;
-export import :shard_manager;
+export import :shard_master;    // long-lived migration coordinator over the ShardData port
 export import :remote_kv_store;
 export import :shard_router;   // cluster<->mako routing bridge (namespace mako)

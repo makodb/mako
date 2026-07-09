@@ -13,8 +13,7 @@
 
 #include "benchmarks/bench.h"
 #include "storage/mbta_wrapper.hh"
-#include "ordered_index_shard_data.h"
-#include "shard_migrator.h"
+#include "ordered_index_shard_data.h"   // import cluster: ShardMaster coordinator
 
 #include <gtest/gtest.h>
 
@@ -118,7 +117,7 @@ public:
         lo_ = std::move(lo); hi_ = std::move(hi);
         active_ = true; locked_ = false; staged_.clear();
     }
-    void copy() { dst_->copy_range_from(*src_, lo_, hi_); }   // scans src concurrently
+    void copy() { dst_->copy_range_from(src_, lo_, hi_); }   // scans src concurrently
     // Chunked copy: scan the range in small windows so a concurrent-write OCC
     // conflict only re-scans one chunk (not the whole range) -> the cursor
     // always advances -> guaranteed progress under UNBOUNDED range writes.
@@ -197,12 +196,21 @@ TEST_F(Stress, MigrationUnderLoad) {
     go.store(true, std::memory_order_release);
     std::thread mig([&] {
         thread_init_once();
-        janus::ShardMigrator m(&src, &dst, lo, hi, /*generation=*/1);
-        m.background_copy();                 // copy the range while the workers pound the engine
-        m.lock();
-        migrated_ok = m.final_sync_and_verify();
-        if (migrated_ok) m.commit();
-        else             m.abort();
+        // The ShardMaster coordinator over an isolated in-memory config store,
+        // with the two shards registered as participants (0 = src, 1 = dst).
+        janus::InMemoryKvStore kv;
+        janus::ConfigManager cm(&kv);
+        janus::ClusterConfig cfg = janus::ClusterConfig::new_();
+        janus::ShardMaster master = janus::ShardMaster::new_(&cm, &cfg);
+        master.register_shard({"src"}, &src);   // id 0
+        master.register_shard({"dst"}, &dst);   // id 1
+        master.begin_migration(0, 1, "", lo, hi);
+        master.background_copy();             // copy the range while the workers pound the engine
+        master.lock_range();
+        master.final_sync();
+        migrated_ok = master.both_prepared();
+        if (migrated_ok) master.commit_migration();
+        else             master.abort_migration();
     });
     mig.join();
     for (auto& w : ws) w.join();
@@ -313,21 +321,28 @@ TEST_F(Stress, SustainedMigrationPingPong) {
         });
     }
 
-    // Migration thread: ping-pong the range back and forth until stop.
+    // Migration thread: ONE long-lived ShardMaster ping-pongs the range back and
+    // forth until stop -- hundreds of cutovers through the same coordinator.
     std::thread mig([&] {
         thread_init_once();
-        uint64_t gen = 0;
+        janus::InMemoryKvStore kv;
+        janus::ConfigManager cm(&kv);
+        janus::ClusterConfig cfg = janus::ClusterConfig::new_();
+        janus::ShardMaster master = janus::ShardMaster::new_(&cm, &cfg);
+        master.register_shard({"s0"}, shards[0]);   // id 0
+        master.register_shard({"s1"}, shards[1]);   // id 1
         while (!stop.load(std::memory_order_acquire)) {
             int from = owner.load(std::memory_order_acquire), to = 1 - from;
-            janus::ShardMigrator m(shards[from], shards[to], lo, hi, ++gen);
-            m.background_copy();
-            m.lock();
-            if (m.final_sync_and_verify()) {   // empty delta (no range writes) -> always matches
-                m.commit();
+            master.begin_migration(from, to, "", lo, hi);
+            master.background_copy();
+            master.lock_range();
+            master.final_sync();
+            if (master.both_prepared()) {   // empty delta (no range writes) -> always matches
+                master.commit_migration();
                 owner.store(to, std::memory_order_release);
                 migrations += 1;
             } else {
-                m.abort();
+                master.abort_migration();
             }
         }
     });

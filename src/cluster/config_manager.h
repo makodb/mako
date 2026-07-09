@@ -319,6 +319,21 @@ impl ConfigManager {
     fn set_range_owner(&mut self, table: &std::string, lo: &std::string, hi: &std::string, owner: u32) -> bool {
         if unsafe { cm_kv_absent((*self).kv) } { return false; }
         let n: u32 = self.get_range_override_count();
+        // Upsert keyed by (table, lo, hi): a range has exactly ONE current owner,
+        // so re-migrating it overwrites the existing override in place. Appending
+        // would leave two overrides for the range, and cc_range_owner takes the
+        // first match -- a fresh ClusterConfig would then route to the stale owner.
+        let mut i: u32 = 0;
+        while i < n {
+            if self.get_range_table(i) == (*table)
+                && self.get_range_lo(i) == (*lo)
+                && self.get_range_hi(i) == (*hi) {
+                let ukey: std::string = std::string("range/") + std::to_string(i) + std::string("/owner");
+                let uval: std::string = std::to_string(owner);
+                return self.put_versioned(&ukey, &uval);
+            }
+            i = i + 1;
+        }
         let tkey: std::string = std::string("range/") + std::to_string(n) + std::string("/table");
         unsafe { (*(*self).kv).put(&tkey, table); }
         let lkey: std::string = std::string("range/") + std::to_string(n) + std::string("/lo");
@@ -446,7 +461,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=6875fe12543f2ab5d30b476cebc823ed91ec267dfb30c4ebf7905c34fd12d385*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=7dd71f51f318bfabe090dceb34266a9a5f3cf76b23613e916fdae4bf12a83bf1*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -813,6 +828,15 @@ inline bool ConfigManager::set_range_owner(const std::string& table, const std::
         return false;
     }
     const uint32_t n = this->get_range_override_count();
+    uint32_t i = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        if (((this->get_range_table(std::move(i)) == (table)) && (this->get_range_lo(std::move(i)) == (lo))) && (this->get_range_hi(std::move(i)) == (hi))) {
+            const std::string ukey = (std::string("range/") + std::to_string(std::move(i))) + std::string("/owner");
+            const std::string uval = std::to_string(std::move(owner));
+            return this->put_versioned(ukey, uval);
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<uint32_t>(1);
+    }
     const std::string tkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/table");
     // @unsafe
     {

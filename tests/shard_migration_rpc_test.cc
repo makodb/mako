@@ -18,8 +18,7 @@
 // in shard_data_rpc_harness.cc (see that file for why).
 
 #include "shard_data_rpc_harness.h" // rrr server/client wiring (rrr.hpp in its .cc)
-#include "shard_data_service.h"     // ShardDataServiceImpl / RemoteShardData (+ rcc_rpc.h)
-#include "shard_migrator.h"         // the migration coordinator
+#include "shard_data_service.h"     // ShardDataServiceImpl / RemoteShardData (+ rcc_rpc.h; import cluster: ShardMaster)
 
 #include <gtest/gtest.h>
 
@@ -117,12 +116,22 @@ TEST(ShardMigrationRpc, DistributedMigrationOverRpc) {
 
     const std::string lo = mkkey(50), hi = mkkey(150);   // [50,150): 100 keys
 
-    // Drive the SAME coordinator, but with a REMOTE source participant.
-    janus::ShardMigrator m(&remote_src, &local_dst, lo, hi, /*generation=*/1);
-    m.background_copy();       // local_dst pulls the range from remote_src (ScanRange RPCs)
-    m.lock();
-    ASSERT_TRUE(m.final_sync_and_verify());  // remote_src.checksum() [RPC] vs local_dst.verify_range()
-    m.commit();               // remote_src.drop_range() [DropRange RPC]
+    // Drive the SAME coordinator -- the cluster ShardMaster -- but with a REMOTE
+    // source participant (shard 0, over the wire) and a local destination (shard
+    // 1). The master's ConfigManager is an isolated in-memory store here.
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    janus::ClusterConfig cfg = janus::ClusterConfig::new_();
+    janus::ShardMaster master = janus::ShardMaster::new_(&cm, &cfg);
+    ASSERT_EQ(master.register_shard({"remote_src"}, &remote_src), 0u);
+    ASSERT_EQ(master.register_shard({"local_dst"}, &local_dst), 1u);
+
+    ASSERT_TRUE(master.begin_migration(/*source=*/0, /*dest=*/1, /*table=*/"", lo, hi));
+    master.background_copy();  // local_dst pulls the range from remote_src (ScanRange RPCs)
+    master.lock_range();
+    master.final_sync();       // remote_src.checksum() [RPC] vs local_dst.verify_range()
+    ASSERT_TRUE(master.both_prepared());
+    ASSERT_TRUE(master.commit_migration());  // remote_src.drop_range() [DropRange RPC]
 
     // The range now lives on the local destination...
     EXPECT_EQ(local_dst.range_count(lo, hi), 100u);

@@ -11,7 +11,9 @@
 
 #include <string>
 
-namespace janus { class ShardData; class ShardDataServiceProxy; }
+import cluster;   // janus::ShardData (module-owned; a textual fwd-decl would be a distinct type)
+
+namespace janus { class ShardDataServiceProxy; }  // rrr-generated (rcc_rpc.h); global module
 
 namespace rpc_harness {
 

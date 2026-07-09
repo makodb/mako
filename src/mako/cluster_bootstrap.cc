@@ -43,6 +43,7 @@ rusty::Option<rusty::Box<OrderedIndexKvStore>> g_cfg_kv_local;   // shard-0 lead
 rusty::Option<rusty::Box<RemoteKvStore>> g_cfg_kv_remote;        // other nodes
 rusty::Option<rusty::Box<ConfigManager>> g_cfg_cm;
 rusty::Option<rusty::Box<ConfigWatcher>> g_cfg_watcher;
+rusty::Option<rusty::Box<ShardMaster>> g_shard_master;   // shard-0 leader only: THE migration coordinator
 
 // @safe - env-var read
 bool cluster_config_enabled() {
@@ -104,6 +105,16 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
         ConfigWatcher::new_(cm, &get_cluster_config(), kConfigPollIntervalMs)));
     g_cfg_watcher.as_ref().unwrap()->poll();   // prime the cache immediately
     g_cfg_watcher.as_ref().unwrap()->start();
+
+    // The long-lived migration coordinator on the master shard (shard 0): the ONE
+    // ShardMaster every migration in the cluster goes through, over this shard's
+    // authoritative ConfigManager + the routing cache. Each shard's data plane
+    // registers as a participant; an admin trigger drives the 2PC, and commit
+    // publishes the [lo,hi)->owner cutover through the ConfigManager, which the
+    // ConfigWatcher above then propagates cluster-wide.
+    g_shard_master = rusty::Some(rusty::make_box<ShardMaster>(
+        ShardMaster::new_(cm, &get_cluster_config())));
+    Log_info("BootstrapClusterConfig: shard-0 ShardMaster (migration coordinator) ready");
 }
 
 // Every other node (shard-0 followers + all non-zero shards): read shard
@@ -156,6 +167,20 @@ void BootstrapClusterConfig(abstract_db* db) {
     } else {
         StartRemoteWatcher();
     }
+}
+
+// The long-lived ShardMaster on the master shard (shard 0's leader), or nullptr
+// on any other node -- only shard 0 hosts the coordinator. Valid after
+// BootstrapClusterConfig() has run. Future admin/migration triggers reach it by
+// declaring, under `import cluster;`:
+//     namespace janus { class ShardMaster; ShardMaster* get_shard_master(); }
+// then registering each shard's ShardData participant and driving begin/copy/
+// lock/final_sync/commit. Kept out of cluster_bootstrap.h so that header stays
+// free of the cluster module import.
+// @unsafe - borrowed pointer into the process-lifetime singleton
+ShardMaster* get_shard_master() {
+    if (g_shard_master.is_none()) return nullptr;
+    return g_shard_master.as_ref().unwrap().get();
 }
 
 }  // namespace janus
