@@ -11047,6 +11047,60 @@ public:
         return ar;
     }
 
+    struct RpcFreezeRangeRequest {
+        std::string lo;
+        std::string hi;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFreezeRangeRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFreezeRangeRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        return ar;
+    }
+
+    struct RpcFreezeRangeResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFreezeRangeResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFreezeRangeResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
+    struct RpcUnfreezeRangeRequest {
+        std::string lo;
+        std::string hi;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcUnfreezeRangeRequest& o) {
+        ar << o.lo;
+        ar << o.hi;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcUnfreezeRangeRequest& o) {
+        ar >> o.lo;
+        ar >> o.hi;
+        return ar;
+    }
+
+    struct RpcUnfreezeRangeResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcUnfreezeRangeResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcUnfreezeRangeResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
     enum {
         SCANRANGE = 0x431847f1,
         CHECKSUM = 0x11430399,
@@ -11055,6 +11109,8 @@ public:
         REMOVEKEY = 0x458b0310,
         DROPRANGE = 0x13a070d5,
         GETKEY = 0x24134f12,
+        FREEZERANGE = 0x245a293b,
+        UNFREEZERANGE = 0x34bea045,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11081,6 +11137,12 @@ public:
         if ((ret = svr.reg_rpc(GETKEY, svc_index)) != 0) {
             goto err;
         }
+        if ((ret = svr.reg_rpc(FREEZERANGE, svc_index)) != 0) {
+            goto err;
+        }
+        if ((ret = svr.reg_rpc(UNFREEZERANGE, svc_index)) != 0) {
+            goto err;
+        }
         return 0;
     err:
         svr.unreg(SCANRANGE);
@@ -11090,6 +11152,8 @@ public:
         svr.unreg(REMOVEKEY);
         svr.unreg(DROPRANGE);
         svr.unreg(GETKEY);
+        svr.unreg(FREEZERANGE);
+        svr.unreg(UNFREEZERANGE);
         return ret;
     }
     // @safe - Dispatch for RPC requests
@@ -11102,6 +11166,8 @@ public:
         case REMOVEKEY: __RemoveKey__wrapper__(std::move(req), weak_sconn); break;
         case DROPRANGE: __DropRange__wrapper__(std::move(req), weak_sconn); break;
         case GETKEY: __GetKey__wrapper__(std::move(req), weak_sconn); break;
+        case FREEZERANGE: __FreezeRange__wrapper__(std::move(req), weak_sconn); break;
+        case UNFREEZERANGE: __UnfreezeRange__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
     }
@@ -11120,6 +11186,10 @@ public:
     virtual void DropRange(const RpcDropRangeRequest& req, RpcDropRangeResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void GetKey(const RpcGetKeyRequest& req, RpcGetKeyResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void FreezeRange(const RpcFreezeRangeRequest& req, RpcFreezeRangeResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void UnfreezeRange(const RpcUnfreezeRangeRequest& req, RpcUnfreezeRangeResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
@@ -11264,6 +11334,46 @@ private:
             this->GetKey(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
+    // @safe
+    void __FreezeRange__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcFreezeRangeRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            auto __typed_resp__ = std::make_shared<RpcFreezeRangeResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->FreezeRange(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
+    // @safe
+    void __UnfreezeRange__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcUnfreezeRangeRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            auto __typed_resp__ = std::make_shared<RpcUnfreezeRangeResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->UnfreezeRange(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
 };
 
 class ShardDataServiceProxy {
@@ -11286,6 +11396,10 @@ public:
     using RpcDropRangeResponse = ShardDataServiceService::RpcDropRangeResponse;
     using RpcGetKeyRequest = ShardDataServiceService::RpcGetKeyRequest;
     using RpcGetKeyResponse = ShardDataServiceService::RpcGetKeyResponse;
+    using RpcFreezeRangeRequest = ShardDataServiceService::RpcFreezeRangeRequest;
+    using RpcFreezeRangeResponse = ShardDataServiceService::RpcFreezeRangeResponse;
+    using RpcUnfreezeRangeRequest = ShardDataServiceService::RpcUnfreezeRangeRequest;
+    using RpcUnfreezeRangeResponse = ShardDataServiceService::RpcUnfreezeRangeResponse;
     class ScanRangeTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -11655,6 +11769,112 @@ public:
         auto __typed_fu_result__ = this->async_GetKey(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcGetKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class FreezeRangeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit FreezeRangeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcFreezeRangeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcFreezeRangeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcFreezeRangeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcFreezeRangeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<FreezeRangeTypedFuture, rrr::i32> async_FreezeRange(const RpcFreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::FREEZERANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<FreezeRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<FreezeRangeTypedFuture, rrr::i32>::Ok(FreezeRangeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<FreezeRangeTypedFuture> await_FreezeRange(const RpcFreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_FreezeRange(req, __fu_attr__));
+    }
+    rusty::Result<RpcFreezeRangeResponse, rrr::i32> FreezeRange(const RpcFreezeRangeRequest& req) {
+        auto __typed_fu_result__ = this->async_FreezeRange(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcFreezeRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class UnfreezeRangeTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit UnfreezeRangeTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcUnfreezeRangeResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcUnfreezeRangeResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcUnfreezeRangeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcUnfreezeRangeResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<UnfreezeRangeTypedFuture, rrr::i32> async_UnfreezeRange(const RpcUnfreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::UNFREEZERANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.lo;
+            __m__ << req.hi;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<UnfreezeRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<UnfreezeRangeTypedFuture, rrr::i32>::Ok(UnfreezeRangeTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<UnfreezeRangeTypedFuture> await_UnfreezeRange(const RpcUnfreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_UnfreezeRange(req, __fu_attr__));
+    }
+    rusty::Result<RpcUnfreezeRangeResponse, rrr::i32> UnfreezeRange(const RpcUnfreezeRangeRequest& req) {
+        auto __typed_fu_result__ = this->async_UnfreezeRange(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcUnfreezeRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

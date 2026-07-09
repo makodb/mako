@@ -143,4 +143,27 @@ TEST(ShardMigrationRpc, DistributedMigrationOverRpc) {
     EXPECT_EQ(remote_src.scan_range(mkkey(150), mkkey(200)).size(), 50u);
 }
 
+// The FreezeRange / UnfreezeRange RPCs set and clear the source shard's
+// MigrationGuard over the wire -- so the shard's non-txn write handler will
+// reject frozen keys during the migration. Server and test share the
+// process-global guard in this loopback, so we can inspect it directly.
+TEST(ShardMigrationRpc, FreezeRangeOverRpcSetsAndClearsTheGuard) {
+    janus::get_migration_guard().clear();
+    janus::ShardData* shard = make_shard(20);
+
+    const std::string addr = "127.0.0.1:31901";
+    ASSERT_EQ(rpc_harness::start_server(shard, addr), 0) << "server bind failed on " << addr;
+    janus::ShardDataServiceProxy* proxy = rpc_harness::connect_client(addr);
+    ASSERT_NE(proxy, nullptr) << "client connect failed to " << addr;
+    janus::RemoteShardData remote(proxy);
+
+    EXPECT_FALSE(janus::get_migration_guard().is_frozen("", mkkey(7)));
+    remote.freeze_range(mkkey(5), mkkey(10));                             // FreezeRange RPC
+    EXPECT_TRUE(janus::get_migration_guard().is_frozen("", mkkey(7)));    // inside [5,10)
+    EXPECT_FALSE(janus::get_migration_guard().is_frozen("", mkkey(3)));   // outside
+    EXPECT_FALSE(janus::get_migration_guard().is_frozen("", mkkey(10)));  // hi exclusive
+    remote.unfreeze_range(mkkey(5), mkkey(10));                           // UnfreezeRange RPC
+    EXPECT_FALSE(janus::get_migration_guard().is_frozen("", mkkey(7)));
+}
+
 }  // namespace

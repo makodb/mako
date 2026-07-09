@@ -31,7 +31,10 @@ namespace janus {
 // @safe - thin handler over an injected ShardData (the shard's real data plane).
 class ShardDataServiceImpl : public ShardDataServiceService {
 public:
-    explicit ShardDataServiceImpl(ShardData* shard) : shard_(shard) {}
+    // `guard` defaults to this shard's process-global MigrationGuard (production);
+    // tests inject their own so they can inspect the freeze state directly.
+    explicit ShardDataServiceImpl(ShardData* shard, MigrationGuard* guard = nullptr)
+        : shard_(shard), guard_(guard != nullptr ? guard : &get_migration_guard()) {}
 
     // ---- handler logic, factored out so it unit-tests without the socket ----
     std::map<std::string, std::string>
@@ -57,6 +60,15 @@ public:
     }
     bool DoGet(const std::string& key, std::string* out) {
         return shard_ != nullptr && out != nullptr && shard_->get(key, *out);
+    }
+    // Freeze / unfreeze [lo,hi) on this shard for a migration. Table-agnostic ""
+    // (this single-table service serves one index), so the non-txn write handler
+    // rejects any frozen key in the range.
+    void DoFreezeRange(const std::string& lo, const std::string& hi) {
+        if (guard_) guard_->freeze(std::string(), lo, hi);
+    }
+    void DoUnfreezeRange(const std::string& lo, const std::string& hi) {
+        if (guard_) guard_->unfreeze(std::string(), lo, hi);
     }
 
     // ---- RPC handlers (generated signatures; delegate to Do*) ----
@@ -96,9 +108,18 @@ public:
         if (found) resp.value = std::move(v);
         defer.reply();
     }
+    void FreezeRange(const RpcFreezeRangeRequest& req, RpcFreezeRangeResponse& resp,
+                     rrr::DeferredReply defer) override {
+        DoFreezeRange(req.lo, req.hi); resp.ok = 1; defer.reply();
+    }
+    void UnfreezeRange(const RpcUnfreezeRangeRequest& req, RpcUnfreezeRangeResponse& resp,
+                       rrr::DeferredReply defer) override {
+        DoUnfreezeRange(req.lo, req.hi); resp.ok = 1; defer.reply();
+    }
 
 private:
-    ShardData* shard_;   // non-owning; the shard's real data plane.
+    ShardData* shard_;       // non-owning; the shard's real data plane.
+    MigrationGuard* guard_;  // non-owning; this shard's freeze registry.
 };
 
 // @unsafe - a ShardData whose ops are RPCs to a remote shard's ShardDataService.
@@ -167,6 +188,17 @@ public:
     void drop_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcDropRangeRequest req; req.lo = lo; req.hi = hi;
         (void)proxy_->DropRange(req);
+    }
+
+    // Control-plane (not ShardData ops): freeze/unfreeze the range on the remote
+    // shard for a migration -- the coordinator calls these on the SOURCE.
+    void freeze_range(const std::string& lo, const std::string& hi) {
+        ShardDataServiceProxy::RpcFreezeRangeRequest req; req.lo = lo; req.hi = hi;
+        (void)proxy_->FreezeRange(req);
+    }
+    void unfreeze_range(const std::string& lo, const std::string& hi) {
+        ShardDataServiceProxy::RpcUnfreezeRangeRequest req; req.lo = lo; req.hi = hi;
+        (void)proxy_->UnfreezeRange(req);
     }
 
 private:

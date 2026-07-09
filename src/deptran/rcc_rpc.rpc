@@ -581,5 +581,11 @@ abstract service ShardDataService {
     defer DropRange(string lo, string hi | i32 ok);
     // Point read (verification).
     defer GetKey(string key | i32 found, string value);
+    // Freeze / unfreeze [lo,hi) on this shard for the migration's duration: the
+    // shard's non-txn write handler rejects (RETRY_LATER) writes to a frozen key
+    // so the client backs off and retries, landing on the destination after the
+    // cutover. The migration coordinator calls these on the SOURCE shard.
+    defer FreezeRange(string lo, string hi | i32 ok);
+    defer UnfreezeRange(string lo, string hi | i32 ok);
 }
 %%
