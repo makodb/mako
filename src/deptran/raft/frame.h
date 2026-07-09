@@ -14,15 +14,21 @@
 
 namespace janus {
 
-// @unsafe - inherits from non-@interface Frame (individual methods are @safe)
+// @unsafe - owns the Raft protocol singletons behind raw-pointer factory APIs
+// inherited from Frame. Callers receive borrowed raw pointers from
+// CreateScheduler()/CreateCommo(); RaftFrame keeps ownership in the unique_ptrs.
 class RaftFrame : public Frame {
  private:
   // Safe shared mutable counter using Arc<Cell<T>> pattern
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_ = rusty::Arc<rusty::Cell<slotid_t>>::make(1);
 #ifdef RAFT_TEST_CORO
+  // @unsafe - test-only global coordination state; keep hand-written while the
+  // lab coroutine harness exists.
   static std::mutex raft_test_mutex_;
   static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
   static uint16_t n_replicas_;
+  // @unsafe - borrowed frame registry for RAFT_TEST_CORO; entries are not owned
+  // by this map.
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
   static bool tests_done_;
@@ -34,9 +40,13 @@ class RaftFrame : public Frame {
  public:
   RaftFrame(int mode);
   ~RaftFrame();  // Destructor to clean up owned resources
-  std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
+  // @unsafe - owning communicator handle. Exposed as a raw borrowed
+  // Communicator* by CreateCommo() for legacy scheduler/coordinator APIs.
+  std::unique_ptr<RaftCommo> commo_;
   /* TODO: have another class for common data */
-  std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
+  // @unsafe - owning scheduler/server handle. Exposed as a raw borrowed
+  // TxLogServer* by CreateScheduler(); callers must not delete it.
+  std::unique_ptr<RaftServer> svr_;
   Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

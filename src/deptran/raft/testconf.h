@@ -46,6 +46,8 @@ class CommitIndex {
 class RaftTestConfig {
 
  private:
+  // @unsafe - test harness borrows frames from the RAFT_TEST_CORO frame
+  // registry; this map does not own the RaftFrame instances.
   static std::map<siteid_t, RaftFrame*> replicas;
   // Compatibility boundary: RegLearnerAction still stores the shared scheduler
   // callback type.
@@ -55,6 +57,7 @@ class RaftTestConfig {
 
   // disconnected_[svr] true if svr is disconnected by Disconnect()/Reconnect()
   std::map<siteid_t, bool> disconnected_;
+  // @unsafe - test-only network control thread synchronization.
   // guards disconnected_ between Disconnect()/Reconnect() and netctlLoop
   std::mutex disconnect_mtx_;
 
@@ -172,6 +175,7 @@ class RaftTestConfig {
 
  private:
   // vars & subroutine for unreliable network setting
+  // @unsafe - test-only thread/condvar state; keep hand-written.
   std::thread th_;
   std::mutex cv_m_; // guards cv_, unreliable_, finished_
   std::condition_variable cv_;
@@ -180,6 +184,7 @@ class RaftTestConfig {
   void netctlLoop(void);
 
   // internal disconnect/reconnect/slow functions
+  // @unsafe - recursive mutex protects test network mutation.
   std::recursive_mutex connection_m_;
   bool isDisconnected(siteid_t svr);
   void disconnect(siteid_t svr, bool ignore = false);

@@ -79,7 +79,8 @@ public:
  * Apply callback (ApplyEntry): registered via RegLearnerAction, applies
  * committed entries to local RocksDB with idempotency tracking.
  */
-// @unsafe - Wraps RocksDB C API pointers and Raft server interaction
+// @unsafe - wraps RocksDB C API pointers and a borrowed RaftServer. This is a
+// storage boundary, not an early DSL candidate.
 class ReplicatedDB {
 public:
     // @unsafe - Opens RocksDB, stores raw pointers
@@ -157,7 +158,11 @@ private:
     // @unsafe - Opens (or reopens) RocksDB at db_path_
     bool OpenDB();
 
-    RaftServer* raft_;  // Non-owning pointer, lifetime managed externally
+    // @unsafe - borrowed RaftServer; ReplicatedDB registers callbacks but does
+    // not own or delete the server.
+    RaftServer* raft_;
+    // @unsafe - RocksDB C handles. OpenDB/CloseDB own these via the matching
+    // rocksdb_*_create/destroy/close APIs.
     rocksdb_t* db_ = nullptr;
     rocksdb_options_t* options_ = nullptr;
     rocksdb_writeoptions_t* write_options_ = nullptr;

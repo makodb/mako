@@ -116,7 +116,9 @@ struct KeyValue {
 #endif
 
 
-// @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
+// @unsafe - large stateful Raft core. This remains a Part 1 reshape target:
+// raw frame/commo pointers come from TxLogServer, threading/atomics stay
+// hand-written, and storage/snapshot backends are shared legacy boundaries.
 class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
@@ -124,13 +126,17 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   // LOG PERSISTENCE
   // ============================================================================
-  std::shared_ptr<janus::raft::LogStorage> log_storage_;  // Optional persistent storage
+  // @unsafe - optional shared storage backend. Kept as std::shared_ptr
+  // because storage implementations are polymorphic legacy boundaries.
+  std::shared_ptr<janus::raft::LogStorage> log_storage_;
   bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
   // SNAPSHOT SUPPORT
   // ============================================================================
-  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
+  // @unsafe - optional shared snapshot backend; polymorphic and file/RocksDB
+  // backed implementations remain outside early DSL migration.
+  std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
@@ -138,7 +144,8 @@ class RaftServer : public TxLogServer {
   rusty::Function<std::string()> create_sm_snapshot_cb_;
   rusty::Function<void(const std::string&)> load_sm_snapshot_cb_;
 
-  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
+  // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set).
+  // @unsafe - shared state-machine adapter that wraps RocksDB C handles.
   std::shared_ptr<ReplicatedDB> replicated_db_;
 
   // @unsafe - Initializes snapshot manager from environment config
@@ -170,8 +177,13 @@ class RaftServer : public TxLogServer {
 
   // ============================================================================
 
+  // Replication index state. Keep std containers here until RaftServer is
+  // split into smaller DSL candidates; these maps participate in quorum and
+  // heartbeat logic across many methods.
   std::map<siteid_t, uint64_t> match_index_{};
   std::map<siteid_t, uint64_t> next_index_{};
+  // @unsafe - election/heartbeat timer threads are hard-deferred threading
+  // state; joined/stopped manually by RaftServer teardown.
   std::vector<std::thread> timer_threads_ = {};
   // @unsafe - uses raw pointer parameter for thread signaling
   void timer_thread(bool *vote) ;
@@ -190,12 +202,14 @@ class RaftServer : public TxLogServer {
   bool disconnected_ = false;
   bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
+  // @unsafe - cross-thread apply signal; keep atomic semantics.
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
 #ifdef RAFT_TEST_CORO
   bool failover_{true} ;
 #else
   bool failover_{true} ;
 #endif
+  // @unsafe - cross-thread timer batching counter; not a Cell candidate.
   atomic<int64_t> counter_{0};
   const char *filename = "/db/data.txt";
 
@@ -224,6 +238,7 @@ class RaftServer : public TxLogServer {
   uint64_t leader_last_commit_index_ = 0;                   // Leader's commit index (from heartbeats)
   bool transferring_leadership_ = false;                    // True when transfer in progress
   uint64_t leadership_transfer_start_time_ = 0;             // When transfer started (for timeout)
+  // @unsafe - leadership monitor thread coordination; hard-deferred.
   std::atomic<bool> leadership_monitor_stop_{false};       // Signal to stop monitoring thread
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
@@ -271,6 +286,8 @@ class RaftServer : public TxLogServer {
   // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
   // when done, allowing us to prune finished threads at each new insertion to prevent
   // unbounded growth of thread handles.
+  // @unsafe - async persistence thread registry; uses std::thread plus an
+  // atomic completion flag to avoid use-after-free on shutdown.
   std::mutex async_threads_mtx_;
   std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> async_threads_;
 
@@ -278,6 +295,7 @@ class RaftServer : public TxLogServer {
   // Key: log index, Value: callback to notify on commit status change
   // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
   // or ROLLEDBACK (leader stepped down gracefully)
+  // @safe - move-only callbacks stored by log index for later notification.
   std::map<uint64_t, rusty::Function<void(CommitStatus)>> pendingCallbacks_;
   uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
   uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
@@ -438,6 +456,7 @@ class RaftServer : public TxLogServer {
   // Dedicated apply fiber and background apply thread.
   void StartApplyFiber();
 
+  // @unsafe - background apply thread and queue are manually coordinated.
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;
@@ -537,7 +556,8 @@ class RaftServer : public TxLogServer {
   // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
  public:
-  // @unsafe - Returns raw pointer cast
+  // @unsafe - returns borrowed communicator pointer from TxLogServer base.
+  // The owning RaftFrame/RaftWorker lifetime must outlive this server use.
   RaftCommo* commo() {
     return (RaftCommo*) commo_;
   }

@@ -41,7 +41,8 @@ enum class NotifyRestartStatus {
   PENDING        // Need to send/retry NotifyRestart
 };
 
-// @unsafe - inherits from non-@interface base QuorumEvent
+// @unsafe - inherits from non-@interface base QuorumEvent and tracks voters
+// behind a std::mutex; keep hand-written until the event hierarchy migrates.
 class RaftVoteQuorumEvent: public QuorumEvent {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
@@ -125,12 +126,14 @@ struct AppendEntriesResponse {
 };
 
 
-// @unsafe - inherits from non-@interface base Communicator
+// @unsafe - legacy RPC communicator. It owns no peer proxies directly; proxy
+// tables live in Communicator and are downcast at RPC boundaries.
 class RaftCommo : public Communicator {
 
 friend class RaftProxy;
  private:
-  // NotifyRestart status tracking for each peer
+  // NotifyRestart status tracking for each peer.
+  // @unsafe - guarded by std::mutex outside RustyCpp borrow checking.
   std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
   std::mutex notify_restart_mtx_;
   siteid_t self_site_id_ = 0;  // Our own site ID (set when SendNotifyRestart is called)
@@ -138,6 +141,7 @@ friend class RaftProxy;
 
  public:
 #ifdef RAFT_TEST_CORO
+  // @unsafe - test-only RPC accounting shared with RaftTestConfig.
   std::recursive_mutex rpc_mtx_ = {};
   uint64_t rpc_count_ = 0;
 #endif

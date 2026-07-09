@@ -59,7 +59,9 @@ using watermark_callback_t = rusty::Function<int(
     std::queue<std::tuple<int, int, int, int, const char*>>&
 )>;
 
-// @unsafe - class contains raw pointers and manual memory management
+// @unsafe - Part 1 migration boundary. This worker still owns thread
+// coordination state and raw protocol/RPC handles; keep the ownership map below
+// accurate before converting any field to Box/Arc/Option or moving to DSL.
 class RaftWorker {
 private:
   // TODO(RustyCpp): legacy simple callbacks are currently only stored,
@@ -79,6 +81,9 @@ private:
   std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
   std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
 
+  // Thread coordination is hard-deferred for RustyCpp migration. These fields
+  // synchronize SubmitLoop/StopSubmitThread and must stay hand-written until a
+  // later pass audits the full threading protocol.
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
   std::mutex condition_mutex_;
@@ -96,6 +101,8 @@ private:
 
 public:
   // Statistics
+  // Keep these atomics hand-written: they are cross-thread counters/flags, not
+  // Cell candidates. Cell would not preserve atomicity.
   std::atomic<int> n_current{0};   // Current in-flight requests
   std::atomic<int> n_submit{0};    // Total submitted
   std::atomic<int> n_tot{0};       // Total processed
@@ -107,23 +114,37 @@ public:
   int tot_num = 0;
 
   // Configuration
+  // @unsafe - borrowed Config::SiteInfo. Launch code assigns this from Config
+  // before SetupBase(); RaftWorker must not delete it.
   Config::SiteInfo* site_info_ = nullptr;
   // When true, this worker accepts and serves all partitions.
   bool handles_all_partitions_ = false;
 
   // Raft protocol components
+  // @unsafe - borrowed frame returned by Frame::GetFrame(); the frame registry
+  // owns it, not RaftWorker.
   Frame* rep_frame_ = nullptr;
-  TxLogServer* rep_sched_ = nullptr;      // Points to RaftServer
+  // @unsafe - borrowed pointer to the RaftFrame-owned RaftServer. Current
+  // ShutDown() still deletes this raw pointer; audit that legacy ownership
+  // mismatch before converting this field.
+  TxLogServer* rep_sched_ = nullptr;
+  // @unsafe - borrowed communicator returned by RaftFrame::CreateCommo();
+  // RaftFrame keeps ownership in its commo_ member.
   Communicator* rep_commo_ = nullptr;
 
   // RPC infrastructure
+  // @safe - shared PollThread handle; Arc/Option manages this lifetime.
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // Services are now owned by rpc_server_ via reg_service()
+  // @unsafe - manually owned rrr::Server. Allocated in SetupService(), deleted
+  // in ShutDown(); services are transferred to the server via reg_service().
   rrr::Server* rpc_server_ = nullptr;
 
   // Heartbeat/control RPC
+  // @safe - shared heartbeat PollThread/status handles.
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
+  // @unsafe - manually owned heartbeat/control server. Allocated in
+  // SetupHeartbeat(), deleted in ShutDown().
   rrr::Server* hb_rpc_server_ = nullptr;
 
   // Queue for unreplayed logs (follower only)
@@ -132,6 +153,7 @@ public:
   // Leadership state
   int cur_epoch = 0;
   int is_leader = 0;
+  // @unsafe - recursive mutex protects leadership state across callbacks.
   std::recursive_mutex election_state_lock;
 
   // Constants

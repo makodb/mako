@@ -20,16 +20,20 @@ namespace janus {
 
 class RaftCommo;
 class RaftServer;
-// @unsafe - inherits from non-@interface Coordinator
+// @unsafe - inherits from non-@interface Coordinator and keeps borrowed raw
+// back-pointers into RaftFrame/RaftServer state.
 class CoordinatorRaft : public Coordinator {
  public:
 //  static ballot_t next_slot_s;
+  // @unsafe - borrowed RaftServer back-pointer set by RaftFrame; CoordinatorRaft
+  // does not own or delete it.
   RaftServer* svr_ = nullptr;
  private:
   enum Phase { INIT_END = 0, PREPARE = 1, ACCEPT = 2, COMMIT = 3, FORWARD = 4 };
   const int32_t n_phase_ = 4;
 
-  // @unsafe - C-style cast on raw pointer
+  // @unsafe - C-style cast on borrowed Coordinator::commo_ pointer. The
+  // communicator is owned by RaftFrame, not this coordinator.
   RaftCommo *commo() {
     // TODO fix this.
     verify(commo_ != nullptr);
@@ -55,7 +59,7 @@ class CoordinatorRaft : public Coordinator {
   ballot_t curr_ballot_ = 1; // TODO
   uint32_t n_replica_ = 0;   // TODO
   slotid_t slot_id_ = 0;
-  // Safe shared mutable counter - shares ownership with RaftFrame
+  // Safe shared mutable counter - shares ownership with RaftFrame.
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_;
   // removed `uint64_t cmt_idx_ = 0;` —
   // declared but never written or read on CoordinatorRaft (the

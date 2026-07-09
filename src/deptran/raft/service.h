@@ -25,19 +25,23 @@ namespace janus {
 class TxLogServer;
 class RaftServer;
 
-// @unsafe - inherits from non-@interface RaftService
+// @unsafe - RPC service adapter. rrr owns service object lifetime after
+// registration; this class only tracks a borrowed/atomic RaftServer pointer.
 class RaftServiceImpl : public RaftService {
  public:
-  // Static registry to find services by site_id (for Kill/Restart support)
+  // Static registry to find services by site_id (for Kill/Restart support).
+  // @unsafe - stores borrowed service pointers; registry does not own entries.
   static std::map<siteid_t, RaftServiceImpl*> service_registry_;
   static std::mutex registry_mutex_;
 
-  // Atomic pointer - allows lock-free reads on RPC hot path
+  // @unsafe - borrowed atomic server pointer. Updated during Kill/Restart;
+  // RaftServiceImpl never owns or deletes the server.
   std::atomic<RaftServer*> svr_;
   siteid_t site_id_;
 
   // Store the poll thread so Restart() can reuse the original, ensuring
   // inbound and outbound RPCs share a thread.
+  // @safe - Arc/Option manages shared PollThread lifetime.
   rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_;
 
   RaftServiceImpl(TxLogServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
