@@ -47,6 +47,14 @@ impl Resp3Handler {
         self.buf.extend_from_slice(data);
     }
 
+    pub fn buffered(&self) -> &[u8] {
+        &self.buf
+    }
+
+    pub fn consume(&mut self, len: usize) {
+        let _ = self.buf.split_to(len);
+    }
+
     fn maybe_rewrite_inline_command(&mut self) {
         if self.buf.is_empty()
             || matches!(

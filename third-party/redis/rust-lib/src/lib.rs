@@ -1517,12 +1517,7 @@ fn parse_resp3(frame: DecodedFrame<BytesFrame>) -> Result<Command, ParseError> {
             }
             let key = part_to_bytes(&parts[1])?;
             validate_user_key(&key)?;
-            Ok(Command::new(
-                op,
-                vec![key],
-                None,
-                command_args(&parts).ok_or(ParseError::Protocol("invalid argument"))?,
-            ))
+            Ok(Command::new(op, vec![key], None, Vec::new()))
         }
         OpCode::MGet => {
             if parts.len() < 2 {
@@ -1638,12 +1633,7 @@ fn parse_resp3(frame: DecodedFrame<BytesFrame>) -> Result<Command, ParseError> {
             let key = part_to_bytes(&parts[1])?;
             validate_user_key(&key)?;
             let val = part_to_bytes(&parts[2])?;
-            let mut cmd = Command::new(
-                op,
-                vec![key],
-                Some(val),
-                command_args(&parts).ok_or(ParseError::Protocol("invalid argument"))?,
-            );
+            let mut cmd = Command::new(op, vec![key], Some(val), Vec::new());
             let mut index = 3;
             let mut saw_expiry = false;
             while index < parts.len() {
@@ -6735,6 +6725,143 @@ fn sleep_for_retry(attempt: usize) {
     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
 }
 
+fn execute_fast_mako_string_op<W: Write>(
+    op: OpCode,
+    key: &[u8],
+    value: Option<&[u8]>,
+    protocol_version: u8,
+    writer: &mut W,
+) -> std::io::Result<bool> {
+    let (txn_op, val_ptr, val_len, max_attempts) = match op {
+        OpCode::Get => (TXN_OP_GET, std::ptr::null(), 0, 1),
+        OpCode::Set => {
+            let Some(value) = value else {
+                write_err(writer, "operation failed")?;
+                return Ok(false);
+            };
+            (
+                TXN_OP_SET,
+                value.as_ptr(),
+                value.len(),
+                WRITING_TXN_MAX_ATTEMPTS,
+            )
+        }
+        _ => return Ok(false),
+    };
+
+    let operation = TxnOperation {
+        op: txn_op,
+        key_ptr: key.as_ptr(),
+        key_len: key.len(),
+        val_ptr,
+        val_len,
+        flags: 0,
+        expire_at_ms: -1,
+        group_id: 0,
+    };
+    let request = TxnRequest {
+        num_ops: 1,
+        ops: std::ptr::addr_of!(operation),
+    };
+    let mut response = TxnResponse {
+        transaction_success: false,
+        num_results: 0,
+        results: std::ptr::null_mut(),
+    };
+    let mut call_ok = false;
+
+    for attempt in 0..max_attempts {
+        response = TxnResponse {
+            transaction_success: false,
+            num_results: 0,
+            results: std::ptr::null_mut(),
+        };
+        call_ok = unsafe { cpp_execute_transaction(&request, &mut response) };
+        if call_ok && response.transaction_success && response.num_results == 1 {
+            break;
+        }
+        unsafe { cpp_free_transaction_response(&mut response) };
+        if attempt + 1 < max_attempts {
+            unsafe { cpp_record_txn_retry() };
+            sleep_for_retry(attempt);
+        }
+    }
+
+    if !call_ok || !response.transaction_success || response.num_results != 1 {
+        unsafe { cpp_free_transaction_response(&mut response) };
+        write_err(writer, "backend")?;
+        return Ok(false);
+    }
+
+    let result = unsafe { &*response.results };
+    let mut success = result.success;
+    match op {
+        OpCode::Get => {
+            if !result.success {
+                write_err(writer, "operation failed")?;
+            } else if result.value_present {
+                if result.data_len > 0 {
+                    if result.data_ptr.is_null() {
+                        success = false;
+                        write_err(writer, "operation failed")?;
+                    } else {
+                        let data =
+                            unsafe { std::slice::from_raw_parts(result.data_ptr, result.data_len) };
+                        write_bulk(writer, data)?;
+                    }
+                } else {
+                    write_bulk(writer, b"")?;
+                }
+            } else {
+                write_null(writer, protocol_version)?;
+            }
+        }
+        OpCode::Set => {
+            if result.success {
+                write_simple_ok(writer)?;
+            } else {
+                write_err(writer, "operation failed")?;
+            }
+        }
+        _ => {}
+    }
+
+    unsafe { cpp_free_transaction_response(&mut response) };
+    Ok(success)
+}
+
+fn try_fast_mako_string_command<W: Write>(
+    cmd: &Command,
+    protocol_version: u8,
+    writer: &mut W,
+) -> std::io::Result<bool> {
+    if redis_backend() != RedisBackend::Mako {
+        return Ok(false);
+    }
+
+    let Some(key) = cmd.keys.first() else {
+        return Ok(false);
+    };
+    let value = match cmd.op {
+        OpCode::Get => None,
+        OpCode::Set
+            if cmd.set_condition == SetCondition::None
+                && !cmd.set_return_old
+                && !cmd.set_integer_reply
+                && !cmd.set_keep_ttl
+                && cmd.expire_at_ms < 0 =>
+        {
+            let Some(value) = cmd.val.as_ref() else {
+                return Ok(false);
+            };
+            Some(value.as_ref())
+        }
+        _ => return Ok(false),
+    };
+    let _ = execute_fast_mako_string_op(cmd.op, key, value, protocol_version, writer)?;
+    Ok(true)
+}
+
 /// Execute a single command as a transaction (for non-MULTI operations)
 /// Returns the result directly without array wrapper
 fn ffi_execute_single<W: Write>(
@@ -6742,6 +6869,10 @@ fn ffi_execute_single<W: Write>(
     protocol_version: u8,
     writer: &mut W,
 ) -> std::io::Result<()> {
+    if try_fast_mako_string_command(cmd, protocol_version, writer)? {
+        return Ok(());
+    }
+
     let single = [cmd.clone()];
     let (ops, spans, _payloads) = build_txn_ops(&single);
 
@@ -8619,7 +8750,10 @@ fn remove_watched_existing_keys<'a, I>(keys: I)
 where
     I: IntoIterator<Item = &'a Bytes>,
 {
-    if let Ok(mut watched) = watched_existing_keys().lock() {
+    let Some(watched_keys) = WATCHED_EXISTING_KEYS.get() else {
+        return;
+    };
+    if let Ok(mut watched) = watched_keys.lock() {
         for key in keys {
             watched.remove(key);
         }
@@ -8635,14 +8769,20 @@ fn current_key_version(key: &Bytes) -> usize {
 }
 
 fn bump_key_version(key: &Bytes) {
-    if let Ok(mut versions) = key_versions().lock() {
+    let Some(key_versions) = KEY_VERSIONS.get() else {
+        return;
+    };
+    if let Ok(mut versions) = key_versions.lock() {
         let next = versions.get(key).copied().unwrap_or(0).saturating_add(1);
         versions.insert(key.clone(), next);
     }
 }
 
 fn bump_existing_watched_keys() {
-    let keys: Vec<Bytes> = watched_existing_keys()
+    let Some(watched_existing) = WATCHED_EXISTING_KEYS.get() else {
+        return;
+    };
+    let keys: Vec<Bytes> = watched_existing
         .lock()
         .map(|watched| watched.iter().cloned().collect())
         .unwrap_or_default();
@@ -8874,12 +9014,219 @@ fn should_defer_dirty_command(client: &ClientConn, cmd: &Command) -> bool {
         && BLOCKED_CLIENTS.load(Ordering::Relaxed) > 0
 }
 
+enum RawMakoCommand<'a> {
+    Get { key: &'a [u8] },
+    Set { key: &'a [u8], value: &'a [u8] },
+}
+
+enum RawMakoParse<'a> {
+    Complete {
+        command: RawMakoCommand<'a>,
+        consumed: usize,
+    },
+    Incomplete,
+    NotFast,
+}
+
+fn parse_usize_ascii(raw: &[u8]) -> Option<usize> {
+    if raw.is_empty() {
+        return None;
+    }
+    let mut value = 0usize;
+    for &byte in raw {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value = value
+            .checked_mul(10)?
+            .checked_add(usize::from(byte - b'0'))?;
+    }
+    Some(value)
+}
+
+fn read_crlf_line(buf: &[u8], offset: usize) -> Result<Option<(&[u8], usize)>, ()> {
+    if offset >= buf.len() {
+        return Ok(None);
+    }
+    let mut end = offset;
+    while end + 1 < buf.len() {
+        if buf[end] == b'\r' && buf[end + 1] == b'\n' {
+            return Ok(Some((&buf[offset..end], end + 2)));
+        }
+        end += 1;
+    }
+    Ok(None)
+}
+
+fn raw_command_is(command: &[u8], expected: &[u8]) -> bool {
+    command.len() == expected.len()
+        && command
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+}
+
+fn read_resp_bulk(buf: &[u8], offset: usize) -> Result<Option<(&[u8], usize)>, ()> {
+    if offset >= buf.len() {
+        return Ok(None);
+    }
+    if buf[offset] != b'$' {
+        return Err(());
+    }
+    let Some((len_raw, data_start)) = read_crlf_line(buf, offset + 1)? else {
+        return Ok(None);
+    };
+    let Some(len) = parse_usize_ascii(len_raw) else {
+        return Err(());
+    };
+    let data_end = data_start.checked_add(len).ok_or(())?;
+    let frame_end = data_end.checked_add(2).ok_or(())?;
+    if frame_end > buf.len() {
+        return Ok(None);
+    }
+    if &buf[data_end..frame_end] != b"\r\n" {
+        return Err(());
+    }
+    Ok(Some((&buf[data_start..data_end], frame_end)))
+}
+
+fn parse_raw_mako_string_command(buf: &[u8]) -> RawMakoParse<'_> {
+    if buf.is_empty() {
+        return RawMakoParse::Incomplete;
+    }
+    if buf[0] != b'*' {
+        return RawMakoParse::NotFast;
+    }
+    let Some((array_len_raw, mut offset)) = (match read_crlf_line(buf, 1) {
+        Ok(line) => line,
+        Err(()) => return RawMakoParse::NotFast,
+    }) else {
+        return RawMakoParse::Incomplete;
+    };
+    let Some(array_len) = parse_usize_ascii(array_len_raw) else {
+        return RawMakoParse::NotFast;
+    };
+    if array_len != 2 && array_len != 3 {
+        return RawMakoParse::NotFast;
+    }
+    let Some((command, next_offset)) = (match read_resp_bulk(buf, offset) {
+        Ok(part) => part,
+        Err(()) => return RawMakoParse::NotFast,
+    }) else {
+        return RawMakoParse::Incomplete;
+    };
+    offset = next_offset;
+    if array_len == 2 && raw_command_is(command, b"GET") {
+        let Some((key, consumed)) = (match read_resp_bulk(buf, offset) {
+            Ok(part) => part,
+            Err(()) => return RawMakoParse::NotFast,
+        }) else {
+            return RawMakoParse::Incomplete;
+        };
+        if key.first() == Some(&0x01) {
+            return RawMakoParse::NotFast;
+        }
+        return RawMakoParse::Complete {
+            command: RawMakoCommand::Get { key },
+            consumed,
+        };
+    }
+    if array_len == 3 && raw_command_is(command, b"SET") {
+        let Some((key, next_offset)) = (match read_resp_bulk(buf, offset) {
+            Ok(part) => part,
+            Err(()) => return RawMakoParse::NotFast,
+        }) else {
+            return RawMakoParse::Incomplete;
+        };
+        if key.first() == Some(&0x01) {
+            return RawMakoParse::NotFast;
+        }
+        let Some((value, consumed)) = (match read_resp_bulk(buf, next_offset) {
+            Ok(part) => part,
+            Err(()) => return RawMakoParse::NotFast,
+        }) else {
+            return RawMakoParse::Incomplete;
+        };
+        return RawMakoParse::Complete {
+            command: RawMakoCommand::Set { key, value },
+            consumed,
+        };
+    }
+    RawMakoParse::NotFast
+}
+
+fn bump_key_version_raw(key: &[u8]) {
+    let Some(key_versions) = KEY_VERSIONS.get() else {
+        return;
+    };
+    if let Ok(mut versions) = key_versions.lock() {
+        let key = Bytes::copy_from_slice(key);
+        let next = versions.get(&key).copied().unwrap_or(0).saturating_add(1);
+        versions.insert(key, next);
+    }
+}
+
+fn can_use_raw_mako_fast_path(client: &ClientConn) -> bool {
+    redis_backend() == RedisBackend::Mako
+        && !client.txn_state.in_multi
+        && !client.client_state.in_subscriber_mode()
+        && client.pending_command.is_none()
+        && client.blocked_command.is_none()
+        && LUA_BUSY.load(Ordering::Relaxed) == 0
+        && MAXMEMORY_SETTING.load(Ordering::Relaxed) == 0
+        && BLOCKED_CLIENTS.load(Ordering::Relaxed) == 0
+}
+
+fn process_raw_mako_fast_frame(client: &mut ClientConn) -> std::io::Result<bool> {
+    if !can_use_raw_mako_fast_path(client) {
+        return Ok(false);
+    }
+    let parsed = parse_raw_mako_string_command(client.resp3.buffered());
+    let (consumed, dirty) = match parsed {
+        RawMakoParse::Complete { command, consumed } => match command {
+            RawMakoCommand::Get { key } => {
+                let _ = execute_fast_mako_string_op(
+                    OpCode::Get,
+                    key,
+                    None,
+                    client.client_state.protocol_version,
+                    &mut client.write_buf,
+                )?;
+                (consumed, false)
+            }
+            RawMakoCommand::Set { key, value } => {
+                let success = execute_fast_mako_string_op(
+                    OpCode::Set,
+                    key,
+                    Some(value),
+                    client.client_state.protocol_version,
+                    &mut client.write_buf,
+                )?;
+                if success {
+                    bump_key_version_raw(key);
+                }
+                (consumed, success)
+            }
+        },
+        RawMakoParse::Incomplete | RawMakoParse::NotFast => return Ok(false),
+    };
+    client.resp3.consume(consumed);
+    if dirty {
+        DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(true)
+}
+
 fn process_buffered_frames(
     client: &mut ClientConn,
     wake_blocked: &mut bool,
 ) -> std::io::Result<bool> {
     let mut made_progress = false;
     loop {
+        if process_raw_mako_fast_frame(client)? {
+            made_progress = true;
+            continue;
+        }
         match client.resp3.next_frame() {
             Ok(Some(frame)) => {
                 made_progress = true;
@@ -9978,6 +10325,42 @@ mod tests {
         }
 
         out
+    }
+
+    #[test]
+    fn raw_mako_fast_parser_accepts_plain_get_and_set() {
+        match parse_raw_mako_string_command(b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n") {
+            RawMakoParse::Complete {
+                command: RawMakoCommand::Get { key },
+                consumed,
+            } => {
+                assert_eq!(key, b"key");
+                assert_eq!(consumed, 22);
+            }
+            _ => panic!("expected raw GET fast path"),
+        }
+
+        match parse_raw_mako_string_command(b"*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n") {
+            RawMakoParse::Complete {
+                command: RawMakoCommand::Set { key, value },
+                consumed,
+            } => {
+                assert_eq!(key, b"key");
+                assert_eq!(value, b"value");
+                assert_eq!(consumed, 33);
+            }
+            _ => panic!("expected raw SET fast path"),
+        }
+    }
+
+    #[test]
+    fn raw_mako_fast_parser_leaves_extended_set_to_general_parser() {
+        match parse_raw_mako_string_command(
+            b"*5\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n$2\r\nNX\r\n",
+        ) {
+            RawMakoParse::NotFast => {}
+            _ => panic!("expected SET with options to use the general parser"),
+        }
     }
 
     fn txn_set<'a>(key: &'a [u8], value: &'a [u8], flags: u32) -> TxnOperation {
