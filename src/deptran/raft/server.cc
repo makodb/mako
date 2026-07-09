@@ -3451,7 +3451,7 @@ void RaftServer::stepDown(StepDownReason reason) {
 // ============================================================================
 
 void RaftServer::RegisterCommitCallback(uint64_t index,
-                                        std::function<void(CommitStatus)> callback) {
+                                        rusty::Function<void(CommitStatus)> callback) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // If already speculatively committed, invoke immediately
@@ -3470,7 +3470,8 @@ void RaftServer::RegisterCommitCallback(uint64_t index,
   }
 
   // Store callback for future notification
-  pendingCallbacks_[index] = std::move(callback);
+  pendingCallbacks_.erase(index);
+  pendingCallbacks_.emplace(index, std::move(callback));
   Log_debug("[SPEC-CALLBACK] Registered callback for index %lu", index);
 }
 

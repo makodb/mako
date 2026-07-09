@@ -278,7 +278,7 @@ class RaftServer : public TxLogServer {
   // Key: log index, Value: callback to notify on commit status change
   // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
   // or ROLLEDBACK (leader stepped down gracefully)
-  std::map<uint64_t, std::function<void(CommitStatus)>> pendingCallbacks_;
+  std::map<uint64_t, rusty::Function<void(CommitStatus)>> pendingCallbacks_;
   uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
   uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
@@ -1345,7 +1345,7 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Modifies pendingCallbacks_
   void RegisterCommitCallback(uint64_t index,
-                              std::function<void(CommitStatus)> callback);
+                            rusty::Function<void(CommitStatus)> callback);
 
   /**
    * Notify all registered callbacks for indices in range (from, to] with status.
