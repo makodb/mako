@@ -11,6 +11,10 @@
 // in transitively via ordered_index_shard_data.h).
 #include "storage/mbta_wrapper.hh"
 #include "ordered_index_shard_data.h"
+// Cross-process migration demo (MAKO_XPROC_MIGRATION_DEMO). Thin string-only API;
+// the rrr/rcc_rpc/cluster machinery is isolated in migration_demo_endpoint.cc so
+// it never shares a TU with Masstree (that pair compiles pathologically).
+#include "migration_demo_endpoint.h"
 
 import std;
 
@@ -347,6 +351,50 @@ static void run_online_migration_demo()
   }).detach();
 }
 
+// Opt-in cross-PROCESS migration demo (MAKO_XPROC_MIGRATION_DEMO=1): in the
+// multi-process shard setup (a separate dbtest process per shard), shard 1 serves
+// isolated demo data over a ShardDataService rrr socket, and shard 0 drives the
+// cluster ShardMaster to migrate a key range from shard 1 INTO itself over that
+// socket -- a genuine cross-process online migration, running alongside the live
+// workload without touching its tables. The rrr/rcc_rpc/cluster machinery lives in
+// migration_demo_endpoint.cc; this Masstree-heavy TU only calls the thin API.
+static void run_xproc_migration_demo()
+{
+  auto& bench = BenchmarkConfig::getInstance();
+  auto* cfg = bench.getConfig();
+  if (cfg == nullptr || bench.getNshards() < 2) {
+    Notice("XPROC MIGRATION DEMO: needs a >=2-shard config; skipping");
+    return;
+  }
+  const int role  = bench.getClusterRole();
+  const int shard = static_cast<int>(bench.getShardIndex());
+  // Both processes derive the SAME ShardData service address from the shared
+  // config: shard 1's leader port + a small delta clear of the mako per-shard
+  // rpc ports (shard_port + id, id < ~20).
+  auto s1 = cfg->shard(1, role);
+  const int base = atoi(s1.port.c_str());
+  const std::string bind_addr = "0.0.0.0:" + std::to_string(base + 50);
+  const std::string conn_addr = s1.host + ":" + std::to_string(base + 50);
+
+  if (shard == 1) {
+    // SOURCE: seed + serve isolated demo data (non-blocking; leaked, process-life).
+    std::thread([bind_addr]{
+      mako::xproc_migration_serve(bind_addr, 30);
+    }).detach();
+  } else if (shard == 0) {
+    // DEST/MASTER: wait for the source to come up, then migrate [d10,d20) over RPC.
+    std::thread([conn_addr]{
+      std::this_thread::sleep_for(std::chrono::seconds(12));
+      long moved = mako::xproc_migration_run(conn_addr, "d10", "d20", /*connect_retries=*/20);
+      if (moved == 10)
+        Notice("XPROC MIGRATION DEMO: SUCCESS moved %ld rows across processes "
+               "(shard 1 -> shard 0) over rrr", moved);
+      else
+        Notice("XPROC MIGRATION DEMO: FAILED (moved=%ld, expected 10)", moved);
+    }).detach();
+  }
+}
+
 static void run_workers_multi_shard(const vector<int>& shard_indices)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -597,6 +645,10 @@ main(int argc, char **argv)
     abstract_db * db = initWithDB(); // Some init is required for followers/learners
     restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
+    // Opt-in cross-process migration demo, fired while the workload serves below.
+    if (std::getenv("MAKO_XPROC_MIGRATION_DEMO") != nullptr) {
+      run_xproc_migration_demo();
+    }
     // Run worker threads on the leader
     if (benchConfig.getLeaderConfig()) {
       run_workers(db);

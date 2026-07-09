@@ -343,6 +343,36 @@ run_2shard_no_replication() {
     return 1
 }
 
+# Function: 2-shard no-replication run WITH the cross-process migration demo.
+# Same bed as shardNoReplication, plus MAKO_XPROC_MIGRATION_DEMO=1 so shard 1
+# serves isolated demo data over a ShardDataService rrr socket and shard 0 drives
+# a real range migration from shard 1 into itself over that socket, alongside the
+# live workload. The script additionally asserts the migration succeeded.
+run_2shard_migration_xproc() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shardMigrationXproc"
+    echo "========================================="
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        MAKO_XPROC_MIGRATION_DEMO=1 bash ./examples/test_2shard_no_replication.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "shardMigrationXproc"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shardMigrationXproc (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 run_1shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1Replication"
@@ -688,6 +718,9 @@ case "${1:-}" in
         ;;
     shardNoReplication)
         run_2shard_no_replication
+        ;;
+    shardMigrationXproc)
+        run_2shard_migration_xproc
         ;;
     shard1Replication)
         run_1shard_replication

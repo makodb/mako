@@ -258,6 +258,24 @@ for i in 0 1; do
     fi
 done
 
+# Optional: when the cross-process migration demo is enabled, additionally
+# require it to have SUCCEEDED on shard 0 (the migration master) -- a genuine
+# range migration between the two separate shard PROCESSES over the real rrr
+# ShardDataService socket, alongside the live workload above.
+if [ "${MAKO_XPROC_MIGRATION_DEMO:-}" = "1" ]; then
+    echo ""
+    echo "Checking cross-process migration (MAKO_XPROC_MIGRATION_DEMO=1):"
+    echo "-----------------"
+    xproc_log="${log_prefix}_shard0-$trd.log"
+    if grep -q "XPROC MIGRATION DEMO: SUCCESS" "$xproc_log" 2>/dev/null; then
+        echo "  ✓ Cross-process migration succeeded"
+        grep "XPROC MIGRATION DEMO: SUCCESS" "$xproc_log" | tail -n 1 | sed 's/^/    /'
+    else
+        echo "  ✗ Cross-process migration did not report success on shard 0"
+        failed=1
+    fi
+fi
+
 echo ""
 echo "========================================="
 if [ $failed -eq 0 ]; then
