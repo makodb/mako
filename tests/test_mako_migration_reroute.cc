@@ -304,4 +304,129 @@ TEST_F(MakoMigrationReroute, MigratedRangeReroutesToNewOwnerShard) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Freeze-under-migration: while a range is frozen for the migration window, a
+// client write to that range is rejected (SERVER_BUSY) and does NOT land, reads
+// and out-of-range writes stay available, and after the cutover + unfreeze the
+// client's (retried) write lands on the NEW owner with the pre-migration value
+// preserved. This is the online-migration freeze contract end-to-end over the
+// real 2-server RPC path.
+//
+// Single-threaded and deterministic: the freeze is HELD across the whole
+// migration (the mbta ops run on their own engine thread, joined before the
+// unfreeze), so every observation has one correct outcome regardless of timing.
+// A real client's put() wrapper RETRIES on SERVER_BUSY -- exactly the freeze
+// contract -- so the "reject now, land on the destination after cutover" here is
+// what that retry does, made observable step by step. Disjoint m* key range so
+// this is independent of the reroute test in this same fixture.
+// ---------------------------------------------------------------------------
+TEST_F(MakoMigrationReroute, FrozenRangeRejectsRangeWritesDuringMigrationThenReroutes) {
+    auto mkey = [](int i) {
+        return std::string("m") + (i < 10 ? "0" : "") + std::to_string(i);
+    };
+    auto mval = [](int i) { return "w" + std::to_string(i); };
+    janus::get_migration_guard().clear();
+
+    // Seed m00..m29 on shard 0 (map mode -> the whole partition is still on 0).
+    for (int i = 0; i < 30; i++) {
+        bool op = false;
+        ASSERT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(i), mval(i), &op),
+                  static_cast<int>(mako::ErrorCode::SUCCESS)) << mkey(i);
+    }
+
+    const std::string lo = mkey(10), hi = mkey(20);
+
+    // FREEZE [m10,m20) -- stands in for the coordinator's FreezeRange RPC on the
+    // SOURCE. lock_range() only flips the master's internal 2PC flag; the freeze
+    // that the server's RunNontxnOp actually enforces is the process-global guard,
+    // so the coordinator freezes it explicitly. The range stops taking writes.
+    janus::get_migration_guard().freeze(std::string(), lo, hi);
+    bool op = false;
+
+    // DURING the freeze:
+    //  (a) a write INSIDE the range is rejected and does NOT land,
+    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(15), "SHOULD_NOT_LAND", &op),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
+    //  (b) reads of the range stay available (gets are never frozen),
+    {
+        std::string out;
+        EXPECT_EQ(TThread::sclient->nontxnGet(kTableId, mkey(15), out),
+                  static_cast<int>(mako::ErrorCode::SUCCESS));
+        EXPECT_EQ(out, mval(15)) << "the rejected write must not have landed";
+    }
+    //  (c) writes OUTSIDE the range stay available (only the moving range freezes).
+    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(5), "live-below", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(25), "live-above", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+
+    // Run the migration while the range stays frozen (stable range -> the single
+    // copy captures everything; the empty delta replays cleanly).
+    MigrationProbe probe;
+    std::thread mig([&] {
+        scoped_db_thread_ctx ctx(g_db, /*loader=*/true);
+        janus::OrderedIndexShardData sd0(g_srv[0].store);
+        janus::OrderedIndexShardData sd1(g_srv[1].store);
+        janus::ShardMaster master =
+            janus::ShardMaster::new_(g_cm, &janus::get_cluster_config());
+        master.attach_shard(0, &sd0);
+        master.attach_shard(1, &sd1);
+        probe.begin_ok = master.begin_migration(0, 1, g_table_name, lo, hi);
+        master.background_copy();
+        master.lock_range();
+        master.final_sync();
+        probe.prepared_ok = master.both_prepared();
+        probe.commit_ok = master.commit_migration();
+        std::string mv;
+        probe.dst_has_mid = g_srv[1].store->get(lcdf::Str(mkey(15)), mv, std::string::npos);
+        probe.dst_mid_val = mv;
+        std::string tmp;
+        probe.src_has_mid = g_srv[0].store->get(lcdf::Str(mkey(15)), tmp, std::string::npos);
+        probe.src_range_after = master.shard_range_count(0, lo, hi);
+        probe.dst_range_after = master.shard_range_count(1, lo, hi);
+    });
+    mig.join();
+
+    // Migration committed; the range physically moved with its PRE-migration
+    // values (the rejected write never landed -> m15 is still the seeded value).
+    EXPECT_TRUE(probe.begin_ok);
+    EXPECT_TRUE(probe.prepared_ok);
+    EXPECT_TRUE(probe.commit_ok);
+    EXPECT_FALSE(probe.src_has_mid);
+    EXPECT_TRUE(probe.dst_has_mid);
+    EXPECT_EQ(probe.dst_mid_val, mval(15)) << "no lost write: the seeded value migrated intact";
+    EXPECT_EQ(probe.src_range_after, 0u);
+    EXPECT_EQ(probe.dst_range_after, 10u);
+
+    // Cutover published -> the moved range routes to shard 1.
+    EXPECT_EQ(1, mako::compute_shard_for_key(kTableId, mkey(15)));
+    EXPECT_EQ(0, mako::compute_shard_for_key(kTableId, mkey(5)));
+
+    // The guard is process-global (""), so the moved range is STILL frozen on its
+    // new owner (shard 1) until the coordinator lifts it: a write is still rejected,
+    // but a READ is served by shard 1 with the migrated value.
+    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(15), "still-frozen", &op),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
+    {
+        std::string out;
+        EXPECT_EQ(TThread::sclient->nontxnGet(kTableId, mkey(15), out),
+                  static_cast<int>(mako::ErrorCode::SUCCESS));
+        EXPECT_EQ(out, mval(15)) << "migrated value is served by the new owner while frozen";
+    }
+
+    // UNFREEZE -> shard 1 serves the range. The client's retried write now lands
+    // on the NEW owner (this is what the put() wrapper's SERVER_BUSY retry does).
+    janus::get_migration_guard().unfreeze(std::string(), lo, hi);
+    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(15), "after-cutover", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    {
+        std::string out;
+        ASSERT_EQ(TThread::sclient->nontxnGet(kTableId, mkey(15), out),
+                  static_cast<int>(mako::ErrorCode::SUCCESS));
+        EXPECT_EQ(out, "after-cutover") << "the retried write landed on shard 1";
+    }
+
+    janus::get_migration_guard().clear();
+}
+
 }  // namespace
