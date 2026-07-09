@@ -467,9 +467,11 @@ void RaftWorker::WaitForSubmit() {
 }
 
 // @unsafe
-void RaftWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
-  // @unsafe
-  { this->callback_ = cb; }
+void RaftWorker::register_apply_callback(rusty::Function<void(const char*, int)> cb) {
+  // @unsafe - stores move-only legacy callback for later invocation.
+  {
+    this->callback_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {
@@ -488,9 +490,11 @@ void RaftWorker::register_apply_callback(std::function<void(const char*, int)> c
 
 // @unsafe
 void RaftWorker::register_apply_callback_par_id(
-    std::function<void(const char*&, int, int)> cb) {
-  // @unsafe
-  { this->callback_par_id_ = cb; }
+    rusty::Function<void(const char*&, int, int)> cb) {
+  // @unsafe - stores move-only legacy callback for later invocation.
+  {
+    this->callback_par_id_ = std::move(cb);
+  }
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {

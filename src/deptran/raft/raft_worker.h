@@ -60,8 +60,8 @@ class RaftWorker {
 private:
   // TODO(RustyCpp): legacy simple callbacks are currently only stored,
   // not invoked by Next(). Leave as std::function until deletion/compat cleanup.
-  std::function<void(const char*, int)> callback_ = nullptr;
-  std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
+  rusty::Function<void(const char*, int)> callback_;
+  rusty::Function<void(const char*&, int, int)> callback_par_id_;
 
   // RAFT CHANGE: Store separate callbacks for leader and follower roles
   // The Next() method will choose which to call based on current leadership
@@ -181,9 +181,9 @@ public:
 
   // Callback registration (Mako watermark integration)
   // @safe - stores callback for later invocation
-  void register_apply_callback(std::function<void(const char*, int)> cb);
+  void register_apply_callback(rusty::Function<void(const char*, int)> cb);
   // @safe - stores callback for later invocation
-  void register_apply_callback_par_id(std::function<void(const char*&, int, int)> cb);
+  void register_apply_callback_par_id(rusty::Function<void(const char*&, int, int)> cb);
 
   // RAFT CHANGE: Separate registration for leader and follower callbacks
   // @safe - stores callback for later invocation
