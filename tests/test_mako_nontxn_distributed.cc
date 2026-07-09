@@ -35,6 +35,7 @@
 #include <gtest/gtest.h>
 
 import std;
+import cluster;   // janus::get_migration_guard() -- the server's migration freeze registry
 
 namespace {
 
@@ -331,6 +332,55 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     rdb->Disconnect();
     delete rdb;
     tcp->Stop();
+}
+
+// ---------------------------------------------------------------------------
+// Migration freeze enforcement over the REAL non-txn RPC path: while a range is
+// frozen (as a migration's source shard would freeze it), a client's remote
+// write to a key in that range is rejected by the server's RunNontxnOp
+// (SERVER_BUSY) and does NOT land; keys outside the range are unaffected; and
+// once unfrozen the write goes through. Server and client share the
+// process-global MigrationGuard here (one process), so freezing it directly
+// stands in for the FreezeRange RPC the coordinator would issue on the source.
+// ---------------------------------------------------------------------------
+// nontxnPut returns the raw server status (the higher-level put() wrapper is
+// what RETRIES on SERVER_BUSY -- which is exactly the freeze contract: a client
+// retries until the cutover reroutes it. We call nontxnPut directly so the test
+// observes the rejection deterministically instead of retrying forever.
+TEST_F(MakoNontxnDistributed, FrozenRangeReturnsServerBusyOnRemoteWrite) {
+    auto& guard = janus::get_migration_guard();
+    guard.clear();
+    bool op = false;
+
+    // Baseline: nothing frozen -> the remote write succeeds and lands.
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "fz_ok", "v", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    { std::string out; ASSERT_TRUE(g_server_tbl->get(lcdf::Str("fz_ok"), out, std::string::npos));
+      EXPECT_EQ(out, "v"); }
+
+    // Freeze [fz_m, fz_t) on the server shard (stands in for the FreezeRange RPC
+    // the coordinator issues on the source; server + client share the guard here).
+    guard.freeze("", "fz_m", "fz_t");
+
+    // A remote write INSIDE the frozen range is rejected by the server's
+    // RunNontxnOp with SERVER_BUSY, and does NOT land on the server view.
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "fz_m5", "frozen", &op),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
+    { std::string out; EXPECT_FALSE(g_server_tbl->get(lcdf::Str("fz_m5"), out, std::string::npos))
+        << "a write to a frozen range must not land on the server"; }
+
+    // A remote write OUTSIDE the frozen range still succeeds.
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "fz_zzz", "outside", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+
+    // Unfreeze -> the previously-frozen key now writes through.
+    guard.unfreeze("", "fz_m", "fz_t");
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "fz_m5", "after-thaw", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    { std::string out; ASSERT_TRUE(g_server_tbl->get(lcdf::Str("fz_m5"), out, std::string::npos));
+      EXPECT_EQ(out, "after-thaw"); }
+
+    guard.clear();
 }
 
 }  // namespace

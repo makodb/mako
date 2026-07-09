@@ -2676,7 +2676,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_mako_nontxn_distributed PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_mako_nontxn_distributed
-        mako ${TEST_LINK_LIBS}
+        cluster mako ${TEST_LINK_LIBS}
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
