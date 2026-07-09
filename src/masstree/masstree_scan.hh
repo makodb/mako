@@ -88,6 +88,11 @@ class scanstackelt {
             return -1;
     }
 
+    // @unsafe { Downcasts a saved node-stack entry back to its leaf cursor }
+    rusty::MutPtr<leaf<P>> stacked_leaf() const {
+        return static_cast<leaf<P>*>(node_stack_.back());
+    }
+
     template <typename PX> friend class basic_table;
 };
 
@@ -100,11 +105,11 @@ struct forward_scan_helper {
                                             int keylenx) const {
         return k.compare(ikey, keylenx) >= 0;
     }
-    template <typename K, typename N> int lower(const K &k, const N *n) const {
+    template <typename K, typename N> int lower(const K &k, rusty::Ptr<N> n) const {
         return N::bound_type::lower_by(k, *n, *n).i;
     }
     template <typename K, typename N>
-    key_indexed_position lower_with_position(const K &k, const N *n) const {
+    key_indexed_position lower_with_position(const K &k, rusty::Ptr<N> n) const {
         return N::bound_type::lower_by(k, *n, *n);
     }
     void found() const {
@@ -113,11 +118,11 @@ struct forward_scan_helper {
         return ki + 1;
     }
     template <typename N, typename K>
-    N *advance(const N *n, const K &) const {
+    rusty::MutPtr<N> advance(rusty::Ptr<N> n, const K &) const {
         return n->safe_next();
     }
     template <typename N, typename K>
-    typename N::nodeversion_type stable(const N *n, const K &) const {
+    typename N::nodeversion_type stable(rusty::Ptr<N> n, const K &) const {
         return n->stable();
     }
     template <typename K> void shift_clear(K &ka) const {
@@ -145,14 +150,14 @@ struct reverse_scan_helper {
                                             int keylenx) const {
         return k.compare(ikey, keylenx) <= 0 && !upper_bound_;
     }
-    template <typename K, typename N> int lower(const K &k, const N *n) const {
+    template <typename K, typename N> int lower(const K &k, rusty::Ptr<N> n) const {
         if (upper_bound_)
             return n->size() - 1;
         key_indexed_position kx = N::bound_type::lower_by(k, *n, *n);
         return kx.i - (kx.p < 0);
     }
     template <typename K, typename N>
-    key_indexed_position lower_with_position(const K &k, const N *n) const {
+    key_indexed_position lower_with_position(const K &k, rusty::Ptr<N> n) const {
         key_indexed_position kx = N::bound_type::lower_by(k, *n, *n);
         kx.i -= kx.p < 0;
         return kx;
@@ -164,16 +169,16 @@ struct reverse_scan_helper {
         upper_bound_ = false;
     }
     template <typename N, typename K>
-    N *advance(const N *n, K &k) const {
+    rusty::MutPtr<N> advance(rusty::Ptr<N> n, K &k) const {
         k.assign_store_ikey(n->ikey_bound());
         k.assign_store_length(0);
         return n->prev_;
     }
     template <typename N, typename K>
-    typename N::nodeversion_type stable(N *&n, const K &k) const {
+    typename N::nodeversion_type stable(rusty::MutPtr<N>& n, const K &k) const {
         while (1) {
             typename N::nodeversion_type v = n->stable();
-            N *next = n->safe_next();
+            rusty::MutPtr<N> next = n->safe_next();
             int cmp;
             if (!next
                 || (cmp = ::compare(k.ikey(), next->ikey_bound())) < 0
@@ -373,7 +378,7 @@ int basic_table<P>::scan(H helper,
             do {
                 if (stack.node_stack_.empty())
                     goto done;
-                stack.n_ = static_cast<leaf<P>*>(stack.node_stack_.back());
+                stack.n_ = stack.stacked_leaf();
                 stack.node_stack_.pop_back();
                 stack.root_ = stack.node_stack_.back();
                 stack.node_stack_.pop_back();
