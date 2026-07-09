@@ -768,4 +768,69 @@ TEST(RemoteKvStoreTest, KillShardVisibleToRemoteNode) {
         << "remote node must reroute the dead shard's keys to the taker";
 }
 
+// ===========================================================================
+// MigrationGuard — per-shard freeze registry (P3 freeze enforcement)
+// ===========================================================================
+
+TEST(MigrationGuardTest, FreshGuardFreezesNothing) {
+    MigrationGuard g = MigrationGuard::new_();
+    EXPECT_EQ(g.frozen_count(), 0u);
+    EXPECT_FALSE(g.is_frozen("T", "anything"));
+}
+
+TEST(MigrationGuardTest, FreezeCoversTheHalfOpenRangeOnly) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("T", "m", "t");
+    EXPECT_EQ(g.frozen_count(), 1u);
+    EXPECT_TRUE(g.is_frozen("T", "m"));    // lo inclusive
+    EXPECT_TRUE(g.is_frozen("T", "m5"));   // inside
+    EXPECT_FALSE(g.is_frozen("T", "a"));   // below lo
+    EXPECT_FALSE(g.is_frozen("T", "t"));   // hi exclusive
+    EXPECT_FALSE(g.is_frozen("T", "z"));   // above hi
+}
+
+TEST(MigrationGuardTest, UnfreezeClearsTheRange) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("T", "m", "t");
+    ASSERT_TRUE(g.is_frozen("T", "m5"));
+    g.unfreeze("T", "m", "t");
+    EXPECT_EQ(g.frozen_count(), 0u);
+    EXPECT_FALSE(g.is_frozen("T", "m5"));
+}
+
+TEST(MigrationGuardTest, EmptyTableFreezesAcrossAllTables) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("", "m", "t");                       // table-agnostic default
+    EXPECT_TRUE(g.is_frozen("WAREHOUSE", "m5"));
+    EXPECT_TRUE(g.is_frozen("STOCK", "m5"));
+    EXPECT_FALSE(g.is_frozen("STOCK", "a"));
+}
+
+TEST(MigrationGuardTest, TableSpecificFreezeDoesNotAffectOtherTables) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("T", "m", "t");
+    EXPECT_TRUE(g.is_frozen("T", "m5"));
+    EXPECT_FALSE(g.is_frozen("OTHER", "m5"));   // different table, not frozen
+}
+
+TEST(MigrationGuardTest, FreezeIsIdempotent) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("T", "m", "t");
+    g.freeze("T", "m", "t");   // same range again
+    EXPECT_EQ(g.frozen_count(), 1u);
+}
+
+TEST(MigrationGuardTest, MultipleDisjointRangesCoexist) {
+    MigrationGuard g = MigrationGuard::new_();
+    g.freeze("T", "a", "c");
+    g.freeze("T", "m", "t");
+    EXPECT_EQ(g.frozen_count(), 2u);
+    EXPECT_TRUE(g.is_frozen("T", "b"));
+    EXPECT_TRUE(g.is_frozen("T", "n"));
+    EXPECT_FALSE(g.is_frozen("T", "e"));   // between the two ranges
+    g.unfreeze("T", "a", "c");
+    EXPECT_FALSE(g.is_frozen("T", "b"));   // first range gone
+    EXPECT_TRUE(g.is_frozen("T", "n"));    // second remains
+}
+
 }  // namespace janus

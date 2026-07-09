@@ -940,6 +940,7 @@ set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
     ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_master.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/migration_guard.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
 )

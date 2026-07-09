@@ -59,6 +59,8 @@ FILES=(
   # cutover via ConfigManager (set_range_owner + version bump). Supersedes the
   # separate ShardMigrator (real engine) + stub ShardManager.
   src/cluster/shard_master.h
+  # MigrationGuard: per-shard freeze registry consulted by the non-txn write path.
+  src/cluster/migration_guard.h
   # ShardRouter: the four routing free fns as DSL pub fns; generated
   # definitions land in the .cc (compiled once), header stays decls.
   src/cluster/shard_router.cc
