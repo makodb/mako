@@ -14,11 +14,14 @@
  *    rusty::Arc<RaftCommo> is unusable because Arc<T>::operator-> yields
  *    const access but RaftCommo's Send* methods are non-const.
  *  - The reply-slot + IntEvent pair is allocated via std::make_shared
- *    at the rrr boundary; `RaftCommo::Send*Cb` takes a std::function
- *    that captures it. One @unsafe boundary per method.
+*     at the rrr boundary. `RaftCommo::Send*Cb` takes rusty::Function,
+*    and each call builds a one-shot lambda that captures the shared
+*    reply slot and wakeup event. One @unsafe boundary per method.
  */
 
 #include <cstdint>
+#include <memory>
+#include <utility>
 
 #include "transport.hpp"
 #include "messages.hpp"
@@ -44,20 +47,30 @@ class RrrTransportAdapter : public TransportBase {
   // Fire-and-forget RPCs — forwarded directly.
   // ------------------------------------------------------------------
 
-  // @safe
+  // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
-  }
-  // @safe
-  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    commo_->SendAppendEntriesDurable(
-        leader, par_, req.term, req.follower_id, req.last_log_index);
-  }
-  // @safe
-  void send_notify_restart(siteid_t self, parid_t par) override {
-    commo_->SendNotifyRestart(self, par);
+    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+    {
+      commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
+    }
   }
 
+  // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
+  void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
+    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+    {
+      commo_->SendAppendEntriesDurable(
+          leader, par_, req.term, req.follower_id, req.last_log_index);
+    }
+  }
+
+  // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
+  void send_notify_restart(siteid_t self, parid_t par) override {
+    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+    {
+      commo_->SendNotifyRestart(self, par);
+    }
+  }
   // ------------------------------------------------------------------
   // Reply-expecting RPCs — fiber-synchronous.
   // Each method registers an IntEvent + reply slot with RaftCommo's
@@ -66,7 +79,8 @@ class RrrTransportAdapter : public TransportBase {
   // and sets the event, waking the fiber.
   // ------------------------------------------------------------------
 
-  // @unsafe { std::function bridge at rrr boundary }
+  // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
+  // rusty::Function callback API using shared reply slot + IntEvent.
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
@@ -85,7 +99,8 @@ class RrrTransportAdapter : public TransportBase {
     return *slot;
   }
 
-  // @unsafe { std::function bridge at rrr boundary }
+  // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
+  // rusty::Function callback API using shared reply slot + IntEvent.
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
     auto slot  = std::make_shared<AppendEntriesReply>();
@@ -110,10 +125,9 @@ class RrrTransportAdapter : public TransportBase {
     return out;
   }
 
-  // @unsafe { std::function + shared_ptr bridge at rrr boundary.
-  //            BroadcastVoteCb fires the callback once per peer reply;
-  //            send_vote is per-peer, so we filter on `from == dst`
-  //            and park on a dedicated IntEvent. }
+  // @unsafe - bridges per-peer send_vote onto BroadcastVoteCb fanout.
+  // BroadcastVoteCb uses rusty::Function and may fire once per peer reply;
+  // this adapter filters on `from == dst` and wakes this call's IntEvent.
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
     auto slot  = std::make_shared<VoteReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
@@ -130,7 +144,8 @@ class RrrTransportAdapter : public TransportBase {
     return *slot;
   }
 
-  // @unsafe { std::function bridge }
+  // @unsafe - bridges synchronous TransportBase API to SendTimeoutNow's
+  // rusty::Function callback using shared reply slot + IntEvent.
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
     auto slot  = std::make_shared<TimeoutNowReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
@@ -145,8 +160,8 @@ class RrrTransportAdapter : public TransportBase {
     return *slot;
   }
 
-  // @unsafe { std::function bridge; SendInstallSnapshot already takes
-  //           a std::function — we just wire it into a slot+event. }
+  // @unsafe - bridges synchronous TransportBase API to SendInstallSnapshot's
+  // rusty::Function callback using shared reply slot + IntEvent.
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
     auto slot  = std::make_shared<InstallSnapshotReply>();
     auto ready = Reactor::create_sp_event<IntEvent>();
@@ -162,6 +177,7 @@ class RrrTransportAdapter : public TransportBase {
   }
 
  private:
+  // @unsafe - non-owning pointer. RaftServer owns RaftCommo and must outlive this adapter.
   RaftCommo* commo_{nullptr};
   siteid_t   self_{0};
   parid_t    par_{0};
