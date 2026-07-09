@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <memory>
 #include <thread>
 #include <rusty/function.hpp>
 
@@ -124,9 +125,8 @@ public:
   // @unsafe - borrowed frame returned by Frame::GetFrame(); the frame registry
   // owns it, not RaftWorker.
   Frame* rep_frame_ = nullptr;
-  // @unsafe - borrowed pointer to the RaftFrame-owned RaftServer. Current
-  // ShutDown() still deletes this raw pointer; audit that legacy ownership
-  // mismatch before converting this field.
+  // @unsafe - borrowed pointer to the RaftFrame-owned RaftServer. RaftWorker
+  // must not delete it.
   TxLogServer* rep_sched_ = nullptr;
   // @unsafe - borrowed communicator returned by RaftFrame::CreateCommo();
   // RaftFrame keeps ownership in its commo_ member.
@@ -135,17 +135,17 @@ public:
   // RPC infrastructure
   // @safe - shared PollThread handle; Arc/Option manages this lifetime.
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // @unsafe - manually owned rrr::Server. Allocated in SetupService(), deleted
-  // in ShutDown(); services are transferred to the server via reg_service().
-  rrr::Server* rpc_server_ = nullptr;
+  // @unsafe - owned RPC server. Allocated in SetupService(), reset in ShutDown();
+  // services are transferred to the server via reg_service().
+  std::unique_ptr<rrr::Server> rpc_server_;
 
   // Heartbeat/control RPC
   // @safe - shared heartbeat PollThread/status handles.
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
-  // @unsafe - manually owned heartbeat/control server. Allocated in
-  // SetupHeartbeat(), deleted in ShutDown().
-  rrr::Server* hb_rpc_server_ = nullptr;
+  // @unsafe - owned heartbeat/control server. Allocated in SetupHeartbeat(),
+  // reset in ShutDown().
+  std::unique_ptr<rrr::Server> hb_rpc_server_;
 
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;
@@ -176,7 +176,7 @@ public:
   void SetupHeartbeat();
 
   // Shutdown
-  // @unsafe - uses delete on raw pointers (manual memory management)
+  // @unsafe - shuts down RPC servers and borrowed protocol pointers
   void ShutDown();
   // @safe - bounded pointer dereferences
   void WaitForShutdown();

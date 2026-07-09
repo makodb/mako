@@ -119,7 +119,7 @@ void RaftWorker::SetupBase() {
   }
 }
 
-// @unsafe - uses new to allocate raw pointers (manual memory management)
+// @unsafe - creates owned RPC server and registers legacy service proxies
 void RaftWorker::SetupService() {
   // Create RPC server and register Raft service
   std::string bind_addr = site_info_->GetBindAddress();
@@ -131,7 +131,7 @@ void RaftWorker::SetupService() {
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // Create RPC server first (before registering services)
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+  rpc_server_ = std::make_unique<rrr::Server>(rusty::Some(poll_worker.clone()));
 
   // Create and register Raft services (ownership transferred to rpc_server_)
   if (rep_frame_ != nullptr) {
@@ -168,7 +168,7 @@ void RaftWorker::SetupCommo() {
   }
 }
 
-// @unsafe - uses new to allocate raw pointers (manual memory management)
+// @unsafe - creates owned heartbeat/control RPC server
 void RaftWorker::SetupHeartbeat() {
   auto config = Config::GetConfig();
   bool hb = config->do_heart_beat();
@@ -181,7 +181,8 @@ void RaftWorker::SetupHeartbeat() {
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  hb_rpc_server_ = std::make_unique<rrr::Server>(
+      rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
@@ -193,7 +194,7 @@ void RaftWorker::SetupHeartbeat() {
   hb_rpc_server_->start(addr_port.c_str());
 }
 
-// @unsafe - uses delete, raw pointers, Option<Arc<PollThread>>
+// @unsafe - resets owned RPC servers and clears borrowed protocol pointers
 void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] entering");
 
@@ -208,18 +209,16 @@ void RaftWorker::ShutDown() {
   }
 
   if (rpc_server_) {
-    Log_info("[RAFT-WORKER-SHUTDOWN] deleting rpc_server_");
-    delete rpc_server_;
-    rpc_server_ = nullptr;
+    Log_info("[RAFT-WORKER-SHUTDOWN] resetting rpc_server_");
+    rpc_server_.reset();
   }
 
   if (hb_rpc_server_) {
-    delete hb_rpc_server_;  // Server destructor cleans up owned services
-    hb_rpc_server_ = nullptr;
+    hb_rpc_server_.reset();  // Server destructor cleans up owned services
     server_status_ = rusty::None;
   }
 
-  // Services are now owned by rpc_server_ and deleted with it
+  // Services are owned by rpc_server_ and destroyed with it.
 
   StopSubmitThread();
 
