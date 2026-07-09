@@ -134,9 +134,9 @@ class RaftServer : public TxLogServer {
   uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
-  // @unsafe - std::function holds non-borrow-checked closures
-  std::function<std::string()> create_sm_snapshot_cb_;
-  std::function<void(const std::string&)> load_sm_snapshot_cb_;
+  // @safe - stores move-only RustyCpp callbacks for later invocation
+  rusty::Function<std::string()> create_sm_snapshot_cb_;
+  rusty::Function<void(const std::string&)> load_sm_snapshot_cb_;
 
   // Optional replicated DB (created when MAKO_REPLICATED_DB=1 env var is set)
   std::shared_ptr<ReplicatedDB> replicated_db_;
@@ -815,14 +815,13 @@ class RaftServer : public TxLogServer {
    * @param create_cb Returns serialized state machine snapshot data
    * @param load_cb Loads serialized state machine snapshot data
    */
-  // @unsafe - stores std::function closures
-  void SetStateMachineSnapshotCallbacks(
-      std::function<std::string()> create_cb,
-      std::function<void(const std::string&)> load_cb) {
-    create_sm_snapshot_cb_ = std::move(create_cb);
-    load_sm_snapshot_cb_ = std::move(load_cb);
-  }
-
+    // @safe - stores move-only snapshot callbacks for later invocation
+    void SetStateMachineSnapshotCallbacks(
+        rusty::Function<std::string()> create_cb,
+        rusty::Function<void(const std::string&)> load_cb) {
+      create_sm_snapshot_cb_ = std::move(create_cb);
+      load_sm_snapshot_cb_ = std::move(load_cb);
+    }
   /**
    * Check if a snapshot is available.
    * @return true if a snapshot exists in the snapshot manager
