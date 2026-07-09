@@ -208,13 +208,19 @@ RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
 }
 
 // =====================================================================
-// Registry + lifecycle plumbing (unchanged from prior commit)
+// Registry + lifecycle plumbing.
+//
+// RaftServiceImpl instances are owned by the rrr::Server after registration.
+// The registry stores borrowed service pointers so the RAFT_TEST_CORO
+// Kill/Restart harness can swap the borrowed RaftServer pointer without
+// rebuilding the RPC service or poll thread.
 // =====================================================================
 
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;
 
-// @unsafe - C-style cast in @unsafe block
+// @unsafe - C-style cast from scheduler base to borrowed RaftServer pointer.
+// The service stores the pointer atomically but does not own the server.
 RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread> poll_thread)
     : poll_thread_(rusty::Some(std::move(poll_thread))) {
   // @unsafe
@@ -234,6 +240,8 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
   std::lock_guard<std::mutex> lock(registry_mutex_);
   auto it = service_registry_.find(site_id);
   if (it != service_registry_.end()) {
+    // Publish a borrowed server pointer for future RPC handlers. nullptr is
+    // intentional during Kill(); handlers then return disconnected defaults.
     it->second->svr_.store(new_svr, std::memory_order_release);
     Log_info("[RAFT-SERVICE] UpdateServer: site %d -> %p", site_id, new_svr);
   } else {
@@ -242,6 +250,8 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
 }
 
 RaftServer* RaftServiceImpl::GetServer() {
+  // Borrowed pointer load paired with UpdateServer's release-store. The caller
+  // must null-check before dereferencing because Kill() publishes nullptr.
   return svr_.load(std::memory_order_acquire);
 }
 

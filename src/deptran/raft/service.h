@@ -35,7 +35,8 @@ class RaftServiceImpl : public RaftService {
   static std::mutex registry_mutex_;
 
   // @unsafe - borrowed atomic server pointer. Updated during Kill/Restart;
-  // RaftServiceImpl never owns or deletes the server.
+  // RaftServiceImpl never owns or deletes the server. A nullptr means this
+  // service remains registered but the replica is currently killed/down.
   std::atomic<RaftServer*> svr_;
   siteid_t site_id_;
 
@@ -46,13 +47,14 @@ class RaftServiceImpl : public RaftService {
 
   RaftServiceImpl(TxLogServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
 
-  // Called by test framework during Kill/Restart to update server pointer
+  // Called by test framework during Kill/Restart to publish the current
+  // borrowed server pointer. Passing nullptr marks the service as down.
   static void UpdateServer(siteid_t site_id, RaftServer* new_svr);
 
-  // Called by test framework during Restart to get the original poll thread
+  // Called by test framework during Restart to get the original poll thread.
   static rusty::Option<rusty::Arc<rrr::PollThread>> GetPollThread(siteid_t site_id);
 
-  // Called by RPC handlers - lock-free atomic read
+  // Called by RPC handlers - lock-free atomic read of the borrowed server.
   RaftServer* GetServer();
 
   // Generated fiber-RPC overrides. The rrr codegen wraps each one in a
