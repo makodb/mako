@@ -18,6 +18,7 @@
 #include "sto/sync_util.hh"
 
 import std;
+import cluster;   // janus::get_migration_guard() -- the per-shard migration freeze registry
 
 std::function<int()> ss_callback_ = nullptr;
 void register_sync_util_ss(std::function<int()> cb) {
@@ -657,6 +658,15 @@ namespace mako
         auto it = open_tables_table_id.find(table_id);
         if (it == open_tables_table_id.end() || it->second == nullptr) {
             return ErrorCode::ERROR;  // table not found
+        }
+
+        // Migration freeze: a WRITE to a range being cut over is rejected so the
+        // client backs off and retries, landing on the destination once routing
+        // flips (reads are still served -- the source keeps serving until commit).
+        // The freeze registry is this shard's process-global MigrationGuard, set
+        // by the FreezeRange RPC the coordinator issues on the source shard.
+        if (!is_get && janus::get_migration_guard().is_frozen(std::string(), key)) {
+            return ErrorCode::SERVER_BUSY;
         }
 
         int status = ErrorCode::SUCCESS;
