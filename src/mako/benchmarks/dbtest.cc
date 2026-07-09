@@ -6,16 +6,6 @@
 #include <unistd.h>
 #include <mako.hh>
 
-// Online shard-migration on the real storage engine (opt-in demo, gated below).
-// The migration coordinator is the cluster ShardMaster (import cluster, pulled
-// in transitively via ordered_index_shard_data.h).
-#include "storage/mbta_wrapper.hh"
-#include "ordered_index_shard_data.h"
-// Cross-process migration demo (MAKO_XPROC_MIGRATION_DEMO). Thin string-only API;
-// the rrr/rcc_rpc/cluster machinery is isolated in migration_demo_endpoint.cc so
-// it never shares a TU with Masstree (that pair compiles pathologically).
-#include "migration_demo_endpoint.h"
-
 import std;
 
 using namespace std;
@@ -292,109 +282,6 @@ static void run_workers(abstract_db* db)
   delete db;
 }
 
-// Opt-in online-migration demo (MAKO_MIGRATION_DEMO=1): proves the real mako
-// storage engine + the migration coordinator perform an ONLINE range migration
-// INSIDE this live dbtest process, on real mbta indexes, alongside the workload.
-// Runs on an isolated, mbta-initialized thread so it never disturbs serving.
-static void run_online_migration_demo()
-{
-  // Fire on a detached thread ~6s in, so the migration runs WHILE the workload
-  // is serving. Dedicated demo tables (separate from the workload's tables) mean
-  // no data race; not joined -- on process teardown the thread just dies.
-  std::thread([]{
-    TThread::set_id(400);  // a valid, unused mbta thread id (< MAX_THREADS=460)
-    TThread::set_mode(0);
-    TThread::readset_shard_bits = 0;
-    TThread::writeset_shard_bits = 0;
-    TThread::transget_without_throw = false;
-    TThread::transget_without_stable = false;
-    mbta_table::thread_init();
-    std::this_thread::sleep_for(std::chrono::seconds(6));  // let the workload get serving
-
-    Notice("MAKO_MIGRATION_DEMO: online range migration on the real mbta engine (mid-workload)");
-    auto* src_idx = mbta_index_build("mako_mig_demo_src", 9510);
-    auto* dst_idx = mbta_index_build("mako_mig_demo_dst", 9511);
-    janus::OrderedIndexShardData src(src_idx), dst(dst_idx);
-    for (int i = 0; i < 30; i++) {
-      char kb[8]; snprintf(kb, sizeof kb, "m%02d", i);
-      src.put(kb, std::string("v") + std::to_string(i));
-    }
-    const std::string lo = "m10", hi = "m20";
-    // Drive the migration through the ShardMaster coordinator (the same one the
-    // cluster uses), here over an ISOLATED in-memory config store so the demo
-    // never perturbs the real cluster config. The two demo shards are its
-    // participants (ids 0 = src, 1 = dst).
-    janus::InMemoryKvStore demo_kv;
-    janus::ConfigManager demo_cm(&demo_kv);
-    janus::ClusterConfig demo_cfg = janus::ClusterConfig::new_();
-    janus::ShardMaster master = janus::ShardMaster::new_(&demo_cm, &demo_cfg);
-    master.register_shard({"demo_src"}, &src);        // shard 0
-    master.register_shard({"demo_dst"}, &dst);        // shard 1
-    master.begin_migration(0, 1, /*table=*/"", lo, hi);
-    master.background_copy();                          // Phase 1 (source keeps serving)
-    master.client_put("m15", "hot");                  // writes during copy (the delta)
-    master.client_remove("m13");
-    master.lock_range();                              // Phase 2 (freeze the range)
-    master.final_sync();                             // Phase 3 (delta replay + checksum gate)
-    const bool verified = master.both_prepared();
-    if (verified) {
-      master.commit_migration();                     // Phase 4 (source drops the range)
-      Notice("MAKO_MIGRATION_DEMO: OK committed [%s,%s) src_range=%zu dst_range=%zu "
-             "(checksums matched, no lost writes, source shed the range)",
-             lo.c_str(), hi.c_str(),
-             (size_t)src.range_count(lo, hi), (size_t)dst.range_count(lo, hi));
-    } else {
-      master.abort_migration();
-      Notice("MAKO_MIGRATION_DEMO: checksum mismatch -> aborted (source intact, range=%zu)",
-             (size_t)src.range_count(lo, hi));
-    }
-  }).detach();
-}
-
-// Opt-in cross-PROCESS migration demo (MAKO_XPROC_MIGRATION_DEMO=1): in the
-// multi-process shard setup (a separate dbtest process per shard), shard 1 serves
-// isolated demo data over a ShardDataService rrr socket, and shard 0 drives the
-// cluster ShardMaster to migrate a key range from shard 1 INTO itself over that
-// socket -- a genuine cross-process online migration, running alongside the live
-// workload without touching its tables. The rrr/rcc_rpc/cluster machinery lives in
-// migration_demo_endpoint.cc; this Masstree-heavy TU only calls the thin API.
-static void run_xproc_migration_demo()
-{
-  auto& bench = BenchmarkConfig::getInstance();
-  auto* cfg = bench.getConfig();
-  if (cfg == nullptr || bench.getNshards() < 2) {
-    Notice("XPROC MIGRATION DEMO: needs a >=2-shard config; skipping");
-    return;
-  }
-  const int role  = bench.getClusterRole();
-  const int shard = static_cast<int>(bench.getShardIndex());
-  // Both processes derive the SAME ShardData service address from the shared
-  // config: shard 1's leader port + a small delta clear of the mako per-shard
-  // rpc ports (shard_port + id, id < ~20).
-  auto s1 = cfg->shard(1, role);
-  const int base = atoi(s1.port.c_str());
-  const std::string bind_addr = "0.0.0.0:" + std::to_string(base + 50);
-  const std::string conn_addr = s1.host + ":" + std::to_string(base + 50);
-
-  if (shard == 1) {
-    // SOURCE: seed + serve isolated demo data (non-blocking; leaked, process-life).
-    std::thread([bind_addr]{
-      mako::xproc_migration_serve(bind_addr, 30);
-    }).detach();
-  } else if (shard == 0) {
-    // DEST/MASTER: wait for the source to come up, then migrate [d10,d20) over RPC.
-    std::thread([conn_addr]{
-      std::this_thread::sleep_for(std::chrono::seconds(12));
-      long moved = mako::xproc_migration_run(conn_addr, "d10", "d20", /*connect_retries=*/20);
-      if (moved == 10)
-        Notice("XPROC MIGRATION DEMO: SUCCESS moved %ld rows across processes "
-               "(shard 1 -> shard 0) over rrr", moved);
-      else
-        Notice("XPROC MIGRATION DEMO: FAILED (moved=%ld, expected 10)", moved);
-    }).detach();
-  }
-}
-
 static void run_workers_multi_shard(const vector<int>& shard_indices)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -626,14 +513,6 @@ main(int argc, char **argv)
     restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
 
-    // Opt-in: kick off a real ONLINE range migration on the real mbta engine
-    // that fires ~6s in, WHILE the workload below is serving (the default path,
-    // without MAKO_MIGRATION_DEMO, is unchanged). Proves the live mako DB does
-    // online data migration under load.
-    if (std::getenv("MAKO_MIGRATION_DEMO") != nullptr) {
-      run_online_migration_demo();
-    }
-
     // Run workers on all local shards
     if (benchConfig.getLeaderConfig()) {
       Notice("Running workers on all %zu local shards",
@@ -651,10 +530,6 @@ main(int argc, char **argv)
     janus::BootstrapClusterConfig(db);
     restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
-    // Opt-in cross-process migration demo, fired while the workload serves below.
-    if (std::getenv("MAKO_XPROC_MIGRATION_DEMO") != nullptr) {
-      run_xproc_migration_demo();
-    }
     // Run worker threads on the leader
     if (benchConfig.getLeaderConfig()) {
       run_workers(db);
