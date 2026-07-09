@@ -84,25 +84,22 @@ pub fn cc_route(s: &ClusterConfigState, table: &std::string, key: &std::string) 
     if s.shard_count == 0 {
         return 0;
     }
-    // Committed migration overrides win over the policy / hash default: a range
-    // whose migration has committed routes to its new owner.
-    let ro: i32 = janus::cc_range_owner(s, table, key);
-    if ro >= 0 {
-        return janus::cc_follow_replacement(s, ro as u32);
-    }
-    if !table.empty() {
-        if s.table_policies.contains_key(table) {
-            let kv: i64 = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
-            let sid: i32 = s.table_policies.get(table).unwrap().get().get_shard(kv);
-            if sid >= 0 {
-                return janus::cc_follow_replacement(s, sid as u32);
-            }
+    // Two strategies, never mixed -- branch on the mode.
+    if s.mode == ShardingMode::MAP {
+        // Map: the per-table partition table is the source of truth (no hash
+        // fallback -- the segments tile the keyspace). A table with no partition
+        // yet routes to shard 0 (the config host), which WrongShard-redirects.
+        let owner: i32 = janus::cc_partition_lookup(s, table, key);
+        if owner >= 0 {
+            return janus::cc_follow_replacement(s, owner as u32);
         }
+        return 0;
     }
+    // Hash: pure hash(key) % shard_count, then the dead-shard replacement chase.
     janus::cc_follow_replacement(s, janus::cc_hash_key(key) % s.shard_count)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=2637cbdc5a7924e192df53f0364380a10e5c817cbb653bbfea5084350ca99204*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=b73a6d23739da2cb3dbdce87adaa00836f87015f7dd42e35c39f7f111c80fd50*/
 uint32_t cc_hash_key(const std::string& key);
 
 uint32_t cc_hash_key(const std::string& key) {
@@ -165,18 +162,12 @@ uint32_t cc_route(const ClusterConfigState& s, const std::string& table, const s
     if (rusty::detail::deref_if_pointer_like(s.shard_count) == 0) {
         return static_cast<uint32_t>(0);
     }
-    const int32_t ro = janus::cc_range_owner(s, table, key);
-    if (rusty::detail::deref_if_pointer_like(ro) >= 0) {
-        return janus::cc_follow_replacement(s, static_cast<uint32_t>(ro));
-    }
-    if (!table.empty()) {
-        if (s.table_policies.contains_key(table)) {
-            const int64_t kv = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
-            const int32_t sid = s.table_policies.get(table).unwrap().get().get_shard(std::move(kv));
-            if (rusty::detail::deref_if_pointer_like(sid) >= 0) {
-                return janus::cc_follow_replacement(s, static_cast<uint32_t>(sid));
-            }
+    if (rusty::detail::deref_if_pointer_like(s.mode) == rusty::clone(ShardingMode::MAP)) {
+        const int32_t owner = janus::cc_partition_lookup(s, table, key);
+        if (rusty::detail::deref_if_pointer_like(owner) >= 0) {
+            return janus::cc_follow_replacement(s, static_cast<uint32_t>(owner));
         }
+        return static_cast<uint32_t>(0);
     }
     return janus::cc_follow_replacement(s, janus::cc_hash_key(key) % rusty::detail::deref_if_pointer_like(s.shard_count));
 }
@@ -199,22 +190,30 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
         info.replacement = cm->get_shard_replacement(i);
         new_shards.insert(i, std::move(info));
     }
-    // Committed migration range->owner overrides (published on cutover).
-    uint32_t rcount = cm->get_range_override_count();
-    std::vector<RangeOverride> new_overrides;
-    for (uint32_t i = 0; i < rcount; i++) {
-        RangeOverride ro;
-        ro.table = cm->get_range_table(i);
-        ro.lo = cm->get_range_lo(i);
-        ro.hi = cm->get_range_hi(i);
-        ro.owner = cm->get_range_owner(i);
-        new_overrides.push_back(std::move(ro));
+    // Routing strategy.
+    std::string mode_str = cm->get_sharding_mode();
+    ShardingMode mode = (mode_str == std::string("map")) ? ShardingMode::MAP
+                                                         : ShardingMode::HASH;
+    // Map-mode partition tables (one per table with a partition).
+    btree_port::BTreeMap<std::string, std::vector<PartitionSegment>> new_partitions;
+    std::vector<std::string> ptables = cm->list_partition_tables();
+    for (const auto& t : ptables) {
+        uint32_t pn = cm->get_partition_count(t);
+        std::vector<PartitionSegment> segs;
+        for (uint32_t i = 0; i < pn; i++) {
+            PartitionSegment seg;
+            seg.start = cm->get_partition_start(t, i);
+            seg.shard = cm->get_partition_shard(t, i);
+            segs.push_back(std::move(seg));
+        }
+        new_partitions.insert(t, std::move(segs));
     }
     s.shard_count = count;
     s.version = ver;
     s.epoch = ep;
+    s.mode = mode;
     s.shards = std::move(new_shards);
-    s.range_overrides = std::move(new_overrides);
+    s.partitions = std::move(new_partitions);
     return true;
 }
 

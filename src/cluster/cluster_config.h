@@ -45,14 +45,21 @@ struct ShardInfo {
 // cluster:config_manager above — modules forbid forward-declaring a foreign
 // module's entity, so the old `class ConfigManager;` forward decl is gone.
 
-// A committed migration override: keys in [lo, hi) for `table` (empty = any
-// table) route to `owner`, ahead of the sharding policy / hash default. Loaded
-// from ConfigManager (range/<i>/* keys) and published by a migration's commit.
-struct RangeOverride {
-    std::string table;
-    std::string lo;
-    std::string hi;
-    uint32_t owner = 0;
+// Routing strategy (sharding/mode). Mutually exclusive: cc_route branches on
+// this and never layers the two. Explicit backing type for a trivially-copyable
+// enum (stored in ClusterConfigState).
+enum class ShardingMode : int {
+    HASH = 0,   // hash(key) % shard_count — no stored ranges
+    MAP  = 1,   // per-table partition table lookup (the source of truth)
+};
+
+// One segment of a map-mode partition table: keys in [start, next.start) route
+// to `shard`. The first segment's start is "" (−∞); segments are ordered by
+// start and tile the whole key space (so a present table always yields an
+// owner). A migration mutates this via ConfigManager::split_and_reassign.
+struct PartitionSegment {
+    std::string start;
+    uint32_t shard = 0;
 };
 
 // The guarded state (bare struct; the Mutex is the ClusterConfig field).
@@ -60,9 +67,13 @@ struct ClusterConfigState {
     uint32_t shard_count = 0;
     uint64_t version = 0;
     uint64_t epoch = 0;
+    ShardingMode mode = ShardingMode::HASH;
     btree_port::BTreeMap<uint32_t, ShardInfo> shards;
+    // Legacy: no longer consulted by cc_route (retained until the KeyExtractor
+    // policy is fully retired; kept only to seed an initial partition).
     btree_port::BTreeMap<std::string, TableShardingPolicy> table_policies;
-    std::vector<RangeOverride> range_overrides;
+    // Map-mode: per-table partition table (ordered segments; tiles the keyspace).
+    btree_port::BTreeMap<std::string, std::vector<PartitionSegment>> partitions;
 };
 
 // ---- kernels: run under an already-held guard; own the map/routing ----
@@ -78,17 +89,26 @@ inline std::string cc_shard_status(const ClusterConfigState& s, uint32_t id) {
     auto found = s.shards.get(id);
     return found.is_some() ? found.unwrap().get().status : std::string();
 }
-// Committed migration override: first [lo,hi) match wins; -1 if none. cc_route
-// consults this before the policy/hash default so a migrated range routes to
-// its new owner.
-inline int32_t cc_range_owner(const ClusterConfigState& s, const std::string& table,
-                              const std::string& key) {
-    for (const auto& ro : s.range_overrides) {
-        if ((ro.table.empty() || ro.table == table) && key >= ro.lo && key < ro.hi) {
-            return static_cast<int32_t>(ro.owner);
+// Map-mode routing: owner of `key` in `table`'s partition table = shard of the
+// segment with the greatest start <= key. Returns -1 if the table has no
+// partition (caller decides the fallback). Segments tile the space, so a present
+// table always yields an owner.
+inline int32_t cc_partition_lookup(const ClusterConfigState& s, const std::string& table,
+                                   const std::string& key) {
+    auto found = s.partitions.get(table);
+    if (found.is_none()) return -1;
+    const std::vector<PartitionSegment>& segs = found.unwrap().get();
+    int32_t owner = -1;
+    bool have_best = false;
+    std::string best;
+    for (const auto& seg : segs) {
+        if (seg.start <= key && (!have_best || !(seg.start < best))) {
+            best = seg.start;
+            owner = static_cast<int32_t>(seg.shard);
+            have_best = true;
         }
     }
-    return -1;
+    return owner;
 }
 // cc_update_shard / cc_set_table_policy / cc_clear_table_policy /
 // cc_has_table_policy are gone: folded into the DSL methods below as direct

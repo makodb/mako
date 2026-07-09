@@ -38,6 +38,16 @@ protected:
         EXPECT_EQ(master_.register_shard({"s2"}, &shards_[2]), 2u);
     }
 
+    // Switch to map-mode routing with the whole keyspace (the table-agnostic ""
+    // partition) seeded to shard 0, then reload the master's cache. A migration's
+    // commit reassigns the moved range in this partition table -- the source of
+    // truth that route()/FreshRoute() consult.
+    void EnableMapMode() {
+        ASSERT_TRUE(cm_.set_sharding_mode("map"));
+        ASSERT_TRUE(cm_.seed_partition("", 0));
+        ASSERT_TRUE(cfg_.load_from_config_manager(&cm_));
+    }
+
     // Read a key straight from shard `id`'s data plane (the test owns the
     // participants; the out-param ShardData::get is fine in C++ test code).
     bool Read(uint32_t id, const std::string& key, std::string& out) {
@@ -58,6 +68,7 @@ protected:
 // published on the real config plane.
 TEST_F(ShardMasterTest, MigrationCopyLockSyncCommitPublishesCutover) {
     AddThreeShards();
+    EnableMapMode();
     const std::string lo = "m", hi = "t";
 
     // Seed the range's initial data on the source (shard 1).
@@ -227,6 +238,7 @@ TEST_F(ShardMasterTest, RangeBoundariesAreHalfOpen) {
 // updated in place (the fresh route follows the latest owner, not a stale one).
 TEST_F(ShardMasterTest, RangeCanMigrateAgainAfterCommit) {
     AddThreeShards();
+    EnableMapMode();
     const std::string lo = "m", hi = "t";
     shards_[1].put("m5", "orig");
 
@@ -382,6 +394,7 @@ TEST_F(ShardMasterTest, PrepareTimeoutAbortsAndIgnoresLateVote) {
 // same range: the generation guard rejects it; only the current vote commits.
 TEST_F(ShardMasterTest, StaleVoteCannotAffectALaterMigration) {
     AddThreeShards();
+    EnableMapMode();
     shards_[1].put("m5", "v");
 
     ASSERT_TRUE(master_.begin_migration(1, 2, "", "m", "t"));  // attempt #1 -> shard 2

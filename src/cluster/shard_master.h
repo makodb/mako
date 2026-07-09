@@ -283,9 +283,10 @@ impl ShardMaster {
             let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
             unsafe { (*src).drop_range(&lo, &hi) };
         }
-        // Publish the cutover: [lo, hi) now routes to the destination. The
-        // ConfigManager persists the override and bumps the version last.
-        unsafe { (*(*self).cm).set_range_owner(&table, &lo, &hi, dst_id) };
+        // Publish the cutover by mutating the authoritative partition table:
+        // split at lo/hi and reassign [lo, hi) to the destination (version bumped
+        // last). Requires the table's partition to be seeded (map mode).
+        unsafe { janus::cm_split_and_reassign((*self).cm, &table, &lo, &hi, dst_id) };
         self.reload();
         (*self).mig_active = false;
         (*self).mig_staged.clear();
@@ -350,7 +351,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=71e46ea178e8eb254fa0e872bb15cad146a2695e9cf37e19558cb6e769d7236b*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=2ad88d7024b7bd3fb877f2afb568114d888d5410ff727aa68c01dd2342b67d69*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -664,7 +665,7 @@ inline bool ShardMaster::commit_migration() {
     }
     // @unsafe
     {
-        ((rusty::detail::deref_if_pointer_like(((*this)).cm))).set_range_owner(table, lo, hi, std::move(dst_id));
+        janus::cm_split_and_reassign(((*this)).cm, table, lo, hi, std::move(dst_id));
     }
     this->reload();
     ((*this)).mig_active = false;

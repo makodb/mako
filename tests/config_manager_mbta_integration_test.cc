@@ -170,6 +170,10 @@ TEST_F(ConfigManagerMbtaTest, MigrationThroughShardMasterOnRealMbta) {
     // mbta-backed shards registered as its participants (ids 0 and 1).
     OrderedIndexKvStore kv(make_config_index());
     ConfigManager cm(&kv);
+    // Map mode: the partition table is the routing source of truth. Seed the
+    // whole keyspace (table "") to shard 0; the migration reassigns [lo,hi).
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(cm.seed_partition("", 0));
     ClusterConfig cc = ClusterConfig::new_();
     ShardMaster master = ShardMaster::new_(&cm, &cc);
     ASSERT_EQ(master.register_shard({"src"}, &src), 0u);

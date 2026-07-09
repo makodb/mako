@@ -236,12 +236,13 @@ All configuration lives in a reserved table `__mako_config__` on shard 0, access
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
 | `epoch` | uint64 | Global speculative epoch number (all shards converge to this) |
 | `shard/<id>/replacement` | uint32 | For `status=dead`: taker shard whose Raft group inherits routing that would hash to this shard. Chased transitively with a cycle guard. |
-| `sharding/mode` | string | `hash` (default) or `range` — the routing mode Path A of `get_shard_for_key` uses when no per-table policy is registered |
-| `sharding/policy/<table>` | bytes | Serialized `TableShardingPolicy` for one table — its `KeyExtractor` plus a sorted vector of `RangeMapping`s. Absence means "fall back to `sharding/mode`". |
-| `node/<site>/addr` | string | Node address (`ip:port`) |
+| `sharding/mode` | string | `hash` or `map` — the routing **strategy**, chosen once. The two are mutually exclusive; `get_shard_for_key` branches on this and never layers them. |
+| `partition/<table>/count` | uint32 | **(map mode)** number of segments in this table's partition table |
+| `partition/<table>/<i>/start` | bytes | **(map mode)** inclusive raw-key lower bound of segment `i` (`""` = −∞); segment `i` owns `[start_i, start_{i+1})`, stored ordered by `start` |
+| `partition/<table>/<i>/shard` | uint32 | **(map mode)** owner of segment `i`. The per-table partition table is the authoritative range→shard map; a migration mutates it (split + reassign). |
+| `node/<site>/addr` | string | Node address (`ip:port`) — the runtime source of truth for peer discovery (seeded once from YAML, then read from the table) |
 | `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
-| `reshard/active` | bool | Whether resharding is in progress |
-| `reshard/phase` | string | `prepare`, `migrating`, `committed` |
+| `sharding/policy/<table>` | bytes | *(legacy)* serialized `TableShardingPolicy` (`KeyExtractor` + `RangeMapping`s). Retired from routing by the partition table above; kept only to *seed* an initial partition. |
 
 ### Key Components
 
@@ -289,7 +290,24 @@ Because `key → bucket` is frozen, only the `bucket → shard` map moves on a m
 
 Every node caches the shard map via `ClusterConfig::get_shard_for_key()` for routing.
 
-> **Current vs target.** The routing described here is the target model. The code today still takes the naive `hash(key) % shard_count` path when no per-table policy is registered (`cc_route`, `src/cluster/cluster_config.cc`), and range policies are keyed on an *extracted int64* (via `KeyExtractor`, below) rather than raw-key lex order. The fixed-`bucket_count` ring and the raw-key lex default are not yet built.
+**Strategies do not mix.** `sharding/mode` picks exactly one, and `cc_route` branches on it — there is no "override on top of policy on top of hash" precedence. In **map** mode routing is a single lookup in the per-table partition table (no hash fallback: the segments tile the whole key space). In **hash** mode routing is the ring above, with *no* stored ranges.
+
+#### Partition table (the map-mode source of truth)
+
+In map mode the range→shard assignment is **not computed** — it is an authoritative, ordered, gap-free table on shard 0, one per table (`partition/<table>/*`, schema above). Each table is an array of `(start, shard)` split points; segment `i` owns `[start_i, start_{i+1})`; routing is the last `start ≤ key` (binary search). It tiles the whole key space by construction, so there is no default to fall back to.
+
+A migration is the *only* thing that changes it, via **`split_and_reassign(table, lo, hi, dest)`**: insert boundaries at `lo` and `hi`, set the `[lo,hi)` segment's owner to `dest`, coalesce same-owner neighbors, bump `__version__`. That single mutation *is* the cutover — `ConfigWatcher` propagates the new version and every node reroutes. This replaces the earlier `range/<n>` override patch-list (an append/scan layer over hash) entirely.
+
+> **Current vs target.** `cc_route` (`src/cluster/cluster_config.cc`) now branches on `mode`: map mode does the partition-table lookup; hash mode is still the interim `hash(key) % shard_count` (the fixed-`bucket_count` consistent-hash ring is not yet built). The `KeyExtractor`-based `TableShardingPolicy` no longer participates in routing.
+
+#### Live migration wiring (how a running cluster migrates)
+
+Making a live cluster actually migrate reuses the components already proven in unit tests:
+
+- **Data plane over RPC.** Each shard serves a `ShardDataService` over its live `open_tables_table_id[table_id]` index; the RPC carries `table_id` per op, so one service per shard covers all tables. The `ShardData` trait stays single-index; the master builds a table-bound handle (local `OrderedIndexShardData` or a `RemoteShardData` proxy) per migration.
+- **Peer discovery = the system table.** There is no separate discovery mechanism: shard 0's master resolves a shard's address from `__mako_config__` (`get_shard_leader(id)` → `get_node_addr(site)` → dial `+ kShardDataPortDelta`). Only shard 0's *own* root address is a YAML seed (chicken-and-egg).
+- **Admin trigger.** An admin `Migrate(table, lo, hi, dest)` RPC drives the shard-0 `ShardMaster` through the 2PC on a background thread; commit calls `split_and_reassign`.
+- **Freeze the whole migration.** Because the live non-txn write path is not in the master's delta path, the source freezes `[lo,hi)` for the *entire* migration: the non-txn handler returns `RETRY_LATER` for a frozen key (client backs off and retries, landing on the destination after cutover). No writes are lost; the range is briefly write-unavailable. (Transactional migration — coordinating with in-flight Silo transactions — and durable/recoverable migration state are deliberately out of scope for this pass.)
 
 #### Key Extractors
 

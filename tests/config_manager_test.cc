@@ -183,51 +183,119 @@ TEST_F(ConfigManagerTest, ClusterConfigLoadFromNullManagerFails) {
 }
 
 // ===========================================================================
-// ConfigManager — migration range overrides (Stage 4 runtime routing)
+// ConfigManager + ClusterConfig — map-mode routing end to end
 // ===========================================================================
-TEST_F(ConfigManagerTest, RangeOverrideRoundTrip) {
-    std::string any_table = "";
-    EXPECT_EQ(cm_.get_range_override_count(), 0u);
-    ASSERT_TRUE(cm_.set_range_owner(any_table, "k00050", "k00150", 2));
-    EXPECT_EQ(cm_.get_range_override_count(), 1u);
-    EXPECT_EQ(cm_.get_range_lo(0), "k00050");
-    EXPECT_EQ(cm_.get_range_hi(0), "k00150");
-    EXPECT_EQ(cm_.get_range_owner(0), 2u);
-    // set_range_owner bumps the version last (so a watcher sees a complete record).
-    EXPECT_EQ(cm_.get_version(), 1u);
-}
 
-// A committed migration override flips runtime routing for the moved range to
-// the new owner once ClusterConfig reloads (what the ConfigWatcher does on a
-// version bump), and leaves keys outside the range on their hash owner.
-TEST_F(ConfigManagerTest, RangeOverrideRoutesMigratedRangeToNewOwner) {
+// Map mode end to end: a migration reassigns [lo,hi) in the partition table;
+// ClusterConfig routes the moved range to the new owner once it reloads (what
+// the ConfigWatcher does on a version bump), and leaves the rest untouched.
+TEST_F(ConfigManagerTest, PartitionRoutesReassignedRangeToNewOwnerAfterReload) {
     ASSERT_TRUE(cm_.add_shard(0, {"a"}));
     ASSERT_TRUE(cm_.add_shard(1, {"b"}));
     ASSERT_TRUE(cm_.add_shard(2, {"c"}));
+    ASSERT_TRUE(cm_.set_sharding_mode("map"));
+    ASSERT_TRUE(cm_.seed_partition("", 0));   // whole keyspace -> shard 0
 
     ClusterConfig cc = ClusterConfig::new_();
     ASSERT_TRUE(cc.load_from_config_manager(&cm_));
+    EXPECT_EQ(cc.get_shard_for_key_default("k00099"), 0u);   // the seeded owner
 
-    const std::string in_key = "k00099";    // inside [k00050, k00150)
-    const std::string out_key = "k00200";   // outside
-    uint32_t in_default = cc.get_shard_for_key_default(in_key);
-    uint32_t out_default = cc.get_shard_for_key_default(out_key);
-    uint32_t hi_default = cc.get_shard_for_key_default("k00150");  // hi is exclusive
+    // Publish a migration cutover: [k00050,k00150) -> shard 2.
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "", "k00050", "k00150", 2));
 
-    // Publish the migration cutover: [k00050,k00150) -> a NEW owner (!= hash).
-    uint32_t new_owner = (in_default + 1u) % 3u;
-    std::string any_table = "";
-    ASSERT_TRUE(cm_.set_range_owner(any_table, "k00050", "k00150", new_owner));
-
-    // Stale in-memory config still routes by hash until reload.
-    EXPECT_EQ(cc.get_shard_for_key_default(in_key), in_default);
+    // Stale in-memory config still routes to the old owner until reload.
+    EXPECT_EQ(cc.get_shard_for_key_default("k00099"), 0u);
 
     // Reload (the ConfigWatcher's action) -> the range routes to the new owner.
     ASSERT_TRUE(cc.load_from_config_manager(&cm_));
-    EXPECT_EQ(cc.get_shard_for_key_default(in_key), new_owner);
-    EXPECT_EQ(cc.get_shard_for_key_default("k00050"), new_owner);   // lo inclusive
-    EXPECT_EQ(cc.get_shard_for_key_default("k00150"), hi_default);  // hi exclusive -> unchanged
-    EXPECT_EQ(cc.get_shard_for_key_default(out_key), out_default);  // outside -> unchanged
+    EXPECT_EQ(cc.get_shard_for_key_default("k00099"), 2u);   // inside
+    EXPECT_EQ(cc.get_shard_for_key_default("k00050"), 2u);   // lo inclusive
+    EXPECT_EQ(cc.get_shard_for_key_default("k00150"), 0u);   // hi exclusive -> unchanged
+    EXPECT_EQ(cc.get_shard_for_key_default("k00200"), 0u);   // outside -> unchanged
+}
+
+// ===========================================================================
+// ConfigManager — map-mode partition table (per-table raw-key lex segments)
+// The authoritative range->shard map; a migration mutates it via
+// cm_split_and_reassign (split at lo/hi, reassign [lo,hi), coalesce).
+// ===========================================================================
+
+// Owner of `key` under the persisted partition table for `table`: shard of the
+// segment with the greatest start <= key (mirrors cc_partition_lookup).
+static uint32_t partition_owner(ConfigManager& cm, const std::string& table,
+                                const std::string& key) {
+    uint32_t n = cm.get_partition_count(table);
+    uint32_t owner = 0;
+    std::string best;
+    bool found = false;
+    for (uint32_t i = 0; i < n; ++i) {
+        std::string s = cm.get_partition_start(table, i);
+        if (s <= key && (!found || s >= best)) { best = s; owner = cm.get_partition_shard(table, i); found = true; }
+    }
+    return owner;
+}
+
+TEST_F(ConfigManagerTest, PartitionSeedIsOneSegmentCoveringEverything) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    EXPECT_EQ(cm_.get_partition_count("T"), 1u);
+    EXPECT_EQ(cm_.get_partition_start("T", 0), "");   // -inf
+    EXPECT_EQ(cm_.get_partition_shard("T", 0), 0u);
+    auto tables = cm_.list_partition_tables();
+    ASSERT_EQ(tables.size(), 1u);
+    EXPECT_EQ(tables[0], "T");
+    EXPECT_EQ(partition_owner(cm_, "T", ""), 0u);
+    EXPECT_EQ(partition_owner(cm_, "T", "k500"), 0u);
+}
+
+TEST_F(ConfigManagerTest, SplitReassignMiddleRangeCreatesThreeSegments) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "k300", "k600", 1));  // ["" ->0, k300->1, k600->0]
+    EXPECT_EQ(cm_.get_partition_count("T"), 3u);
+    EXPECT_EQ(partition_owner(cm_, "T", "k100"), 0u);   // below lo
+    EXPECT_EQ(partition_owner(cm_, "T", "k300"), 1u);   // lo inclusive
+    EXPECT_EQ(partition_owner(cm_, "T", "k599"), 1u);   // inside
+    EXPECT_EQ(partition_owner(cm_, "T", "k600"), 0u);   // hi exclusive
+    EXPECT_EQ(partition_owner(cm_, "T", "k900"), 0u);   // above hi
+}
+
+TEST_F(ConfigManagerTest, SplitReassignToInfinityHasNoUpperBoundary) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "k600", "", 2));  // hi "" = +inf
+    EXPECT_EQ(cm_.get_partition_count("T"), 2u);   // ["" ->0, k600->2]
+    EXPECT_EQ(partition_owner(cm_, "T", "k599"), 0u);
+    EXPECT_EQ(partition_owner(cm_, "T", "k600"), 2u);
+    EXPECT_EQ(partition_owner(cm_, "T", "zzzz"), 2u);
+}
+
+TEST_F(ConfigManagerTest, MigratingARangeBackCoalescesToOneSegment) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "k300", "k600", 1));
+    EXPECT_EQ(cm_.get_partition_count("T"), 3u);
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "k300", "k600", 0));  // back to owner 0
+    EXPECT_EQ(cm_.get_partition_count("T"), 1u);   // coalesced away
+    EXPECT_EQ(partition_owner(cm_, "T", "k400"), 0u);
+}
+
+TEST_F(ConfigManagerTest, TwoDisjointReassignsCoexist) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "a", "c", 1));
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "m", "t", 2));
+    EXPECT_EQ(partition_owner(cm_, "T", "b"), 1u);
+    EXPECT_EQ(partition_owner(cm_, "T", "n"), 2u);
+    EXPECT_EQ(partition_owner(cm_, "T", "e"), 0u);   // between the two ranges
+    EXPECT_EQ(partition_owner(cm_, "T", "z"), 0u);   // above t
+}
+
+TEST_F(ConfigManagerTest, SplitReassignRefusedOnUnseededTable) {
+    EXPECT_FALSE(cm_split_and_reassign(&cm_, "T", "k300", "k600", 1));
+    EXPECT_EQ(cm_.get_partition_count("T"), 0u);
+}
+
+TEST_F(ConfigManagerTest, SplitReassignBumpsVersionForTheWatcher) {
+    ASSERT_TRUE(cm_.seed_partition("T", 0));
+    uint64_t v = cm_.get_version();
+    ASSERT_TRUE(cm_split_and_reassign(&cm_, "T", "k300", "k600", 1));
+    EXPECT_GT(cm_.get_version(), v);   // set_partition_count bumps __version__ last
 }
 
 TEST_F(ConfigManagerTest, ClusterConfigShardForKeyIsStable) {
@@ -498,36 +566,10 @@ TEST_F(ConfigManagerTest, ShardingPolicyDeleteMissingIsNoop) {
 // ClusterConfig — per-table policy routing
 // ===========================================================================
 
-TEST_F(ConfigManagerTest, PolicyRoutingRoutesByRange) {
-    // Two shards, a warehouse-style policy on table WAREHOUSE:
-    //   w_id in [0, 5)  -> shard 0
-    //   w_id in [5, 10) -> shard 1
-    // Encode w_id in the first 8 bytes big-endian (matches ExtractKeyValue_).
-    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
-    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
-
-    ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
-
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
-    policy.add_range(0, 5, 0);
-    policy.add_range(5, 10, 1);
-    cc.set_table_policy("WAREHOUSE", policy);
-
-    auto encode_w = [](int64_t w) -> std::string {
-        std::string s(8, '\0');
-        for (int i = 7; i >= 0; --i) {
-            s[i] = static_cast<char>(w & 0xff);
-            w >>= 8;
-        }
-        return s;
-    };
-
-    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(0)), 0u);
-    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(3)), 0u);
-    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(5)), 1u);
-    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", encode_w(9)), 1u);
-}
+// (PolicyRoutingRoutesByRange + PolicyRoutingClearRevertsToDefault removed:
+// per-table KeyExtractor policies no longer participate in routing — the
+// map-mode partition table is the source of truth. The remaining tests below
+// verify the new behavior: a set policy does NOT affect routing (hash is used).)
 
 TEST_F(ConfigManagerTest, PolicyRoutingFallsBackToHashForUnknownTable) {
     ASSERT_TRUE(cm_.add_shard(0, {"a"}));
@@ -568,29 +610,6 @@ TEST_F(ConfigManagerTest, PolicyRoutingFallsBackWhenGetShardIsNegative) {
     EXPECT_LT(sid, 2u);
 }
 
-TEST_F(ConfigManagerTest, PolicyRoutingClearRevertsToDefault) {
-    ASSERT_TRUE(cm_.add_shard(0, {"a"}));
-    ASSERT_TRUE(cm_.add_shard(1, {"b"}));
-
-    ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.load_from_config_manager(&cm_));
-
-    TableShardingPolicy policy = TableShardingPolicy::create("WAREHOUSE", KeyExtractor::by_field(0));
-    policy.add_range(0, 100, 1);  // everything → shard 1
-    cc.set_table_policy("WAREHOUSE", policy);
-    EXPECT_TRUE(cc.has_table_policy("WAREHOUSE"));
-
-    std::string k(8, '\0');
-    k[7] = 3;
-    EXPECT_EQ(cc.get_shard_for_key("WAREHOUSE", k), 1u);
-
-    cc.clear_table_policy("WAREHOUSE");
-    EXPECT_FALSE(cc.has_table_policy("WAREHOUSE"));
-    // After clearing, the routing decision drops back to hash-mod on
-    // the raw key. We don't know which shard that resolves to, but we
-    // do know it must be a valid shard.
-    EXPECT_LT(cc.get_shard_for_key("WAREHOUSE", k), 2u);
-}
 
 TEST_F(ConfigManagerTest, PolicyRoutingComposesWithReplacement) {
     // A per-table policy resolves to shard 1, which is dead → routing

@@ -3,6 +3,7 @@ module;
 #include <vector>
 #include <cstdint>
 #include <charconv>
+#include <algorithm>   // cm_split_and_reassign sorts the spliced partition segments
 
 // deref_if_pointer_like (raw-pointer field method calls) used by the
 // DSL-generated bodies below. rusty, not rrr.
@@ -43,9 +44,16 @@ export namespace janus {
  *   epoch                   — global speculative epoch number (uint64)
  *   node/<site>/addr        — node network address
  *   node/<site>/status      — alive, dead, decommissioning
- *   sharding/mode           — default routing mode "hash" or "range"
- *   sharding/policy/<table> — opaque serialized TableShardingPolicy bytes
- *   sharding/policy_tables  — comma-separated list of tables with a policy
+ *   sharding/mode              — routing strategy: "hash" or "map" (mutually exclusive)
+ *   partition_table_count      — (map) number of tables that have a partition table
+ *   partition_table/<i>        — (map) name of the i-th partitioned table (indexed
+ *                                storage so an empty "" default table name survives)
+ *   partition/<table>/count    — (map) segment count for a table's partition table
+ *   partition/<table>/<j>/start— (map) raw-key lower bound of segment j ("" = -inf);
+ *                                segment j owns [start_j, start_{j+1})
+ *   partition/<table>/<j>/shard— (map) owner shard of segment j
+ *   sharding/policy/<table>    — (legacy) serialized TableShardingPolicy; NOT used by
+ *                                routing anymore (the partition table is the source of truth)
  *
  * Authored in the inline-Rust DSL (docs/storage-interface.md): the
  * `#if RUSTYCPP_RUST` block is the source of truth; the GEN block is the
@@ -274,79 +282,9 @@ impl ConfigManager {
     }
 
     // ---- migration range overrides (committed [lo,hi) -> owner) -----------
-    // A migration's commit publishes an override so routing sends keys in
-    // [lo,hi) to the new owner; ClusterConfig loads these and cc_route consults
-    // them ahead of the policy/hash default. Stored as range/<i>/{table,lo,hi,
-    // owner} plus a range_count, mirroring the shard/<id>/* layout.
-    fn get_range_override_count(&mut self) -> u32 {
-        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
-        let key: std::string = std::string("range_count");
-        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
-        if vopt.is_some() {
-            let value: std::string = vopt.unwrap();
-            return unsafe { cm_parse_u64(&value) } as u32;
-        }
-        0
-    }
-    fn get_range_table(&mut self, idx: u32) -> std::string {
-        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
-        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/table");
-        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
-        vopt.unwrap_or(std::string(""))
-    }
-    fn get_range_lo(&mut self, idx: u32) -> std::string {
-        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
-        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/lo");
-        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
-        vopt.unwrap_or(std::string(""))
-    }
-    fn get_range_hi(&mut self, idx: u32) -> std::string {
-        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
-        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/hi");
-        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
-        vopt.unwrap_or(std::string(""))
-    }
-    fn get_range_owner(&mut self, idx: u32) -> u32 {
-        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
-        let key: std::string = std::string("range/") + std::to_string(idx) + std::string("/owner");
-        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
-        if vopt.is_some() {
-            let value: std::string = vopt.unwrap();
-            return unsafe { cm_parse_u64(&value) } as u32;
-        }
-        0
-    }
-    fn set_range_owner(&mut self, table: &std::string, lo: &std::string, hi: &std::string, owner: u32) -> bool {
-        if unsafe { cm_kv_absent((*self).kv) } { return false; }
-        let n: u32 = self.get_range_override_count();
-        // Upsert keyed by (table, lo, hi): a range has exactly ONE current owner,
-        // so re-migrating it overwrites the existing override in place. Appending
-        // would leave two overrides for the range, and cc_range_owner takes the
-        // first match -- a fresh ClusterConfig would then route to the stale owner.
-        let mut i: u32 = 0;
-        while i < n {
-            if self.get_range_table(i) == (*table)
-                && self.get_range_lo(i) == (*lo)
-                && self.get_range_hi(i) == (*hi) {
-                let ukey: std::string = std::string("range/") + std::to_string(i) + std::string("/owner");
-                let uval: std::string = std::to_string(owner);
-                return self.put_versioned(&ukey, &uval);
-            }
-            i = i + 1;
-        }
-        let tkey: std::string = std::string("range/") + std::to_string(n) + std::string("/table");
-        unsafe { (*(*self).kv).put(&tkey, table); }
-        let lkey: std::string = std::string("range/") + std::to_string(n) + std::string("/lo");
-        unsafe { (*(*self).kv).put(&lkey, lo); }
-        let hkey: std::string = std::string("range/") + std::to_string(n) + std::string("/hi");
-        unsafe { (*(*self).kv).put(&hkey, hi); }
-        let okey: std::string = std::string("range/") + std::to_string(n) + std::string("/owner");
-        let oval: std::string = std::to_string(owner);
-        unsafe { (*(*self).kv).put(&okey, &oval); }
-        let ckey: std::string = std::string("range_count");
-        let cval: std::string = std::to_string(n + 1);
-        self.put_versioned(&ckey, &cval)
-    }
+    // (Migration cutovers are published by mutating the map-mode partition table
+    // via cm_split_and_reassign -- see below. The old range/<i>/* override
+    // patch-list is gone: the partition table is the single source of truth.)
 
     // ---- epoch -----------------------------------------------------------
     fn get_epoch(&mut self) -> u64 {
@@ -399,6 +337,104 @@ impl ConfigManager {
     fn set_sharding_mode(&mut self, mode: &std::string) -> bool {
         let key: std::string = std::string("sharding/mode");
         self.put_versioned(&key, mode)
+    }
+
+    // ---- map-mode partition table (per-table raw-key lex segments) --------
+    // Segment i owns [start_i, start_{i+1}); the first start is "" (-inf), the
+    // last extends to +inf. Stored ordered by start; the authoritative range->
+    // shard map, mutated only by cm_split_and_reassign (below).
+    fn get_partition_table_count(&mut self) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = std::string("partition_table_count");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    fn get_partition_table_name(&mut self, idx: u32) -> std::string {
+        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
+        let key: std::string = std::string("partition_table/") + std::to_string(idx);
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
+    }
+    // Enumerate tables with a partition via INDEXED storage (not a CSV), so an
+    // empty table name "" -- the table-agnostic default routing key -- survives
+    // (a CSV round-trips a single "" back to the empty list).
+    fn list_partition_tables(&mut self) -> std::vector<std::string> {
+        let empty: std::string = std::string("");
+        let mut result: std::vector<std::string> = unsafe { cm_split_csv(&empty) };
+        let n: u32 = self.get_partition_table_count();
+        let mut i: u32 = 0;
+        while i < n {
+            result.push_back(self.get_partition_table_name(i));
+            i = i + 1;
+        }
+        result
+    }
+    fn get_partition_count(&mut self, table: &std::string) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = (std::string("partition/") + *table) + std::string("/count");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    fn get_partition_start(&mut self, table: &std::string, idx: u32) -> std::string {
+        if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
+        let key: std::string = ((std::string("partition/") + *table) + std::string("/")) + std::to_string(idx) + std::string("/start");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        vopt.unwrap_or(std::string(""))
+    }
+    fn get_partition_shard(&mut self, table: &std::string, idx: u32) -> u32 {
+        if unsafe { cm_kv_absent((*self).kv) } { return 0; }
+        let key: std::string = ((std::string("partition/") + *table) + std::string("/")) + std::to_string(idx) + std::string("/shard");
+        let vopt: rusty::Option<std::string> = unsafe { (*(*self).kv).get(&key) };
+        if vopt.is_some() {
+            let value: std::string = vopt.unwrap();
+            return unsafe { cm_parse_u64(&value) } as u32;
+        }
+        0
+    }
+    // Write one segment's start+shard (no version bump; set_partition_count bumps last).
+    fn put_partition_segment(&mut self, table: &std::string, idx: u32, start: &std::string, shard: u32) {
+        if unsafe { cm_kv_absent((*self).kv) } { return; }
+        let skey: std::string = ((std::string("partition/") + *table) + std::string("/")) + std::to_string(idx) + std::string("/start");
+        unsafe { (*(*self).kv).put(&skey, start); }
+        let hkey: std::string = ((std::string("partition/") + *table) + std::string("/")) + std::to_string(idx) + std::string("/shard");
+        let hval: std::string = std::to_string(shard);
+        unsafe { (*(*self).kv).put(&hkey, &hval); }
+    }
+    // Set the segment count + register the table in partition_tables, version bump LAST.
+    fn set_partition_count(&mut self, table: &std::string, count: u32) -> bool {
+        if unsafe { cm_kv_absent((*self).kv) } { return false; }
+        // Register the table in the indexed list if new.
+        let ntab: u32 = self.get_partition_table_count();
+        let mut present: bool = false;
+        let mut i: u32 = 0;
+        while i < ntab {
+            if self.get_partition_table_name(i) == *table { present = true; }
+            i = i + 1;
+        }
+        if !present {
+            let nkey: std::string = std::string("partition_table/") + std::to_string(ntab);
+            unsafe { (*(*self).kv).put(&nkey, table); }
+            let cnkey: std::string = std::string("partition_table_count");
+            let cnval: std::string = std::to_string(ntab + 1);
+            unsafe { (*(*self).kv).put(&cnkey, &cnval); }
+        }
+        let ckey: std::string = (std::string("partition/") + *table) + std::string("/count");
+        let cval: std::string = std::to_string(count);
+        self.put_versioned(&ckey, &cval)
+    }
+    // Seed a table's partition as a single segment ["" -> shard] (map-mode bootstrap).
+    fn seed_partition(&mut self, table: &std::string, shard: u32) -> bool {
+        let empty: std::string = std::string("");
+        self.put_partition_segment(table, 0, &empty, shard);
+        self.set_partition_count(table, 1)
     }
     fn get_sharding_policy(&mut self, table: &std::string) -> std::string {
         if unsafe { cm_kv_absent((*self).kv) } { return std::string(""); }
@@ -461,7 +497,7 @@ impl ConfigManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=7dd71f51f318bfabe090dceb34266a9a5f3cf76b23613e916fdae4bf12a83bf1*/
+/*RUSTYCPP:GEN-BEGIN id=config_manager.1 version=1 rust_sha256=9f16ac74bd9cc4a53824c2907a4e62662707dc66ffc6a8017eebccb5e1b2704a*/
 struct ConfigManager;
 
 struct ConfigManager {
@@ -485,12 +521,6 @@ struct ConfigManager {
     bool remove_shard(uint32_t shard_id);
     uint32_t get_shard_replacement(uint32_t shard_id);
     bool kill_shard(uint32_t dead_id, uint32_t taker_id);
-    uint32_t get_range_override_count();
-    std::string get_range_table(uint32_t idx);
-    std::string get_range_lo(uint32_t idx);
-    std::string get_range_hi(uint32_t idx);
-    uint32_t get_range_owner(uint32_t idx);
-    bool set_range_owner(const std::string& table, const std::string& lo, const std::string& hi, uint32_t owner);
     uint64_t get_epoch();
     bool advance_epoch();
     std::string get_node_addr(const std::string& site);
@@ -499,6 +529,15 @@ struct ConfigManager {
     bool set_node_status(const std::string& site, const std::string& status);
     std::string get_sharding_mode();
     bool set_sharding_mode(const std::string& mode);
+    uint32_t get_partition_table_count();
+    std::string get_partition_table_name(uint32_t idx);
+    std::vector<std::string> list_partition_tables();
+    uint32_t get_partition_count(const std::string& table);
+    std::string get_partition_start(const std::string& table, uint32_t idx);
+    uint32_t get_partition_shard(const std::string& table, uint32_t idx);
+    void put_partition_segment(const std::string& table, uint32_t idx, const std::string& start, uint32_t shard);
+    bool set_partition_count(const std::string& table, uint32_t count);
+    bool seed_partition(const std::string& table, uint32_t shard);
     std::string get_sharding_policy(const std::string& table);
     std::vector<std::string> list_sharding_policy_tables();
     bool set_sharding_policy(const std::string& table, const std::string& serialized_policy);
@@ -770,99 +809,6 @@ inline bool ConfigManager::kill_shard(uint32_t dead_id, uint32_t taker_id) {
     return true;
 }
 
-inline uint32_t ConfigManager::get_range_override_count() {
-    if (cm_kv_absent(((*this)).kv)) {
-        return static_cast<uint32_t>(0);
-    }
-    const std::string key = std::string("range_count");
-    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
-    if (vopt.is_some()) {
-        const std::string value = vopt.unwrap();
-        return static_cast<uint32_t>(cm_parse_u64(value));
-    }
-    return static_cast<uint32_t>(0);
-}
-
-inline std::string ConfigManager::get_range_table(uint32_t idx) {
-    if (cm_kv_absent(((*this)).kv)) {
-        return std::string("");
-    }
-    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/table");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
-    return vopt.unwrap_or(std::string(""));
-}
-
-inline std::string ConfigManager::get_range_lo(uint32_t idx) {
-    if (cm_kv_absent(((*this)).kv)) {
-        return std::string("");
-    }
-    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/lo");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
-    return vopt.unwrap_or(std::string(""));
-}
-
-inline std::string ConfigManager::get_range_hi(uint32_t idx) {
-    if (cm_kv_absent(((*this)).kv)) {
-        return std::string("");
-    }
-    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/hi");
-    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
-    return vopt.unwrap_or(std::string(""));
-}
-
-inline uint32_t ConfigManager::get_range_owner(uint32_t idx) {
-    if (cm_kv_absent(((*this)).kv)) {
-        return static_cast<uint32_t>(0);
-    }
-    const std::string key = (std::string("range/") + std::to_string(std::move(idx))) + std::string("/owner");
-    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
-    if (vopt.is_some()) {
-        const std::string value = vopt.unwrap();
-        return static_cast<uint32_t>(cm_parse_u64(value));
-    }
-    return static_cast<uint32_t>(0);
-}
-
-inline bool ConfigManager::set_range_owner(const std::string& table, const std::string& lo, const std::string& hi, uint32_t owner) {
-    if (cm_kv_absent(((*this)).kv)) {
-        return false;
-    }
-    const uint32_t n = this->get_range_override_count();
-    uint32_t i = static_cast<uint32_t>(0);
-    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        if (((this->get_range_table(std::move(i)) == (table)) && (this->get_range_lo(std::move(i)) == (lo))) && (this->get_range_hi(std::move(i)) == (hi))) {
-            const std::string ukey = (std::string("range/") + std::to_string(std::move(i))) + std::string("/owner");
-            const std::string uval = std::to_string(std::move(owner));
-            return this->put_versioned(ukey, uval);
-        }
-        i = rusty::detail::deref_if_pointer_like(i) + static_cast<uint32_t>(1);
-    }
-    const std::string tkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/table");
-    // @unsafe
-    {
-        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(tkey, table);
-    }
-    const std::string lkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/lo");
-    // @unsafe
-    {
-        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(lkey, lo);
-    }
-    const std::string hkey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/hi");
-    // @unsafe
-    {
-        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(hkey, hi);
-    }
-    const std::string okey = (std::string("range/") + std::to_string(std::move(n))) + std::string("/owner");
-    const std::string oval = std::to_string(std::move(owner));
-    // @unsafe
-    {
-        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(okey, oval);
-    }
-    const std::string ckey = std::string("range_count");
-    const std::string cval = std::to_string(rusty::detail::deref_if_pointer_like(n) + 1);
-    return this->put_versioned(ckey, cval);
-}
-
 inline uint64_t ConfigManager::get_epoch() {
     if (cm_kv_absent(((*this)).kv)) {
         return static_cast<uint64_t>(0);
@@ -926,6 +872,129 @@ inline std::string ConfigManager::get_sharding_mode() {
 inline bool ConfigManager::set_sharding_mode(const std::string& mode) {
     const std::string key = std::string("sharding/mode");
     return this->put_versioned(key, mode);
+}
+
+inline uint32_t ConfigManager::get_partition_table_count() {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = std::string("partition_table_count");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline std::string ConfigManager::get_partition_table_name(uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return std::string("");
+    }
+    const std::string key = std::string("partition_table/") + std::to_string(std::move(idx));
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
+}
+
+inline std::vector<std::string> ConfigManager::list_partition_tables() {
+    const std::string empty = std::string("");
+    std::vector<std::string> result = cm_split_csv(empty);
+    const uint32_t n = this->get_partition_table_count();
+    uint32_t i = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        result.push_back(this->get_partition_table_name(std::move(i)));
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<uint32_t>(1);
+    }
+    return std::move(result);
+}
+
+inline uint32_t ConfigManager::get_partition_count(const std::string& table) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = ((std::string("partition/") + table)) + std::string("/count");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline std::string ConfigManager::get_partition_start(const std::string& table, uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return std::string("");
+    }
+    const std::string key = (((((std::string("partition/") + table)) + std::string("/"))) + std::to_string(std::move(idx))) + std::string("/start");
+    const rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    return vopt.unwrap_or(std::string(""));
+}
+
+inline uint32_t ConfigManager::get_partition_shard(const std::string& table, uint32_t idx) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return static_cast<uint32_t>(0);
+    }
+    const std::string key = (((((std::string("partition/") + table)) + std::string("/"))) + std::to_string(std::move(idx))) + std::string("/shard");
+    rusty::Option<std::string> vopt = ((rusty::detail::deref_if_pointer_like(((*this)).kv))).get(key);
+    if (vopt.is_some()) {
+        const std::string value = vopt.unwrap();
+        return static_cast<uint32_t>(cm_parse_u64(value));
+    }
+    return static_cast<uint32_t>(0);
+}
+
+inline void ConfigManager::put_partition_segment(const std::string& table, uint32_t idx, const std::string& start, uint32_t shard) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return;
+    }
+    const std::string skey = (((((std::string("partition/") + table)) + std::string("/"))) + std::to_string(std::move(idx))) + std::string("/start");
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(skey, start);
+    }
+    const std::string hkey = (((((std::string("partition/") + table)) + std::string("/"))) + std::to_string(std::move(idx))) + std::string("/shard");
+    const std::string hval = std::to_string(std::move(shard));
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(hkey, hval);
+    }
+}
+
+inline bool ConfigManager::set_partition_count(const std::string& table, uint32_t count) {
+    if (cm_kv_absent(((*this)).kv)) {
+        return false;
+    }
+    const uint32_t ntab = this->get_partition_table_count();
+    bool present = false;
+    uint32_t i = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(ntab)) {
+        if (this->get_partition_table_name(std::move(i)) == table) {
+            present = true;
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<uint32_t>(1);
+    }
+    if (!present) {
+        const std::string nkey = std::string("partition_table/") + std::to_string(std::move(ntab));
+        // @unsafe
+        {
+            ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(nkey, table);
+        }
+        const std::string cnkey = std::string("partition_table_count");
+        const std::string cnval = std::to_string(rusty::detail::deref_if_pointer_like(ntab) + 1);
+        // @unsafe
+        {
+            ((rusty::detail::deref_if_pointer_like(((*this)).kv))).put(cnkey, cnval);
+        }
+    }
+    const std::string ckey = ((std::string("partition/") + table)) + std::string("/count");
+    const std::string cval = std::to_string(std::move(count));
+    return this->put_versioned(ckey, cval);
+}
+
+inline bool ConfigManager::seed_partition(const std::string& table, uint32_t shard) {
+    const std::string empty = std::string("");
+    this->put_partition_segment(table, static_cast<uint32_t>(0), empty, std::move(shard));
+    return this->set_partition_count(table, static_cast<uint32_t>(1));
 }
 
 inline std::string ConfigManager::get_sharding_policy(const std::string& table) {
@@ -1028,5 +1097,68 @@ inline bool ConfigManager::delete_sharding_policy(const std::string& table) {
 /*RUSTYCPP:GEN-END id=config_manager.1*/
 /*RUSTYCPP:GEN-BEGIN*/
 /*RUSTYCPP:GEN-END*/
+
+// @unsafe - reads the current map-mode partition table through the
+// ConfigManager, splices [lo,hi) onto `dest`, and writes it back (version bumped
+// last via set_partition_count). This is the ONE mutation a migration commit
+// performs on the authoritative range->shard map. Defined here (after the GEN
+// block) where ConfigManager is a complete type; ShardMaster::commit calls it.
+inline bool cm_split_and_reassign(ConfigManager* cm, const std::string& table,
+                                  const std::string& lo, const std::string& hi,
+                                  uint32_t dest) {
+    if (cm == nullptr) return false;
+    uint32_t n = cm->get_partition_count(table);
+    if (n == 0) return false;                 // no partition to reassign; seed it first
+    std::vector<std::string> starts;
+    std::vector<uint32_t> shards;
+    for (uint32_t i = 0; i < n; ++i) {
+        starts.push_back(cm->get_partition_start(table, i));
+        shards.push_back(cm->get_partition_shard(table, i));
+    }
+    // Owner of key k under the CURRENT segments = shard of the segment with the
+    // greatest start <= k (segments tile the space; the first start is "").
+    auto owner_of = [&](const std::string& k) -> uint32_t {
+        uint32_t o = shards[0];
+        std::string best = starts[0];
+        for (size_t i = 0; i < starts.size(); ++i) {
+            if (starts[i] <= k && !(starts[i] < best)) { best = starts[i]; o = shards[i]; }
+        }
+        return o;
+    };
+    // Materialize boundaries at lo and (finite) hi, owners taken from the current map.
+    bool have_lo = false, have_hi = false;
+    for (const auto& s : starts) {
+        if (s == lo) have_lo = true;
+        if (!hi.empty() && s == hi) have_hi = true;
+    }
+    const uint32_t owner_lo = owner_of(lo);
+    const uint32_t owner_hi = hi.empty() ? 0u : owner_of(hi);
+    if (!have_lo) { starts.push_back(lo); shards.push_back(owner_lo); }
+    if (!hi.empty() && !have_hi) { starts.push_back(hi); shards.push_back(owner_hi); }
+    // Order the segments by start.
+    std::vector<size_t> order(starts.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(),
+              [&](size_t a, size_t b) { return starts[a] < starts[b]; });
+    // Reassign every segment whose start is in [lo,hi) to dest, coalescing
+    // same-owner neighbors in one pass.
+    std::vector<std::string> ns;
+    std::vector<uint32_t> nsh;
+    for (size_t j = 0; j < order.size(); ++j) {
+        const std::string& st = starts[order[j]];
+        uint32_t sh = shards[order[j]];
+        if (st >= lo && (hi.empty() || st < hi)) sh = dest;
+        if (!ns.empty() && nsh.back() == sh) continue;   // coalesce
+        ns.push_back(st);
+        nsh.push_back(sh);
+    }
+    // Write back segments, then the count (version bump last). Stale tail
+    // segments beyond the new count are unreachable — get_partition_count gates
+    // every read.
+    for (size_t i = 0; i < ns.size(); ++i) {
+        cm->put_partition_segment(table, static_cast<uint32_t>(i), ns[i], nsh[i]);
+    }
+    return cm->set_partition_count(table, static_cast<uint32_t>(ns.size()));
+}
 
 }  // namespace janus
