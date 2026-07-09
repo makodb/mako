@@ -150,15 +150,18 @@ void RaftWorker::SetupService() {
   }
 }
 
-// @safe - pointer dereferences are bounded, external calls marked @external
+// @unsafe - borrows/creates RaftFrame-owned communicator and wires it into the
+// borrowed RaftServer.
 void RaftWorker::SetupCommo() {
-  // Create Raft communicator
+  // Borrow/create the RaftFrame-owned communicator.
   verify(rep_frame_ != nullptr);
   verify(rep_sched_ != nullptr);
 
   // @unsafe
   { // rep_frame_-> pointer dereference, Option::clone
-    // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThreadWorker()
+    // CreateCommo returns a borrowed pointer to RaftFrame::commo_; RaftWorker
+    // must not delete it. Use clone() to preserve svr_poll_thread_worker_ for
+    // later use by GetPollThreadWorker().
     rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
   }
 
@@ -224,6 +227,8 @@ void RaftWorker::ShutDown() {
 
   // rep_sched_ is borrowed from RaftFrame::svr_; RaftWorker must not delete it.
   rep_sched_ = nullptr;
+  // rep_commo_ is borrowed from RaftFrame::commo_; RaftWorker must not delete it.
+  rep_commo_ = nullptr;
 
   // IMPORTANT: Shutdown poll threads AFTER servers are destroyed.
   // Server::~Server() enqueues remove commands to the poll thread; keeping the
