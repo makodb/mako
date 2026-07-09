@@ -2682,6 +2682,23 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
 
+    # Test: live online-migration REROUTE over the real non-txn client->server
+    # RPC path with TWO real shard servers in one process. Seeds via the client,
+    # migrates a key range 0->1 through the ShardMaster on real mbta stores, and
+    # asserts the same client's nontxnGet is rerouted to shard 1 (no lost write).
+    add_executable(test_mako_migration_reroute tests/test_mako_migration_reroute.cc)
+    target_include_directories(test_mako_migration_reroute PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mako_migration_reroute PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mako_migration_reroute
+        cluster mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_mako_migration_reroute COMMAND test_mako_migration_reroute)
+
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
     # is not picked up by ctest.
