@@ -343,12 +343,13 @@ run_2shard_no_replication() {
     return 1
 }
 
-# Function: live operator-driven migration on the replicated multi-process bed.
+# Function: live operator-driven migration on the PARTITION bed (two shard
+# processes, no replication -- replication is orthogonal to what this checks).
 # MAKO_CLUSTER_CONFIG=1 + map routing + seeded migratable rows on shard 1; once
-# both shard leaders' data planes are up, mako_admin fires ONE Migrate RPC at
-# shard 0's MigrationAdmin service, which drives the STANDING shard-0
-# ShardMaster through the full online 2PC (remote source over ShardDataService)
-# while TPC-C serves. The script asserts the commit + the usual bed checks.
+# both shards' data planes are up, mako_admin fires ONE Migrate RPC at shard 0's
+# MigrationAdmin service, which drives the STANDING shard-0 ShardMaster through
+# the full online 2PC (remote source over ShardDataService) while TPC-C serves.
+# The script asserts the commit + the usual bed checks.
 run_2shard_migration_admin() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shardMigrationAdmin"

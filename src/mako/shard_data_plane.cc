@@ -15,7 +15,8 @@
 #include <string>
 #include <thread>
 
-#include "storage/abstract_db.h"           // abstract_db::open_index / thread_init (virtual)
+#include "storage/abstract_db.h"           // abstract_db::thread_init (virtual)
+#include "standalone_index.h"              // registry-free mbta index factory
 #include "ordered_index_shard_data.h"      // janus::OrderedIndexShardData
 #include "ordered_index_kv_store.h"        // janus::OrderedIndexKvStore
 
@@ -112,9 +113,9 @@ private:
 
 janus::ShardData* make_engine_shard_data(abstract_db* db,
                                          const std::string& table_name,
-                                         int shard_index) {
+                                         long table_id) {
     if (db == nullptr) return nullptr;
-    ::abstract_ordered_index* idx = db->open_index(table_name, shard_index);
+    ::FullOrderedIndex* idx = make_standalone_index(table_name, table_id);
     if (idx == nullptr) return nullptr;
     // Leaked: process-lifetime, like the bootstrap's other singletons.
     return new EngineShardData(db, idx);

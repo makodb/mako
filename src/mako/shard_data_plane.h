@@ -16,16 +16,16 @@ class FullOrderedIndex;
 
 namespace mako {
 
-// Open (or create) the non-txn index `table_name` on this shard and return a
-// process-lifetime ShardData over it whose every op first ENGINE-REGISTERS the
-// calling thread (Silo/mbta thread_init) — rrr service handler threads are not
-// otherwise registered. Call from threads that are NOT already engine-registered
-// workload threads (service/admin/seed threads); it must not run on a thread that
-// already holds a workload identity, since registration assigns a fresh id.
-// Returns nullptr if the index cannot be opened.
+// Create the shard's migratable non-txn index (STANDALONE, with the given fixed
+// table id — system tables must not consume per-process open_index id slots;
+// see standalone_index.cc) and return a process-lifetime ShardData over it whose
+// every op first ENGINE-REGISTERS the calling thread (Silo/mbta thread_init) —
+// rrr service handler threads are not otherwise registered. Call from threads
+// that are NOT already engine-registered workload threads (service/admin/seed
+// threads). Returns nullptr if the index cannot be created.
 janus::ShardData* make_engine_shard_data(abstract_db* db,
                                          const std::string& table_name,
-                                         int shard_index);
+                                         long table_id);
 
 // Engine-register the calling thread with `db` (idempotent per thread). The
 // admin Migrate handler calls this up front so config-store writes (the

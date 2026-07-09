@@ -810,6 +810,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/shard_data_plane.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/standalone_index.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/migration_demo_endpoint.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"

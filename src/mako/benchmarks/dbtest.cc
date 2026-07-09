@@ -643,6 +643,12 @@ main(int argc, char **argv)
   } else {
     // Single-shard mode: keep existing behavior
     abstract_db * db = initWithDB(); // Some init is required for followers/learners
+    // Wire the cluster runtime (config service + data plane + shard-0 master)
+    // here too: init_env's body is entirely the getIsReplicated() branch, so
+    // on the no-replication bed BootstrapClusterConfig would otherwise never
+    // run. Idempotent (internal once-guard): on replicated runs init_env
+    // already did this and the call is a no-op.
+    janus::BootstrapClusterConfig(db);
     restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
     // Opt-in cross-process migration demo, fired while the workload serves below.

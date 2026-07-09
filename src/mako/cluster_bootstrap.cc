@@ -9,10 +9,10 @@
 #include "ordered_index_kv_store.h"        // OrderedIndexKvStore
 #include "benchmarks/benchmark_config.h"   // BenchmarkConfig
 #include "shard_data_plane.h"              // make_engine_shard_data (engine-side factory TU)
+#include "standalone_index.h"              // registry-free system-table indexes
 
 import cluster;   // config/sharding metadata module (was #include "cluster/...")
 
-#include "deptran/config.h"                // Config
 #include "deptran/config_kv_service.h"     // ConfigKvServiceImpl, make_config_read_fn,
                                            // ConfigKvServiceProxy
 #include "shard_data_service.h"            // ShardDataServiceImpl / RemoteShardData / proxies
@@ -23,14 +23,17 @@ import cluster;   // config/sharding metadata module (was #include "cluster/..."
 namespace janus {
 namespace {
 
-// The config-read service listens on shard-0 leader's base port + this
-// delta. Both server bind and client connect use the same delta, so they
-// stay symmetric. The delta must live INSIDE the shard's 1000-port paxos
-// window: site offsets stay under ~450 and the heartbeat control server
-// is at +10000 (PaxosWorker/RaftWorker CtrlPortDelta), so the 500..999
-// gap is free. The old +20000 overflowed 65535 for most randomized CI
-// port bases (e.g. base 52210 -> 72210), silently disabling the service.
-constexpr int kConfigKvPortDelta = 900;
+// The config-read service listens at shard 0's MAKO transport port + this
+// delta (server bind and client connect derive it identically from the
+// SHARED mako config, which names every shard on every node -- unlike the
+// per-shard deptran paxos config, which cannot address peers and does not
+// even exist on the no-replication bed). Mako shard port windows are 100
+// apart and mako itself binds shard_port + id with id <= ~20, so small
+// deltas in the 25..99 gap are free: 50 = xproc demo, 60 = the data
+// plane, 70 = this. (History: the delta was +20000 off the deptran leader
+// port, which overflowed 65535 for most randomized CI port bases and
+// silently disabled the service.)
+constexpr int kConfigKvPortDelta = 70;
 
 // How often a node re-polls shard 0 for a config-version change.
 constexpr uint64_t kConfigPollIntervalMs = 1000;
@@ -63,6 +66,15 @@ rusty::Option<rusty::Box<ShardMaster>> g_shard_master;   // shard-0 leader only:
 constexpr int kShardDataPortDelta = 60;
 // The migratable non-txn KV index each shard leader serves for range migration.
 constexpr const char* kMigratableTable = "__mako_kv__";
+// FIXED table ids for the runtime's system tables. These indexes are created
+// STANDALONE (mako::make_standalone_index) -- NOT via abstract_db::open_index --
+// because open_index assigns per-process sequential ids: bootstrap-opened tables
+// would shift every workload table id after them, asymmetrically across shards
+// (only shard 0 opens the config store), breaking cross-shard table-id
+// arithmetic (observed live: ~100% remote aborts on both shards). Values sit far
+// outside the per-shard 200-id workload windows.
+constexpr long kConfigStoreTableId = 9001;
+constexpr long kMigratableTableId  = 9002;
 ShardData* g_data_plane = nullptr;                        // this shard's data plane (leaked)
 abstract_db* g_dp_db = nullptr;                           // for engine thread registration
 rusty::Option<rusty::Arc<rrr::PollThread>> g_data_poll;   // data-plane server poll
@@ -76,20 +88,21 @@ bool cluster_config_enabled() {
     return v != nullptr && strcmp(v, "1") == 0;
 }
 
-// Seed shard 0's config store from the static YAML topology so other
+// Seed shard 0's config store from the shared mako topology so other
 // nodes have a complete snapshot to read on their first poll. Blind
 // puts; __version__ is bumped last (set_shard_count), so a reader that
-// observes the new version sees every key of it.
+// observes the new version sees every key of it. Shard identity comes
+// from the MAKO transport config (host:port per shard) -- present in
+// every mode; the deptran paxos config (per-shard, replicated-only) is
+// deliberately not consulted, so this runs on the no-replication bed too.
 // @unsafe - KvStore writes via ConfigManager
 void SeedTopology(ConfigManager* cm, uint32_t nshards) {
-    Config* cfg = Config::GetConfig();
+    auto& bench = BenchmarkConfig::getInstance();
     for (uint32_t sid = 0; sid < nshards; ++sid) {
-        std::vector<std::string> replica_names;
-        for (auto& site : cfg->SitesByPartitionId(sid)) {
-            replica_names.push_back(site.name);
-        }
-        cm->set_shard_replicas(sid, replica_names);
-        cm->set_shard_leader(sid, cfg->LeaderSiteByPartitionId(sid).name);
+        auto s = bench.getConfig()->shard(static_cast<int>(sid), bench.getClusterRole());
+        const std::string site = s.host + ":" + s.port;
+        cm->set_shard_replicas(sid, {site});
+        cm->set_shard_leader(sid, site);
         cm->set_shard_status(sid, "active");
     }
     // Routing strategy: "hash" (default) or "map" (per-table partition tables --
@@ -231,9 +244,9 @@ void StartShardDataPlane(abstract_db* db) {
     auto& bench = BenchmarkConfig::getInstance();
     const int shard = static_cast<int>(bench.getShardIndex());
     g_dp_db = db;
-    g_data_plane = mako::make_engine_shard_data(db, kMigratableTable, shard);
+    g_data_plane = mako::make_engine_shard_data(db, kMigratableTable, kMigratableTableId);
     if (g_data_plane == nullptr) {
-        Log_warn("ShardDataPlane: could not open index '%s'", kMigratableTable);
+        Log_warn("ShardDataPlane: could not create index '%s'", kMigratableTable);
         return;
     }
     // Test/demo seeding, from a fresh engine-registered thread (never this one).
@@ -269,9 +282,12 @@ void StartShardDataPlane(abstract_db* db) {
 // own routing cache fresh from the local store (no self-RPC).
 // @unsafe - storage index open, RPC server bind, background thread
 void StartShard0Leader(abstract_db* db, uint32_t nshards) {
-    abstract_ordered_index* idx = db->open_index("__mako_config__", /*shard_index=*/0);
+    // Standalone (fixed-id) config index -- see kConfigStoreTableId above for
+    // why this must not go through open_index.
+    ::FullOrderedIndex* idx =
+        mako::make_standalone_index("__mako_config__", kConfigStoreTableId);
     if (idx == nullptr) {
-        Log_warn("BootstrapClusterConfig: could not open __mako_config__ index");
+        Log_warn("BootstrapClusterConfig: could not create __mako_config__ index");
         return;
     }
     // Engine-gated store: the ConfigWatcher poll thread and the ConfigKvService
@@ -305,9 +321,12 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     Log_info("BootstrapClusterConfig: shard-0 ShardMaster (migration coordinator) ready%s",
              g_data_plane != nullptr ? " (local data plane attached)" : "");
 
-    // Dedicated RPC server for config reads (config_node_init.cc pattern).
-    Config::SiteInfo me = Config::GetConfig()->LeaderSiteByPartitionId(0);
-    std::string bind_addr = "0.0.0.0:" + std::to_string(me.port + kConfigKvPortDelta);
+    // Dedicated RPC server for config reads, at this shard's mako port + delta
+    // (same shared-config derivation the data plane uses).
+    auto& bench = BenchmarkConfig::getInstance();
+    auto me = bench.getConfig()->shard(0, bench.getClusterRole());
+    std::string bind_addr =
+        "0.0.0.0:" + std::to_string(atoi(me.port.c_str()) + kConfigKvPortDelta);
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
     g_cfg_server = new rrr::Server(rusty::Some(g_cfg_poll.as_ref().unwrap().clone()));
     g_cfg_server->reg_service(rusty::make_box<ConfigKvServiceImpl>(kv));
@@ -329,8 +348,14 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
 // 0's config over RPC and watch it for changes.
 // @unsafe - RPC client connect, background thread
 void StartRemoteWatcher() {
-    Config::SiteInfo leader0 = Config::GetConfig()->LeaderSiteByPartitionId(0);
-    std::string addr = leader0.GetHostAddr(kConfigKvPortDelta);
+    // Shard 0's config service address from the SHARED mako config -- every
+    // process can name shard 0 (the old per-shard deptran paxos config could
+    // not: each process resolved partition 0 within its OWN file and dialed
+    // its own port + delta, where nothing listens).
+    auto& bench = BenchmarkConfig::getInstance();
+    auto leader0 = bench.getConfig()->shard(0, bench.getClusterRole());
+    std::string addr =
+        leader0.host + ":" + std::to_string(atoi(leader0.port.c_str()) + kConfigKvPortDelta);
 
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
     g_cfg_client = rusty::Some(rrr::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
