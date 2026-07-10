@@ -72,6 +72,12 @@ int get_shard_for_warehouse(int w_id) {
     return cache.get_shard_for_key("WAREHOUSE", w_id);
 }
 
+// @safe - Read-only lookup through the cluster module's partition routing.
+// Plain bridge for masstree TUs (tpcc.cc) that cannot import cluster.
+int tpcc_route_shard_for_warehouse(const std::string& logical_table, int global_wid) {
+    return mako::route_shard_for_warehouse(logical_table, global_wid);
+}
+
 // @unsafe - I/O operations
 void print_tpcc_sharding_policy(std::ostream& out) {
     auto& cache = janus::get_sharding_policy_cache();

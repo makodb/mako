@@ -66,8 +66,9 @@ public:
 
     // Write drain on the LOCAL engine: wait until no staged-write txn that
     // began before the fence remains (the staged-writer counter in
-    // lib/migration_fence.cc -- registered at staging BEFORE the fence check,
-    // closed at Transaction::stop, so post-fence the count only drains).
+    // lib/migration_fence.cc -- registered BEFORE the fence check, closed at
+    // Transaction::stop for txn staging and at RAII scope exit for the
+    // internally-retrying one-op kernels, so post-fence the count only drains).
     // NOTE deliberately NOT Silo's active_epoch: idle 2PC participants hold
     // in_progress-but-empty txns that pin epochs forever; empty txns cannot
     // hold pre-fence staged writes, so the counter is both sufficient and

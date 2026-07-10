@@ -67,6 +67,34 @@ int get_shard_for_warehouse(int w_id);
 // Implementation in src/deptran/tpcc_sharding.cc
 void print_tpcc_sharding_policy(std::ostream& out = std::cout);
 
+/**
+ * @brief Partition-governed shard for a global warehouse id, or -1 when the
+ * logical table is ungoverned (caller keeps the legacy static layout).
+ *
+ * Plain-header bridge to mako::route_shard_for_warehouse in the cluster
+ * module (tpcc.cc is a masstree TU and cannot import cluster). Used by
+ * WarehouseInShard so a partition-table cutover reroutes new transactions.
+ */
+// Implementation in src/deptran/tpcc_sharding.cc
+int tpcc_route_shard_for_warehouse(const std::string& logical_table, int global_wid);
+
+/**
+ * @brief Seed per-table warehouse partition tables on the shard-0 master.
+ *
+ * The mixed routing strategy: the partition table guards routing, and the
+ * TPC-C workload fills it with sharding-by-warehouse. For every
+ * warehouse-partitioned logical table this installs split points at
+ * warehouse boundaries matching the legacy layout, via the local
+ * ConfigManager. No-op (returning false) on processes without the master's
+ * ConfigManager, when the sharding mode is not "map", or if BootstrapClusterConfig
+ * has not run; idempotent per table otherwise.
+ *
+ * Implementation lives in src/mako/cluster_bootstrap.cc (owner of the
+ * ConfigManager singleton); declared here so tpcc.cc's init_tables can call
+ * it right after initialize_tpcc_sharding_policy.
+ */
+bool tpcc_seed_warehouse_partitions_if_master(int num_warehouses_total, int num_shards);
+
 }  // namespace mako
 
 #endif  // _MAKO_TPCC_SHARDING_H_

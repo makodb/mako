@@ -8,6 +8,7 @@
 #include "storage/abstract_db.h"           // abstract_db, abstract_ordered_index
 #include "ordered_index_kv_store.h"        // OrderedIndexKvStore
 #include "benchmarks/benchmark_config.h"   // BenchmarkConfig
+#include "benchmarks/tpcc_sharding.h"      // tpcc_seed_warehouse_partitions_if_master decl
 #include "shard_data_plane.h"              // make_engine_shard_data (engine-side factory TU)
 #include "standalone_index.h"              // registry-free system-table indexes
 
@@ -512,3 +513,42 @@ ShardMaster* get_shard_master() {
 }
 
 }  // namespace janus
+
+namespace mako {
+
+// The workload side of the mixed routing strategy: the partition table guards
+// routing, and TPC-C fills it with sharding-by-warehouse. Called from tpcc.cc
+// init_tables (which runs after BootstrapClusterConfig on the leader); only
+// the shard-0 leader owns the authoritative WRITABLE ConfigManager -- on every
+// other process g_cfg_cm wraps the read-only remote store, so this no-ops and
+// they learn the seeded partitions through their ConfigWatcher.
+// @unsafe - writes through the master's ConfigManager
+bool tpcc_seed_warehouse_partitions_if_master(int num_warehouses_total,
+                                              int num_shards) {
+    if (janus::g_shard_master.is_none()) return false;   // not the master process
+    if (janus::g_cfg_cm.is_none()) return false;
+    janus::ConfigManager* cm = janus::g_cfg_cm.as_ref().unwrap().get();
+    if (cm->get_sharding_mode() != "map") return false;  // partition routing not chosen
+    // Every warehouse-partitioned TPC-C table. item is deliberately absent:
+    // read-only + replicated per shard, its routing must stay local.
+    static const char* kTables[] = {
+        "customer", "customer_name_idx", "district", "history", "new_order",
+        "oorder", "oorder_c_id_idx", "order_line", "stock", "stock_data",
+        "warehouse"};
+    bool ok = true;
+    for (const char* t : kTables) {
+        if (!mako::seed_warehouse_partitions(cm, std::string(t),
+                                             num_warehouses_total, num_shards)) {
+            Log_warn("tpcc partition seeding failed for table %s", t);
+            ok = false;
+        }
+    }
+    if (ok) {
+        Log_info("tpcc partition seeding: %d warehouses across %d shards "
+                 "(11 warehouse-partitioned tables now governed)",
+                 num_warehouses_total, num_shards);
+    }
+    return ok;
+}
+
+}  // namespace mako

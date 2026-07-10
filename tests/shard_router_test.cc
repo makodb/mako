@@ -266,6 +266,130 @@ TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigOnlyForGovernedTables) 
               compute_shard_for_key(300, "anykey"));
 }
 
+// =============================================================================
+// Routing aliases: partition governance of per-warehouse physical indexes
+// =============================================================================
+
+// TPC-C opens one physical index per warehouse per table ("customer_0",
+// "customer_remote_5"); the key bytes carry only the LOCAL warehouse id, so
+// the index identity names the partition. The alias registered at open time
+// (logical table + fixed encoded-global-warehouse key) lets the partition
+// table govern those indexes: routing ignores the op's key bytes entirely.
+TEST_F(ShardRouterTest, RoutingAliasGovernsPhysicalIndexesByGlobalWarehouse) {
+    auto& reg = get_table_registry();
+    // Shard 1's physical index for global warehouse 3 (names never seeded).
+    reg.register_table(201, "customer_0");
+    reg.register_route(201, "customer", warehouse_route_key(3));
+    // Shard 0's remote proxy for the same warehouse: same logical route.
+    reg.register_table(7, "customer_remote_3");
+    reg.register_route(7, "customer", warehouse_route_key(3));
+    // An aliased table whose LOGICAL table is not governed: legacy fallback.
+    reg.register_table(9, "stock_remote_3");
+    reg.register_route(9, "stock", warehouse_route_key(3));
+
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    // 4 warehouses, 2 shards: [1,2] -> 0, [3,4] -> 1.
+    ASSERT_TRUE(seed_warehouse_partitions(&cm, "customer", 4, 2));
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+
+    // Both physical indexes of warehouse 3 route to shard 1 -- REGARDLESS of
+    // the op's key bytes (a local-wid key would say warehouse 1).
+    EXPECT_EQ(1, compute_shard_for_key(201, std::string("\x00\x00\x00\x01", 4)));
+    EXPECT_EQ(1, compute_shard_for_key(7, "unrelated-bytes"));
+    // Ungoverned logical table: arithmetic fallback, alias dormant.
+    EXPECT_EQ((9 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD,
+              compute_shard_for_key(9, "unrelated-bytes"));
+}
+
+// A partition-table cutover (the migration commit's publish) flips both the
+// physical-index routing AND the workload's warehouse oracle -- no re-open,
+// no workload change.
+TEST_F(ShardRouterTest, RoutingAliasFollowsWarehouseCutover) {
+    auto& reg = get_table_registry();
+    reg.register_table(210, "customer_0");   // shard 1's index, global wh 3
+    reg.register_route(210, "customer", warehouse_route_key(3));
+
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(seed_warehouse_partitions(&cm, "customer", 4, 2));
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+
+    EXPECT_EQ(1, compute_shard_for_key(210, "any"));
+    EXPECT_EQ(1, route_shard_for_warehouse("customer", 3));
+    EXPECT_EQ(0, route_shard_for_warehouse("customer", 2));
+
+    // Migrate warehouse 3 to shard 0: reassign [wrk(3), wrk(4)) and reload.
+    ASSERT_TRUE(janus::cm_split_and_reassign(&cm, "customer",
+                                             warehouse_route_key(3),
+                                             warehouse_route_key(4), 0));
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+
+    EXPECT_EQ(0, compute_shard_for_key(210, "any"));
+    EXPECT_EQ(0, route_shard_for_warehouse("customer", 3));
+    // Neighbors keep their owners.
+    EXPECT_EQ(0, route_shard_for_warehouse("customer", 2));
+    EXPECT_EQ(1, route_shard_for_warehouse("customer", 4));
+}
+
+// The seeded layout must reproduce the legacy static layout exactly --
+// wps = ceil(nw/ns), shard s owns warehouses [s*wps+1, min((s+1)*wps, nw)] --
+// for even, ragged, and degenerate splits. Seeding is also idempotent.
+TEST_F(ShardRouterTest, SeedWarehousePartitionsMatchesLegacyLayout) {
+    struct Case { int nw; int ns; };
+    const Case cases[] = {{4, 2}, {5, 2}, {9, 3}, {1, 2}, {6, 1}};
+    for (const auto& c : cases) {
+        get_table_registry().clear();
+        janus::InMemoryKvStore kv;
+        janus::ConfigManager cm(&kv);
+        for (int s = 0; s < c.ns; s++)
+            ASSERT_TRUE(cm.add_shard(s, {"s" + std::to_string(s)}));
+        ASSERT_TRUE(cm.set_sharding_mode("map"));
+        ASSERT_TRUE(seed_warehouse_partitions(&cm, "customer", c.nw, c.ns));
+        ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+
+        const int wps = (c.nw + c.ns - 1) / c.ns;
+        for (int w = 1; w <= c.nw; w++) {
+            EXPECT_EQ((w - 1) / wps, route_shard_for_warehouse("customer", w))
+                << "nw=" << c.nw << " ns=" << c.ns << " w=" << w;
+        }
+    }
+
+    // Idempotence: a re-seed must not clobber a live cutover.
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("map"));
+    ASSERT_TRUE(seed_warehouse_partitions(&cm, "customer", 4, 2));
+    ASSERT_TRUE(janus::cm_split_and_reassign(&cm, "customer",
+                                             warehouse_route_key(3),
+                                             warehouse_route_key(4), 0));
+    ASSERT_TRUE(seed_warehouse_partitions(&cm, "customer", 4, 2));  // no-op
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+    EXPECT_EQ(0, route_shard_for_warehouse("customer", 3));  // cutover survives
+}
+
+// Ungoverned (empty config, or populated hash-mode config): the warehouse
+// oracle answers -1 and callers keep the legacy static layout.
+TEST_F(ShardRouterTest, RouteShardForWarehouseUngovernedReturnsMinusOne) {
+    EXPECT_EQ(-1, route_shard_for_warehouse("customer", 3));
+
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    ASSERT_TRUE(cm.add_shard(0, {"s0"}));
+    ASSERT_TRUE(cm.add_shard(1, {"s1"}));
+    ASSERT_TRUE(cm.set_sharding_mode("hash"));   // partition routing not chosen
+    ASSERT_TRUE(janus::get_cluster_config().load_from_config_manager(&cm));
+    EXPECT_EQ(-1, route_shard_for_warehouse("customer", 3));
+}
+
 TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig) {
     get_table_registry().register_table(1, "GOVERNED");
 

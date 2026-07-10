@@ -49,6 +49,7 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_sharding.h"
+#include "lib/table_registry.h"   // register_route + warehouse_route_key (partition-governed routing)
 
 import std;
 
@@ -121,6 +122,14 @@ void ALWAYS_ERROR(bool aa){
 
 static inline ALWAYS_INLINE bool
 WarehouseInShard(int g_w_id, int sIdx) {
+  // Mixed routing strategy: when the partition table governs the TPC-C
+  // tables (map mode + seeded by the workload), it is the authority for
+  // warehouse ownership -- a migration cutover flips this answer and new
+  // transactions reroute. "customer" stands in for the whole warehouse
+  // group: all 11 governed tables are seeded with identical segments.
+  int s = mako::tpcc_route_shard_for_warehouse("customer", g_w_id);
+  if (s >= 0) return s == sIdx;
+  // Ungoverned: the legacy static layout.
   return g_w_id >= sIdx * NumWarehouses() + 1 && g_w_id <= sIdx * NumWarehouses() + NumWarehouses();
 }
 // #endif
@@ -3454,10 +3463,26 @@ private:
     const bool use_hashtable = UseHashtable(name); 
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehouses());
+    // Routing alias for partition-governed routing: each physical index maps
+    // to its logical table plus the encoded GLOBAL id of the first warehouse
+    // it covers (routing granularity == physical-index granularity; key bytes
+    // carry only the local warehouse id, so the index identity is the route).
+    // item is read-only + replicated per shard: never aliased, stays local.
+    const size_t local_shard = BenchmarkConfig::getInstance().getShardIndex();
+    const auto register_route_alias = [&](abstract_ordered_index *idx,
+                                          size_t first_local_wid_0based) {
+      if (is_read_only) return;
+      const int gwid = static_cast<int>(local_shard * NumWarehouses() +
+                                        first_local_wid_0based + 1);
+      mako::get_table_registry().register_route(
+          idx->get_table_id(), s_name, mako::warehouse_route_key(gwid));
+    };
     if (g_enable_separate_tree_per_partition && !is_read_only) {
       if (NumWarehouses() <= BenchmarkConfig::getInstance().getNthreads()) {
-        for (size_t i = 0; i < NumWarehouses(); i++)
+        for (size_t i = 0; i < NumWarehouses(); i++) {
           ret[i] = db->open_index(s_name + "_" + to_string(i));
+          register_route_alias(ret[i], i);
+        }
       } else {
         const unsigned nwhse_per_partition = NumWarehouses() / BenchmarkConfig::getInstance().getNthreads();
         for (size_t partid = 0; partid < BenchmarkConfig::getInstance().getNthreads(); partid++) {
@@ -3466,12 +3491,14 @@ private:
             NumWarehouses() : (partid + 1) * nwhse_per_partition;
           abstract_ordered_index *idx =
             db->open_index(s_name + "_" + to_string(partid));
+          register_route_alias(idx, wstart);
           for (size_t i = wstart; i < wend; i++)
             ret[i] = idx;
         }
       }
     } else {
       abstract_ordered_index *idx = db->open_index(s_name);
+      register_route_alias(idx, 0);
       for (size_t i = 0; i < NumWarehouses(); i++)
         ret[i] = idx;
     }
@@ -3508,6 +3535,13 @@ private:
         abstract_ordered_index *idx = db->open_index(
           s_name + "_remote_" + to_string(global_wid),
           s_idx);
+        // Routing alias (see OpenTablesForTablespace): remote proxies are
+        // exactly one-warehouse wide, keyed by their GLOBAL warehouse id.
+        // item stays unaliased (read-only, replicated per shard).
+        if (!is_read_only) {
+          mako::get_table_registry().register_route(
+              idx->get_table_id(), s_name, mako::warehouse_route_key(global_wid));
+        }
         ret[i] = idx;
       }
     }
@@ -3585,6 +3619,12 @@ private:
       int num_warehouses_total = cfg.getScaleFactor() * cfg.getNshards();
       int num_shards = cfg.getNshards();
       mako::initialize_tpcc_sharding_policy(num_warehouses_total, num_shards);
+      // Mixed routing strategy: the partition table guards routing; the
+      // workload fills it with sharding-by-warehouse. Master-only (no-op
+      // elsewhere: other shards learn it through their ConfigWatcher);
+      // dormant unless MAKO_SHARDING_MODE=map chose partition routing.
+      mako::tpcc_seed_warehouse_partitions_if_master(num_warehouses_total,
+                                                     num_shards);
     }
 
     if (g_enable_partition_locks) {

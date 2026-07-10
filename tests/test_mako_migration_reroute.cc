@@ -460,9 +460,16 @@ TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration
                   static_cast<int>(mako::ErrorCode::SUCCESS));
     }
 
-    // The racing writer: unique keys inside [r10, r20), recording every outcome.
-    struct Outcome { std::string key, val; int status; };
+    // The racing writer: unique keys inside [r10, r20), recording every outcome
+    // (with an ack timestamp so a failure can be correlated to the phases).
+    const auto t_base = std::chrono::steady_clock::now();
+    auto ms_now = [t_base] {
+        return (long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - t_base).count();
+    };
+    struct Outcome { std::string key, val; int status; long ack_ms; };
     std::vector<Outcome> outcomes;
+    long phase_ms[5] = {0, 0, 0, 0, 0};  // pre-lock, fenced, drained, caught-up, committed
     std::atomic<bool> stop{false};
     std::thread writer([&] {
         TThread::set_num_eprc_server(1);   // rpc id stays 6 for par_id 1
@@ -482,7 +489,7 @@ TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration
                 // UNKNOWN (not acked) -- record as neither SUCCESS nor BUSY.
                 st = -1;
             }
-            outcomes.push_back(Outcome{kb, vb, st});
+            outcomes.push_back(Outcome{kb, vb, st, ms_now()});
             ++i;
         }
     });
@@ -502,8 +509,11 @@ TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration
         master.attach_shard(1, &sd1);
         probe.begin_ok = master.begin_migration(0, 1, g_table_name, lo, hi);
         master.background_copy();          // live copy (writer racing)
+        phase_ms[0] = ms_now();
         master.lock_range();               // staging fence up
+        phase_ms[1] = ms_now();
         drain_ok = master.drain_source();  // wait out pre-fence in-flight writes
+        phase_ms[2] = ms_now();
         // Hold the fence for a beat (models a long catch-up copy on a big
         // range) so the racing writer demonstrably hits it: without this the
         // whole fence window is a few ms and the per-RPC writer can miss it,
@@ -511,9 +521,11 @@ TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration
         // this only widens the exercised window.
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         master.background_copy();          // catch-up over the quiescent range
+        phase_ms[3] = ms_now();
         master.final_sync();
         probe.prepared_ok = master.both_prepared();
         probe.commit_ok = master.commit_migration();
+        phase_ms[4] = ms_now();
     });
     mig.join();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));  // post-cutover acks
@@ -535,9 +547,16 @@ TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration
         if (o.status == static_cast<int>(mako::ErrorCode::SUCCESS)) {
             ++acked;
             std::string out;
+            std::string s0, s1;
+            const bool on_src = g_srv[0].store->get(lcdf::Str(o.key), s0, std::string::npos);
+            const bool on_dst = g_srv[1].store->get(lcdf::Str(o.key), s1, std::string::npos);
             ASSERT_EQ(TThread::sclient->nontxnGet(kTableId, o.key, out),
                       static_cast<int>(mako::ErrorCode::SUCCESS))
-                << "ACKED write lost: " << o.key;
+                << "ACKED write lost: " << o.key << " (acked at t=" << o.ack_ms
+                << "ms; phases pre-lock=" << phase_ms[0]
+                << " fenced=" << phase_ms[1] << " drained=" << phase_ms[2]
+                << " caught-up=" << phase_ms[3] << " committed=" << phase_ms[4]
+                << "; on_src=" << on_src << " on_dst=" << on_dst << ")";
             EXPECT_EQ(out, o.val) << "ACKED value corrupted: " << o.key;
         } else if (o.status == static_cast<int>(mako::ErrorCode::SERVER_BUSY)) {
             ++busy;

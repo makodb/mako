@@ -3,6 +3,7 @@
 #include "lib/server.h"
 #include "lib/common.h"
 #include "lib/table_registry.h"   // resolve an op's table NAME for the per-table freeze
+#include "lib/migration_fence.h"  // migration_owner_shard (routing-ownership recheck)
 #include "lib/transport_request_handle.h"
 #include "sto/Interface.hh"
 #include "benchmarks/common.h"
@@ -681,6 +682,21 @@ namespace mako
             if (is_get
                     ? janus::get_migration_guard().is_moved(fenced_table, key)
                     : janus::get_migration_guard().is_frozen(fenced_table, key)) {
+                return ErrorCode::SERVER_BUSY;
+            }
+        }
+
+        // Routing-ownership recheck (governed tables only): a request routed
+        // to this shard BEFORE a migration cutover can reach here AFTER it --
+        // the shed source's persistent fence normally rejects it, and this
+        // closes the same window at the routing layer (also the only guard in
+        // the single-process test bed, whose SHARED MigrationGuard loses the
+        // source's fence when commit unfences the destination). Serving shard
+        // != current owner => reject retryably; the client re-routes.
+        {
+            const int owner = mako::migration_owner_shard(
+                static_cast<int>(table_id), key.data(), key.size());
+            if (owner >= 0 && owner != TThread::get_shard_index()) {
                 return ErrorCode::SERVER_BUSY;
             }
         }

@@ -20,6 +20,8 @@ module;
 
 export module cluster:shard_router;
 
+import :config_manager;   // janus::ConfigManager (seed_warehouse_partitions)
+
 export namespace mako {
 
 // Number of tables pre-allocated per shard (for table-ID-based routing fallback)
@@ -54,6 +56,38 @@ int compute_shard_for_key(int table_id, const std::string& key);
  */
 // @safe - Uses thread-safe caches
 int compute_shard_for_key_value(int table_id, const std::string& table_name, int64_t key_value);
+
+/**
+ * @brief The partition-table-governed owner of (table_id, key), or -1 when
+ * the ClusterConfig does not govern the table -- no legacy fallback.
+ *
+ * The server-side ownership recheck (RunNontxnOp, via the migration_fence
+ * bridge) uses this to reject retryably any op executing on a shard the
+ * routing config says no longer owns the key: a request routed before a
+ * cutover but executed after it must not land on the old owner.
+ */
+// @safe - Uses thread-safe caches
+int governed_owner_shard(int table_id, const std::string& key);
+
+/**
+ * @brief Partition-governed shard for a global warehouse id, or -1 if the
+ * logical table is ungoverned (caller falls back to the static layout).
+ *
+ * The workload's local-vs-remote oracle: TPC-C's WarehouseInShard consults
+ * this (through the tpcc_sharding.cc bridge) so a partition-table cutover
+ * reroutes new transactions.
+ */
+// @safe - Uses thread-safe caches
+int route_shard_for_warehouse(const std::string& logical_table, int global_wid);
+
+/**
+ * @brief Seed `table`'s partition table with the static TPC-C warehouse
+ * layout (split points at warehouse boundaries in warehouse_route_key
+ * encoding). Idempotent: keeps an existing partition table untouched.
+ */
+// @unsafe - writes through the raw ConfigManager pointer
+bool seed_warehouse_partitions(janus::ConfigManager* cm, const std::string& table,
+                               int num_warehouses_total, int num_shards);
 
 /**
  * @brief Check if policy-based routing is available for a table.

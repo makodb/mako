@@ -146,6 +146,12 @@ inline size_t oi_mbta_size(const mbta_table *t) { return t->approx_size(); }
 // @unsafe - Sto txn read; pokes TThread read-set metadata (UPDATE_VS)
 inline bool oi_mbta_tx_get_local(mbta_table *t, lcdf::Str key,
                                  std::string &value) {
+  // Moved-range ownership guard on the READ path: after a migration sheds a
+  // range (marked moved), this shard's copy is stale/dropped -- a local read
+  // must not serve it. Abort retryably; the retry reroutes to the new owner
+  // once routing reloads. (Frozen-but-not-moved ranges still serve reads.)
+  if (mako::migration_read_moved(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   STD_OP({
     bool ret = t->transGet(key, value);
     // Check for silent abort (transGet uses abort_without_throw for
@@ -441,11 +447,18 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
   const std::string enc = mako::Encode(value);
+  // Registration spans the WHOLE logical put: t->put retries OCC aborts
+  // INTERNALLY, and a per-txn registration (stage_fenced) closes at the first
+  // attempt's Transaction::stop -- the internal retry then runs uncounted and
+  // unfenced, and can commit on the source AFTER the drain returned and the
+  // catch-up copy scanned (observed live: lost acknowledged write, racing-
+  // writer test). The RAII holds the drain until the final attempt lands;
+  // register-then-check keeps the proof shape.
+  mako::MigrationStagedWriter staged_writer;
   while (true) {
-    // Fence + staged-writer registration PER ATTEMPT: each retry is a new
-    // one-op txn (Transaction::stop closed the previous registration), and a
-    // post-fence attempt must abort out of the loop, not spin on it.
-    if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
+    // Fence check per attempt: a post-fence attempt must abort out of the
+    // loop, not spin on it.
+    if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
       throw abstract_db::abstract_abort_exception();
     try {
       return t->put(key, StringWrapper(enc));
@@ -467,9 +480,11 @@ inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
                                  const std::string &value) {
   // Raw-bytes convention: Encode applied here, once (see put above).
   const std::string enc = mako::Encode(value);
+  // Registration spans the whole logical insert; fence per attempt (see put
+  // above for why per-txn registration loses internally-retried commits).
+  mako::MigrationStagedWriter staged_writer;
   while (true) {
-    // Fence + staged-writer registration per attempt (see put above).
-    if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
+    if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
       throw abstract_db::abstract_abort_exception();
     try {
       return t->insert(key, StringWrapper(enc));
@@ -487,8 +502,11 @@ inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key) {
 
 // @unsafe - direct raw write through the MassTrans cursor
 inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
-  // Direct raw write (the documented asymmetry: no txn, no Transaction::stop),
-  // so the NON-counting fence check -- there is no staged window to drain.
+  // Direct raw write (the documented asymmetry: no txn, no Transaction::stop).
+  // The RAII registration covers the check-then-act gap: a fence installing
+  // between the check and the raw write would otherwise let the delete land
+  // after the drain, and the copy would resurrect the key on the destination.
+  mako::MigrationStagedWriter staged_writer;
   if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   return t->remove(key);
