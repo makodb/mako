@@ -19,6 +19,7 @@
 #include "benchmarks/benchmark_config.h"
 #include "lib/common.h"
 #include "lib/table_registry.h"
+#include "lib/migration_fence.h"
 #include "benchmarks/rpc_setup.h"
 #include "mbta_sharded_ordered_index.hh"
 
@@ -183,12 +184,22 @@ inline void oi_mbta_tx_put(mbta_table *t, lcdf::Str key,
 #if OP_LOGGING
   mt_put++;
 #endif
+  // Migration write-fence, checked INSIDE the transaction at staging (see
+  // migration_fence.h): a fenced key aborts the txn retryably -- the worker
+  // retries and lands on the new owner once routing reloads.
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   STD_OP({ t->transPut(key, StringWrapper(value)); });
 }
 
 // @unsafe - Sto txn insert
 inline void oi_mbta_tx_insert(mbta_table *t, lcdf::Str key,
                               const std::string &value) {
+  // Migration write-fence, checked INSIDE the transaction at staging (see
+  // migration_fence.h): a fenced key aborts the txn retryably -- the worker
+  // retries and lands on the new owner once routing reloads.
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   STD_OP(t->transInsert(key, StringWrapper(value));)
 }
 
@@ -197,6 +208,11 @@ inline void oi_mbta_tx_remove(mbta_table *t, lcdf::Str key) {
 #if OP_LOGGING
   mt_del++;
 #endif
+  // Migration write-fence, checked INSIDE the transaction at staging (see
+  // migration_fence.h): a fenced key aborts the txn retryably -- the worker
+  // retries and lands on the new owner once routing reloads.
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   STD_OP(t->transDelete(key));
 }
 
@@ -300,6 +316,11 @@ inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
 // @unsafe - ambient-txn write + write-set lock
 inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
                                      const std::string &value) {
+  // Migration write-fence, checked INSIDE the transaction at staging (see
+  // migration_fence.h): a fenced key aborts the txn retryably -- the worker
+  // retries and lands on the new owner once routing reloads.
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   STD_OP({
     t->transPut(key, StringWrapper(value));
     if (!Sto::shard_try_lock_last_writeset()) {
@@ -416,6 +437,11 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
   // pointer into the caller's buffer until commit and therefore needs
   // the caller to own an Encode()d copy). The one-op txn commits
   // inside mbta.put, so the local's lifetime suffices.
+  // Migration write-fence, checked INSIDE the transaction at staging (see
+  // migration_fence.h): a fenced key aborts the txn retryably -- the worker
+  // retries and lands on the new owner once routing reloads.
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   const std::string enc = mako::Encode(value);
   while (true) {
     try {
@@ -436,6 +462,8 @@ inline bool oi_mbta_insert_remote(mbta_table *t, lcdf::Str key,
 // @unsafe - one-op OCC put-if-absent with retry
 inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
                                  const std::string &value) {
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   // Raw-bytes convention: Encode applied here, once (see put above).
   const std::string enc = mako::Encode(value);
   while (true) {
@@ -455,6 +483,8 @@ inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key) {
 
 // @unsafe - direct raw write through the MassTrans cursor
 inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
+  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+    throw abstract_db::abstract_abort_exception();
   return t->remove(key);
 }
 

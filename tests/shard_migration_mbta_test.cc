@@ -13,6 +13,7 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"
+#include "lib/migration_fence.h"   // MigrationFenceBypass (T1 fence test)
 #include "storage/mbta_wrapper.hh"
 #include "ordered_index_shard_data.h"   // the real shard-data class under test (import cluster: ShardMaster)
 
@@ -421,6 +422,63 @@ TEST_F(ShardMigrationMbta, EndToEndDynamicReshardWithLiveMigration) {
     // Data physically moved: shard0 shed the range, shard1 holds it.
     EXPECT_EQ(shard0.range_count(k(10), k(20)), 0u);
     EXPECT_EQ(shard1.range_count(k(10), k(20)), 9u);   // 10 - 1 delete
+}
+
+// ---------------------------------------------------------------------------
+// TxnMig T1: the migration write fence at STAGING, on the real engine. A write
+// into a fenced (frozen OR moved) range of the fenced TABLE aborts retryably
+// (abstract_abort_exception -- what the worker retry loop catches) from INSIDE
+// the one-op txn; the data plane's own writes bypass; other tables and keys
+// outside the range are untouched.
+// ---------------------------------------------------------------------------
+TEST(StagingWriteFence, AbortsRetryablyAndBypasses) {
+    engine_thread_init();
+    auto& guard = janus::get_migration_guard();
+    guard.clear();
+
+    auto* fenced_idx = fresh_index("fence_tbl");
+    auto* other_idx  = fresh_index("other_tbl");
+    // Names must match what the fence resolves (mbta_table::get_table_name).
+    // fresh_index names them via mbta_index_build, so they carry these names.
+
+    // Pre-fence writes land normally.
+    ASSERT_TRUE(fenced_idx->put(lcdf::Str("m05"), "v0"));
+
+    // FROZEN [m00,m50) of fence_tbl: staged writes inside abort retryably...
+    guard.freeze("fence_tbl", "m00", "m50");
+    EXPECT_THROW(fenced_idx->put(lcdf::Str("m10"), "x"),
+                 abstract_db::abstract_abort_exception);
+    EXPECT_THROW(fenced_idx->insert(lcdf::Str("m11"), "x"),
+                 abstract_db::abstract_abort_exception);
+    EXPECT_THROW(fenced_idx->remove(lcdf::Str("m05")),
+                 abstract_db::abstract_abort_exception);
+    // ...while keys outside the range and OTHER tables are unaffected.
+    ASSERT_TRUE(fenced_idx->put(lcdf::Str("z99"), "out"));
+    ASSERT_TRUE(other_idx->put(lcdf::Str("m10"), "other-table"));
+
+    // The frozen write never landed; the pre-fence row survived the fenced
+    // remove attempt.
+    { std::string out;
+      EXPECT_FALSE(fenced_idx->get(lcdf::Str("m10"), out, std::string::npos));
+      ASSERT_TRUE(fenced_idx->get(lcdf::Str("m05"), out, std::string::npos));
+      EXPECT_EQ(out, "v0"); }
+
+    // The data plane's own writes (the migration copy) bypass the fence.
+    {
+        mako::MigrationFenceBypass bypass;
+        ASSERT_TRUE(fenced_idx->put(lcdf::Str("m20"), "copied"));
+    }
+
+    // MOVED still fences writes (is_frozen matches both states).
+    guard.mark_moved("fence_tbl", "m00", "m50");
+    EXPECT_THROW(fenced_idx->put(lcdf::Str("m30"), "x"),
+                 abstract_db::abstract_abort_exception);
+
+    // Unfence: writes flow again.
+    guard.unfreeze("fence_tbl", "m00", "m50");
+    ASSERT_TRUE(fenced_idx->put(lcdf::Str("m30"), "thawed"));
+
+    guard.clear();
 }
 
 }  // namespace

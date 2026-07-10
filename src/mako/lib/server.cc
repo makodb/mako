@@ -728,6 +728,12 @@ namespace mako
                 status = ErrorCode::ERROR;
                 break;
             }
+        } catch (abstract_db::abstract_abort_exception&) {
+            // The staging-time migration fence fired INSIDE the one-op txn
+            // (the check-then-act-proof placement; the early is_frozen check
+            // above is just the fast path). Retryable: the client backs off
+            // and lands on the new owner once routing reloads.
+            status = ErrorCode::SERVER_BUSY;
         } catch (...) {
             // The L3 non-txn ops retry OCC aborts internally; anything
             // escaping here is unexpected — surface as an error.

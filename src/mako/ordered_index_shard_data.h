@@ -16,6 +16,7 @@
 
 import cluster;   // ShardData participant port (janus::ShardData; was #include "shard_data.h")
 #include "storage/abstract_ordered_index.h"
+#include "lib/migration_fence.h"   // MigrationFenceBypass: plane writes are exempt
 
 #include <string>
 #include <utility>
@@ -29,7 +30,11 @@ public:
     // The index outlives this adapter (owned by the shard/process).
     explicit OrderedIndexShardData(::FullOrderedIndex* index) : index_(index) {}
 
+    // Data-plane writes are coordinator-controlled and exempt from the
+    // migration write fence (the copy itself pulls rows into a destination
+    // that may still carry a stale fence, e.g. ping-pong).
     void put(const std::string& key, const std::string& value) override {
+        mako::MigrationFenceBypass bypass;
         index_->put(lcdf::Str(key.data(), key.size()), value);
     }
     bool get(const std::string& key, std::string& out) override {
@@ -37,6 +42,7 @@ public:
                            std::string::npos);
     }
     void remove(const std::string& key) override {
+        mako::MigrationFenceBypass bypass;
         index_->remove(lcdf::Str(key.data(), key.size()));
     }
     std::vector<KvPair> scan_range(const std::string& lo,
