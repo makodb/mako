@@ -25,7 +25,7 @@ FILES=(
   src/mako/storage/mbta_wrapper.hh
   # Cluster metadata port authored in the DSL (namespaced trait —
   # generates cleanly under the a4bcff5f transpiler).
-  src/cluster/kv_store.h
+  # src/cluster/kv_store.h
   # Sharding-policy value types (copyable aggregates + inherent-impl
   # methods; KeyExtractor stays hand-C++ for its `type` keyword field).
   src/cluster/sharding_policy.h
