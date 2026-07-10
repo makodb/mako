@@ -53,10 +53,21 @@ pub struct VoteReply {
     max_ballot: i64,
     vote_granted: bool,
 }
+
+pub struct VoteDurableReq {
+    term: i64,
+    voter_id: u16,
+}
+
+pub struct VoteDurableReply {
+    acknowledged: bool,
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=1eadad9375039379452eb07205d2e8c38687338e3959be8d385885372a880a92*/
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=4f7959512702ebf0e9080d8d8718d6a5598af49738108df4c12ca177eb8688c1*/
 struct VoteReq;
 struct VoteReply;
+struct VoteDurableReq;
+struct VoteDurableReply;
 
 struct VoteReq {
     uint64_t last_log_idx;
@@ -69,20 +80,20 @@ struct VoteReply {
     int64_t max_ballot;
     bool vote_granted;
 };
+
+struct VoteDurableReq {
+    int64_t term;
+    uint16_t voter_id;
+};
+
+struct VoteDurableReply {
+    bool acknowledged;
+};
 /*RUSTYCPP:GEN-END id=messages.1*/
 
 // ---------------------------------------------------------------------------
 // VoteDurable — sent by a voter once its vote has been persisted.
 // ---------------------------------------------------------------------------
-struct VoteDurableReq {
-  ballot_t term{0};
-  siteid_t voter_id{0};
-};
-
-struct VoteDurableReply {
-  bool acknowledged{false};
-};
-
 // ---------------------------------------------------------------------------
 // AppendEntries (with command payload)
 // ---------------------------------------------------------------------------
