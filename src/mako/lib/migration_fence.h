@@ -28,6 +28,25 @@ namespace mako {
 bool migration_write_fenced(const std::string& table, const char* key, size_t len);
 bool migration_read_moved(const std::string& table, const char* key, size_t len);
 
+// The staging entry point the kernels call: registers this txn as a staged
+// writer (once per txn; the count is the DRAIN's ground truth -- Silo epochs
+// cannot serve here because idle 2PC participants pin them forever with
+// in_progress-but-empty txns), THEN checks the fence. Returns true if fenced
+// (the registration is rolled back if this call created it); the caller
+// aborts the txn retryably. Ordering makes the drain proof-grade: a writer is
+// counted BEFORE it can stage, and a post-fence writer aborts here before
+// staging -- so once the fence is up, the counter only drains, and zero means
+// every pre-fence staged-write txn has finished.
+bool migration_stage_fenced(const std::string& table, const char* key, size_t len);
+
+// Hook for Transaction::stop (every commit AND abort): closes this thread's
+// staged-writer registration, if any.
+void migration_fence_txn_done();
+
+// The drain: wait until no pre-fence staged-write txn remains (see above).
+// False on timeout.
+bool migration_fence_drain_writes(int timeout_ms);
+
 // @safe - thread-local depth counter; nestable.
 struct MigrationFenceBypass {
     MigrationFenceBypass();

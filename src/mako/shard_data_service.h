@@ -174,6 +174,14 @@ public:
         resp.copied = static_cast<rrr::i64>(copied >= 0 ? copied : 0);
         defer.reply();
     }
+    void DrainWrites(const RpcDrainWritesRequest& req, RpcDrainWritesResponse& resp,
+                     rrr::DeferredReply defer) override {
+        // The wait is engine-global; resolve the table only so the drain runs
+        // against a live plane (and creates none as a side effect of a typo).
+        ShardData* shard = resolve(req.table_name);
+        resp.ok = (shard != nullptr && shard->drain_writes()) ? 1 : 0;
+        defer.reply();
+    }
 
 private:
     ShardData* resolve(const std::string& table) {
@@ -310,6 +318,16 @@ public:
         ShardDataServiceProxy::RpcDropRangeRequest req;
         req.table_name = table_; req.lo = lo; req.hi = hi;
         if (proxy_->DropRange(req).is_err()) faulted_ = true;
+    }
+
+    // Write drain on the REMOTE shard: one RPC; the remote engine waits its
+    // Silo epochs past the fence capture. Fault-latches like every other op.
+    bool drain_writes() override {
+        ShardDataServiceProxy::RpcDrainWritesRequest req;
+        req.table_name = table_;
+        auto r = proxy_->DrainWrites(req);
+        if (r.is_err()) { faulted_ = true; return false; }
+        return r.unwrap().ok != 0;
     }
 
     // Migration write fence on the REMOTE shard (ShardData overrides): one RPC to

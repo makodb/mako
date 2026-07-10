@@ -187,7 +187,7 @@ inline void oi_mbta_tx_put(mbta_table *t, lcdf::Str key,
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+  if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   STD_OP({ t->transPut(key, StringWrapper(value)); });
 }
@@ -198,7 +198,7 @@ inline void oi_mbta_tx_insert(mbta_table *t, lcdf::Str key,
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+  if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   STD_OP(t->transInsert(key, StringWrapper(value));)
 }
@@ -211,7 +211,7 @@ inline void oi_mbta_tx_remove(mbta_table *t, lcdf::Str key) {
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+  if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   STD_OP(t->transDelete(key));
 }
@@ -319,7 +319,7 @@ inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
+  if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   STD_OP({
     t->transPut(key, StringWrapper(value));
@@ -440,10 +440,13 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
-    throw abstract_db::abstract_abort_exception();
   const std::string enc = mako::Encode(value);
   while (true) {
+    // Fence + staged-writer registration PER ATTEMPT: each retry is a new
+    // one-op txn (Transaction::stop closed the previous registration), and a
+    // post-fence attempt must abort out of the loop, not spin on it.
+    if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
+      throw abstract_db::abstract_abort_exception();
     try {
       return t->put(key, StringWrapper(enc));
     } catch (Transaction::Abort &) { /* conflict — retry */ }
@@ -462,11 +465,12 @@ inline bool oi_mbta_insert_remote(mbta_table *t, lcdf::Str key,
 // @unsafe - one-op OCC put-if-absent with retry
 inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
                                  const std::string &value) {
-  if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
-    throw abstract_db::abstract_abort_exception();
   // Raw-bytes convention: Encode applied here, once (see put above).
   const std::string enc = mako::Encode(value);
   while (true) {
+    // Fence + staged-writer registration per attempt (see put above).
+    if (mako::migration_stage_fenced(t->get_table_name(), key.data(), key.length()))
+      throw abstract_db::abstract_abort_exception();
     try {
       return t->insert(key, StringWrapper(enc));
     } catch (Transaction::Abort &) { /* conflict — retry */ }
@@ -483,6 +487,8 @@ inline bool oi_mbta_remove_remote(mbta_table *t, lcdf::Str key) {
 
 // @unsafe - direct raw write through the MassTrans cursor
 inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
+  // Direct raw write (the documented asymmetry: no txn, no Transaction::stop),
+  // so the NON-counting fence check -- there is no staged window to drain.
   if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
     throw abstract_db::abstract_abort_exception();
   return t->remove(key);

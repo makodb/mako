@@ -226,6 +226,18 @@ impl ShardMaster {
         let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
         unsafe { (*src).freeze_range(&lo, &hi) };
     }
+    // Drain the SOURCE's in-flight writes after lock_range: waits out every
+    // write that began before the fence installed (Silo epoch wait on the
+    // participant; one DrainWrites RPC for a remote source), so the catch-up
+    // copy that follows sees a provably quiescent range. False on timeout or
+    // no migration -- the caller aborts.
+    fn drain_source(&mut self) -> bool {
+        if !(*self).mig_active { return false; }
+        let src_id: u32 = (*self).mig_source;
+        if !(*self).shards.contains_key(src_id) { return false; }
+        let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
+        unsafe { (*src).drain_writes() }
+    }
     // A dead participant's reads degenerate to empty-scan / checksum-0, and an
     // EMPTY destination also checksums 0 -- a vacuous match. Never vote prepared
     // over a faulted participant: the coordinator aborts instead of committing a
@@ -399,7 +411,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=dd7457e7710007cdc0a55112935d7c0876c81fdfc0d3cfc9c504429f447712a0*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=657bf0a0d49c48d75dac2b48bb3aa5c411a19e18758b1d2dae511f20bb7c0c46*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -433,6 +445,7 @@ struct ShardMaster {
     bool begin_migration(uint32_t source, uint32_t dest, const std::string& table, const std::string& lo, const std::string& hi);
     void background_copy();
     void lock_range();
+    bool drain_source();
     bool participants_faulted() const;
     bool range_checksums_match() const;
     void final_sync();
@@ -628,6 +641,21 @@ inline void ShardMaster::lock_range() {
     // @unsafe
     {
         ((*src)).freeze_range(lo, hi);
+    }
+}
+
+inline bool ShardMaster::drain_source() {
+    if (!((*this)).mig_active) {
+        return false;
+    }
+    const uint32_t src_id = ((*this)).mig_source;
+    if (!((*this)).shards.contains_key(std::move(src_id))) {
+        return false;
+    }
+    ShardData* const src = ((*this)).shards.get(std::move(src_id)).unwrap().get();
+    // @unsafe
+    {
+        return ((*src)).drain_writes();
     }
 }
 

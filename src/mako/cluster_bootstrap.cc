@@ -204,7 +204,11 @@ private:
             return "begin_migration rejected";
         master->background_copy();     // Phase 1: copy, source still serving
         master->lock_range();          // Phase 2: master freezes the source's range
-        master->background_copy();     // catch-up: the range is now write-fenced
+        if (!master->drain_source()) { // wait out writes that began pre-fence
+            master->abort_migration();
+            return "write drain timed out -> aborted (source intact, unfrozen)";
+        }
+        master->background_copy();     // catch-up: the range is now QUIESCENT
         master->final_sync();          // Phase 3: checksum gate -> dest prepared
         if (!master->both_prepared()) {
             // Distinguish a dead/unreachable participant (its reads degenerate

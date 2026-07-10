@@ -106,6 +106,18 @@ public:
         for (const auto& kv : scan_range(lo, hi)) remove(kv.first);
     }
 
+    // ---- write drain (the fence's other half) ----
+    // Block until every write that BEGAN before this call has finished on this
+    // participant, so the post-drain catch-up copy sees a provably quiescent
+    // range: the staging fence rejects writes that begin AFTER the fence
+    // install, and this waits out the ones that began BEFORE it (the
+    // check-then-act closure -- see docs/mako-book.md s3). The engine
+    // participant waits Silo's active_epoch past the captured global_epoch
+    // (read-only reuse, ~1-2 advancer ticks); the RPC participant forwards to
+    // the remote shard; in-memory doubles are trivially quiescent. Returns
+    // false only on timeout (the coordinator aborts).
+    virtual bool drain_writes() { return true; }
+
     // ---- participant health ----
     // Has ANY operation on this participant failed (e.g. an RPC error on a
     // remote participant whose process died)? The coordinator consults this

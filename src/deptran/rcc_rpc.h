@@ -11167,6 +11167,36 @@ public:
         return ar;
     }
 
+    struct RpcDrainWritesRequest {
+        std::string table_name;
+        std::string lo;
+        std::string hi;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDrainWritesRequest& o) {
+        ar << o.table_name;
+        ar << o.lo;
+        ar << o.hi;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDrainWritesRequest& o) {
+        ar >> o.table_name;
+        ar >> o.lo;
+        ar >> o.hi;
+        return ar;
+    }
+
+    struct RpcDrainWritesResponse {
+        rrr::i32 ok;
+    };
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDrainWritesResponse& o) {
+        ar << o.ok;
+        return ar;
+    }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDrainWritesResponse& o) {
+        ar >> o.ok;
+        return ar;
+    }
+
     enum {
         SCANRANGE = 0x431847f1,
         CHECKSUM = 0x11430399,
@@ -11178,6 +11208,7 @@ public:
         FREEZERANGE = 0x245a293b,
         UNFREEZERANGE = 0x34bea045,
         PULLRANGE = 0x5be1e052,
+        DRAINWRITES = 0x3a8d0b81,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
@@ -11213,6 +11244,9 @@ public:
         if ((ret = svr.reg_rpc(PULLRANGE, svc_index)) != 0) {
             goto err;
         }
+        if ((ret = svr.reg_rpc(DRAINWRITES, svc_index)) != 0) {
+            goto err;
+        }
         return 0;
     err:
         svr.unreg(SCANRANGE);
@@ -11225,6 +11259,7 @@ public:
         svr.unreg(FREEZERANGE);
         svr.unreg(UNFREEZERANGE);
         svr.unreg(PULLRANGE);
+        svr.unreg(DRAINWRITES);
         return ret;
     }
     // @safe - Dispatch for RPC requests
@@ -11240,6 +11275,7 @@ public:
         case FREEZERANGE: __FreezeRange__wrapper__(std::move(req), weak_sconn); break;
         case UNFREEZERANGE: __UnfreezeRange__wrapper__(std::move(req), weak_sconn); break;
         case PULLRANGE: __PullRange__wrapper__(std::move(req), weak_sconn); break;
+        case DRAINWRITES: __DrainWrites__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
     }
@@ -11264,6 +11300,8 @@ public:
     virtual void UnfreezeRange(const RpcUnfreezeRangeRequest& req, RpcUnfreezeRangeResponse& resp, rrr::DeferredReply defer) = 0;
     // @safe
     virtual void PullRange(const RpcPullRangeRequest& req, RpcPullRangeResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void DrainWrites(const RpcDrainWritesRequest& req, RpcDrainWritesResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
@@ -11481,6 +11519,27 @@ private:
             this->PullRange(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
+    // @safe
+    void __DrainWrites__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        // @unsafe
+        {
+            RpcDrainWritesRequest __typed_req__;
+            rrr::MarshalSource __req_src__(&req->m);
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
+            __req_ar__ >> __typed_req__.lo;
+            __req_ar__ >> __typed_req__.hi;
+            auto __typed_resp__ = std::make_shared<RpcDrainWritesResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::BinaryWriteArchive& m) {
+                    m << __typed_resp__->ok;
+                },
+                []() {});
+            this->DrainWrites(__typed_req__, *__typed_resp__, std::move(__defer__));
+        }
+    }
 };
 
 class ShardDataServiceProxy {
@@ -11509,6 +11568,8 @@ public:
     using RpcUnfreezeRangeResponse = ShardDataServiceService::RpcUnfreezeRangeResponse;
     using RpcPullRangeRequest = ShardDataServiceService::RpcPullRangeRequest;
     using RpcPullRangeResponse = ShardDataServiceService::RpcPullRangeResponse;
+    using RpcDrainWritesRequest = ShardDataServiceService::RpcDrainWritesRequest;
+    using RpcDrainWritesResponse = ShardDataServiceService::RpcDrainWritesResponse;
     class ScanRangeTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
@@ -12050,6 +12111,60 @@ public:
         auto __typed_fu_result__ = this->async_PullRange(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcPullRangeResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+    class DrainWritesTypedFuture {
+    private:
+        rusty::Arc<rrr::Future> __fu__;
+    public:
+        explicit DrainWritesTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        rrr::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<rrr::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcDrainWritesResponse, rrr::i32> resolve() const {
+            rrr::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcDrainWritesResponse, rrr::i32>::Err(__ret__);
+            }
+            RpcDrainWritesResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            rrr::MarshalSource __reply_src__(&*__reply_guard__);
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
+            __reply_ar__ >> __typed_resp__.ok;
+            return rusty::Result<RpcDrainWritesResponse, rrr::i32>::Ok(__typed_resp__);
+        }
+        auto operator co_await() const {
+            return rrr::make_typed_future_awaitable(*this);
+        }
+    };
+    rusty::Result<DrainWritesTypedFuture, rrr::i32> async_DrainWrites(const RpcDrainWritesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ShardDataServiceService::DRAINWRITES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
+            __m__ << req.lo;
+            __m__ << req.hi;
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<DrainWritesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<DrainWritesTypedFuture, rrr::i32>::Ok(DrainWritesTypedFuture(__fu_result__.unwrap()));
+    }
+    rrr::TypedFutureResultAwaiter<DrainWritesTypedFuture> await_DrainWrites(const RpcDrainWritesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_DrainWrites(req, __fu_attr__));
+    }
+    rusty::Result<RpcDrainWritesResponse, rrr::i32> DrainWrites(const RpcDrainWritesRequest& req) {
+        auto __typed_fu_result__ = this->async_DrainWrites(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcDrainWritesResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

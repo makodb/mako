@@ -97,15 +97,22 @@ void rpc_server_thread(int si) {
                                             id);
     std::unordered_map<uint16_t, mako::HelperQueue*> queues;
     std::unordered_map<uint16_t, mako::HelperQueue*> queues_response;
-    queues[0] = new mako::HelperQueue(0, true);
-    queues_response[0] = new mako::HelperQueue(0, false);
+    // One helper queue per requesting client identity (server_id = the
+    // client's global warehouse id): 0 = the main test client (par_id 0),
+    // 1 = the racing writer (par_id 1). Mirrors production's one helper
+    // per client warehouse.
+    for (uint16_t q = 0; q <= 1; q++) {
+        queues[q] = new mako::HelperQueue(q, true);
+        queues_response[q] = new mako::HelperQueue(q, false);
+    }
     g_srv[si].transport->SetHelperQueues(queues);
     g_srv[si].transport->SetHelperQueuesResponse(queues_response);
     g_srv[si].transport->Run();
 }
 
-// The worker servicing non-txn RPCs for shard `si` against its own store.
-void helper_server_thread(int si) {
+// The worker servicing non-txn RPCs for shard `si` against its own store,
+// consuming helper queue `qid` (one worker per client identity).
+void helper_server_thread(int si, uint16_t qid) {
     scoped_db_thread_ctx ctx(g_db, true, 1);   // source=1 => helper_server
     TThread::set_mode(1);
     TThread::enable_multiverison();
@@ -119,8 +126,8 @@ void helper_server_thread(int si) {
     std::map<int, abstract_ordered_index*> tables;
     tables[kTableId] = g_srv[si].store;
     ss->Register(g_db,
-                 g_srv[si].transport->GetHelperQueue(0),
-                 g_srv[si].transport->GetHelperQueueResponse(0),
+                 g_srv[si].transport->GetHelperQueue(qid),
+                 g_srv[si].transport->GetHelperQueueResponse(qid),
                  tables);
     ss->Run();   // event driven
 }
@@ -172,7 +179,8 @@ protected:
         }
         sleep(2);
         for (int si = 0; si < 2; si++) {
-            std::thread(helper_server_thread, si).detach();
+            std::thread(helper_server_thread, si, static_cast<uint16_t>(0)).detach();
+            std::thread(helper_server_thread, si, static_cast<uint16_t>(1)).detach();
         }
         sleep(1);
 
@@ -418,6 +426,135 @@ TEST_F(MakoMigrationReroute, FrozenRangeRejectsRangeWritesDuringMigrationThenRer
                   static_cast<int>(mako::ErrorCode::SUCCESS));
         EXPECT_EQ(out, "after-cutover") << "the retried write landed on shard 1";
     }
+
+    janus::get_migration_guard().clear();
+}
+
+// ---------------------------------------------------------------------------
+// THE RACE TEST (TxnMig T2): a second client hammers the migrating range
+// through the real server path WHILE the migration freezes mid-stream, with the
+// full corrected sequence -- copy, lock (staging fence), DRAIN (Silo epoch
+// wait), catch-up copy, checksum, commit. The safety property, timing-free:
+//
+//     every ACKNOWLEDGED write is present with its value on the final owner.
+//
+// Before the staging fence + drain, a writer could pass the freeze check, have
+// its one-op txn commit after the checksum scans, and lose an acked write to
+// drop_range. The fence makes post-install writes abort retryably
+// (SERVER_BUSY); the drain waits out pre-install in-flight ones before the
+// catch-up copy; acks are therefore either copied or landed post-cutover on
+// the destination.
+//
+// The racing client runs on its own thread with its own ShardClient (sclient
+// is per-thread; par_id 1 binds port base+1) and pins the_num_rpc_server=1 on
+// that thread so its rpc id stays 6 (the bed's single server slot).
+// ---------------------------------------------------------------------------
+TEST_F(MakoMigrationReroute, RacingWriterLosesNoAcknowledgedWriteAcrossMigration) {
+    janus::get_migration_guard().clear();
+    const std::string lo = "r10", hi = "r20";
+    bool op = false;
+
+    // Seed base rows so the migration moves something even if the writer is slow.
+    for (int i = 0; i < 10; i++) {
+        ASSERT_EQ(TThread::sclient->nontxnPut(kTableId, "r1" + std::to_string(i), "seed", &op),
+                  static_cast<int>(mako::ErrorCode::SUCCESS));
+    }
+
+    // The racing writer: unique keys inside [r10, r20), recording every outcome.
+    struct Outcome { std::string key, val; int status; };
+    std::vector<Outcome> outcomes;
+    std::atomic<bool> stop{false};
+    std::thread writer([&] {
+        TThread::set_num_eprc_server(1);   // rpc id stays 6 for par_id 1
+        TThread::set_nshards(2);
+        mako::ShardClient wclient(config_path(), "localhost", kClientShard, /*par_id=*/1);
+        int i = 0;
+        while (!stop.load(std::memory_order_relaxed)) {
+            char kb[16], vb[16];
+            snprintf(kb, sizeof kb, "r1%d_%04d", i % 10, i);   // in [r10, r20)
+            snprintf(vb, sizeof vb, "w%04d", i);
+            bool wop = false;
+            int st;
+            try {
+                st = wclient.nontxnPut(kTableId, kb, vb, &wop);
+            } catch (...) {
+                // Client-side transport timeout etc.: the write's fate is
+                // UNKNOWN (not acked) -- record as neither SUCCESS nor BUSY.
+                st = -1;
+            }
+            outcomes.push_back(Outcome{kb, vb, st});
+            ++i;
+        }
+    });
+
+    // Let some writes land pre-fence, then migrate [r10,r20) 0 -> 1 with the
+    // full corrected sequence on real engine participants.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    MigrationProbe probe;
+    bool drain_ok = false;
+    std::thread mig([&] {
+        scoped_db_thread_ctx ctx(g_db, /*loader=*/true);
+        janus::OrderedIndexShardData sd0(g_srv[0].store);
+        janus::OrderedIndexShardData sd1(g_srv[1].store);
+        janus::ShardMaster master =
+            janus::ShardMaster::new_(g_cm, &janus::get_cluster_config());
+        master.attach_shard(0, &sd0);
+        master.attach_shard(1, &sd1);
+        probe.begin_ok = master.begin_migration(0, 1, g_table_name, lo, hi);
+        master.background_copy();          // live copy (writer racing)
+        master.lock_range();               // staging fence up
+        drain_ok = master.drain_source();  // wait out pre-fence in-flight writes
+        // Hold the fence for a beat (models a long catch-up copy on a big
+        // range) so the racing writer demonstrably hits it: without this the
+        // whole fence window is a few ms and the per-RPC writer can miss it,
+        // leaving the busy>0 coverage assertion flaky. Safety is timing-free;
+        // this only widens the exercised window.
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        master.background_copy();          // catch-up over the quiescent range
+        master.final_sync();
+        probe.prepared_ok = master.both_prepared();
+        probe.commit_ok = master.commit_migration();
+    });
+    mig.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // post-cutover acks
+    stop.store(true);
+    writer.join();
+
+    ASSERT_TRUE(probe.begin_ok);
+    EXPECT_TRUE(drain_ok) << "the epoch drain must complete (advancer running)";
+    ASSERT_TRUE(probe.prepared_ok)
+        << "checksums must match after fence+drain+catch-up -- a mismatch here "
+           "means a write slipped between the copy and the scans";
+    ASSERT_TRUE(probe.commit_ok);
+
+    // The safety property: every ACKED write is present with its value NOW
+    // (the client reroutes to the final owner). SERVER_BUSY writes never
+    // landed -- retried now, they land on the new owner.
+    int acked = 0, busy = 0;
+    for (const auto& o : outcomes) {
+        if (o.status == static_cast<int>(mako::ErrorCode::SUCCESS)) {
+            ++acked;
+            std::string out;
+            ASSERT_EQ(TThread::sclient->nontxnGet(kTableId, o.key, out),
+                      static_cast<int>(mako::ErrorCode::SUCCESS))
+                << "ACKED write lost: " << o.key;
+            EXPECT_EQ(out, o.val) << "ACKED value corrupted: " << o.key;
+        } else if (o.status == static_cast<int>(mako::ErrorCode::SERVER_BUSY)) {
+            ++busy;
+            std::string out;
+            EXPECT_NE(TThread::sclient->nontxnGet(kTableId, o.key, out),
+                      static_cast<int>(mako::ErrorCode::SUCCESS))
+                << "SERVER_BUSY write must not have landed: " << o.key;
+            bool rop = false;
+            EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, o.key, o.val, &rop),
+                      static_cast<int>(mako::ErrorCode::SUCCESS))
+                << "retry after cutover must land on the new owner";
+        }
+    }
+    // The race must actually have been exercised on both sides of the fence.
+    EXPECT_GT(acked, 0) << "no writes acked -- writer never got going";
+    EXPECT_GT(busy, 0) << "no writes fenced -- the migration won before the "
+                          "writer raced it (lengthen the writer head start?)";
 
     janus::get_migration_guard().clear();
 }

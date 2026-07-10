@@ -598,6 +598,12 @@ abstract service ShardDataService {
     // migration data never transits the master. copied = rows pulled.
     defer PullRange(string table_name, string lo, string hi,
                     string src_addr, string src_table | i64 copied, i32 ok);
+    // Write drain (the staging fence's other half): block until every write
+    // that BEGAN before this call has finished on this shard (Silo epoch wait),
+    // so the coordinator's catch-up copy sees a quiescent range. ok=0 on
+    // timeout (the coordinator aborts). Params are informational (the wait is
+    // engine-global).
+    defer DrainWrites(string table_name, string lo, string hi | i32 ok);
 }
 
 // Operator-facing migration trigger, served by shard 0's leader (the node that

@@ -10,6 +10,7 @@
 #include "deptran/s_main.h"
 #include "sto/sync_util.hh"
 #include "lib/common.h"
+#include "lib/migration_fence.h"   // staged-writer drain accounting (txn stop hook)
 #include "benchmarks/benchmark_config.h"
 
 import std;
@@ -193,6 +194,11 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
 
 // @unsafe: manipulates transaction items with unlock and cleanup operations
 void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
+    // Migration drain accounting: this txn (commit OR abort) is no longer a
+    // staged writer. The drain waits this count to zero after the fence
+    // installs (Silo epochs cannot serve: idle 2PC participants pin them with
+    // in_progress-but-empty txns). See lib/migration_fence.h.
+    mako::migration_fence_txn_done();
     if (!committed) {
         TXP_INCREMENT(txp_total_aborts);
 #if STO_DEBUG_ABORTS

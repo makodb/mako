@@ -82,6 +82,9 @@ public:
         engine_init_this_thread(db_);
         return inner_.scan_range_limited(lo, hi, limit);
     }
+    // The drain is engine-global (Silo epochs), delegated to the adapter.
+    bool drain_writes() override { return inner_.drain_writes(); }
+
     // Fence ops go to the process-global MigrationGuard under THIS table's name
     // (matching the remote service's named entries, so a later unfreeze -- e.g.
     // the destination clearing a stale fence when it re-gains a range -- finds

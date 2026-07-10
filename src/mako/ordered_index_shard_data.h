@@ -16,7 +16,7 @@
 
 import cluster;   // ShardData participant port (janus::ShardData; was #include "shard_data.h")
 #include "storage/abstract_ordered_index.h"
-#include "lib/migration_fence.h"   // MigrationFenceBypass: plane writes are exempt
+#include "lib/migration_fence.h"   // fence bypass + the staged-writer drain
 
 #include <string>
 #include <utility>
@@ -62,6 +62,18 @@ public:
         LimitedCollector cb(limit);
         index_->scan(lo, &hi, cb, nullptr);
         return std::move(cb.pairs);
+    }
+
+    // Write drain on the LOCAL engine: wait until no staged-write txn that
+    // began before the fence remains (the staged-writer counter in
+    // lib/migration_fence.cc -- registered at staging BEFORE the fence check,
+    // closed at Transaction::stop, so post-fence the count only drains).
+    // NOTE deliberately NOT Silo's active_epoch: idle 2PC participants hold
+    // in_progress-but-empty txns that pin epochs forever; empty txns cannot
+    // hold pre-fence staged writes, so the counter is both sufficient and
+    // immune to that pinning. Timeout 3s -> false, the coordinator aborts.
+    bool drain_writes() override {
+        return mako::migration_fence_drain_writes(3000);
     }
 
     // Migration write fence on the LOCAL shard: this participant lives in the
