@@ -74,25 +74,28 @@ janus::ShardData* make_shard(int count) {
 }
 
 // ---- server-logic (Do*) directly, no socket ----
+// Every op names its table; this single-table service (SingleTableCatalog
+// inside) resolves ANY name to the one wrapped shard, so "t" is arbitrary.
 TEST(ShardMigrationRpc, ServiceHandlerLogic) {
     janus::ShardData* shard = make_shard(20);
     janus::ShardDataServiceImpl svc(shard);
+    const std::string t = "t";
 
-    auto rows = svc.DoScanRange(mkkey(5), mkkey(10), 100);   // [k00005,k00010): 5 keys
+    auto rows = svc.DoScanRange(t, mkkey(5), mkkey(10), 100);   // [k00005,k00010): 5 keys
     EXPECT_EQ(rows.size(), 5u);
     EXPECT_EQ(rows[mkkey(7)], mkval(7));
 
-    const uint64_t ck = svc.DoChecksum(mkkey(5), mkkey(10));
-    EXPECT_EQ(svc.DoChecksum(mkkey(5), mkkey(10)), ck);         // stable
-    EXPECT_TRUE(svc.DoVerifyRange(mkkey(5), mkkey(10), ck));    // matches self
-    EXPECT_FALSE(svc.DoVerifyRange(mkkey(5), mkkey(10), ck ^ 1));
+    const uint64_t ck = svc.DoChecksum(t, mkkey(5), mkkey(10));
+    EXPECT_EQ(svc.DoChecksum(t, mkkey(5), mkkey(10)), ck);         // stable
+    EXPECT_TRUE(svc.DoVerifyRange(t, mkkey(5), mkkey(10), ck));    // matches self
+    EXPECT_FALSE(svc.DoVerifyRange(t, mkkey(5), mkkey(10), ck ^ 1));
 
-    svc.DoPut("nk", "nv");
-    std::string out; EXPECT_TRUE(svc.DoGet("nk", &out)); EXPECT_EQ(out, "nv");
-    svc.DoRemove("nk"); EXPECT_FALSE(svc.DoGet("nk", &out));
+    svc.DoPut(t, "nk", "nv");
+    std::string out; EXPECT_TRUE(svc.DoGet(t, "nk", &out)); EXPECT_EQ(out, "nv");
+    svc.DoRemove(t, "nk"); EXPECT_FALSE(svc.DoGet(t, "nk", &out));
 
-    svc.DoDropRange(mkkey(5), mkkey(10));
-    EXPECT_EQ(svc.DoScanRange(mkkey(5), mkkey(10), 100).size(), 0u);
+    svc.DoDropRange(t, mkkey(5), mkkey(10));
+    EXPECT_EQ(svc.DoScanRange(t, mkkey(5), mkkey(10), 100).size(), 0u);
 }
 
 // ---- the real thing: a cross-process migration over an rrr loopback ----

@@ -56,11 +56,14 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
 # The cluster runtime under test: config bootstrap + map routing + the shard
-# data planes; shard 1 seeds the migratable rows the admin will move.
+# data planes; shard 1 seeds the migratable rows the admin will move -- into a
+# CUSTOM-named table, so the per-table catalog's on-demand creation is on the
+# hot path (nothing hardcodes this name anywhere in the runtime).
 export MAKO_CLUSTER_CONFIG=1
 export MAKO_SHARDING_MODE=map
 export MAKO_MIGRATE_SEED=30
 export MAKO_MIGRATE_SEED_SHARD=1
+export MAKO_MIGRATE_SEED_TABLE=user_kv
 
 cleanup_temp_config() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then
@@ -130,17 +133,29 @@ while [ "$dp_wait" -lt 90 ]; do
 done
 
 migration_ok=0
+migration2_ok=0
 admin_output=""
+admin2_output=""
 if [ -z "$admin_addr" ]; then
     echo "  ✗ Data planes did not come up within 90s"
 else
     echo "Both data planes up; MigrationAdmin at ${admin_addr}"
-    echo "Firing: mako_admin migrate ${admin_addr} __mako_kv__ d10 d20 1 -> 0 (mid-workload)"
-    admin_output=$("$admin_path" migrate "$admin_addr" __mako_kv__ d10 d20 1 0 30 2>&1)
+    # Migration 1: the seeded CUSTOM-named table -- 10 rows must move.
+    echo "Firing: mako_admin migrate ${admin_addr} user_kv d10 d20 1 -> 0 (mid-workload)"
+    admin_output=$("$admin_path" migrate "$admin_addr" user_kv d10 d20 1 0 30 2>&1)
     admin_rc=$?
     echo "mako_admin: rc=${admin_rc} output: ${admin_output}"
     if [ "$admin_rc" -eq 0 ] && echo "$admin_output" | grep -q "ok=1 moved=10"; then
         migration_ok=1
+    fi
+    # Migration 2: a DIFFERENT (unseeded) table in the same run -- the catalog
+    # creates it on demand on both shards; the empty range commits cleanly.
+    echo "Firing: mako_admin migrate ${admin_addr} __mako_kv__ d10 d20 1 -> 0 (second table)"
+    admin2_output=$("$admin_path" migrate "$admin_addr" __mako_kv__ d10 d20 1 0 10 2>&1)
+    admin2_rc=$?
+    echo "mako_admin(2): rc=${admin2_rc} output: ${admin2_output}"
+    if [ "$admin2_rc" -eq 0 ] && echo "$admin2_output" | grep -q "ok=1 moved=0"; then
+        migration2_ok=1
     fi
 fi
 
@@ -225,9 +240,15 @@ echo ""
 echo "Checking live migration:"
 echo "-----------------"
 if [ "$migration_ok" -eq 1 ]; then
-    echo "  ✓ mako_admin migration committed (ok=1 moved=10)"
+    echo "  ✓ mako_admin migration of seeded custom table committed (ok=1 moved=10)"
 else
-    echo "  ✗ mako_admin migration failed: ${admin_output}"
+    echo "  ✗ mako_admin migration of seeded custom table failed: ${admin_output}"
+    failed=1
+fi
+if [ "$migration2_ok" -eq 1 ]; then
+    echo "  ✓ second migration (different, unseeded table) committed (ok=1 moved=0)"
+else
+    echo "  ✗ second migration (different table) failed: ${admin2_output}"
     failed=1
 fi
 if grep -aq "MigrationAdmin: committed" "$log_file0" 2>/dev/null; then

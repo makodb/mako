@@ -64,18 +64,20 @@ rusty::Option<rusty::Box<ShardMaster>> g_shard_master;   // shard-0 leader only:
 // delta sits inside each shard's mako port window (mako binds shard_port + id,
 // id <= ~20; windows are 100+ apart) and clear of the +50 the xproc demo uses.
 constexpr int kShardDataPortDelta = 60;
-// The migratable non-txn KV index each shard leader serves for range migration.
+// The default migratable non-txn KV table (pre-created so the data plane is
+// never empty); any OTHER table named by a Migrate is created on demand by the
+// catalog on both sides.
 constexpr const char* kMigratableTable = "__mako_kv__";
-// FIXED table ids for the runtime's system tables. These indexes are created
-// STANDALONE (mako::make_standalone_index) -- NOT via abstract_db::open_index --
-// because open_index assigns per-process sequential ids: bootstrap-opened tables
-// would shift every workload table id after them, asymmetrically across shards
-// (only shard 0 opens the config store), breaking cross-shard table-id
-// arithmetic (observed live: ~100% remote aborts on both shards). Values sit far
-// outside the per-shard 200-id workload windows.
+// FIXED table id for the config store. System-table indexes are created
+// STANDALONE (mako::make_standalone_index / the catalog) -- NOT via
+// abstract_db::open_index -- because open_index assigns per-process sequential
+// ids: bootstrap-opened tables would shift every workload table id after them,
+// asymmetrically across shards (only shard 0 opens the config store), breaking
+// cross-shard table-id arithmetic (observed live: ~100% remote aborts on both
+// shards). 9001 + the catalog's 9100+ sit far outside the per-shard 200-id
+// workload windows.
 constexpr long kConfigStoreTableId = 9001;
-constexpr long kMigratableTableId  = 9002;
-ShardData* g_data_plane = nullptr;                        // this shard's data plane (leaked)
+ShardDataCatalog* g_data_catalog = nullptr;               // this shard's named tables (leaked)
 abstract_db* g_dp_db = nullptr;                           // for engine thread registration
 rusty::Option<rusty::Arc<rrr::PollThread>> g_data_poll;   // data-plane server poll
 rrr::Server* g_data_server = nullptr;
@@ -174,9 +176,10 @@ private:
             return "sharding mode is not 'map' (start the cluster with "
                    "MAKO_SHARDING_MODE=map); a range cutover would not affect routing";
 
-        std::string err = EnsureParticipant(master, static_cast<uint32_t>(req.src));
+        std::string err = EnsureParticipant(master, static_cast<uint32_t>(req.src),
+                                            req.table_name);
         if (!err.empty()) return err;
-        err = EnsureParticipant(master, static_cast<uint32_t>(req.dst));
+        err = EnsureParticipant(master, static_cast<uint32_t>(req.dst), req.table_name);
         if (!err.empty()) return err;
 
         // First migration of a table: seed its partition table with the whole
@@ -206,34 +209,56 @@ private:
         return std::string();
     }
 
-    // Attach shard `sid`'s data plane to the master if not already attached:
-    // this process's engine index for the local shard, a RemoteShardData over
-    // the peer's ShardDataService otherwise. Returns "" or the failure detail.
-    std::string EnsureParticipant(ShardMaster* master, uint32_t sid) {
-        if (master->has_shard(sid)) return std::string();
+    // Attach shard `sid`'s data plane FOR `table` to the master (participants
+    // are table-bound; attach_shard overwrites, so each migration binds the
+    // handles for ITS table): this process's catalog entry for the local shard,
+    // a table-bound RemoteShardData over the peer's ShardDataService otherwise.
+    // Proxies are cached per shard, handles per (shard, table); all leaked
+    // (process-lifetime). Returns "" or the failure detail.
+    std::string EnsureParticipant(ShardMaster* master, uint32_t sid,
+                                  const std::string& table) {
         auto& bench = BenchmarkConfig::getInstance();
         if (sid == static_cast<uint32_t>(bench.getShardIndex())) {
-            if (g_data_plane == nullptr) return "local data plane not up";
-            master->attach_shard(sid, g_data_plane);
+            if (g_data_catalog == nullptr) return "local data plane not up";
+            ShardData* sd = g_data_catalog->get_or_create(table);
+            if (sd == nullptr) return "cannot create local table " + table;
+            master->attach_shard(sid, sd);
             return std::string();
         }
-        std::string addr = data_plane_addr_of(sid);
-        if (g_admin_poll.is_none()) {
-            g_admin_poll = rusty::Some(rrr::PollThread::create());
+        const std::string hkey = std::to_string(sid) + "/" + table;
+        auto hit = remotes_.find(hkey);
+        if (hit != remotes_.end()) {
+            master->attach_shard(sid, hit->second);
+            return std::string();
         }
-        auto* client = new rusty::Arc<rrr::Client>(          // leaked: process-lifetime
-            rrr::Client::create(g_admin_poll.as_ref().unwrap().clone()));
-        if ((*client)->connect(addr.c_str(), false) != 0) {
-            return std::string("cannot reach shard ") + std::to_string(sid) +
-                   " data plane at " + addr;
+        ShardDataServiceProxy* proxy = nullptr;
+        auto pit = proxies_.find(sid);
+        if (pit != proxies_.end()) {
+            proxy = pit->second;
+        } else {
+            std::string addr = data_plane_addr_of(sid);
+            if (g_admin_poll.is_none()) {
+                g_admin_poll = rusty::Some(rrr::PollThread::create());
+            }
+            auto* client = new rusty::Arc<rrr::Client>(      // leaked: process-lifetime
+                rrr::Client::create(g_admin_poll.as_ref().unwrap().clone()));
+            if ((*client)->connect(addr.c_str(), false) != 0) {
+                return std::string("cannot reach shard ") + std::to_string(sid) +
+                       " data plane at " + addr;
+            }
+            proxy = new ShardDataServiceProxy(const_cast<rrr::Client*>(client->get()));
+            proxies_.emplace(sid, proxy);
+            Log_info("MigrationAdmin: connected shard %u data plane at %s",
+                     sid, addr.c_str());
         }
-        auto* proxy = new ShardDataServiceProxy(
-            const_cast<rrr::Client*>(client->get()));
-        master->attach_shard(sid, new RemoteShardData(proxy));  // leaked participant
-        Log_info("MigrationAdmin: attached remote shard %u data plane at %s",
-                 sid, addr.c_str());
+        auto* remote = new RemoteShardData(proxy, table);    // leaked participant
+        remotes_.emplace(hkey, remote);
+        master->attach_shard(sid, remote);
         return std::string();
     }
+
+    std::map<uint32_t, ShardDataServiceProxy*> proxies_;   // per remote shard
+    std::map<std::string, RemoteShardData*> remotes_;      // per (shard "/" table)
 };
 
 // Every shard LEADER: open the migratable index, optionally seed demo rows
@@ -244,20 +269,28 @@ void StartShardDataPlane(abstract_db* db) {
     auto& bench = BenchmarkConfig::getInstance();
     const int shard = static_cast<int>(bench.getShardIndex());
     g_dp_db = db;
-    g_data_plane = mako::make_engine_shard_data(db, kMigratableTable, kMigratableTableId);
-    if (g_data_plane == nullptr) {
-        Log_warn("ShardDataPlane: could not create index '%s'", kMigratableTable);
+    g_data_catalog = mako::make_engine_shard_catalog(db);
+    if (g_data_catalog == nullptr ||
+        g_data_catalog->get_or_create(kMigratableTable) == nullptr) {
+        Log_warn("ShardDataPlane: could not create catalog / '%s'", kMigratableTable);
         return;
     }
     // Test/demo seeding, from a fresh engine-registered thread (never this one).
+    // MAKO_MIGRATE_SEED_TABLE picks the table (default the standard KV table),
+    // exercising on-demand creation of a custom-named table.
     const char* seed = getenv("MAKO_MIGRATE_SEED");
     if (seed != nullptr) {
         const char* ss = getenv("MAKO_MIGRATE_SEED_SHARD");
         const int seed_shard = (ss != nullptr) ? atoi(ss) : 1;
+        const char* st = getenv("MAKO_MIGRATE_SEED_TABLE");
+        const std::string seed_table = (st != nullptr) ? st : kMigratableTable;
         if (shard == seed_shard) {
-            mako::seed_shard_data(g_data_plane, atoi(seed));
-            Log_info("ShardDataPlane: seeded %d demo rows into '%s' on shard %d",
-                     atoi(seed), kMigratableTable, shard);
+            ShardData* sd = g_data_catalog->get_or_create(seed_table);
+            if (sd != nullptr) {
+                mako::seed_shard_data(sd, atoi(seed));
+                Log_info("ShardDataPlane: seeded %d demo rows into '%s' on shard %d",
+                         atoi(seed), seed_table.c_str(), shard);
+            }
         }
     }
     auto me = bench.getConfig()->shard(shard, bench.getClusterRole());
@@ -265,7 +298,7 @@ void StartShardDataPlane(abstract_db* db) {
         std::to_string(atoi(me.port.c_str()) + kShardDataPortDelta);
     g_data_poll = rusty::Some(rrr::PollThread::create());
     g_data_server = new rrr::Server(rusty::Some(g_data_poll.as_ref().unwrap().clone()));
-    g_data_server->reg_service(rusty::make_box<ShardDataServiceImpl>(g_data_plane));
+    g_data_server->reg_service(rusty::make_box<ShardDataServiceImpl>(g_data_catalog));
     if (shard == 0) {
         g_data_server->reg_service(rusty::make_box<MigrationAdminImpl>());
     }
@@ -313,13 +346,9 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     // the config server so an RPC bind failure can never take the master with it.
     g_shard_master = rusty::Some(rusty::make_box<ShardMaster>(
         ShardMaster::new_(cm, &get_cluster_config())));
-    // Attach this shard's own data plane as participant 0 up front; remote
-    // participants attach lazily on the first Migrate that names them.
-    if (g_data_plane != nullptr) {
-        g_shard_master.as_ref().unwrap()->attach_shard(0, g_data_plane);
-    }
-    Log_info("BootstrapClusterConfig: shard-0 ShardMaster (migration coordinator) ready%s",
-             g_data_plane != nullptr ? " (local data plane attached)" : "");
+    // Participants are table-bound and attach per migration (the admin handler
+    // binds local catalog entries / remote table-bound proxies for each call).
+    Log_info("BootstrapClusterConfig: shard-0 ShardMaster (migration coordinator) ready");
 
     // Dedicated RPC server for config reads, at this shard's mako port + delta
     // (same shared-config derivation the data plane uses).

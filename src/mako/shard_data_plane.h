@@ -9,23 +9,22 @@
 
 #include <string>
 
-import cluster;   // janus::ShardData / janus::KvStore (module-owned)
+import cluster;   // janus::ShardData / ShardDataCatalog / KvStore (module-owned)
 
 class abstract_db;
 class FullOrderedIndex;
 
 namespace mako {
 
-// Create the shard's migratable non-txn index (STANDALONE, with the given fixed
-// table id — system tables must not consume per-process open_index id slots;
-// see standalone_index.cc) and return a process-lifetime ShardData over it whose
-// every op first ENGINE-REGISTERS the calling thread (Silo/mbta thread_init) —
-// rrr service handler threads are not otherwise registered. Call from threads
-// that are NOT already engine-registered workload threads (service/admin/seed
-// threads). Returns nullptr if the index cannot be created.
-janus::ShardData* make_engine_shard_data(abstract_db* db,
-                                         const std::string& table_name,
-                                         long table_id);
+// The production ShardDataCatalog: named migratable tables created on demand as
+// STANDALONE engine indexes (fixed ids from 9100 — system tables must not
+// consume per-process open_index id slots; see standalone_index.cc), each
+// registered in the process table registry (so the non-txn write handler can
+// resolve an op's table NAME to query the per-table migration freeze), and each
+// behind a per-op engine-registration gate (rrr service handler threads are not
+// otherwise Silo/mbta-registered). Tables and the catalog are process-lifetime
+// (leaked). Returns nullptr if db is null.
+janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db);
 
 // Engine-register the calling thread with `db` (idempotent per thread). The
 // admin Migrate handler calls this up front so config-store writes (the

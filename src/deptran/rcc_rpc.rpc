@@ -565,28 +565,32 @@ abstract service ConfigKvService {
 // checksum-verify + commit, all over these calls. Values are raw bytes (NUL-safe
 // rrr string marshalling), matching the non-txn OrderedIndex surface.
 abstract service ShardDataService {
+    // Every op names its table: one service per shard covers ALL of that
+    // shard's migratable (non-txn system) tables; the server resolves the name
+    // through its ShardDataCatalog, creating the table on first use.
     // Bulk read up to `limit` live pairs from [lo,hi) -- the migration copy /
     // final-sync source read. rows is empty once the range is exhausted.
-    defer ScanRange(string lo, string hi, i32 limit | map<string, string> rows);
+    defer ScanRange(string table_name, string lo, string hi, i32 limit | map<string, string> rows);
     // Fold the range into a scalar (the source's 2PC vote).
-    defer Checksum(string lo, string hi | i64 checksum);
+    defer Checksum(string table_name, string lo, string hi | i64 checksum);
     // Compute this shard's range checksum and compare to `expected` (the
     // source's): ok=1 iff byte-identical -- the destination's 2PC prepare vote.
-    defer VerifyRange(string lo, string hi, i64 expected | i32 ok);
+    defer VerifyRange(string table_name, string lo, string hi, i64 expected | i32 ok);
     // Point write / delete -- the coordinator replays the migration delta to the
     // destination through these.
-    defer PutKey(string key, string value | i32 ok);
-    defer RemoveKey(string key | i32 ok);
+    defer PutKey(string table_name, string key, string value | i32 ok);
+    defer RemoveKey(string table_name, string key | i32 ok);
     // Post-commit shed: drop the whole range on the shard in one call.
-    defer DropRange(string lo, string hi | i32 ok);
+    defer DropRange(string table_name, string lo, string hi | i32 ok);
     // Point read (verification).
-    defer GetKey(string key | i32 found, string value);
-    // Freeze / unfreeze [lo,hi) on this shard for the migration's duration: the
-    // shard's non-txn write handler rejects (RETRY_LATER) writes to a frozen key
-    // so the client backs off and retries, landing on the destination after the
-    // cutover. The migration coordinator calls these on the SOURCE shard.
-    defer FreezeRange(string lo, string hi | i32 ok);
-    defer UnfreezeRange(string lo, string hi | i32 ok);
+    defer GetKey(string table_name, string key | i32 found, string value);
+    // Freeze / unfreeze [lo,hi) of `table_name` on this shard for the
+    // migration's duration: the shard's non-txn write handler rejects
+    // (SERVER_BUSY) writes to a frozen key so the client backs off and retries,
+    // landing on the destination after the cutover. The migration coordinator
+    // calls these on the SOURCE shard.
+    defer FreezeRange(string table_name, string lo, string hi | i32 ok);
+    defer UnfreezeRange(string table_name, string lo, string hi | i32 ok);
 }
 
 // Operator-facing migration trigger, served by shard 0's leader (the node that

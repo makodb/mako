@@ -14,6 +14,7 @@ export module cluster;
 export import :kv_store;
 export import :in_memory_kv_store;
 export import :shard_data;            // migration participant port (peer of :kv_store)
+export import :shard_data_catalog;    // named-table registry behind the data-plane service
 export import :in_memory_shard_data;  // in-memory ShardData fake (peer of :in_memory_kv_store)
 export import :sharding_policy;
 export import :sharding_policy_builder;

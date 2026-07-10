@@ -933,6 +933,7 @@ set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_data.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_data_catalog.h
     ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_shard_data.h
     ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h

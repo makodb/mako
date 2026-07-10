@@ -12,13 +12,18 @@
 
 #include <stdio.h>
 
+#include <atomic>
+#include <map>
 #include <string>
 #include <thread>
+
+#include <rusty/mutex.hpp>
 
 #include "storage/abstract_db.h"           // abstract_db::thread_init (virtual)
 #include "standalone_index.h"              // registry-free mbta index factory
 #include "ordered_index_shard_data.h"      // janus::OrderedIndexShardData
 #include "ordered_index_kv_store.h"        // janus::OrderedIndexKvStore
+#include "lib/table_registry.h"            // mako::get_table_registry (name<->id)
 
 namespace mako {
 namespace {
@@ -83,6 +88,38 @@ private:
     janus::OrderedIndexShardData inner_;
 };
 
+// The production catalog: named tables created lazily as standalone fixed-id
+// engine indexes (ids from 9100), registered in the table registry so the
+// non-txn write handler can resolve an op's table name for the per-table
+// migration freeze. One instance per process; entries are process-lifetime.
+// @unsafe - guarded map of leaked engine tables.
+class EngineShardCatalog : public janus::ShardDataCatalog {
+public:
+    explicit EngineShardCatalog(abstract_db* db) : db_(db) {}
+
+    janus::ShardData* get_or_create(const std::string& table) override {
+        if (table.empty()) return nullptr;
+        auto lk = mu_.lock().unwrap();
+        auto it = tables_.find(table);
+        if (it != tables_.end()) return it->second;
+        const long id = next_id_.fetch_add(1);
+        ::FullOrderedIndex* idx = make_standalone_index(table, id);
+        if (idx == nullptr) return nullptr;
+        // Name<->id registration: lets RunNontxnOp resolve an op's table NAME to
+        // query the migration guard, and the router govern the table by name.
+        get_table_registry().register_table(static_cast<int>(id), table);
+        auto* sd = new EngineShardData(db_, idx);   // leaked: process-lifetime
+        tables_.emplace(table, sd);
+        return sd;
+    }
+
+private:
+    abstract_db* db_;                                    // non-owning
+    rusty::Mutex<int> mu_{0};                            // guards tables_/creation
+    std::map<std::string, janus::ShardData*> tables_;
+    std::atomic<long> next_id_{9100};                    // outside workload windows
+};
+
 // The config store behind the same gate: the ConfigWatcher poll thread and the
 // ConfigKvService rrr handler thread hit the __mako_config__ index directly.
 // @unsafe - delegates to the storage engine; non-owning db/index.
@@ -111,14 +148,10 @@ private:
 
 }  // namespace
 
-janus::ShardData* make_engine_shard_data(abstract_db* db,
-                                         const std::string& table_name,
-                                         long table_id) {
+janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db) {
     if (db == nullptr) return nullptr;
-    ::FullOrderedIndex* idx = make_standalone_index(table_name, table_id);
-    if (idx == nullptr) return nullptr;
     // Leaked: process-lifetime, like the bootstrap's other singletons.
-    return new EngineShardData(db, idx);
+    return new EngineShardCatalog(db);
 }
 
 void engine_register_this_thread(abstract_db* db) {

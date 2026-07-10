@@ -2,6 +2,7 @@
 #include "lib/timestamp.h"
 #include "lib/server.h"
 #include "lib/common.h"
+#include "lib/table_registry.h"   // resolve an op's table NAME for the per-table freeze
 #include "lib/transport_request_handle.h"
 #include "sto/Interface.hh"
 #include "benchmarks/common.h"
@@ -665,8 +666,18 @@ namespace mako
         // flips (reads are still served -- the source keeps serving until commit).
         // The freeze registry is this shard's process-global MigrationGuard, set
         // by the FreezeRange RPC the coordinator issues on the source shard.
-        if (!is_get && janus::get_migration_guard().is_frozen(std::string(), key)) {
-            return ErrorCode::SERVER_BUSY;
+        // Entries carry the frozen TABLE's name, so the query resolves this op's
+        // table name from the registry (a table-agnostic "" entry still fences
+        // every table; an unregistered id resolves to "" and is fenced only by
+        // "" entries -- unregistered tables cannot be migration sources anyway).
+        if (!is_get) {
+            std::string frozen_table;
+            const rusty::Option<std::string> tname_opt =
+                get_table_registry().get_table_name(static_cast<int>(table_id));
+            if (tname_opt.is_some()) frozen_table = tname_opt.as_ref().unwrap();
+            if (janus::get_migration_guard().is_frozen(frozen_table, key)) {
+                return ErrorCode::SERVER_BUSY;
+            }
         }
 
         int status = ErrorCode::SUCCESS;

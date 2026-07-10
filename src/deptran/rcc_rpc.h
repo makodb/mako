@@ -10856,17 +10856,20 @@ class ShardDataServiceService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
     struct RpcScanRangeRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
         rrr::i32 limit;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcScanRangeRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         ar << o.limit;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcScanRangeRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         ar >> o.limit;
@@ -10886,15 +10889,18 @@ public:
     }
 
     struct RpcChecksumRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcChecksumRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcChecksumRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         return ar;
@@ -10913,17 +10919,20 @@ public:
     }
 
     struct RpcVerifyRangeRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
         rrr::i64 expected;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcVerifyRangeRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         ar << o.expected;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcVerifyRangeRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         ar >> o.expected;
@@ -10943,15 +10952,18 @@ public:
     }
 
     struct RpcPutKeyRequest {
+        std::string table_name;
         std::string key;
         std::string value;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPutKeyRequest& o) {
+        ar << o.table_name;
         ar << o.key;
         ar << o.value;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPutKeyRequest& o) {
+        ar >> o.table_name;
         ar >> o.key;
         ar >> o.value;
         return ar;
@@ -10970,13 +10982,16 @@ public:
     }
 
     struct RpcRemoveKeyRequest {
+        std::string table_name;
         std::string key;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcRemoveKeyRequest& o) {
+        ar << o.table_name;
         ar << o.key;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcRemoveKeyRequest& o) {
+        ar >> o.table_name;
         ar >> o.key;
         return ar;
     }
@@ -10994,15 +11009,18 @@ public:
     }
 
     struct RpcDropRangeRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcDropRangeRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcDropRangeRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         return ar;
@@ -11021,13 +11039,16 @@ public:
     }
 
     struct RpcGetKeyRequest {
+        std::string table_name;
         std::string key;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetKeyRequest& o) {
+        ar << o.table_name;
         ar << o.key;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetKeyRequest& o) {
+        ar >> o.table_name;
         ar >> o.key;
         return ar;
     }
@@ -11048,15 +11069,18 @@ public:
     }
 
     struct RpcFreezeRangeRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcFreezeRangeRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcFreezeRangeRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         return ar;
@@ -11075,15 +11099,18 @@ public:
     }
 
     struct RpcUnfreezeRangeRequest {
+        std::string table_name;
         std::string lo;
         std::string hi;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcUnfreezeRangeRequest& o) {
+        ar << o.table_name;
         ar << o.lo;
         ar << o.hi;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcUnfreezeRangeRequest& o) {
+        ar >> o.table_name;
         ar >> o.lo;
         ar >> o.hi;
         return ar;
@@ -11200,6 +11227,7 @@ private:
             RpcScanRangeRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             __req_ar__ >> __typed_req__.limit;
@@ -11221,6 +11249,7 @@ private:
             RpcChecksumRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             auto __typed_resp__ = std::make_shared<RpcChecksumResponse>();
@@ -11241,6 +11270,7 @@ private:
             RpcVerifyRangeRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             __req_ar__ >> __typed_req__.expected;
@@ -11262,6 +11292,7 @@ private:
             RpcPutKeyRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.key;
             __req_ar__ >> __typed_req__.value;
             auto __typed_resp__ = std::make_shared<RpcPutKeyResponse>();
@@ -11282,6 +11313,7 @@ private:
             RpcRemoveKeyRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.key;
             auto __typed_resp__ = std::make_shared<RpcRemoveKeyResponse>();
             rrr::DeferredReply __defer__(
@@ -11301,6 +11333,7 @@ private:
             RpcDropRangeRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             auto __typed_resp__ = std::make_shared<RpcDropRangeResponse>();
@@ -11321,6 +11354,7 @@ private:
             RpcGetKeyRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.key;
             auto __typed_resp__ = std::make_shared<RpcGetKeyResponse>();
             rrr::DeferredReply __defer__(
@@ -11341,6 +11375,7 @@ private:
             RpcFreezeRangeRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             auto __typed_resp__ = std::make_shared<RpcFreezeRangeResponse>();
@@ -11361,6 +11396,7 @@ private:
             RpcUnfreezeRangeRequest __typed_req__;
             rrr::MarshalSource __req_src__(&req->m);
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
+            __req_ar__ >> __typed_req__.table_name;
             __req_ar__ >> __typed_req__.lo;
             __req_ar__ >> __typed_req__.hi;
             auto __typed_resp__ = std::make_shared<RpcUnfreezeRangeResponse>();
@@ -11435,6 +11471,7 @@ public:
     };
     rusty::Result<ScanRangeTypedFuture, rrr::i32> async_ScanRange(const RpcScanRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::SCANRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
             __m__ << req.limit;
@@ -11489,6 +11526,7 @@ public:
     };
     rusty::Result<ChecksumTypedFuture, rrr::i32> async_Checksum(const RpcChecksumRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::CHECKSUM, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
         });
@@ -11542,6 +11580,7 @@ public:
     };
     rusty::Result<VerifyRangeTypedFuture, rrr::i32> async_VerifyRange(const RpcVerifyRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::VERIFYRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
             __m__ << req.expected;
@@ -11596,6 +11635,7 @@ public:
     };
     rusty::Result<PutKeyTypedFuture, rrr::i32> async_PutKey(const RpcPutKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::PUTKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.key;
             __m__ << req.value;
         });
@@ -11649,6 +11689,7 @@ public:
     };
     rusty::Result<RemoveKeyTypedFuture, rrr::i32> async_RemoveKey(const RpcRemoveKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::REMOVEKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.key;
         });
         if (__fu_result__.is_err()) {
@@ -11701,6 +11742,7 @@ public:
     };
     rusty::Result<DropRangeTypedFuture, rrr::i32> async_DropRange(const RpcDropRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::DROPRANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
         });
@@ -11755,6 +11797,7 @@ public:
     };
     rusty::Result<GetKeyTypedFuture, rrr::i32> async_GetKey(const RpcGetKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::GETKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.key;
         });
         if (__fu_result__.is_err()) {
@@ -11807,6 +11850,7 @@ public:
     };
     rusty::Result<FreezeRangeTypedFuture, rrr::i32> async_FreezeRange(const RpcFreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::FREEZERANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
         });
@@ -11860,6 +11904,7 @@ public:
     };
     rusty::Result<UnfreezeRangeTypedFuture, rrr::i32> async_UnfreezeRange(const RpcUnfreezeRangeRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ShardDataServiceService::UNFREEZERANGE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            __m__ << req.table_name;
             __m__ << req.lo;
             __m__ << req.hi;
         });
