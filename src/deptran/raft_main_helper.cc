@@ -20,7 +20,7 @@ using namespace janus;
 namespace janus {
 vector<unique_ptr<ClientWorker>> client_workers_storage = {};
 vector<shared_ptr<RaftWorker>> raft_workers_g = {};
-std::function<void(int)> leader_callback_{};
+rusty::Function<void(int)> leader_callback_{};
 }
 
 vector<unique_ptr<janus::ClientWorker>>& client_workers_g = janus::client_workers_storage;
@@ -736,7 +736,7 @@ void register_for_leader(std::function<void(const char*, int)> cb,
 
 // register_leader_election_callback saves the external notifier invoked on leadership change.
 void register_leader_election_callback(std::function<void(int)> cb) {
-  janus::leader_callback_ = std::move(cb);
+  janus::leader_callback_ = rusty::Function<void(int)>(std::move(cb));
 }
 
 // register_for_leader_par_id registers leader callbacks that want the partition id.

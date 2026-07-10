@@ -41,9 +41,9 @@
 namespace janus {
 
 // Runtime replication switching - always declare raft functions.
-// Compatibility boundary: the global leader-change callback is defined
-// outside raft_worker and may still use the legacy callback type.
-extern std::function<void(int)> leader_callback_;
+// The public helper API still receives std::function for Paxos/Raft dispatch
+// compatibility, then stores the Raft-side callback in move-only rusty::Function.
+extern rusty::Function<void(int)> leader_callback_;
 
 // @unsafe - invokes raw global compatibility callback with unbounded user code
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
