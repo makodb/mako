@@ -33,8 +33,9 @@ namespace janus
     //  verify(poll != nullptr);
   }
 
-  // @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
-  // Returns shared_ptr<AppendEntriesResponse> - callback captures this to ensure memory validity
+  // @unsafe - Legacy quorum RPC boundary: raw RaftProxy cast and async
+  // FutureAttr callback. The returned shared_ptr is intentionally captured by
+  // the callback so the response/event storage outlives this function.
   shared_ptr<AppendEntriesResponse>
   RaftCommo::SendAppendEntries2(siteid_t site_id,
                                 parid_t par_id,
@@ -49,7 +50,8 @@ namespace janus
                                 const janus::Command &cmd,
                                 uint64_t cmdLogTerm)
   {
-    // Allocate response data with shared_ptr - callback captures this to keep memory valid
+    // Allocate response data with shared_ptr; the async callback captures it
+    // and signals response->event when the legacy Future completes.
     auto response = std::make_shared<AppendEntriesResponse>();
     response->event = Reactor::create_sp_event<IntEvent>();
 
@@ -68,7 +70,8 @@ namespace janus
         proxy = (RaftProxy *)p.second;
       }
       FutureAttr fuattr;
-      // Capture response shared_ptr - ensures memory stays valid even after caller releases
+      // Capture response shared_ptr so FutureAttr can run after this function
+      // returns without dangling response/event storage.
       fuattr.callback = [response, site_id](rusty::Arc<Future> fu)
       {
         if (fu->get_error_code() != 0)
@@ -130,7 +133,8 @@ namespace janus
     return response;
   }
 
-  // @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+  // @unsafe - Legacy quorum RPC boundary. The returned shared result is the
+  // rendezvous object observed by the caller while the async callback fills it.
   shared_ptr<SendAppendEntriesResults>
   RaftCommo::SendAppendEntries(siteid_t site_id,
                                parid_t par_id,
@@ -147,11 +151,7 @@ namespace janus
                                bool trigger_election_now)
   {
     // verify(par_id == 0);
-    shared_ptr<SendAppendEntriesResults> res;
-    // @unsafe
-    {
-      res = shared_ptr<SendAppendEntriesResults>(new SendAppendEntriesResults());
-    }
+    auto res = std::make_shared<SendAppendEntriesResults>();
     auto proxies = rpc_par_proxies_[par_id];
     // vector<rusty::Arc<Future>> fus;
     WAN_WAIT;
@@ -166,6 +166,8 @@ namespace janus
         proxy = (RaftProxy *)p.second;
       }
       FutureAttr fuattr;
+      // Capture res by shared_ptr because the legacy FutureAttr callback may
+      // run after SendAppendEntries returns to the heartbeat loop.
       fuattr.callback = [res, cmd, site_id](rusty::Arc<Future> fu)
       {
         if (fu->get_error_code() != 0)
@@ -240,7 +242,8 @@ namespace janus
     return res;
   }
 
-  // @unsafe - C-style casts in @unsafe blocks, external calls marked @external [safe]
+  // @unsafe - Legacy fanout RPC boundary. The quorum event is shared with each
+  // async vote callback and with the caller waiting for quorum.
   shared_ptr<RaftVoteQuorumEvent>
   RaftCommo::BroadcastVote(parid_t par_id,
                            slotid_t lst_log_idx,
@@ -269,6 +272,8 @@ namespace janus
         proxy = (RaftProxy *)p.second;
       }
       FutureAttr fuattr;
+      // Capture the quorum event by shared_ptr so peer replies can arrive
+      // after BroadcastVote returns.
       fuattr.callback = [e, site_id](rusty::Arc<Future> fu)
       {
         if (fu->get_error_code() != 0)
@@ -475,7 +480,8 @@ namespace janus
      * Called after a follower has durably persisted log entries to disk.
      * This notifies the leader that entries up to lastLogIndex are now durable.
      */
-    // @unsafe
+    // @unsafe - Fire-and-forget async RPC. Callback captures only values; no
+    // RaftCommo state is touched after this function returns.
     void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
                                              parid_t par_id,
                                              ballot_t term,
@@ -505,6 +511,8 @@ namespace janus
       }
 
       FutureAttr fuattr;
+      // Value-only capture keeps this completion callback independent of
+      // RaftCommo lifetime.
       fuattr.callback = [leader_id, term, follower_id, lastLogIndex](rusty::Arc<Future> fu)
       {
         if (fu->get_error_code() != 0)
@@ -548,7 +556,9 @@ namespace janus
      * - acknowledged=false → DOWN (peer is down, will reconnect when it restarts)
      * - error/timeout      → PENDING (should retry)
      */
-    // @unsafe
+    // @unsafe - Broadcasts async restart notifications and updates
+    // notify_restart_status_. Captures `this`, so RaftCommo must outlive any
+    // in-flight FutureAttr callbacks on this path.
     void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id)
     {
       auto proxies = rpc_par_proxies_[par_id];
@@ -588,7 +598,8 @@ namespace janus
         }
         FutureAttr fuattr;
 
-        // Capture 'this' to update status map
+        // Capture `this` to update notify_restart_status_. The status map is
+        // protected by notify_restart_mtx_, but lifetime is still manual.
         fuattr.callback = [this, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)
@@ -681,6 +692,8 @@ namespace janus
         }
 
         FutureAttr fuattr;
+        // Retry callbacks have the same lifetime contract as SendNotifyRestart:
+        // they capture `this` and must finish before RaftCommo destruction.
         fuattr.callback = [this, site_id](rusty::Arc<Future> fu)
         {
           if (fu->get_error_code() != 0)

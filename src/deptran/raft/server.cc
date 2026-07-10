@@ -756,6 +756,8 @@ uint64_t RaftServer::GetElectionTimeout() {
 }
 
 // StartApplyFiber - lightweight status monitor on PollThread.
+// @unsafe - detached fiber captures `this`; shutdown relies on stop_ before
+// RaftServer member teardown.
 void RaftServer::StartApplyFiber() {
   Fiber::create_run([this]() {
     Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
@@ -809,6 +811,8 @@ void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commi
 
 // Background OS thread for entry application.
 // Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
+// @unsafe - thread captures `this`; ~RaftServer must stop/join it before
+// apply_queue_, app_next_, and other member state are destroyed.
 void RaftServer::StartApplyThread() {
   apply_thread_running_.store(true);
   apply_thread_ = std::thread([this]() {
@@ -1029,11 +1033,15 @@ void RaftServer::Setup() {
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
+    // @unsafe - detached fiber captures `this`; teardown is coordinated by
+    // stop_/looping_ in ~RaftServer.
     Fiber::create_run([this](){
       this->HeartbeatLoop();
     });
     // Start election timeout loop
     if (failover_) {
+      // @unsafe - detached election fiber captures `this`; StartElectionTimer
+      // checks stop_ before voting during shutdown.
       Fiber::create_run([this](){
         StartElectionTimer();
       });
@@ -1044,11 +1052,15 @@ void RaftServer::Setup() {
 #ifndef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
+    // @unsafe - detached fiber captures `this`; teardown is coordinated by
+    // stop_/looping_ in ~RaftServer.
     Fiber::create_run([this](){
       this->HeartbeatLoop();
     });
     // Start election timeout loop
     if (failover_) {
+      // @unsafe - detached election fiber captures `this`; StartElectionTimer
+      // checks stop_ before voting during shutdown.
       Fiber::create_run([this](){
         StartElectionTimer();
       });
@@ -1414,9 +1426,13 @@ struct PendingAppendEntries {
 };
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
+// Runs in a detached fiber that captures `this`; do not convert until the
+// server lifetime/threading model is redesigned.
 void RaftServer::HeartbeatLoop() {
   // @unsafe
   {
+  // Legacy timer allocation is tied to the fiber-based heartbeat loop and is
+  // left as a hard-deferred manual lifetime boundary.
   auto hb_timer = new Timer();
   hb_timer->start();
   }
@@ -2344,7 +2360,9 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
   VerifySpeculativeInvariants();
 }
 
-// @unsafe - Calls undeclared Fiber::create_run()
+// @unsafe - Starts a detached election timer fiber that captures `this`.
+// Hard-deferred concurrency boundary: the loop must observe stop_ before
+// RaftServer destruction completes.
 void RaftServer::StartElectionTimer() {
   // @unsafe
   { resetTimer("start election timer"); }
@@ -2702,6 +2720,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
                 // Wait before starting election to allow old leader's heartbeats
                 // to reach other replicas. This prevents election storms.
+                // @unsafe - delayed transfer fiber captures `this`; it must
+                // check stop_ before touching virtual/server state.
                 Fiber::create_run([this]() {
                     std::this_thread::sleep_for(std::chrono::milliseconds(30));
                     // CRITICAL: Check stop_ before calling RequestVote() to prevent
@@ -2998,6 +3018,8 @@ void RaftServer::StopLeadershipTransferMonitoring() {
 }
 
 // @unsafe - Starts monitor thread (threading and mutex operations marked safe via @external)
+// The thread captures `this` and exits by observing leadership_monitor_stop_,
+// stop_, or leadership state changes.
 void RaftServer::StartLeadershipTransferMonitoring() {
   if (leadership_monitor_stop_.load()) {
     leadership_monitor_stop_ = false;
@@ -3013,7 +3035,8 @@ void RaftServer::StartLeadershipTransferMonitoring() {
   Log_info("[LEADERSHIP-TRANSFER] Site %d: Starting leadership transfer monitoring thread",
            site_id_);
 
-  // Launch monitoring thread
+  // Launch monitoring thread. Lifetime is manually coordinated by
+  // StopLeadershipTransferMonitoring() / ~RaftServer.
   leadership_monitor_thread_ = std::thread([this]() {
     const uint64_t CHECK_INTERVAL_MS = 1000;  // Check every 1 second
     const uint64_t MIN_STABLE_TIME_US = 500000; // Wait 0.5 seconds (in microseconds) after becoming leader before transferring

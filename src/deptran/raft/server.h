@@ -238,7 +238,9 @@ class RaftServer : public TxLogServer {
   uint64_t leader_last_commit_index_ = 0;                   // Leader's commit index (from heartbeats)
   bool transferring_leadership_ = false;                    // True when transfer in progress
   uint64_t leadership_transfer_start_time_ = 0;             // When transfer started (for timeout)
-  // @unsafe - leadership monitor thread coordination; hard-deferred.
+  // @unsafe - leadership monitor thread coordination; hard-deferred. The
+  // monitor thread captures `this` and is coordinated manually during
+  // leadership transfer and shutdown.
   std::atomic<bool> leadership_monitor_stop_{false};       // Signal to stop monitoring thread
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
@@ -453,10 +455,12 @@ class RaftServer : public TxLogServer {
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
-  // Dedicated apply fiber and background apply thread.
+  // Dedicated apply fiber and background apply thread. These capture `this`
+  // and are hard-deferred concurrency boundaries for the RustyCpp migration.
   void StartApplyFiber();
 
   // @unsafe - background apply thread and queue are manually coordinated.
+  // Destructor joins apply_thread_ before member teardown.
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
   std::mutex apply_queue_mtx_;

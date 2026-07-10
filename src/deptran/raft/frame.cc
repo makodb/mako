@@ -68,13 +68,15 @@ bool RaftFrame::IsRaftLabTestConfig() {
 #endif
 
 
-// @unsafe - factory method returns raw pointer via new (caller takes ownership)
+// @unsafe - legacy Frame factory returns a raw owning pointer via new; the
+// inherited caller contract is responsible for deletion.
 Executor *RaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
   Executor *exec = new RaftExecutor(cmd_id, sched);
   return exec;
 }
 
-// @unsafe - factory method uses new to create raw pointer (caller takes ownership)
+// @unsafe - legacy Frame factory returns a raw owning pointer via new; the
+// inherited caller contract is responsible for deletion.
 Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
                                                 int benchmark,
@@ -144,7 +146,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
     Log_info("CreateCommo: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
-    Log_info("CreateCommo: Creating new RaftCommo");
+    Log_info("CreateCommo: Creating RaftFrame-owned RaftCommo");
     commo_ = std::make_unique<RaftCommo>(std::move(poll_thread_worker));
   }
 
