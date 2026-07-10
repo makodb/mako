@@ -130,7 +130,7 @@ void query<R>::emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
 template <typename R> template <typename T>
 // @unsafe { Traverses Masstree via unlocked cursor, accesses row values }
 void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
-    typename T::unlocked_cursor_type lp(table, req[2].as_s());
+    auto lp = T::unlocked_cursor_type::from_mutable_str(table, req[2].as_s());
     bool found = lp.find_unlocked(ti);
     if (found && row_is_marker(lp.value()))
         found = false;
@@ -146,7 +146,7 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
 template <typename R> template <typename T>
 // @unsafe { Traverses Masstree via unlocked cursor, returns column value }
 bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) {
-    typename T::unlocked_cursor_type lp(table, key);
+    auto lp = T::unlocked_cursor_type::from_mutable_str(table, key);
     bool found = lp.find_unlocked(ti);
     if (found && row_is_marker(lp.value()))
         found = false;

@@ -36,33 +36,32 @@ class unlocked_tcursor {
     typedef typename nodeversion_type::value_type nodeversion_value_type;
     typedef typename leaf<P>::permuter_type permuter_type;
 
-    inline unlocked_tcursor(const basic_table<P>& table, Str str)
-        : ka_(str), lv_(leafvalue<P>::make_empty()),
-          root_(table.root()) {
+    static unlocked_tcursor from_str(const basic_table<P>& table, Str str) {
+        return from_key_and_root(key_type(str), table.root());
     }
-    inline unlocked_tcursor(basic_table<P>& table, Str str)
-        : ka_(str), lv_(leafvalue<P>::make_empty()),
-          root_(table.fix_root()) {
+
+    static unlocked_tcursor from_mutable_str(basic_table<P>& table, Str str) {
+        return from_key_and_root(key_type(str), table.fix_root());
     }
-    inline unlocked_tcursor(const basic_table<P>& table,
-                            const char* s, int len)
-        : ka_(s, len), lv_(leafvalue<P>::make_empty()),
-          root_(table.root()) {
+
+    static unlocked_tcursor from_chars(const basic_table<P>& table,
+                                       const char* s, int len) {
+        return from_key_and_root(key_type(s, len), table.root());
     }
-    inline unlocked_tcursor(basic_table<P>& table,
-                            const char* s, int len)
-        : ka_(s, len), lv_(leafvalue<P>::make_empty()),
-          root_(table.fix_root()) {
+
+    static unlocked_tcursor from_mutable_chars(basic_table<P>& table,
+                                               const char* s, int len) {
+        return from_key_and_root(key_type(s, len), table.fix_root());
     }
-    inline unlocked_tcursor(const basic_table<P>& table,
-                            const unsigned char* s, int len)
-        : ka_(reinterpret_cast<const char*>(s), len),
-          lv_(leafvalue<P>::make_empty()), root_(table.root()) {
+
+    static unlocked_tcursor from_const_bytes(const basic_table<P>& table,
+                                             const unsigned char* s, int len) {
+        return from_chars(table, reinterpret_cast<const char*>(s), len);
     }
-    inline unlocked_tcursor(basic_table<P>& table,
-                            const unsigned char* s, int len)
-        : ka_(reinterpret_cast<const char*>(s), len),
-          lv_(leafvalue<P>::make_empty()), root_(table.fix_root()) {
+
+    static unlocked_tcursor from_mutable_bytes(basic_table<P>& table,
+                                               const unsigned char* s, int len) {
+        return from_mutable_chars(table, reinterpret_cast<const char*>(s), len);
     }
 
     // @unsafe { Traverses tree via raw pointers without locks }
@@ -89,6 +88,15 @@ class unlocked_tcursor {
     }
 
   private:
+    static unlocked_tcursor from_key_and_root(key_type key,
+                                              rusty::Ptr<node_base<P>> root) {
+        return unlocked_tcursor(key, root);
+    }
+
+    unlocked_tcursor(key_type key, rusty::Ptr<node_base<P>> root)
+        : ka_(key), lv_(leafvalue<P>::make_empty()), root_(root) {
+    }
+
     rusty::MutPtr<leaf<P>> n_;
     key_type ka_;
     typename leaf<P>::nodeversion_type v_;

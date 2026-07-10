@@ -597,7 +597,7 @@ inline bool mbtree<P>::search(const key_type &k, value_type &v,
 {
   rcu_region guard;
   threadinfo ti;
-  Masstree::unlocked_tcursor<P> lp(table_, k.data(), k.length());
+  auto lp = Masstree::unlocked_tcursor<P>::from_const_bytes(table_, k.data(), k.length());
   bool found = lp.find_unlocked(ti);
   if (found)
     v = lp.value();

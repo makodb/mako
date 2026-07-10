@@ -86,8 +86,8 @@ inline bool pure_insert(PureTable& t, threadinfo& ti, const std::string& k,
 // the value into *out.
 inline bool pure_search(const PureTable& t, threadinfo& ti,
                         const std::string& k, uint64_t** out) {
-    Masstree::unlocked_tcursor<PureParams> lp(t, k.data(),
-                                              static_cast<int>(k.size()));
+    auto lp = Masstree::unlocked_tcursor<PureParams>::from_chars(
+        t, k.data(), static_cast<int>(k.size()));
     bool found = lp.find_unlocked(ti);
     if (found) *out = lp.value();
     return found;

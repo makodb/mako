@@ -128,7 +128,7 @@ public:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
     /// in the original implement, throw exception to distinguish case2
-    unlocked_cursor_type lp(table_, key);
+    auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -169,7 +169,7 @@ public:
 
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
-    unlocked_cursor_type lp(table_, key);
+    auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -217,7 +217,7 @@ private:
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
     // optimization to do an unlocked lookup first
     if (SET) {
-      unlocked_cursor_type lp(table_, key);
+      auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
       bool found = lp.find_unlocked(*ti.ti);
       if (found) {
         if (compar != nullptr) {
