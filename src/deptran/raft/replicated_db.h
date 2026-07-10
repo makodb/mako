@@ -83,10 +83,10 @@ public:
 // storage boundary, not an early DSL candidate.
 class ReplicatedDB {
 public:
-    // @unsafe - Opens RocksDB, stores raw pointers
+    // @unsafe - Allocates RocksDB option handles and opens db_path_.
     ReplicatedDB(RaftServer* raft, const std::string& db_path);
 
-    // @unsafe - Closes RocksDB
+    // @unsafe - Closes db_ if open and destroys RocksDB option handles.
     ~ReplicatedDB();
 
     // Non-copyable, non-movable
@@ -152,18 +152,21 @@ private:
     // @unsafe - Loads last_applied_index_ from RocksDB metadata
     void LoadLastAppliedIndex();
 
-    // @unsafe - Closes the current RocksDB instance (for snapshot loading)
+    // @unsafe - Closes db_ for snapshot loading; option handles stay alive.
     void CloseDB();
 
-    // @unsafe - Opens (or reopens) RocksDB at db_path_
+    // @unsafe - Reopens db_path_ with the constructor-owned option handles.
     bool OpenDB();
 
     // @unsafe - borrowed RaftServer; ReplicatedDB registers callbacks but does
     // not own or delete the server.
     RaftServer* raft_;
-    // @unsafe - RocksDB C handles. OpenDB/CloseDB own these via the matching
-    // rocksdb_*_create/destroy/close APIs.
+    // @unsafe - RocksDB database handle. The constructor/OpenDB open it;
+    // CloseDB/destructor close it.
     rocksdb_t* db_ = nullptr;
+    // @unsafe - RocksDB option handles. The constructor creates these and the
+    // destructor destroys them. CloseDB intentionally leaves them alive so
+    // LoadStateMachineSnapshot can reopen db_ with the same configuration.
     rocksdb_options_t* options_ = nullptr;
     rocksdb_writeoptions_t* write_options_ = nullptr;
     rocksdb_readoptions_t* read_options_ = nullptr;

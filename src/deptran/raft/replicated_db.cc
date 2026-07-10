@@ -122,7 +122,7 @@ Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
 // ReplicatedDB implementation
 // ===========================================================================
 
-// @unsafe - Opens RocksDB, stores raw pointers
+// @unsafe - Allocates RocksDB option handles and opens db_path_.
 ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
     : raft_(raft), db_path_(db_path) {
   // @unsafe { std::getenv is not borrow-checked }
@@ -131,7 +131,7 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
     compression_enabled_ = false;
   }
 
-  // @unsafe - RocksDB C API calls
+  // @unsafe - Owns these C handles until the destructor.
   options_ = rocksdb_options_create();
   write_options_ = rocksdb_writeoptions_create();
   read_options_ = rocksdb_readoptions_create();
@@ -152,7 +152,8 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
   // Read options
   rocksdb_readoptions_set_verify_checksums(read_options_, 1);
 
-  // Open the database
+  // Open the database handle. Snapshot loading can later close/reopen only
+  // db_, while keeping the option handles above alive.
   char* err = nullptr;
   db_ = rocksdb_open(options_, db_path_.c_str(), &err);
   if (err != nullptr || db_ == nullptr) {
@@ -178,7 +179,7 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
            db_path_.c_str(), last_applied_index_);
 }
 
-// @unsafe - Closes RocksDB, destroys options
+// @unsafe - Closes db_ if open and destroys constructor-owned option handles.
 ReplicatedDB::~ReplicatedDB() {
   if (db_ != nullptr) {
     rocksdb_close(db_);
@@ -446,7 +447,7 @@ void ReplicatedDB::LoadLastAppliedIndex() {
   }
 }
 
-// @unsafe - RocksDB C API
+// @unsafe - RocksDB C API; frees error strings returned by RocksDB.
 std::string ReplicatedDB::take_rocksdb_error(char** errptr) {
   if (errptr == nullptr || *errptr == nullptr) {
     return "";
@@ -461,7 +462,8 @@ std::string ReplicatedDB::take_rocksdb_error(char** errptr) {
 // CloseDB / OpenDB helpers (for snapshot loading)
 // ===========================================================================
 
-// @unsafe - Closes RocksDB, nulls db_ pointer (keeps options alive)
+// @unsafe - Closes db_ and nulls the handle. Option handles stay alive so
+// OpenDB can reuse the existing RocksDB configuration after snapshot loading.
 void ReplicatedDB::CloseDB() {
   if (db_ != nullptr) {
     rocksdb_close(db_);
@@ -469,7 +471,7 @@ void ReplicatedDB::CloseDB() {
   }
 }
 
-// @unsafe - Opens RocksDB at db_path_ using existing options
+// @unsafe - Opens db_path_ using the constructor-owned option handles.
 bool ReplicatedDB::OpenDB() {
   if (db_ != nullptr) {
     Log_warn("[ReplicatedDB] OpenDB called but db_ is already open");
@@ -517,7 +519,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
 
   std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(last_applied_index_);
 
-  // @unsafe { filesystem operations }
+  // @unsafe { RocksDB checkpoint handle and filesystem operations }
   rocksdb_checkpoint_create(cp, cp_dir.c_str(), 0, &err);
   rocksdb_checkpoint_object_destroy(cp);
 
@@ -751,6 +753,8 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   // 3. Delete the old database directory
   // @unsafe { RocksDB C API - destroy_db removes all DB files }
   {
+    // Temporary options handle used only for destroy_db; keep this separate
+    // from options_, which remains owned by this ReplicatedDB for reopen.
     rocksdb_options_t* destroy_opts = rocksdb_options_create();
     char* err = nullptr;
     rocksdb_destroy_db(destroy_opts, db_path_.c_str(), &err);
