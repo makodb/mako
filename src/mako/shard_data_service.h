@@ -175,13 +175,13 @@ public:
     void put(const std::string& key, const std::string& value) override {
         ShardDataServiceProxy::RpcPutKeyRequest req;
         req.table_name = table_; req.key = key; req.value = value;
-        (void)proxy_->PutKey(req);
+        if (proxy_->PutKey(req).is_err()) faulted_ = true;
     }
     bool get(const std::string& key, std::string& out) override {
         ShardDataServiceProxy::RpcGetKeyRequest req;
         req.table_name = table_; req.key = key;
         auto r = proxy_->GetKey(req);
-        if (r.is_err()) return false;
+        if (r.is_err()) { faulted_ = true; return false; }
         auto resp = r.unwrap();
         if (!resp.found) return false;
         out = std::move(resp.value);
@@ -190,7 +190,7 @@ public:
     void remove(const std::string& key) override {
         ShardDataServiceProxy::RpcRemoveKeyRequest req;
         req.table_name = table_; req.key = key;
-        (void)proxy_->RemoveKey(req);
+        if (proxy_->RemoveKey(req).is_err()) faulted_ = true;
     }
     std::vector<KvPair> scan_range_limited(const std::string& lo,
                                            const std::string& hi,
@@ -200,7 +200,7 @@ public:
         req.table_name = table_;
         req.lo = lo; req.hi = hi; req.limit = static_cast<rrr::i32>(limit);
         auto r = proxy_->ScanRange(req);
-        if (r.is_err()) return out;
+        if (r.is_err()) { faulted_ = true; return out; }
         for (auto& kv : r.unwrap().rows) out.emplace_back(kv.first, kv.second);
         return out;   // rows arrive sorted (a std::map) -> ascending vector
     }
@@ -223,7 +223,8 @@ public:
         ShardDataServiceProxy::RpcChecksumRequest req;
         req.table_name = table_; req.lo = lo; req.hi = hi;
         auto r = proxy_->Checksum(req);
-        return r.is_err() ? 0 : static_cast<uint64_t>(r.unwrap().checksum);
+        if (r.is_err()) { faulted_ = true; return 0; }
+        return static_cast<uint64_t>(r.unwrap().checksum);
     }
     bool verify_range(const std::string& lo, const std::string& hi,
                       uint64_t expected) override {
@@ -231,12 +232,13 @@ public:
         req.table_name = table_;
         req.lo = lo; req.hi = hi; req.expected = static_cast<rrr::i64>(expected);
         auto r = proxy_->VerifyRange(req);
-        return !r.is_err() && r.unwrap().ok != 0;
+        if (r.is_err()) { faulted_ = true; return false; }
+        return r.unwrap().ok != 0;
     }
     void drop_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcDropRangeRequest req;
         req.table_name = table_; req.lo = lo; req.hi = hi;
-        (void)proxy_->DropRange(req);
+        if (proxy_->DropRange(req).is_err()) faulted_ = true;
     }
 
     // Migration write fence on the REMOTE shard (ShardData overrides): one RPC to
@@ -245,17 +247,23 @@ public:
     void freeze_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcFreezeRangeRequest req;
         req.table_name = table_; req.lo = lo; req.hi = hi;
-        (void)proxy_->FreezeRange(req);
+        if (proxy_->FreezeRange(req).is_err()) faulted_ = true;
     }
     void unfreeze_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcUnfreezeRangeRequest req;
         req.table_name = table_; req.lo = lo; req.hi = hi;
-        (void)proxy_->UnfreezeRange(req);
+        if (proxy_->UnfreezeRange(req).is_err()) faulted_ = true;
     }
+
+    // Any RPC error on this participant (dead peer, connection loss) latches the
+    // fault bit; the coordinator refuses to vote prepared over a faulted
+    // participant (see ShardData::faulted).
+    bool faulted() override { return faulted_; }
 
 private:
     ShardDataServiceProxy* proxy_;   // non-owning; connected to the remote shard.
     std::string table_;              // the one table this participant is bound to.
+    bool faulted_ = false;           // latched on the first RPC failure.
 };
 
 }  // namespace janus

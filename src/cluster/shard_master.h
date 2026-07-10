@@ -226,6 +226,24 @@ impl ShardMaster {
         let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
         unsafe { (*src).freeze_range(&lo, &hi) };
     }
+    // A dead participant's reads degenerate to empty-scan / checksum-0, and an
+    // EMPTY destination also checksums 0 -- a vacuous match. Never vote prepared
+    // over a faulted participant: the coordinator aborts instead of committing a
+    // cutover to an empty destination (which would strand the range's rows on
+    // the dead source while routing sends readers to the new, empty owner).
+    fn participants_faulted(&self) -> bool {
+        let src_id: u32 = (*self).mig_source;
+        if (*self).shards.contains_key(src_id) {
+            let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
+            if unsafe { (*src).faulted() } { return true; }
+        }
+        let dst_id: u32 = (*self).mig_dest;
+        if (*self).shards.contains_key(dst_id) {
+            let dst: *mut ShardData = (*self).shards.get(dst_id).unwrap().get();
+            if unsafe { (*dst).faulted() } { return true; }
+        }
+        false
+    }
     // True iff source and destination hold identical data over [lo, hi): the
     // source computes its checksum (its "prepared" proof) and the destination
     // verifies its own range against it (one RPC for a remote dst — the dst's
@@ -257,6 +275,7 @@ impl ShardMaster {
         for dk in (*self).mig_deleted {
             unsafe { (*dst).remove(dk.first) };
         }
+        if self.participants_faulted() { return; }
         if self.range_checksums_match() {
             (*self).mig_dst_prepared = true;
         }
@@ -266,6 +285,7 @@ impl ShardMaster {
     fn prepare_dest(&mut self, generation: u64) -> bool {
         if !(*self).mig_active { return false; }
         if generation != (*self).mig_generation { return false; }
+        if self.participants_faulted() { return false; }
         if !self.range_checksums_match() { return false; }
         (*self).mig_dst_prepared = true;
         true
@@ -371,7 +391,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=7b5ed1ccb4d140d2f431f44131c984a858d34fefe60da6d657dd4fa409cad634*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=1d08bd2be723104adb3074d1e393d35cbc41945ed5154c25342fdf7c7fc4e519*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -405,6 +425,7 @@ struct ShardMaster {
     bool begin_migration(uint32_t source, uint32_t dest, const std::string& table, const std::string& lo, const std::string& hi);
     void background_copy();
     void lock_range();
+    bool participants_faulted() const;
     bool range_checksums_match() const;
     void final_sync();
     bool prepare_dest(uint64_t generation);
@@ -602,6 +623,24 @@ inline void ShardMaster::lock_range() {
     }
 }
 
+inline bool ShardMaster::participants_faulted() const {
+    const uint32_t src_id = ((*this)).mig_source;
+    if (((*this)).shards.contains_key(std::move(src_id))) {
+        ShardData* const src = ((*this)).shards.get(std::move(src_id)).unwrap().get();
+        if (((*src)).faulted()) {
+            return true;
+        }
+    }
+    const uint32_t dst_id = ((*this)).mig_dest;
+    if (((*this)).shards.contains_key(std::move(dst_id))) {
+        ShardData* const dst = ((*this)).shards.get(std::move(dst_id)).unwrap().get();
+        if (((*dst)).faulted()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 inline bool ShardMaster::range_checksums_match() const {
     if (!((*this)).mig_active) {
         return false;
@@ -646,6 +685,9 @@ inline void ShardMaster::final_sync() {
             ((*dst)).remove(std::move(dk.first));
         }
     }
+    if (this->participants_faulted()) {
+        return;
+    }
     if (this->range_checksums_match()) {
         ((*this)).mig_dst_prepared = true;
     }
@@ -656,6 +698,9 @@ inline bool ShardMaster::prepare_dest(uint64_t generation) {
         return false;
     }
     if (rusty::detail::deref_if_pointer_like(generation) != rusty::detail::deref_if_pointer_like(((*this)).mig_generation)) {
+        return false;
+    }
+    if (this->participants_faulted()) {
         return false;
     }
     if (!this->range_checksums_match()) {

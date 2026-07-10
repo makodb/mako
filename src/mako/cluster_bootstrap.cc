@@ -199,13 +199,31 @@ private:
         master->background_copy();     // catch-up: the range is now write-fenced
         master->final_sync();          // Phase 3: checksum gate -> dest prepared
         if (!master->both_prepared()) {
+            // Distinguish a dead/unreachable participant (its reads degenerate
+            // to empty/0, which the master's faulted() gate refuses to treat as
+            // a checksum match) from a genuine copy divergence.
+            const bool faulted = master->participants_faulted();
             master->abort_migration();
-            return "checksum verify failed -> aborted (source intact, unfrozen)";
+            return faulted
+                ? "participant unreachable -> aborted (source intact and "
+                  "unfrozen; retry when the shard is back)"
+                : "checksum verify failed -> aborted (source intact, unfrozen)";
         }
         if (!master->commit_migration())  // Phase 4: shed + publish cutover
             return "commit_migration failed";
         *moved = static_cast<rrr::i64>(master->shard_range_count(
             static_cast<uint32_t>(req.dst), req.lo, req.hi));
+        // Post-commit shed verification: the cutover is already published (dest
+        // owns the range) -- residual source rows are unrouted garbage, surfaced
+        // here so an operator can re-drop them (e.g. after a source that died
+        // between its prepare vote and the DropRange).
+        const size_t src_left = master->shard_range_count(
+            static_cast<uint32_t>(req.src), req.lo, req.hi);
+        if (src_left > 0) {
+            Log_warn("MigrationAdmin: committed, but the source still holds %zu "
+                     "rows in [%s,%s) (DropRange failed?); unrouted until re-dropped",
+                     src_left, req.lo.c_str(), req.hi.c_str());
+        }
         return std::string();
     }
 

@@ -484,5 +484,148 @@ TEST_F(ShardMasterTest, MasterAssignsMonotonicShardIds) {
     EXPECT_EQ(master_.register_shard({"d"}, &shards_[0]), 3u);  // id not recycled
 }
 
+// =============================================================================
+// Alive-master recovery from UNSUCCESSFUL migrations: the fence lifecycle on
+// abort vs commit, a dead participant degenerating to abort (not a vacuous
+// commit), and a failed attempt retried to completion on the same master.
+// =============================================================================
+
+// Records the master-issued write-fence calls (what a real participant forwards
+// to its process-global MigrationGuard / the FreezeRange RPC).
+class FreezeTrackingShardData : public InMemoryShardData {
+public:
+    void freeze_range(const std::string&, const std::string&) override { freezes++; }
+    void unfreeze_range(const std::string&, const std::string&) override { unfreezes++; }
+    int freezes = 0;
+    int unfreezes = 0;
+};
+
+// The exact observable behavior of a RemoteShardData whose peer DIED: every
+// read degenerates to empty/0 (its RPCs error out) and faulted() latches.
+class DeadShardData : public InMemoryShardData {
+public:
+    bool faulted() override { return true; }
+    bool get(const std::string&, std::string&) override { return false; }
+    std::vector<KvPair> scan_range(const std::string&, const std::string&) override {
+        return {};
+    }
+    std::vector<KvPair> scan_range_limited(const std::string&, const std::string&,
+                                           size_t) override {
+        return {};
+    }
+    uint64_t checksum(const std::string&, const std::string&) override { return 0; }
+    bool verify_range(const std::string&, const std::string&, uint64_t) override {
+        return false;
+    }
+};
+
+// lock_range fences the SOURCE; ABORT lifts the fence (the source resumes
+// serving the range); COMMIT deliberately leaves it (the source no longer owns
+// the range -- the standing fence rejects stale-routed writers until their
+// config reloads). The destination is never fenced.
+TEST_F(ShardMasterTest, AbortUnfreezesSourceCommitLeavesFence) {
+    AddThreeShards();
+    EnableMapMode();
+    FreezeTrackingShardData src, dst;
+    master_.attach_shard(1, &src);   // overwrite ids 1/2 with tracking planes
+    master_.attach_shard(2, &dst);
+    const std::string lo = "m", hi = "t";
+    for (int i = 0; i < 5; ++i) src.put("m" + std::to_string(i), "v");
+
+    // Attempt 1: lock fences the source; abort lifts exactly that fence.
+    ASSERT_TRUE(master_.begin_migration(1, 2, "", lo, hi));
+    master_.background_copy();
+    master_.lock_range();
+    EXPECT_EQ(src.freezes, 1);
+    EXPECT_EQ(src.unfreezes, 0);
+    master_.abort_migration();
+    EXPECT_EQ(src.unfreezes, 1) << "abort must unfence the source";
+    EXPECT_EQ(dst.freezes, 0) << "the destination is never fenced";
+
+    // Attempt 2: a committed migration leaves the source fenced.
+    ASSERT_TRUE(master_.begin_migration(1, 2, "", lo, hi));
+    master_.background_copy();
+    master_.lock_range();
+    master_.final_sync();
+    ASSERT_TRUE(master_.both_prepared());
+    ASSERT_TRUE(master_.commit_migration());
+    EXPECT_EQ(src.freezes, 2);
+    EXPECT_EQ(src.unfreezes, 1) << "commit must NOT unfence the source";
+}
+
+// A dead source's reads degenerate to empty-scan / checksum-0 -- and an empty
+// destination ALSO checksums 0. Without the faulted() gate that vacuously
+// "matches" and the migration would COMMIT a cutover to an empty destination,
+// stranding the range's rows on the dead source while routing sends readers to
+// the new, empty owner. The gate forces the abort path instead, and the master
+// is not wedged: the next migration (healthy participants) commits.
+TEST_F(ShardMasterTest, DeadParticipantAbortsInsteadOfVacuousCommit) {
+    AddThreeShards();
+    EnableMapMode();
+    DeadShardData dead_src;
+    master_.attach_shard(1, &dead_src);
+    const std::string lo = "m", hi = "t";
+
+    ASSERT_TRUE(master_.begin_migration(1, 2, "", lo, hi));
+    master_.background_copy();               // copies nothing (dead reads)
+    master_.lock_range();
+    master_.final_sync();
+    EXPECT_FALSE(master_.both_prepared())
+        << "a faulted participant must not produce a (vacuous) prepared vote";
+    EXPECT_FALSE(master_.prepare_dest(master_.migration_generation()))
+        << "an explicit prepare vote is refused too";
+    EXPECT_FALSE(master_.commit_migration());
+    master_.abort_migration();
+    EXPECT_FALSE(master_.is_migrating());
+    EXPECT_EQ(FreshRoute("m3"), 0u) << "no cutover may have been published";
+
+    // The master recovers: a healthy migration right after commits normally.
+    master_.attach_shard(1, &shards_[1]);    // healthy plane back
+    shards_[1].put("m1", "alive");
+    ASSERT_TRUE(master_.begin_migration(1, 2, "", lo, hi));
+    master_.background_copy();
+    master_.lock_range();
+    master_.final_sync();
+    ASSERT_TRUE(master_.both_prepared());
+    ASSERT_TRUE(master_.commit_migration());
+    { std::string v; ASSERT_TRUE(Read(2, "m1", v)); EXPECT_EQ(v, "alive"); }
+}
+
+// A failed attempt aborts cleanly and the SAME (still-alive) master retries the
+// SAME range to completion: the retry re-copies (puts are idempotent), gets a
+// fresh generation, checksum-verifies, and publishes the cutover.
+TEST_F(ShardMasterTest, RetryAfterAbortConverges) {
+    AddThreeShards();
+    EnableMapMode();
+    const std::string lo = "m", hi = "t";
+    for (int i = 0; i < 8; ++i) shards_[0].put("m" + std::to_string(i), "v" + std::to_string(i));
+
+    // Attempt 1: the copy diverges (a corrupt row lands on the destination
+    // behind the coordinator's back) -> checksum gate refuses -> abort.
+    ASSERT_TRUE(master_.begin_migration(0, 1, "", lo, hi));
+    master_.background_copy();
+    shards_[1].put("m3", "corrupt");
+    master_.lock_range();
+    master_.final_sync();
+    EXPECT_FALSE(master_.both_prepared());
+    EXPECT_FALSE(master_.commit_migration());
+    master_.abort_migration();
+    EXPECT_EQ(master_.shard_range_count(1, lo, hi), 0u);   // partial copy discarded
+    EXPECT_EQ(master_.shard_range_count(0, lo, hi), 8u);   // source intact
+    EXPECT_EQ(FreshRoute("m3"), 0u);                       // routing unchanged
+
+    // Attempt 2 (same master, same range): converges and publishes.
+    ASSERT_TRUE(master_.begin_migration(0, 1, "", lo, hi));
+    master_.background_copy();
+    master_.lock_range();
+    master_.final_sync();
+    ASSERT_TRUE(master_.both_prepared());
+    ASSERT_TRUE(master_.commit_migration());
+    EXPECT_EQ(master_.shard_range_count(1, lo, hi), 8u);
+    EXPECT_EQ(master_.shard_range_count(0, lo, hi), 0u);
+    EXPECT_EQ(FreshRoute("m3"), 1u) << "the retried commit publishes the cutover";
+    { std::string v; ASSERT_TRUE(Read(1, "m3", v)); EXPECT_EQ(v, "v3"); }
+}
+
 }  // namespace
 }  // namespace janus

@@ -90,6 +90,17 @@ public:
         for (const auto& kv : scan_range(lo, hi)) remove(kv.first);
     }
 
+    // ---- participant health ----
+    // Has ANY operation on this participant failed (e.g. an RPC error on a
+    // remote participant whose process died)? The coordinator consults this
+    // before voting prepared: a faulted participant's reads degenerate to
+    // empty-scan / checksum-0, and an empty destination ALSO checksums 0, so
+    // without this gate a dead source would VACUOUSLY match and the migration
+    // would commit a cutover to an empty destination — losing the range to
+    // routing while the rows sit on the (dead) source. Local/in-memory
+    // participants never fault.
+    virtual bool faulted() { return false; }
+
     // ---- migration freeze (write fence) on THIS participant ----
     // The coordinator (ShardMaster) freezes the SOURCE's [lo,hi) at lock_range so
     // no write slips between the final copy and the cutover, and unfreezes only on
