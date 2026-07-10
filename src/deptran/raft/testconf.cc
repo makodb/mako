@@ -20,7 +20,11 @@ namespace janus {
 
 int _test_id_g = 0;
 
+// @unsafe - static test harness registry of live frames. Kill() deletes and
+// erases entries; Restart() allocates and reinserts replacements.
 std::map<siteid_t, RaftFrame*> RaftTestConfig::replicas;
+
+// @unsafe - std::function compatibility boundary for RaftServer::RegLearnerAction.
 std::map<siteid_t, std::function<int(int, janus::Command)>>
     RaftTestConfig::commit_callbacks;
 std::map<siteid_t, std::vector<int>> RaftTestConfig::committed_cmds;
@@ -45,6 +49,8 @@ void RaftTestConfig::SetLearnerAction(void) {
     auto svr = pair.first;
     auto frame = pair.second;
     // rep_frame_ is already set in constructor, no need to set it here
+    // Store the callback so Restart() can re-register equivalent learner
+    // behavior on the newly allocated RaftServer.
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -574,8 +580,8 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // Mark as disconnected
   disconnected_[svr] = true;
 
-  // Clear atomic pointer in RaftServiceImpl BEFORE deleting frame
-  // This ensures in-flight RPCs get nullptr and return failure gracefully
+  // Publish nullptr before deleting the frame-owned RaftServer so existing RPC
+  // services stop forwarding to an about-to-be-destroyed server.
   RaftServiceImpl::UpdateServer(svr, nullptr);
 
   // Disconnect to save RPC proxies before deletion
@@ -589,10 +595,12 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // We must wait longer than this to ensure stale coroutines exit before we delete
   usleep(450000); // 450ms > max election timer sleep (400ms)
 
-  // Delete the frame (this will cascade delete svr_ and commo_)
+  // RaftFrame owns svr_ and commo_; deleting it tears down the server and
+  // communicator for this test replica.
   delete frame;
 
-  // Remove from replicas map
+  // Remove the killed frame from the live registry. Restart() will allocate
+  // and insert a replacement frame.
   replicas.erase(it);
 
   // Clear committed commands for this server
@@ -635,25 +643,29 @@ void RaftTestConfig::Restart(siteid_t svr) {
     return;
   }
 
-  // Create new RaftFrame
+  // Allocate a replacement frame owned by the test registry after insertion.
   RaftFrame* frame = new RaftFrame(MODE_RAFT);
   frame->site_info_ = site_info;
 
-  // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
+  // RaftFrame owns the recreated RaftServer; external users receive borrowed
+  // raw pointers via .get(). Persistence is loaded below before publication.
   frame->svr_ = std::make_unique<RaftServer>(frame);
   frame->svr_->site_id_ = svr;
   frame->svr_->partition_id_ = site_info->partition_id_;
   frame->svr_->loc_id_ = site_info->locale_id;
   frame->svr_->rep_frame_ = frame;
 
-  // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
+  // Reuse the RPC service poll thread kept by RaftServiceImpl across Kill().
   // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)
-  // use the SAME poll thread, eliminating race conditions on RaftServer state
+  // use the same poll thread, eliminating race conditions on RaftServer state.
   auto poll_thread = RaftServiceImpl::GetPollThread(svr);
   if (poll_thread.is_some()) {
+    // RaftFrame owns the recreated communicator.
     frame->commo_ = std::make_unique<RaftCommo>(std::move(poll_thread));
   } else {
     Log_warn("[RAFT-RESTART] site %d: poll thread not found, creating new one", svr);
+    // RaftFrame owns the recreated communicator even when a poll thread must
+    // be created lazily by RaftCommo.
     frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
   }
   frame->commo_->loc_id_ = site_info->locale_id;
@@ -744,7 +756,8 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 #endif
 
-  // Re-register learner action BEFORE adding to replicas map
+  // Register learner callback before publishing the frame so the restarted
+  // server observes commits the same way as the original.
   commit_callbacks[svr] =
       [svr](int slot, janus::Command md) -> int {
         verify(md.kind_ == TpcCommitCommand::static_kind());
@@ -757,11 +770,10 @@ void RaftTestConfig::Restart(siteid_t svr) {
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);
 
-  // Update atomic pointer in RaftServiceImpl to point to the new server
-  // This allows the existing RPC service to forward requests to the new server
+  // Rebind the existing RPC service to the newly frame-owned server.
   RaftServiceImpl::UpdateServer(svr, frame->svr_.get());
 
-  // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
+  // Publish the restarted frame into the live registry.
   replicas[svr] = frame;
 
   // Mark as connected in test config (don't call Reconnect, proxies will be restored on demand)

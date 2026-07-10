@@ -46,11 +46,13 @@ class CommitIndex {
 class RaftTestConfig {
 
  private:
-  // @unsafe - test harness borrows frames from the RAFT_TEST_CORO frame
-  // registry; this map does not own the RaftFrame instances.
+  // @unsafe - test harness registry of live RaftFrame objects. The initial
+  // entries are copied from the caller's frame map; Kill() deletes and erases
+  // an entry, Restart() allocates and reinserts a replacement.
   static std::map<siteid_t, RaftFrame*> replicas;
-  // Compatibility boundary: RegLearnerAction still stores the shared scheduler
-  // callback type.
+  // @unsafe - compatibility learner-action storage. RegLearnerAction still
+  // accepts std::function, so these callbacks stay std::function for now.
+  // Restart() re-registers a fresh callback on the recreated RaftServer.
   static std::map<siteid_t, std::function<int(int, janus::Command)>> commit_callbacks;
   static std::map<siteid_t, std::vector<int>> committed_cmds;
   static std::map<siteid_t, uint64_t> rpc_count_last;
@@ -74,6 +76,9 @@ class RaftTestConfig {
   // Helper function to get next server ID in sequence
   siteid_t getNextServerId(siteid_t current_server_id, int offset = 1) const;
 
+  // @unsafe - copies borrowed/live frame pointers into the static test registry.
+  // The registry becomes responsible for Kill()/Restart() replacement during
+  // the test config lifetime.
   RaftTestConfig(std::map<siteid_t, RaftFrame*>& replicas);
 
   // sets up learner action functions for the servers
