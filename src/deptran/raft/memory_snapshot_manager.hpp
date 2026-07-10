@@ -18,6 +18,7 @@
  */
 
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -29,7 +30,8 @@ namespace raft {
 
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
-  // @safe
+  // @unsafe - borrows MemorySnapshotManager internals. The writer must not
+  // outlive the manager that created it.
   MemorySnapshotWriter(std::string* dest_payload,
                        SnapshotMetadata* dest_meta,
                        bool* has_snapshot,
@@ -69,9 +71,13 @@ class MemorySnapshotWriter : public SnapshotWriter {
   size_t GetOffset() const override { return offset_; }
 
  private:
+  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
   std::string*         dest_payload_{nullptr};
+  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
   SnapshotMetadata*    dest_meta_{nullptr};
+  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
   bool*                has_snapshot_{nullptr};
+  // @unsafe - borrowed from MemorySnapshotManager; guards the borrowed fields.
   std::mutex*          mtx_{nullptr};
   std::string          buffer_{};
   size_t               offset_{0};
@@ -116,12 +122,12 @@ class MemorySnapshotManager : public SnapshotManager {
   // @safe
   MemorySnapshotManager() = default;
 
-  // @safe
+  // @unsafe - returned writer owns itself but borrows this manager's payload,
+  // metadata, flag, and mutex. Do not let the writer outlive the manager.
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
       slotid_t last_index, ballot_t last_term) override {
-    return std::unique_ptr<SnapshotWriter>(
-        new MemorySnapshotWriter(&payload_, &meta_, &has_snapshot_, &mtx_,
-                                 last_index, last_term));
+    return std::make_unique<MemorySnapshotWriter>(
+        &payload_, &meta_, &has_snapshot_, &mtx_, last_index, last_term);
   }
 
   // @unsafe - memcpy into internal buffer under mutex
@@ -136,13 +142,12 @@ class MemorySnapshotManager : public SnapshotManager {
     return true;
   }
 
-  // @safe
+  // @safe - returned reader owns a copy of the in-memory snapshot payload.
   std::unique_ptr<SnapshotReader> BeginLoad(
       const SnapshotMetadata& /*metadata*/) override {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!has_snapshot_) return nullptr;
-    return std::unique_ptr<SnapshotReader>(
-        new MemorySnapshotReader(payload_, meta_));
+    return std::make_unique<MemorySnapshotReader>(payload_, meta_);
   }
 
   // @unsafe - writes to caller-owned pointers under mutex
