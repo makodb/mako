@@ -122,20 +122,28 @@ class tcursor {
     static constexpr int new_nodes_size = 1; // unless we make a new trie newnodes will have at most 1 item
     typedef small_vector<std::pair<rusty::MutPtr<leaf_type>, nodeversion_value_type>, new_nodes_size> new_nodes_type;
 
-    tcursor(basic_table<P>& table, Str str)
-        : ka_(str), root_(table.fix_root()) {
+    static tcursor from_mutable_str(basic_table<P>& table, Str str) {
+        return from_key_and_root(key_type(str), table.fix_root());
     }
-    tcursor(basic_table<P>& table, const char* s, int len)
-        : ka_(s, len), root_(table.fix_root()) {
+
+    static tcursor from_mutable_chars(basic_table<P>& table,
+                                      const char* s, int len) {
+        return from_key_and_root(key_type(s, len), table.fix_root());
     }
-    tcursor(basic_table<P>& table, const unsigned char* s, int len)
-        : ka_(reinterpret_cast<const char*>(s), len), root_(table.fix_root()) {
+
+    static tcursor from_mutable_bytes(basic_table<P>& table,
+                                      const unsigned char* s, int len) {
+        return from_mutable_chars(table, reinterpret_cast<const char*>(s), len);
     }
-    tcursor(rusty::MutPtr<node_base<P>> root, const char* s, int len)
-        : ka_(s, len), root_(root) {
+
+    static tcursor from_root_chars(rusty::MutPtr<node_base<P>> root,
+                                   const char* s, int len) {
+        return from_key_and_root(key_type(s, len), root);
     }
-    tcursor(rusty::MutPtr<node_base<P>> root, const unsigned char* s, int len)
-        : ka_(reinterpret_cast<const char*>(s), len), root_(root) {
+
+    static tcursor from_root_bytes(rusty::MutPtr<node_base<P>> root,
+                                   const unsigned char* s, int len) {
+        return from_root_chars(root, reinterpret_cast<const char*>(s), len);
     }
 
     inline bool has_value() const {
@@ -184,6 +192,15 @@ class tcursor {
     inline nodeversion_value_type next_full_version_value(int state) const;
 
   private:
+    static tcursor from_key_and_root(key_type key,
+                                     rusty::MutPtr<node_base<P>> root) {
+        return tcursor(key, root);
+    }
+
+    tcursor(key_type key, rusty::MutPtr<node_base<P>> root)
+        : ka_(key), root_(root) {
+    }
+
     rusty::MutPtr<leaf_type> n_;
     key_type ka_;
     key_indexed_position kx_;

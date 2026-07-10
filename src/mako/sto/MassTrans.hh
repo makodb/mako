@@ -235,7 +235,7 @@ private:
       }
     }
 
-    cursor_type lp(table_, key);
+    auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_insert(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -688,7 +688,7 @@ public:
   }
 
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
-    cursor_type lp(table_, key);
+    auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_locked(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
@@ -730,7 +730,7 @@ protected:
         // copied version is going to be invalid because we just had to mark e invalid
         new_location->version() &= ~invalid_bit;
       }
-      cursor_type lp(table_, key);
+      auto lp = cursor_type::from_mutable_str(table_, key);
       // TODO: not even trying to pass around threadinfo here
       bool found = lp.find_locked(*mythreadinfo.ti);
       (void)found;
@@ -957,4 +957,3 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
-

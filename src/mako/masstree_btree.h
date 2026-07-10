@@ -613,7 +613,7 @@ inline bool mbtree<P>::insert(const key_type &k, value_type v,
 {
   rcu_region guard;
   threadinfo ti;
-  Masstree::tcursor<P> lp(table_, k.data(), k.length());
+  auto lp = Masstree::tcursor<P>::from_mutable_bytes(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
   if (!found)
     ti.observe_phantoms(lp.node());
@@ -635,7 +635,7 @@ inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
 {
   rcu_region guard;
   threadinfo ti;
-  Masstree::tcursor<P> lp(table_, k.data(), k.length());
+  auto lp = Masstree::tcursor<P>::from_mutable_bytes(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
   if (!found) {
     ti.observe_phantoms(lp.node());
@@ -661,7 +661,7 @@ inline bool mbtree<P>::remove(const key_type &k, value_type *old_v)
 {
   rcu_region guard;
   threadinfo ti;
-  Masstree::tcursor<P> lp(table_, k.data(), k.length());
+  auto lp = Masstree::tcursor<P>::from_mutable_bytes(table_, k.data(), k.length());
   bool found = lp.find_locked(ti);
   if (found && old_v)
     *old_v = lp.value();

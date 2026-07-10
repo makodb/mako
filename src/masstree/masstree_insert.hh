@@ -164,7 +164,7 @@ template <typename P> template <typename F>
 // @unsafe { Locks nodes, calls user callback f }
 inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 {
-    tcursor<P> lp(*this, key);
+    auto lp = tcursor<P>::from_mutable_str(*this, key);
     bool found = lp.find_locked(ti);
     int answer;
     if (found)
@@ -179,7 +179,7 @@ template <typename P> template <typename F>
 // @unsafe { Locks nodes, may insert, calls user callback f }
 inline int basic_table<P>::modify_insert(Str key, F& f, threadinfo& ti)
 {
-    tcursor<P> lp(*this, key);
+    auto lp = tcursor<P>::from_mutable_str(*this, key);
     bool found = lp.find_insert(ti);
     int answer = f(key, found, lp, ti);
     lp.finish(answer, ti);

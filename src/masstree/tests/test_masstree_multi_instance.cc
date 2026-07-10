@@ -74,7 +74,8 @@ inline std::string be_u64(uint64_t v) {
 // ti.rcu_start() / ti.rcu_stop()). Returns true iff the key was new.
 inline bool pure_insert(PureTable& t, threadinfo& ti, const std::string& k,
                         uint64_t* v) {
-    Masstree::tcursor<PureParams> lp(t, k.data(), static_cast<int>(k.size()));
+    auto lp = Masstree::tcursor<PureParams>::from_mutable_chars(
+        t, k.data(), static_cast<int>(k.size()));
     bool found = lp.find_insert(ti);
     if (!found) ti.observe_phantoms(lp.node());
     lp.value() = v;

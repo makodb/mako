@@ -176,7 +176,7 @@ template <typename R> template <typename T>
 result_t query<R>::run_put(T& table, Str key,
                            const Json* firstreq, const Json* lastreq,
                            threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
         ti.observe_phantoms(lp.node());
@@ -219,7 +219,7 @@ inline bool query<R>::apply_put(rusty::MutPtr<R>& value, bool found, const Json*
 template <typename R> template <typename T>
 // @unsafe { Uses cursor to find/insert, replaces raw row data }
 result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
         ti.observe_phantoms(lp.node());
@@ -252,7 +252,7 @@ inline bool query<R>::apply_replace(rusty::MutPtr<R>& value, bool found, Str new
 template <typename R> template <typename T>
 // @unsafe { Uses locked cursor, frees row via RCU }
 bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_locked(ti);
     if (found)
         apply_remove(lp.value(), lp.node()->phantom_epoch_[0], ti);
