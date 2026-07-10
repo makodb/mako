@@ -41,17 +41,35 @@ namespace raft {
 // ---------------------------------------------------------------------------
 // RequestVote
 // ---------------------------------------------------------------------------
+#if RUSTYCPP_RUST
+pub struct VoteReq {
+    last_log_idx: u64,
+    last_log_term: i64,
+    candidate_site_id: u16,
+    current_term: i64,
+}
+
+pub struct VoteReply {
+    max_ballot: i64,
+    vote_granted: bool,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=1eadad9375039379452eb07205d2e8c38687338e3959be8d385885372a880a92*/
+struct VoteReq;
+struct VoteReply;
+
 struct VoteReq {
-  uint64_t last_log_idx{0};
-  ballot_t last_log_term{0};
-  siteid_t candidate_site_id{0};
-  ballot_t current_term{0};
+    uint64_t last_log_idx;
+    int64_t last_log_term;
+    uint16_t candidate_site_id;
+    int64_t current_term;
 };
 
 struct VoteReply {
-  ballot_t max_ballot{0};
-  bool     vote_granted{false};
+    int64_t max_ballot;
+    bool vote_granted;
 };
+/*RUSTYCPP:GEN-END id=messages.1*/
 
 // ---------------------------------------------------------------------------
 // VoteDurable — sent by a voter once its vote has been persisted.

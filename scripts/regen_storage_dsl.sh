@@ -67,6 +67,9 @@ FILES=(
   # fns; generated defs in the .cc (header keeps decls). cc_load_from_cm stays
   # a hand-C++ kernel (reads through a complete ConfigManager).
   src/cluster/cluster_config.cc
+  # Raft vote message PODs: first low-risk Raft DSL island; larger request
+  # structs with janus::Command payloads stay hand-C++ for now.
+  src/deptran/raft/messages.hpp
 )
 
 post_pass() {
