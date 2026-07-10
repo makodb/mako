@@ -402,21 +402,14 @@ TEST_F(MakoMigrationReroute, FrozenRangeRejectsRangeWritesDuringMigrationThenRer
     EXPECT_EQ(1, mako::compute_shard_for_key(kTableId, mkey(15)));
     EXPECT_EQ(0, mako::compute_shard_for_key(kTableId, mkey(5)));
 
-    // The guard is process-global (""), so the moved range is STILL frozen on its
-    // new owner (shard 1) until the coordinator lifts it: a write is still rejected,
-    // but a READ is served by shard 1 with the migrated value.
-    EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(15), "still-frozen", &op),
-              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
-    {
-        std::string out;
-        EXPECT_EQ(TThread::sclient->nontxnGet(kTableId, mkey(15), out),
-                  static_cast<int>(mako::ErrorCode::SUCCESS));
-        EXPECT_EQ(out, mval(15)) << "migrated value is served by the new owner while frozen";
-    }
-
-    // UNFREEZE -> shard 1 serves the range. The client's retried write now lands
-    // on the NEW owner (this is what the put() wrapper's SERVER_BUSY retry does).
-    janus::get_migration_guard().unfreeze(std::string(), lo, hi);
+    // COMMIT transfers ownership: the master unfences the DESTINATION (clearing
+    // any stale fence from a previous ownership of this range). In this
+    // single-process bed the guard is SHARED and the manual + lock entries carry
+    // the identical ("", lo, hi) triple, so the destination's unfence clears the
+    // source's too -- a bed artifact; in production each process has its own
+    // guard and the source keeps its fence (the coordinator-level contract is
+    // pinned by shard_master_test.AbortUnfreezesSourceCommitLeavesFence). The
+    // client's retried write therefore lands on the NEW owner right away here.
     EXPECT_EQ(TThread::sclient->nontxnPut(kTableId, mkey(15), "after-cutover", &op),
               static_cast<int>(mako::ErrorCode::SUCCESS));
     {

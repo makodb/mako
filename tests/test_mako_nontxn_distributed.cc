@@ -383,4 +383,52 @@ TEST_F(MakoNontxnDistributed, FrozenRangeReturnsServerBusyOnRemoteWrite) {
     guard.clear();
 }
 
+// ---------------------------------------------------------------------------
+// The MOVED state over the REAL RPC path: while a range is merely FROZEN
+// (mid-migration), reads keep serving from this shard; once the shard SHEDS the
+// range (mark_moved, as DropRange does at commit), READS are rejected too --
+// a stale-routed client must never see a clean miss for data that lives on the
+// new owner. Unfreeze (ownership regained) restores both.
+// ---------------------------------------------------------------------------
+TEST_F(MakoNontxnDistributed, MovedRangeRejectsReadsAndWritesUntilUnfenced) {
+    auto& guard = janus::get_migration_guard();
+    guard.clear();
+    bool op = false;
+    std::string out;
+
+    // Seed a row the reads will target.
+    ASSERT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "mv_m5", "v0", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+
+    // FROZEN: writes rejected, reads still served (the mid-migration contract).
+    guard.freeze("", "mv_m", "mv_t");
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "mv_m5", "x", &op),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
+    EXPECT_EQ(TThread::sclient->nontxnGet(kRemoteTableId, "mv_m5", out),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    EXPECT_EQ(out, "v0");
+
+    // MOVED (the shard shed the range): reads join writes behind the fence.
+    guard.mark_moved("", "mv_m", "mv_t");
+    EXPECT_EQ(TThread::sclient->nontxnGet(kRemoteTableId, "mv_m5", out),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY))
+        << "a stale-routed read of a moved range must retry, not see a miss";
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "mv_m5", "x", &op),
+              static_cast<int>(mako::ErrorCode::SERVER_BUSY));
+    // Outside the range: unaffected.
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "mv_zz", "ok", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+
+    // Ownership regained (what the master's commit does on the destination):
+    // the exact-triple unfence clears the moved entry; both ops serve again.
+    guard.unfreeze("", "mv_m", "mv_t");
+    EXPECT_EQ(TThread::sclient->nontxnGet(kRemoteTableId, "mv_m5", out),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    EXPECT_EQ(out, "v0");
+    EXPECT_EQ(TThread::sclient->nontxnPut(kRemoteTableId, "mv_m5", "v1", &op),
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+
+    guard.clear();
+}
+
 }  // namespace

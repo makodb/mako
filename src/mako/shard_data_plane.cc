@@ -82,12 +82,23 @@ public:
         engine_init_this_thread(db_);
         return inner_.scan_range_limited(lo, hi, limit);
     }
-    // Freeze goes to the process-global MigrationGuard (no engine work).
+    // Fence ops go to the process-global MigrationGuard under THIS table's name
+    // (matching the remote service's named entries, so a later unfreeze -- e.g.
+    // the destination clearing a stale fence when it re-gains a range -- finds
+    // the exact (table, lo, hi) triple).
     void freeze_range(const std::string& lo, const std::string& hi) override {
-        inner_.freeze_range(lo, hi);
+        janus::get_migration_guard().freeze(table_, lo, hi);
     }
     void unfreeze_range(const std::string& lo, const std::string& hi) override {
-        inner_.unfreeze_range(lo, hi);
+        janus::get_migration_guard().unfreeze(table_, lo, hi);
+    }
+    // Shedding the range IS losing ownership: upgrade the fence to MOVED so
+    // stale-routed reads (not just writes) get the retryable rejection until
+    // their config reloads. Rides drop_range -- no extra RPC or master step.
+    void drop_range(const std::string& lo, const std::string& hi) override {
+        engine_init_this_thread(db_);
+        janus::ShardData::drop_range(lo, hi);   // scan+remove via the gated primitives
+        janus::get_migration_guard().mark_moved(table_, lo, hi);
     }
 
 private:

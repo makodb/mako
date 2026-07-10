@@ -322,7 +322,15 @@ impl ShardMaster {
         // source no longer owns [lo, hi), and the standing fence keeps rejecting
         // stale-routed writers (SERVER_BUSY -> client retries) until their config
         // reloads and lands them on the destination -- closing the cutover race.
-        // The destination was never frozen, so it serves immediately.
+        // (drop_range above additionally upgraded it to MOVED on participants
+        // that fence: reads join writes behind it.)
+        // The DESTINATION now owns the range: clear any stale fence left from a
+        // time it previously owned and shed this same range (ping-pong), so it
+        // serves immediately.
+        if (*self).shards.contains_key(dst_id) {
+            let dst2: *mut ShardData = (*self).shards.get(dst_id).unwrap().get();
+            unsafe { (*dst2).unfreeze_range(&lo, &hi) };
+        }
         (*self).mig_active = false;
         (*self).mig_staged.clear();
         (*self).mig_deleted.clear();
@@ -391,7 +399,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=1d08bd2be723104adb3074d1e393d35cbc41945ed5154c25342fdf7c7fc4e519*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=dd7457e7710007cdc0a55112935d7c0876c81fdfc0d3cfc9c504429f447712a0*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -745,6 +753,13 @@ inline bool ShardMaster::commit_migration() {
         janus::cm_split_and_reassign(((*this)).cm, table, lo, hi, std::move(dst_id));
     }
     this->reload();
+    if (((*this)).shards.contains_key(std::move(dst_id))) {
+        ShardData* const dst2 = ((*this)).shards.get(std::move(dst_id)).unwrap().get();
+        // @unsafe
+        {
+            ((*dst2)).unfreeze_range(lo, hi);
+        }
+    }
     ((*this)).mig_active = false;
     ((*this)).mig_staged.clear();
     ((*this)).mig_deleted.clear();

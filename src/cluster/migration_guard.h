@@ -25,12 +25,18 @@ export module cluster:migration_guard;
 
 export namespace janus {
 
-// A frozen range: keys in [lo, hi) of `table` are write-frozen. An empty table
-// ("") freezes the range across every table (the table-agnostic default).
+// A fenced range of `table`. Two states:
+//   frozen (moved=false): keys in [lo,hi) are WRITE-fenced -- the mid-migration
+//     contract (reads keep serving from the source until cutover).
+//   moved  (moved=true):  the shard SHED the range at commit -- reads AND
+//     writes are rejected (a stale-routed read must not see a clean miss for
+//     data that moved); clients retry, reload config, land on the new owner.
+// An empty table ("") fences the range across every table.
 struct FrozenRange {
     std::string table;
     std::string lo;
     std::string hi;
+    bool moved = false;
 };
 
 // The guarded state (bare struct; the Mutex is the MigrationGuard field).
@@ -39,11 +45,24 @@ struct MigrationGuardState {
 };
 
 // ---- kernels: run under an already-held guard ----
-// Is `key` inside any frozen range for `table`?
+// Is `key` inside any fenced range for `table`? (Writes are rejected in BOTH
+// states, so this matches frozen and moved entries.)
 inline bool mg_is_frozen(const MigrationGuardState& s, const std::string& table,
                          const std::string& key) {
     for (const auto& r : s.ranges) {
         if ((r.table.empty() || r.table == table) && key >= r.lo && key < r.hi) {
+            return true;
+        }
+    }
+    return false;
+}
+// Is `key` inside a MOVED range for `table`? (Reads are rejected only after the
+// shard shed the range -- during a migration the source keeps serving reads.)
+inline bool mg_is_moved(const MigrationGuardState& s, const std::string& table,
+                        const std::string& key) {
+    for (const auto& r : s.ranges) {
+        if (r.moved && (r.table.empty() || r.table == table) &&
+            key >= r.lo && key < r.hi) {
             return true;
         }
     }
@@ -55,7 +74,19 @@ inline void mg_freeze(MigrationGuardState& s, const std::string& table,
     for (const auto& r : s.ranges) {
         if (r.table == table && r.lo == lo && r.hi == hi) return;
     }
-    s.ranges.push_back(FrozenRange{table, lo, hi});
+    s.ranges.push_back(FrozenRange{table, lo, hi, false});
+}
+// Upgrade [lo,hi) of `table` to MOVED (the shard shed the range at commit):
+// flips a matching frozen entry, or inserts one if the fence was never set.
+inline void mg_mark_moved(MigrationGuardState& s, const std::string& table,
+                          const std::string& lo, const std::string& hi) {
+    for (auto& r : s.ranges) {
+        if (r.table == table && r.lo == lo && r.hi == hi) {
+            r.moved = true;
+            return;
+        }
+    }
+    s.ranges.push_back(FrozenRange{table, lo, hi, true});
 }
 // Unfreeze exactly [lo,hi) of `table` (commit/abort).
 inline void mg_unfreeze(MigrationGuardState& s, const std::string& table,
@@ -92,6 +123,17 @@ impl MigrationGuard {
         let g = (*self).state.lock().unwrap();
         unsafe { mg_is_frozen((*g), table, key) }
     }
+    // Consulted by READ paths: true only after the shard shed the range.
+    fn is_moved(&self, table: &std::string, key: &std::string) -> bool {
+        let g = (*self).state.lock().unwrap();
+        unsafe { mg_is_moved((*g), table, key) }
+    }
+    // The shard shed [lo,hi) of `table` (DropRange at commit): reads join writes
+    // behind the fence until stale routers reload.
+    fn mark_moved(&mut self, table: &std::string, lo: &std::string, hi: &std::string) {
+        let mut g = (*self).state.lock().unwrap();
+        unsafe { mg_mark_moved((*g), table, lo, hi) };
+    }
     fn frozen_count(&self) -> usize {
         let g = (*self).state.lock().unwrap();
         unsafe { mg_count((*g)) }
@@ -102,7 +144,7 @@ impl MigrationGuard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=migration_guard.1 version=1 rust_sha256=2783a61ba4f9a572f7cf8027dbf7f96e506d91c83f59459b1cf3a46601246e5b*/
+/*RUSTYCPP:GEN-BEGIN id=migration_guard.1 version=1 rust_sha256=6075f9a33f3e3e6f13728711603e0d12afc16ba10df357832fd379885c8967a0*/
 struct MigrationGuard;
 
 struct MigrationGuard {
@@ -112,6 +154,8 @@ struct MigrationGuard {
     void freeze(const std::string& table, const std::string& lo, const std::string& hi);
     void unfreeze(const std::string& table, const std::string& lo, const std::string& hi);
     bool is_frozen(const std::string& table, const std::string& key) const;
+    bool is_moved(const std::string& table, const std::string& key) const;
+    void mark_moved(const std::string& table, const std::string& lo, const std::string& hi);
     size_t frozen_count() const;
     void clear();
 };
@@ -142,6 +186,22 @@ inline bool MigrationGuard::is_frozen(const std::string& table, const std::strin
     // @unsafe
     {
         return mg_is_frozen((rusty::detail::deref_if_pointer_like(g)), table, key);
+    }
+}
+
+inline bool MigrationGuard::is_moved(const std::string& table, const std::string& key) const {
+    const auto g = ((*this)).state.lock().unwrap();
+    // @unsafe
+    {
+        return mg_is_moved((rusty::detail::deref_if_pointer_like(g)), table, key);
+    }
+}
+
+inline void MigrationGuard::mark_moved(const std::string& table, const std::string& lo, const std::string& hi) {
+    auto g = ((*this)).state.lock().unwrap();
+    // @unsafe
+    {
+        mg_mark_moved((rusty::detail::deref_if_pointer_like(g)), table, lo, hi);
     }
 }
 

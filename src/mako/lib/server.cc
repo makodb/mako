@@ -661,21 +661,26 @@ namespace mako
             return ErrorCode::ERROR;  // table not found
         }
 
-        // Migration freeze: a WRITE to a range being cut over is rejected so the
-        // client backs off and retries, landing on the destination once routing
-        // flips (reads are still served -- the source keeps serving until commit).
-        // The freeze registry is this shard's process-global MigrationGuard, set
-        // by the FreezeRange RPC the coordinator issues on the source shard.
-        // Entries carry the frozen TABLE's name, so the query resolves this op's
+        // Migration fence, two states (this shard's process-global MigrationGuard,
+        // set by the coordinator's FreezeRange RPC / upgraded by DropRange):
+        //   frozen: a WRITE to a range being cut over is rejected so the client
+        //     backs off and retries, landing on the destination once routing
+        //     flips (reads are still served -- the source serves until commit).
+        //   moved: the shard SHED the range at commit -- READS are rejected too,
+        //     or a stale-routed client would see a clean miss ("key absent") for
+        //     data that lives on the new owner.
+        // Entries carry the fenced TABLE's name, so the query resolves this op's
         // table name from the registry (a table-agnostic "" entry still fences
         // every table; an unregistered id resolves to "" and is fenced only by
         // "" entries -- unregistered tables cannot be migration sources anyway).
-        if (!is_get) {
-            std::string frozen_table;
+        {
+            std::string fenced_table;
             const rusty::Option<std::string> tname_opt =
                 get_table_registry().get_table_name(static_cast<int>(table_id));
-            if (tname_opt.is_some()) frozen_table = tname_opt.as_ref().unwrap();
-            if (janus::get_migration_guard().is_frozen(frozen_table, key)) {
+            if (tname_opt.is_some()) fenced_table = tname_opt.as_ref().unwrap();
+            if (is_get
+                    ? janus::get_migration_guard().is_moved(fenced_table, key)
+                    : janus::get_migration_guard().is_frozen(fenced_table, key)) {
                 return ErrorCode::SERVER_BUSY;
             }
         }
