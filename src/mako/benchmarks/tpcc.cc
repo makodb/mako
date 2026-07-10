@@ -49,6 +49,7 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_sharding.h"
+#include "benchmarks/tpcc_warehouse_directory.h"   // ownership-driven table handle resolution
 #include "lib/table_registry.h"   // register_route + warehouse_route_key (partition-governed routing)
 
 import std;
@@ -383,9 +384,16 @@ struct _dummy {}; // exists so we can inherit from it, so we can use a macro in
 
 class tpcc_worker_mixin : private _dummy {
 
+// The per-warehouse table handles resolve through the warehouse table
+// directory (tpcc_warehouse_directory.h) instead of location-baked vectors:
+// the partition table decides at ACCESS time whether a warehouse is served
+// by this shard's local index or a remote proxy, so a migration cutover
+// flips the access path without reopening anything. The mixin binds each
+// table's slot array once at construction (no string lookup on the hot
+// path); the partitions maps stay as the registration source (init_tables
+// feeds the directory from them).
 #define DEFN_TBL_INIT_X(name) \
-  , tbl_ ## name ## _vec(partitions.at(#name)) \
-  , remote_tbl_ ## name ## _remote_vec(remote_partitions.at(#name))
+  , dir_ ## name(mako::get_warehouse_directory().table_slots(#name))
 
 public:
   tpcc_worker_mixin(const map<string, vector<abstract_ordered_index *>> &partitions,
@@ -402,20 +410,22 @@ protected:
 
 #define DEFN_TBL_ACCESSOR_X(name) \
 private:  \
-  vector<abstract_ordered_index *> tbl_ ## name ## _vec; \
-  vector<abstract_ordered_index *> remote_tbl_ ## name ## _remote_vec; \
+  mako::WarehouseTableSlots* dir_ ## name; \
 protected: \
   inline ALWAYS_INLINE abstract_ordered_index * \
   tbl_ ## name (unsigned int wid) \
   { \
     INVARIANT(wid >= 1 && wid <= NumWarehouses()); \
-    INVARIANT(tbl_ ## name ## _vec.size() == NumWarehouses()); \
-    return tbl_ ## name ## _vec[wid - 1]; \
+    const int my_shard = TThread::get_shard_index(); \
+    return mako::get_warehouse_directory().resolve( \
+        dir_ ## name, \
+        static_cast<int>(my_shard * NumWarehouses() + wid), my_shard); \
   } \
   inline ALWAYS_INLINE abstract_ordered_index * \
   remote_tbl_ ## name (unsigned int wid) \
   { \
-    return remote_tbl_ ## name ## _remote_vec[wid - 1]; \
+    return mako::get_warehouse_directory().resolve( \
+        dir_ ## name, static_cast<int>(wid), TThread::get_shard_index()); \
   }
 
   TPCC_TABLE_LIST(DEFN_TBL_ACCESSOR_X)
@@ -3627,6 +3637,48 @@ private:
                                                      num_shards);
     }
 
+    // Feed the warehouse table directory -- the ownership-driven layer that
+    // replaces the location-baked per-warehouse vectors. This shard's block
+    // registers local handles; every non-null remote proxy registers under
+    // its global warehouse. Multi-shard runners overlay disjoint blocks into
+    // the shared directory (wireup_cross_shard_tables registers the rest).
+    // The opener serves the on-demand slow paths (departed/adopted
+    // warehouses after a migration cutover).
+    {
+      const int dir_shard = static_cast<int>(BenchmarkConfig::getInstance().getShardIndex());
+      const int dir_wps = static_cast<int>(NumWarehouses());
+      mako::get_warehouse_directory().init(
+          dir_wps, static_cast<int>(NumWarehousesTotal()),
+          mako::TpccWarehouseDirectory::Opener{
+              // Opens the physical index AND registers its routing alias --
+              // the directory's handles are opaque (toolchain note in its
+              // header), so the complete-type work happens here.
+              [](void* ctx, const std::string& logical, int gwid,
+                 const std::string& n, int s) -> abstract_ordered_index* {
+                auto* idx = static_cast<abstract_db*>(ctx)->open_index(n, s);
+                mako::get_table_registry().register_route(
+                    idx->get_table_id(), logical, mako::warehouse_route_key(gwid));
+                return idx;
+              },
+              db});
+      for (auto &t : partitions) {
+        for (size_t i = 0; i < t.second.size(); i++) {
+          if (t.second[i] != nullptr) {
+            mako::get_warehouse_directory().register_local(
+                t.first, dir_shard * dir_wps + static_cast<int>(i) + 1, t.second[i]);
+          }
+        }
+      }
+      for (auto &t : remote_partitions) {
+        for (size_t j = 0; j < t.second.size(); j++) {
+          if (t.second[j] != nullptr) {
+            mako::get_warehouse_directory().register_remote(
+                t.first, static_cast<int>(j) + 1, t.second[j]);
+          }
+        }
+      }
+    }
+
     if (g_enable_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
       auto& cfg = BenchmarkConfig::getInstance();
@@ -3763,6 +3815,13 @@ public:
         int global_wid_idx = start_wid_idx + local_wid;  // 0-indexed
         if (global_wid_idx < (int)remote_vec.size()) {
           remote_vec[global_wid_idx] = source_vec[local_wid];
+          // The shared directory serves this runner's accesses too: the other
+          // in-process shard's REAL local index goes in the remote slot, so
+          // resolution hands back a direct handle instead of an RPC proxy.
+          if (source_vec[local_wid] != nullptr) {
+            mako::get_warehouse_directory().register_remote(
+                table_name, global_wid_idx + 1, source_vec[local_wid]);
+          }
           // Notice("Wired up %s[%d] from shard %d local_wid %d", table_name.c_str(), global_wid_idx, source_shard, local_wid);
         }
       }

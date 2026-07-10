@@ -1638,6 +1638,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_tpcc_sharding ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
 
+    # Warehouse table directory (ownership-driven per-warehouse handle resolution)
+    add_executable(test_tpcc_warehouse_directory tests/tpcc_warehouse_directory_test.cc)
+    target_include_directories(test_tpcc_warehouse_directory PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
+    target_compile_options(test_tpcc_warehouse_directory PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_tpcc_warehouse_directory ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_tpcc_warehouse_directory COMMAND test_tpcc_warehouse_directory)
+
     # Fiber API Tests
     add_executable(test_fiber src/rrr/tests/fiber_test.cc)
     target_include_directories(test_fiber PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/rrr)
