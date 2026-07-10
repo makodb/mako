@@ -62,12 +62,51 @@ pub struct VoteDurableReq {
 pub struct VoteDurableReply {
     acknowledged: bool,
 }
+
+pub struct AppendEntriesDurableReq {
+    term: i64,
+    follower_id: u16,
+    last_log_index: u64,
+}
+
+pub struct AppendEntriesDurableReply {
+    acknowledged: bool,
+}
+
+pub struct TimeoutNowReq {
+    leader_term: u64,
+    leader_site_id: u16,
+}
+
+pub struct TimeoutNowReply {
+    follower_term: u64,
+    success: bool,
+}
+
+pub struct NotifyRestartReq {
+    restarted_site_id: u16,
+}
+
+pub struct NotifyRestartReply {
+    acknowledged: bool,
+}
+
+pub struct InstallSnapshotReply {
+    term_out: u64,
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=4f7959512702ebf0e9080d8d8718d6a5598af49738108df4c12ca177eb8688c1*/
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=146a5de5df5a25274e7d90735cd3a752da7e183ceb8f8f8a7fbe1e36b7e21c8d*/
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;
 struct VoteDurableReply;
+struct AppendEntriesDurableReq;
+struct AppendEntriesDurableReply;
+struct TimeoutNowReq;
+struct TimeoutNowReply;
+struct NotifyRestartReq;
+struct NotifyRestartReply;
+struct InstallSnapshotReply;
 
 struct VoteReq {
     uint64_t last_log_idx;
@@ -88,6 +127,38 @@ struct VoteDurableReq {
 
 struct VoteDurableReply {
     bool acknowledged;
+};
+
+struct AppendEntriesDurableReq {
+    int64_t term;
+    uint16_t follower_id;
+    uint64_t last_log_index;
+};
+
+struct AppendEntriesDurableReply {
+    bool acknowledged;
+};
+
+struct TimeoutNowReq {
+    uint64_t leader_term;
+    uint16_t leader_site_id;
+};
+
+struct TimeoutNowReply {
+    uint64_t follower_term;
+    bool success;
+};
+
+struct NotifyRestartReq {
+    uint16_t restarted_site_id;
+};
+
+struct NotifyRestartReply {
+    bool acknowledged;
+};
+
+struct InstallSnapshotReply {
+    uint64_t term_out;
 };
 /*RUSTYCPP:GEN-END id=messages.1*/
 
@@ -141,42 +212,9 @@ struct EmptyAppendEntriesReply {
   uint64_t follower_ack_type{0};
 };
 
-// ---------------------------------------------------------------------------
-// AppendEntriesDurable — follower acks that its log has been fsync'd.
-// ---------------------------------------------------------------------------
-struct AppendEntriesDurableReq {
-  ballot_t term{0};
-  siteid_t follower_id{0};
-  uint64_t last_log_index{0};
-};
 
-struct AppendEntriesDurableReply {
-  bool acknowledged{false};
-};
 
-// ---------------------------------------------------------------------------
-// TimeoutNow — leader asks a follower to immediately start election
-// ---------------------------------------------------------------------------
-struct TimeoutNowReq {
-  uint64_t leader_term{0};
-  siteid_t leader_site_id{0};
-};
 
-struct TimeoutNowReply {
-  uint64_t follower_term{0};
-  bool     success{false};
-};
-
-// ---------------------------------------------------------------------------
-// NotifyRestart — after crash recovery, tell peers to reconnect.
-// ---------------------------------------------------------------------------
-struct NotifyRestartReq {
-  siteid_t restarted_site_id{0};
-};
-
-struct NotifyRestartReply {
-  bool acknowledged{false};
-};
 
 // ---------------------------------------------------------------------------
 // InstallSnapshot
@@ -189,9 +227,6 @@ struct InstallSnapshotReq {
   std::string data;  // raw snapshot bytes; LZ4-compressed in RocksDB impl
 };
 
-struct InstallSnapshotReply {
-  uint64_t term_out{0};
-};
 
 // ---------------------------------------------------------------------------
 // AddServer / RemoveServer (membership change)
