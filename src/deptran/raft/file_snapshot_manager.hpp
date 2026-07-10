@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <regex>
 #include <string>
@@ -39,7 +40,8 @@ namespace raft {
  */
 class FileSnapshotWriter : public SnapshotWriter {
  public:
-  // @unsafe - Creates file
+  // @unsafe - Records final/temp paths. Finalize owns the temp-file write and
+  // rename; Abort/destructor clean up an unfinished temp file.
   FileSnapshotWriter(const std::string& final_path,
                      const std::string& temp_path,
                      slotid_t last_index,
@@ -52,7 +54,7 @@ class FileSnapshotWriter : public SnapshotWriter {
              last_index_, last_term_, final_path_.c_str());
   }
 
-  // @unsafe - May delete temp file
+  // @unsafe - Best-effort cleanup of an unfinished temp file.
   ~FileSnapshotWriter() override {
     if (!finalized_ && !aborted_) {
       Abort();
@@ -77,7 +79,8 @@ class FileSnapshotWriter : public SnapshotWriter {
   /**
    * Finalize the snapshot: serialize to format, write to temp, rename.
    */
-  // @unsafe - File I/O operations
+  // @unsafe - File I/O operations. Owns the local fd until close(), then
+  // atomically transfers temp_path_ into final_path_ with rename().
   bool Finalize() override {
     if (finalized_ || aborted_) {
       Log_error("[SNAPSHOT-WRITER] Finalize after finalize/abort");
@@ -136,7 +139,7 @@ class FileSnapshotWriter : public SnapshotWriter {
   /**
    * Abort the snapshot, cleaning up any temporary files.
    */
-  // @unsafe - File operations
+  // @unsafe - Deletes the temp file if this writer has not finalized.
   bool Abort() override {
     if (finalized_ || aborted_) {
       return true;
@@ -151,6 +154,7 @@ class FileSnapshotWriter : public SnapshotWriter {
   size_t GetOffset() const override { return offset_; }
 
  private:
+  // @unsafe - owned path strings; no file handle is kept between calls.
   std::string final_path_;
   std::string temp_path_;
   slotid_t last_index_;
@@ -167,7 +171,8 @@ class FileSnapshotWriter : public SnapshotWriter {
  */
 class FileSnapshotReader : public SnapshotReader {
  public:
-  // @unsafe - Opens and reads file
+  // @unsafe - Opens the snapshot path with a local fd, reads it fully, closes
+  // the fd, then owns the decoded payload in data_.
   explicit FileSnapshotReader(const std::string& path) : path_(path) {
     // Read entire file
     int fd = open(path.c_str(), O_RDONLY);
@@ -259,6 +264,8 @@ class FileSnapshotReader : public SnapshotReader {
   bool IsValid() const { return valid_; }
 
  private:
+  // @unsafe - path is retained for diagnostics; file_data_/data_ are owned
+  // in-memory copies, not borrowed file-backed buffers.
   std::string path_;
   std::string file_data_;
   std::string data_;
@@ -273,7 +280,7 @@ class FileSnapshotReader : public SnapshotReader {
  */
 class FileSnapshotManager : public SnapshotManager {
  public:
-  // @unsafe - May create directory
+  // @unsafe - May create the snapshot directory; config_ owns the path string.
   explicit FileSnapshotManager(const SnapshotConfig& config) : config_(config) {
     EnsureDirectory();
     Log_info("[SNAPSHOT-MGR] Initialized: path=%s max_snapshots=%zu",
@@ -286,7 +293,8 @@ class FileSnapshotManager : public SnapshotManager {
   // Snapshot Creation
   // ========================================================================
 
-  // @unsafe - Creates writer
+  // @unsafe - Returns an owned writer. The writer owns path strings and later
+  // owns any temp-file cleanup for this snapshot.
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
       slotid_t last_index, ballot_t last_term) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -313,7 +321,7 @@ class FileSnapshotManager : public SnapshotManager {
   // Snapshot Loading
   // ========================================================================
 
-  // @unsafe - Creates reader
+  // @unsafe - Returns an owned reader with an in-memory copy of the snapshot.
   std::unique_ptr<SnapshotReader> BeginLoad(
       const SnapshotMetadata& metadata) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -326,7 +334,7 @@ class FileSnapshotManager : public SnapshotManager {
     return reader;
   }
 
-  // @unsafe - Reads file
+  // @unsafe - Reads the latest snapshot into caller-owned output pointers.
   bool LoadLatestSnapshot(SnapshotMetadata* metadata_out,
                           std::string* data_out) override {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -392,7 +400,7 @@ class FileSnapshotManager : public SnapshotManager {
   // Snapshot Cleanup
   // ========================================================================
 
-  // @unsafe - Deletes files
+  // @unsafe - Deletes snapshot files below keep_after_index.
   size_t PruneSnapshots(slotid_t keep_after_index) override {
     std::lock_guard<std::mutex> lock(mutex_);
     auto snapshots = ListSnapshotsUnlocked();
@@ -411,7 +419,7 @@ class FileSnapshotManager : public SnapshotManager {
     return deleted;
   }
 
-  // @unsafe - Deletes files
+  // @unsafe - Deletes all complete snapshot files known to the manager.
   size_t DeleteAllSnapshots() override {
     std::lock_guard<std::mutex> lock(mutex_);
     auto snapshots = ListSnapshotsUnlocked();
@@ -438,10 +446,12 @@ class FileSnapshotManager : public SnapshotManager {
   }
 
  private:
+  // @unsafe - owned configuration. GetStoragePath returns a borrowed reference
+  // to config_.storage_path; callers must not retain it past manager lifetime.
   SnapshotConfig config_;
   mutable std::mutex mutex_;
 
-  // @unsafe - Creates directory
+  // @unsafe - Creates storage_path if missing.
   bool EnsureDirectory() const {
     struct stat st;
     if (stat(config_.storage_path.c_str(), &st) == 0) {
@@ -461,7 +471,8 @@ class FileSnapshotManager : public SnapshotManager {
     return GetSnapshotPath(index, term) + ".tmp";
   }
 
-  // @unsafe - Directory operations (must hold mutex)
+  // @unsafe - Directory operations (must hold mutex). DIR* is closed before
+  // return; only complete .snap files are returned, not .tmp files.
   std::vector<SnapshotMetadata> ListSnapshotsUnlocked() const {
     std::vector<SnapshotMetadata> result;
 
@@ -511,7 +522,7 @@ class FileSnapshotManager : public SnapshotManager {
     return rusty::Some(snapshots[0]);
   }
 
-  // @unsafe - Deletes files (must hold mutex)
+  // @unsafe - Deletes old complete snapshot files (must hold mutex).
   void ApplyRetentionPolicy() {
     auto snapshots = ListSnapshotsUnlocked();
     if (snapshots.size() <= config_.max_snapshots) {
