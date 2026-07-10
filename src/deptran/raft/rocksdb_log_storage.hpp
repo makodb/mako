@@ -42,11 +42,14 @@ namespace raft {
  */
 class RocksDBLogStorage : public LogStorage {
 private:
-    // Database handle (raw pointer, RocksDB C API manages lifetime via rocksdb_close)
-    rocksdb_t* db_{nullptr};  // @unsafe - Raw pointer managed by RocksDB C API
+    // @unsafe - RocksDB database handle. open() creates it, close()/destructor
+    // close it with rocksdb_close().
+    rocksdb_t* db_{nullptr};
     std::string db_path_;
 
-    // Configuration
+    // @unsafe - RocksDB option handles. The constructor creates these and the
+    // destructor destroys them after close(); close() intentionally leaves them
+    // alive so open() can be called again with the same configuration.
     rocksdb_options_t* options_{nullptr};
     rocksdb_writeoptions_t* write_options_{nullptr};
     rocksdb_readoptions_t* read_options_{nullptr};
@@ -58,7 +61,7 @@ private:
     static constexpr const char* LOG_PREFIX = "log:";
     static constexpr const char* META_PREFIX = "meta:";
 
-    // @unsafe - Uses RocksDB C API allocator semantics
+    // @unsafe - Frees RocksDB error strings returned through char** out params.
     static std::string take_rocksdb_error(char** errptr) {
         if (errptr == nullptr || *errptr == nullptr) {
             return "";
@@ -125,9 +128,10 @@ public:
      * Construct a RocksDB log storage and open the database.
      * @param db_path Path to the database directory
      */
-    // @unsafe - Opens RocksDB database
+    // @unsafe - Allocates RocksDB option handles and opens db_path_.
     explicit RocksDBLogStorage(const std::string& db_path)
         : db_path_(db_path) {
+        // Constructor-owned option handles; destroyed in ~RocksDBLogStorage().
         options_ = rocksdb_options_create();
         write_options_ = rocksdb_writeoptions_create();
         read_options_ = rocksdb_readoptions_create();
@@ -155,7 +159,7 @@ public:
         open();
     }
 
-    // @unsafe - Calls close() which uses RocksDB API
+    // @unsafe - Closes db_ if open, then destroys constructor-owned options.
     ~RocksDBLogStorage() override {
         close();
 
@@ -177,7 +181,7 @@ public:
      * Open the database. Must be called before other operations.
      * @return true on success, false on failure
      */
-    // @unsafe - Uses RocksDB C API
+    // @unsafe - Opens db_path_ with constructor-owned option handles.
     bool open() {
         if (is_open_.get()) {
             return true;  // Already open
@@ -207,7 +211,8 @@ public:
     // Single Entry Operations
     // ========================================================================
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. The returned value buffer is owned by
+    // RocksDB and must be released with rocksdb_free().
     rusty::Option<LogEntry> get(slotid_t slot_id) const override {
         if (!is_open_.get() || db_ == nullptr) {
             return rusty::None;
@@ -258,7 +263,8 @@ public:
         return true;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. The existence-check buffer is owned by
+    // RocksDB and must be released with rocksdb_free().
     bool remove(slotid_t slot_id) override {
         if (!is_open_.get() || db_ == nullptr) {
             return false;
@@ -291,7 +297,8 @@ public:
     // Batch Operations
     // ========================================================================
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
+    // before return.
     std::vector<LogEntry> get_range(slotid_t start, slotid_t end) const override {
         std::vector<LogEntry> result;
         if (!is_open_.get() || db_ == nullptr || start >= end) {
@@ -334,7 +341,8 @@ public:
         return result;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Write batch is a temporary handle destroyed
+    // on every exit path after creation.
     bool put_batch(const std::vector<LogEntry>& entries) override {
         if (!is_open_.get() || db_ == nullptr) {
             return false;
@@ -365,7 +373,8 @@ public:
         return true;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Write batch and iterator are temporary
+    // handles destroyed on every exit path after creation.
     bool remove_range(slotid_t start, slotid_t end) override {
         if (!is_open_.get() || db_ == nullptr || start >= end) {
             return false;
@@ -420,7 +429,8 @@ public:
     // Index Queries
     // ========================================================================
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
+    // before return.
     slotid_t get_first_index() const override {
         if (!is_open_.get() || db_ == nullptr) {
             return 0;
@@ -454,7 +464,8 @@ public:
         return first_index;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
+    // before return.
     slotid_t get_last_index() const override {
         if (!is_open_.get() || db_ == nullptr) {
             return 0;
@@ -505,7 +516,8 @@ public:
         return rusty::Some(entry_opt.unwrap().term);
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
+    // before return.
     size_t size() const override {
         if (!is_open_.get() || db_ == nullptr) {
             return 0;
@@ -564,7 +576,8 @@ public:
         return true;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. The returned value buffer is owned by
+    // RocksDB and must be released with rocksdb_free().
     rusty::Option<std::string> get_metadata(const std::string& key) const override {
         if (!is_open_.get() || db_ == nullptr) {
             return rusty::None;
@@ -594,7 +607,8 @@ public:
     // Lifecycle Operations
     // ========================================================================
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Flush options are a temporary handle
+    // destroyed before return.
     bool sync() override {
         if (!is_open_.get() || db_ == nullptr) {
             return false;
@@ -616,7 +630,8 @@ public:
         return true;
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Closes db_ only; constructor-owned option handles remain
+    // alive so the storage can be reopened.
     bool close() override {
         if (!is_open_.get()) {
             return false;
@@ -636,7 +651,8 @@ public:
         return is_open_.get();
     }
 
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses RocksDB API. Write batch and iterator are temporary
+    // handles destroyed on every exit path after creation.
     bool clear() override {
         if (!is_open_.get() || db_ == nullptr) {
             return false;
@@ -695,7 +711,7 @@ public:
      * Destroy the database (delete all files).
      * Database must be closed first.
      */
-    // @unsafe - Uses RocksDB API
+    // @unsafe - Uses a temporary RocksDB options handle for destroy_db.
     static bool destroy(const std::string& db_path) {
         rocksdb_options_t* options = rocksdb_options_create();
         if (options == nullptr) {
