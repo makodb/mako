@@ -27,6 +27,8 @@
 #include "rcc_rpc.h"        // ShardDataServiceService / ShardDataServiceProxy
 import cluster;             // ShardData + ShardDataCatalog ports + MigrationGuard
 
+#include <rusty/mutex.hpp>  // guards the pull-source connection cache
+
 #include <cstdint>
 #include <map>
 #include <string>
@@ -106,6 +108,18 @@ public:
                          const std::string& hi) {
         if (guard_) guard_->unfreeze(table, lo, hi);
     }
+    // Destination-driven bulk copy: THIS shard pulls [lo,hi) of src_table
+    // directly from the source's ShardDataService at src_addr into its local
+    // `table` -- the coordinator sent one control RPC and no row transits it.
+    // Runs the whole chunked pull inside this handler (the coordinator's
+    // Migrate call is synchronous anyway). Returns rows pulled, or -1 if the
+    // local table or the source connection cannot be set up. Defined after
+    // RemoteShardData below (it constructs one over the pull source).
+    long DoPullRange(const std::string& table, const std::string& lo,
+                     const std::string& hi, const std::string& src_addr,
+                     const std::string& src_table);
+    // Observable in tests: how many destination-driven pulls this service ran.
+    int pull_range_calls = 0;
 
     // ---- RPC handlers (generated signatures; delegate to Do*) ----
     void ScanRange(const RpcScanRangeRequest& req, RpcScanRangeResponse& resp,
@@ -152,15 +166,45 @@ public:
                        rrr::DeferredReply defer) override {
         DoUnfreezeRange(req.table_name, req.lo, req.hi); resp.ok = 1; defer.reply();
     }
+    void PullRange(const RpcPullRangeRequest& req, RpcPullRangeResponse& resp,
+                   rrr::DeferredReply defer) override {
+        const long copied = DoPullRange(req.table_name, req.lo, req.hi,
+                                        req.src_addr, req.src_table);
+        resp.ok = copied >= 0 ? 1 : 0;
+        resp.copied = static_cast<rrr::i64>(copied >= 0 ? copied : 0);
+        defer.reply();
+    }
 
 private:
     ShardData* resolve(const std::string& table) {
         return catalog_ != nullptr ? catalog_->get_or_create(table) : nullptr;
     }
 
+    // Cached rrr connection to a PULL source (per address; leaked,
+    // process-lifetime). One shared poll thread for all of them.
+    // @unsafe - rrr client wiring, same shape as the bootstrap's.
+    ShardDataServiceProxy* SourceProxy(const std::string& addr) {
+        auto lk = src_mu_.lock().unwrap();
+        auto it = src_proxies_.find(addr);
+        if (it != src_proxies_.end()) return it->second;
+        if (src_poll_ == nullptr) {
+            src_poll_ = new rusty::Arc<rrr::PollThread>(rrr::PollThread::create());
+        }
+        auto* client = new rusty::Arc<rrr::Client>(
+            rrr::Client::create(src_poll_->clone()));
+        if ((*client)->connect(addr.c_str(), false) != 0) return nullptr;
+        auto* proxy = new ShardDataServiceProxy(
+            const_cast<rrr::Client*>(client->get()));
+        src_proxies_.emplace(addr, proxy);
+        return proxy;
+    }
+
     ShardDataCatalog* catalog_;        // non-owning (unless owned_single_)
     SingleTableCatalog* owned_single_; // set by the single-table ctor
     MigrationGuard* guard_;            // non-owning; this shard's freeze registry.
+    rusty::Mutex<int> src_mu_{0};      // guards the pull-source connection cache
+    std::map<std::string, ShardDataServiceProxy*> src_proxies_;
+    rusty::Arc<rrr::PollThread>* src_poll_ = nullptr;   // lazy; leaked
 };
 
 // @unsafe - a ShardData bound to ONE named table on a remote shard's
@@ -168,9 +212,36 @@ private:
 // outlive this. The coordinator attaches one per (shard, table) it migrates.
 class RemoteShardData : public ShardData {
 public:
+    // `addr` is the remote service's own host:port; it lets this participant
+    // IDENTIFY itself as a pull source (service_addr) and lets the coordinator
+    // delegate copies to it (copy_range_from -> one PullRange control RPC).
     explicit RemoteShardData(ShardDataServiceProxy* proxy,
-                             std::string table_name = std::string())
-        : proxy_(proxy), table_(std::move(table_name)) {}
+                             std::string table_name = std::string(),
+                             std::string addr = std::string())
+        : proxy_(proxy), table_(std::move(table_name)), addr_(std::move(addr)) {}
+
+    std::string service_addr() override { return addr_; }
+    std::string service_table() override { return table_; }
+
+    // Destination-driven copy: if the SOURCE is network-reachable, tell THIS
+    // (remote destination) shard to pull the range directly from it -- one
+    // control RPC, no row transits the coordinator. An unreachable source
+    // (in-memory test double) falls back to the coordinator-side default.
+    void copy_range_from(ShardData* source, const std::string& lo,
+                         const std::string& hi) override {
+        const std::string src_addr = source->service_addr();
+        if (src_addr.empty()) {
+            ShardData::copy_range_from(source, lo, hi);
+            return;
+        }
+        ShardDataServiceProxy::RpcPullRangeRequest req;
+        req.table_name = table_;
+        req.lo = lo; req.hi = hi;
+        req.src_addr = src_addr;
+        req.src_table = source->service_table();
+        auto r = proxy_->PullRange(req);
+        if (r.is_err() || r.unwrap().ok == 0) faulted_ = true;
+    }
 
     void put(const std::string& key, const std::string& value) override {
         ShardDataServiceProxy::RpcPutKeyRequest req;
@@ -263,7 +334,38 @@ public:
 private:
     ShardDataServiceProxy* proxy_;   // non-owning; connected to the remote shard.
     std::string table_;              // the one table this participant is bound to.
+    std::string addr_;               // the remote service's own host:port ("" = unknown).
     bool faulted_ = false;           // latched on the first RPC failure.
 };
+
+// @unsafe - rrr client wiring + storage writes (see the in-class declaration).
+inline long ShardDataServiceImpl::DoPullRange(const std::string& table,
+                                              const std::string& lo,
+                                              const std::string& hi,
+                                              const std::string& src_addr,
+                                              const std::string& src_table) {
+    ShardData* dest = resolve(table);
+    if (dest == nullptr) return -1;
+    ShardDataServiceProxy* sp = SourceProxy(src_addr);
+    if (sp == nullptr) return -1;
+    RemoteShardData src(sp, src_table);
+    static const size_t kCopyChunk = 512;
+    long copied = 0;
+    std::string cur = lo;
+    while (cur < hi) {
+        std::vector<ShardData::KvPair> batch =
+            src.scan_range_limited(cur, hi, kCopyChunk);
+        if (batch.empty()) break;
+        for (const auto& kv : batch) dest->put(kv.first, kv.second);
+        copied += static_cast<long>(batch.size());
+        cur = batch.back().first;
+        cur.push_back('\0');   // resume strictly after the last key copied
+    }
+    if (src.faulted()) return -1;   // dead source: report failure, not a short copy
+    pull_range_calls++;
+    Log_info("ShardDataPlane: pulled %ld rows of '%s' [%s,%s) directly from %s",
+             copied, table.c_str(), lo.c_str(), hi.c_str(), src_addr.c_str());
+    return copied;
+}
 
 }  // namespace janus

@@ -169,4 +169,54 @@ TEST(ShardMigrationRpc, FreezeRangeOverRpcSetsAndClearsTheGuard) {
     EXPECT_FALSE(janus::get_migration_guard().is_frozen("", mkkey(7)));
 }
 
+// ---- destination-driven copy: rows flow source -> dest, never via the master ----
+// BOTH participants are remote (two rrr servers); the coordinator's
+// background_copy delegates to the DESTINATION with one PullRange control RPC,
+// and the destination pulls the range directly from the source's service. The
+// destination service's pull counter proves the copy ran dest-side (under the
+// old master-relayed shape it would stay 0 and the master would ship every row
+// itself as per-key PutKey RPCs).
+TEST(ShardMigrationRpc, DestinationDrivenCopyBypassesTheMaster) {
+    janus::ShardData* src_backing = make_shard(200);
+    auto* dst_backing = new MapShardData();
+
+    const std::string src_addr = "127.0.0.1:31897";
+    const std::string dst_addr = "127.0.0.1:31898";
+    ASSERT_EQ(rpc_harness::start_server(src_backing, src_addr), 0);
+    janus::ShardDataServiceImpl* dst_svc =
+        rpc_harness::start_server_impl(dst_backing, dst_addr);
+    ASSERT_NE(dst_svc, nullptr);
+
+    janus::ShardDataServiceProxy* src_proxy = rpc_harness::connect_client(src_addr);
+    janus::ShardDataServiceProxy* dst_proxy = rpc_harness::connect_client(dst_addr);
+    ASSERT_NE(src_proxy, nullptr);
+    ASSERT_NE(dst_proxy, nullptr);
+
+    // Address-bound remote participants: the source can IDENTIFY itself as a
+    // pull endpoint, the destination can be delegated to.
+    janus::RemoteShardData remote_src(src_proxy, "t", src_addr);
+    janus::RemoteShardData remote_dst(dst_proxy, "t", dst_addr);
+
+    janus::InMemoryKvStore kv;
+    janus::ConfigManager cm(&kv);
+    janus::ClusterConfig cfg = janus::ClusterConfig::new_();
+    janus::ShardMaster master = janus::ShardMaster::new_(&cm, &cfg);
+    ASSERT_EQ(master.register_shard({"remote_src"}, &remote_src), 0u);
+    ASSERT_EQ(master.register_shard({"remote_dst"}, &remote_dst), 1u);
+
+    const std::string lo = mkkey(50), hi = mkkey(150);
+    ASSERT_TRUE(master.begin_migration(0, 1, "", lo, hi));
+    master.background_copy();   // ONE PullRange to the dest; rows go src -> dst direct
+    master.lock_range();
+    master.final_sync();
+    ASSERT_TRUE(master.both_prepared());
+    ASSERT_TRUE(master.commit_migration());
+
+    EXPECT_EQ(dst_svc->pull_range_calls, 1)
+        << "the DESTINATION must have executed the pull (not the master)";
+    EXPECT_EQ(dst_backing->scan_range(lo, hi).size(), 100u);   // rows landed dest-side
+    EXPECT_EQ(src_backing->scan_range(lo, hi).size(), 0u);     // source shed the range
+    { std::string v; ASSERT_TRUE(dst_backing->get(mkkey(99), v)); EXPECT_EQ(v, mkval(99)); }
+}
+
 }  // namespace

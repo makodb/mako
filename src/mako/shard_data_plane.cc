@@ -49,8 +49,15 @@ void engine_init_this_thread(abstract_db* db) {
 // @unsafe - delegates to the storage engine; non-owning db/index.
 class EngineShardData : public janus::ShardData {
 public:
-    EngineShardData(abstract_db* db, ::FullOrderedIndex* idx)
-        : db_(db), inner_(idx) {}
+    EngineShardData(abstract_db* db, ::FullOrderedIndex* idx,
+                    std::string addr, std::string table)
+        : db_(db), inner_(idx), addr_(std::move(addr)), table_(std::move(table)) {}
+
+    // Self-identification as a pull source: this table is served by THIS
+    // shard's ShardDataService, so a remote migration destination can pull the
+    // range directly from here (no rows through the coordinator).
+    std::string service_addr() override { return addr_; }
+    std::string service_table() override { return table_; }
 
     void put(const std::string& k, const std::string& v) override {
         engine_init_this_thread(db_);
@@ -86,6 +93,8 @@ public:
 private:
     abstract_db* db_;                        // non-owning; for thread registration
     janus::OrderedIndexShardData inner_;
+    std::string addr_;                       // this shard's data-plane host:port
+    std::string table_;                      // this entry's table name
 };
 
 // The production catalog: named tables created lazily as standalone fixed-id
@@ -95,7 +104,8 @@ private:
 // @unsafe - guarded map of leaked engine tables.
 class EngineShardCatalog : public janus::ShardDataCatalog {
 public:
-    explicit EngineShardCatalog(abstract_db* db) : db_(db) {}
+    EngineShardCatalog(abstract_db* db, std::string own_addr)
+        : db_(db), own_addr_(std::move(own_addr)) {}
 
     janus::ShardData* get_or_create(const std::string& table) override {
         if (table.empty()) return nullptr;
@@ -108,13 +118,14 @@ public:
         // Name<->id registration: lets RunNontxnOp resolve an op's table NAME to
         // query the migration guard, and the router govern the table by name.
         get_table_registry().register_table(static_cast<int>(id), table);
-        auto* sd = new EngineShardData(db_, idx);   // leaked: process-lifetime
+        auto* sd = new EngineShardData(db_, idx, own_addr_, table);  // leaked
         tables_.emplace(table, sd);
         return sd;
     }
 
 private:
     abstract_db* db_;                                    // non-owning
+    std::string own_addr_;                               // this shard's data-plane host:port
     rusty::Mutex<int> mu_{0};                            // guards tables_/creation
     std::map<std::string, janus::ShardData*> tables_;
     std::atomic<long> next_id_{9100};                    // outside workload windows
@@ -148,10 +159,11 @@ private:
 
 }  // namespace
 
-janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db) {
+janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db,
+                                                   const std::string& own_addr) {
     if (db == nullptr) return nullptr;
     // Leaked: process-lifetime, like the bootstrap's other singletons.
-    return new EngineShardCatalog(db);
+    return new EngineShardCatalog(db, own_addr);
 }
 
 void engine_register_this_thread(abstract_db* db) {

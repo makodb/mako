@@ -22,9 +22,14 @@ namespace mako {
 // registered in the process table registry (so the non-txn write handler can
 // resolve an op's table NAME to query the per-table migration freeze), and each
 // behind a per-op engine-registration gate (rrr service handler threads are not
-// otherwise Silo/mbta-registered). Tables and the catalog are process-lifetime
-// (leaked). Returns nullptr if db is null.
-janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db);
+// otherwise Silo/mbta-registered). `own_addr` is THIS shard's data-plane
+// service address (host:port): each table self-identifies with it
+// (ShardData::service_addr), so a remote migration DESTINATION can pull
+// directly from this shard instead of relaying rows through the coordinator.
+// Tables and the catalog are process-lifetime (leaked). Returns nullptr if db
+// is null.
+janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db,
+                                                   const std::string& own_addr);
 
 // Engine-register the calling thread with `db` (idempotent per thread). The
 // admin Migrate handler calls this up front so config-store writes (the

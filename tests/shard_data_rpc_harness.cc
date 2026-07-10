@@ -13,10 +13,17 @@ namespace rpc_harness {
 // @unsafe - rrr framework wiring (raw Server, leaked singletons), same shape as
 // cluster_bootstrap.cc's ConfigKvService bring-up.
 int start_server(janus::ShardData* shard, const std::string& addr) {
+    return start_server_impl(shard, addr) != nullptr ? 0 : -1;
+}
+
+janus::ShardDataServiceImpl* start_server_impl(janus::ShardData* shard,
+                                               const std::string& addr) {
     auto* spoll  = new rusty::Arc<rrr::PollThread>(rrr::PollThread::create());
     auto* server = new rrr::Server(rusty::Some(spoll->clone()));
-    server->reg_service(rusty::make_box<janus::ShardDataServiceImpl>(shard));
-    return server->start(addr.c_str());
+    auto svc = rusty::make_box<janus::ShardDataServiceImpl>(shard);
+    auto* raw = svc.get();   // server owns the box; both leak (process-lifetime)
+    server->reg_service(std::move(svc));
+    return server->start(addr.c_str()) == 0 ? raw : nullptr;
 }
 
 janus::ShardDataServiceProxy* connect_client(const std::string& addr) {

@@ -13,13 +13,22 @@
 
 import cluster;   // janus::ShardData (module-owned; a textual fwd-decl would be a distinct type)
 
-namespace janus { class ShardDataServiceProxy; }  // rrr-generated (rcc_rpc.h); global module
+namespace janus {
+class ShardDataServiceProxy;   // rrr-generated (rcc_rpc.h); global module
+class ShardDataServiceImpl;    // the service (shard_data_service.h)
+}
 
 namespace rpc_harness {
 
 // Start an rrr ShardDataService server over `shard`, bound to `addr`
 // ("host:port"). Leaks the server/poll (process-lifetime). Returns 0 on success.
 int start_server(janus::ShardData* shard, const std::string& addr);
+
+// Like start_server, but hands back the (server-owned, process-lifetime)
+// service impl so tests can observe it (e.g. pull_range_calls). nullptr on
+// bind failure.
+janus::ShardDataServiceImpl* start_server_impl(janus::ShardData* shard,
+                                               const std::string& addr);
 
 // Connect a client to `addr` and return a ShardDataServiceProxy (leaked).
 // Returns nullptr on connect failure.

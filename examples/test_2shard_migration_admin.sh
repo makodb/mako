@@ -115,14 +115,14 @@ nohup bash bash/shard.sh 2 1 $trd localhost > "$log_file1" 2>&1 &
 SHARD1_PID=$!
 
 # ---- Wait for BOTH shard data planes, then fire the migration ----
-echo "Waiting for both shard data planes..."
+echo "Waiting for both shard data planes + the admin service..."
 admin_addr=""
 dp_wait=0
 while [ "$dp_wait" -lt 90 ]; do
-    l0=$(grep -a "data plane listening on" "$log_file0" 2>/dev/null | tail -n 1)
+    la=$(grep -a "MigrationAdmin listening on" "$log_file0" 2>/dev/null | tail -n 1)
     l1=$(grep -a "data plane listening on" "$log_file1" 2>/dev/null | tail -n 1)
-    if [ -n "$l0" ] && [ -n "$l1" ]; then
-        port=$(echo "$l0" | sed -n 's/.*listening on 0\.0\.0\.0:\([0-9]*\).*/\1/p')
+    if [ -n "$la" ] && [ -n "$l1" ]; then
+        port=$(echo "$la" | sed -n 's/.*listening on 0\.0\.0\.0:\([0-9]*\).*/\1/p')
         if [ -n "$port" ]; then
             admin_addr="127.0.0.1:${port}"
             break
@@ -134,8 +134,10 @@ done
 
 migration_ok=0
 migration2_ok=0
+migration3_ok=0
 admin_output=""
 admin2_output=""
+admin3_output=""
 if [ -z "$admin_addr" ]; then
     echo "  ✗ Data planes did not come up within 90s"
 else
@@ -156,6 +158,16 @@ else
     echo "mako_admin(2): rc=${admin2_rc} output: ${admin2_output}"
     if [ "$admin2_rc" -eq 0 ] && echo "$admin2_output" | grep -q "ok=1 moved=0"; then
         migration2_ok=1
+    fi
+    # Migration 3: send user_kv BACK 0 -> 1. The destination is REMOTE from the
+    # master, so this leg exercises the destination-driven copy: the master sends
+    # ONE PullRange control RPC and shard 1 pulls the rows directly from shard 0.
+    echo "Firing: mako_admin migrate ${admin_addr} user_kv d10 d20 0 -> 1 (remote-dest pull)"
+    admin3_output=$("$admin_path" migrate "$admin_addr" user_kv d10 d20 0 1 10 2>&1)
+    admin3_rc=$?
+    echo "mako_admin(3): rc=${admin3_rc} output: ${admin3_output}"
+    if [ "$admin3_rc" -eq 0 ] && echo "$admin3_output" | grep -q "ok=1 moved=10"; then
+        migration3_ok=1
     fi
 fi
 
@@ -249,6 +261,19 @@ if [ "$migration2_ok" -eq 1 ]; then
     echo "  ✓ second migration (different, unseeded table) committed (ok=1 moved=0)"
 else
     echo "  ✗ second migration (different table) failed: ${admin2_output}"
+    failed=1
+fi
+if [ "$migration3_ok" -eq 1 ]; then
+    echo "  ✓ round-trip migration back to shard 1 committed (ok=1 moved=10)"
+else
+    echo "  ✗ round-trip migration back to shard 1 failed: ${admin3_output}"
+    failed=1
+fi
+if grep -aq "pulled 10 rows of 'user_kv'" "$log_file1" 2>/dev/null; then
+    echo "  ✓ shard 1 pulled the rows DIRECTLY from shard 0 (destination-driven copy)"
+    grep -a "pulled 10 rows of 'user_kv'" "$log_file1" | tail -n 1 | sed 's/^/    /'
+else
+    echo "  ✗ shard 1 shows no direct pull (copy relayed through the master?)"
     failed=1
 fi
 if grep -aq "MigrationAdmin: committed" "$log_file0" 2>/dev/null; then

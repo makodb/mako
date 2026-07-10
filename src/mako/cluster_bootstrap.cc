@@ -64,6 +64,12 @@ rusty::Option<rusty::Box<ShardMaster>> g_shard_master;   // shard-0 leader only:
 // delta sits inside each shard's mako port window (mako binds shard_port + id,
 // id <= ~20; windows are 100+ apart) and clear of the +50 the xproc demo uses.
 constexpr int kShardDataPortDelta = 60;
+// The MigrationAdmin control service gets its OWN rrr server (shard 0 only) at
+// +61: its Migrate handler blocks for a whole migration, and during a
+// destination-driven pull the DESTINATION connects BACK to shard 0's data plane
+// for ScanRange -- if admin and data shared one server, the busy Migrate worker
+// would starve that scan (observed live: pull timeout -> faulted -> abort).
+constexpr int kMigrationAdminPortDelta = 61;
 // The default migratable non-txn KV table (pre-created so the data plane is
 // never empty); any OTHER table named by a Migrate is created on demand by the
 // catalog on both sides.
@@ -81,6 +87,8 @@ ShardDataCatalog* g_data_catalog = nullptr;               // this shard's named 
 abstract_db* g_dp_db = nullptr;                           // for engine thread registration
 rusty::Option<rusty::Arc<rrr::PollThread>> g_data_poll;   // data-plane server poll
 rrr::Server* g_data_server = nullptr;
+rusty::Option<rusty::Arc<rrr::PollThread>> g_admin_srv_poll;  // admin server poll (shard 0)
+rrr::Server* g_admin_server = nullptr;
 rusty::Option<rusty::Arc<rrr::PollThread>> g_admin_poll;  // client polls for remote participants
 rusty::Mutex<int> g_admin_mu{0};                          // serialize Migrate calls
 
@@ -243,18 +251,28 @@ private:
             master->attach_shard(sid, sd);
             return std::string();
         }
+        const std::string addr = data_plane_addr_of(sid);
         const std::string hkey = std::to_string(sid) + "/" + table;
         auto hit = remotes_.find(hkey);
         if (hit != remotes_.end()) {
-            master->attach_shard(sid, hit->second);
-            return std::string();
+            if (!hit->second->faulted()) {
+                master->attach_shard(sid, hit->second);
+                return std::string();
+            }
+            // A latched fault poisons every later migration through this handle:
+            // evict it AND the shard's connection (the fault usually means the
+            // peer/connection died), then rebuild fresh below -- this is what
+            // makes retry-after-failure work for REMOTE participants.
+            remotes_.erase(hit);
+            proxies_.erase(sid);
+            Log_info("MigrationAdmin: evicted faulted handle for shard %u table '%s'",
+                     sid, table.c_str());
         }
         ShardDataServiceProxy* proxy = nullptr;
         auto pit = proxies_.find(sid);
         if (pit != proxies_.end()) {
             proxy = pit->second;
         } else {
-            std::string addr = data_plane_addr_of(sid);
             if (g_admin_poll.is_none()) {
                 g_admin_poll = rusty::Some(rrr::PollThread::create());
             }
@@ -269,7 +287,10 @@ private:
             Log_info("MigrationAdmin: connected shard %u data plane at %s",
                      sid, addr.c_str());
         }
-        auto* remote = new RemoteShardData(proxy, table);    // leaked participant
+        // Table- and address-bound: the addr lets this participant act as a pull
+        // SOURCE, and lets the coordinator delegate copies to it as a pull
+        // DESTINATION (one PullRange control RPC; rows go source -> dest direct).
+        auto* remote = new RemoteShardData(proxy, table, addr);   // leaked
         remotes_.emplace(hkey, remote);
         master->attach_shard(sid, remote);
         return std::string();
@@ -287,7 +308,10 @@ void StartShardDataPlane(abstract_db* db) {
     auto& bench = BenchmarkConfig::getInstance();
     const int shard = static_cast<int>(bench.getShardIndex());
     g_dp_db = db;
-    g_data_catalog = mako::make_engine_shard_catalog(db);
+    // Each table self-identifies with this shard's data-plane address so remote
+    // migration destinations can pull ranges directly from here.
+    g_data_catalog = mako::make_engine_shard_catalog(
+        db, data_plane_addr_of(static_cast<uint32_t>(shard)));
     if (g_data_catalog == nullptr ||
         g_data_catalog->get_or_create(kMigratableTable) == nullptr) {
         Log_warn("ShardDataPlane: could not create catalog / '%s'", kMigratableTable);
@@ -317,16 +341,29 @@ void StartShardDataPlane(abstract_db* db) {
     g_data_poll = rusty::Some(rrr::PollThread::create());
     g_data_server = new rrr::Server(rusty::Some(g_data_poll.as_ref().unwrap().clone()));
     g_data_server->reg_service(rusty::make_box<ShardDataServiceImpl>(g_data_catalog));
-    if (shard == 0) {
-        g_data_server->reg_service(rusty::make_box<MigrationAdminImpl>());
-    }
     if (g_data_server->start(bind_addr.c_str()) != 0) {
         Log_warn("ShardDataPlane: failed to bind %s", bind_addr.c_str());
         return;
     }
-    Log_info("ShardDataPlane: shard %d data plane listening on %s%s",
-             shard, bind_addr.c_str(),
-             shard == 0 ? " (with MigrationAdmin)" : "");
+    Log_info("ShardDataPlane: shard %d data plane listening on %s",
+             shard, bind_addr.c_str());
+    // The admin control service on its OWN server + poll (see
+    // kMigrationAdminPortDelta): a blocking Migrate must never occupy the
+    // data-plane worker that serves this shard's ScanRange/PullRange.
+    if (shard == 0) {
+        std::string admin_addr = "0.0.0.0:" +
+            std::to_string(atoi(me.port.c_str()) + kMigrationAdminPortDelta);
+        g_admin_srv_poll = rusty::Some(rrr::PollThread::create());
+        g_admin_server = new rrr::Server(
+            rusty::Some(g_admin_srv_poll.as_ref().unwrap().clone()));
+        g_admin_server->reg_service(rusty::make_box<MigrationAdminImpl>());
+        if (g_admin_server->start(admin_addr.c_str()) != 0) {
+            Log_warn("ShardDataPlane: MigrationAdmin failed to bind %s",
+                     admin_addr.c_str());
+            return;
+        }
+        Log_info("ShardDataPlane: MigrationAdmin listening on %s", admin_addr.c_str());
+    }
 }
 
 // Shard 0's leader: owns the config store, serves reads, and keeps its

@@ -73,8 +73,14 @@ public:
     // window, not the whole range. On an OCC-backed source (mbta) this turns a
     // hot-range whole-scan starvation into guaranteed progress; on a cold range
     // it is just a handful of extra scans. Correctness is unchanged.
-    void copy_range_from(ShardData* source, const std::string& lo,
-                         const std::string& hi) {
+    //
+    // VIRTUAL so the copy is DESTINATION-DRIVEN: this default runs where the
+    // destination lives (local dest pulls straight from the source), and the
+    // RPC destination participant overrides it to send ONE PullRange control
+    // RPC -- the destination shard then pulls directly from the source's
+    // data-plane service. Migration data never transits the coordinator.
+    virtual void copy_range_from(ShardData* source, const std::string& lo,
+                                 const std::string& hi) {
         static const size_t kCopyChunk = 512;
         std::string cur = lo;
         while (cur < hi) {
@@ -85,6 +91,16 @@ public:
             cur.push_back('\0');   // resume strictly after the last key copied
         }
     }
+
+    // ---- data-plane self-identification (for destination-driven copy) ----
+    // Where can ANOTHER shard reach this participant's rows over the
+    // ShardDataService, and under which table name? A participant that is
+    // network-reachable (an RPC proxy, or a local engine table served by this
+    // process) reports its host:port + table; in-memory test doubles report ""
+    // (unreachable), which makes the destination fall back to the coordinator-
+    // side default copy above.
+    virtual std::string service_addr() { return std::string(); }
+    virtual std::string service_table() { return std::string(); }
     // Post-commit shed: drop the range from this shard.
     virtual void drop_range(const std::string& lo, const std::string& hi) {
         for (const auto& kv : scan_range(lo, hi)) remove(kv.first);

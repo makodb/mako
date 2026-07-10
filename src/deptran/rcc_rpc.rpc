@@ -591,6 +591,13 @@ abstract service ShardDataService {
     // calls these on the SOURCE shard.
     defer FreezeRange(string table_name, string lo, string hi | i32 ok);
     defer UnfreezeRange(string table_name, string lo, string hi | i32 ok);
+    // Destination-driven bulk copy: THIS shard (the migration destination)
+    // pulls [lo,hi) of src_table directly from the SOURCE shard's
+    // ShardDataService at src_addr into its local `table_name`. The
+    // coordinator sends this ONE control RPC instead of relaying rows --
+    // migration data never transits the master. copied = rows pulled.
+    defer PullRange(string table_name, string lo, string hi,
+                    string src_addr, string src_table | i64 copied, i32 ok);
 }
 
 // Operator-facing migration trigger, served by shard 0's leader (the node that
