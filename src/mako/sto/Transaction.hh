@@ -704,6 +704,14 @@ public:
         return in_progress() && tset_size_ != 0;
     }
 
+    // Current item count (reads + writes registered this transaction).
+    // Guards use this against tset_max_capacity: allocate_item past the cap
+    // runs the chunk-pointer array off the end and corrupts the heap, so
+    // callers that can retry must bail out BEFORE getting near it.
+    unsigned item_count() const {
+        return tset_size_;
+    }
+
     // opacity checking
     // These function will eventually help us track the commit TID when we
     // have no opacity, or for GV7 opacity.

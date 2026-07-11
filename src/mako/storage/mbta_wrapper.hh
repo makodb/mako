@@ -310,9 +310,28 @@ inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
 
 // ---- 2PC participant verbs (ambient Sto txn) ------------------------------
 
+// Item-set overflow guard for AMBIENT-txn ops (participant reads/writes
+// registering into the helper thread's transaction): allocate_item past
+// tset_max_capacity (32768) runs the chunk-pointer array off the end and
+// corrupts the heap (observed live: SIGSEGV with the thread's txn pointer
+// aliased to scribbled memory, surfacing on shard_get). Bail retryably WELL
+// before the cliff and name the accumulation -- an ambient txn this large
+// means participant state is piling up without a reset, which is the bug to
+// chase, not to ride into corruption.
+// @unsafe - reads thread-local txn state; stderr diagnostics on trip
+inline void oi_mbta_guard_item_cap(const char* who) {
+  if (TThread::txn != nullptr && TThread::txn->item_count() > 30000) {
+    fprintf(stderr,
+            "item-cap guard: %s at %u items on thread %d -- aborting op\n",
+            who, TThread::txn->item_count(), TThread::id());
+    throw abstract_db::abstract_abort_exception();
+  }
+}
+
 // @unsafe - stages a read into the serving thread's ambient Sto txn
 inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
                               std::string &value) {
+  oi_mbta_guard_item_cap("shard_get");
   STD_OP({
     bool ret = t->transGet(key, value);
     return ret;
@@ -322,6 +341,7 @@ inline bool oi_mbta_shard_get(mbta_table *t, lcdf::Str key,
 // @unsafe - ambient-txn write + write-set lock
 inline const char *oi_mbta_shard_put(mbta_table *t, lcdf::Str key,
                                      const std::string &value) {
+  oi_mbta_guard_item_cap("shard_put");
   // Migration write-fence, checked INSIDE the transaction at staging (see
   // migration_fence.h): a fenced key aborts the txn retryably -- the worker
   // retries and lands on the new owner once routing reloads.

@@ -88,12 +88,12 @@ public:
     }
     // Drain on THIS table's staged-writer watermark: cross-shard 2PC gives
     // unrelated txns multi-second tails, so a process-wide wait times out on
-    // live beds (forensics: 3-5s holds on other warehouses' indexes). 10s
-    // covers same-table 2PC tails. The begin/poll split serves the RPC path
+    // live beds (forensics: 3-5s holds on other warehouses indexes); tails
+    // under migration load reach ~14s, so 30s. The begin/poll split serves the RPC path
     // (the DrainWrites handler), whose per-call budget must stay under rrr's
     // ~1s request timeout.
     bool drain_writes() override {
-        return mako::migration_fence_drain_writes_for(table_, 10000);
+        return mako::migration_fence_drain_writes_for(table_, 30000);
     }
     int drain_begin() override { return mako::migration_fence_drain_begin(); }
     bool drain_poll(int parity) override {

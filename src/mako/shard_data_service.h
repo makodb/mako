@@ -346,7 +346,7 @@ public:
     // tails). Fault-latches like every other op.
     bool drain_writes() override {
         rrr::i32 phase = -1;
-        for (int waited_ms = 0; waited_ms < 12000; ) {
+        for (int waited_ms = 0; waited_ms < 30000; ) {   // 2PC tails under migration load reach ~14s
             ShardDataServiceProxy::RpcDrainWritesRequest req;
             req.table_name = table_;
             req.phase = phase;
