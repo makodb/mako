@@ -17,7 +17,7 @@ using namespace rrr;
 // ============================================================================
 
 TEST(ReconnectPolicyTest, DefaultValues) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     EXPECT_TRUE(policy.auto_reconnect);
     EXPECT_EQ(policy.max_retries, 5u);
     EXPECT_EQ(policy.initial_delay_ms, 1000u);  // 1 second
@@ -57,7 +57,7 @@ TEST(ReconnectPolicyTest, NoRetryPreset) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, InitialState) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_EQ(calc.retry_count(), 0u);
@@ -65,7 +65,7 @@ TEST(ReconnectCalculatorTest, InitialState) {
 }
 
 TEST(ReconnectCalculatorTest, ShouldRetryCountsDown) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
     auto calc = ReconnectCalculator::new_(policy);
 
@@ -82,7 +82,7 @@ TEST(ReconnectCalculatorTest, ShouldRetryCountsDown) {
 }
 
 TEST(ReconnectCalculatorTest, RetryCountIncrementsOnNextDelay) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_EQ(calc.retry_count(), 0u);
@@ -95,7 +95,7 @@ TEST(ReconnectCalculatorTest, RetryCountIncrementsOnNextDelay) {
 }
 
 TEST(ReconnectCalculatorTest, ResetClearsRetryCount) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     auto calc = ReconnectCalculator::new_(policy);
 
     calc.next_delay_ms();
@@ -112,7 +112,7 @@ TEST(ReconnectCalculatorTest, ResetClearsRetryCount) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, ExponentialBackoffNoJitter) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
@@ -138,7 +138,7 @@ TEST(ReconnectCalculatorTest, ExponentialBackoffNoJitter) {
 }
 
 TEST(ReconnectCalculatorTest, MaxDelayEnforced) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1000;
     policy.backoff_multiplier = 10.0;
     policy.max_delay_ms = 5000;
@@ -162,7 +162,7 @@ TEST(ReconnectCalculatorTest, MaxDelayEnforced) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, JitterAddRandomness) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1000;
     policy.backoff_multiplier = 1.0;  // No backoff, just jitter
     policy.max_delay_ms = 10000;
@@ -186,7 +186,7 @@ TEST(ReconnectCalculatorTest, JitterAddRandomness) {
 }
 
 TEST(ReconnectCalculatorTest, JitterWithBackoff) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
@@ -211,7 +211,7 @@ TEST(ReconnectCalculatorTest, JitterWithBackoff) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, ZeroMaxRetriesIsUnlimited) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 0;  // 0 = unlimited
     policy.auto_reconnect = true;
 
@@ -226,7 +226,7 @@ TEST(ReconnectCalculatorTest, ZeroMaxRetriesIsUnlimited) {
 }
 
 TEST(ReconnectCalculatorTest, AutoReconnectDisabled) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = false;
 
     auto calc = ReconnectCalculator::new_(policy);
@@ -234,7 +234,7 @@ TEST(ReconnectCalculatorTest, AutoReconnectDisabled) {
 }
 
 TEST(ReconnectCalculatorTest, ZeroInitialDelay) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 0;
     policy.jitter_enabled = false;
     policy.max_retries = 5;
@@ -247,7 +247,7 @@ TEST(ReconnectCalculatorTest, ZeroInitialDelay) {
 }
 
 TEST(ReconnectCalculatorTest, BackoffMultiplierOne) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 1.0;
     policy.max_delay_ms = 10000;
@@ -263,7 +263,7 @@ TEST(ReconnectCalculatorTest, BackoffMultiplierOne) {
 }
 
 TEST(ReconnectCalculatorTest, VeryHighBackoffMultiplier) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1;
     policy.backoff_multiplier = 100.0;
     policy.max_delay_ms = 1000;
@@ -287,7 +287,7 @@ TEST(ReconnectCalculatorTest, VeryHighBackoffMultiplier) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, PolicyIsReference) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
     policy.auto_reconnect = true;
 
@@ -311,7 +311,7 @@ TEST(ReconnectCalculatorTest, PolicyIsReference) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, PeekDoesNotIncrement) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.jitter_enabled = false;

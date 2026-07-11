@@ -484,7 +484,7 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    ReconnectPolicy reconnect_policy;
+    auto reconnect_policy = ReconnectPolicy::new_();
     reconnect_policy.auto_reconnect = false;
     client->set_reconnect_policy(reconnect_policy);
 
@@ -649,7 +649,7 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return has_event(kConnected); }, milliseconds(1000)));
 
-    ReconnectPolicy reconnect_policy;
+    auto reconnect_policy = ReconnectPolicy::new_();
     reconnect_policy.auto_reconnect = false;
     client->set_reconnect_policy(reconnect_policy);
     client->set_buffering_config(BufferingConfig::disabled());

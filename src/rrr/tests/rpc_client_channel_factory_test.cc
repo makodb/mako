@@ -254,7 +254,7 @@ TEST_F(ClientChannelFactoryTest, ConnectFailureSurfacesAsErrno) {
 TEST_F(ClientChannelFactoryTest,
        OnClosedReconnectReusesFactoryAndProducesNewStub) {
     // Configure auto-reconnect + factory-driven reconnect.
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 

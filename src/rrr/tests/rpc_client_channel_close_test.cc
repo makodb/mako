@@ -236,7 +236,7 @@ TEST_F(ClientChannelCloseTest, OnClosedAttemptsReconnectWhenPolicyAllows) {
     // legacy fd reconnect path by aborting it via reconnect_abort_
     // *inside* the spawned thread (we observe the spawn via the
     // counter, then immediately abort to avoid hitting socket(2)).
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 

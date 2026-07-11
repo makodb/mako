@@ -206,7 +206,7 @@ TEST_F(CombinedReliabilityTest, ReconnectPolicyWithStateTracking) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Configure reconnection policy
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 50;
     policy.max_retries = 3;
     policy.auto_reconnect = true;
@@ -246,7 +246,7 @@ TEST_F(CombinedReliabilityTest, ReconnectPolicyWithStateTracking) {
 }
 
 TEST_F(CombinedReliabilityTest, ReconnectCalculatorResetOnSuccess) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.max_retries = 5;
     policy.jitter_enabled = false;

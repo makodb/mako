@@ -1174,7 +1174,7 @@ impl ClientConnection {
             pending_fu_: SpinMutex::<HashMap<i64, Arc<Future>>>::new(HashMap::<i64, Arc<Future>>::new()),
             pending_cb_slots_: SpinMutex::<Vec<Option<AsyncReplyCallback>>>::new(make_prefilled_cb_slots()),
             state_machine_: ConnectionStateMachine::new(),
-            reconnect_policy_: Cell::<ReconnectPolicy>::new(ReconnectPolicy {}),
+            reconnect_policy_: Cell::<ReconnectPolicy>::new(ReconnectPolicy::new()),
             reconnect_: ReconnectState {},
             reconnect_address_: Cell::<std::string>::new(std::string {}),
             buffering_config_: Cell::<BufferingConfig>::new(BufferingConfig::defaults()),
@@ -1687,7 +1687,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3529b660c8823a47558dcc757697d426353de42018b4d77052885ecc4e3a23e5*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=dcc923e1642e50aa057d1ba5343ac11ec31ea234aaa277a72c7290e3cd7faaa6*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1849,7 +1849,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     , pending_fu_(SpinMutex<rusty::HashMap<int64_t, rusty::Arc<Future>>>::new_(rusty::HashMap<int64_t, rusty::Arc<Future>>()))
     , pending_cb_slots_(SpinMutex<rusty::Vec<rusty::Option<AsyncReplyCallback>>>::new_(make_prefilled_cb_slots()))
     , state_machine_(ConnectionStateMachine::new_())
-    , reconnect_policy_(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy{}))
+    , reconnect_policy_(rusty::Cell<ReconnectPolicy>::new_(ReconnectPolicy::new_()))
     , reconnect_(ReconnectState{})
     , reconnect_address_(rusty::Cell<std::string>::new_(std::string{}))
     , buffering_config_(rusty::Cell<BufferingConfig>::new_(BufferingConfig::defaults()))

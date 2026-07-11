@@ -161,7 +161,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = false;
     policy.max_retries = 5;
     policy.initial_delay_ms = 200;
@@ -203,7 +203,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 2;
     policy.initial_delay_ms = 80;
@@ -333,7 +333,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 50;
     policy.initial_delay_ms = 20;
@@ -430,7 +430,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 200;
     policy.initial_delay_ms = 20;
@@ -512,7 +512,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 0;  // unlimited
     policy.initial_delay_ms = 20;
@@ -567,7 +567,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
 // ============================================================================
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorBackoff) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
@@ -587,7 +587,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorBackoff) {
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorMaxRetries) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
     policy.auto_reconnect = true;
 
@@ -606,7 +606,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorMaxRetries) {
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorReset) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
 
     auto calc = ReconnectCalculator::new_(policy);
