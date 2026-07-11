@@ -424,66 +424,6 @@ double Timer::elapsed() const {
 }
 /*RUSTYCPP:GEN-END id=basetypes.3*/
 
-template<class T>
-class Enumerator {
-public:
-    virtual ~Enumerator() {}
-    virtual void reset() {
-        std::abort();
-    }
-    virtual bool has_next() = 0;
-    operator bool() {
-        return this->has_next();
-    }
-    virtual T next() = 0;
-    T operator() () {
-        return this->next();
-    }
-};
-
-template<class T, class Compare = std::greater<T>>
-class MergedEnumerator: public Enumerator<T> {
-    struct merge_helper {
-        T data;
-        Enumerator<T>* src;
-        merge_helper(const T& d, Enumerator<T>* s): data(d), src(s) {}
-        bool operator < (const merge_helper& other) const {
-            return Compare()(data, other.data);
-        }
-    };
-
-    rusty::Vec<merge_helper> q_;
-
-public:
-    // @unsafe - takes raw `Enumerator<T>*`; calls std::push_heap on raw
-    // iterator pair.
-    void add_source(Enumerator<T>* src) {
-        if (src && src->has_next()) {
-            q_.push(merge_helper(src->next(), src));
-            std::push_heap(q_.begin(), q_.end());
-        }
-    }
-    void reset() override {
-    }
-    bool has_next() override {
-        return !q_.is_empty();
-    }
-    // @unsafe - raw `Enumerator<T>*` dereference + std::pop/push_heap on
-    // raw iterator pairs.
-    T next() override {
-        if (q_.is_empty()) std::abort();
-        std::pop_heap(q_.begin(), q_.end());
-        merge_helper mh = q_.pop();
-        T ret = mh.data;
-        Enumerator<T>* src = mh.src;
-        if (src->has_next()) {
-            q_.push(merge_helper(src->next(), src));
-            std::push_heap(q_.begin(), q_.end());
-        }
-        return ret;
-    }
-};
-
 } // export namespace rrr
 
 // @safe - impl block: buf_size/val_size are pure switch math; the
