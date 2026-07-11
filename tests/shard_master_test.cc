@@ -22,6 +22,37 @@ import cluster;   // ShardMaster / InMemoryShardData / ConfigManager / ClusterCo
 namespace janus {
 namespace {
 
+// A destination whose write channel GARBLES one key's value while active --
+// the divergence injection for the checksum-gate tests. Corrupting the
+// dest's stored bytes once no longer diverges: final_sync's post-fence
+// catch-up re-copy heals any at-rest corruption by design, so the injected
+// fault must live in the transfer channel itself and re-garble every copy
+// attempt. Reads/scans pass through, so checksums see the garbled bytes.
+class GarblingShardData : public ShardData {
+public:
+    explicit GarblingShardData(ShardData* inner) : inner_(inner) {}
+    bool garble = false;
+    std::string poisoned_key;
+    void put(const std::string& k, const std::string& v) override {
+        inner_->put(k, (garble && k == poisoned_key) ? std::string("CORRUPT") : v);
+    }
+    bool get(const std::string& k, std::string& out) override {
+        return inner_->get(k, out);
+    }
+    void remove(const std::string& k) override { inner_->remove(k); }
+    std::vector<KvPair> scan_range(const std::string& lo,
+                                   const std::string& hi) override {
+        return inner_->scan_range(lo, hi);
+    }
+    std::vector<KvPair> scan_range_limited(const std::string& lo,
+                                           const std::string& hi,
+                                           size_t limit) override {
+        return inner_->scan_range_limited(lo, hi, limit);
+    }
+private:
+    ShardData* inner_;
+};
+
 class ShardMasterTest : public ::testing::Test {
 protected:
     InMemoryKvStore kv_;                                     // config store (shard 0's __mako_config__ stand-in)
@@ -344,20 +375,24 @@ TEST_F(ShardMasterTest, ChecksumsMatchAfterCleanCopy) {
     EXPECT_TRUE(master_.range_checksums_match());
 }
 
-// If the destination's copy diverges (a lost/garbled transmission), checksums
+// If the destination's copy diverges (a garbling transfer channel), checksums
 // differ, the destination cannot vote prepared, commit is refused, master aborts.
 TEST_F(ShardMasterTest, ChecksumMismatchRefusesCommitAndAborts) {
-    AddThreeShards();
+    GarblingShardData dst(&shards_[2]);
+    EXPECT_EQ(master_.register_shard({"s0"}, &shards_[0]), 0u);
+    EXPECT_EQ(master_.register_shard({"s1"}, &shards_[1]), 1u);
+    EXPECT_EQ(master_.register_shard({"s2"}, &dst), 2u);
     const std::string lo = "m", hi = "t";
     shards_[1].put("m1", "a");
     shards_[1].put("m2", "b");
+    dst.garble = true;
+    dst.poisoned_key = "m1";                    // every transfer of m1 garbles
 
     ASSERT_TRUE(master_.begin_migration(1, 2, "", lo, hi));
-    master_.background_copy();
-    shards_[2].put("m1", "CORRUPT");           // corrupt a snapshot key on the dest
+    master_.background_copy();                  // m1 lands CORRUPT on the dest
 
     master_.lock_range();
-    master_.final_sync();                       // no delta fixes m1 -> checksums differ
+    master_.final_sync();                       // catch-up re-copy garbles m1 again
     EXPECT_FALSE(master_.range_checksums_match());
     EXPECT_FALSE(master_.both_prepared());      // dest could not verify -> no vote
     EXPECT_FALSE(master_.commit_migration());   // commit refused
@@ -595,16 +630,20 @@ TEST_F(ShardMasterTest, DeadParticipantAbortsInsteadOfVacuousCommit) {
 // SAME range to completion: the retry re-copies (puts are idempotent), gets a
 // fresh generation, checksum-verifies, and publishes the cutover.
 TEST_F(ShardMasterTest, RetryAfterAbortConverges) {
-    AddThreeShards();
+    GarblingShardData dst(&shards_[1]);
+    EXPECT_EQ(master_.register_shard({"s0"}, &shards_[0]), 0u);
+    EXPECT_EQ(master_.register_shard({"s1"}, &dst), 1u);
+    EXPECT_EQ(master_.register_shard({"s2"}, &shards_[2]), 2u);
     EnableMapMode();
     const std::string lo = "m", hi = "t";
     for (int i = 0; i < 8; ++i) shards_[0].put("m" + std::to_string(i), "v" + std::to_string(i));
 
-    // Attempt 1: the copy diverges (a corrupt row lands on the destination
-    // behind the coordinator's back) -> checksum gate refuses -> abort.
+    // Attempt 1: the transfer channel garbles a row on its way to the
+    // destination (every copy attempt) -> checksum gate refuses -> abort.
+    dst.garble = true;
+    dst.poisoned_key = "m3";
     ASSERT_TRUE(master_.begin_migration(0, 1, "", lo, hi));
     master_.background_copy();
-    shards_[1].put("m3", "corrupt");
     master_.lock_range();
     master_.final_sync();
     EXPECT_FALSE(master_.both_prepared());
@@ -614,7 +653,9 @@ TEST_F(ShardMasterTest, RetryAfterAbortConverges) {
     EXPECT_EQ(master_.shard_range_count(0, lo, hi), 8u);   // source intact
     EXPECT_EQ(FreshRoute("m3"), 0u);                       // routing unchanged
 
-    // Attempt 2 (same master, same range): converges and publishes.
+    // Attempt 2 (same master, same range, channel healed): converges and
+    // publishes.
+    dst.garble = false;
     ASSERT_TRUE(master_.begin_migration(0, 1, "", lo, hi));
     master_.background_copy();
     master_.lock_range();

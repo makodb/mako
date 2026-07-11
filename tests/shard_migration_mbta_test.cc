@@ -316,18 +316,47 @@ TEST_F(ShardMigrationMbta, MigratorCommitPath) {
     EXPECT_FALSE(dst.get(k(13), got));
 }
 
+// A destination whose write channel garbles ONE key on every transfer: a
+// one-time at-rest corruption no longer diverges (final_sync's post-fence
+// catch-up re-copy heals it, by design), so the injected fault must live in
+// the channel and re-garble every copy attempt.
+class GarblingDst : public janus::ShardData {
+public:
+    explicit GarblingDst(janus::ShardData* inner, std::string poisoned)
+        : inner_(inner), poisoned_(std::move(poisoned)) {}
+    void put(const std::string& key, const std::string& value) override {
+        inner_->put(key, key == poisoned_ ? std::string("CORRUPT") : value);
+    }
+    bool get(const std::string& key, std::string& out) override {
+        return inner_->get(key, out);
+    }
+    void remove(const std::string& key) override { inner_->remove(key); }
+    std::vector<KvPair> scan_range(const std::string& lo,
+                                   const std::string& hi) override {
+        return inner_->scan_range(lo, hi);
+    }
+    std::vector<KvPair> scan_range_limited(const std::string& lo,
+                                           const std::string& hi,
+                                           size_t limit) override {
+        return inner_->scan_range_limited(lo, hi, limit);
+    }
+private:
+    janus::ShardData* inner_;
+    std::string poisoned_;
+};
+
 TEST_F(ShardMigrationMbta, MigratorAbortOnDivergenceLeavesSourceIntact) {
     janus::OrderedIndexShardData src(fresh_index("ma_src"));
-    janus::OrderedIndexShardData dst(fresh_index("ma_dst"));
+    janus::OrderedIndexShardData real_dst(fresh_index("ma_dst"));
+    GarblingDst dst(&real_dst, k(14));         // garbling transfer channel
     for (int i = 0; i < 30; i++) src.put(k(i), "v" + std::to_string(i));
 
     MasterRig rig(&src, &dst);
     auto& m = rig.master;
     ASSERT_TRUE(m.begin_migration(0, 1, "", k(10), k(20)));
-    m.background_copy();
-    dst.remove(k(14));                         // garbled transfer -> divergence
+    m.background_copy();                       // k(14) lands CORRUPT on the dest
     m.lock_range();
-    m.final_sync();
+    m.final_sync();                            // catch-up re-copy garbles it again
     EXPECT_FALSE(m.both_prepared());            // checksum gate fails -> no cutover
     m.abort_migration();
 

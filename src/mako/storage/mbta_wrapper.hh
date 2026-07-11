@@ -546,6 +546,9 @@ inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
   ALWAYS_ASSERT(!t->get_is_remote());
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
+    // Discard any prior attempt's rows: an aborted OCC attempt's reads are
+    // the ones that failed validation (torn values, and dupes on retry).
+    callback.restart();
     try {
       t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
@@ -566,6 +569,7 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
   ALWAYS_ASSERT(!t->get_is_remote());
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
+    callback.restart();   // see scan above: discard the aborted attempt's rows
     try {
       t->rscan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
@@ -1828,6 +1832,15 @@ public:
   }
 
   void shard_reset() {
+    // Participant txn boundary: a 2PC helper's txn ends HERE (install/unlock
+    // or abort, then re-arm) without ever reaching Transaction::stop, so the
+    // migration fence's staged-writer registrations must close here too.
+    // A helper that staged a write into a later-fenced table otherwise holds
+    // its drain bucket for the rest of the run (observed live: four helpers'
+    // gen-0 customer_1 registrations stalled every customer drain at any
+    // budget). Runs on the helper thread that staged (2PC pins a txn's RPCs
+    // to one thread); idempotent with the stop-side hook.
+    mako::migration_fence_txn_done();
     Sto::start_transaction();
   }
 

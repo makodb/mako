@@ -90,9 +90,14 @@ public:
     }
 
 private:
-    // Collects (key, value) pairs from a scan; never stops early.
+    // Collects (key, value) pairs from a scan; never stops early. restart()
+    // (each retry attempt of the whole-scan-retrying one-op scan) discards
+    // the aborted attempt's rows -- they are the reads that failed OCC
+    // validation, i.e. torn values, and keeping them corrupted migration
+    // copies and checksums (observed live).
     class Collector : public oi_scan_callback {
     public:
+        void restart() override { pairs.clear(); }
         bool invoke(const char* keyp, size_t keylen,
                     const std::string& value) override {
             pairs.emplace_back(std::string(keyp, keylen), value);
@@ -105,6 +110,7 @@ private:
     class LimitedCollector : public oi_scan_callback {
     public:
         explicit LimitedCollector(size_t limit) : limit_(limit) {}
+        void restart() override { pairs.clear(); }
         bool invoke(const char* keyp, size_t keylen,
                     const std::string& value) override {
             pairs.emplace_back(std::string(keyp, keylen), value);

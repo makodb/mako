@@ -571,8 +571,15 @@ abstract service ShardDataService {
     // Bulk read up to `limit` live pairs from [lo,hi) -- the migration copy /
     // final-sync source read. rows is empty once the range is exhausted.
     defer ScanRange(string table_name, string lo, string hi, i32 limit | map<string, string> rows);
-    // Fold the range into a scalar (the source's 2PC vote).
-    defer Checksum(string table_name, string lo, string hi | i64 checksum);
+    // Fold the range into a scalar (the source's 2PC vote), as a BEGIN/POLL
+    // job like DrainWrites: the fold walks the whole table (100k+ rows) and
+    // under migration load outruns rrr's ~1s client timeout; a retried
+    // SYNCHRONOUS fold then stacks another full scan on the shard each time
+    // (observed live: piled folds saturated the source and stretched 2PC
+    // tails past the write-drain budget). phase < 0 starts the job (reply
+    // carries its id in `job`, done=0); phase = job polls it (done=1 => value
+    // in `checksum`; done=-1 => id mismatch / slot busy with another range).
+    defer Checksum(string table_name, string lo, string hi, i32 phase | i64 checksum, i32 done, i32 job);
     // Compute this shard's range checksum and compare to `expected` (the
     // source's): ok=1 iff byte-identical -- the destination's 2PC prepare vote.
     defer VerifyRange(string table_name, string lo, string hi, i64 expected | i32 ok);

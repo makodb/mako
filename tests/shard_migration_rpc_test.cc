@@ -212,8 +212,10 @@ TEST(ShardMigrationRpc, DestinationDrivenCopyBypassesTheMaster) {
     ASSERT_TRUE(master.both_prepared());
     ASSERT_TRUE(master.commit_migration());
 
-    EXPECT_EQ(dst_svc->pull_range_calls, 1)
-        << "the DESTINATION must have executed the pull (not the master)";
+    EXPECT_EQ(dst_svc->pull_range_calls, 2)
+        << "the DESTINATION must have executed the pulls (not the master): "
+           "one for the phase-1 bulk copy, one for final_sync's post-fence "
+           "catch-up re-copy";
     EXPECT_EQ(dst_backing->scan_range(lo, hi).size(), 100u);   // rows landed dest-side
     EXPECT_EQ(src_backing->scan_range(lo, hi).size(), 0u);     // source shed the range
     { std::string v; ASSERT_TRUE(dst_backing->get(mkkey(99), v)); EXPECT_EQ(v, mkval(99)); }

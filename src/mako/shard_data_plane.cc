@@ -89,11 +89,13 @@ public:
     // Drain on THIS table's staged-writer watermark: cross-shard 2PC gives
     // unrelated txns multi-second tails, so a process-wide wait times out on
     // live beds (forensics: 3-5s holds on other warehouses indexes); tails
-    // under migration load reach ~14s, so 30s. The begin/poll split serves the RPC path
-    // (the DrainWrites handler), whose per-call budget must stay under rrr's
-    // ~1s request timeout.
+    // under migration load reach ~14s -- and the gen-bucket watermark now
+    // (correctly) waits real pre-fence stragglers the parity scheme missed --
+    // so 60s. The begin/poll split serves the RPC path (the DrainWrites
+    // handler), whose per-call budget must stay under rrr's ~1s request
+    // timeout.
     bool drain_writes() override {
-        return mako::migration_fence_drain_writes_for(table_, 30000);
+        return mako::migration_fence_drain_writes_for(table_, 60000);
     }
     int drain_begin() override { return mako::migration_fence_drain_begin(); }
     bool drain_poll(int parity) override {
@@ -109,8 +111,9 @@ public:
         long prev = last_log.load(std::memory_order_relaxed);
         if (now != prev &&
             last_log.compare_exchange_strong(prev, now, std::memory_order_relaxed)) {
-            fprintf(stderr, "drain_poll waiting: table='%s' parity=%d\n",
+            fprintf(stderr, "drain_poll waiting: table='%s' skip_bucket=%d\n",
                     table_.c_str(), parity);
+            mako::migration_fence_dump_residual(table_);
             mako::migration_fence_dump_staged();
         }
         return false;

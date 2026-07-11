@@ -66,15 +66,23 @@ bool migration_fence_drain_writes(int timeout_ms);
 
 // Begin/poll split of the same drain, for RPC-driven waiting: rrr requests
 // carry a ~1s client timeout, so a remote drain must be one BEGIN (the single
-// watermark generation bump -- repeated bumps would recycle the two parities
-// and pull post-fence registrants back into the waited set) followed by
-// short-budget POLLS. begin returns the old parity to poll.
+// watermark generation bump -- repeated bumps would recycle the generation
+// buckets and pull post-fence registrants back into the waited set) followed
+// by short-budget POLLS. begin returns the bump's own bucket -- the one
+// bucket the polls do NOT wait on (every older bucket is waited: with only
+// two parities, a straggler from two drains ago sat in the not-waited parity
+// and its pre-fence write leaked past the drain, observed live).
 int migration_fence_drain_begin();
-bool migration_fence_drained(const std::string& table, int parity);
+bool migration_fence_drained(const std::string& table, int skip_bucket);
 
 // Forensics: dump every open staged-writer registration (thread slot, table,
-// parity, age) to stderr. Rate-limit at the call site.
+// gen bucket, age) to stderr. Rate-limit at the call site.
 void migration_fence_dump_staged();
+// Forensics: one line with the per-gen-bucket counter values for `table`'s
+// hash slot (or the whole array for "") plus the overflow bucket -- the
+// drain's actual ground truth, catching leaked counts whose per-thread
+// forensic slot has since been overwritten.
+void migration_fence_dump_residual(const std::string& table);
 
 // Routing-ownership recheck for server-executed ops: the shard that owns
 // (table_id, key) per the CURRENT partition-governed routing, or -1 when the
@@ -111,7 +119,7 @@ struct MigrationStagedWriter {
     MigrationStagedWriter& operator=(const MigrationStagedWriter&) = delete;
 private:
     bool counted_;
-    unsigned parity_ = 0;   // fence generation parity captured at registration
+    unsigned bucket_ = 0;   // fence generation bucket captured at registration
 };
 
 }  // namespace mako

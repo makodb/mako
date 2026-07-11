@@ -267,22 +267,17 @@ fi
 echo ""
 echo "Checking live warehouse migration (warehouse ${MIG_WH}, shard 1 -> 0):"
 echo "-----------------"
-# GATED assertion: the warehouse table must migrate live (the end-to-end
-# mechanism: spec resolution, adopted index, widened copy, per-table drain,
-# checksum, commit, publish). The write-hot tables are reported but not yet
-# gated: district trips a checksum divergence under churn and customer/stock
-# exhaust the drain deadline on 2PC tails -- both under active investigation
-# (see docs/mako-book.md s3).
+# GATED assertion: EVERY table must migrate live, including the write-hot
+# big ones (customer 90k rows, stock 100k) -- the full mechanism end to end:
+# spec resolution, adopted index, widened chunked copy, physical-name freeze,
+# per-table gen-bucket drain (participant txn boundary included), post-fence
+# catch-up copy, begin/poll checksum job, commit, publish.
 for t in "${MIG_TABLES[@]}"; do
     if [ "${mig_ok[$t]:-0}" -eq 1 ]; then
         echo "  ✓ ${t}: committed (${mig_out[$t]}, expected >= ${MIG_EXPECT[$t]})"
     else
-        if [ "$t" = "warehouse" ] || [ "$t" = "district" ]; then
-            echo "  ✗ ${t}: failed: ${mig_out[$t]:-not fired}"
-            failed=1
-        else
-            echo "  ~ ${t}: not committed (known-open): ${mig_out[$t]:-not fired}"
-        fi
+        echo "  ✗ ${t}: failed: ${mig_out[$t]:-not fired}"
+        failed=1
     fi
 done
 

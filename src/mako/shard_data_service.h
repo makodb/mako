@@ -33,7 +33,9 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 
 #include <cstdint>
 #include <map>
+#include <mutex>    // checksum job slot (guards state shared with its thread)
 #include <string>
+#include <thread>   // checksum compute thread (see the Checksum handler)
 #include <utility>
 #include <vector>
 
@@ -57,7 +59,11 @@ public:
           guard_(guard != nullptr ? guard : &get_migration_guard()) {
         catalog_ = owned_single_;
     }
-    ~ShardDataServiceImpl() { delete owned_single_; }
+    ~ShardDataServiceImpl() {
+        // @unsafe { reap the checksum compute thread before members die }
+        if (ck_thread_.joinable()) ck_thread_.join();
+        delete owned_single_;
+    }
 
     // ---- handler logic, factored out so it unit-tests without the socket ----
     std::map<std::string, std::string>
@@ -98,16 +104,30 @@ public:
         ShardData* shard = resolve(table);
         return shard != nullptr && out != nullptr && shard->get(key, *out);
     }
-    // Freeze / unfreeze [lo,hi) of `table` on this shard for a migration. The
-    // entry carries the REAL table name; the non-txn write handler resolves its
-    // op's table name and queries the guard with it (a "" entry still fences
-    // every table -- see MigrationGuard).
+    // Freeze / unfreeze [lo,hi) of `table` on this shard for a migration.
+    // Resolve through the catalog and let the PARTICIPANT freeze itself: it
+    // knows its PHYSICAL table name -- the staging fence's lookup key
+    // (t->get_table_name()) -- and its range semantics (wh-spec participants
+    // widen to the whole index). Freezing the raw wire name here fenced
+    // NOTHING for spec-named tables ('wh:6:customer' entry vs 'customer_1'
+    // queries): every post-drain write sailed through, so the big-table
+    // catch-up copy was always one write behind and the checksum gate
+    // diverged (observed live across every customer/stock attempt). The raw
+    // guard entry remains only for tables without a data plane here.
     void DoFreezeRange(const std::string& table, const std::string& lo,
                        const std::string& hi) {
+        ShardData* shard = resolve(table);
+        if (shard != nullptr) shard->freeze_range(lo, hi);
+        // ALSO install the raw wire-name entry: the RPC's documented guard
+        // contract (and the only fence for fakes whose freeze_range doesn't
+        // touch the process guard). Unfreeze mirrors both, so the pair stays
+        // symmetric.
         if (guard_) guard_->freeze(table, lo, hi);
     }
     void DoUnfreezeRange(const std::string& table, const std::string& lo,
                          const std::string& hi) {
+        ShardData* shard = resolve(table);
+        if (shard != nullptr) shard->unfreeze_range(lo, hi);
         if (guard_) guard_->unfreeze(table, lo, hi);
     }
     // Destination-driven bulk copy: THIS shard pulls [lo,hi) of src_table
@@ -131,7 +151,41 @@ public:
     }
     void Checksum(const RpcChecksumRequest& req, RpcChecksumResponse& resp,
                   rrr::DeferredReply defer) override {
-        resp.checksum = static_cast<rrr::i64>(DoChecksum(req.table_name, req.lo, req.hi));
+        // BEGIN/POLL job (see rcc_rpc.rpc): one compute thread folds the
+        // range; every call replies immediately, under rrr's ~1s timeout.
+        std::lock_guard<std::mutex> g(ck_mu_);
+        const std::string key = req.table_name + '\0' + req.lo + '\0' + req.hi;
+        resp.checksum = 0;
+        if (req.phase < 0) {
+            if (ck_running_) {
+                // Same range: join the in-flight job. Other range: busy --
+                // migrations are serialized, so this only happens across a
+                // retry boundary; the caller backs off and begins again.
+                resp.done = (ck_key_ == key) ? 0 : -1;
+                resp.job = ck_id_;
+                defer.reply(); return;
+            }
+            if (ck_thread_.joinable()) ck_thread_.join();   // reap prior compute
+            ck_id_++; ck_key_ = key; ck_running_ = true; ck_has_ = false;
+            const int id = ck_id_;
+            const std::string t = req.table_name, lo = req.lo, hi = req.hi;
+            // @unsafe { std::thread kernel: single compute thread, reaped
+            //   above and joined in the dtor }
+            ck_thread_ = std::thread([this, id, t, lo, hi]() {
+                const uint64_t v = DoChecksum(t, lo, hi);
+                std::lock_guard<std::mutex> g2(ck_mu_);
+                if (id == ck_id_) {
+                    ck_value_ = v; ck_has_ = true; ck_running_ = false;
+                }
+            });
+            resp.done = 0; resp.job = ck_id_;
+            defer.reply(); return;
+        }
+        resp.job = ck_id_;
+        if (req.phase != ck_id_)  resp.done = -1;   // stale/preempted job id
+        else if (ck_has_)       { resp.done = 1;
+                                  resp.checksum = static_cast<rrr::i64>(ck_value_); }
+        else                      resp.done = 0;
         defer.reply();
     }
     void VerifyRange(const RpcVerifyRangeRequest& req, RpcVerifyRangeResponse& resp,
@@ -228,6 +282,18 @@ private:
     ShardDataCatalog* catalog_;        // non-owning (unless owned_single_)
     SingleTableCatalog* owned_single_; // set by the single-table ctor
     MigrationGuard* guard_;            // non-owning; this shard's freeze registry.
+
+    // Checksum job slot (see the Checksum handler): one compute at a time,
+    // matching the serialized-migrations invariant. @unsafe { std::thread +
+    // std::mutex kernel: the thread must be reaped, rusty wrappers don't
+    // cover the joinable-handoff shape here }
+    std::mutex ck_mu_;
+    std::thread ck_thread_;
+    int ck_id_ = 0;
+    std::string ck_key_;
+    bool ck_running_ = false;
+    bool ck_has_ = false;
+    uint64_t ck_value_ = 0;
     rusty::Mutex<int> src_mu_{0};      // guards the pull-source connection cache
     std::map<std::string, ShardDataServiceProxy*> src_proxies_;
     rusty::Arc<rrr::PollThread>* src_poll_ = nullptr;   // lazy; leaked
@@ -332,16 +398,44 @@ public:
     // live: the customer migration's src checksum arrived as 0 -- a 90k-row
     // fold is never 0 -- and every historical "checksum divergence" traces to
     // this timeout, not to data.)
+    // BEGIN/POLL (see rcc_rpc.rpc): the server folds the range on ONE compute
+    // thread; every RPC here replies fast. The old synchronous form retried
+    // the whole fold on each ~1s timeout, stacking full-table scans on a
+    // loaded shard -- a self-inflicted saturation spiral (observed live:
+    // customer's drain stragglers stretched past budget while 8 piled folds
+    // ran). Poll timeouts don't latch (congestion, not death); only a begin
+    // that can't even start after several tries does.
     uint64_t checksum(const std::string& lo, const std::string& hi) override {
-        for (int attempt = 0; attempt < 8; attempt++) {
+        rrr::i32 job = -1;
+        int begin_tries = 0;
+        for (int waited_ms = 0; waited_ms < 90000; ) {
             ShardDataServiceProxy::RpcChecksumRequest req;
             req.table_name = table_; req.lo = lo; req.hi = hi;
+            req.phase = job;
             auto r = proxy_->Checksum(req);
-            if (!r.is_err()) return static_cast<uint64_t>(r.unwrap().checksum);
-            usleep(300 * 1000);   // congested: back off, retry
+            if (r.is_err()) {
+                if (job < 0 && ++begin_tries >= 8) { faulted_ = true; return 0; }
+                usleep(300 * 1000);
+                waited_ms += 1300;   // ~1s timeout + backoff
+                continue;
+            }
+            auto resp = r.unwrap();
+            if (resp.done == 1) return static_cast<uint64_t>(resp.checksum);
+            if (resp.done == -1) {
+                // Slot busy with another range (begin) or our job was
+                // preempted (poll). Migrations are serialized, so a stale
+                // prior job is the only expected cause: re-begin; fail the
+                // vote only if polling and preempted.
+                if (job >= 0) return 0;
+                usleep(300 * 1000);
+                waited_ms += 300;
+                continue;
+            }
+            job = resp.job;
+            usleep(300 * 1000);
+            waited_ms += 300;
         }
-        faulted_ = true;
-        return 0;
+        return 0;   // deadline: fail this vote; shard is alive, don't latch
     }
     bool verify_range(const std::string& lo, const std::string& hi,
                       uint64_t expected) override {
@@ -363,26 +457,36 @@ public:
     }
 
     // Write drain on the REMOTE shard, as BEGIN/POLL: the first call bumps
-    // the remote watermark once and returns the parity; subsequent calls
-    // poll it with a short server budget, each staying under rrr's ~1s
+    // the remote watermark once and returns the bucket cookie; subsequent
+    // calls poll it with a short server budget, each staying under rrr's ~1s
     // request timeout. Loops to a 30s deadline (2PC tails under migration
-    // load reach ~14s). A POLL that errors does NOT fault-latch: polls are
-    // idempotent reads, and under migration load they queue behind the data
-    // service's scan traffic and trip rrr's ~1s client timeout -- that is
-    // congestion, not a dead participant (observed live: customer's drain
-    // aborted "participant unreachable" while the shard served fine). Only
-    // the BEGIN call (phase < 0, the one generation bump) latches on error,
-    // since retrying it blindly would double-bump the watermark.
+    // load reach ~14s). No call fault-latches on a timeout: under migration
+    // load both begin and polls queue behind the data service's scan traffic
+    // and trip rrr's ~1s client timeout -- congestion, not a dead participant
+    // (observed live twice: polls first, then the BEGIN itself latching
+    // "write drain timed out" while the shard served fine). Retrying BEGIN is
+    // safe under the 16-generation-bucket watermark: an extra bump just burns
+    // a bucket, and the newest cookie's wait covers every older one -- unlike
+    // the old two-parity scheme, where a double bump recycled the waited
+    // parity (the comment that used to forbid this). Cap begin retries so a
+    // truly dead participant still fails fast.
     bool drain_writes() override {
         rrr::i32 phase = -1;
-        for (int waited_ms = 0; waited_ms < 30000; ) {
+        int begin_tries = 0;
+        // 60s deadline: the gen-bucket watermark now (correctly) waits out
+        // real pre-fence stragglers -- cross-shard 2PC tails observed at
+        // 6-14s under migration load, longer right after a bulk copy.
+        for (int waited_ms = 0; waited_ms < 60000; ) {
             ShardDataServiceProxy::RpcDrainWritesRequest req;
             req.table_name = table_;
             req.phase = phase;
             auto r = proxy_->DrainWrites(req);
             if (r.is_err()) {
-                if (phase < 0) { faulted_ = true; return false; }
-                usleep(200 * 1000);   // congested: back off, re-poll
+                if (phase < 0 && ++begin_tries >= 8) {
+                    faulted_ = true;
+                    return false;
+                }
+                usleep(200 * 1000);   // congested: back off, retry/re-poll
                 waited_ms += 700;
                 continue;
             }

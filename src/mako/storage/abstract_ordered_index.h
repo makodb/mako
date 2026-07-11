@@ -44,6 +44,14 @@
 class oi_scan_callback {
 public:
   virtual ~oi_scan_callback() {}
+  // Called at the start of EVERY attempt of a whole-scan-retrying scan
+  // (oi_mbta_nontxn_scan): an aborted one-op OCC attempt's collected rows
+  // are exactly the reads that failed validation -- torn values, plus dupes
+  // on retry -- so an accumulating collector must discard them or the scan
+  // returns a mix of torn and fresh rows (observed live: the migration
+  // catch-up copy left payment-mutated customer fields at stale values).
+  // Default no-op preserves the historical behavior of workload collectors.
+  virtual void restart() {}
   // XXX(stephentu): key is passed as (const char *, size_t) pair
   // because it really should be the string_type of the underlying
   // tree, but since the interface is not templated we can't

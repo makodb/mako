@@ -273,9 +273,19 @@ impl ShardMaster {
         let src_ck: u64 = unsafe { (*src).checksum(&lo, &hi) };
         unsafe { (*dst).verify_range(&lo, &hi, src_ck) }
     }
-    // Phase 3 — FINAL SYNC: replay the captured delta (puts + deletes) to the
-    // destination, then vote prepared ONLY if its range checksum-matches the
+    // Phase 3 — FINAL SYNC: catch the destination up to the now-quiescent
+    // source, then vote prepared ONLY if its range checksum-matches the
     // source; otherwise the copy is corrupt/incomplete and the master aborts.
+    // Two catch-up channels, both idempotent:
+    //  - replay the master-captured delta (the stub beds, where writes transit
+    //    the master's put path — live workload writes never do);
+    //  - a SECOND copy_range_from over the fenced+drained range (stop-and-copy).
+    //    The phase-1 bulk copy runs unfenced, so rows mutate behind its scan
+    //    cursor and the destination lands one "epoch" behind — observed live
+    //    as every big-table verify failing with dst = src-at-copy-time (the
+    //    delta replay above is empty on the live path). Post-drain the range
+    //    is immutable, so this pass is the correctness anchor; its cost is
+    //    the price of having no dirty-key tracking yet.
     fn final_sync(&mut self) {
         if !(*self).mig_active { return; }
         let dst_id: u32 = (*self).mig_dest;
@@ -286,6 +296,13 @@ impl ShardMaster {
         }
         for dk in (*self).mig_deleted {
             unsafe { (*dst).remove(dk.first) };
+        }
+        let src_id: u32 = (*self).mig_source;
+        if (*self).shards.contains_key(src_id) {
+            let src: *mut ShardData = (*self).shards.get(src_id).unwrap().get();
+            let lo: std::string = (*self).mig_lo;
+            let hi: std::string = (*self).mig_hi;
+            unsafe { (*dst).copy_range_from(src, &lo, &hi) };
         }
         if self.participants_faulted() { return; }
         if self.range_checksums_match() {
@@ -411,7 +428,7 @@ impl ShardMaster {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=657bf0a0d49c48d75dac2b48bb3aa5c411a19e18758b1d2dae511f20bb7c0c46*/
+/*RUSTYCPP:GEN-BEGIN id=shard_master.1 version=1 rust_sha256=825354b40c0bf73d762774ca9d45a7902c89d24e1847c9e243a8f674724622ed*/
 struct ShardMaster;
 
 struct ShardMaster {
@@ -719,6 +736,16 @@ inline void ShardMaster::final_sync() {
         // @unsafe
         {
             ((*dst)).remove(std::move(dk.first));
+        }
+    }
+    const uint32_t src_id = ((*this)).mig_source;
+    if (((*this)).shards.contains_key(std::move(src_id))) {
+        ShardData* const src = ((*this)).shards.get(std::move(src_id)).unwrap().get();
+        const std::string lo = ((*this)).mig_lo;
+        const std::string hi = ((*this)).mig_hi;
+        // @unsafe
+        {
+            ((*dst)).copy_range_from(src, lo, hi);
         }
     }
     if (this->participants_faulted()) {
