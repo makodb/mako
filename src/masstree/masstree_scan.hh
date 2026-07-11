@@ -349,7 +349,7 @@ int basic_table<P>::scan(H helper,
     } keybuf;
     masstree_precondition(firstkey.len <= (int) sizeof(keybuf));
     memcpy(keybuf.s, firstkey.s, firstkey.len);
-    key_type ka(keybuf.s, firstkey.len);
+    key_type ka = key_type::from_chars(keybuf.s, firstkey.len);
 
     typedef scanstackelt<P> mystack_type;
     mystack_type stack;

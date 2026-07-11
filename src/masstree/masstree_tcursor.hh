@@ -37,21 +37,21 @@ class unlocked_tcursor {
     typedef typename leaf<P>::permuter_type permuter_type;
 
     static unlocked_tcursor from_str(const basic_table<P>& table, Str str) {
-        return from_key_and_root(key_type(str), table.root());
+        return from_key_and_root(key_type::from_str(str), table.root());
     }
 
     static unlocked_tcursor from_mutable_str(basic_table<P>& table, Str str) {
-        return from_key_and_root(key_type(str), table.fix_root());
+        return from_key_and_root(key_type::from_str(str), table.fix_root());
     }
 
     static unlocked_tcursor from_chars(const basic_table<P>& table,
                                        const char* s, int len) {
-        return from_key_and_root(key_type(s, len), table.root());
+        return from_key_and_root(key_type::from_chars(s, len), table.root());
     }
 
     static unlocked_tcursor from_mutable_chars(basic_table<P>& table,
                                                const char* s, int len) {
-        return from_key_and_root(key_type(s, len), table.fix_root());
+        return from_key_and_root(key_type::from_chars(s, len), table.fix_root());
     }
 
     static unlocked_tcursor from_const_bytes(const basic_table<P>& table,
@@ -123,12 +123,12 @@ class tcursor {
     typedef small_vector<std::pair<rusty::MutPtr<leaf_type>, nodeversion_value_type>, new_nodes_size> new_nodes_type;
 
     static tcursor from_mutable_str(basic_table<P>& table, Str str) {
-        return from_key_and_root(key_type(str), table.fix_root());
+        return from_key_and_root(key_type::from_str(str), table.fix_root());
     }
 
     static tcursor from_mutable_chars(basic_table<P>& table,
                                       const char* s, int len) {
-        return from_key_and_root(key_type(s, len), table.fix_root());
+        return from_key_and_root(key_type::from_chars(s, len), table.fix_root());
     }
 
     static tcursor from_mutable_bytes(basic_table<P>& table,
@@ -138,7 +138,7 @@ class tcursor {
 
     static tcursor from_root_chars(rusty::MutPtr<node_base<P>> root,
                                    const char* s, int len) {
-        return from_key_and_root(key_type(s, len), root);
+        return from_key_and_root(key_type::from_chars(s, len), root);
     }
 
     static tcursor from_root_bytes(rusty::MutPtr<node_base<P>> root,

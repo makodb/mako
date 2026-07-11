@@ -67,7 +67,7 @@ bool tcursor<P>::find_insert(threadinfo& ti)
 template <typename P>
 // @unsafe { Allocates new leaf nodes, manipulates raw pointers }
 bool tcursor<P>::make_new_layer(threadinfo& ti) {
-    key_type oka(n_->ksuf(kx_.p));
+    key_type oka = key_type::from_str(n_->ksuf(kx_.p));
     ka_.shift();
     int kcmp = oka.compare(ka_);
 

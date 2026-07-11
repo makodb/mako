@@ -90,7 +90,7 @@ void leaf<P>::print(FILE *f, const char *prefix, int indent, int kdepth)
     fputc('\n', f);
 
     if (v.deleted() || (perm[0] != 0 && prev_))
-        fprintf(f, "%s%*s%s = [] #0\n", prefix, indent + 2, "", key_type(ikey_bound()).unparse().c_str());
+        fprintf(f, "%s%*s%s = [] #0\n", prefix, indent + 2, "", key_type::from_ikey(ikey_bound()).unparse().c_str());
 
     char xbuf[15];
     for (int idx = 0; idx < perm.size(); ++idx) {

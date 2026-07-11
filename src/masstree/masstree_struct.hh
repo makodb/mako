@@ -154,7 +154,7 @@ class internode : public node_base<P> {
 
     // @safe - returns key from array
     key_type get_key(int p) const {
-        return key_type(ikey0_[p]);
+        return key_type::from_ikey(ikey0_[p]);
     }
     // @safe - returns ikey from array
     ikey_type ikey(int p) const {
@@ -406,9 +406,9 @@ class leaf : public node_base<P> {
     key_type get_key(int p) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
-            return key_type(ikey0_[p], keylenx);
+            return key_type::from_ikey_len(ikey0_[p], keylenx);
         else
-            return key_type(ikey0_[p], ksuf(p));
+            return key_type::from_ikey_suffix(ikey0_[p], ksuf(p));
     }
     // @safe - array access
     ikey_type ikey(int p) const {
