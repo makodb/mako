@@ -112,45 +112,82 @@ template <class U> class JobAdapter;
 template <class U> class JobAdapterRef;
 template <class U> class JobAdapterRefMut;
 /*RUSTYCPP:GEN-END id=job.0*/
-
-// `OneTimeJob` — a `Job` that runs a callback exactly once. Hand-written
-// subclass of the `Job` interface. `Job` is a DSL `pub trait` (an abstract
-// base class); this is plain C++ inheritance from that base, NOT the
-// `#[cpp_inherit]` attribute. `func_` is a `rusty::Function<void()>`, aliased
-// to the opaque `OneTimeJobFn` (the `Function<void()>` template arg is kept in
-// the alias for readability). `Job` deletes its move ctor, so an explicit move
-// ctor is provided for the by-value `Arc<OneTimeJob>::new_(...)` path. Both the
-// 1-arg ctor (`OneTimeJob(func)` — used directly by deptran) and the static
-// `new_` factory (used by rrr's client/server) are provided.
+// `OneTimeJob` — one-shot Job over a stored callback. Authored as
+// inline Rust DSL with #[cpp_inherit] (Job is a DSL interface trait —
+// the sanctioned usage): the transpiler emits
+// `struct OneTimeJob : public Job` with implicit overrides; call sites
+// keep constructing via OneTimeJob::new_ and upcasting Arc<OneTimeJob>
+// -> Arc<Job> unchanged.
+// Callback alias (the DSL can't parse a Function<..> field type inline).
 using OneTimeJobFn = rusty::Function<void()>;
-class OneTimeJob : public Job {
- public:
-  bool done_;
-  bool ready_;
-  OneTimeJobFn func_;
 
-  OneTimeJob(OneTimeJobFn func)
-      : done_(false), ready_(true), func_(std::move(func)) {}
+#if RUSTYCPP_RUST
+struct OneTimeJob {
+    done_: bool,
+    ready_: bool,
+    func_: OneTimeJobFn,
+}
 
-  OneTimeJob(OneTimeJob&& other) noexcept
-      : Job(), done_(other.done_), ready_(other.ready_),
-        func_(std::move(other.func_)) {}
+impl OneTimeJob {
+    fn new(func: OneTimeJobFn) -> OneTimeJob {
+        OneTimeJob { done_: false, ready_: true, func_: func }
+    }
+}
 
-  static OneTimeJob new_(OneTimeJobFn func) {
-    return OneTimeJob(std::move(func));
-  }
+#[cpp_inherit]
+impl Job for OneTimeJob {
+    fn Ready(&mut self) -> bool {
+        self.ready_
+    }
 
-  bool Ready() override { return ready_; }
-  bool Done() override { return done_; }
+    fn Done(&mut self) -> bool {
+        self.done_
+    }
 
-  // @safe - runs the one-shot callback exactly once.
-  void Work() override {
-    ready_ = false;
-    // @unsafe { invoking a stored rusty::Function<void()> through this }
-    func_();
-    done_ = true;
-  }
+    // Runs the one-shot callback exactly once.
+    fn Work(&mut self) {
+        self.ready_ = false;
+        (self.func_)();
+        self.done_ = true;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.one_time_job version=1 rust_sha256=6fab16d57545a1a9bbdcd5eb475f330ab39fe0667f2affc062dd6713cc3e2a9e*/
+struct OneTimeJob;
+
+struct OneTimeJob : public Job {
+    bool done_;
+    bool ready_;
+    OneTimeJobFn func_;
+    OneTimeJob(bool done__init, bool ready__init, OneTimeJobFn func__init) : Job(), done_(std::move(done__init)), ready_(std::move(ready__init)), func_(std::move(func__init)) {}
+    OneTimeJob(OneTimeJob&& other) noexcept : Job(), done_(std::move(other.done_)), ready_(std::move(other.ready_)), func_(std::move(other.func_)) {}
+
+
+    static OneTimeJob new_(OneTimeJobFn func);
+    bool Ready();
+    bool Done();
+    void Work();
 };
+
+
+OneTimeJob OneTimeJob::new_(OneTimeJobFn func) {
+    return OneTimeJob(false, true, std::move(func));
+}
+
+bool OneTimeJob::Ready() {
+    return this->ready_;
+}
+
+bool OneTimeJob::Done() {
+    return this->done_;
+}
+
+void OneTimeJob::Work() {
+    this->ready_ = false;
+    (this->func_)();
+    this->done_ = true;
+}
+/*RUSTYCPP:GEN-END id=misc.one_time_job*/
 
 } // export namespace rrr
 
