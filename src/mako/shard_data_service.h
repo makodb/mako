@@ -292,14 +292,22 @@ public:
     std::vector<KvPair> scan_range_limited(const std::string& lo,
                                            const std::string& hi,
                                            size_t limit) override {
+        // Idempotent read; retried on timeout like checksum/verify above (a
+        // dropped chunk would otherwise silently truncate a copy).
         std::vector<KvPair> out;
-        ShardDataServiceProxy::RpcScanRangeRequest req;
-        req.table_name = table_;
-        req.lo = lo; req.hi = hi; req.limit = static_cast<rrr::i32>(limit);
-        auto r = proxy_->ScanRange(req);
-        if (r.is_err()) { faulted_ = true; return out; }
-        for (auto& kv : r.unwrap().rows) out.emplace_back(kv.first, kv.second);
-        return out;   // rows arrive sorted (a std::map) -> ascending vector
+        for (int attempt = 0; attempt < 8; attempt++) {
+            ShardDataServiceProxy::RpcScanRangeRequest req;
+            req.table_name = table_;
+            req.lo = lo; req.hi = hi; req.limit = static_cast<rrr::i32>(limit);
+            auto r = proxy_->ScanRange(req);
+            if (!r.is_err()) {
+                for (auto& kv : r.unwrap().rows) out.emplace_back(kv.first, kv.second);
+                return out;   // rows arrive sorted (a std::map) -> ascending vector
+            }
+            usleep(300 * 1000);   // congested: back off, retry
+        }
+        faulted_ = true;
+        return out;
     }
     std::vector<KvPair> scan_range(const std::string& lo,
                                    const std::string& hi) override {
@@ -317,21 +325,36 @@ public:
         return out;
     }
     // Range ops as ONE RPC each -- the range's rows never cross the wire.
+    // Checksum / verify are IDEMPOTENT reads whose server-side work (chunked
+    // scans of a whole warehouse index, ~22 x 4096 rows) can exceed rrr's ~1s
+    // client timeout under migration load. A timeout is congestion, not a
+    // dead participant: retry within a deadline before latching. (Observed
+    // live: the customer migration's src checksum arrived as 0 -- a 90k-row
+    // fold is never 0 -- and every historical "checksum divergence" traces to
+    // this timeout, not to data.)
     uint64_t checksum(const std::string& lo, const std::string& hi) override {
-        ShardDataServiceProxy::RpcChecksumRequest req;
-        req.table_name = table_; req.lo = lo; req.hi = hi;
-        auto r = proxy_->Checksum(req);
-        if (r.is_err()) { faulted_ = true; return 0; }
-        return static_cast<uint64_t>(r.unwrap().checksum);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            ShardDataServiceProxy::RpcChecksumRequest req;
+            req.table_name = table_; req.lo = lo; req.hi = hi;
+            auto r = proxy_->Checksum(req);
+            if (!r.is_err()) return static_cast<uint64_t>(r.unwrap().checksum);
+            usleep(300 * 1000);   // congested: back off, retry
+        }
+        faulted_ = true;
+        return 0;
     }
     bool verify_range(const std::string& lo, const std::string& hi,
                       uint64_t expected) override {
-        ShardDataServiceProxy::RpcVerifyRangeRequest req;
-        req.table_name = table_;
-        req.lo = lo; req.hi = hi; req.expected = static_cast<rrr::i64>(expected);
-        auto r = proxy_->VerifyRange(req);
-        if (r.is_err()) { faulted_ = true; return false; }
-        return r.unwrap().ok != 0;
+        for (int attempt = 0; attempt < 8; attempt++) {
+            ShardDataServiceProxy::RpcVerifyRangeRequest req;
+            req.table_name = table_;
+            req.lo = lo; req.hi = hi; req.expected = static_cast<rrr::i64>(expected);
+            auto r = proxy_->VerifyRange(req);
+            if (!r.is_err()) return r.unwrap().ok != 0;
+            usleep(300 * 1000);   // congested: back off, retry
+        }
+        faulted_ = true;
+        return false;
     }
     void drop_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcDropRangeRequest req;
