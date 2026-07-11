@@ -169,9 +169,9 @@ inline int value_versioned_array::ncol() const {
 // @unsafe { Accesses cols_ array via raw pointer dereference }
 inline Str value_versioned_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
-        return Str(cols_[i]->s, cols_[i]->len);
+        return Str::from_chars(cols_[i]->s, cols_[i]->len);
     else
-        return Str();
+        return Str::empty();
 }
 
 // @safe - pure computation

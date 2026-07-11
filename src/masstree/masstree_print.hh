@@ -114,7 +114,7 @@ void leaf<P>::print(FILE *f, const char *prefix, int indent, int kdepth)
             n->print(f, prefix, indent + 4, kdepth + key_type::ikey_size);
         } else {
             typename P::value_type tvx = lv.value();
-            P::value_print_type::print(tvx, f, prefix, indent + 2, Str(keybuf, l), initial_timestamp, xbuf);
+            P::value_print_type::print(tvx, f, prefix, indent + 2, Str::from_chars(keybuf, l), initial_timestamp, xbuf);
         }
     }
 

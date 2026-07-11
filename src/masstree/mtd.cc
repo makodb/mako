@@ -554,10 +554,10 @@ struct conn {
     }
     Str recent_string(uint64_t xposition) const {
         if (xposition - inbuftotal_ <= unsigned(inbufpos_))
-            return Str(inbuf_ + (xposition - inbuftotal_),
-                       inbuf_ + inbufpos_);
+            return Str::from_range(inbuf_ + (xposition - inbuftotal_),
+                                   inbuf_ + inbufpos_);
         else
-            return Str();
+            return Str::empty();
     }
 
   private:

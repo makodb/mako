@@ -525,7 +525,7 @@ class leaf : public node_base<P> {
         else if (extrasize64_ > 0)
             return iksuf_[0].get(p);
         else
-            return Str();
+            return Str::empty();
     }
 
     // @safe - value comparison
