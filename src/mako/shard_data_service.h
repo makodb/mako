@@ -149,49 +149,61 @@ public:
         resp.rows = DoScanRange(req.table_name, req.lo, req.hi, req.limit);
         defer.reply();
     }
-    void Checksum(const RpcChecksumRequest& req, RpcChecksumResponse& resp,
-                  rrr::DeferredReply defer) override {
-        // BEGIN/POLL job (see rcc_rpc.rpc): one compute thread folds the
-        // range; every call replies immediately, under rrr's ~1s timeout.
+    // Shared fold-job step for Checksum AND VerifyRange (see rcc_rpc.rpc):
+    // both are the same full-range fold on one compute thread; VerifyRange
+    // just compares the folded value to `expected` at reply time. BEGIN
+    // (phase < 0) starts the fold, or joins an in-flight one for the same
+    // range (other range: busy -- migrations are serialized, so that is a
+    // stale prior job; the caller backs off and re-begins). POLL reports.
+    // Returns done: 0 running, 1 *value valid, -1 stale id / busy.
+    int FoldJobStep(const std::string& table, const std::string& lo,
+                    const std::string& hi, rrr::i32 phase,
+                    rrr::i32* job, uint64_t* value) {
         std::lock_guard<std::mutex> g(ck_mu_);
-        const std::string key = req.table_name + '\0' + req.lo + '\0' + req.hi;
-        resp.checksum = 0;
-        if (req.phase < 0) {
+        const std::string key = table + '\0' + lo + '\0' + hi;
+        *value = 0;
+        if (phase < 0) {
             if (ck_running_) {
-                // Same range: join the in-flight job. Other range: busy --
-                // migrations are serialized, so this only happens across a
-                // retry boundary; the caller backs off and begins again.
-                resp.done = (ck_key_ == key) ? 0 : -1;
-                resp.job = ck_id_;
-                defer.reply(); return;
+                *job = ck_id_;
+                return ck_key_ == key ? 0 : -1;
             }
             if (ck_thread_.joinable()) ck_thread_.join();   // reap prior compute
             ck_id_++; ck_key_ = key; ck_running_ = true; ck_has_ = false;
             const int id = ck_id_;
-            const std::string t = req.table_name, lo = req.lo, hi = req.hi;
+            const std::string t = table, l = lo, h = hi;
             // @unsafe { std::thread kernel: single compute thread, reaped
             //   above and joined in the dtor }
-            ck_thread_ = std::thread([this, id, t, lo, hi]() {
-                const uint64_t v = DoChecksum(t, lo, hi);
+            ck_thread_ = std::thread([this, id, t, l, h]() {
+                const uint64_t v = DoChecksum(t, l, h);
                 std::lock_guard<std::mutex> g2(ck_mu_);
                 if (id == ck_id_) {
                     ck_value_ = v; ck_has_ = true; ck_running_ = false;
                 }
             });
-            resp.done = 0; resp.job = ck_id_;
-            defer.reply(); return;
+            *job = ck_id_;
+            return 0;
         }
-        resp.job = ck_id_;
-        if (req.phase != ck_id_)  resp.done = -1;   // stale/preempted job id
-        else if (ck_has_)       { resp.done = 1;
-                                  resp.checksum = static_cast<rrr::i64>(ck_value_); }
-        else                      resp.done = 0;
+        *job = ck_id_;
+        if (phase != ck_id_) return -1;   // stale/preempted job id
+        if (!ck_has_) return 0;
+        *value = ck_value_;
+        return 1;
+    }
+    void Checksum(const RpcChecksumRequest& req, RpcChecksumResponse& resp,
+                  rrr::DeferredReply defer) override {
+        uint64_t v = 0;
+        resp.done = FoldJobStep(req.table_name, req.lo, req.hi, req.phase,
+                                &resp.job, &v);
+        resp.checksum = static_cast<rrr::i64>(v);
         defer.reply();
     }
     void VerifyRange(const RpcVerifyRangeRequest& req, RpcVerifyRangeResponse& resp,
                      rrr::DeferredReply defer) override {
-        resp.ok = DoVerifyRange(req.table_name, req.lo, req.hi,
-                                static_cast<uint64_t>(req.expected)) ? 1 : 0;
+        uint64_t v = 0;
+        resp.done = FoldJobStep(req.table_name, req.lo, req.hi, req.phase,
+                                &resp.job, &v);
+        resp.ok = (resp.done == 1 &&
+                   v == static_cast<uint64_t>(req.expected)) ? 1 : 0;
         defer.reply();
     }
     void PutKey(const RpcPutKeyRequest& req, RpcPutKeyResponse& resp,
@@ -319,12 +331,11 @@ public:
     // (remote destination) shard to pull the range directly from it -- one
     // control RPC, no row transits the coordinator. An unreachable source
     // (in-memory test double) falls back to the coordinator-side default.
-    void copy_range_from(ShardData* source, const std::string& lo,
-                         const std::string& hi) override {
+    size_t copy_range_from(ShardData* source, const std::string& lo,
+                           const std::string& hi) override {
         const std::string src_addr = source->service_addr();
         if (src_addr.empty()) {
-            ShardData::copy_range_from(source, lo, hi);
-            return;
+            return ShardData::copy_range_from(source, lo, hi);
         }
         ShardDataServiceProxy::RpcPullRangeRequest req;
         req.table_name = table_;
@@ -332,7 +343,8 @@ public:
         req.src_addr = src_addr;
         req.src_table = source->service_table();
         auto r = proxy_->PullRange(req);
-        if (r.is_err() || r.unwrap().ok == 0) faulted_ = true;
+        if (r.is_err() || r.unwrap().ok == 0) { faulted_ = true; return 0; }
+        return static_cast<size_t>(r.unwrap().copied);
     }
 
     void put(const std::string& key, const std::string& value) override {
@@ -407,18 +419,21 @@ public:
     // that can't even start after several tries does.
     uint64_t checksum(const std::string& lo, const std::string& hi) override {
         rrr::i32 job = -1;
-        int begin_tries = 0;
+        bool any_reply = false;
         for (int waited_ms = 0; waited_ms < 90000; ) {
             ShardDataServiceProxy::RpcChecksumRequest req;
             req.table_name = table_; req.lo = lo; req.hi = hi;
             req.phase = job;
             auto r = proxy_->Checksum(req);
             if (r.is_err()) {
-                if (job < 0 && ++begin_tries >= 8) { faulted_ = true; return 0; }
+                // Congestion, not death: retry to the deadline (begin included
+                // -- restarting/joining the fold is idempotent; see the drain
+                // comment). Latch only on total silence below.
                 usleep(300 * 1000);
                 waited_ms += 1300;   // ~1s timeout + backoff
                 continue;
             }
+            any_reply = true;
             auto resp = r.unwrap();
             if (resp.done == 1) return static_cast<uint64_t>(resp.checksum);
             if (resp.done == -1) {
@@ -435,20 +450,43 @@ public:
             usleep(300 * 1000);
             waited_ms += 300;
         }
-        return 0;   // deadline: fail this vote; shard is alive, don't latch
+        if (!any_reply) faulted_ = true;   // 90s of silence: participant is gone
+        return 0;   // deadline: fail this vote (a live-but-slow shard doesn't latch)
     }
+    // BEGIN/POLL like checksum (the same fold, on the REMOTE destination --
+    // the return-leg's vote): see the checksum comment above for why the
+    // synchronous form self-destructs under load.
     bool verify_range(const std::string& lo, const std::string& hi,
                       uint64_t expected) override {
-        for (int attempt = 0; attempt < 8; attempt++) {
+        rrr::i32 job = -1;
+        bool any_reply = false;
+        for (int waited_ms = 0; waited_ms < 90000; ) {
             ShardDataServiceProxy::RpcVerifyRangeRequest req;
             req.table_name = table_;
             req.lo = lo; req.hi = hi; req.expected = static_cast<rrr::i64>(expected);
+            req.phase = job;
             auto r = proxy_->VerifyRange(req);
-            if (!r.is_err()) return r.unwrap().ok != 0;
-            usleep(300 * 1000);   // congested: back off, retry
+            if (r.is_err()) {
+                // Congestion, not death: retry to the deadline (see checksum).
+                usleep(300 * 1000);
+                waited_ms += 1300;   // ~1s timeout + backoff
+                continue;
+            }
+            any_reply = true;
+            auto resp = r.unwrap();
+            if (resp.done == 1) return resp.ok != 0;
+            if (resp.done == -1) {
+                if (job >= 0) return false;   // preempted mid-poll: fail the vote
+                usleep(300 * 1000);
+                waited_ms += 300;
+                continue;
+            }
+            job = resp.job;
+            usleep(300 * 1000);
+            waited_ms += 300;
         }
-        faulted_ = true;
-        return false;
+        if (!any_reply) faulted_ = true;   // 90s of silence: participant is gone
+        return false;   // deadline: fail the vote (a live-but-slow shard doesn't latch)
     }
     void drop_range(const std::string& lo, const std::string& hi) override {
         ShardDataServiceProxy::RpcDropRangeRequest req;
@@ -472,24 +510,28 @@ public:
     // truly dead participant still fails fast.
     bool drain_writes() override {
         rrr::i32 phase = -1;
-        int begin_tries = 0;
+        bool any_reply = false;
         // 60s deadline: the gen-bucket watermark now (correctly) waits out
         // real pre-fence stragglers -- cross-shard 2PC tails observed at
-        // 6-14s under migration load, longer right after a bulk copy.
+        // 6-14s under migration load, longer right after a bulk copy. No
+        // fixed retry cap on BEGIN: a bulk copy saturates the participant's
+        // rrr workers for 10s+ stretches and every control RPC times out
+        // (observed live: a whole run's tail failed on begins that never got
+        // through, zero participant-side drain logs) -- and re-beginning is
+        // SAFE under the gen-bucket watermark (an extra bump burns a bucket;
+        // the newest cookie waits every older one). Latch faulted only on
+        // TOTAL silence for the whole window.
         for (int waited_ms = 0; waited_ms < 60000; ) {
             ShardDataServiceProxy::RpcDrainWritesRequest req;
             req.table_name = table_;
             req.phase = phase;
             auto r = proxy_->DrainWrites(req);
             if (r.is_err()) {
-                if (phase < 0 && ++begin_tries >= 8) {
-                    faulted_ = true;
-                    return false;
-                }
                 usleep(200 * 1000);   // congested: back off, retry/re-poll
-                waited_ms += 700;
+                waited_ms += 1200;    // ~1s client timeout + backoff
                 continue;
             }
+            any_reply = true;
             auto resp = r.unwrap();
             if (resp.ok != 0) return true;
             if (resp.parity < 0) return false;   // no split drain remotely; it said no
@@ -497,6 +539,7 @@ public:
             usleep(100 * 1000);   // server budget ~400ms + this = ~2 polls/sec
             waited_ms += 500;
         }
+        if (!any_reply) faulted_ = true;   // 60s of silence: participant is gone
         return false;
     }
 
@@ -537,23 +580,18 @@ inline long ShardDataServiceImpl::DoPullRange(const std::string& table,
     ShardDataServiceProxy* sp = SourceProxy(src_addr);
     if (sp == nullptr) return -1;
     RemoteShardData src(sp, src_table);
-    static const size_t kCopyChunk = 512;
-    long copied = 0;
-    std::string cur = lo;
-    while (cur < hi) {
-        std::vector<ShardData::KvPair> batch =
-            src.scan_range_limited(cur, hi, kCopyChunk);
-        if (batch.empty()) break;
-        for (const auto& kv : batch) dest->put(kv.first, kv.second);
-        copied += static_cast<long>(batch.size());
-        cur = batch.back().first;
-        cur.push_back('\0');   // resume strictly after the last key copied
-    }
+    // The DESTINATION participant drives the pull: its copy_range_from knows
+    // its own range semantics (wh-spec participants widen to the whole
+    // index -- a hand-rolled loop here scanned from the publish-range lo and
+    // read nothing) and mirrors (put + delete-extras) rather than just puts.
+    // dest is local to this process, so the base mirror runs right here with
+    // local puts/removes and chunked RPC scans of the source.
+    const size_t copied = dest->copy_range_from(&src, lo, hi);
     if (src.faulted()) return -1;   // dead source: report failure, not a short copy
     pull_range_calls++;
-    Log_info("ShardDataPlane: pulled %ld rows of '%s' [%s,%s) directly from %s",
+    Log_info("ShardDataPlane: pulled %zu rows of '%s' [%s,%s) directly from %s",
              copied, table.c_str(), lo.c_str(), hi.c_str(), src_addr.c_str());
-    return copied;
+    return static_cast<long>(copied);
 }
 
 }  // namespace janus

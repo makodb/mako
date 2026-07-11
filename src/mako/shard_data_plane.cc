@@ -203,9 +203,9 @@ public:
         // from the start and the copy would never advance.
         return EngineShardData::scan_range_limited(lo, widen_hi(), limit);
     }
-    void copy_range_from(janus::ShardData* source, const std::string&,
-                         const std::string&) override {
-        EngineShardData::copy_range_from(source, std::string(), widen_hi());
+    size_t copy_range_from(janus::ShardData* source, const std::string&,
+                           const std::string&) override {
+        return EngineShardData::copy_range_from(source, std::string(), widen_hi());
     }
     void drop_range(const std::string&, const std::string&) override {
         EngineShardData::drop_range(std::string(), widen_hi());

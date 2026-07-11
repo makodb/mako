@@ -15,6 +15,7 @@ module;
 // are defined ONCE here over the primitives, so every backend gets them for free
 // and the source and destination always agree on the checksum definition.
 
+#include <algorithm>   // lower_bound (the mirror-copy's membership probe)
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -68,31 +69,77 @@ public:
                               uint64_t expected_checksum) {
         return checksum(lo, hi) == expected_checksum;
     }
-    // Background bulk copy: pull the source's [lo,hi) into this shard, CHUNKED --
-    // scan the source in small windows so a concurrent write invalidates only one
-    // window, not the whole range. On an OCC-backed source (mbta) this turns a
-    // hot-range whole-scan starvation into guaranteed progress; on a cold range
-    // it is just a handful of extra scans. Correctness is unchanged.
+    // Background bulk copy as a MIRROR: make this shard's [lo,hi) EQUAL the
+    // source's -- put every live source pair (idempotent overwrite) AND delete
+    // the keys this shard holds in the range that the source does not. A
+    // put-only copy cannot converge a table that takes DELETES: TPC-C delivery
+    // consumes new_order rows between the phase-1 copy and the fence, the
+    // stale destination rows survive every re-copy, and the checksum gate
+    // refuses forever (observed live). Mirroring is safe in every phase
+    // because the destination never serves [lo,hi) before the commit. CHUNKED:
+    // scan the source in small windows so a concurrent write invalidates only
+    // one window, not the whole range (on an OCC-backed source this turns a
+    // hot-range whole-scan starvation into guaranteed progress); both cursors
+    // resume strictly after the last key seen.
     //
     // VIRTUAL so the copy is DESTINATION-DRIVEN: this default runs where the
     // destination lives (local dest pulls straight from the source), and the
     // RPC destination participant overrides it to send ONE PullRange control
     // RPC -- the destination shard then pulls directly from the source's
     // data-plane service. Migration data never transits the coordinator.
-    virtual void copy_range_from(ShardData* source, const std::string& lo,
-                                 const std::string& hi) {
+    // Returns the number of pairs written.
+    virtual size_t copy_range_from(ShardData* source, const std::string& lo,
+                                   const std::string& hi) {
         // Sized for big workload tables: a 100k-row stock warehouse at 512
         // rows/chunk is ~200 scan round-trips; 4096 cuts that to ~25 while a
         // chunk response (rows ~300B) stays around a megabyte -- well inside
         // rrr frame limits and the ~1s request budget.
         static const size_t kCopyChunk = 4096;
-        std::string cur = lo;
-        while (cur < hi) {
-            std::vector<KvPair> batch = source->scan_range_limited(cur, hi, kCopyChunk);
-            if (batch.empty()) break;
+        size_t copied = 0;
+        std::string src_cur = lo;
+        std::string dst_cur = lo;
+        while (true) {
+            std::vector<KvPair> batch =
+                source->scan_range_limited(src_cur, hi, kCopyChunk);
+            const bool src_done = batch.size() < kCopyChunk;
+            if (src_done && source->faulted()) {
+                // A dead source reads as an empty tail; finishing the mirror
+                // would DELETE every remaining destination key in the range.
+                // Stop here -- the coordinator sees faulted() and aborts.
+                return copied;
+            }
             for (const auto& kv : batch) put(kv.first, kv.second);
-            cur = batch.back().first;
-            cur.push_back('\0');   // resume strictly after the last key copied
+            copied += batch.size();
+            // The batch is authoritative for [dst_cur, scan_to): a key of
+            // ours in that window that is not in the (sorted) batch no
+            // longer exists on the source -- remove it.
+            std::string scan_to;
+            if (src_done) {
+                scan_to = hi;
+            } else {
+                scan_to = batch.back().first;
+                scan_to.push_back('\0');
+            }
+            while (dst_cur < scan_to) {
+                std::vector<KvPair> mine =
+                    scan_range_limited(dst_cur, scan_to, kCopyChunk);
+                for (const auto& kv : mine) {
+                    auto it = std::lower_bound(
+                        batch.begin(), batch.end(), kv.first,
+                        [](const KvPair& p, const std::string& k) {
+                            return p.first < k;
+                        });
+                    if (it == batch.end() || it->first != kv.first) {
+                        remove(kv.first);
+                    }
+                }
+                if (mine.size() < kCopyChunk) break;
+                dst_cur = mine.back().first;
+                dst_cur.push_back('\0');
+            }
+            dst_cur = scan_to;
+            if (src_done) return copied;
+            src_cur = scan_to;
         }
     }
 

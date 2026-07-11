@@ -2566,6 +2566,18 @@ tpcc_worker::txn_result
 tpcc_worker::txn_delivery()
 {
   const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
+  // Departed-home gate: once this warehouse migrates off the shard, its
+  // scan-bearing home transactions (delivery / order_status / stock_level
+  // walk new_order and order_line ranges) stop originating here -- the
+  // remote index proxies support point ops and the server-side one-pick
+  // scan, not multi-row range scans (a proxy tx_scan reads a clean EMPTY,
+  // and the workload panics on the must-find miss; observed live). This is
+  // the bench's stand-in for client rerouting: new requests for a moved
+  // warehouse belong at its new owner. Point-op txns (payment, new_order)
+  // keep running against the moved warehouse through the remote legs.
+  if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
+                        BenchmarkConfig::getInstance().getShardIndex()))
+    return txn_result(true, 0);
   const uint o_carrier_id = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   const uint32_t ts = GetCurrentTimeMillis();
 
@@ -3000,8 +3012,17 @@ if (TThread::get_is_micro()) {
       static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true); // probably a safe bet for now
       // this huge c_data might cause so many ISSUES - on real machines
       // NO need to worry about at this moment
-      if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID))->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
+      //
+      // Branch on the RESOLVED HANDLE, not the warehouse-group answer: the
+      // directory resolves per TABLE, so mid-migration the name index can
+      // already live remotely while WarehouseInShard (whose seed segment is
+      // the customer table's) still says local -- and a tx_scan against the
+      // remote proxy reads a clean EMPTY (proxies stage point ops; they hold
+      // no rows), which the must-find check turns into a Panic (observed
+      // live). The handle knows where it actually points.
+      auto* name_idx_h = tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID));
+      if (!name_idx_h->get_is_remote()) {
+        name_idx_h->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
         ALWAYS_ERROR(c.size() > 0);
         INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
         int index = c.size() / 2;
@@ -3154,6 +3175,10 @@ tpcc_worker::txn_result
 tpcc_worker::txn_order_status()
 {
   const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
+  // Departed-home gate: see txn_delivery.
+  if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
+                        BenchmarkConfig::getInstance().getShardIndex()))
+    return txn_result(true, 0);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
 
   // output from txn counters:
@@ -3316,6 +3341,10 @@ tpcc_worker::txn_result
 tpcc_worker::txn_stock_level()
 {
   const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
+  // Departed-home gate: see txn_delivery.
+  if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
+                        BenchmarkConfig::getInstance().getShardIndex()))
+    return txn_result(true, 0);
   const uint threshold = RandomNumber(r, 10, 20);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
 

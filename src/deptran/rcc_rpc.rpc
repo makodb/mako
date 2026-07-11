@@ -582,7 +582,11 @@ abstract service ShardDataService {
     defer Checksum(string table_name, string lo, string hi, i32 phase | i64 checksum, i32 done, i32 job);
     // Compute this shard's range checksum and compare to `expected` (the
     // source's): ok=1 iff byte-identical -- the destination's 2PC prepare vote.
-    defer VerifyRange(string table_name, string lo, string hi, i64 expected | i32 ok);
+    // Same BEGIN/POLL job as Checksum (the fold is the same full-range walk,
+    // and a remote DESTINATION under load has the same ~1s-timeout pile-up
+    // hazard): phase < 0 starts/joins the fold (reply carries done=0 + job);
+    // phase = job polls; done=1 delivers the compare verdict in ok.
+    defer VerifyRange(string table_name, string lo, string hi, i64 expected, i32 phase | i32 ok, i32 done, i32 job);
     // Point write / delete -- the coordinator replays the migration delta to the
     // destination through these.
     defer PutKey(string table_name, string key, string value | i32 ok);

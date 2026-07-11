@@ -229,6 +229,15 @@ inline void oi_mbta_tx_scan(mbta_table *t, const std::string &start_key,
 #if OP_LOGGING
   mt_scan++;
 #endif
+  // Moved-range gate, same as the point read's: a scan handle resolved
+  // BEFORE a migration cutover can execute AFTER it, and a tombstoned
+  // (moved) index scans as cleanly EMPTY -- the workload treats a must-find
+  // miss as an integrity Panic, not a retry (observed live: payment's
+  // by-name customer lookup panicked both workers right at a commit).
+  // Abort retryably instead; the retry re-resolves to the new owner.
+  if (mako::migration_read_moved(t->get_table_name(), start_key.data(),
+                                 start_key.length()))
+    throw abstract_db::abstract_abort_exception();
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   STD_OP(t->transQuery(start_key, end,
                        [&](mbta_table::Str key, std::string &value) {
@@ -245,6 +254,10 @@ inline void oi_mbta_tx_rscan(mbta_table *t, const std::string &start_key,
 #if OP_LOGGING
   mt_rscan++;
 #endif
+  // Moved-range gate: see oi_mbta_tx_scan.
+  if (mako::migration_read_moved(t->get_table_name(), start_key.data(),
+                                 start_key.length()))
+    throw abstract_db::abstract_abort_exception();
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   STD_OP(t->transRQuery(start_key, end,
                         [&](mbta_table::Str key, std::string &value) {
@@ -259,6 +272,10 @@ inline void oi_mbta_tx_scan_one_local(mbta_table *t,
                                       const std::string &start_key,
                                       const std::string &end_key,
                                       std::string &value) {
+  // Moved-range gate: see oi_mbta_tx_scan.
+  if (mako::migration_read_moved(t->get_table_name(), start_key.data(),
+                                 start_key.length()))
+    throw abstract_db::abstract_abort_exception();
   bool found = false;
   STD_OP(t->transQuery(start_key, mbta_table::Str(end_key),
                        [&](mbta_table::Str key, std::string &v) {

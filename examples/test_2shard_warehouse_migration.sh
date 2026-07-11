@@ -70,7 +70,10 @@ export MAKO_SHARDING_MODE=map
 # The four migrations (through stock's ~100k-row copy) need more benchmark
 # window than the default 30s -- the shards must keep serving until every
 # cutover lands, or the tail migrations die with the bed.
-export MAKO_RUNTIME_SECONDS=180
+# Long enough for eleven sequential migrations (order_line alone moves ~300k
+# rows twice: bulk + post-fence catch-up) to fire INSIDE the bench window --
+# the point is migrating under live traffic, and dbtest exits at bench end.
+export MAKO_RUNTIME_SECONDS=${MAKO_RUNTIME_SECONDS:-360}
 
 cleanup_temp_config() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then
@@ -153,9 +156,23 @@ done
 
 declare -A mig_ok
 declare -A mig_out
-# Ascending size: a timeout on a big table cannot mask a small-table bug.
-MIG_TABLES=(warehouse district customer stock)
-declare -A MIG_EXPECT=([warehouse]=1 [district]=10 [customer]=30000 [stock]=100000)
+# EVERY governed table of the warehouse -- the full warehouse move (item is
+# ungoverned: read-only, replicated per shard). CUSTOMER GOES FIRST: its
+# partition segment is the WarehouseInShard group signal, so committing it
+# first re-homes the warehouse's scan-bearing transactions (delivery /
+# order_status / stock_level skip a departed home; remote proxies cannot
+# serve their multi-row range scans) BEFORE any scanned table moves. After
+# customer, ascending size so a timeout on a big table cannot mask a
+# small-table bug. Expectations are MINIMUMS at load time; the workload
+# grows history/oorder/order_line, and new_order can be fully consumed by
+# deliveries (0 rows is a legitimate commit).
+MIG_TABLES=(customer warehouse district new_order customer_name_idx history oorder oorder_c_id_idx stock stock_data order_line)
+declare -A MIG_EXPECT=([customer]=30000 [warehouse]=1 [district]=10
+                       [new_order]=0
+                       [customer_name_idx]=30000 [history]=30000
+                       [oorder]=30000 [oorder_c_id_idx]=30000
+                       [stock]=100000 [stock_data]=100000
+                       [order_line]=250000)
 
 if [ -z "$admin_addr" ]; then
     echo "  ✗ Admin service / benchmarks did not come up within 150s"
