@@ -61,13 +61,19 @@ public:
         catalog_ = owned_single_;
     }
     ~ShardDataServiceImpl() {
-        // @unsafe { stop and reap the fold compute worker before members die }
+        // @unsafe { stop and reap the fold + pull workers before members die }
         {
             std::lock_guard<std::mutex> g(ck_mu_);
             ck_stop_ = true;
         }
         ck_cv_.notify_one();
         if (ck_thread_.joinable()) ck_thread_.join();
+        {
+            std::lock_guard<std::mutex> g(pl_mu_);
+            pl_stop_ = true;
+        }
+        pl_cv_.notify_one();
+        if (pl_thread_.joinable()) pl_thread_.join();
         delete owned_single_;
     }
 
@@ -263,10 +269,59 @@ public:
     }
     void PullRange(const RpcPullRangeRequest& req, RpcPullRangeResponse& resp,
                    rrr::DeferredReply defer) override {
-        const long copied = DoPullRange(req.table_name, req.lo, req.hi,
-                                        req.src_addr, req.src_table);
-        resp.ok = copied >= 0 ? 1 : 0;
-        resp.copied = static_cast<rrr::i64>(copied >= 0 ? copied : 0);
+        // BEGIN/POLL job (see rcc_rpc.rpc): the pull mirrors a whole range
+        // server-side -- minutes for big tables -- on ONE persistent worker;
+        // every call here replies immediately, under rrr's ~1s timeout.
+        std::lock_guard<std::mutex> g(pl_mu_);
+        const std::string key = req.table_name + '\0' + req.lo + '\0' +
+                                req.hi + '\0' + req.src_addr + '\0' +
+                                req.src_table;
+        resp.copied = 0;
+        resp.ok = 0;
+        if (req.phase < 0) {
+            if (pl_running_) {
+                resp.done = (pl_key_ == key) ? 0 : -1;
+                resp.job = pl_id_;
+                defer.reply(); return;
+            }
+            if (!pl_worker_started_) {
+                pl_worker_started_ = true;
+                // @unsafe { std::thread kernel: one process-lifetime pull
+                //   worker, joined in the dtor }
+                pl_thread_ = std::thread([this]() {
+                    std::unique_lock<std::mutex> lk(pl_mu_);
+                    while (true) {
+                        pl_cv_.wait(lk, [this] { return pl_pending_ || pl_stop_; });
+                        if (pl_stop_) return;
+                        pl_pending_ = false;
+                        const int id = pl_pending_id_;
+                        const std::string t = pl_t_, lo = pl_lo_, hi = pl_hi_;
+                        const std::string sa = pl_src_addr_, st = pl_src_table_;
+                        lk.unlock();
+                        const long copied = DoPullRange(t, lo, hi, sa, st);
+                        lk.lock();
+                        if (id == pl_id_) {
+                            pl_copied_ = copied; pl_has_ = true; pl_running_ = false;
+                        }
+                    }
+                });
+            }
+            pl_id_++; pl_key_ = key; pl_running_ = true; pl_has_ = false;
+            pl_pending_ = true;
+            pl_pending_id_ = pl_id_;
+            pl_t_ = req.table_name; pl_lo_ = req.lo; pl_hi_ = req.hi;
+            pl_src_addr_ = req.src_addr; pl_src_table_ = req.src_table;
+            pl_cv_.notify_one();
+            resp.done = 0; resp.job = pl_id_;
+            defer.reply(); return;
+        }
+        resp.job = pl_id_;
+        if (req.phase != pl_id_)  resp.done = -1;   // stale/preempted job id
+        else if (pl_has_) {
+            resp.done = 1;
+            resp.ok = pl_copied_ >= 0 ? 1 : 0;
+            resp.copied = static_cast<rrr::i64>(pl_copied_ >= 0 ? pl_copied_ : 0);
+        } else                    resp.done = 0;
         defer.reply();
     }
     void DrainWrites(const RpcDrainWritesRequest& req, RpcDrainWritesResponse& resp,
@@ -339,6 +394,22 @@ private:
     bool ck_running_ = false;
     bool ck_has_ = false;
     uint64_t ck_value_ = 0;
+
+    // Pull job slot: same shape as the fold slot, its own persistent worker
+    // (a pull and a fold can overlap across the two sides of one migration).
+    std::mutex pl_mu_;
+    std::condition_variable pl_cv_;
+    std::thread pl_thread_;
+    bool pl_worker_started_ = false;
+    bool pl_stop_ = false;
+    bool pl_pending_ = false;
+    int pl_pending_id_ = 0;
+    std::string pl_t_, pl_lo_, pl_hi_, pl_src_addr_, pl_src_table_;
+    int pl_id_ = 0;
+    std::string pl_key_;
+    bool pl_running_ = false;
+    bool pl_has_ = false;
+    long pl_copied_ = 0;
     rusty::Mutex<int> src_mu_{0};      // guards the pull-source connection cache
     std::map<std::string, ShardDataServiceProxy*> src_proxies_;
     rusty::Arc<rrr::PollThread>* src_poll_ = nullptr;   // lazy; leaked
@@ -364,20 +435,70 @@ public:
     // (remote destination) shard to pull the range directly from it -- one
     // control RPC, no row transits the coordinator. An unreachable source
     // (in-memory test double) falls back to the coordinator-side default.
+    // BEGIN/POLL (see rcc_rpc.rpc): the destination shard mirrors the whole
+    // range server-side -- minutes for the big tables -- so the caller polls
+    // rather than waiting on one ~1s-budgeted request (the old synchronous
+    // form timed out after exactly one request and latched faulted; the
+    // return leg's first migration never copied a row). Deadline sized for
+    // a 300k-row mirror under load; poll timeouts don't latch.
     size_t copy_range_from(ShardData* source, const std::string& lo,
                            const std::string& hi) override {
         const std::string src_addr = source->service_addr();
         if (src_addr.empty()) {
             return ShardData::copy_range_from(source, lo, hi);
         }
-        ShardDataServiceProxy::RpcPullRangeRequest req;
-        req.table_name = table_;
-        req.lo = lo; req.hi = hi;
-        req.src_addr = src_addr;
-        req.src_table = source->service_table();
-        auto r = proxy_->PullRange(req);
-        if (r.is_err() || r.unwrap().ok == 0) { faulted_ = true; return 0; }
-        return static_cast<size_t>(r.unwrap().copied);
+        rrr::i32 job = -1;
+        bool any_reply = false;
+        int errs = 0;
+        for (int waited_ms = 0; waited_ms < 600000; ) {
+            ShardDataServiceProxy::RpcPullRangeRequest req;
+            req.table_name = table_;
+            req.lo = lo; req.hi = hi;
+            req.src_addr = src_addr;
+            req.src_table = source->service_table();
+            req.phase = job;
+            auto r = proxy_->PullRange(req);
+            if (r.is_err()) {
+                errs++;
+                usleep(300 * 1000);
+                waited_ms += 1300;   // ~1s timeout + backoff
+                continue;
+            }
+            any_reply = true;
+            auto resp = r.unwrap();
+            if (resp.done == 1) {
+                if (resp.ok == 0) {
+                    // @unsafe { stderr diagnostics }
+                    fprintf(stderr,
+                            "pull '%s': server pull FAILED (resolve/source), "
+                            "errs=%d waited=%dms\n",
+                            table_.c_str(), errs, waited_ms);
+                    faulted_ = true;
+                    return 0;
+                }
+                return static_cast<size_t>(resp.copied);
+            }
+            if (resp.done == -1) {
+                if (job >= 0) {
+                    // @unsafe { stderr diagnostics }
+                    fprintf(stderr, "pull '%s': job preempted, errs=%d waited=%dms\n",
+                            table_.c_str(), errs, waited_ms);
+                    faulted_ = true;
+                    return 0;
+                }
+                usleep(300 * 1000);
+                waited_ms += 300;
+                continue;
+            }
+            job = resp.job;
+            usleep(300 * 1000);
+            waited_ms += 300;
+        }
+        // @unsafe { stderr diagnostics }
+        fprintf(stderr, "pull '%s': deadline, any_reply=%d errs=%d\n",
+                table_.c_str(), any_reply ? 1 : 0, errs);
+        faulted_ = true;
+        return 0;
     }
 
     void put(const std::string& key, const std::string& value) override {

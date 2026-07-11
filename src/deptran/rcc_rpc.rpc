@@ -607,8 +607,15 @@ abstract service ShardDataService {
     // ShardDataService at src_addr into its local `table_name`. The
     // coordinator sends this ONE control RPC instead of relaying rows --
     // migration data never transits the master. copied = rows pulled.
+    // BEGIN/POLL job like Checksum: the pull mirrors a whole range (300k+
+    // rows for the big TPC-C tables) server-side, far past rrr's ~1s client
+    // timeout -- the old synchronous form could never complete for a big
+    // table (the caller timed out after exactly one request and latched the
+    // participant faulted; observed on the return leg's first migration).
+    // phase < 0 starts/joins; phase = job polls; done=1 delivers ok+copied.
     defer PullRange(string table_name, string lo, string hi,
-                    string src_addr, string src_table | i64 copied, i32 ok);
+                    string src_addr, string src_table, i32 phase |
+                    i64 copied, i32 ok, i32 done, i32 job);
     // Write drain (the staging fence's other half), as BEGIN/POLL: wait out
     // every writer that staged into the fenced table before the fence, so the
     // coordinator's catch-up copy sees a quiescent range. rrr requests carry

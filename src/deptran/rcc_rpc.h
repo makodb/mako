@@ -11152,6 +11152,7 @@ public:
         std::string hi;
         std::string src_addr;
         std::string src_table;
+        rrr::i32 phase;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPullRangeRequest& o) {
         ar << o.table_name;
@@ -11159,6 +11160,7 @@ public:
         ar << o.hi;
         ar << o.src_addr;
         ar << o.src_table;
+        ar << o.phase;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPullRangeRequest& o) {
@@ -11167,21 +11169,28 @@ public:
         ar >> o.hi;
         ar >> o.src_addr;
         ar >> o.src_table;
+        ar >> o.phase;
         return ar;
     }
 
     struct RpcPullRangeResponse {
         rrr::i64 copied;
         rrr::i32 ok;
+        rrr::i32 done;
+        rrr::i32 job;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcPullRangeResponse& o) {
         ar << o.copied;
         ar << o.ok;
+        ar << o.done;
+        ar << o.job;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcPullRangeResponse& o) {
         ar >> o.copied;
         ar >> o.ok;
+        ar >> o.done;
+        ar >> o.job;
         return ar;
     }
 
@@ -11537,6 +11546,7 @@ private:
             __req_ar__ >> __typed_req__.hi;
             __req_ar__ >> __typed_req__.src_addr;
             __req_ar__ >> __typed_req__.src_table;
+            __req_ar__ >> __typed_req__.phase;
             auto __typed_resp__ = std::make_shared<RpcPullRangeResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -11544,6 +11554,8 @@ private:
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
                     m << __typed_resp__->copied;
                     m << __typed_resp__->ok;
+                    m << __typed_resp__->done;
+                    m << __typed_resp__->job;
                 },
                 []() {});
             this->PullRange(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -12123,6 +12135,8 @@ public:
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
             __reply_ar__ >> __typed_resp__.copied;
             __reply_ar__ >> __typed_resp__.ok;
+            __reply_ar__ >> __typed_resp__.done;
+            __reply_ar__ >> __typed_resp__.job;
             return rusty::Result<RpcPullRangeResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -12136,6 +12150,7 @@ public:
             __m__ << req.hi;
             __m__ << req.src_addr;
             __m__ << req.src_table;
+            __m__ << req.phase;
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<PullRangeTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());

@@ -222,20 +222,43 @@ if [ -z "$admin_addr" ]; then
 else
     echo "Benchmarks running on both shards; MigrationAdmin at ${admin_addr}"
     sleep 2   # a beat of steady-state traffic before the first cutover
-    for t in "${MIG_TABLES[@]}"; do
-        run_migration "$t" 1 0 "$t"
+    # PREFLIGHT: one end-to-end migration of a throwaway EMPTY standalone
+    # table (the catalog creates it on demand on both sides) exercises both
+    # data planes -- resolve, scan, drain, checksum, commit -- in seconds.
+    # Some runs come up with a shard's ShardDataService accepting connections
+    # but never answering a request (startup race, under investigation: right
+    # port, listener up, every RPC times out from the first chunk); without
+    # this probe the bed burns its whole window learning that one table at a
+    # time. Retry a few times in case it is a transient warm-up race; a
+    # persistent mute fails the bed fast with a named cause.
+    preflight_ok=0
+    for pf in 1 2 3; do
+        pf_out=$("$admin_path" migrate "$admin_addr" "__preflight__" a b 1 0 5 2>&1)
+        if echo "$pf_out" | grep -aq "ok=1"; then preflight_ok=1; break; fi
+        echo "Preflight attempt ${pf}: ${pf_out}"
+        sleep 5
     done
+    if [ "$preflight_ok" -eq 1 ]; then
+        echo "Preflight migration committed: both data planes answering"
+        for t in "${MIG_TABLES[@]}"; do
+            run_migration "$t" 1 0 "$t"
+        done
+    else
+        echo "PREFLIGHT FAILED: a shard data plane is up but not answering; skipping migrations"
+    fi
     # ---- PING-PONG RETURN LEG: the whole warehouse goes home, 0 -> 1 ----
     # This is also the REMOTE-DESTINATION path from the master's seat: the
     # destination participant is an RPC proxy, so the copy runs as PullRange
     # (the destination pulls; rows never transit the master) and the prepare
     # vote as the remote VerifyRange job. commit clears the returning
     # shard's stale MOVED fence, so it serves the range again immediately.
-    echo "Return leg: migrating warehouse ${MIG_WH} back 0 -> 1"
-    sleep 2   # let post-cutover traffic settle on the new owner first
-    for t in "${MIG_TABLES_BACK[@]}"; do
-        run_migration "$t" 0 1 "back:${t}"
-    done
+    if [ "$preflight_ok" -eq 1 ]; then
+        echo "Return leg: migrating warehouse ${MIG_WH} back 0 -> 1"
+        sleep 2   # let post-cutover traffic settle on the new owner first
+        for t in "${MIG_TABLES_BACK[@]}"; do
+            run_migration "$t" 0 1 "back:${t}"
+        done
+    fi
 fi
 
 # ---- Wait for benchmark completion (standard bed behavior) ----

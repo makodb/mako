@@ -290,18 +290,41 @@ private:
                 return "seed_partition failed";
         }
 
+        // Per-phase wall-clock: a return-leg job was observed running 21
+        // MINUTES with zero output between start and terminal -- the hanging
+        // phase was invisible. Every phase now names its cost.
+        struct timespec ph_ts;
+        clock_gettime(CLOCK_MONOTONIC, &ph_ts);
+        long ph_last_ms = ph_ts.tv_sec * 1000L + ph_ts.tv_nsec / 1000000L;
+        auto phase_ms = [&ph_last_ms]() {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            const long t = now.tv_sec * 1000L + now.tv_nsec / 1000000L;
+            const long d = t - ph_last_ms;
+            ph_last_ms = t;
+            return d;
+        };
+
         if (!master->begin_migration(static_cast<uint32_t>(req.src),
                                      static_cast<uint32_t>(req.dst),
                                      publish_table, publish_lo, publish_hi))
             return "begin_migration rejected";
         master->background_copy();     // Phase 1: copy, source still serving
+        Log_info("MigrationAdmin: '%s' %d->%d phase copy1 took %ld ms",
+                 req.table_name.c_str(), req.src, req.dst, phase_ms());
         master->lock_range();          // Phase 2: master freezes the source's range
         if (!master->drain_source()) { // wait out writes that began pre-fence
             master->abort_migration();
             return "write drain timed out -> aborted (source intact, unfrozen)";
         }
+        Log_info("MigrationAdmin: '%s' %d->%d phase lock+drain took %ld ms",
+                 req.table_name.c_str(), req.src, req.dst, phase_ms());
         master->background_copy();     // catch-up: the range is now QUIESCENT
+        Log_info("MigrationAdmin: '%s' %d->%d phase copy2 took %ld ms",
+                 req.table_name.c_str(), req.src, req.dst, phase_ms());
         master->final_sync();          // Phase 3: checksum gate -> dest prepared
+        Log_info("MigrationAdmin: '%s' %d->%d phase final_sync took %ld ms",
+                 req.table_name.c_str(), req.src, req.dst, phase_ms());
         if (!master->both_prepared()) {
             // Distinguish a dead/unreachable participant (its reads degenerate
             // to empty/0, which the master's faulted() gate refuses to treat as
