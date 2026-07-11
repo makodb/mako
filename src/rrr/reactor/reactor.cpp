@@ -1263,6 +1263,9 @@ public:
     // Send commands to worker via channel
     void add_proxy(PollableProxy poll) const;
     void remove(Pollable& poll) const;
+    // fd-keyed variant (remove(Pollable&) only reads .fd() anyway);
+    // lets shim-only callers drop the Pollable base entirely.
+    void remove_fd(int fd) const;
     void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops proxy ownership
     // @safe - Sends update mode command via channel
     // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
@@ -2933,6 +2936,10 @@ void PollThread::add_proxy(PollableProxy poll) const {
 
 void PollThread::remove(Pollable& poll) const {
   sender_.send(CmdRemovePollable{poll.fd()});
+}
+
+void PollThread::remove_fd(int fd) const {
+  sender_.send(CmdRemovePollable{fd});
 }
 
 void PollThread::request_close(int fd) const {

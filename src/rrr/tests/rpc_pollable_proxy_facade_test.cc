@@ -6,33 +6,35 @@
 namespace rrr {
 namespace {
 
-class CountingPollable : public Pollable {
+// Plain struct (no PollableBase inheritance): consumed only via the
+// typed-arc PollableArcShim<T>, whose hooks are const.
+class CountingPollable {
  public:
   explicit CountingPollable(int fd) : fd_(fd) {}
 
-  int fd() const override { return fd_; }
-  int poll_mode() const override { return poll_mode_; }
-  size_t content_size() override {
+  int fd() const { return fd_; }
+  int poll_mode() const { return poll_mode_; }
+  size_t content_size() const {
     ++content_size_calls_;
     return 64;
   }
-  bool handle_read() override {
+  bool handle_read() const {
     ++read_calls_;
     return true;
   }
-  int handle_write() override {
+  int handle_write() const {
     ++write_calls_;
     return PollMode::NO_CHANGE;
   }
-  void handle_error() override { ++error_calls_; }
-  void close() override {
+  void handle_error() const { ++error_calls_; }
+  void close() const {
     ++close_calls_;
     closed_ = true;
   }
-  bool check_pending_write_update() const override {
+  bool check_pending_write_update() const {
     return pending_write_update_;
   }
-  bool is_closed() const override { return closed_; }
+  bool is_closed() const { return closed_; }
 
   void set_pending_write_update(bool enabled) const { pending_write_update_ = enabled; }
 
@@ -46,12 +48,12 @@ class CountingPollable : public Pollable {
   int fd_;
   int poll_mode_{PollMode::READ | PollMode::WRITE};
   mutable bool pending_write_update_{false};
-  bool closed_{false};
-  int content_size_calls_{0};
-  int read_calls_{0};
-  int write_calls_{0};
-  int error_calls_{0};
-  int close_calls_{0};
+  mutable bool closed_{false};
+  mutable int content_size_calls_{0};
+  mutable int read_calls_{0};
+  mutable int write_calls_{0};
+  mutable int error_calls_{0};
+  mutable int close_calls_{0};
 };
 
 TEST(RpcPollableProxyFacadeTest, AdapterForwardsAllPollableMethods) {

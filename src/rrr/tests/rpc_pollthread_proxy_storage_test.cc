@@ -33,7 +33,9 @@ bool wait_until(rusty::Function<bool()> pred, int timeout_ms) {
   return pred();
 }
 
-class CountingPollable : public Pollable {
+// Plain struct (no PollableBase inheritance): consumed only via the
+// typed-arc PollableArcShim<T>, whose hooks are const.
+class CountingPollable {
  public:
   CountingPollable(
       int fd,
@@ -47,18 +49,16 @@ class CountingPollable : public Pollable {
         write_count_(write_count),
         close_count_(close_count) {}
 
-  // `Pollable` (a pub trait) deletes copy AND move, so the implicit move ctor is
-  // deleted; provide one (default-construct the base, copy the trivial members)
-  // so `CountingPollable` can be moved into an Arc/PollableProxy.
+  // Movable so it can be constructed into an Arc.
   CountingPollable(CountingPollable&& o) noexcept
-      : Pollable(), fd_(o.fd_), mode_(o.mode_),
+      : fd_(o.fd_), mode_(o.mode_),
         read_count_(o.read_count_), write_count_(o.write_count_),
         close_count_(o.close_count_) {}
 
-  int fd() const override { return fd_; }
-  int poll_mode() const override { return mode_; }
-  size_t content_size() override { return 0; }
-  bool handle_read() override {
+  int fd() const { return fd_; }
+  int poll_mode() const { return mode_; }
+  size_t content_size() const { return 0; }
+  bool handle_read() const {
     char buf[32];
     (void)::read(fd_, buf, sizeof(buf));
     if (read_count_ != nullptr) {
@@ -66,14 +66,14 @@ class CountingPollable : public Pollable {
     }
     return true;
   }
-  int handle_write() override {
+  int handle_write() const {
     if (write_count_ != nullptr) {
       write_count_->fetch_add(1, std::memory_order_relaxed);
     }
     return PollMode::NO_CHANGE;
   }
-  void handle_error() override {}
-  void close() override {
+  void handle_error() const {}
+  void close() const {
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
@@ -82,13 +82,13 @@ class CountingPollable : public Pollable {
       close_count_->fetch_add(1, std::memory_order_relaxed);
     }
   }
-  bool check_pending_write_update() const override { return false; }
-  bool is_closed() const override { return fd_ < 0; }
+  bool check_pending_write_update() const { return false; }
+  bool is_closed() const { return fd_ < 0; }
 
   void set_mode(int mode) const { mode_ = mode; }
 
  private:
-  int fd_;
+  mutable int fd_;
   mutable int mode_;
   std::atomic<int>* read_count_;
   std::atomic<int>* write_count_;
@@ -111,8 +111,8 @@ class PlainPollable {
 
   int fd() const { return fd_; }
   int poll_mode() const { return mode_; }
-  size_t content_size() { return 0; }
-  bool handle_read() {
+  size_t content_size() const { return 0; }
+  bool handle_read() const {
     char buf[32];
     (void)::read(fd_, buf, sizeof(buf));
     if (read_count_ != nullptr) {
@@ -120,14 +120,14 @@ class PlainPollable {
     }
     return true;
   }
-  int handle_write() {
+  int handle_write() const {
     if (write_count_ != nullptr) {
       write_count_->fetch_add(1, std::memory_order_relaxed);
     }
     return PollMode::NO_CHANGE;
   }
-  void handle_error() {}
-  void close() {
+  void handle_error() const {}
+  void close() const {
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
@@ -142,7 +142,7 @@ class PlainPollable {
   void set_mode(int mode) const { mode_ = mode; }
 
  private:
-  int fd_;
+  mutable int fd_;
   mutable int mode_;
   std::atomic<int>* read_count_;
   std::atomic<int>* write_count_;
@@ -187,7 +187,6 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
   std::atomic<int> write_count{0};
   auto pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(sv[0], PollMode::READ, nullptr, &write_count, nullptr));
-  Pollable& poll_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*pollable));
 
   poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(pollable.clone()));
   std::this_thread::sleep_for(milliseconds(60));
@@ -197,13 +196,13 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
 
   ASSERT_TRUE(wait_until([&] { return write_count.load(std::memory_order_relaxed) > 0; }, 1000));
 
-  poll_thread->remove(poll_ref);
+  poll_thread->remove_fd(pollable->fd());
   std::this_thread::sleep_for(milliseconds(120));
   const int stable_count = write_count.load(std::memory_order_relaxed);
   std::this_thread::sleep_for(milliseconds(150));
   EXPECT_EQ(write_count.load(std::memory_order_relaxed), stable_count);
 
-  poll_ref.close();
+  pollable->close();
   poll_thread->shutdown();
   ::close(sv[1]);
 }

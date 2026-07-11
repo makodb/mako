@@ -306,32 +306,49 @@ concept ServiceLike = requires(
   { svc.__reg_to__(server, svc_index) } -> std::convertible_to<int>;
   { svc.__dispatch__(rpc_id, std::move(req), std::move(weak_sconn)) } -> std::same_as<void>;
 };
+// `ServiceBoxShim<T>` — the generic Box-holding Service implementor
+// (generic #[cpp_inherit]; Box gives owning mutable access, so no
+// constness dance at all).
+#if RUSTYCPP_RUST
+struct ServiceBoxShim<T> {
+    svc_: Box<T>,
+}
 
-// Adapter that wraps a Box<T> for a duck-typed T and exposes it as a
-// concrete subclass of Service.
-// @safe - Pure adapter; forwards `__reg_to__` / `__dispatch__` into the
-// wrapped Box<T>. No raw pointer math, no syscalls.
-template <ServiceLike T>
-class ServiceTypedBoxAdapter : public Service {
- public:
-  explicit ServiceTypedBoxAdapter(rusty::Box<T> svc) : svc_(std::move(svc)) {}
+#[cpp_inherit]
+impl<T> Service for ServiceBoxShim<T> {
+    fn __reg_to__(&mut self, server: &mut Server, svc_index: usize) -> i32 {
+        self.svc_.__reg_to__(server, svc_index)
+    }
 
-  int __reg_to__(Server& server, size_t svc_index) override {
-    return svc_->__reg_to__(server, svc_index);
-  }
+    fn __dispatch__(&mut self, rpc_id: i32, req: Box<Request>, sconn: WeakServerConnection) {
+        self.svc_.__dispatch__(rpc_id, req, sconn)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.service_shim version=1 rust_sha256=8ea14174fc475f154893d662426c5842da99c0350b2545961078fb302be55a61*/
+template<typename T>
+struct ServiceBoxShim;
 
-  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) override {
-    svc_->__dispatch__(rpc_id, std::move(req), std::move(sconn));
-  }
+template<typename T>
+struct ServiceBoxShim : public Service {
+    rusty::Box<T> svc_;
+    ServiceBoxShim(rusty::Box<T> svc__init) : Service(), svc_(std::move(svc__init)) {}
+    ServiceBoxShim(ServiceBoxShim&& other) noexcept : Service(), svc_(std::move(other.svc_)) {}
 
- private:
-  rusty::Box<T> svc_;
+
+    int32_t __reg_to__(Server& server, size_t svc_index) {
+        return this->svc_->__reg_to__(server, std::move(svc_index));
+    }
+    void __dispatch__(int32_t rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
+        this->svc_->__dispatch__(std::move(rpc_id), std::move(req), std::move(sconn));
+    }
 };
+/*RUSTYCPP:GEN-END id=server.service_shim*/
 
 // @safe - Wraps a typed Box<T> in the ServiceTypedBoxAdapter; Box move only.
 template <ServiceLike T>
 inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
-  return rusty::make_box<ServiceTypedBoxAdapter<T>>(std::move(svc));
+  return rusty::make_box<ServiceBoxShim<T>>(std::move(svc));
 }
 
 // Forward-declared atomic typedefs (full definitions repeated below near
