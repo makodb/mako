@@ -66,21 +66,21 @@ class scanstackelt {
     int ki_;
     small_vector<rusty::MutPtr<node_base<P>>, 2> node_stack_;
 
-    enum { scan_emit, scan_find_next, scan_down, scan_up, scan_retry };
+    enum class scan_state { emit, find_next, down, up, retry };
 
     scanstackelt() {
     }
 
     template <typename H>
     // @unsafe { Walks tree via raw pointers with version checking }
-    int find_initial(H& helper, key_type& ka, bool emit_equal,
-                     leafvalue_type& entry, threadinfo& ti);
+    scan_state find_initial(H& helper, key_type& ka, bool emit_equal,
+                            leafvalue_type& entry, threadinfo& ti);
     template <typename H>
     // @unsafe { Retries traversal via reach_leaf() on raw nodes }
-    int find_retry(H& helper, key_type& ka, threadinfo& ti);
+    scan_state find_retry(H& helper, key_type& ka, threadinfo& ti);
     template <typename H>
     // @unsafe { Advances cursor via raw node pointers, uses fence() }
-    int find_next(H& helper, key_type& ka, leafvalue_type& entry);
+    scan_state find_next(H& helper, key_type& ka, leafvalue_type& entry);
 
     int kp() const {
         if (unsigned(ki_) < unsigned(perm_.size()))
@@ -204,8 +204,9 @@ struct reverse_scan_helper {
 
 
 template <typename P> template <typename H>
-int scanstackelt<P>::find_initial(H& helper, key_type& ka, bool emit_equal,
-                                  leafvalue_type& entry, threadinfo& ti)
+typename scanstackelt<P>::scan_state
+scanstackelt<P>::find_initial(H& helper, key_type& ka, bool emit_equal,
+                              leafvalue_type& entry, threadinfo& ti)
 {
     key_indexed_position kx;
     int keylenx = 0;
@@ -245,24 +246,25 @@ int scanstackelt<P>::find_initial(H& helper, key_type& ka, bool emit_equal,
             node_stack_.push_back(root_);
             node_stack_.push_back(n_);
             root_ = entry.layer();
-            return scan_down;
+            return scan_state::down;
         } else if (n_->keylenx_has_ksuf(keylenx)) {
             int ksuf_compare = suffix.compare(ka.suffix());
             if (helper.initial_ksuf_match(ksuf_compare, emit_equal)) {
                 int keylen = ka.assign_store_suffix(suffix);
                 ka.assign_store_length(keylen);
-                return scan_emit;
+                return scan_state::emit;
             }
         } else if (emit_equal)
-            return scan_emit;
+            return scan_state::emit;
         // otherwise, this entry must be skipped
         ki_ = helper.next(ki_);
     }
-    return scan_find_next;
+    return scan_state::find_next;
 }
 
 template <typename P> template <typename H>
-int scanstackelt<P>::find_retry(H& helper, key_type& ka, threadinfo& ti)
+typename scanstackelt<P>::scan_state
+scanstackelt<P>::find_retry(H& helper, key_type& ka, threadinfo& ti)
 {
  retry:
     n_ = root_->reach_leaf(ka, v_, ti);
@@ -272,16 +274,17 @@ int scanstackelt<P>::find_retry(H& helper, key_type& ka, threadinfo& ti)
     n_->prefetch();
     perm_ = n_->permutation();
     ki_ = helper.lower(ka, this);
-    return scan_find_next;
+    return scan_state::find_next;
 }
 
 template <typename P> template <typename H>
-int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
+typename scanstackelt<P>::scan_state
+scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
 {
     int kp;
 
     if (v_.deleted())
-        return scan_retry;
+        return scan_state::retry;
 
  retry_entry:
     kp = this->kp();
@@ -309,17 +312,17 @@ int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
             node_stack_.push_back(root_);
             node_stack_.push_back(n_);
             root_ = entry.layer();
-            return scan_down;
+            return scan_state::down;
         } else {
             ka.assign_store_length(keylen);
-            return scan_emit;
+            return scan_state::emit;
         }
     }
 
     if (!n_->has_changed(v_)) {
         n_ = helper.advance(n_, ka);
         if (!n_)
-            return scan_up;
+            return scan_state::up;
         n_->prefetch();
     }
 
@@ -327,7 +330,7 @@ int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
     v_ = helper.stable(n_, ka);
     perm_ = n_->permutation();
     ki_ = helper.lower(ka, this);
-    return scan_find_next;
+    return scan_state::find_next;
 }
 
 template <typename P> template <typename H, typename F>
@@ -354,19 +357,19 @@ int basic_table<P>::scan(H helper,
     leafvalue_type entry = leafvalue_type::make_empty();
 
     int scancount = 0;
-    int state;
+    typename mystack_type::scan_state state;
 
     while (1) {
         state = stack.find_initial(helper, ka, emit_firstkey, entry, ti);
         scanner.visit_leaf(stack, ka, ti);
-        if (state != mystack_type::scan_down)
+        if (state != mystack_type::scan_state::down)
             break;
         ka.shift();
     }
 
     while (1) {
         switch (state) {
-        case mystack_type::scan_emit:
+        case mystack_type::scan_state::emit:
             ++scancount;
             if (!scanner.visit_value(ka, entry.value(), ti))
                 goto done;
@@ -374,14 +377,14 @@ int basic_table<P>::scan(H helper,
             state = stack.find_next(helper, ka, entry);
             break;
 
-        case mystack_type::scan_find_next:
+        case mystack_type::scan_state::find_next:
         find_next:
             state = stack.find_next(helper, ka, entry);
-            if (state != mystack_type::scan_up)
+            if (state != mystack_type::scan_state::up)
                 scanner.visit_leaf(stack, ka, ti);
             break;
 
-        case mystack_type::scan_up:
+        case mystack_type::scan_state::up:
             do {
                 if (stack.node_stack_.empty())
                     goto done;
@@ -396,11 +399,11 @@ int basic_table<P>::scan(H helper,
             stack.ki_ = helper.lower(ka, &stack);
             goto find_next;
 
-        case mystack_type::scan_down:
+        case mystack_type::scan_state::down:
             helper.shift_clear(ka);
             goto retry;
 
-        case mystack_type::scan_retry:
+        case mystack_type::scan_state::retry:
         retry:
             state = stack.find_retry(helper, ka, ti);
             break;
