@@ -342,16 +342,27 @@ public:
     // Write drain on the REMOTE shard, as BEGIN/POLL: the first call bumps
     // the remote watermark once and returns the parity; subsequent calls
     // poll it with a short server budget, each staying under rrr's ~1s
-    // request timeout. Loops to a 12s deadline (covers same-table 2PC
-    // tails). Fault-latches like every other op.
+    // request timeout. Loops to a 30s deadline (2PC tails under migration
+    // load reach ~14s). A POLL that errors does NOT fault-latch: polls are
+    // idempotent reads, and under migration load they queue behind the data
+    // service's scan traffic and trip rrr's ~1s client timeout -- that is
+    // congestion, not a dead participant (observed live: customer's drain
+    // aborted "participant unreachable" while the shard served fine). Only
+    // the BEGIN call (phase < 0, the one generation bump) latches on error,
+    // since retrying it blindly would double-bump the watermark.
     bool drain_writes() override {
         rrr::i32 phase = -1;
-        for (int waited_ms = 0; waited_ms < 30000; ) {   // 2PC tails under migration load reach ~14s
+        for (int waited_ms = 0; waited_ms < 30000; ) {
             ShardDataServiceProxy::RpcDrainWritesRequest req;
             req.table_name = table_;
             req.phase = phase;
             auto r = proxy_->DrainWrites(req);
-            if (r.is_err()) { faulted_ = true; return false; }
+            if (r.is_err()) {
+                if (phase < 0) { faulted_ = true; return false; }
+                usleep(200 * 1000);   // congested: back off, re-poll
+                waited_ms += 700;
+                continue;
+            }
             auto resp = r.unwrap();
             if (resp.ok != 0) return true;
             if (resp.parity < 0) return false;   // no split drain remotely; it said no
