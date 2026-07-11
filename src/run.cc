@@ -49,42 +49,9 @@ void fiber_yield_2() {
   rusty::Rc<Fiber> fiber = fiber_yield_2_sub();
   fiber->continue_();
 }
-void fiber_wait_die_lock() {
-  WaitDieALock a;
-  auto fiber1 = Fiber::create_run([&a] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
-    ASSERT_EQ(req_id == true);
-    Fiber::current_fiber().unwrap()->yield_();
-    Log_info("aborting lock from fiber 1.");
-    a.abort(req_id);
-  });
-
-  int x = 0;
-  auto fiber2 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
-    ASSERT_EQ(req_id == false);
-    x = 1;
-  });
-  (void)fiber2;
-  ASSERT_EQ(x == 1);
-
-  int y = 0;
-  auto fiber3 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);  // yield
-    ASSERT_EQ(req_id > 0);
-    Log_info("acquired lock from fiber 3.");
-    y = 1;
-  });
-  (void)fiber3;
-  ASSERT_EQ(y == 0);
-  fiber1->continue_();
-  Reactor::get_reactor()->loop();
-  ASSERT_EQ(y == 1);
-}
 
 int main(int argc, char* argv[]) {
   fiber_basic();
   fiber_yield();
   fiber_yield_2();
-  fiber_wait_die_lock();
 }

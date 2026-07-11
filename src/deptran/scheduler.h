@@ -92,22 +92,34 @@ class Distribution {
     return sum / data_.size();
   }
   string statistics() {
-    std::ostringstream oss;
-    oss << std::setw(7) << "count" << std::setw(9) << count();
-    oss << std::setw(7) << " 0pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.0);
-    oss << std::setw(7) << "50pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.5);
-    oss << std::setw(7) << "90pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.9);
-    oss << std::setw(7) << "99pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.99);
-    oss << std::setw(7) << "  ave" << std::setw(9) << std::fixed << std::setprecision(2) << ave();
-    return oss.str();
+    // snprintf instead of iomanip manipulators: under clang-22
+    // `import std`, the <iomanip> operator<< overloads are not reliably
+    // reachable in module TUs (same fix as rrr base/common.h).
+    char buf[64];
+    string out;
+    snprintf(buf, sizeof(buf), "%7s%9zu", "count", count());
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", " 0pct", pct(0.0));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "50pct", pct(0.5));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "90pct", pct(0.9));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "99pct", pct(0.99));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "  ave", ave());
+    out += buf;
+    return out;
   }
   string distribution() {
-    std::ostringstream oss;
+    // snprintf instead of iomanip manipulators (see statistics()).
+    char buf[32];
+    string out;
     for (int i = 0; i <= 100; i += 10) {
-      // oss << i << "pct ";
-      oss << std::setw(9) << std::fixed << std::setprecision(2) << pct(i / 100.0);
+      snprintf(buf, sizeof(buf), "%9.2f", pct(i / 100.0));
+      out += buf;
     }
-    return oss.str();
+    return out;
   }
 };
 
@@ -136,7 +148,10 @@ class Frequency {
     std::stringstream ss;
     int i = 0;
     for (set<pair<int, int>>::iterator it = frequency.begin(); it != frequency.end() && i < 10; it++, i++) {
-      ss << std::fixed << std::setprecision(6) << -it->first * 100.0 / count() << " (" << it->second << "), ";
+      // snprintf for the %.6f part instead of iomanip (see statistics()).
+      char buf[48];
+      snprintf(buf, sizeof(buf), "%.6f", -it->first * 100.0 / count());
+      ss << buf << " (" << it->second << "), ";
     }
     return ss.str();
   }

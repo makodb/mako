@@ -266,9 +266,6 @@ void TpccRdWorkload::RegPayment() {
          mb[2] = cmd.input[TPCC_VAR_C_W_ID].get_blob();
          // R customer
          r = tx.Query(tx.GetTable(TPCC_TB_CUSTOMER), mb, ROW_CUSTOMER);
-         ALock::type_t lock_20_type = ALock::RLOCK;
-         if (cmd.input[TPCC_VAR_C_ID].get_i32() % 10 == 0)
-           lock_20_type = ALock::WLOCK;
 
          vector<Value> buf({
                                Value(""), Value(""), Value(""), Value(""),

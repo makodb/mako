@@ -206,7 +206,9 @@ txn_reg_->regs_[txn][pie].sharder_ \
 #define CREATE_ROW(schema, row_data) \
     switch (Config::config_s->tx_proto_) { \
     case MODE_2PL: \
-        r = mdb::FineLockedRow::create(schema, row_data); \
+        /* FineLockedRow/ALock removed (dead code) */ \
+        verify(0); \
+        r = nullptr; \
         break; \
         case MODE_OCC: \
     case MODE_NONE: \

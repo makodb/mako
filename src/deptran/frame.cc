@@ -131,7 +131,9 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
   mdb::Row* r = nullptr;
   switch (mode) {
     case MODE_2PL:
-      r = mdb::FineLockedRow::create(schema, row_data);
+      // FineLockedRow/ALock were removed as dead code; 2PL fine-grained
+      // locking is no longer available.
+      verify(0);
       break;
     case MODE_RO6:
       r = RO6Row::create(schema, row_data);

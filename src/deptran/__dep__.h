@@ -82,8 +82,6 @@ using rrr::Future;
 using rrr::RandomGenerator;
 // removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
-using rrr::ALock;
-using rrr::TimeoutALock;
 using rrr::PollThread;
 using rrr::Marshal;
 // retired

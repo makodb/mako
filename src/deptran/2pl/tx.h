@@ -6,7 +6,6 @@ namespace janus {
 
 class Tx2pl: public TxClassic {
  public:
-  vector<std::pair<ALock*, uint64_t>> locked_locks_ = {};
   bool woundable_{true};
   bool wounded_{false};
   int _debug_n_lock_requested_{0};

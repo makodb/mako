@@ -139,38 +139,6 @@ TEST(FiberRuntimeTest, destroy_paused_fiber_with_cleanup) {
     delete heap_flag;
     std::cout << "=== Test completed successfully ===" << std::endl;
 }
-
-TEST(FiberRuntimeTest, wait_die_lock) {
-  WaitDieALock a;
-  auto fiber1 = Fiber::create_run([&a] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
-    ASSERT_EQ(req_id, true);
-    Fiber::current_fiber().unwrap()->yield_();
-    Log_debug("aborting lock from fiber 1.");
-    a.abort(req_id);
-  });
-
-  int x = 0;
-  auto fiber2 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
-    ASSERT_EQ(req_id, false);
-    x = 1;
-  });
-  ASSERT_EQ(x, 1);
-
-  int y = 0;
-  auto fiber3 = Fiber::create_run([&] () {
-    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);
-    ASSERT_GT(req_id, 0);
-    Log_debug("acquired lock from fiber 3.");
-    y = 1;
-  });
-  ASSERT_EQ(y, 0);
-  fiber1->continue_();
-  Reactor::get_reactor()->loop();
-  ASSERT_EQ(y, 1);
-}
-
 TEST(FiberRuntimeTest, timeout) {
   auto fiber1 = Fiber::create_run([](){
     auto t1 = Time::now(true);

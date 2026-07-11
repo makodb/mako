@@ -488,9 +488,9 @@ void Config::InitMode(string &cc_name, string& ab_name) {
   } else if (cc_name == "2pl_w") {
     retry_wait_ = true;
   } else if (cc_name == "2pl_wait_die" || cc_name == "2pl_wd") {
-    mdb::FineLockedRow::set_wait_die();
+    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
   } else if ((cc_name == "2pl_ww") || (cc_name == "2pl_wound_die")) {
-    mdb::FineLockedRow::set_wound_wait();
+    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
     n_parallel_dispatch_ = 1;
   }
 

@@ -25,8 +25,6 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/base/strop.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp
@@ -140,8 +138,6 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/base/threading.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/base/unittest.cpp
         # misc/
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/alarm.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/misc/alock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/any_message.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/cpuinfo.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/misc/marshal.cpp

@@ -26,8 +26,6 @@
 // `import std; ... #include <vector>` (the include lands after the
 // module's already-imported std), so umbrella imports for modularized
 // rrr submodules sit at the bottom of the textual chain.
-import rrr.alarm;
-import rrr.alock;
 import rrr.basetypes;
 import rrr.callbacks;
 import rrr.channel;
