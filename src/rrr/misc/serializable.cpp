@@ -625,192 +625,194 @@ class BinaryWriteArchive {
     sink_->write_bytes(reinterpret_cast<const uint8_t*>(p), n);
   }
 
-  // ---- Fixed-width primitives. ------------------------------------------
-  // Each scalar's byte representation is `reinterpret_cast<const
-  // uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
-  // makes the byte view explicit (the previous `const void*` form
-  // hid it behind implicit conversion).
-  BinaryWriteArchive& operator<<(int8_t v)   { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int16_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int32_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(int64_t v)  { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint8_t v)  { sink_->write_bytes(&v, sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint16_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint32_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(uint64_t v) { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-  BinaryWriteArchive& operator<<(double v)   { sink_->write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return *this; }
-
-  // ---- Variable-length integer encoding (SparseInt). --------------------
-  BinaryWriteArchive& operator<<(rrr::v32 v) {
-    char buf[5];
-    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    sink_->write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
-    return *this;
-  }
-
-  BinaryWriteArchive& operator<<(rrr::v64 v) {
-    char buf[9];
-    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    sink_->write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
-    return *this;
-  }
-
-  // ---- Variable-length byte sequences. ----------------------------------
-  BinaryWriteArchive& operator<<(std::string_view s) {
-    rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
-    *this << v_len;
-    if (s.size() > 0) {
-      sink_->write_bytes(reinterpret_cast<const uint8_t*>(s.data()), s.size());
-    }
-    return *this;
-  }
-
-  // std::string is a convenience overload — same wire format as
-  // string_view (length-prefixed bytes).
-  BinaryWriteArchive& operator<<(const std::string& s) {
-    return *this << std::string_view{s};
-  }
-
-  // ---- Composites. ------------------------------------------------------
-  // std::pair: write first then second, no length prefix (each side
-  // already knows the type and consumes its own bytes).
-  template<class T1, class T2>
-  BinaryWriteArchive& operator<<(const std::pair<T1, T2>& v) {
-    *this << v.first;
-    *this << v.second;
-    return *this;
-  }
-
-  // ---- Linear containers (length prefix + sequential elements). --------
-  // All linear containers share the wire format: v64 length prefix
-  // followed by each element serialized via operator<<. Iteration
-  // order matches the container's begin()/end(). For ordered containers
-  // (set/map/BTreeSet/BTreeMap) this is sorted-key order. For unordered
-  // containers (unordered_set/unordered_map/HashSet/HashMap) it's
-  // bucket-walk order — same iteration order as the existing
-  // `Marshal` operator<<, so byte-for-byte compatibility holds.
-  template<class T>
-  BinaryWriteArchive& operator<<(const rusty::Vec<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const std::vector<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const std::list<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const rusty::BTreeSet<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-    *this << v_len;
-    // rusty BTreeSet has no begin()/end(); iterate the Rust-style iterator.
-    auto __it = v.iter();
-    for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-      *this << std::move(__e).unwrap();
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const std::set<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const rusty::HashSet<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-    *this << v_len;
-    // HashSet wraps a HashMap<T, monostate>; walk the underlying map's const
-    // Rust iterator (HashSet's own begin()/end() is non-const). next() yields
-    // Option<tuple<const T&, ...>>.
-    // WARNING: ANY hashbrown enumeration (iter()/begin()/drain()) routes
-    // through the `rusty::iter(table)` lambda in slice.hpp, whose return-type
-    // name crashes clang-22's Itanium mangler (SIGSEGV in mangleSourceName).
-    // So this overload MUST NOT be instantiated on clang-22 — there is no
-    // crash-free way to enumerate a hashbrown table there. No production code
-    // serializes a rusty::HashSet today; if that changes, the encoder needs a
-    // mangler-safe enumeration path (or a fixed toolchain). See the
-    // RustyHashSetPrimitives test for the decoder-only workaround.
-    auto __it = v.map.iter();
-    for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-      *this << std::get<0>(std::move(__e).unwrap());
-    return *this;
-  }
-
-  template<class T>
-  BinaryWriteArchive& operator<<(const std::unordered_set<T>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) *this << *it;
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryWriteArchive& operator<<(const rusty::BTreeMap<K, V>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-    *this << v_len;
-    // rusty BTreeMap has no begin()/end(); iterate the Rust-style iterator.
-    // iter().next() yields Option<std::tuple<const K&, V&>>.
-    auto __it = v.iter();
-    for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
-      auto kv = std::move(__e).unwrap();
-      *this << std::get<0>(kv) << std::get<1>(kv);
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryWriteArchive& operator<<(const std::map<K, V>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) {
-      *this << it->first << it->second;
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryWriteArchive& operator<<(const rusty::HashMap<K, V>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-    *this << v_len;
-    // rusty HashMap has no const begin()/end(); iterate via the Rust iterator.
-    // iter().next() yields Option<std::tuple<const K&, const V&>>.
-    // WARNING: like rusty::HashSet above, hashbrown enumeration crashes
-    // clang-22's name mangler — do not instantiate this overload on clang-22.
-    auto __it = v.iter();
-    for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
-      auto kv = std::move(__e).unwrap();
-      *this << std::get<0>(kv) << std::get<1>(kv);
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryWriteArchive& operator<<(const std::unordered_map<K, V>& v) {
-    rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-    *this << v_len;
-    for (auto it = v.begin(); it != v.end(); ++it) {
-      *this << it->first << it->second;
-    }
-    return *this;
-  }
 };
+
+// ---- Fixed-width primitives. ------------------------------------------
+// Each scalar's byte representation is `reinterpret_cast<const
+// uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
+// makes the byte view explicit (the previous `const void*` form
+// hid it behind implicit conversion).
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int8_t v)   { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int16_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int32_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int64_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint8_t v)  { ar.write_bytes(&v, sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint16_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint32_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint64_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+
+// ---- Variable-length integer encoding (SparseInt). --------------------
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) {
+  char buf[5];
+  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+  ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
+  return ar;
+}
+
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v64 v) {
+  char buf[9];
+  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+  ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
+  return ar;
+}
+
+// ---- Variable-length byte sequences. ----------------------------------
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, std::string_view s) {
+  rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
+  ar << v_len;
+  if (s.size() > 0) {
+    ar.write_bytes(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+  }
+  return ar;
+}
+
+// std::string is a convenience overload — same wire format as
+// string_view (length-prefixed bytes).
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::string& s) {
+  return ar << std::string_view{s};
+}
+
+// ---- Composites. ------------------------------------------------------
+// std::pair: write first then second, no length prefix (each side
+// already knows the type and consumes its own bytes).
+template<class T1, class T2>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::pair<T1, T2>& v) {
+  ar << v.first;
+  ar << v.second;
+  return ar;
+}
+
+// ---- Linear containers (length prefix + sequential elements). --------
+// All linear containers share the wire format: v64 length prefix
+// followed by each element serialized via operator<<. Iteration
+// order matches the container's begin()/end(). For ordered containers
+// (set/map/BTreeSet/BTreeMap) this is sorted-key order. For unordered
+// containers (unordered_set/unordered_map/HashSet/HashMap) it's
+// bucket-walk order — same iteration order as the existing
+// `Marshal` operator<<, so byte-for-byte compatibility holds.
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::Vec<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::vector<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::list<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeSet<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
+  ar << v_len;
+  // rusty BTreeSet has no begin()/end(); iterate the Rust-style iterator.
+  auto __it = v.iter();
+  for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
+    ar << std::move(__e).unwrap();
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::set<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashSet<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
+  ar << v_len;
+  // HashSet wraps a HashMap<T, monostate>; walk the underlying map's const
+  // Rust iterator (HashSet's own begin()/end() is non-const). next() yields
+  // Option<tuple<const T&, ...>>.
+  // WARNING: ANY hashbrown enumeration (iter()/begin()/drain()) routes
+  // through the `rusty::iter(table)` lambda in slice.hpp, whose return-type
+  // name crashes clang-22's Itanium mangler (SIGSEGV in mangleSourceName).
+  // So this overload MUST NOT be instantiated on clang-22 — there is no
+  // crash-free way to enumerate a hashbrown table there. No production code
+  // serializes a rusty::HashSet today; if that changes, the encoder needs a
+  // mangler-safe enumeration path (or a fixed toolchain). See the
+  // RustyHashSetPrimitives test for the decoder-only workaround.
+  auto __it = v.map.iter();
+  for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
+    ar << std::get<0>(std::move(__e).unwrap());
+  return ar;
+}
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_set<T>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeMap<K, V>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
+  ar << v_len;
+  // rusty BTreeMap has no begin()/end(); iterate the Rust-style iterator.
+  // iter().next() yields Option<std::tuple<const K&, V&>>.
+  auto __it = v.iter();
+  for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
+    auto kv = std::move(__e).unwrap();
+    ar << std::get<0>(kv) << std::get<1>(kv);
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::map<K, V>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) {
+    ar << it->first << it->second;
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashMap<K, V>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
+  ar << v_len;
+  // rusty HashMap has no const begin()/end(); iterate via the Rust iterator.
+  // iter().next() yields Option<std::tuple<const K&, const V&>>.
+  // WARNING: like rusty::HashSet above, hashbrown enumeration crashes
+  // clang-22's name mangler — do not instantiate this overload on clang-22.
+  auto __it = v.iter();
+  for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
+    auto kv = std::move(__e).unwrap();
+    ar << std::get<0>(kv) << std::get<1>(kv);
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_map<K, V>& v) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
+  ar << v_len;
+  for (auto it = v.begin(); it != v.end(); ++it) {
+    ar << it->first << it->second;
+  }
+  return ar;
+}
+
 
 class BinaryReadArchive {
   SourceProxy source_;
@@ -837,231 +839,233 @@ class BinaryReadArchive {
     return got == n;
   }
 
-  // ---- Fixed-width primitives. ------------------------------------------
-  // Each operator>> verifies the read produced sizeof(T) bytes; on
-  // truncation it aborts via `verify` (matches the existing
-  // `Marshal::read` contract — short reads at the boundary are
-  // programming errors at this layer, not recoverable conditions).
-  BinaryReadArchive& operator>>(int8_t& v)   { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(int16_t& v)  { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(int32_t& v)  { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(int64_t& v)  { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(uint8_t& v)  { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(uint16_t& v) { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(uint32_t& v) { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(uint64_t& v) { verify(read_exact(&v, sizeof(v))); return *this; }
-  BinaryReadArchive& operator>>(double& v)   { verify(read_exact(&v, sizeof(v))); return *this; }
-
-  // ---- Variable-length integer encoding (SparseInt). --------------------
-  // SparseInt's first byte determines the total length; we peek it,
-  // read the remaining bytes, then decode.
-  BinaryReadArchive& operator>>(rrr::v32& v) {
-    char buf[5];
-    verify(read_exact(buf, 1));
-    size_t total = rrr::SparseInt::buf_size(buf[0]);
-    if (total > 1) {
-      verify(read_exact(buf + 1, total - 1));
-    }
-    v.set(rrr::SparseInt::load_i32(buf));
-    return *this;
-  }
-
-  BinaryReadArchive& operator>>(rrr::v64& v) {
-    char buf[9];
-    verify(read_exact(buf, 1));
-    size_t total = rrr::SparseInt::buf_size(buf[0]);
-    if (total > 1) {
-      verify(read_exact(buf + 1, total - 1));
-    }
-    v.set(rrr::SparseInt::load_i64(buf));
-    return *this;
-  }
-
-  // ---- Variable-length byte sequences. ----------------------------------
-  BinaryReadArchive& operator>>(std::string& s) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    auto len = static_cast<size_t>(v_len.get());
-    s.resize(len);
-    if (len > 0) {
-      // @unsafe { writing into string's internal buffer via &s[0] }
-      verify(read_exact(&s[0], len));
-    }
-    return *this;
-  }
-
-  // ---- Composites. ------------------------------------------------------
-  template<class T1, class T2>
-  BinaryReadArchive& operator>>(std::pair<T1, T2>& v) {
-    *this >> v.first;
-    *this >> v.second;
-    return *this;
-  }
-
-  // ---- Linear containers. -----------------------------------------------
-  // Wire format: v64 length prefix + N elements deserialized in order.
-  // Containers are cleared first; matches the existing Marshal operator>>
-  // semantics.
-  template<class T>
-  BinaryReadArchive& operator>>(rusty::Vec<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    v.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.push(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(std::vector<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    v.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.push_back(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(std::list<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.push_back(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(rusty::BTreeSet<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.insert(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(std::set<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.insert(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(rusty::HashSet<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.insert(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class T>
-  BinaryReadArchive& operator>>(std::unordered_set<T>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      T elem{};
-      *this >> elem;
-      v.insert(std::move(elem));
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryReadArchive& operator>>(rusty::BTreeMap<K, V>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      K key{};
-      V value{};
-      *this >> key >> value;
-      v.insert(std::move(key), std::move(value));
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryReadArchive& operator>>(std::map<K, V>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      K key{};
-      V value{};
-      *this >> key >> value;
-      v.emplace(std::move(key), std::move(value));
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryReadArchive& operator>>(rusty::HashMap<K, V>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      K key{};
-      V value{};
-      *this >> key >> value;
-      v.insert(std::move(key), std::move(value));
-    }
-    return *this;
-  }
-
-  template<class K, class V>
-  BinaryReadArchive& operator>>(std::unordered_map<K, V>& v) {
-    rrr::v64 v_len{0};
-    *this >> v_len;
-    v.clear();
-    auto n = static_cast<size_t>(v_len.get());
-    for (size_t i = 0; i < n; ++i) {
-      K key{};
-      V value{};
-      *this >> key >> value;
-      v.emplace(std::move(key), std::move(value));
-    }
-    return *this;
-  }
 };
+
+// ---- Fixed-width primitives. ------------------------------------------
+// Each operator>> verifies the read produced sizeof(T) bytes; on
+// truncation it aborts via `verify` (matches the existing
+// `Marshal::read` contract — short reads at the boundary are
+// programming errors at this layer, not recoverable conditions).
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+
+// ---- Variable-length integer encoding (SparseInt). --------------------
+// SparseInt's first byte determines the total length; we peek it,
+// read the remaining bytes, then decode.
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) {
+  char buf[5];
+  verify(ar.read_exact(buf, 1));
+  size_t total = rrr::SparseInt::buf_size(buf[0]);
+  if (total > 1) {
+    verify(ar.read_exact(buf + 1, total - 1));
+  }
+  v.set(rrr::SparseInt::load_i32(buf));
+  return ar;
+}
+
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) {
+  char buf[9];
+  verify(ar.read_exact(buf, 1));
+  size_t total = rrr::SparseInt::buf_size(buf[0]);
+  if (total > 1) {
+    verify(ar.read_exact(buf + 1, total - 1));
+  }
+  v.set(rrr::SparseInt::load_i64(buf));
+  return ar;
+}
+
+// ---- Variable-length byte sequences. ----------------------------------
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  auto len = static_cast<size_t>(v_len.get());
+  s.resize(len);
+  if (len > 0) {
+    // @unsafe { writing into string's internal buffer via &s[0] }
+    verify(ar.read_exact(&s[0], len));
+  }
+  return ar;
+}
+
+// ---- Composites. ------------------------------------------------------
+template<class T1, class T2>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::pair<T1, T2>& v) {
+  ar >> v.first;
+  ar >> v.second;
+  return ar;
+}
+
+// ---- Linear containers. -----------------------------------------------
+// Wire format: v64 length prefix + N elements deserialized in order.
+// Containers are cleared first; matches the existing Marshal operator>>
+// semantics.
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::Vec<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  v.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.push(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::vector<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  v.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.push_back(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::list<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.push_back(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeSet<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.insert(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::set<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.insert(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashSet<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.insert(std::move(elem));
+  }
+  return ar;
+}
+
+template<class T>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_set<T>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    ar >> elem;
+    v.insert(std::move(elem));
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeMap<K, V>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    ar >> key >> value;
+    v.insert(std::move(key), std::move(value));
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::map<K, V>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    ar >> key >> value;
+    v.emplace(std::move(key), std::move(value));
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashMap<K, V>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    ar >> key >> value;
+    v.insert(std::move(key), std::move(value));
+  }
+  return ar;
+}
+
+template<class K, class V>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_map<K, V>& v) {
+  rrr::v64 v_len{0};
+  ar >> v_len;
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    ar >> key >> value;
+    v.emplace(std::move(key), std::move(value));
+  }
+  return ar;
+}
+
 
 // ---------------------------------------------------------------------------
 // Layer 4: Serializable proxy + factory registry.
