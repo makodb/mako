@@ -4218,7 +4218,7 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
     size_t args_size = serialized_args.content_size();
     if (args_size > 0) {
         args_bytes.resize(args_size);
-        verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
+        verify(serialized_args.read(reinterpret_cast<std::uint8_t*>(args_bytes.data()), args_size) == args_size);
     }
 
     // Non-idempotent operations must never be retried even if max_retries is set.
@@ -4769,8 +4769,8 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
     verify(fu->xid_ == v_reply_xid.get());
     fu->error_code_.set(v_error_code.get());
     if (response_payload_bytes > 0) {
-      fu->reply_.borrow_mut()->write(bytes + parsed_header_size,
-                                     response_payload_bytes);
+      fu->reply_.borrow_mut()->write_bytes(bytes + parsed_header_size,
+                                           response_payload_bytes);
     }
 
     if (v_error_code.get() == 0) {

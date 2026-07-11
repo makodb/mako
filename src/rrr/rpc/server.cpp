@@ -1685,7 +1685,7 @@ void sconn_decode_request_and_dispatch(
     auto req_box = rusty::make_box<Request>();
     Request& req = *req_box;
     if (size > 0) {
-        req.m.write(bytes, size);
+        req.m.write_bytes(bytes, size);
     }
 
     // Header parse: xid + rpc_id. If the frame is malformed (less

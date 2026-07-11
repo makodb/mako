@@ -324,16 +324,17 @@ inline void cached_response_set(CachedResponse& self, const Marshal& m) {
     if (size > 0) {
         self.response_data.set_len(size);
         // Use Marshal's peek method to copy data without consuming;
-        // peek takes T& which we cast from char* to char& for raw access.
-        Marshal& non_const_m = const_cast<Marshal&>(m);
-        non_const_m.peek(self.response_data[0], size);
+        // Raw bulk peek straight into the byte vector — const-clean
+        // (peek_bytes is a const method; the old T&-peek needed a
+        // const_cast).
+        m.peek_bytes(reinterpret_cast<std::uint8_t*>(&self.response_data[0]), size);
     }
 }
 
 // @unsafe - Copy response data to Marshal. Same rationale as above.
 inline void cached_response_get(const CachedResponse& self, Marshal* out) {
     if (out && !self.response_data.is_empty()) {
-        out->write(self.response_data.data(), self.response_data.len());
+        out->write_bytes(reinterpret_cast<const std::uint8_t*>(self.response_data.data()), self.response_data.len());
     }
 }
 

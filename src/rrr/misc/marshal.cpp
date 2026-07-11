@@ -86,133 +86,250 @@ const kInitialCapacity: usize = 4096;
 constexpr size_t kInitialCapacity = static_cast<size_t>(4096);
 /*RUSTYCPP:GEN-END id=marshal.initial_capacity*/
 
-class Marshal: public NoCopy {
-private:
-  rusty::Vec<std::uint8_t> buf_{};
-  std::size_t read_pos_{0};
-  rrr::i32 write_cnt_{0};
+// Hand-written kernels for the DSL methods below (raw byte-pointer
+// memcpy/span surgery). Defined right after the GEN block.
+std::size_t marshal_write(Marshal& self, const std::uint8_t* p, std::size_t n);
+std::size_t marshal_read(Marshal& self, std::uint8_t* p, std::size_t n);
+std::size_t marshal_peek_bytes(const Marshal& self, std::uint8_t* p, std::size_t n);
+std::size_t marshal_read_from(Marshal& self, Marshal& src, std::size_t n);
 
-public:
+// fn new()'s field init can't spell "a Vec with reserved capacity".
+inline rusty::Vec<std::uint8_t> marshal_make_reserved_buf() {
+  rusty::Vec<std::uint8_t> v;
+  v.reserve(kInitialCapacity);
+  return v;
+}
 
-  // @safe - Default ctor: reserve starter capacity so small writes
-  // don't pay the first-grow cost.
-  Marshal() {
-    buf_.reserve(kInitialCapacity);
-  }
+// `Marshal` — the contiguous wire buffer (write tail + read cursor).
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * `read_pos_`/`write_cnt_` are `Cell`s: Cells default-CONSTRUCT to
+//     zero, so plain `Marshal m;` locals and by-value fields (e.g. the
+//     DSL `Request { m: Marshal }` in server.cpp) stay zero-initialized
+//     without the old in-class initializers — zero call-site churn.
+//     Cell is also the transpiler's move-only marker, replacing the
+//     `: public NoCopy` base (copy deleted, move implicit, exactly as
+//     before).
+//   * Plain default construction no longer pre-reserves
+//     kInitialCapacity (a DSL aggregate has no ctor body) — only
+//     `Marshal::new_()` does, via marshal_make_reserved_buf(). Perf
+//     hint only; first write grows the Vec.
+//   * The raw byte overloads keep their names/signatures except
+//     `const void*`/`void*` become `const uint8_t*`/`uint8_t*` (the
+//     DSL has no void*); callers cast at the boundary.
+//   * The typed overload `read<T>(T&, n=sizeof(T))` is renamed
+//     `read_obj<T>(T&)` (a Rust impl cannot overload `read`, and DSL
+//     fns have no default args); `peek<T>` likewise drops its `n`
+//     parameter. Both delegate to marshal_* template free fns.
+#if RUSTYCPP_RUST
+struct Marshal {
+    buf_: Vec<u8>,
+    read_pos_: Cell<usize>,
+    write_cnt_: Cell<i32>,
+}
 
-  // @safe - Trivial dtor — Vec releases the heap on drop. noexcept to
-  // match NoCopy::~NoCopy()'s exception spec.
-  ~Marshal() noexcept = default;
-
-  // @safe - Explicit move declarations restore implicit-move
-  // suppression caused by the user-declared destructor above. With
-  // these, `Marshal` becomes move-constructible / move-assignable
-  // (delegated through NoCopy's defaulted move members + rusty::Vec's
-  // move). Copy stays deleted via NoCopy.
-  Marshal(Marshal&&) noexcept = default;
-  Marshal& operator=(Marshal&&) noexcept = default;
-
-  // @safe - Rust-style factory matching `fn new() -> Self`. Equivalent
-  // to default construction; provided for symmetry with the rest of
-  // the rrr `new_()` rollout.
-  static Marshal new_() {
-    return Marshal{};
-  }
-
-  // @safe - Empty when fully drained.
-  bool empty() const { return read_pos_ >= buf_.size(); }
-
-  // @safe - Bytes between read cursor and write tail.
-  std::size_t content_size() const { return buf_.size() - read_pos_; }
-
-  // @safe - Append n bytes from caller-owned p to buf_. Memcpy is
-  // quarantined in Vec::extend_from_slice's internal @unsafe block
-  // (rusty-cpp's Vec<uint8_t> fast path).
-  std::size_t write(const void* p, std::size_t n) {
-    // @unsafe { caller-provided `const void*` cast to a byte span;
-    //           Vec::extend_from_slice memcpy. }
-    {
-      const auto* bytes = static_cast<const std::uint8_t*>(p);
-      buf_.extend_from_slice(std::span<const std::uint8_t>(bytes, n));
+impl Marshal {
+    fn new() -> Marshal {
+        Marshal {
+            buf_: marshal_make_reserved_buf(),
+            read_pos_: Cell::new(0usize),
+            write_cnt_: Cell::new(0i32),
+        }
     }
-    write_cnt_ += static_cast<rrr::i32>(n);
-    return n;
-  }
 
-  // @safe - Bounded memcpy out of buf_, advance read_pos_, reset on
-  // full drain.
-  std::size_t read(void* p, std::size_t n) {
-    const std::size_t avail = buf_.size() - read_pos_;
-    const std::size_t copy = std::min(n, avail);
-    if (copy == 0) return 0;
-    // @unsafe { libc memcpy from buf_.data()+read_pos_ to caller p. }
-    {
-      std::memcpy(p, buf_.data() + read_pos_, copy);
+    // Empty when fully drained.
+    fn empty(&self) -> bool {
+        self.read_pos_.get() >= self.buf_.len()
     }
-    read_pos_ += copy;
-    if (read_pos_ == buf_.size()) {
-      // Fully drained — recycle storage so steady-state write/read
-      // loops don't grow buf_ unboundedly. Vec::clear keeps the
-      // capacity, only sets len back to 0.
-      buf_.clear();
-      read_pos_ = 0;
-    }
-    return copy;
-  }
 
-  // @safe - Type-safe overload of `read` for trivially-copyable T.
-  template<typename T>
-  std::size_t read(T& out, std::size_t n = sizeof(T)) {
-    static_assert(std::is_trivially_copyable_v<T>, "read requires trivially copyable type");
-    // @unsafe { reinterpret_cast for type-safe wrapper }
-    {
-      return read(reinterpret_cast<void*>(&out), n);
+    // Bytes between read cursor and write tail.
+    fn content_size(&self) -> usize {
+        self.buf_.len() - self.read_pos_.get()
     }
-  }
 
-  // @safe - Like read() but doesn't advance the cursor; for trivially-
-  // copyable T.
-  template<typename T>
-  std::size_t peek(T& out, std::size_t n = sizeof(T)) const {
-    static_assert(std::is_trivially_copyable_v<T>, "peek requires trivially copyable type");
-    const std::size_t avail = buf_.size() - read_pos_;
-    const std::size_t copy = std::min(n, avail);
-    if (copy == 0) return 0;
-    // @unsafe { libc memcpy from buf_.data()+read_pos_; T* address-of. }
-    {
-      std::memcpy(reinterpret_cast<void*>(&out), buf_.data() + read_pos_, copy);
+    // Append n bytes from caller-owned p. (Named write_bytes: the
+    // transpiler reserves/suffixes a bare `write`.)
+    fn write_bytes(&mut self, p: *const u8, n: usize) -> usize {
+        marshal_write(self, p, n)
     }
-    return copy;
-  }
 
-  // @safe - Splice n bytes from another Marshal into this one. Both
-  // sides advance their cursors; source resets on full drain.
-  std::size_t read_from_marshal(Marshal& src, std::size_t n) {
-    verify(src.content_size() >= n);
-    if (n == 0) return 0;
-    // @unsafe { span over src.buf_'s unread range handed to
-    //           Vec::extend_from_slice memcpy. }
-    {
-      auto* bytes = src.buf_.data() + src.read_pos_;
-      buf_.extend_from_slice(std::span<const std::uint8_t>(bytes, n));
+    // Bounded copy out, advance cursor, recycle storage on full drain.
+    fn read(&mut self, p: *mut u8, n: usize) -> usize {
+        marshal_read(self, p, n)
     }
-    write_cnt_ += static_cast<rrr::i32>(n);
-    src.read_pos_ += n;
-    if (src.read_pos_ == src.buf_.size()) {
-      src.buf_.clear();
-      src.read_pos_ = 0;
+
+    // Type-safe read for trivially-copyable T (was `read<T>`).
+    fn read_obj<T>(&mut self, out: &mut T) -> usize {
+        marshal_read_obj(self, out)
     }
-    return n;
-  }
 
-  // @safe - Empty buf_, reset read cursor and write count.
-  void reset() {
-    buf_.clear();
-    read_pos_ = 0;
-    write_cnt_ = 0;
-  }
+    // Like read_obj but does not advance the cursor.
+    fn peek<T>(&self, out: &mut T) -> usize {
+        marshal_peek(self, out)
+    }
 
+    // Raw bulk peek: copy up to n unread bytes without advancing.
+    fn peek_bytes(&self, p: *mut u8, n: usize) -> usize {
+        marshal_peek_bytes(self, p, n)
+    }
+
+    // Splice n bytes from another Marshal into this one.
+    fn read_from_marshal(&mut self, src: &mut Marshal, n: usize) -> usize {
+        marshal_read_from(self, src, n)
+    }
+
+    // Empty the buffer, reset cursor and write count.
+    fn reset(&mut self) {
+        self.buf_.clear();
+        self.read_pos_.set(0);
+        self.write_cnt_.set(0);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=marshal.marshal version=1 rust_sha256=12876777f123eaff5008fe1923017338fb295de7e8199c3316c1ee9b1635da6c*/
+struct Marshal;
+
+struct Marshal {
+    rusty::Vec<uint8_t> buf_;
+    rusty::Cell<size_t> read_pos_;
+    rusty::Cell<int32_t> write_cnt_;
+
+    static Marshal new_();
+    bool empty() const;
+    size_t content_size() const;
+    size_t write_bytes(const uint8_t* p, size_t n);
+    size_t read(uint8_t* p, size_t n);
+    template<typename T>
+    size_t read_obj(T& out);
+    template<typename T>
+    size_t peek(T& out) const;
+    size_t peek_bytes(uint8_t* p, size_t n) const;
+    size_t read_from_marshal(Marshal& src, size_t n);
+    void reset();
 };
+
+
+Marshal Marshal::new_() {
+    return Marshal{.buf_ = marshal_make_reserved_buf(), .read_pos_ = rusty::Cell<size_t>::new_(static_cast<size_t>(0)), .write_cnt_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0))};
+}
+
+bool Marshal::empty() const {
+    return this->read_pos_.get() >= rusty::len(this->buf_);
+}
+
+size_t Marshal::content_size() const {
+    return rusty::len(this->buf_) - this->read_pos_.get();
+}
+
+size_t Marshal::write_bytes(const uint8_t* p, size_t n) {
+    return marshal_write((*this), p, std::move(n));
+}
+
+size_t Marshal::read(uint8_t* p, size_t n) {
+    return marshal_read((*this), p, std::move(n));
+}
+
+template<typename T>
+size_t Marshal::read_obj(T& out) {
+    return marshal_read_obj((*this), out);
+}
+
+template<typename T>
+size_t Marshal::peek(T& out) const {
+    return marshal_peek((*this), out);
+}
+
+size_t Marshal::peek_bytes(uint8_t* p, size_t n) const {
+    return marshal_peek_bytes((*this), p, std::move(n));
+}
+
+size_t Marshal::read_from_marshal(Marshal& src, size_t n) {
+    return marshal_read_from((*this), src, std::move(n));
+}
+
+void Marshal::reset() {
+    this->buf_.clear();
+    this->read_pos_.set(static_cast<size_t>(0));
+    this->write_cnt_.set(static_cast<int32_t>(0));
+}
+/*RUSTYCPP:GEN-END id=marshal.marshal*/
+
+// ---- Marshal kernels (raw byte surgery; @unsafe boundaries) ----------
+
+// @unsafe - caller-provided byte pointer into Vec::extend_from_slice.
+inline std::size_t marshal_write(Marshal& self, const std::uint8_t* p,
+                                 std::size_t n) {
+  self.buf_.extend_from_slice(std::span<const std::uint8_t>(p, n));
+  self.write_cnt_.set(self.write_cnt_.get() + static_cast<rrr::i32>(n));
+  return n;
+}
+
+// @unsafe - libc memcpy from buf_.data()+read_pos_ to caller p.
+inline std::size_t marshal_read(Marshal& self, std::uint8_t* p,
+                                std::size_t n) {
+  const std::size_t avail = self.buf_.size() - self.read_pos_.get();
+  const std::size_t copy = std::min(n, avail);
+  if (copy == 0) return 0;
+  std::memcpy(p, self.buf_.data() + self.read_pos_.get(), copy);
+  self.read_pos_.set(self.read_pos_.get() + copy);
+  if (self.read_pos_.get() == self.buf_.size()) {
+    // Fully drained — recycle storage so steady-state write/read loops
+    // don't grow buf_ unboundedly (clear keeps capacity).
+    self.buf_.clear();
+    self.read_pos_.set(0);
+  }
+  return copy;
+}
+
+// @unsafe - reinterpret_cast for the type-safe wrapper.
+template <typename T>
+inline std::size_t marshal_read_obj(Marshal& self, T& out) {
+  static_assert(std::is_trivially_copyable_v<T>,
+                "read_obj requires trivially copyable type");
+  return marshal_read(self, reinterpret_cast<std::uint8_t*>(&out), sizeof(T));
+}
+
+// @unsafe - libc memcpy from buf_.data()+read_pos_ to caller p.
+inline std::size_t marshal_peek_bytes(const Marshal& self, std::uint8_t* p,
+                                      std::size_t n) {
+  const std::size_t avail = self.buf_.size() - self.read_pos_.get();
+  const std::size_t copy = std::min(n, avail);
+  if (copy == 0) return 0;
+  std::memcpy(p, self.buf_.data() + self.read_pos_.get(), copy);
+  return copy;
+}
+
+// @unsafe - libc memcpy from buf_.data()+read_pos_; T* address-of.
+template <typename T>
+inline std::size_t marshal_peek(const Marshal& self, T& out) {
+  static_assert(std::is_trivially_copyable_v<T>,
+                "peek requires trivially copyable type");
+  const std::size_t avail = self.buf_.size() - self.read_pos_.get();
+  const std::size_t copy = std::min(sizeof(T), avail);
+  if (copy == 0) return 0;
+  std::memcpy(reinterpret_cast<void*>(&out),
+              self.buf_.data() + self.read_pos_.get(), copy);
+  return copy;
+}
+
+// @unsafe - span over src's unread range into Vec::extend_from_slice.
+inline std::size_t marshal_read_from(Marshal& self, Marshal& src,
+                                     std::size_t n) {
+  verify(src.content_size() >= n);
+  if (n == 0) return 0;
+  const auto* bytes = src.buf_.data() + src.read_pos_.get();
+  self.buf_.extend_from_slice(std::span<const std::uint8_t>(bytes, n));
+  self.write_cnt_.set(self.write_cnt_.get() + static_cast<rrr::i32>(n));
+  src.read_pos_.set(src.read_pos_.get() + n);
+  if (src.read_pos_.get() == src.buf_.size()) {
+    src.buf_.clear();
+    src.read_pos_.set(0);
+  }
+  return n;
+}
 
 // ---------------------------------------------------------------------------
 // Marshal ↔ Archive bridges (Phase 1 of marshal-serde-split).
@@ -294,7 +411,7 @@ public:
 // @safe - The only raw-pointer op is Marshal::write, annotated below.
 inline void marshal_sink_write(MarshalSink& self, const void* p, size_t n) {
   // @unsafe { Marshal::write through borrowed pointer + verify }
-  size_t actual = self.m_->write(p, n);
+  size_t actual = self.m_->write_bytes(static_cast<const std::uint8_t*>(p), n);
   verify(actual == n);
 }
 
@@ -358,7 +475,7 @@ public:
 // @safe - The only raw-pointer op is Marshal::read, annotated below.
 inline size_t marshal_source_read(MarshalSource& self, void* p, size_t n) {
   // @unsafe { Marshal::read through borrowed pointer }
-  return self.m_->read(p, n);
+  return self.m_->read(static_cast<std::uint8_t*>(p), n);
 }
 
 inline SinkProxy make_sink_proxy(Marshal* m) {
@@ -378,28 +495,28 @@ inline SourceProxy make_source_proxy(MarshalSource* source) {
 // @safe
 // @lifetime: (&'a, const i8&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {
-  verify(m.write(&v, sizeof(v)) == sizeof(v));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const i16&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i16 &v) {
-  verify(m.write(&v, sizeof(v)) == sizeof(v));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const i32&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) {
-  verify(m.write(&v, sizeof(v)) == sizeof(v));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const i64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
-  verify(m.write(&v, sizeof(v)) == sizeof(v));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
@@ -410,7 +527,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
   {
     char buf[5];
     size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    verify(m.write(buf, bsize) == bsize);
+    verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
     return m;
   }
 }
@@ -422,7 +539,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
   {
     char buf[9];
     size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-    verify(m.write(buf, bsize) == bsize);
+    verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
     return m;
   }
 }
@@ -430,35 +547,35 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
 // @safe
 // @lifetime: (&'a, const uint8_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint8_t &u) {
-  verify(m.write(&u, sizeof(u)) == sizeof(u));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const uint16_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint16_t &u) {
-  verify(m.write(&u, sizeof(u)) == sizeof(u));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const uint32_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) {
-  verify(m.write(&u, sizeof(u)) == sizeof(u));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const uint64_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) {
-  verify(m.write(&u, sizeof(u)) == sizeof(u));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, const double&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) {
-  verify(m.write(&v, sizeof(v)) == sizeof(v));
+  verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
@@ -468,7 +585,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
   v64 v_len{static_cast<rrr::i64>(v.length())};
   m << v_len;
   if (v_len.get() > 0) {
-    verify(m.write(v.c_str(), v_len.get()) == (size_t) v_len.get());
+    verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(v.c_str()), v_len.get()) == (size_t) v_len.get());
   }
 
   return m;
@@ -640,28 +757,28 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m,
 // @safe
 // @lifetime: (&'a, i8&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i8 &v) {
-  verify(m.read(&v, sizeof(v)) == sizeof(v));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, i16&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i16 &v) {
-  verify(m.read(&v, sizeof(v)) == sizeof(v));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, i32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) {
-  verify(m.read(&v, sizeof(v)) == sizeof(v));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, i64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
-  verify(m.read(&v, sizeof(v)) == sizeof(v));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
@@ -669,10 +786,10 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
 // @lifetime: (&'a, v32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   char byte0;
-  verify(m.peek(byte0, 1) == 1);
+  verify(m.peek(byte0) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[5];
-  verify(m.read(buf, bsize) == bsize);
+  verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
   i32 val = rrr::SparseInt::load_i32(buf);
   v.set(val);
   return m;
@@ -682,10 +799,10 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
 // @lifetime: (&'a, v64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   char byte0;
-  verify(m.peek(byte0, 1) == 1);
+  verify(m.peek(byte0) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[9];
-  verify(m.read(buf, bsize) == bsize);
+  verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
   i64 val = rrr::SparseInt::load_i64(buf);
   v.set(val);
   return m;
@@ -694,35 +811,35 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
 // @safe
 // @lifetime: (&'a, uint8_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint8_t &u) {
-  verify(m.read(&u, sizeof(u)) == sizeof(u));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, uint16_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint16_t &u) {
-  verify(m.read(&u, sizeof(u)) == sizeof(u));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, uint32_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint32_t &u) {
-  verify(m.read(&u, sizeof(u)) == sizeof(u));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, uint64_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint64_t &u) {
-  verify(m.read(&u, sizeof(u)) == sizeof(u));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
   return m;
 }
 
 // @safe
 // @lifetime: (&'a, double&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, double &v) {
-  verify(m.read(&v, sizeof(v)) == sizeof(v));
+  verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
   return m;
 }
 
@@ -733,7 +850,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
   m >> v_len;
   v.resize(v_len.get());
   if (v_len.get() > 0) {
-    verify(m.read(&v[0], v_len.get()) == (size_t) v_len.get());
+    verify(m.read(reinterpret_cast<std::uint8_t*>(&v[0]), v_len.get()) == (size_t) v_len.get());
   }
   return m;
 }

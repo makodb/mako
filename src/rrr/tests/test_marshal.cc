@@ -330,11 +330,11 @@ TEST_F(MarshalTest, PartialReadWrite) {
         write_data[i] = static_cast<char>(i % 256);
     }
     
-    size_t written = m.as_ref().unwrap()->write(write_data.data(), data_size);
+    size_t written = m.as_ref().unwrap()->write_bytes(reinterpret_cast<const std::uint8_t*>(write_data.data()), data_size);
     EXPECT_EQ(written, data_size);
     
     std::vector<char> read_data(data_size);
-    size_t read = m.as_ref().unwrap()->read(read_data.data(), data_size);
+    size_t read = m.as_ref().unwrap()->read(reinterpret_cast<std::uint8_t*>(read_data.data()), data_size);
     EXPECT_EQ(read, data_size);
     
     EXPECT_EQ(write_data, read_data);
