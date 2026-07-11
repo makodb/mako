@@ -21,6 +21,7 @@
 #define MASSTREE_SCAN_HH
 #include "masstree_tcursor.hh"
 #include "masstree_struct.hh"
+#include <rusty/cell.hpp>
 #include <rusty/ptr.hpp>
 namespace Masstree {
 
@@ -148,10 +149,10 @@ struct reverse_scan_helper {
     template <typename K> bool is_duplicate(const K &k,
                                             typename K::ikey_type ikey,
                                             int keylenx) const {
-        return k.compare(ikey, keylenx) <= 0 && !upper_bound_;
+        return k.compare(ikey, keylenx) <= 0 && !get_upper_bound();
     }
     template <typename K, typename N> int lower(const K &k, rusty::Ptr<N> n) const {
-        if (upper_bound_)
+        if (get_upper_bound())
             return n->size() - 1;
         key_indexed_position kx = N::bound_type::lower_by(k, *n, *n);
         return kx.i - (kx.p < 0);
@@ -166,7 +167,7 @@ struct reverse_scan_helper {
         return ki - 1;
     }
     void found() const {
-        upper_bound_ = false;
+        set_upper_bound(false);
     }
     template <typename N, typename K>
     rusty::MutPtr<N> advance(rusty::Ptr<N> n, K &k) const {
@@ -189,10 +190,16 @@ struct reverse_scan_helper {
     }
     template <typename K> void shift_clear(K &ka) const {
         ka.shift_clear_reverse();
-        upper_bound_ = true;
+        set_upper_bound(true);
     }
   private:
-    mutable bool upper_bound_;
+    rusty::Cell<bool> upper_bound_;
+    void set_upper_bound(bool b) const {
+        upper_bound_.set(b);
+    }
+    bool get_upper_bound() const {
+        return upper_bound_.get();
+    }
 };
 
 
