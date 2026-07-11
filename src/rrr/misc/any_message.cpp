@@ -26,53 +26,135 @@ import rrr.threading;
 export namespace rrr {
 
 
-// @safe - see file header.
-class AnyMessage {
- public:
-  AnyMessage() = default;
+struct AnyMessage;
+using AnyMessageSp = std::shared_ptr<AnyMessage>;
 
-  // Wire ops — `[v64 type_name] [payload bytes]`.  The payload's
-  // bytes come from the inner T's `save`/`load` via the proxy
-  // facade.
-  void save(BinaryWriteArchive& ar) const;
-  void load(BinaryReadArchive& ar);
+// Hand-written backing free fns for the DSL save/load below (Marshal
+// operator chains + shared_ptr deref). Defined in the impl namespace.
+void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar);
+void anymessage_load(AnyMessage& self, BinaryReadArchive& ar);
 
-  // Discriminator accessors.
-  const std::string& type_name() const noexcept { return type_name_; }
-  bool is_a(std::string_view name) const noexcept {
-    return std::string_view{type_name_} == name;
-  }
+// The generic backing free fns must be DECLARED before the generated
+// template methods below: `pack`/`pack_as` take only std::shared_ptr<T>
+// arguments, so for a non-rrr T argument-dependent lookup never
+// considers namespace rrr — ordinary lookup at the template definition
+// point has to find these. (is_a/unpack pass `(*this)` and would be
+// found by ADL, declared here anyway for uniformity.) Definitions
+// (inline) follow the registry declarations below.
+template <typename T> bool anymessage_is_a(const AnyMessage& self);
+template <typename T> std::shared_ptr<T> anymessage_unpack(const AnyMessage& self);
+template <typename T> AnyMessageSp anymessage_pack_as(std::string name, std::shared_ptr<T> val);
+template <typename T> AnyMessageSp anymessage_pack(std::shared_ptr<T> val);
 
-  // True iff this AnyMessage carries a value of type T (i.e., the
-  // wire-carried type_name matches T's registered name).
-  template <typename T>
-  bool is_a() const;
+// `AnyMessage` — typed wire payload `[v64 type_name] [payload bytes]`.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * The `is_a(std::string_view)` overload and the `type_name()`
+//     accessor are DROPPED — zero callers repo-wide, and a Rust impl
+//     block cannot hold two fns named `is_a` anyway.
+//   * The private 2-arg ctor is gone; the struct is a plain public
+//     aggregate (`AnyMessage m;` default-construct sites in rcc_rpc.h
+//     keep working — both members default-construct). pack_as builds
+//     the aggregate directly.
+//   * The generic methods delegate to anymessage_* template free fns
+//     (found by ADL at instantiation, the clientconn_request_*
+//     precedent); pack/pack_as spell the return as the AnyMessageSp
+//     alias (same type as before).
+#if RUSTYCPP_RUST
+struct AnyMessage {
+    type_name_: std::string,
+    payload_: SerializableProxy,
+}
 
-  // Recover the typed payload. Returns nullptr if T is not the
-  // carried type, or if T was never registered.
-  template <typename T>
-  std::shared_ptr<T> unpack() const;
+impl AnyMessage {
+    // Wire ops. The payload's bytes come from the inner T's
+    // `save`/`load` via the proxy facade.
+    fn save(&self, ar: &mut BinaryWriteArchive) {
+        anymessage_save(self, ar)
+    }
 
-  // Build an AnyMessage holding `val` under an explicit `name`. The
-  // name does NOT need to have been pre-registered — pack_as is the
-  // escape hatch for ad-hoc names. The receiver still needs a
-  // factory registered under the same name to deserialize.
-  template <typename T>
-  static std::shared_ptr<AnyMessage> pack_as(std::string name,
-                                             std::shared_ptr<T> val);
+    fn load(&mut self, ar: &mut BinaryReadArchive) {
+        anymessage_load(self, ar)
+    }
 
-  // Build an AnyMessage using T's registered name. Aborts via
-  // verify() if T was not registered with `reg_any_message_as<T>(...)`.
-  template <typename T>
-  static std::shared_ptr<AnyMessage> pack(std::shared_ptr<T> val);
+    // True iff this AnyMessage carries a value of type T (i.e., the
+    // wire-carried type_name matches T's registered name).
+    fn is_a<T>(&self) -> bool {
+        anymessage_is_a::<T>(self)
+    }
 
- private:
-  AnyMessage(std::string type_name, SerializableProxy payload)
-      : type_name_(std::move(type_name)), payload_(std::move(payload)) {}
+    // Recover the typed payload. Returns nullptr if T is not the
+    // carried type, or if T was never registered.
+    fn unpack<T>(&self) -> std::shared_ptr<T> {
+        anymessage_unpack::<T>(self)
+    }
 
-  std::string type_name_;
-  SerializableProxy payload_;
+    // Build an AnyMessage holding `val` under an explicit `name`. The
+    // name does NOT need to have been pre-registered — pack_as is the
+    // escape hatch for ad-hoc names. The receiver still needs a
+    // factory registered under the same name to deserialize.
+    fn pack_as<T>(name: std::string, val: std::shared_ptr<T>) -> AnyMessageSp {
+        anymessage_pack_as(name, val)
+    }
+
+    // Build an AnyMessage using T's registered name. Aborts via
+    // verify() if T was not registered with `reg_any_message_as<T>(...)`.
+    fn pack<T>(val: std::shared_ptr<T>) -> AnyMessageSp {
+        anymessage_pack(val)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=0c7fa9020ff38127267d6cd2f38983829a15a401deeb803c274c7374497667c6*/
+struct AnyMessage;
+
+struct AnyMessage {
+    std::string type_name_;
+    SerializableProxy payload_;
+
+    void save(BinaryWriteArchive& ar) const;
+    void load(BinaryReadArchive& ar);
+    template<typename T>
+    bool is_a() const;
+    template<typename T>
+    std::shared_ptr<T> unpack() const;
+    template<typename T>
+    static AnyMessageSp pack_as(std::string name, std::shared_ptr<T> val);
+    template<typename T>
+    static AnyMessageSp pack(std::shared_ptr<T> val);
 };
+
+
+void AnyMessage::save(BinaryWriteArchive& ar) const {
+    anymessage_save((*this), ar);
+}
+
+void AnyMessage::load(BinaryReadArchive& ar) {
+    anymessage_load((*this), ar);
+}
+
+template<typename T>
+bool AnyMessage::is_a() const {
+    return anymessage_is_a<T>((*this));
+}
+
+template<typename T>
+std::shared_ptr<T> AnyMessage::unpack() const {
+    return anymessage_unpack<T>((*this));
+}
+
+template<typename T>
+AnyMessageSp AnyMessage::pack_as(std::string name, std::shared_ptr<T> val) {
+    return anymessage_pack_as(std::move(name), std::move(val));
+}
+
+template<typename T>
+AnyMessageSp AnyMessage::pack(std::shared_ptr<T> val) {
+    return anymessage_pack(std::move(val));
+}
+/*RUSTYCPP:GEN-END id=any_message.message*/
 
 // Runtime registry: maps registered type-name string → factory and
 // std::type_index → registered name. Stored behind a SpinMutex
@@ -144,46 +226,46 @@ inline int reg_any_message_as(std::string name) {
 // @unsafe - dereferences raw `const std::string*` returned by
 // any_message_registry::name_for_type.
 template <typename T>
-inline bool AnyMessage::is_a() const {
+inline bool anymessage_is_a(const AnyMessage& self) {
   const std::string* name = any_message_registry::name_for_type(
       std::type_index(typeid(T)));
   if (name == nullptr) return false;
-  return type_name_ == *name;
+  return self.type_name_ == *name;
 }
 
 // @unsafe - dynamic_cast through `payload_.get()` returning raw `T*`.
 template <typename T>
-inline std::shared_ptr<T> AnyMessage::unpack() const {
-  if (!is_a<T>()) return nullptr;
-  if (!payload_) return nullptr;
+inline std::shared_ptr<T> anymessage_unpack(const AnyMessage& self) {
+  if (!anymessage_is_a<T>(self)) return nullptr;
+  if (!self.payload_) return nullptr;
   if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(
-          payload_.get())) {
+          self.payload_.get())) {
     return h->ptr;
   }
   return nullptr;
 }
 
-// @unsafe - `new AnyMessage(...)` raw allocation passed into shared_ptr.
+// @unsafe - aggregate-constructs the AnyMessage into a shared_ptr.
 template <typename T>
-inline std::shared_ptr<AnyMessage> AnyMessage::pack_as(
-    std::string name, std::shared_ptr<T> val) {
+inline AnyMessageSp anymessage_pack_as(std::string name,
+                                       std::shared_ptr<T> val) {
   verify(val != nullptr);
   auto payload = std::make_shared<details::SerializableSharedPtrHolder<T>>(
       std::move(val));
-  return std::shared_ptr<AnyMessage>(
-      new AnyMessage(std::move(name), std::move(payload)));
+  return std::make_shared<AnyMessage>(
+      AnyMessage{std::move(name), std::move(payload)});
 }
 
 // @unsafe - dereferences raw `const std::string*` from name_for_type
-// and forwards to the @unsafe pack_as.
+// and forwards to the @unsafe anymessage_pack_as.
 template <typename T>
-inline std::shared_ptr<AnyMessage> AnyMessage::pack(std::shared_ptr<T> val) {
+inline AnyMessageSp anymessage_pack(std::shared_ptr<T> val) {
   const std::string* name = any_message_registry::name_for_type(
       std::type_index(typeid(T)));
   verify(name != nullptr &&
          "AnyMessage::pack<T>: T not registered. "
          "Call reg_any_message_as<T>(\"name\") at static init.");
-  return pack_as<T>(*name, std::move(val));
+  return anymessage_pack_as<T>(*name, std::move(val));
 }
 
 // ---- Free archive operators -----------------------------------------
@@ -219,22 +301,22 @@ namespace rrr {
 
 // @unsafe - `ar << type_name_` Marshal operator<< chain + raw
 // shared_ptr deref to call payload_->save.
-void AnyMessage::save(BinaryWriteArchive& ar) const {
-  ar << type_name_;
-  if (payload_) {
-    payload_->save(ar);
+void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
+  ar << self.type_name_;
+  if (self.payload_) {
+    self.payload_->save(ar);
   }
 }
 
 // @unsafe - `ar >> type_name_` Marshal operator>> chain + raw
 // shared_ptr deref to call payload_->load.
-void AnyMessage::load(BinaryReadArchive& ar) {
-  ar >> type_name_;
-  payload_ = any_message_registry::create(type_name_);
-  verify(payload_ &&
+void anymessage_load(AnyMessage& self, BinaryReadArchive& ar) {
+  ar >> self.type_name_;
+  self.payload_ = any_message_registry::create(self.type_name_);
+  verify(self.payload_ &&
          "AnyMessage::load: unknown type name on wire.  "
          "Did the sender register a type the receiver does not know?");
-  payload_->load(ar);
+  self.payload_->load(ar);
 }
 
 namespace {

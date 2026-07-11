@@ -686,7 +686,7 @@ void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
     } else {
       *p_md_res_graph = *rrr::AnyMessage::pack(sp_graph);
     }
-    verify(!p_md_res_graph->type_name().empty());
+    verify(!p_md_res_graph->type_name_.empty());
     defer.reply();
 }
 

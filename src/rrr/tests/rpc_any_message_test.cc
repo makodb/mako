@@ -2,7 +2,7 @@
 //
 // Validates the open-set polymorphic envelope from `any_message.hpp`:
 //   1. Pack + unpack roundtrip preserves typed payload values.
-//   2. `is_a<T>()` / `is_a(name)` / `type_name()` discriminators work.
+//   2. `is_a<T>()` / the public `type_name_` discriminator work.
 //   3. Wrong-type unpack returns nullptr (not abort).
 //   4. Direct archive roundtrip produces an AnyMessage that decodes
 //      to the same typed value.
@@ -77,7 +77,7 @@ TEST(AnyMessageTest, PackUnpackRoundTripPreservesValue) {
 
   auto am = AnyMessage::pack(val);
   ASSERT_NE(am, nullptr);
-  EXPECT_EQ(am->type_name(), kGraphName);
+  EXPECT_EQ(am->type_name_, kGraphName);
   EXPECT_TRUE(am->is_a<GraphPayload>());
   EXPECT_FALSE(am->is_a<OtherPayload>());
 
@@ -110,8 +110,8 @@ TEST(AnyMessageTest, IsAByName) {
   auto val = std::make_shared<GraphPayload>();
   auto am = AnyMessage::pack(val);
 
-  EXPECT_TRUE(am->is_a(kGraphName));
-  EXPECT_FALSE(am->is_a("nonexistent.Type"));
+  EXPECT_TRUE(am->type_name_ == kGraphName);
+  EXPECT_FALSE(am->type_name_ == "nonexistent.Type");
 }
 
 TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
@@ -139,7 +139,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
     reader >> incoming;
   }
 
-  EXPECT_EQ(incoming.type_name(), kGraphName);
+  EXPECT_EQ(incoming.type_name_, kGraphName);
   EXPECT_TRUE(incoming.is_a<GraphPayload>());
 
   auto recovered = incoming.unpack<GraphPayload>();
@@ -165,7 +165,7 @@ TEST(AnyMessageTest, PackAsAdHocName) {
 
   auto am = AnyMessage::pack_as<GraphPayload>("graph.alias.v1", val);
   ASSERT_NE(am, nullptr);
-  EXPECT_EQ(am->type_name(), "graph.alias.v1");
+  EXPECT_EQ(am->type_name_, "graph.alias.v1");
 
   // Wire roundtrip under the alias name.
   AnyMessage outgoing = *am;
@@ -181,7 +181,7 @@ TEST(AnyMessageTest, PackAsAdHocName) {
     BinaryReadArchive reader(make_source_proxy(&src));
     reader >> incoming;
   }
-  EXPECT_EQ(incoming.type_name(), "graph.alias.v1");
+  EXPECT_EQ(incoming.type_name_, "graph.alias.v1");
 
   // is_a<GraphPayload>() resolves through the FIRST registered name
   // for GraphPayload (kGraphName). Under the alias name, is_a<T>
@@ -189,7 +189,7 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   // (single) name_for_type lookup. This is intentional: the registry
   // tracks one canonical name per type.
   EXPECT_FALSE(incoming.is_a<GraphPayload>());
-  EXPECT_TRUE(incoming.is_a("graph.alias.v1"));
+  EXPECT_TRUE(incoming.type_name_ == "graph.alias.v1");
 }
 
 TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
@@ -249,7 +249,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
     ar >> incoming;
   }
 
-  EXPECT_EQ(incoming.type_name(), kGraphName);
+  EXPECT_EQ(incoming.type_name_, kGraphName);
   EXPECT_TRUE(incoming.is_a<GraphPayload>());
   auto recovered = incoming.unpack<GraphPayload>();
   ASSERT_NE(recovered, nullptr);
