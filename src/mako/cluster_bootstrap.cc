@@ -309,12 +309,70 @@ private:
                                               req.table_name);
                 if (s != nullptr) src_ck = s->checksum(publish_lo, publish_hi);
                 if (d != nullptr) dst_ck = d->checksum(publish_lo, publish_hi);
+                Log_warn("MigrationAdmin: final_sync diverged for '%s': src rows=%zu "
+                         "dst rows=%zu src_ck=%llu dst_ck=%llu faulted=%d",
+                         req.table_name.c_str(), src_n, dst_n,
+                         static_cast<unsigned long long>(src_ck),
+                         static_cast<unsigned long long>(dst_ck), faulted ? 1 : 0);
+                // Row-level diff on a REAL divergence (both folds well-formed
+                // but different): still pre-abort, so both sides are fenced
+                // and still. Names the first few mismatching rows -- the
+                // guilty value shape identifies the copy-fidelity bug.
+                if (src_ck != 0 && dst_ck != 0 && src_ck != dst_ck &&
+                    s != nullptr && d != nullptr) {
+                    auto hex = [](const std::string& b, size_t off, size_t n) {
+                        static const char* k = "0123456789abcdef";
+                        std::string h;
+                        for (size_t x = off; x < b.size() && x < off + n; x++) {
+                            unsigned char c = static_cast<unsigned char>(b[x]);
+                            h += k[c >> 4]; h += k[c & 15];
+                        }
+                        return h;
+                    };
+                    // Scan with the EXPLICIT whole-keyspace range: the remote
+                    // scan path chunks CLIENT-side from the caller's lo, and
+                    // wh-spec publish keys (warehouse_route_key space) never
+                    // match physical rows -- the same artifact that makes the
+                    // counts above read 0 for the remote side.
+                    const std::string diff_lo;
+                    const std::string diff_hi(16, '\xff');
+                    auto sv = s->scan_range(diff_lo, diff_hi);
+                    auto dv = d->scan_range(diff_lo, diff_hi);
+                    Log_warn("MigrationAdmin: diff scan src=%zu dst=%zu rows",
+                             sv.size(), dv.size());
+                    size_t i = 0, j = 0;
+                    int logged = 0;
+                    while ((i < sv.size() || j < dv.size()) && logged < 3) {
+                        if (j >= dv.size() ||
+                            (i < sv.size() && sv[i].first < dv[j].first)) {
+                            Log_warn("  diff: key only on SRC k[%zu]=%s",
+                                     sv[i].first.size(),
+                                     hex(sv[i].first, 0, 24).c_str());
+                            i++; logged++;
+                        } else if (i >= sv.size() || dv[j].first < sv[i].first) {
+                            Log_warn("  diff: key only on DST k[%zu]=%s",
+                                     dv[j].first.size(),
+                                     hex(dv[j].first, 0, 24).c_str());
+                            j++; logged++;
+                        } else {
+                            if (sv[i].second != dv[j].second) {
+                                size_t o = 0;
+                                const std::string& a = sv[i].second;
+                                const std::string& b = dv[j].second;
+                                while (o < a.size() && o < b.size() && a[o] == b[o]) o++;
+                                Log_warn("  diff: k[%zu]=%s src_vlen=%zu dst_vlen=%zu "
+                                         "first_diff@%zu src[..]=%s dst[..]=%s",
+                                         sv[i].first.size(),
+                                         hex(sv[i].first, 0, 24).c_str(),
+                                         a.size(), b.size(), o,
+                                         hex(a, o, 16).c_str(), hex(b, o, 16).c_str());
+                                logged++;
+                            }
+                            i++; j++;
+                        }
+                    }
+                }
             }
-            Log_warn("MigrationAdmin: final_sync diverged for '%s': src rows=%zu "
-                     "dst rows=%zu src_ck=%llu dst_ck=%llu faulted=%d",
-                     req.table_name.c_str(), src_n, dst_n,
-                     static_cast<unsigned long long>(src_ck),
-                     static_cast<unsigned long long>(dst_ck), faulted ? 1 : 0);
             master->abort_migration();
             return faulted
                 ? "participant unreachable -> aborted (source intact and "
