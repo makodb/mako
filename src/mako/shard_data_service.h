@@ -303,11 +303,12 @@ public:
     }
     std::vector<KvPair> scan_range(const std::string& lo,
                                    const std::string& hi) override {
-        // A full scan = repeated bounded remote scans (keeps each message small).
+        // A full scan = repeated bounded remote scans (each response ~1MB max;
+        // sized with copy_range_from's kCopyChunk for big workload tables).
         std::vector<KvPair> out;
         std::string cur = lo;
         while (cur < hi) {
-            std::vector<KvPair> batch = scan_range_limited(cur, hi, 1024);
+            std::vector<KvPair> batch = scan_range_limited(cur, hi, 4096);
             if (batch.empty()) break;
             std::string last = batch.back().first;
             for (auto& kv : batch) out.push_back(std::move(kv));

@@ -81,7 +81,11 @@ public:
     // data-plane service. Migration data never transits the coordinator.
     virtual void copy_range_from(ShardData* source, const std::string& lo,
                                  const std::string& hi) {
-        static const size_t kCopyChunk = 512;
+        // Sized for big workload tables: a 100k-row stock warehouse at 512
+        // rows/chunk is ~200 scan round-trips; 4096 cuts that to ~25 while a
+        // chunk response (rows ~300B) stays around a megabyte -- well inside
+        // rrr frame limits and the ~1s request budget.
+        static const size_t kCopyChunk = 4096;
         std::string cur = lo;
         while (cur < hi) {
             std::vector<KvPair> batch = source->scan_range_limited(cur, hi, kCopyChunk);

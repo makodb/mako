@@ -67,6 +67,10 @@ echo "dbtest config: $MAKO_CONFIG  (migrating warehouse ${MIG_WH}, shard 1 -> 0)
 
 export MAKO_CLUSTER_CONFIG=1
 export MAKO_SHARDING_MODE=map
+# The four migrations (through stock's ~100k-row copy) need more benchmark
+# window than the default 30s -- the shards must keep serving until every
+# cutover lands, or the tail migrations die with the bed.
+export MAKO_RUNTIME_SECONDS=90
 
 cleanup_temp_config() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then

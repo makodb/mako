@@ -423,6 +423,21 @@ main(int argc, char **argv)
   parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
                           site_name, paxos_config_file, local_shards_str, replication_type);
 
+  // Benchmark runtime override (seconds; default 30 from BenchmarkConfig).
+  // Beds that run long control-plane work mid-benchmark -- e.g. the live
+  // warehouse-migration capstone, whose big-table copies outlast 30s --
+  // lengthen the window without touching every config file.
+  if (const char* rt = getenv("MAKO_RUNTIME_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(rt, &endptr, 10);
+    if (endptr != rt && *endptr == '\0' && parsed > 0 && parsed <= 86400) {
+      benchConfig.setRuntime(static_cast<uint64_t>(parsed));
+      Notice("MAKO_RUNTIME_SECONDS=%ld: benchmark runtime overridden", parsed);
+    } else {
+      Warning("Invalid MAKO_RUNTIME_SECONDS='%s'; ignoring", rt);
+    }
+  }
+
   // Keep dbtest CLI responsive to process-level termination signals (SIGTERM/SIGINT),
   // which are commonly used by timeout/docker stop/script cleanup flows.
   set_fasttransport_signal_handlers_enabled(false);
