@@ -1026,7 +1026,7 @@ int onego(query<row_type>& q, Json& request, Str request_str, threadinfo& ti) {
                                req, end_req, ti);
         if (ti.logger() && request_str) {
             // use the client's parsed version of the request
-            msgpack::parser mp(request_str.data());
+            msgpack::parser mp = msgpack::parser::from_const_char(request_str.data());
             mp.skip_array_size().skip_primitives(3);
             ti.logger()->record(logcmd_put, q.query_times(), key, Str(mp.position(), request_str.end()));
         } else if (ti.logger())
@@ -1342,7 +1342,7 @@ kvepoch_t read_checkpoint(threadinfo *ti, const char *path) {
     always_assert(p != MAP_FAILED);
     close(fd);
 
-    msgpack::parser par(String::make_stable(p, sb.st_size));
+    msgpack::parser par = msgpack::parser::from_string(String::make_stable(p, sb.st_size));
     Json j;
     par >> j;
     std::cerr << j << "\n";
