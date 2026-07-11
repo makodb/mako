@@ -1045,6 +1045,10 @@ inline PollableProxy make_tcp_listener_pollable_proxy(
 // translate to the DSL grammar today. The
 // `connect_errno_to_channel_error` static helper also moves to a
 // non-DSL free function (only called from `tcp_factory_connect`).
+struct TcpFactory;
+ConnectResult                       tcp_factory_connect(const TcpFactory& self, std::string_view addr);
+rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self);
+
 #if RUSTYCPP_RUST
 struct TcpFactory {
     poll_thread_: Arc<PollThread>,
@@ -1060,12 +1064,21 @@ impl TcpFactory {
         std::string("tcp")
     }
 
+    // Socket + connect path (kernel does the syscalls).
+    fn connect(&self, addr: std::string_view) -> ConnectResult {
+        tcp_factory_connect(self, addr)
+    }
+
+    fn make_listener(&self) -> Option<ChannelListenerProxy> {
+        tcp_factory_make_listener(self)
+    }
+
     fn set_connect_timeout_ms(&mut self, timeout_ms: i32) {
         self.connect_timeout_ms_ = timeout_ms;
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.factory version=1 rust_sha256=e747e0cf7b391eb08b698d50bdd72c0e05ac556f2d6e918889b6ae2892c15469*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.factory version=1 rust_sha256=d43919efde1a49f808f725b869069277bcf518d0c536d1c7d016d0d36dc97288*/
 struct TcpFactory;
 
 struct TcpFactory {
@@ -1074,6 +1087,8 @@ struct TcpFactory {
 
     static TcpFactory new_(rusty::Arc<PollThread> poll_thread);
     std::string backend_name() const;
+    ConnectResult connect(std::string_view addr) const;
+    rusty::Option<ChannelListenerProxy> make_listener() const;
     void set_connect_timeout_ms(int32_t timeout_ms);
 };
 
@@ -1086,34 +1101,70 @@ std::string TcpFactory::backend_name() const {
     return std::string("tcp");
 }
 
+ConnectResult TcpFactory::connect(std::string_view addr) const {
+    return tcp_factory_connect((*this), std::move(addr));
+}
+
+rusty::Option<ChannelListenerProxy> TcpFactory::make_listener() const {
+    return tcp_factory_make_listener((*this));
+}
+
 void TcpFactory::set_connect_timeout_ms(int32_t timeout_ms) {
     this->connect_timeout_ms_ = std::move(timeout_ms);
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.factory*/
 
 // Free functions (non-DSL) — see definitions further down.
-ConnectResult                       tcp_factory_connect(TcpFactory& self, std::string_view addr);
-rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(TcpFactory& self);
+// `TcpFactoryShim` — Arc-holding ChannelFactoryBase implementor
+// (same recipe as the four shims above; no const_cast idiom).
+#if RUSTYCPP_RUST
+struct TcpFactoryShim {
+    factory_: Arc<TcpFactory>,
+}
 
-class TcpFactoryAdapter : public ChannelFactoryBase {
- public:
-    explicit TcpFactoryAdapter(rusty::Arc<TcpFactory> factory)
-        : factory_(std::move(factory)) {}
+#[cpp_inherit]
+impl ChannelFactoryBase for TcpFactoryShim {
+    fn connect(&mut self, addr: std::string_view) -> ConnectResult {
+        self.factory_.connect(addr)
+    }
+    fn make_listener(&mut self) -> Option<ChannelListenerProxy> {
+        self.factory_.make_listener()
+    }
+    fn backend_name(&self) -> std::string {
+        self.factory_.backend_name()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.factory_shim version=1 rust_sha256=fc1345d561aeeac70720fcc9c259cee8fcd14a33d56fc1eb66b83887e2373474*/
+struct TcpFactoryShim;
 
-    // @unsafe - forwards through mut_factory() const_cast (socket+connect path).
-    ConnectResult                       connect(std::string_view addr) override { return tcp_factory_connect(mut_factory(), addr); }
-    // @unsafe - forwards through mut_factory() const_cast.
-    rusty::Option<ChannelListenerProxy> make_listener() override                { return tcp_factory_make_listener(mut_factory()); }
-    std::string                         backend_name() const override           { return factory_->backend_name(); }
-
- private:
-    // @unsafe - const_cast through Arc::get<T*>().
-    TcpFactory& mut_factory() { return const_cast<TcpFactory&>(*factory_.get()); }
+struct TcpFactoryShim : public ChannelFactoryBase {
     rusty::Arc<TcpFactory> factory_;
+    TcpFactoryShim(rusty::Arc<TcpFactory> factory__init) : ChannelFactoryBase(), factory_(std::move(factory__init)) {}
+    TcpFactoryShim(TcpFactoryShim&& other) noexcept : ChannelFactoryBase(), factory_(std::move(other.factory_)) {}
+
+
+    ConnectResult connect(std::string_view addr);
+    rusty::Option<ChannelListenerProxy> make_listener();
+    std::string backend_name() const;
 };
 
+
+ConnectResult TcpFactoryShim::connect(std::string_view addr) {
+    return this->factory_->connect(std::move(rusty::to_string_view(addr)));
+}
+
+rusty::Option<ChannelListenerProxy> TcpFactoryShim::make_listener() {
+    return this->factory_->make_listener();
+}
+
+std::string TcpFactoryShim::backend_name() const {
+    return this->factory_->backend_name();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.factory_shim*/
+
 inline ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {
-    return rusty::make_box<TcpFactoryAdapter>(std::move(factory));
+    return rusty::make_box<TcpFactoryShim>(std::move(factory));
 }
 
 }  // export namespace rrr
@@ -1855,7 +1906,7 @@ ChannelError connect_errno_to_channel_error(int err) {
 // @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
 // + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
 // add_proxy is @unsafe + raw fd handling.
-ConnectResult tcp_factory_connect(TcpFactory& self, std::string_view addr) {
+ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr) {
     auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
     if (parse_result.is_err()) {
         return ConnectResult{rusty::None, ChannelError::AddressInvalid};
@@ -1957,7 +2008,7 @@ ConnectResult tcp_factory_connect(TcpFactory& self, std::string_view addr) {
     };
 }
 
-rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(TcpFactory& self) {
+rusty::Option<ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self) {
     auto listener = rusty::Arc<TcpListener>::make();
     // Wire the listener up with the poll thread + a weak self-ref so
     // it can self-register on a successful `listen(addr)` and so
