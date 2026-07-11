@@ -667,14 +667,14 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { ar.w
 // ---- Variable-length integer encoding (SparseInt). --------------------
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) {
   char buf[5];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+  size_t bsize = rrr::sparseint_dump(v.get(), buf);
   ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
   return ar;
 }
 
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v64 v) {
   char buf[9];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+  size_t bsize = rrr::sparseint_dump(v.get(), buf);
   ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
   return ar;
 }
@@ -908,7 +908,7 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) {
   if (total > 1) {
     verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
-  v.set(rrr::SparseInt::load_i32(buf));
+  v.set(rrr::sparseint_load_i32(buf));
   return ar;
 }
 
@@ -919,7 +919,7 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) {
   if (total > 1) {
     verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
-  v.set(rrr::SparseInt::load_i64(buf));
+  v.set(rrr::sparseint_load_i64(buf));
   return ar;
 }
 

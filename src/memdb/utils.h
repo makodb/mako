@@ -16,7 +16,6 @@ using rrr::verify;
 
 using base::i32;
 using base::i64;
-using base::NoCopy;
 using base::Log;
 using base::insert_into_map;
 using base::format_decimal;

@@ -526,7 +526,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
   // @unsafe
   {
     char buf[5];
-    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    size_t bsize = rrr::sparseint_dump(v.get(), buf);
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
     return m;
   }
@@ -538,7 +538,7 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
   // @unsafe
   {
     char buf[9];
-    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    size_t bsize = rrr::sparseint_dump(v.get(), buf);
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
     return m;
   }
@@ -790,7 +790,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[5];
   verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
-  i32 val = rrr::SparseInt::load_i32(buf);
+  i32 val = rrr::sparseint_load_i32(buf);
   v.set(val);
   return m;
 }
@@ -803,7 +803,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[9];
   verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
-  i64 val = rrr::SparseInt::load_i64(buf);
+  i64 val = rrr::sparseint_load_i64(buf);
   v.set(val);
   return m;
 }

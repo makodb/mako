@@ -52,15 +52,57 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
-class SparseInt {
-public:
-    static size_t buf_size(char byte0);
-    static size_t val_size(i64 val);
-    static size_t dump(i32 val, char* buf);
-    static size_t dump(i64 val, char* buf);
-    static i32 load_i32(const char* buf);
-    static i64 load_i64(const char* buf);
+struct SparseInt;
+
+// Pointer-taking varint kernels (raw char* byte surgery) — plain free
+// fns; a Rust impl can't hold the dump overload pair or char* params.
+// Call sites (all in the marshal/serializable wire layer) use these
+// names directly.
+size_t sparseint_dump(i32 val, char* buf);
+size_t sparseint_dump(i64 val, char* buf);
+i32 sparseint_load_i32(const char* buf);
+i64 sparseint_load_i64(const char* buf);
+size_t sparseint_buf_size_impl(char byte0);
+size_t sparseint_val_size_impl(i64 val);
+
+// `SparseInt` — the wire varint format's pointer-free queries, as DSL
+// statics (the v32/v64 DSL blocks above call SparseInt::val_size).
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+#if RUSTYCPP_RUST
+struct SparseInt {}
+
+impl SparseInt {
+    // Total encoded length implied by the first byte.
+    fn buf_size(byte0: i8) -> usize {
+        sparseint_buf_size_impl(byte0)
+    }
+
+    // Encoded length required for the value.
+    fn val_size(val: i64) -> usize {
+        sparseint_val_size_impl(val)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=basetypes.sparseint version=1 rust_sha256=c0f0cbf0ba56f0fe42d2c8af9478b7b72fbc68998e5da06182d0d40f935943ac*/
+struct SparseInt;
+
+struct SparseInt {
+
+    static size_t buf_size(int8_t byte0);
+    static size_t val_size(int64_t val);
 };
+
+
+size_t SparseInt::buf_size(int8_t byte0) {
+    return sparseint_buf_size_impl(std::move(byte0));
+}
+
+size_t SparseInt::val_size(int64_t val) {
+    return sparseint_val_size_impl(std::move(val));
+}
+/*RUSTYCPP:GEN-END id=basetypes.sparseint*/
 
 // `v32` — variable-length 32-bit integer wrapper for Marshal wire ops.
 //
@@ -168,16 +210,6 @@ size_t v64::val_size() const {
 }
 /*RUSTYCPP:GEN-END id=basetypes.5*/
 
-class NoCopy {
-protected:
-    NoCopy() = default;
-    virtual ~NoCopy() = default;
-public:
-    NoCopy(const NoCopy&) = delete;
-    NoCopy& operator=(const NoCopy&) = delete;
-    NoCopy(NoCopy&&) = default;
-    NoCopy& operator=(NoCopy&&) = default;
-};
 
 // `Counter` — atomic-backed monotonically-increasing counter.
 //
@@ -433,7 +465,7 @@ double Timer::elapsed() const {
 // `// @unsafe`.
 namespace rrr {
 
-size_t SparseInt::buf_size(char byte0) {
+size_t sparseint_buf_size_impl(char byte0) {
     if ((byte0 & 0x80) == 0) {
         return 1;
     } else if ((byte0 & 0xC0) == 0x80) {
@@ -455,7 +487,7 @@ size_t SparseInt::buf_size(char byte0) {
     }
 }
 
-size_t SparseInt::val_size(i64 val) {
+size_t sparseint_val_size_impl(i64 val) {
     if (-64 <= val && val <= 63) {
         return 1;
     } else if (-8192 <= val && val <= 8191) {
@@ -478,7 +510,7 @@ size_t SparseInt::val_size(i64 val) {
 }
 
 // @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-size_t SparseInt::dump(i32 val, char* buf) {
+size_t sparseint_dump(i32 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
         buf[0] = pv[0];
@@ -520,7 +552,7 @@ size_t SparseInt::dump(i32 val, char* buf) {
 }
 
 // @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-size_t SparseInt::dump(i64 val, char* buf) {
+size_t sparseint_dump(i64 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
         buf[0] = pv[0];
@@ -603,10 +635,10 @@ size_t SparseInt::dump(i64 val, char* buf) {
 }
 
 // @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-i32 SparseInt::load_i32(const char* buf) {
+i32 sparseint_load_i32(const char* buf) {
     i32 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
-    int bsize = SparseInt::buf_size(buf[0]);
+    int bsize = sparseint_buf_size_impl(buf[0]);
     if (bsize < 5) {
         for (int i = 0; i < bsize; i++) {
             pv[i] = buf[bsize - i - 1];
@@ -627,10 +659,10 @@ i32 SparseInt::load_i32(const char* buf) {
 }
 
 // @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-i64 SparseInt::load_i64(const char* buf) {
+i64 sparseint_load_i64(const char* buf) {
     i64 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
-    int bsize = SparseInt::buf_size(buf[0]);
+    int bsize = sparseint_buf_size_impl(buf[0]);
     if (bsize < 8) {
         for (int i = 0; i < bsize; i++) {
             pv[i] = buf[bsize - i - 1];

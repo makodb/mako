@@ -27,4 +27,20 @@ public:
     }
 };
 
+// `NoCopy` — deleted-copy marker base for memdb's identity types
+// (Row/Table/Txn/TxnMgr/snapshot_group/MergedCursor). Relocated
+// verbatim from rrr/base/basetypes.cpp: memdb was its only remaining
+// consumer after the rrr wire-layer DSL flips dropped their NoCopy
+// bases for Cell move-only markers.
+class NoCopy {
+protected:
+    NoCopy() = default;
+    virtual ~NoCopy() = default;
+public:
+    NoCopy(const NoCopy&) = delete;
+    NoCopy& operator=(const NoCopy&) = delete;
+    NoCopy(NoCopy&&) = default;
+    NoCopy& operator=(NoCopy&&) = default;
+};
+
 } // namespace mdb
