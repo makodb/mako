@@ -280,7 +280,7 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
 
     // Send request with lambda API
     auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
-        out.write_bytes(tls_buffers.request_buffer.data(), msg_len);
+        out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), msg_len);
     });
     if (fu_result.is_err()) {
         Warning("Failed to send request for req_type %d", req_type);
@@ -370,7 +370,7 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
 
         auto fu_result = client->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(tls_buffers.request_buffer.data(), req_len);
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), req_len);
         });
         if (fu_result.is_err()) {
             Warning("Failed to send request for shard %d", shard_idx);
@@ -455,7 +455,7 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
         auto fu_result = client->request(req_type, rrr::FutureAttr(), [raw_data, req_len](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(raw_data, req_len);
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(raw_data), req_len);
         });
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
@@ -565,7 +565,7 @@ void RrrRpcBackend::RunEventLoop() {
                 // Send response back via rrr/rpc
                 const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).reply(
                     *rrr_handle->original_request, 0, [&](rrr::BinaryWriteArchive& out) {
-                        out.write_bytes(rrr_handle->response_data.data(), msg_size);
+                        out.write_bytes(reinterpret_cast<const std::uint8_t*>(rrr_handle->response_data.data()), msg_size);
                     });
 
                 msg_size_resp_sent_.fetch_add(msg_size, std::memory_order_relaxed);
@@ -730,7 +730,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
         // Send response
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
@@ -751,7 +751,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
@@ -783,7 +783,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&resp, sizeof(resp));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
         });
 
         backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);

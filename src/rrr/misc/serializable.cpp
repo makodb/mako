@@ -600,32 +600,54 @@ inline SourceProxy make_source_proxy(FdSource* source) {
 // primitive write (negligible vs. the actual I/O).
 // ---------------------------------------------------------------------------
 
-class BinaryWriteArchive {
-  SinkProxy sink_;
- public:
-  explicit BinaryWriteArchive(SinkProxy sink) noexcept : sink_(std::move(sink)) {}
+struct BinaryWriteArchive;
+struct BinaryReadArchive;
 
-  // Convenience: build directly atop a concrete BufferSink.
-  explicit BinaryWriteArchive(BufferSink* sink)
-      : sink_(make_sink_proxy(sink)) {}
+// Byte kernels for the DSL archives below (Box-proxy arrow calls).
+void bwa_write_bytes(BinaryWriteArchive& self, const std::uint8_t* p, std::size_t n);
+bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p, std::size_t n);
 
-  // Convenience: build directly atop a concrete FdSink.
-  explicit BinaryWriteArchive(FdSink* sink)
-      : sink_(make_sink_proxy(sink)) {}
+// `BinaryWriteArchive` — the wire-format encoder over a type-erased
+// SinkProxy. Authored as inline Rust DSL: the `#if RUSTYCPP_RUST`
+// block below is the source of truth; the transpiler regenerates the
+// matching `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * The struct is a single-field aggregate with NO constructors: the
+//     ubiquitous `BinaryWriteArchive ar(make_sink_proxy(&x));` sites
+//     (incl. 150+ in generated rcc_rpc.h) keep compiling via C++20
+//     parenthesized aggregate init — exact single-field match, so the
+//     multi-field misfill hazard does not apply. The BufferSink*/
+//     FdSink* convenience ctors are gone; their four call sites now
+//     pass make_sink_proxy(...) explicitly. `explicit`/noexcept drop.
+//   * write_bytes takes *const u8 (no void* in the DSL); the few
+//     raw-buffer callers cast at the boundary.
+#if RUSTYCPP_RUST
+struct BinaryWriteArchive {
+    sink_: SinkProxy,
+}
 
-  // For Marshal-backed archives, use:
-  //   BinaryWriteArchive(make_sink_proxy(&marshal_sink));
-  // (The MarshalSink convenience constructor was removed when
-  // MarshalSink moved to marshal.hpp and serializable became a module.)
+impl BinaryWriteArchive {
+    // Emit raw bytes (used for unstructured payloads).
+    fn write_bytes(&mut self, p: *const u8, n: usize) {
+        bwa_write_bytes(self, p, n)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.write_archive version=1 rust_sha256=7dded1c21502d9a4f7a9fe3a23e4aaddbd833fc70037dfe7b45d91c2a8784c02*/
+struct BinaryWriteArchive;
 
-  // Emit raw bytes (used for unstructured payloads).
-  // @unsafe { the historical `const void*` parameter becomes
-  //   `const uint8_t*` at the sink trait boundary }
-  void write_bytes(const void* p, size_t n) {
-    sink_->write_bytes(reinterpret_cast<const uint8_t*>(p), n);
-  }
+struct BinaryWriteArchive {
+    SinkProxy sink_;
 
+    void write_bytes(const uint8_t* p, size_t n);
 };
+
+
+void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
+    bwa_write_bytes((*this), p, std::move(n));
+}
+/*RUSTYCPP:GEN-END id=serializable.write_archive*/
 
 // ---- Fixed-width primitives. ------------------------------------------
 // Each scalar's byte representation is `reinterpret_cast<const
@@ -814,57 +836,77 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unorder
 }
 
 
-class BinaryReadArchive {
-  SourceProxy source_;
- public:
-  explicit BinaryReadArchive(SourceProxy source) noexcept
-      : source_(std::move(source)) {}
+// `BinaryReadArchive` — the wire-format decoder over a type-erased
+// SourceProxy. Same aggregate/ctor story as BinaryWriteArchive above;
+// read_exact keeps its verify-at-caller bool contract ([[nodiscard]]
+// drops — the DSL has no attribute syntax; every caller already
+// verify()s the result).
+#if RUSTYCPP_RUST
+struct BinaryReadArchive {
+    source_: SourceProxy,
+}
 
-  // Convenience: build directly atop a concrete BufferSource.
-  explicit BinaryReadArchive(BufferSource* source)
-      : source_(make_source_proxy(source)) {}
+impl BinaryReadArchive {
+    // Read into raw bytes; false if the source ran out.
+    fn read_exact(&mut self, p: *mut u8, n: usize) -> bool {
+        bra_read_exact(self, p, n)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.read_archive version=1 rust_sha256=374c7bfbe6fb7868add3bb9adfab547b3eef450e27c96acaf02928770b62b47f*/
+struct BinaryReadArchive;
 
-  // Convenience: build directly atop a concrete FdSource.
-  explicit BinaryReadArchive(FdSource* source)
-      : source_(make_source_proxy(source)) {}
+struct BinaryReadArchive {
+    SourceProxy source_;
 
-  // For Marshal-backed archives, use:
-  //   BinaryReadArchive(make_source_proxy(&marshal_source));
-
-  // Read into raw bytes; verifies n bytes were actually read.
-  // Returns false if the source ran out (caller can decide whether to
-  // abort or surface the error).
-  [[nodiscard]] bool read_exact(void* p, size_t n) {
-    size_t got = source_->read_bytes(reinterpret_cast<uint8_t*>(p), n);
-    return got == n;
-  }
-
+    bool read_exact(uint8_t* p, size_t n);
 };
+
+
+bool BinaryReadArchive::read_exact(uint8_t* p, size_t n) {
+    return bra_read_exact((*this), p, std::move(n));
+}
+/*RUSTYCPP:GEN-END id=serializable.read_archive*/
+
+// ---- Archive byte kernels (Box-proxy arrow boundary) -----------------
+
+// @unsafe - virtual write through the type-erased sink proxy.
+inline void bwa_write_bytes(BinaryWriteArchive& self, const std::uint8_t* p,
+                            std::size_t n) {
+  self.sink_->write_bytes(p, n);
+}
+
+// @unsafe - virtual read through the type-erased source proxy.
+inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
+                           std::size_t n) {
+  std::size_t got = self.source_->read_bytes(p, n);
+  return got == n;
+}
 
 // ---- Fixed-width primitives. ------------------------------------------
 // Each operator>> verifies the read produced sizeof(T) bytes; on
 // truncation it aborts via `verify` (matches the existing
 // `Marshal::read` contract — short reads at the boundary are
 // programming errors at this layer, not recoverable conditions).
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { verify(ar.read_exact(&v, sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { verify(ar.read_exact(&v, sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
 // SparseInt's first byte determines the total length; we peek it,
 // read the remaining bytes, then decode.
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) {
   char buf[5];
-  verify(ar.read_exact(buf, 1));
+  verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
-    verify(ar.read_exact(buf + 1, total - 1));
+    verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
   v.set(rrr::SparseInt::load_i32(buf));
   return ar;
@@ -872,10 +914,10 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) {
 
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) {
   char buf[9];
-  verify(ar.read_exact(buf, 1));
+  verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
-    verify(ar.read_exact(buf + 1, total - 1));
+    verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
   v.set(rrr::SparseInt::load_i64(buf));
   return ar;
@@ -889,7 +931,7 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) {
   s.resize(len);
   if (len > 0) {
     // @unsafe { writing into string's internal buffer via &s[0] }
-    verify(ar.read_exact(&s[0], len));
+    verify(ar.read_exact(reinterpret_cast<uint8_t*>(&s[0]), len));
   }
   return ar;
 }

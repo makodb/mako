@@ -260,7 +260,7 @@ protected:
 
         // Send response
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&response, sizeof(response));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&response), sizeof(response));
         });
     }
 };
@@ -269,7 +269,7 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
     // Send a simple request
     std::string request_data = "Hello, Transport!";
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(request_data.data(), request_data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(request_data.data()), request_data.size());
     });
     ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request";
     auto fu = fu_result.unwrap();
@@ -299,7 +299,7 @@ TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
     for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
         std::string data = "Request_" + std::to_string(req_type);
         auto fu_result = client_.as_ref().unwrap()->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(data.data(), data.size());
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
         });
         ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request type " << (int)req_type;
         auto fu = fu_result.unwrap();
@@ -328,7 +328,7 @@ TEST_F(RrrRpcDirectTest, ConcurrentRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string data = "Concurrent_" + std::to_string(i);
         auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(data.data(), data.size());
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
         });
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -349,7 +349,7 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
     std::vector<char> large_data(payload_size, 'X');
 
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(large_data.data(), large_data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(large_data.data()), large_data.size());
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -385,7 +385,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
             for (int i = 0; i < requests_per_thread; i++) {
                 std::string data = "Thread_" + std::to_string(t) + "_" + std::to_string(i);
                 auto fu_result = thread_client->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-                    m.write_bytes(data.data(), data.size());
+                    m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
                 });
                 if (fu_result.is_err()) continue;
                 auto fu = fu_result.unwrap();
@@ -411,7 +411,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
 TEST_F(RrrRpcDirectTest, RequestWithTimeout) {
     std::string data = "Timeout_Test";
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(data.data(), data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -432,7 +432,7 @@ TEST_F(RrrRpcDirectTest, StressThroughput) {
     for (int i = 0; i < num_requests; i++) {
         uint32_t seq = i;
         auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(&seq, sizeof(seq));
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(&seq), sizeof(seq));
         });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -466,7 +466,7 @@ TEST_F(RrrRpcDirectTest, StressPipelined) {
         for (int i = 0; i < batch_size; i++) {
             uint32_t seq = batch * batch_size + i;
             auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-                m.write_bytes(&seq, sizeof(seq));
+                m.write_bytes(reinterpret_cast<const std::uint8_t*>(&seq), sizeof(seq));
             });
             if (fu_result.is_err()) continue;
             futures.push_back(fu_result.unwrap());

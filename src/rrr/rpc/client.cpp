@@ -4113,7 +4113,7 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
     }
 
     BufferSink body_sink;
-    BinaryWriteArchive ar(&body_sink);
+    BinaryWriteArchive ar(make_sink_proxy(&body_sink));
     static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                   "request write_fn must accept BinaryWriteArchive&");
     ar << v64(fu->xid_);
@@ -4180,7 +4180,7 @@ rusty::Result<rusty::Unit, i32> clientconn_request_async(
     }
 
     BufferSink body_sink;
-    BinaryWriteArchive ar(&body_sink);
+    BinaryWriteArchive ar(make_sink_proxy(&body_sink));
     static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                   "request_async write_fn must accept BinaryWriteArchive&");
     ar << v64(xid);
@@ -4298,7 +4298,7 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
             auto conn = conn_opt.unwrap();
             auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](BinaryWriteArchive& m) {
                 if (!args_bytes.empty()) {
-                    m.write_bytes(args_bytes.data(), args_bytes.size());
+                    m.write_bytes(reinterpret_cast<const std::uint8_t*>(args_bytes.data()), args_bytes.size());
                 }
             });
             if (attempt_result.is_err()) {
@@ -4711,7 +4711,7 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
   // (matches the legacy `Marshal::operator>>` behaviour on short
   // reads).
   BufferSource src(bytes, size);
-  BinaryReadArchive ar(&src);
+  BinaryReadArchive ar(make_source_proxy(&src));
 
   v64 v_reply_xid;
   v32 v_error_code;
