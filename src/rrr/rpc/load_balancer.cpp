@@ -131,87 +131,145 @@ void LoadBalancerState::reset() const {
 }
 /*RUSTYCPP:GEN-END id=load_balancer.1*/
 
-// @safe - Pure stateless dispatch over LoadBalancingStrategy enum.
-// All static methods take rusty primitives + size_t; no @unsafe ops.
-class LoadBalancer {
-public:
-    template<typename ClientVec>
-    static size_t select(
-        LoadBalancingStrategy strategy,
-        const ClientVec& clients,
-        LoadBalancerState& state,
-        size_t rand_value
-    ) {
-        size_t pool_size = clients.size();
-        if (pool_size == 0) return 0;
+// Hand-written generic helpers backing the DSL LoadBalancer below.
+// They stay template free fns because they are generic over the client
+// container (production: rusty::Vec<Arc<ClientConnection>>-shaped pools;
+// tests: std::vector of mock clients) and their bodies arrow-deref the
+// client handle — neither is DSL-expressible.
 
-        switch (strategy) {
-            case LoadBalancingStrategy::RANDOM:
-                return select_random(pool_size, rand_value);
+// @safe - container size via the generic `.size()`.
+template<typename ClientVec>
+size_t lb_pool_size(const ClientVec& clients) {
+    return clients.size();
+}
 
-            case LoadBalancingStrategy::ROUND_ROBIN:
-                return select_round_robin(pool_size, state);
+// @unsafe - generic arrow-deref of the client handle (Arc in production,
+// raw/mock pointer in tests) to read its ConnectionMetrics.
+template<typename ClientVec>
+size_t lb_select_least_connections(const ClientVec& clients) {
+    size_t best_idx = 0;
+    uint64_t min_pending = UINT64_MAX;
 
-            case LoadBalancingStrategy::LEAST_CONNECTIONS:
-                return select_least_connections(clients);
-
-            case LoadBalancingStrategy::LEAST_LATENCY:
-                return select_least_latency(clients);
-
-            default:
-                return select_random(pool_size, rand_value);
+    for (size_t i = 0; i < clients.size(); i++) {
+        const auto& client = clients[i];
+        const auto& metrics = client->metrics();
+        uint64_t pending = metrics.in_flight_requests();
+        if (pending < min_pending) {
+            min_pending = pending;
+            best_idx = i;
         }
     }
 
-private:
-    static size_t select_random(size_t pool_size, size_t rand_value) {
-        return rand_value % pool_size;
-    }
+    return best_idx;
+}
 
-    static size_t select_round_robin(size_t pool_size, LoadBalancerState& state) {
-        return state.next_round_robin_index(pool_size);
-    }
+// @unsafe - generic arrow-deref of the client handle (Arc in production,
+// raw/mock pointer in tests) to read its ConnectionMetrics.
+template<typename ClientVec>
+size_t lb_select_least_latency(const ClientVec& clients) {
+    size_t best_idx = 0;
+    uint64_t min_latency = UINT64_MAX;
 
-    template<typename ClientVec>
-    static size_t select_least_connections(const ClientVec& clients) {
-        size_t best_idx = 0;
-        uint64_t min_pending = UINT64_MAX;
+    for (size_t i = 0; i < clients.size(); i++) {
+        const auto& client = clients[i];
+        const auto& metrics = client->metrics();
+        uint64_t avg_latency = metrics.avg_latency_us();
 
-        for (size_t i = 0; i < clients.size(); i++) {
-            const auto& client = clients[i];
-            const auto& metrics = client->metrics();
-            uint64_t pending = metrics.in_flight_requests();
-            if (pending < min_pending) {
-                min_pending = pending;
-                best_idx = i;
-            }
+        if (avg_latency == 0 && metrics.requests_completed() == 0) {
+            continue;
         }
 
-        return best_idx;
+        if (avg_latency < min_latency) {
+            min_latency = avg_latency;
+            best_idx = i;
+        }
     }
+
+    return best_idx;
+}
+
+// `LoadBalancer` — pure stateless dispatch over LoadBalancingStrategy.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * The strategy dispatch is an if-else chain, not a `match`/`switch`
+//     (a DSL `match` over a C-like enum lowers to broken variant_holds
+//     C++; RANDOM and unknown strategies share the fall-through arm
+//     exactly like the original `case RANDOM` + `default`).
+//   * `select` takes `state` by const ref (was non-const ref); the only
+//     state method it calls (`next_round_robin_index`) is already const
+//     via Cell interior mutability, so all callers keep working.
+//   * The formerly-private statics are public; nothing outside `select`
+//     calls them.
+#if RUSTYCPP_RUST
+struct LoadBalancer {}
+
+impl LoadBalancer {
+    fn select<ClientVec>(strategy: LoadBalancingStrategy, clients: &ClientVec, state: &LoadBalancerState, rand_value: usize) -> usize {
+        let pool_size: usize = lb_pool_size(clients);
+        if pool_size == 0usize {
+            return 0usize;
+        }
+        if strategy == LoadBalancingStrategy::ROUND_ROBIN {
+            return LoadBalancer::select_round_robin(pool_size, state);
+        }
+        if strategy == LoadBalancingStrategy::LEAST_CONNECTIONS {
+            return lb_select_least_connections(clients);
+        }
+        if strategy == LoadBalancingStrategy::LEAST_LATENCY {
+            return lb_select_least_latency(clients);
+        }
+        LoadBalancer::select_random(pool_size, rand_value)
+    }
+
+    fn select_random(pool_size: usize, rand_value: usize) -> usize {
+        rand_value % pool_size
+    }
+
+    fn select_round_robin(pool_size: usize, state: &LoadBalancerState) -> usize {
+        state.next_round_robin_index(pool_size)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.balancer version=1 rust_sha256=7ccd3abea8f04387bedda62133c9f9ca1254c3a5ac8a7d5540fae9bd8280d75c*/
+struct LoadBalancer;
+
+struct LoadBalancer {
 
     template<typename ClientVec>
-    static size_t select_least_latency(const ClientVec& clients) {
-        size_t best_idx = 0;
-        uint64_t min_latency = UINT64_MAX;
-
-        for (size_t i = 0; i < clients.size(); i++) {
-            const auto& client = clients[i];
-            const auto& metrics = client->metrics();
-            uint64_t avg_latency = metrics.avg_latency_us();
-
-            if (avg_latency == 0 && metrics.requests_completed() == 0) {
-                continue;
-            }
-
-            if (avg_latency < min_latency) {
-                min_latency = avg_latency;
-                best_idx = i;
-            }
-        }
-
-        return best_idx;
-    }
+    static size_t select(LoadBalancingStrategy strategy, const ClientVec& clients, const LoadBalancerState& state, size_t rand_value);
+    static size_t select_random(size_t pool_size, size_t rand_value);
+    static size_t select_round_robin(size_t pool_size, const LoadBalancerState& state);
 };
+
+
+template<typename ClientVec>
+size_t LoadBalancer::select(LoadBalancingStrategy strategy, const ClientVec& clients, const LoadBalancerState& state, size_t rand_value) {
+    size_t pool_size = lb_pool_size(clients);
+    if (rusty::detail::deref_if_pointer_like(pool_size) == static_cast<size_t>(0)) {
+        return static_cast<size_t>(0);
+    }
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::ROUND_ROBIN)) {
+        return LoadBalancer::select_round_robin(std::move(pool_size), state);
+    }
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::LEAST_CONNECTIONS)) {
+        return lb_select_least_connections(clients);
+    }
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::LEAST_LATENCY)) {
+        return lb_select_least_latency(clients);
+    }
+    return LoadBalancer::select_random(std::move(pool_size), std::move(rand_value));
+}
+
+size_t LoadBalancer::select_random(size_t pool_size, size_t rand_value) {
+    return rusty::detail::deref_if_pointer_like(rand_value) % rusty::detail::deref_if_pointer_like(pool_size);
+}
+
+size_t LoadBalancer::select_round_robin(size_t pool_size, const LoadBalancerState& state) {
+    return state.next_round_robin_index(std::move(pool_size));
+}
+/*RUSTYCPP:GEN-END id=load_balancer.balancer*/
 
 } // export namespace rrr
