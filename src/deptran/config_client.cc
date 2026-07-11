@@ -151,7 +151,7 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
     // Deserialize config_data to PersistentConfig
     rrr::Marshal m;
     // @unsafe { Marshal write not borrow-checked }
-    m.write(config_data.data(), config_data.size());
+    m.write_bytes(reinterpret_cast<const std::uint8_t*>(config_data.data()), config_data.size());
 
     PersistentConfig config;
     // @unsafe { Marshal read not borrow-checked }
@@ -254,7 +254,7 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
     // Deserialize policy_data to ShardingPolicySet
     rrr::Marshal m;
     // @unsafe { Marshal write not borrow-checked }
-    m.write(policy_data.data(), policy_data.size());
+    m.write_bytes(reinterpret_cast<const std::uint8_t*>(policy_data.data()), policy_data.size());
 
     ShardingPolicySet policy;
     // @unsafe { Marshal read not borrow-checked }
@@ -331,7 +331,7 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
     std::string policy_data;
     policy_data.resize(m.content_size());
     // @unsafe { Marshal read not borrow-checked }
-    m.read(policy_data.data(), m.content_size());
+    m.read(reinterpret_cast<std::uint8_t*>(policy_data.data()), m.content_size());
 
     rrr::i32 success = 0;
     auto proxy = proxy_.as_ref().unwrap();

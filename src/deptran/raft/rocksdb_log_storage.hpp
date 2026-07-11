@@ -101,7 +101,7 @@ private:
         entry.save(writer);
         size_t size = m.content_size();
         out->resize(size);
-        m.read(out->data(), size);  // @unsafe - read Marshal contents into string
+        m.read(reinterpret_cast<std::uint8_t*>(out->data()), size);  // @unsafe - read Marshal contents into string
         return true;
     }
 
@@ -113,7 +113,7 @@ private:
     // this satisfies.
     bool deserialize_entry(const std::string& data, LogEntry* out) const {
         Marshal m;
-        m.write(data.data(), data.size());  // @unsafe - write string bytes into Marshal
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());  // @unsafe - write string bytes into Marshal
         rrr::MarshalSource src(&m);
         BinaryReadArchive reader(rrr::make_source_proxy(&src));
         out->load(reader);

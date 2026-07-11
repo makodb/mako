@@ -322,7 +322,7 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     // Read response (guard ensures lifetime safety)
     auto resp_guard = fu->get_reply();
     std::vector<char> resp_buffer(tls_buffers.response_len);
-    resp_guard->read(resp_buffer.data(), tls_buffers.response_len);
+    resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), tls_buffers.response_len);
 
     // Deliver response to receiver (only if not stopping)
     if (!stop_ && src) {
@@ -417,7 +417,7 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(resp_buffer.data(), resp_len);
+        resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -495,7 +495,7 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(resp_buffer.data(), resp_len);
+        resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -719,7 +719,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
         // Read request
         basic_request_t basic_req;
-        req->m.read(&basic_req, sizeof(basic_req));
+        req->m.read_obj(basic_req);
 
         // Prepare response
         get_int_response_t resp;
@@ -742,7 +742,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         Debug("Received warmupReqType");
 
         warmup_request_t warmup_req;
-        req->m.read(&warmup_req, sizeof(warmup_req));
+        req->m.read_obj(warmup_req);
 
         get_int_response_t resp;
         resp.result = 1;
@@ -761,7 +761,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     if (req_type == controlReqType) {
         control_request_t ctrl_req;
-        req->m.read(&ctrl_req, sizeof(ctrl_req));
+        req->m.read_obj(ctrl_req);
 
         Warning("Received controlReqType, control: %d, shardIndex: %lld, target_server_id: %llu",
                 ctrl_req.control, ctrl_req.value, ctrl_req.targert_server_id);
@@ -801,7 +801,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     // Peek at request data to extract server ID
     std::vector<char> temp_buffer(req_size);
-    req->m.read(temp_buffer.data(), req_size);
+    req->m.read(reinterpret_cast<std::uint8_t*>(temp_buffer.data()), req_size);
     auto* target_server_id_reader = (TargetServerIDReader*)temp_buffer.data();
     uint16_t target_server_id = target_server_id_reader->targert_server_id;
 

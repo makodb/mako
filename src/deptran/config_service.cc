@@ -52,7 +52,7 @@ std::string ConfigServiceImpl::serialize_config(const PersistentConfig& config) 
     // Extract data from Marshal to string
     std::string result;
     result.resize(m.content_size());
-    m.read(result.data(), m.content_size());
+    m.read(reinterpret_cast<std::uint8_t*>(result.data()), m.content_size());
     return result;
 }
 
@@ -155,7 +155,7 @@ std::string ConfigServiceImpl::serialize_sharding_policy(const ShardingPolicySet
     // Extract data from Marshal to string
     std::string result;
     result.resize(m.content_size());
-    m.read(result.data(), m.content_size());
+    m.read(reinterpret_cast<std::uint8_t*>(result.data()), m.content_size());
     return result;
 }
 
@@ -166,7 +166,7 @@ void ConfigServiceImpl::SetShardingPolicy(
     rrr::DeferredReply defer) {
     // Deserialize the policy
     rrr::Marshal m;
-    m.write(rpc_req.policy_data.data(), rpc_req.policy_data.size());
+    m.write_bytes(reinterpret_cast<const std::uint8_t*>(rpc_req.policy_data.data()), rpc_req.policy_data.size());
 
     ShardingPolicySet policy;
     m >> policy;

@@ -140,14 +140,14 @@ bool ConfigStore::serialize_to_string(const rrr::Marshal& m, std::string* out) c
     size_t size = m.content_size();
     out->resize(size);
     // @unsafe { Marshal read is not borrow-checked }
-    const_cast<rrr::Marshal&>(m).read(out->data(), size);
+    const_cast<rrr::Marshal&>(m).read(reinterpret_cast<std::uint8_t*>(out->data()), size);
     return true;
 }
 
 // @unsafe - Marshal operations
 bool ConfigStore::deserialize_from_string(const std::string& data, rrr::Marshal* m) const {
     // @unsafe { Marshal write is not borrow-checked }
-    m->write(data.data(), data.size());
+    m->write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
     return true;
 }
 
