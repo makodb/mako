@@ -11,6 +11,8 @@
 #include "shard_data_plane.h"
 
 #include <stdio.h>
+#include <time.h>     // time (drain-poll log rate limit)
+#include <unistd.h>   // usleep (drain poll)
 
 #include <atomic>
 #include <map>
@@ -24,6 +26,8 @@
 #include "ordered_index_shard_data.h"      // janus::OrderedIndexShardData
 #include "ordered_index_kv_store.h"        // janus::OrderedIndexKvStore
 #include "lib/table_registry.h"            // mako::get_table_registry (name<->id)
+#include "lib/migration_fence.h"           // per-table staged-writer drain
+#include "benchmarks/tpcc_warehouse_directory.h"   // wh: spec -> workload index
 
 namespace mako {
 namespace {
@@ -82,8 +86,35 @@ public:
         engine_init_this_thread(db_);
         return inner_.scan_range_limited(lo, hi, limit);
     }
-    // The drain is engine-global (Silo epochs), delegated to the adapter.
-    bool drain_writes() override { return inner_.drain_writes(); }
+    // Drain on THIS table's staged-writer watermark: cross-shard 2PC gives
+    // unrelated txns multi-second tails, so a process-wide wait times out on
+    // live beds (forensics: 3-5s holds on other warehouses' indexes). 10s
+    // covers same-table 2PC tails. The begin/poll split serves the RPC path
+    // (the DrainWrites handler), whose per-call budget must stay under rrr's
+    // ~1s request timeout.
+    bool drain_writes() override {
+        return mako::migration_fence_drain_writes_for(table_, 10000);
+    }
+    int drain_begin() override { return mako::migration_fence_drain_begin(); }
+    bool drain_poll(int parity) override {
+        for (int waited = 0; waited < 400; waited += 10) {
+            if (mako::migration_fence_drained(table_, parity)) return true;
+            usleep(10 * 1000);
+        }
+        if (mako::migration_fence_drained(table_, parity)) return true;
+        // Still waiting after this poll's budget: name the holders (rate-
+        // limited to ~1/s process-wide). @unsafe { stderr diagnostics }
+        static std::atomic<long> last_log{0};
+        const long now = time(nullptr);
+        long prev = last_log.load(std::memory_order_relaxed);
+        if (now != prev &&
+            last_log.compare_exchange_strong(prev, now, std::memory_order_relaxed)) {
+            fprintf(stderr, "drain_poll waiting: table='%s' parity=%d\n",
+                    table_.c_str(), parity);
+            mako::migration_fence_dump_staged();
+        }
+        return false;
+    }
 
     // Fence ops go to the process-global MigrationGuard under THIS table's name
     // (matching the remote service's named entries, so a later unfreeze -- e.g.
@@ -111,21 +142,93 @@ private:
     std::string table_;                      // this entry's table name
 };
 
+// A per-WAREHOUSE workload index as a migration participant. The physical
+// index IS the warehouse (separate tree per warehouse partition), so every
+// range operation widens [lo, hi) to the WHOLE keyspace: the master drives
+// the migration with the logical table's warehouse_route_key range (what the
+// commit publishes for routing), while the physical row keys carry the
+// shard-local warehouse id -- the two key spaces never intersect, and the
+// index-granular truth is "migrate everything in this tree". Fences land on
+// the PHYSICAL table name over the full range, which is exactly the staging
+// fence's lookup key (t->get_table_name()) for txn writes to this index.
+// @unsafe - delegates to the storage engine; non-owning db/index.
+class WarehouseShardData : public EngineShardData {
+public:
+    using EngineShardData::EngineShardData;
+
+    // The whole-keyspace widening bounds. The UPPER bound is a sentinel above
+    // every real key, NOT "": the range machinery treats hi as a plain
+    // exclusive lexicographic bound (chunk loops guard cur < hi; scans pass
+    // it to the engine), so an empty hi means "before everything" and turns
+    // every op into a no-op (observed live: 15ms migrations moving nothing,
+    // then checksum aborts). TPC-C encoded keys start with a small
+    // big-endian field, so 16 x 0xff dominates all of them.
+    static std::string widen_hi() { return std::string(16, '\xff'); }
+
+    std::vector<KvPair> scan_range(const std::string&, const std::string&) override {
+        return EngineShardData::scan_range(std::string(), widen_hi());
+    }
+    std::vector<KvPair> scan_range_limited(const std::string& lo, const std::string&,
+                                           size_t limit) override {
+        // Chunked copy resumes from `lo` (the successor of the last copied
+        // key); only the UPPER bound widens, or every chunk would rescan
+        // from the start and the copy would never advance.
+        return EngineShardData::scan_range_limited(lo, widen_hi(), limit);
+    }
+    void copy_range_from(janus::ShardData* source, const std::string&,
+                         const std::string&) override {
+        EngineShardData::copy_range_from(source, std::string(), widen_hi());
+    }
+    void drop_range(const std::string&, const std::string&) override {
+        EngineShardData::drop_range(std::string(), widen_hi());
+    }
+    void freeze_range(const std::string&, const std::string&) override {
+        EngineShardData::freeze_range(std::string(), widen_hi());
+    }
+    void unfreeze_range(const std::string&, const std::string&) override {
+        EngineShardData::unfreeze_range(std::string(), widen_hi());
+    }
+};
+
 // The production catalog: named tables created lazily as standalone fixed-id
 // engine indexes (ids from 9100), registered in the table registry so the
 // non-txn write handler can resolve an op's table name for the per-table
-// migration freeze. One instance per process; entries are process-lifetime.
+// migration freeze. Warehouse specs ("wh:<gwid>:<logical>") instead resolve
+// the REAL workload index through the warehouse directory -- the source's
+// startup index, or the destination's adopted index materialized on demand.
+// One instance per process; entries are process-lifetime.
 // @unsafe - guarded map of leaked engine tables.
 class EngineShardCatalog : public janus::ShardDataCatalog {
 public:
-    EngineShardCatalog(abstract_db* db, std::string own_addr)
-        : db_(db), own_addr_(std::move(own_addr)) {}
+    EngineShardCatalog(abstract_db* db, std::string own_addr, int my_shard)
+        : db_(db), own_addr_(std::move(own_addr)), my_shard_(my_shard) {}
 
     janus::ShardData* get_or_create(const std::string& table) override {
         if (table.empty()) return nullptr;
         auto lk = mu_.lock().unwrap();
         auto it = tables_.find(table);
         if (it != tables_.end()) return it->second;
+
+        int gwid = 0;
+        std::string logical;
+        if (parse_warehouse_spec(table, &gwid, &logical)) {
+            // The directory's opener runs open_index -> needs an engine-
+            // registered thread (rrr handler threads are not).
+            engine_init_this_thread(db_);
+            ::FullOrderedIndex* idx =
+                get_warehouse_directory().local_for_migration(logical, gwid,
+                                                              my_shard_);
+            if (idx == nullptr) return nullptr;   // no TPC-C directory here
+            // Fence entries must carry the PHYSICAL table name (what the
+            // staging fence resolves from the index at write time).
+            const std::string physical =
+                get_table_registry().get_table_name(idx->get_table_id())
+                    .unwrap_or(table);
+            auto* sd = new WarehouseShardData(db_, idx, own_addr_, physical);  // leaked
+            tables_.emplace(table, sd);
+            return sd;
+        }
+
         const long id = next_id_.fetch_add(1);
         ::FullOrderedIndex* idx = make_standalone_index(table, id);
         if (idx == nullptr) return nullptr;
@@ -140,6 +243,7 @@ public:
 private:
     abstract_db* db_;                                    // non-owning
     std::string own_addr_;                               // this shard's data-plane host:port
+    int my_shard_;                                       // this shard's index (adoption opens)
     rusty::Mutex<int> mu_{0};                            // guards tables_/creation
     std::map<std::string, janus::ShardData*> tables_;
     std::atomic<long> next_id_{9100};                    // outside workload windows
@@ -174,10 +278,11 @@ private:
 }  // namespace
 
 janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db,
-                                                   const std::string& own_addr) {
+                                                   const std::string& own_addr,
+                                                   int my_shard) {
     if (db == nullptr) return nullptr;
     // Leaked: process-lifetime, like the bootstrap's other singletons.
-    return new EngineShardCatalog(db, own_addr);
+    return new EngineShardCatalog(db, own_addr, my_shard);
 }
 
 void engine_register_this_thread(abstract_db* db) {

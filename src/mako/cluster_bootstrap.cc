@@ -3,12 +3,15 @@
 #include <stdlib.h>  // getenv
 #include <string.h>  // strcmp
 #include <string>
+#include <thread>    // async-migration job worker
 #include <vector>
 
 #include "storage/abstract_db.h"           // abstract_db, abstract_ordered_index
 #include "ordered_index_kv_store.h"        // OrderedIndexKvStore
 #include "benchmarks/benchmark_config.h"   // BenchmarkConfig
 #include "benchmarks/tpcc_sharding.h"      // tpcc_seed_warehouse_partitions_if_master decl
+#include "benchmarks/tpcc_warehouse_directory.h"   // parse_warehouse_spec
+#include "lib/table_registry.h"            // warehouse_route_key (publish range)
 #include "shard_data_plane.h"              // make_engine_shard_data (engine-side factory TU)
 #include "standalone_index.h"              // registry-free system-table indexes
 
@@ -92,6 +95,17 @@ rusty::Option<rusty::Arc<rrr::PollThread>> g_admin_srv_poll;  // admin server po
 rrr::Server* g_admin_server = nullptr;
 rusty::Option<rusty::Arc<rrr::PollThread>> g_admin_poll;  // client polls for remote participants
 rusty::Mutex<int> g_admin_mu{0};                          // serialize Migrate calls
+// Async-migration job state (see MigrationAdminImpl::Migrate): one job at a
+// time; the terminal result is held until the poller consumes it.
+struct MigJobState {
+    bool running = false;
+    bool has_result = false;
+    bool ok = false;
+    rrr::i64 moved = 0;
+    std::string key;
+    std::string msg;
+};
+rusty::Mutex<MigJobState> g_mig_job{MigJobState{}};
 
 // @safe - env-var read
 bool cluster_config_enabled() {
@@ -143,26 +157,66 @@ std::string data_plane_addr_of(uint32_t sid) {
 //   checksum-gated final sync -> commit (source sheds the range; the cutover
 //   publishes through the authoritative ConfigManager and version-bumps, so
 //   every node's ConfigWatcher reroutes on its next reload).
-// Runs inline on the rrr handler thread (a migration in flight blocks this
-// server's other RPCs; acceptable for an operator-rate control plane).
+// A migration is an ASYNC JOB: rrr requests carry a ~1s client timeout, and a
+// real (multi-second) migration blocking the handler had every big-table
+// Migrate die client-side while the server kept going. The first Migrate for
+// a (table,range,src,dst) spawns the job and replies "started"; the SAME call
+// repeated polls it ("in progress" -> the terminal result, delivered once).
+// mako_admin loops the call until terminal.
 // @unsafe - drives the storage engine, rrr clients, and the config store
 class MigrationAdminImpl : public MigrationAdminService {
 public:
     void Migrate(const RpcMigrateRequest& req, RpcMigrateResponse& resp,
                  rrr::DeferredReply defer) override {
+        const std::string key = req.table_name + "|" + req.lo + "|" + req.hi + "|" +
+                                std::to_string(req.src) + "|" + std::to_string(req.dst);
         resp.moved = 0;
-        std::string err = DoMigrate(req, &resp.moved);
-        resp.ok = err.empty() ? 1 : 0;
-        resp.msg = err.empty() ? "committed" : err;
-        if (resp.ok) {
-            Log_info("MigrationAdmin: committed [%s,%s) of '%s' shard %d -> %d (moved=%lld)",
-                     req.lo.c_str(), req.hi.c_str(), req.table_name.c_str(),
-                     req.src, req.dst, static_cast<long long>(resp.moved));
-        } else {
-            Log_warn("MigrationAdmin: REJECTED [%s,%s) of '%s' shard %d -> %d: %s",
-                     req.lo.c_str(), req.hi.c_str(), req.table_name.c_str(),
-                     req.src, req.dst, err.c_str());
+        {
+            auto st = g_mig_job.lock().unwrap();
+            if ((*st).running) {
+                resp.ok = 0;
+                resp.msg = ((*st).key == key) ? "in progress"
+                                              : "another migration in flight";
+                defer.reply();
+                return;
+            }
+            if ((*st).has_result && (*st).key == key) {
+                // Deliver the terminal result exactly once.
+                resp.ok = (*st).ok ? 1 : 0;
+                resp.moved = (*st).moved;
+                resp.msg = (*st).msg;
+                (*st).has_result = false;
+                defer.reply();
+                return;
+            }
+            (*st).running = true;
+            (*st).has_result = false;
+            (*st).key = key;
         }
+        RpcMigrateRequest job_req = req;
+        // @unsafe { detached worker; process-lifetime service, job writes its
+        // result back under g_mig_job before exiting }
+        std::thread([this, job_req]() {
+            rrr::i64 moved = 0;
+            std::string err = DoMigrate(job_req, &moved);
+            if (err.empty()) {
+                Log_info("MigrationAdmin: committed [%s,%s) of '%s' shard %d -> %d (moved=%lld)",
+                         job_req.lo.c_str(), job_req.hi.c_str(), job_req.table_name.c_str(),
+                         job_req.src, job_req.dst, static_cast<long long>(moved));
+            } else {
+                Log_warn("MigrationAdmin: REJECTED [%s,%s) of '%s' shard %d -> %d: %s",
+                         job_req.lo.c_str(), job_req.hi.c_str(), job_req.table_name.c_str(),
+                         job_req.src, job_req.dst, err.c_str());
+            }
+            auto st = g_mig_job.lock().unwrap();
+            (*st).running = false;
+            (*st).has_result = true;
+            (*st).ok = err.empty();
+            (*st).moved = moved;
+            (*st).msg = err.empty() ? "committed" : err;
+        }).detach();
+        resp.ok = 0;
+        resp.msg = "started";
         defer.reply();
     }
 
@@ -191,17 +245,40 @@ private:
         err = EnsureParticipant(master, static_cast<uint32_t>(req.dst), req.table_name);
         if (!err.empty()) return err;
 
+        // Warehouse spec ("wh:<gwid>:<logical>"): the participants above bind
+        // the physical per-warehouse WORKLOAD index on each side (whole-index
+        // migration unit; the catalog resolves it through the warehouse
+        // directory, materializing the destination's adopted index). What the
+        // commit PUBLISHES is the LOGICAL table's warehouse routing segment --
+        // physical row keys carry the shard-local warehouse id and never
+        // appear in routing, so req.lo/req.hi are ignored for specs. The
+        // participant side widens every range op to its whole index, so the
+        // master's wrk-range drives copy/checksum/drop correctly.
+        std::string publish_table = req.table_name;
+        std::string publish_lo = req.lo;
+        std::string publish_hi = req.hi;
+        {
+            int gwid = 0;
+            std::string logical;
+            if (mako::parse_warehouse_spec(req.table_name, &gwid, &logical)) {
+                publish_table = logical;
+                publish_lo = mako::warehouse_route_key(gwid);
+                publish_hi = mako::warehouse_route_key(gwid + 1);
+            }
+        }
+
         // First migration of a table: seed its partition table with the whole
         // keyspace on the source, so the commit's split_and_reassign has an
-        // authoritative partition to mutate.
-        if (cm->get_partition_count(req.table_name) == 0) {
-            if (!cm->seed_partition(req.table_name, static_cast<uint32_t>(req.src)))
+        // authoritative partition to mutate. (Governed TPC-C tables are already
+        // seeded by the workload; this covers ad-hoc tables.)
+        if (cm->get_partition_count(publish_table) == 0) {
+            if (!cm->seed_partition(publish_table, static_cast<uint32_t>(req.src)))
                 return "seed_partition failed";
         }
 
         if (!master->begin_migration(static_cast<uint32_t>(req.src),
                                      static_cast<uint32_t>(req.dst),
-                                     req.table_name, req.lo, req.hi))
+                                     publish_table, publish_lo, publish_hi))
             return "begin_migration rejected";
         master->background_copy();     // Phase 1: copy, source still serving
         master->lock_range();          // Phase 2: master freezes the source's range
@@ -216,6 +293,13 @@ private:
             // to empty/0, which the master's faulted() gate refuses to treat as
             // a checksum match) from a genuine copy divergence.
             const bool faulted = master->participants_faulted();
+            const size_t src_n = master->shard_range_count(
+                static_cast<uint32_t>(req.src), publish_lo, publish_hi);
+            const size_t dst_n = master->shard_range_count(
+                static_cast<uint32_t>(req.dst), publish_lo, publish_hi);
+            Log_warn("MigrationAdmin: final_sync diverged for '%s': src rows=%zu "
+                     "dst rows=%zu faulted=%d", req.table_name.c_str(), src_n,
+                     dst_n, faulted ? 1 : 0);
             master->abort_migration();
             return faulted
                 ? "participant unreachable -> aborted (source intact and "
@@ -225,17 +309,17 @@ private:
         if (!master->commit_migration())  // Phase 4: shed + publish cutover
             return "commit_migration failed";
         *moved = static_cast<rrr::i64>(master->shard_range_count(
-            static_cast<uint32_t>(req.dst), req.lo, req.hi));
+            static_cast<uint32_t>(req.dst), publish_lo, publish_hi));
         // Post-commit shed verification: the cutover is already published (dest
         // owns the range) -- residual source rows are unrouted garbage, surfaced
         // here so an operator can re-drop them (e.g. after a source that died
         // between its prepare vote and the DropRange).
         const size_t src_left = master->shard_range_count(
-            static_cast<uint32_t>(req.src), req.lo, req.hi);
+            static_cast<uint32_t>(req.src), publish_lo, publish_hi);
         if (src_left > 0) {
             Log_warn("MigrationAdmin: committed, but the source still holds %zu "
                      "rows in [%s,%s) (DropRange failed?); unrouted until re-dropped",
-                     src_left, req.lo.c_str(), req.hi.c_str());
+                     src_left, publish_lo.c_str(), publish_hi.c_str());
         }
         return std::string();
     }
@@ -316,7 +400,7 @@ void StartShardDataPlane(abstract_db* db) {
     // Each table self-identifies with this shard's data-plane address so remote
     // migration destinations can pull ranges directly from here.
     g_data_catalog = mako::make_engine_shard_catalog(
-        db, data_plane_addr_of(static_cast<uint32_t>(shard)));
+        db, data_plane_addr_of(static_cast<uint32_t>(shard)), shard);
     if (g_data_catalog == nullptr ||
         g_data_catalog->get_or_create(kMigratableTable) == nullptr) {
         Log_warn("ShardDataPlane: could not create catalog / '%s'", kMigratableTable);

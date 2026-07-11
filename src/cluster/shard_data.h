@@ -107,16 +107,24 @@ public:
     }
 
     // ---- write drain (the fence's other half) ----
-    // Block until every write that BEGAN before this call has finished on this
-    // participant, so the post-drain catch-up copy sees a provably quiescent
-    // range: the staging fence rejects writes that begin AFTER the fence
-    // install, and this waits out the ones that began BEFORE it (the
-    // check-then-act closure -- see docs/mako-book.md s3). The engine
-    // participant waits Silo's active_epoch past the captured global_epoch
-    // (read-only reuse, ~1-2 advancer ticks); the RPC participant forwards to
-    // the remote shard; in-memory doubles are trivially quiescent. Returns
-    // false only on timeout (the coordinator aborts).
+    // Block until every writer that staged into this participant's table
+    // before the fence has finished, so the post-drain catch-up copy sees a
+    // provably quiescent range: the staging fence rejects writes that begin
+    // AFTER the fence install, and this waits out the ones that began BEFORE
+    // it (the check-then-act closure -- see docs/mako-book.md s3). The engine
+    // participant waits a per-table staged-writer watermark; the RPC
+    // participant polls the remote shard; in-memory doubles are trivially
+    // quiescent. Returns false only on timeout (the coordinator aborts).
     virtual bool drain_writes() { return true; }
+
+    // Begin/poll split of the same drain, for RPC transports whose requests
+    // cannot block on the wait (rrr's ~1s client timeout): drain_begin bumps
+    // the watermark generation ONCE and returns the parity to poll (or -1 if
+    // this participant has no split drain -- callers fall back to
+    // drain_writes); drain_poll answers "has that parity emptied" within a
+    // short server-side budget.
+    virtual int drain_begin() { return -1; }
+    virtual bool drain_poll(int /*parity*/) { return drain_writes(); }
 
     // ---- participant health ----
     // Has ANY operation on this participant failed (e.g. an RPC error on a

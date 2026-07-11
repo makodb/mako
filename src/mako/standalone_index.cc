@@ -15,6 +15,7 @@
 #include <stdlib.h>
 
 #include "benchmarks/bench.h"        // canonical include order for mbta TUs
+#include "benchmarks/rpc_setup.h"    // setup_update_table (helper id map)
 #include "storage/mbta_wrapper.hh"   // mbta_index_build
 
 import std;
@@ -24,6 +25,17 @@ namespace mako {
 ::FullOrderedIndex* make_standalone_index(const std::string& name, long table_id) {
     // Leaked: process-lifetime, like the bootstrap's other singletons.
     return mbta_index_build(name, table_id, /*is_remote=*/false);
+}
+
+::FullOrderedIndex* claim_preallocated_index(abstract_db* db, int table_id,
+                                             const std::string& name) {
+    if (db == nullptr) return nullptr;
+    auto* idx = db->get_index_by_table_id(static_cast<unsigned short>(table_id));
+    if (idx == nullptr) return nullptr;
+    // All preallocated instances are mbta (preallocate_open_index). @unsafe
+    static_cast<mbta_ordered_index*>(idx)->set_table_name(name);
+    setup_update_table(table_id, idx);   // helper servers' id -> table map
+    return idx;
 }
 
 }  // namespace mako

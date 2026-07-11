@@ -151,6 +151,25 @@ public:
         return resolve(table_slots(table), global_wid, my_shard);
     }
 
+    // The migration data plane's entry: this shard's LOCAL index for the
+    // warehouse, regardless of who owns it right now. On the migration
+    // SOURCE that is the startup-registered index holding the rows; on the
+    // DESTINATION (which does not own the warehouse yet) it materializes the
+    // empty adopted index the copy will fill before the cutover publishes.
+    // Returns nullptr when the directory was never initialized (non-TPC-C
+    // bed) so the caller can fail the migration gracefully.
+    // @unsafe - may open an engine index via the opener.
+    FullOrderedIndex* local_for_migration(const std::string& table,
+                                          int global_wid, int my_shard) {
+        if (total_ <= 0 || global_wid < 1 || global_wid > total_) return nullptr;
+        WarehouseTableSlots* slots = table_slots(table);
+        FullOrderedIndex* idx =
+            slots->entries[global_wid - 1].local.load(std::memory_order_acquire);
+        if (idx != nullptr) return idx;
+        if (!opener_) return nullptr;
+        return materialize_local(slots, global_wid, my_shard);
+    }
+
     // Test hook: drop every slot array (handles are engine-owned, not freed).
     // @unsafe - only between tests, never while workers run.
     void reset() {
@@ -219,6 +238,30 @@ private:
 inline TpccWarehouseDirectory& get_warehouse_directory() {
     static TpccWarehouseDirectory instance;
     return instance;
+}
+
+// Warehouse migration spec: the data-plane table name "wh:<gwid>:<logical>"
+// (e.g. "wh:6:customer") names one warehouse of one logical table. The shard
+// data catalog resolves it through the directory to the REAL workload index
+// (whole-index migration unit); the admin publishes the LOGICAL table's
+// [warehouse_route_key(g), warehouse_route_key(g+1)) routing range. Returns
+// false if `name` is not a spec.
+// @safe - pure parse
+inline bool parse_warehouse_spec(const std::string& name, int* global_wid,
+                                 std::string* logical_table) {
+    if (name.rfind("wh:", 0) != 0) return false;
+    const size_t second = name.find(':', 3);
+    if (second == std::string::npos || second == 3 || second + 1 >= name.size())
+        return false;
+    int g = 0;
+    for (size_t i = 3; i < second; i++) {
+        if (name[i] < '0' || name[i] > '9') return false;
+        g = g * 10 + (name[i] - '0');
+    }
+    if (g <= 0) return false;
+    *global_wid = g;
+    *logical_table = name.substr(second + 1);
+    return true;
 }
 
 }  // namespace mako

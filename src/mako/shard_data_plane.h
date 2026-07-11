@@ -26,10 +26,14 @@ namespace mako {
 // service address (host:port): each table self-identifies with it
 // (ShardData::service_addr), so a remote migration DESTINATION can pull
 // directly from this shard instead of relaying rows through the coordinator.
-// Tables and the catalog are process-lifetime (leaked). Returns nullptr if db
-// is null.
+// Warehouse specs ("wh:<gwid>:<logical>", see tpcc_warehouse_directory.h)
+// resolve the REAL workload index through the warehouse directory instead of
+// creating a standalone table -- `my_shard` names this shard for the
+// destination-side adoption open. Tables and the catalog are process-lifetime
+// (leaked). Returns nullptr if db is null.
 janus::ShardDataCatalog* make_engine_shard_catalog(abstract_db* db,
-                                                   const std::string& own_addr);
+                                                   const std::string& own_addr,
+                                                   int my_shard);
 
 // Engine-register the calling thread with `db` (idempotent per thread). The
 // admin Migrate handler calls this up front so config-store writes (the

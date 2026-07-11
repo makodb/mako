@@ -43,15 +43,38 @@ bool migration_stage_fenced(const std::string& table, const char* key, size_t le
 // staged-writer registration, if any.
 void migration_fence_txn_done();
 
-// The drain, as a generation WATERMARK: bumps the fence generation and waits
-// until every writer registered under the OLD generation has finished. NOT a
-// quiescence wait ("zero staged writers") -- a busy shard never quiesces
-// (observed live: TPC-C at ~5k txn/s kept the plain counter nonzero for the
-// whole 3s window and every migration aborted on drain timeout). Post-bump
-// registrants don't block the drain; their fence check runs after
-// registration, so they cannot stage into the already-fenced range. False on
-// timeout.
+// The drain, as a PER-TABLE generation WATERMARK: bumps the fence generation
+// and waits until every writer registered under the OLD generation ON THE
+// FENCED TABLE has finished. Two disproofs shaped this:
+//   - NOT a quiescence wait ("zero staged writers"): a busy shard never
+//     quiesces (live TPC-C kept the plain counter nonzero across the whole
+//     window; every migration aborted on drain timeout).
+//   - NOT a process-wide watermark either: cross-shard 2PC gives individual
+//     txns multi-second tails (forensics: workers held registrations 3-5s on
+//     UNRELATED warehouses' indexes), so waiting for every pre-fence writer
+//     in the process times out on live beds. A txn staged elsewhere can never
+//     write into the fenced table -- every staging call re-checks the fence --
+//     so only same-table pre-fence writers matter.
+// Registrations land in a per-table hash slot (collisions share a slot:
+// conservative, the drain may wait for extra writers but never fewer). An
+// empty `table` waits on EVERY slot (the table-agnostic "" fence the unit
+// beds use). False on timeout.
+bool migration_fence_drain_writes_for(const std::string& table, int timeout_ms);
+
+// Back-compat: the table-agnostic drain (waits on every slot).
 bool migration_fence_drain_writes(int timeout_ms);
+
+// Begin/poll split of the same drain, for RPC-driven waiting: rrr requests
+// carry a ~1s client timeout, so a remote drain must be one BEGIN (the single
+// watermark generation bump -- repeated bumps would recycle the two parities
+// and pull post-fence registrants back into the waited set) followed by
+// short-budget POLLS. begin returns the old parity to poll.
+int migration_fence_drain_begin();
+bool migration_fence_drained(const std::string& table, int parity);
+
+// Forensics: dump every open staged-writer registration (thread slot, table,
+// parity, age) to stderr. Rate-limit at the call site.
+void migration_fence_dump_staged();
 
 // Routing-ownership recheck for server-executed ops: the shard that owns
 // (table_id, key) per the CURRENT partition-governed routing, or -1 when the

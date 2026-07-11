@@ -56,14 +56,26 @@ int main(int argc, char** argv) {
     req.src = atoi(argv[6]);
     req.dst = atoi(argv[7]);
 
-    auto r = proxy.Migrate(req);
-    if (r.is_err()) {
-        fprintf(stderr, "mako_admin: Migrate RPC failed (rrr err=%d)\n",
-                static_cast<int>(r.unwrap_err()));
-        return 2;
+    // Migrations run as ASYNC JOBS server-side (rrr requests carry a ~1s
+    // client timeout, far under a real migration): the first call replies
+    // "started", repeats reply "in progress", and the terminal result is
+    // delivered once. Poll to a generous deadline.
+    const int deadline_s = 600;
+    for (int waited_ms = 0; waited_ms <= deadline_s * 1000; waited_ms += 500) {
+        auto r = proxy.Migrate(req);
+        if (r.is_err()) {
+            fprintf(stderr, "mako_admin: Migrate RPC failed (rrr err=%d)\n",
+                    static_cast<int>(r.unwrap_err()));
+            return 2;
+        }
+        auto resp = r.unwrap();
+        if (resp.msg != "started" && resp.msg != "in progress") {
+            printf("ok=%d moved=%lld msg=%s\n", static_cast<int>(resp.ok),
+                   static_cast<long long>(resp.moved), resp.msg.c_str());
+            return resp.ok == 1 ? 0 : 1;
+        }
+        usleep(500 * 1000);
     }
-    auto resp = r.unwrap();
-    printf("ok=%d moved=%lld msg=%s\n", static_cast<int>(resp.ok),
-           static_cast<long long>(resp.moved), resp.msg.c_str());
-    return resp.ok == 1 ? 0 : 1;
+    fprintf(stderr, "mako_admin: migration still running after %ds\n", deadline_s);
+    return 2;
 }

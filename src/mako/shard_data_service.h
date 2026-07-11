@@ -29,6 +29,8 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 
 #include <rusty/mutex.hpp>  // guards the pull-source connection cache
 
+#include <unistd.h>   // usleep (drain poll pacing)
+
 #include <cstdint>
 #include <map>
 #include <string>
@@ -176,10 +178,26 @@ public:
     }
     void DrainWrites(const RpcDrainWritesRequest& req, RpcDrainWritesResponse& resp,
                      rrr::DeferredReply defer) override {
-        // The wait is engine-global; resolve the table only so the drain runs
-        // against a live plane (and creates none as a side effect of a typo).
+        // BEGIN/POLL protocol (see rcc_rpc.rpc): the server never blocks a
+        // call on the full wait -- rrr requests carry a ~1s client timeout.
         ShardData* shard = resolve(req.table_name);
-        resp.ok = (shard != nullptr && shard->drain_writes()) ? 1 : 0;
+        if (shard == nullptr) {
+            resp.ok = 0; resp.parity = -1; defer.reply(); return;
+        }
+        int parity = req.phase;
+        if (parity < 0) {
+            parity = shard->drain_begin();
+            if (parity < 0) {
+                // No split drain on this participant: fall back to the
+                // blocking wait (in-memory doubles answer instantly).
+                resp.ok = shard->drain_writes() ? 1 : 0;
+                resp.parity = -1;
+                defer.reply();
+                return;
+            }
+        }
+        resp.ok = shard->drain_poll(parity) ? 1 : 0;
+        resp.parity = static_cast<rrr::i32>(parity);
         defer.reply();
     }
 
@@ -320,14 +338,27 @@ public:
         if (proxy_->DropRange(req).is_err()) faulted_ = true;
     }
 
-    // Write drain on the REMOTE shard: one RPC; the remote engine waits its
-    // Silo epochs past the fence capture. Fault-latches like every other op.
+    // Write drain on the REMOTE shard, as BEGIN/POLL: the first call bumps
+    // the remote watermark once and returns the parity; subsequent calls
+    // poll it with a short server budget, each staying under rrr's ~1s
+    // request timeout. Loops to a 12s deadline (covers same-table 2PC
+    // tails). Fault-latches like every other op.
     bool drain_writes() override {
-        ShardDataServiceProxy::RpcDrainWritesRequest req;
-        req.table_name = table_;
-        auto r = proxy_->DrainWrites(req);
-        if (r.is_err()) { faulted_ = true; return false; }
-        return r.unwrap().ok != 0;
+        rrr::i32 phase = -1;
+        for (int waited_ms = 0; waited_ms < 12000; ) {
+            ShardDataServiceProxy::RpcDrainWritesRequest req;
+            req.table_name = table_;
+            req.phase = phase;
+            auto r = proxy_->DrainWrites(req);
+            if (r.is_err()) { faulted_ = true; return false; }
+            auto resp = r.unwrap();
+            if (resp.ok != 0) return true;
+            if (resp.parity < 0) return false;   // no split drain remotely; it said no
+            phase = resp.parity;
+            usleep(100 * 1000);   // server budget ~400ms + this = ~2 polls/sec
+            waited_ms += 500;
+        }
+        return false;
     }
 
     // Migration write fence on the REMOTE shard (ShardData overrides): one RPC to

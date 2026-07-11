@@ -51,6 +51,7 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "benchmarks/tpcc_sharding.h"
 #include "benchmarks/tpcc_warehouse_directory.h"   // ownership-driven table handle resolution
 #include "lib/table_registry.h"   // register_route + warehouse_route_key (partition-governed routing)
+#include "standalone_index.h"     // claim_preallocated_index (on-demand warehouse handles)
 
 import std;
 
@@ -3650,14 +3651,39 @@ private:
       mako::get_warehouse_directory().init(
           dir_wps, static_cast<int>(NumWarehousesTotal()),
           mako::TpccWarehouseDirectory::Opener{
-              // Opens the physical index AND registers its routing alias --
-              // the directory's handles are opaque (toolchain note in its
-              // header), so the complete-type work happens here.
+              // Materializes an on-demand warehouse index (destination's
+              // ADOPTED local, or a departed warehouse's proxy) at a
+              // DETERMINISTIC table id: the wire carries ids, and per-process
+              // open_index counters diverge after startup, so both sides of a
+              // migration must compute the SAME id. Reserved sub-window
+              // [base+101, base+200] of the OWNER shard's id range, slotted by
+              // (logical table, global warehouse); instances are preallocated
+              // for every id in every process with is_remote already set by
+              // window ownership, so marking + registration is all that
+              // remains. (Slot capacity bounds this to <= 9 warehouses total
+              // for the 11 governed tables -- fine for the beds; widen the
+              // window when bigger topologies need live warehouse migration.)
               [](void* ctx, const std::string& logical, int gwid,
                  const std::string& n, int s) -> abstract_ordered_index* {
-                auto* idx = static_cast<abstract_db*>(ctx)->open_index(n, s);
+                static const char* kGoverned[] = {
+                    "customer", "customer_name_idx", "district", "history",
+                    "new_order", "oorder", "oorder_c_id_idx", "order_line",
+                    "stock", "stock_data", "warehouse"};
+                int pos = -1;
+                for (int i = 0; i < 11; i++)
+                  if (logical == kGoverned[i]) { pos = i; break; }
+                const int slot =
+                    (pos < 0) ? -1
+                              : pos * static_cast<int>(NumWarehousesTotal()) +
+                                    (gwid - 1);
+                if (slot < 0 || slot >= 100) return nullptr;
+                const int id = s * mako::NUM_TABLES_PER_SHARD + 1 + 100 + slot;
+                auto* idx = mako::claim_preallocated_index(
+                    static_cast<abstract_db*>(ctx), id, n);
+                if (idx == nullptr) return nullptr;
+                mako::get_table_registry().register_table(id, n);
                 mako::get_table_registry().register_route(
-                    idx->get_table_id(), logical, mako::warehouse_route_key(gwid));
+                    id, logical, mako::warehouse_route_key(gwid));
                 return idx;
               },
               db});
