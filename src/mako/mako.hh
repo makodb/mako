@@ -535,6 +535,60 @@ static void wait_for_termination()
     //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
   }
 
+  // Drain the replay backlog before tearing down. The loop above exits on
+  // the FIRST partition's END marker, but each partition replays
+  // synchronously inside its own delivery callback — the other partitions'
+  // batch tails may still be undelivered (on throttled CI runners,
+  // hundreds of batches), and watermark-parked entries drain on later
+  // deliveries. Also keep printing the counter: the CI harness reads
+  // "replay_batch:N" from this log, and going silent here made it
+  // snapshot a stale mid-lag value (the shard1Replication mako-dev flake).
+  // Exit once the counter stops advancing for a few seconds (drained or
+  // genuinely stuck) or the overall budget runs out.
+  int drain_stall_limit = 5;
+  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_STALL_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(env, &endptr, 10);
+    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 600) {
+      drain_stall_limit = static_cast<int>(parsed);
+    } else {
+      Warning("Invalid MAKO_FOLLOWER_DRAIN_STALL_SECONDS='%s'; using default %d",
+              env, drain_stall_limit);
+    }
+  }
+  int drain_max_seconds = 120;
+  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_MAX_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(env, &endptr, 10);
+    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 3600) {
+      drain_max_seconds = static_cast<int>(parsed);
+    } else {
+      Warning("Invalid MAKO_FOLLOWER_DRAIN_MAX_SECONDS='%s'; using default %d",
+              env, drain_max_seconds);
+    }
+  }
+  int last_replay_batch = benchConfig.getReplayBatch();
+  int drain_stall = 0;
+  for (int drain_time = 1; drain_time <= drain_max_seconds; drain_time++) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    int rb = benchConfig.getReplayBatch();
+    if (rb != last_replay_batch) {
+      last_replay_batch = rb;
+      drain_stall = 0;
+    } else {
+      drain_stall++;
+    }
+    Notice("%s draining replay backlog: %d/%zu ended, replay_batch:%d, stall:%ds, drain_time:%ds\n",
+           isLearner ? "learner" : "follower",
+           benchConfig.getEndReceived(), benchConfig.getNthreads(),
+           rb, drain_stall, drain_time);
+    if (drain_stall >= drain_stall_limit) {
+      Notice("%s replay drained: replay_batch:%d stable for %ds after %ds\n",
+             isLearner ? "learner" : "follower", rb, drain_stall, drain_time);
+      break;
+    }
+  }
+
   // Track and report latency if configured if tracked
   run_latency_tracking();
 }
