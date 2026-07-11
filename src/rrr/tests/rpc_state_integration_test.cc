@@ -136,34 +136,35 @@ bool create_connected_tcp_pair(int sv[2]) {
     return true;
 }
 
-class ClosedFlagPollable : public Pollable {
+// Plain struct: consumed only via the typed-arc PollableArcShim<T>.
+class ClosedFlagPollable {
 public:
     explicit ClosedFlagPollable(int fd)
         : fd_(fd) {}
 
-    int fd() const override {
+    int fd() const {
         return fd_.load();
     }
 
-    int poll_mode() const override {
+    int poll_mode() const {
         return PollMode::READ;
     }
 
-    size_t content_size() override {
+    size_t content_size() const {
         return 0;
     }
 
-    bool handle_read() override {
+    bool handle_read() const {
         return true;
     }
 
-    int handle_write() override {
+    int handle_write() const {
         return PollMode::NO_CHANGE;
     }
 
-    void handle_error() override {}
+    void handle_error() const {}
 
-    void close() override {
+    void close() const {
         close_calls_.fetch_add(1);
         int fd = fd_.exchange(-1);
         if (fd >= 0) {
@@ -171,11 +172,11 @@ public:
         }
     }
 
-    bool check_pending_write_update() const override {
+    bool check_pending_write_update() const {
         return false;
     }
 
-    bool is_closed() const override {
+    bool is_closed() const {
         return closed_.load();
     }
 
@@ -188,9 +189,9 @@ public:
     }
 
 private:
-    std::atomic<int> fd_;
+    mutable std::atomic<int> fd_;
     mutable std::atomic<bool> closed_{false};
-    std::atomic<int> close_calls_{0};
+    mutable std::atomic<int> close_calls_{0};
 };
 
 }  // namespace
