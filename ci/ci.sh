@@ -120,11 +120,12 @@ cleanup_processes() {
     pkill -9 -u "$user_name" -f "bash/shard.sh" 2>/dev/null || true
 
     # Evict ANY of our processes still LISTENING in the test port
-    # ranges (20000-31699 shard/simpleTransaction band, 40000-55999
-    # paxos/raft band). The kill-by-name list above cannot enumerate
-    # every server binary (e.g. leaked rrr test servers), and a single
-    # live squatter mid-range EADDRINUSE-panics a later suite — the
-    # port picker can only probe what is free at PICK time.
+    # ranges (20000-31699 shard/simpleTransaction band, 40000-64999
+    # paxos/raft band — randomized bases reach ~54535 and their +10000
+    # heartbeat ports ~64535). The kill-by-name list above cannot
+    # enumerate every server binary (e.g. leaked rrr test servers), and
+    # a single live squatter mid-range EADDRINUSE-panics a later suite —
+    # the port picker can only probe what is free at PICK time.
     while read -r pid; do
         [ -z "$pid" ] && continue
         if is_ancestor_pid "$pid"; then continue; fi
@@ -134,7 +135,7 @@ cleanup_processes() {
         ss -ltnpH 2>/dev/null | awk '
             {
                 n = split($4, a, ":"); lp = a[n] + 0
-                if ((lp >= 20000 && lp <= 31699) || (lp >= 40000 && lp <= 55999)) print $0
+                if ((lp >= 20000 && lp <= 31699) || (lp >= 40000 && lp <= 64999)) print $0
             }' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u
     )
 

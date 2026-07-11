@@ -43,6 +43,19 @@ if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=
     # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
     DOCKER_SECURITY_OPTS=(--security-opt apparmor=unconfined)
 fi
+# Keep kernel-assigned ephemeral source ports away from the bands the test
+# harness listens on: paxos/raft listen ports live inside the Linux default
+# ephemeral range (32768-60999), and an outbound connect() that grabs one as
+# its source port EADDRINUSE-aborts a later server bind even under
+# SO_REUSEADDR. Reserved ports stay bindable explicitly; only the automatic
+# allocator skips them. Mirrors the CI container sysctl in
+# .github/workflows/ci.yml — keep the two lists in sync.
+# Real docker only: podman's --sysctl CSV-splits the value on commas and
+# rejects the range list (verified podman 5.x); podman runs keep the
+# historical exposure and rely on the rrr self-connect guard.
+if docker --version 2>/dev/null | grep -q '^Docker version'; then
+    DOCKER_SECURITY_OPTS+=(--sysctl net.ipv4.ip_local_reserved_ports=32768-35100,37000-37400,40000-64999)
+fi
 HAS_TTY=1
 DOCKER_INTERACTIVE_OPTS=(-it)
 COMPOSE_EXEC_OPTS=()

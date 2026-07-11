@@ -24,7 +24,19 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-      options: --user root
+      # --sysctl: keep kernel-assigned ephemeral source ports away from every
+      # band the test harness listens on. The suite's fixed/randomized listen
+      # ports (static paxos 45xxx + ctrl 55xxx, static raft ctrl 37xxx, raw
+      # dbtest configs up to 35100, randomized paxos/raft 40000..64535) sit
+      # inside Linux's default ephemeral range (32768-60999); an outbound
+      # connect() can grab one as its source port (or self-connect to it),
+      # and the later listener bind() dies with EADDRINUSE even under
+      # SO_REUSEADDR — the dominant mako-dev CI flake. Reserved ports are
+      # still bindable explicitly; the allocator just skips them. Ephemeral
+      # pool left: 35101-36999 + 37401-39999 (~4.5k ports, loopback
+      # tcp_tw_reuse keeps that plenty). NOTE: value must stay space-free —
+      # the runner splits `options` on whitespace.
+      options: --user root --sysctl net.ipv4.ip_local_reserved_ports=32768-35100,37000-37400,40000-64999
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -63,6 +75,13 @@ jobs:
           echo "CMAKE_GENERATOR=${CMAKE_GENERATOR}"
           echo "MAKO_CPU_LIMIT=${MAKO_CPU_LIMIT}"
           echo "MAKO_THROTTLE_CYCLE_MS=${MAKO_THROTTLE_CYCLE_MS}"
+          # Fail loud if the container was created without the reserved-port
+          # sysctl (see container.options above): an empty value here means
+          # test listen ports are back inside the ephemeral range and the
+          # EADDRINUSE flake family is live again.
+          echo "ip_local_port_range=$(cat /proc/sys/net/ipv4/ip_local_port_range)"
+          echo "ip_local_reserved_ports=$(cat /proc/sys/net/ipv4/ip_local_reserved_ports)"
+          grep -q "40000" /proc/sys/net/ipv4/ip_local_reserved_ports
           rustc --version
           cargo --version
           cmake --version
