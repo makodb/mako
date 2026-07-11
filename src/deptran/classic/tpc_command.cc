@@ -6,15 +6,15 @@
 using namespace janus;
 
 // registrations switched to the no-arg
-// `SerializableRegistry::reg<T>()` overload — kind is auto-derived
+// `SerializableRegistry::reg<T>(T::static_kind())` overload — kind is auto-derived
 // from each type's `static_kind()` method (provided by the
 // `Serializable<T, MakoCommands>` CRTP base, which returns the type's
 // 1-indexed position in the `MakoCommands` TypeList).
-static int volatile x1 = rrr::SerializableRegistry::reg<TpcPrepareCommand>();
-static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>();
-static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>();
-static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>();
-static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>();
+static int volatile x1 = rrr::SerializableRegistry::reg<TpcPrepareCommand>(TpcPrepareCommand::static_kind());
+static int volatile x2 = rrr::SerializableRegistry::reg<TpcCommitCommand>(TpcCommitCommand::static_kind());
+static int volatile x3 = rrr::SerializableRegistry::reg<TpcEmptyCommand>(TpcEmptyCommand::static_kind());
+static int volatile x4 = rrr::SerializableRegistry::reg<TpcNoopCommand>(TpcNoopCommand::static_kind());
+static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatchCommand::static_kind());
 
 
 // TpcPrepareCommand serialization via

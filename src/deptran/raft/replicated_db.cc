@@ -24,7 +24,7 @@ using namespace janus;
 // registration switched to no-arg form — kind
 // auto-derived from `Serializable<T, MakoCommands>` CRTP base.
 static int volatile x_replicated_db =
-    rrr::SerializableRegistry::reg<ReplicatedDBCommand>();
+    rrr::SerializableRegistry::reg<ReplicatedDBCommand>(ReplicatedDBCommand::static_kind());
 
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization

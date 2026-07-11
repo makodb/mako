@@ -10,7 +10,7 @@ namespace janus {
 
 // registration switched to no-arg form — kind
 // auto-derived from `Serializable<T, MakoCommands>` CRTP base.
-static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>();
+static int volatile x = rrr::SerializableRegistry::reg<SimpleRWCommand>(SimpleRWCommand::static_kind());
 
 SimpleRWCommand::SimpleRWCommand() {
   //Log_info("[copilot+] SimpleRWCommand Empty created");
