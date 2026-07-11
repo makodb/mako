@@ -97,7 +97,7 @@ TEST_F(MasstreeTest, RangeScanReturnsSortedKeys) {
 
   CollectCallback cb;
   TestTree::key_type lower = keys.front();
-  tree_.search_range_call(lower, nullptr, cb);
+  tree_.search_range_call_unbounded(lower, cb);
 
   ASSERT_EQ(cb.results.size(), kCount);
   ASSERT_TRUE(std::is_sorted(cb.results.begin(), cb.results.end()));
@@ -155,7 +155,7 @@ TEST_P(MasstreeKeyShape, InsertDuplicateOverwritesAndReturnsFalse) {
   const auto& key = GetParam().key;
   ASSERT_TRUE(tree_.insert(vk(key), MakeValue(1)));
   TestTree::value_type old = nullptr;
-  EXPECT_FALSE(tree_.insert(vk(key), MakeValue(2), &old));
+  EXPECT_FALSE(tree_.insert_with_old(vk(key), MakeValue(2), old));
   ASSERT_NE(old, nullptr);
   EXPECT_EQ(Decode(old), 1u);
   EXPECT_EQ(tree_.size(), 1u);
@@ -363,7 +363,7 @@ TEST_F(MasstreeTest, ForwardScanRespectsExclusiveUpper) {
   Collect cb;
   TestTree::key_type lo = keys[10];
   TestTree::key_type hi = keys[20];
-  tree_.search_range_call(lo, &hi, cb);
+  tree_.search_range_call_bounded(lo, hi, cb);
   ASSERT_EQ(cb.values.size(), 10u);
   EXPECT_EQ(cb.values.front(), 10u);
   EXPECT_EQ(cb.values.back(),  19u);
@@ -378,7 +378,7 @@ TEST_F(MasstreeTest, ForwardScanNullUpperIsUnbounded) {
   }
   Collect cb;
   TestTree::key_type lo = keys.front();
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), kCount);
 }
 
@@ -392,7 +392,7 @@ TEST_F(MasstreeTest, ReverseScanRespectsInclusiveUpperAndExclusiveLower) {
   Collect cb;
   TestTree::key_type up = keys[20];
   TestTree::key_type lo = keys[10];
-  tree_.rsearch_range_call(up, &lo, cb);
+  tree_.rsearch_range_call_bounded(up, lo, cb);
   ASSERT_EQ(cb.values.size(), 10u);
   EXPECT_EQ(cb.values.front(), 20u);
   EXPECT_EQ(cb.values.back(),  11u);
@@ -407,14 +407,14 @@ TEST_F(MasstreeTest, ReverseScanNullLowerIsUnbounded) {
   }
   Collect cb;
   TestTree::key_type up = keys.back();
-  tree_.rsearch_range_call(up, nullptr, cb);
+  tree_.rsearch_range_call_unbounded(up, cb);
   EXPECT_EQ(cb.values.size(), kCount);
 }
 
 TEST_F(MasstreeTest, ScanOnEmptyTreeYieldsNothing) {
   Collect cb;
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_TRUE(cb.values.is_empty());
 }
 
@@ -428,7 +428,7 @@ TEST_F(MasstreeTest, ScanStopsWhenCallbackReturnsFalse) {
   Collect cb;
   cb.limit = 7;
   TestTree::key_type lo = keys.front();
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), 7u);
 }
 
@@ -449,7 +449,7 @@ TEST_F(MasstreeTest, ScanCrossesLayers) {
   Collect cb;
   const std::string lower_raw(p1);
   varkey lo = vk(lower_raw);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_EQ(cb.values.size(), 16u);
   EXPECT_TRUE(std::is_sorted(cb.keys.begin(), cb.keys.end()));
 }
@@ -463,7 +463,7 @@ TEST_F(MasstreeTest, ScanStartKeyJustRemovedSkipsIt) {
   ASSERT_TRUE(tree_.remove(keys[3]));
   Collect cb;
   TestTree::key_type lo = keys[3];
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   ASSERT_FALSE(cb.values.is_empty());
   EXPECT_EQ(cb.values.front(), 4u);
   EXPECT_EQ(cb.values.size(), 6u);  // 4..9
@@ -514,7 +514,7 @@ TEST_F(MasstreeTest, InsertDuringScanIsWeaklyConsistent) {
   cb.vals = &later_values;
 
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
 
   EXPECT_GE(cb.observed.size(), 50u);
   EXPECT_TRUE(std::is_sorted(cb.observed.begin(), cb.observed.end()));
@@ -555,6 +555,6 @@ TEST_F(MasstreeTest, RemoveDuringScanIsWeaklyConsistent) {
   cb.tree = &tree_;
   cb.keys = &keys;
   u64_varkey lo(0);
-  tree_.search_range_call(lo, nullptr, cb);
+  tree_.search_range_call_unbounded(lo, cb);
   EXPECT_TRUE(std::is_sorted(cb.observed.begin(), cb.observed.end()));
 }

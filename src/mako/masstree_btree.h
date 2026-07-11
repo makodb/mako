@@ -297,8 +297,8 @@ public:
   };
 
   /**
-   * For all keys in [lower, *upper), invoke callback in ascending order.
-   * If upper is NULL, then there is no upper bound
+   * For all keys in [lower, upper), invoke callback in ascending order.
+   * Use the unbounded variants when there is no upper bound.
    *
 
    * This function by default provides a weakly consistent view of the b-tree. For
@@ -332,25 +332,50 @@ public:
    * A) locking mode
    * B) optimistic validation mode
    *
-   * the last string parameter is an optional string buffer to use:
-   * if null, a stack allocated string will be used. if not null, must
-   * ensure:
-   *   A) buf->empty() at the beginning
-   *   B) no concurrent mutation of string
-   * note that string contents upon return are arbitrary
+   * The with_buffer variants accept a caller-owned scratch buffer. Callers must
+   * ensure it is empty at the beginning and not concurrently mutated. Its
+   * contents after return are arbitrary.
    */
   void
-  search_range_call(const key_type &lower,
-                    const key_type *upper,
-                    low_level_search_range_callback &callback,
-                    std::string *buf = nullptr) const;
+  search_range_call_unbounded(const key_type &lower,
+                              low_level_search_range_callback &callback) const;
+
+  void
+  search_range_call_bounded(const key_type &lower,
+                            const key_type &upper,
+                            low_level_search_range_callback &callback) const;
+
+  void
+  search_range_call_unbounded_with_buffer(const key_type &lower,
+                                          low_level_search_range_callback &callback,
+                                          std::string &buf) const;
+
+  void
+  search_range_call_bounded_with_buffer(const key_type &lower,
+                                        const key_type &upper,
+                                        low_level_search_range_callback &callback,
+                                        std::string &buf) const;
 
   // (lower, upper]
   void
-  rsearch_range_call(const key_type &upper,
-                     const key_type *lower,
-                     low_level_search_range_callback &callback,
-                     std::string *buf = nullptr) const;
+  rsearch_range_call_unbounded(const key_type &upper,
+                               low_level_search_range_callback &callback) const;
+
+  void
+  rsearch_range_call_bounded(const key_type &upper,
+                             const key_type &lower,
+                             low_level_search_range_callback &callback) const;
+
+  void
+  rsearch_range_call_unbounded_with_buffer(const key_type &upper,
+                                           low_level_search_range_callback &callback,
+                                           std::string &buf) const;
+
+  void
+  rsearch_range_call_bounded_with_buffer(const key_type &upper,
+                                         const key_type &lower,
+                                         low_level_search_range_callback &callback,
+                                         std::string &buf) const;
 
   class search_range_callback : public low_level_search_range_callback {
   public:
@@ -377,10 +402,27 @@ public:
    */
   template <typename F>
   inline void
-  search_range(const key_type &lower,
-               const key_type *upper,
-               F& callback,
-               std::string *buf = nullptr) const;
+  search_range_unbounded(const key_type &lower,
+                         F& callback) const;
+
+  template <typename F>
+  inline void
+  search_range_bounded(const key_type &lower,
+                       const key_type &upper,
+                       F& callback) const;
+
+  template <typename F>
+  inline void
+  search_range_unbounded_with_buffer(const key_type &lower,
+                                     F& callback,
+                                     std::string &buf) const;
+
+  template <typename F>
+  inline void
+  search_range_bounded_with_buffer(const key_type &lower,
+                                   const key_type &upper,
+                                   F& callback,
+                                   std::string &buf) const;
 
   /**
    * (*lower, upper]
@@ -390,22 +432,50 @@ public:
    */
   template <typename F>
   inline void
-  rsearch_range(const key_type &upper,
-                const key_type *lower,
-                F& callback,
-                std::string *buf = nullptr) const;
+  rsearch_range_unbounded(const key_type &upper,
+                          F& callback) const;
+
+  template <typename F>
+  inline void
+  rsearch_range_bounded(const key_type &upper,
+                        const key_type &lower,
+                        F& callback) const;
+
+  template <typename F>
+  inline void
+  rsearch_range_unbounded_with_buffer(const key_type &upper,
+                                      F& callback,
+                                      std::string &buf) const;
+
+  template <typename F>
+  inline void
+  rsearch_range_bounded_with_buffer(const key_type &upper,
+                                    const key_type &lower,
+                                    F& callback,
+                                    std::string &buf) const;
 
   /**
    * returns true if key k did not already exist, false otherwise
    * If k exists with a different mapping, still returns false
    *
-   * If false and old_v is not NULL, then the overwritten value of v
-   * is written into old_v
+   * The insert_with_old variants write the overwritten value into old_v when
+   * this returns false.
    */
   inline bool
-  insert(const key_type &k, value_type v,
-         value_type *old_v = NULL,
-         insert_info_t *insert_info = NULL);
+  insert(const key_type &k, value_type v);
+
+  inline bool
+  insert_with_old(const key_type &k, value_type v,
+                  value_type &old_v);
+
+  inline bool
+  insert_with_info(const key_type &k, value_type v,
+                   insert_info_t &insert_info);
+
+  inline bool
+  insert_with_old_and_info(const key_type &k, value_type v,
+                           value_type &old_v,
+                           insert_info_t &insert_info);
 
   /**
    * Only puts k=>v if k does not exist in map. returns true
@@ -413,16 +483,21 @@ public:
    */
   inline bool
   insert_if_absent(const key_type &k, value_type v,
-                   insert_info_t *insert_info = NULL);
+                   insert_info_t &insert_info);
+
+  inline bool
+  insert_if_absent(const key_type &k, value_type v);
 
   /**
    * return true if a value was removed, false otherwise.
    *
-   * if true and old_v is not NULL, then the removed value of v
-   * is written into old_v
+   * remove_with_old writes the removed value into old_v when this returns true.
    */
   inline bool
-  remove(const key_type &k, value_type *old_v = NULL);
+  remove(const key_type &k);
+
+  inline bool
+  remove_with_old(const key_type &k, value_type &old_v);
 
   /**
    * The tree walk API is a bit strange, due to the optimistic nature of the
@@ -484,6 +559,32 @@ public:
 
  private:
   Masstree::basic_table<P> table_;
+
+  bool insert_impl(const key_type &k, value_type v,
+                   value_type *old_v,
+                   insert_info_t *insert_info);
+  bool insert_if_absent_impl(const key_type &k, value_type v,
+                             insert_info_t *insert_info);
+  bool remove_impl(const key_type &k, value_type *old_v);
+
+  void search_range_call_impl(const key_type &lower,
+                              const key_type *upper,
+                              low_level_search_range_callback &callback,
+                              std::string *buf) const;
+  void rsearch_range_call_impl(const key_type &upper,
+                               const key_type *lower,
+                               low_level_search_range_callback &callback,
+                               std::string *buf) const;
+  template <typename F>
+  void search_range_impl(const key_type &lower,
+                         const key_type *upper,
+                         F& callback,
+                         std::string *buf) const;
+  template <typename F>
+  void rsearch_range_impl(const key_type &upper,
+                          const key_type *lower,
+                          F& callback,
+                          std::string *buf) const;
 
   static leaf_type* leftmost_descend_layer(node_base_type* n);
   class size_walk_callback;
@@ -607,9 +708,37 @@ inline bool mbtree<P>::search(const key_type &k, value_type &v,
 }
 
 template <typename P>
-inline bool mbtree<P>::insert(const key_type &k, value_type v,
-                              value_type *old_v,
-                              insert_info_t *insert_info)
+inline bool mbtree<P>::insert(const key_type &k, value_type v)
+{
+  return insert_impl(k, v, nullptr, nullptr);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_with_old(const key_type &k, value_type v,
+                                       value_type &old_v)
+{
+  return insert_impl(k, v, &old_v, nullptr);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_with_info(const key_type &k, value_type v,
+                                        insert_info_t &insert_info)
+{
+  return insert_impl(k, v, nullptr, &insert_info);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_with_old_and_info(const key_type &k, value_type v,
+                                                value_type &old_v,
+                                                insert_info_t &insert_info)
+{
+  return insert_impl(k, v, &old_v, &insert_info);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_impl(const key_type &k, value_type v,
+                                   value_type *old_v,
+                                   insert_info_t *insert_info)
 {
   rcu_region guard;
   threadinfo ti;
@@ -631,7 +760,20 @@ inline bool mbtree<P>::insert(const key_type &k, value_type v,
 
 template <typename P>
 inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
-                                        insert_info_t *insert_info)
+                                        insert_info_t &insert_info)
+{
+  return insert_if_absent_impl(k, v, &insert_info);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v)
+{
+  return insert_if_absent_impl(k, v, nullptr);
+}
+
+template <typename P>
+inline bool mbtree<P>::insert_if_absent_impl(const key_type &k, value_type v,
+                                             insert_info_t *insert_info)
 {
   rcu_region guard;
   threadinfo ti;
@@ -653,11 +795,22 @@ inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
 /**
  * return true if a value was removed, false otherwise.
  *
- * if true and old_v is not NULL, then the removed value of v
- * is written into old_v
+ * remove_with_old writes the removed value into old_v when this returns true.
  */
 template <typename P>
-inline bool mbtree<P>::remove(const key_type &k, value_type *old_v)
+inline bool mbtree<P>::remove(const key_type &k)
+{
+  return remove_impl(k, nullptr);
+}
+
+template <typename P>
+inline bool mbtree<P>::remove_with_old(const key_type &k, value_type &old_v)
+{
+  return remove_impl(k, &old_v);
+}
+
+template <typename P>
+inline bool mbtree<P>::remove_impl(const key_type &k, value_type *old_v)
 {
   rcu_region guard;
   threadinfo ti;
@@ -751,30 +904,124 @@ public:
 };
 
 template <typename P>
-inline void mbtree<P>::search_range_call(const key_type &lower,
-                                         const key_type *upper,
-                                         low_level_search_range_callback &callback,
-                                         std::string*) const {
+inline void mbtree<P>::search_range_call_unbounded(
+    const key_type &lower,
+    low_level_search_range_callback &callback) const {
+  search_range_call_impl(lower, nullptr, callback, nullptr);
+}
+
+template <typename P>
+inline void mbtree<P>::search_range_call_bounded(
+    const key_type &lower,
+    const key_type &upper,
+    low_level_search_range_callback &callback) const {
+  search_range_call_impl(lower, &upper, callback, nullptr);
+}
+
+template <typename P>
+inline void mbtree<P>::search_range_call_unbounded_with_buffer(
+    const key_type &lower,
+    low_level_search_range_callback &callback,
+    std::string &buf) const {
+  search_range_call_impl(lower, nullptr, callback, &buf);
+}
+
+template <typename P>
+inline void mbtree<P>::search_range_call_bounded_with_buffer(
+    const key_type &lower,
+    const key_type &upper,
+    low_level_search_range_callback &callback,
+    std::string &buf) const {
+  search_range_call_impl(lower, &upper, callback, &buf);
+}
+
+template <typename P>
+inline void mbtree<P>::search_range_call_impl(
+    const key_type &lower,
+    const key_type *upper,
+    low_level_search_range_callback &callback,
+    std::string*) const {
   low_level_search_range_scanner<false> scanner(upper, callback);
   threadinfo ti;
   table_.scan(lcdf::Str(lower.data(), lower.length()), true, scanner, ti);
 }
 
 template <typename P>
-inline void mbtree<P>::rsearch_range_call(const key_type &upper,
-                                          const key_type *lower,
-                                          low_level_search_range_callback &callback,
-                                          std::string*) const {
+inline void mbtree<P>::rsearch_range_call_unbounded(
+    const key_type &upper,
+    low_level_search_range_callback &callback) const {
+  rsearch_range_call_impl(upper, nullptr, callback, nullptr);
+}
+
+template <typename P>
+inline void mbtree<P>::rsearch_range_call_bounded(
+    const key_type &upper,
+    const key_type &lower,
+    low_level_search_range_callback &callback) const {
+  rsearch_range_call_impl(upper, &lower, callback, nullptr);
+}
+
+template <typename P>
+inline void mbtree<P>::rsearch_range_call_unbounded_with_buffer(
+    const key_type &upper,
+    low_level_search_range_callback &callback,
+    std::string &buf) const {
+  rsearch_range_call_impl(upper, nullptr, callback, &buf);
+}
+
+template <typename P>
+inline void mbtree<P>::rsearch_range_call_bounded_with_buffer(
+    const key_type &upper,
+    const key_type &lower,
+    low_level_search_range_callback &callback,
+    std::string &buf) const {
+  rsearch_range_call_impl(upper, &lower, callback, &buf);
+}
+
+template <typename P>
+inline void mbtree<P>::rsearch_range_call_impl(
+    const key_type &upper,
+    const key_type *lower,
+    low_level_search_range_callback &callback,
+    std::string*) const {
   low_level_search_range_scanner<true> scanner(lower, callback);
   threadinfo ti;
   table_.rscan(lcdf::Str(upper.data(), upper.length()), true, scanner, ti);
 }
 
 template <typename P> template <typename F>
-inline void mbtree<P>::search_range(const key_type &lower,
-                                    const key_type *upper,
-                                    F& callback,
-                                    std::string*) const {
+inline void mbtree<P>::search_range_unbounded(const key_type &lower,
+                                              F& callback) const {
+  search_range_impl(lower, nullptr, callback, nullptr);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::search_range_bounded(const key_type &lower,
+                                            const key_type &upper,
+                                            F& callback) const {
+  search_range_impl(lower, &upper, callback, nullptr);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::search_range_unbounded_with_buffer(const key_type &lower,
+                                                          F& callback,
+                                                          std::string &buf) const {
+  search_range_impl(lower, nullptr, callback, &buf);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::search_range_bounded_with_buffer(const key_type &lower,
+                                                        const key_type &upper,
+                                                        F& callback,
+                                                        std::string &buf) const {
+  search_range_impl(lower, &upper, callback, &buf);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::search_range_impl(const key_type &lower,
+                                         const key_type *upper,
+                                         F& callback,
+                                         std::string*) const {
   low_level_search_range_callback_wrapper<F> wrapper(callback);
   low_level_search_range_scanner<false> scanner(upper, wrapper);
   threadinfo ti;
@@ -782,10 +1029,38 @@ inline void mbtree<P>::search_range(const key_type &lower,
 }
 
 template <typename P> template <typename F>
-inline void mbtree<P>::rsearch_range(const key_type &upper,
-                                     const key_type *lower,
-                                     F& callback,
-                                     std::string*) const {
+inline void mbtree<P>::rsearch_range_unbounded(const key_type &upper,
+                                               F& callback) const {
+  rsearch_range_impl(upper, nullptr, callback, nullptr);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::rsearch_range_bounded(const key_type &upper,
+                                             const key_type &lower,
+                                             F& callback) const {
+  rsearch_range_impl(upper, &lower, callback, nullptr);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::rsearch_range_unbounded_with_buffer(const key_type &upper,
+                                                           F& callback,
+                                                           std::string &buf) const {
+  rsearch_range_impl(upper, nullptr, callback, &buf);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::rsearch_range_bounded_with_buffer(const key_type &upper,
+                                                         const key_type &lower,
+                                                         F& callback,
+                                                         std::string &buf) const {
+  rsearch_range_impl(upper, &lower, callback, &buf);
+}
+
+template <typename P> template <typename F>
+inline void mbtree<P>::rsearch_range_impl(const key_type &upper,
+                                          const key_type *lower,
+                                          F& callback,
+                                          std::string*) const {
   low_level_search_range_callback_wrapper<F> wrapper(callback);
   low_level_search_range_scanner<true> scanner(lower, wrapper);
   threadinfo ti;

@@ -224,7 +224,7 @@ class BenchmarkHarness {
       auto lower = keys_[lower_idx];
       auto upper = keys_[upper_idx];
       CountingRangeCallback cb;
-      tree.search_range_call(lower, &upper, cb);
+      tree.search_range_call_bounded(lower, upper, cb);
       total_keys += cb.count();
     }
     auto end = std::chrono::steady_clock::now();

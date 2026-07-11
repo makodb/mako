@@ -144,7 +144,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
       cb.failures = &reader_failures;
       u64_varkey lo(0);
       u64_varkey hi(kStable);
-      tree.search_range_call(lo, &hi, cb);
+      tree.search_range_call_bounded(lo, hi, cb);
       if (cb.bad_order) ++reader_failures;
       ++scanner_ops;
     }

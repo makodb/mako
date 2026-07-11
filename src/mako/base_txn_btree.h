@@ -454,12 +454,16 @@ base_txn_btree<Transaction, P>::do_search_range_call(
   txn_search_range_callback<Traits, Callback, KeyReader, ValueReader> c(
 			&t, &callback, &key_reader, &value_reader);
 
+  std::string * const buf = t.string_allocator()();
   varkey uppervk;
-  if (upper_str)
+  if (upper_str) {
     uppervk = varkey(*upper_str);
-  this->underlying_btree.search_range_call(
-      varkey(*lower_str), upper_str ? &uppervk : nullptr,
-      c, t.string_allocator()());
+    this->underlying_btree.search_range_call_bounded_with_buffer(
+        varkey(*lower_str), uppervk, c, *buf);
+  } else {
+    this->underlying_btree.search_range_call_unbounded_with_buffer(
+        varkey(*lower_str), c, *buf);
+  }
 }
 
 template <template <typename> class Transaction, typename P>
@@ -490,12 +494,16 @@ base_txn_btree<Transaction, P>::do_rsearch_range_call(
   txn_search_range_callback<Traits, Callback, KeyReader, ValueReader> c(
 			&t, &callback, &key_reader, &value_reader);
 
+  std::string * const buf = t.string_allocator()();
   varkey lowervk;
-  if (lower_str)
+  if (lower_str) {
     lowervk = varkey(*lower_str);
-  this->underlying_btree.rsearch_range_call(
-      varkey(*upper_str), lower_str ? &lowervk : nullptr,
-      c, t.string_allocator()());
+    this->underlying_btree.rsearch_range_call_bounded_with_buffer(
+        varkey(*upper_str), lowervk, c, *buf);
+  } else {
+    this->underlying_btree.rsearch_range_call_unbounded_with_buffer(
+        varkey(*upper_str), c, *buf);
+  }
 }
 
 #endif /* _NDB_BASE_TXN_BTREE_H_ */

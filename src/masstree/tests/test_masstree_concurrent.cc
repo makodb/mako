@@ -262,7 +262,7 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
       while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
         Cb cb;
         u64_varkey lo(0);
-        tree.search_range_call(lo, nullptr, cb);
+        tree.search_range_call_unbounded(lo, cb);
         for (size_t i = 1; i < cb.keys_seen.len(); ++i) {
           if (cb.keys_seen[i] <= cb.keys_seen[i - 1]) ++bad_order;
         }

@@ -171,7 +171,7 @@ TEST(MasstreeLayered, MixedLengthKeysInOneLeaf) {
   Cb cb;
   const std::string lo_str = head;  // start at "ABCDEFGH"
   varkey lo = vk(lo_str);
-  tree.search_range_call(lo, nullptr, cb);
+  tree.search_range_call_unbounded(lo, cb);
   ASSERT_EQ(cb.keys.len(), specs.len());
   EXPECT_TRUE(std::is_sorted(cb.keys.begin(), cb.keys.end()));
 }
