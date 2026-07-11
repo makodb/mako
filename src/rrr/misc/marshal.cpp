@@ -94,46 +94,6 @@ private:
 
 public:
 
-  bool found_dep{false};
-  bool valid_id{false};
-
-  // @safe - Bookmark over the Vec<uint8_t>: stores an absolute offset
-  // into buf_ and the size of the reserved slot. set_bookmark grows
-  // buf_ by `size` zero bytes and records the offset; write_bookmark
-  // memcpy's the patch in. The legacy chunk-list version held an
-  // array of `char**` pointing into chunk-local storage — now
-  // unnecessary because buf_ is contiguous.
-  struct bookmark {
-    std::size_t offset = 0;
-    std::size_t size = 0;
-
-    // @safe - Default ctor.
-    bookmark() = default;
-
-    bookmark(const bookmark&) = delete;
-    bookmark& operator=(const bookmark&) = delete;
-
-    // @safe - Move ctor (POD, just copies fields and zeros the source).
-    bookmark(bookmark&& other) noexcept : offset(other.offset), size(other.size) {
-      other.offset = 0;
-      other.size = 0;
-    }
-
-    // @safe - Move assignment.
-    bookmark& operator=(bookmark&& other) noexcept {
-      if (this != &other) {
-        offset = other.offset;
-        size = other.size;
-        other.offset = 0;
-        other.size = 0;
-      }
-      return *this;
-    }
-
-    // @safe - Trivial dtor (no heap state).
-    ~bookmark() = default;
-  };
-
   // @safe - Default ctor: reserve starter capacity so small writes
   // don't pay the first-grow cost.
   Marshal() {
@@ -159,23 +119,11 @@ public:
     return Marshal{};
   }
 
-  // @safe - Pre-reserve `block_size` bytes of capacity. The chunk-list
-  // version allocated a single chunk of this size up front; here we
-  // just hint the Vec to reserve. Legal to call when buf_ is empty.
-  void init_block_read(std::size_t block_size) {
-    buf_.reserve(block_size);
-  }
-
   // @safe - Empty when fully drained.
   bool empty() const { return read_pos_ >= buf_.size(); }
 
   // @safe - Bytes between read cursor and write tail.
   std::size_t content_size() const { return buf_.size() - read_pos_; }
-
-  // @safe - Same as content_size in the contiguous-buf representation;
-  // kept for API compatibility with the chunk-list assertion calls
-  // that compared cached size against a chunk-walk.
-  std::size_t content_size_slow() const { return content_size(); }
 
   // @safe - Append n bytes from caller-owned p to buf_. Memcpy is
   // quarantined in Vec::extend_from_slice's internal @unsafe block
@@ -264,41 +212,6 @@ public:
     write_cnt_ = 0;
   }
 
-  // @safe - Reserve n zero-bytes at the current write tail; returns a
-  // (offset, n) bookmark the caller patches with write_bookmark.
-  bookmark set_bookmark(std::size_t n) {
-    bookmark bm;
-    bm.offset = buf_.size();
-    bm.size = n;
-    // Append n zero bytes — rusty::Vec::push is @safe. Could be replaced
-    // with a resize_with primitive when added to Vec.
-    for (std::size_t i = 0; i < n; ++i) {
-      buf_.push(std::uint8_t{0});
-    }
-    write_cnt_ += static_cast<rrr::i32>(n);
-    return bm;
-  }
-
-  // @safe - Patch the reserved bookmark slot with `value`. T must fit
-  // exactly into bm.size bytes.
-  template<typename T>
-  void write_bookmark(bookmark& bm, const T& value) {
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "write_bookmark requires trivially copyable T");
-    verify(sizeof(T) <= bm.size);
-    verify(bm.offset + bm.size <= buf_.size());
-    // @unsafe { libc memcpy at buf_.data()+bm.offset. }
-    {
-      std::memcpy(buf_.data() + bm.offset, &value, bm.size);
-    }
-  }
-
-  // @safe - Returns and resets the write counter.
-  rrr::i32 get_and_reset_write_cnt() {
-    rrr::i32 cnt = write_cnt_;
-    write_cnt_ = 0;
-    return cnt;
-  }
 };
 
 // ---------------------------------------------------------------------------
@@ -487,15 +400,6 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) {
 // @lifetime: (&'a, const i64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
-
-	if (m.found_dep) {
-		if (v != -1) {
-			m.valid_id = true;
-		} else {
-		}
-		m.found_dep = false;
-	}
-
   return m;
 }
 
@@ -566,14 +470,6 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
   if (v_len.get() > 0) {
     verify(m.write(v.c_str(), v_len.get()) == (size_t) v_len.get());
   }
-
-	if (v == "dep") {
-		m.found_dep = true;
-	} else if (v == "hb") {
-		m.valid_id = true;
-	} else {
-    m.valid_id = true;
-	}
 
   return m;
 }

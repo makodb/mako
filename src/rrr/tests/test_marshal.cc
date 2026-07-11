@@ -358,25 +358,6 @@ TEST_F(MarshalTest, PeekOperation) {
     EXPECT_EQ(read_val2, val2);
 }
 
-TEST_F(MarshalTest, BookmarkOperation) {
-    i32 placeholder = 0;
-    auto bookmark = m.as_ref().unwrap()->set_bookmark(sizeof(i32));
-    
-    std::string str = "data after bookmark";
-    *m.as_ref().unwrap() << str;
-    
-    i32 actual_value = 42;
-    m.as_ref().unwrap()->write_bookmark(bookmark, actual_value);
-    
-    i32 read_value;
-    std::string read_str;
-    *m.as_ref().unwrap() >> read_value >> read_str;
-    
-    EXPECT_EQ(read_value, actual_value);
-    EXPECT_EQ(read_str, str);
-    // bookmark automatically cleaned up when going out of scope
-}
-
 TEST_F(MarshalTest, MultipleChunks) {
     const size_t num_items = 10000;
     std::vector<i64> values;
