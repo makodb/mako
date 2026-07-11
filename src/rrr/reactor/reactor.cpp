@@ -1093,122 +1093,97 @@ export namespace rrr {
 // =============================================================================
 // PollThreadWorker - Owns all polling state, runs in dedicated thread
 // =============================================================================
+// TLS slot for the worker running on this thread (set around
+// poll_loop in pollthread_create's spawn lambda). Namespace-scope:
+// a DSL struct cannot carry static data. `inline` keeps vague linkage.
+class PollThreadWorker;
+inline thread_local PollThreadWorker* g_current_poll_worker = nullptr;
 
-// Worker class that owns all polling state
-// Runs entirely in the spawned thread
-// Receives commands from PollThread via mpsc channel
-//
-// @safe - Single-threaded worker with RefCell for interior mutability
-// Design rationale - PollThreadWorker is memory-safe because:
-// 1. Single-threaded: Runs only on its dedicated poll thread, no data races
-// 2. Ownership: Owns all Pollables via fd_to_pollable_ map
-// 3. Lifetime: Worker outlives all Pollables - on shutdown, clears before destruction
-// 4. Channel: Cross-thread communication only via thread-safe mpsc channel
-// 5. No re-entrancy: handle_write() returns new mode instead of calling back,
-//    so RefCell borrow is never held across handler calls
-class PollThreadWorker {
-    friend class PollThread;
-    // `rusty::Rc<T>` is now a template alias (to `rusty::port::rc::Rc<T,A>`),
-    // not a class template — alias templates can't be befriended. Dropped
-    // the friendship since the ctor below is public; Rc::make() reaches
-    // it through the normal public-API path.
+// Field-type aliases for the DSL (angle-bracketed args).
+using PollCmdReceiver = rusty::sync::mpsc::Receiver<PollCommand>;
+using FdPollableMap = rusty::HashMap<int, PollableProxy>;
+using FdModeMap = rusty::HashMap<int, int>;
+using FdSet = rusty::HashSet<int>;
+// std::set (not rusty::BTreeSet) — the transpiled BTreeSet drags in
+// broken btree_internal clone templates; migrate when upstream fixes.
+using JobSet = std::set<rusty::Arc<Job>>;
 
-public:
-    // @unsafe - Factory method - creates worker wrapped in Rc<RefCell<>>
-    static rusty::Rc<rusty::RefCell<PollThreadWorker>> create(rusty::sync::mpsc::Receiver<PollCommand> receiver);
+// Lifecycle + epoll/fiber kernels for the DSL methods below.
+rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver);
+void pollworker_poll_loop(PollThreadWorker& self);
+void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode);
 
-    // Constructor is public for Rc::make(), but prefer create() factory
-    explicit PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> receiver);
+// `PollThreadWorker` — the poll-loop state machine: epoll instance,
+// fd->pollable ownership, jobs, deferred removals. Single-threaded by
+// construction (owned by its poll thread through Rc<RefCell<>>).
+// Authored as inline Rust DSL. Behavioral diffs:
+//   * The dead zero-caller statics (both add_pollable_from_current_thread
+//     overloads, private get_remove_count) are deleted.
+//   * current_worker_ hoists to the namespace-scope thread_local
+//     g_current_poll_worker (a DSL struct holds no statics).
+//   * The public 1-arg ctor is gone; pollworker_create aggregate-
+//     initializes inside Rc<RefCell<>> directly.
+#if RUSTYCPP_RUST
+struct PollThreadWorker {
+    receiver_: PollCmdReceiver,
+    poll_: Epoll,
+    fd_to_pollable_: FdPollableMap,
+    mode_: FdModeMap,
+    pending_remove_: FdSet,
+    jobs_: JobSet,
+    stop_: bool,
+}
 
-    ~PollThreadWorker() = default;
-
-    // Delete copy - worker is owned by Rc<RefCell<>>
-    PollThreadWorker(const PollThreadWorker&) = delete;
-    PollThreadWorker& operator=(const PollThreadWorker&) = delete;
-    // Allow move - needed for RefCell construction
-    PollThreadWorker(PollThreadWorker&&) = default;
-    PollThreadWorker& operator=(PollThreadWorker&&) = delete;
-
-    // @unsafe - Main polling loop - processes epoll events and channel commands
-    // Non-const because it modifies state (no more mutable fields)
-    void poll_loop();
-
-    // @safe - Check if current thread is a poll thread
-    // Returns true if called from a poll thread, false otherwise.
-    static bool is_on_poll_thread() { return current_worker_ != nullptr; }
-
-    // @unsafe - Add a pollable from within the poll thread (e.g., from handle_read)
-    // Must only be called from the poll thread (asserts if not)
-    // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
-    static void add_pollable_from_current_thread(PollableProxy poll) {
-        verify(current_worker_ != nullptr);
-        current_worker_->do_add_pollable(std::move(poll));
+impl PollThreadWorker {
+    // Factory: worker wrapped in Rc<RefCell<>> for its thread.
+    fn create(receiver: PollCmdReceiver) -> rusty::Rc<rusty::RefCell<PollThreadWorker>> {
+        pollworker_create(receiver)
     }
 
-    template <typename T>
-    static void add_pollable_from_current_thread(rusty::Arc<T> poll) {
-        verify(current_worker_ != nullptr);
-        auto poll_proxy = make_pollable_proxy_from_typed_arc(std::move(poll));
-        current_worker_->do_add_pollable(std::move(poll_proxy));
+    // Main polling loop — epoll events + channel commands.
+    fn poll_loop(&mut self) {
+        pollworker_poll_loop(self)
     }
 
-    // @unsafe - Update poll mode directly (bypasses channel)
-    // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-    // SAFETY: Internal @unsafe block handles epoll operations and address-of
-    void update_mode(Pollable& poll, int new_mode);
+    // Direct mode update (bypasses the channel; poll-thread only).
+    fn update_mode(&mut self, poll: &mut Pollable, new_mode: i32) {
+        pollworker_update_mode(self, poll, new_mode)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread_worker version=1 rust_sha256=f647aa922d81a406d7c95b737347d8f8b915e1f0a2b2038c6c8ae6aee040bdf6*/
+struct PollThreadWorker;
 
-public:
-    // Thread-local storage for current worker (raw pointer; set by the
-    // spawn lambda in pollthread_create — public since the PollThread
-    // DSL flip made that kernel a namespace-scope free fn).
-    // `inline` keeps the symbol in vague linkage — see Reactor::sp_reactor_th_ above.
-    static inline thread_local PollThreadWorker* current_worker_ = nullptr;
-
-private:
-    // @unsafe - For testing: get number of epoll Remove() calls
-    // SAFETY: Atomic load is safe but requires @unsafe annotation
-    int get_remove_count() const { return rrr::epoll_remove_count.load(); }
-
-private:
-    // Process incoming commands from channel
-    void process_commands();
-
-    // Triggers ready jobs in fibers
-    void trigger_job();
-
-    // Internal implementations (single-threaded, no races)
-    void do_add_pollable(PollableProxy poll);
-    void do_remove_pollable(int fd);
-    void do_close_pollable(int fd);  // Close socket and drop Arc
-    void do_update_mode(int fd, int new_mode);
-    void do_add_job(rusty::Arc<Job> job);
-    void do_remove_job(rusty::Arc<Job> job);
-
-    // Process deferred removals
-    void process_pending_removals();
-
-private:
-    // MPSC receiver for commands from PollThread
-    rusty::sync::mpsc::Receiver<PollCommand> receiver_;
-
-    // Epoll instance
+struct PollThreadWorker {
+    PollCmdReceiver receiver_;
     Epoll poll_;
+    FdPollableMap fd_to_pollable_;
+    FdModeMap mode_;
+    FdSet pending_remove_;
+    JobSet jobs_;
+    bool stop_;
 
-    // Pollable state - single owner in worker thread
-    rusty::HashMap<int, PollableProxy> fd_to_pollable_;
-    rusty::HashMap<int, int> mode_;  // fd -> mode
-    rusty::HashSet<int> pending_remove_;
-
-    // Jobs - single owner in worker thread.
-    // std::set (not rusty::BTreeSet) — same reason as dispatch_acks_:
-    // the transpiled BTreeSet calls into BTreeMap::clone() which drags
-    // in broken btree_internal templates. Migrate back when the upstream
-    // transpiler bugs are patched.
-    std::set<rusty::Arc<Job>> jobs_;
-
-    // Stop flag
-    bool stop_ = false;
+    static rusty::Rc<rusty::RefCell<PollThreadWorker>> create(PollCmdReceiver receiver);
+    void poll_loop();
+    void update_mode(Pollable& poll, int32_t new_mode);
 };
+
+
+rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(PollCmdReceiver receiver) {
+    return pollworker_create(std::move(receiver));
+}
+
+void PollThreadWorker::poll_loop() {
+    pollworker_poll_loop((*this));
+}
+
+void PollThreadWorker::update_mode(Pollable& poll, int32_t new_mode) {
+    pollworker_update_mode((*this), poll, std::move(new_mode));
+}
+/*RUSTYCPP:GEN-END id=reactor.poll_thread_worker*/
+
+// @safe - Check if the current thread is a poll thread.
+inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nullptr; }
 
 // =============================================================================
 // PollThread - Handle for controlling the poll thread
@@ -1970,7 +1945,7 @@ inline void stackless_profile_report_periodic() {
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
-// Same for PollThreadWorker::current_worker_, clients_, and dangling_ips_.
+// Same for g_current_poll_worker, clients_, and dangling_ips_.
 
 // @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
@@ -2630,33 +2605,41 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
 // PollThreadWorker Implementation
 // =============================================================================
 
-PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> receiver)
-    : receiver_(std::move(receiver)),
-      poll_(),
-      fd_to_pollable_(),
-      mode_(),
-      pending_remove_(),
-      jobs_(),
-      stop_(false) {
-  // No eventfd needed - we poll the channel with try_recv() after each epoll_wait
+// Kernel-internal forward decls (definition order below is legacy).
+void pollworker_process_commands(PollThreadWorker& self);
+void pollworker_trigger_job(PollThreadWorker& self);
+void pollworker_process_pending_removals(PollThreadWorker& self);
+void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll);
+void pollworker_do_remove_pollable(PollThreadWorker& self, int fd);
+void pollworker_do_close_pollable(PollThreadWorker& self, int fd);
+void pollworker_do_update_mode(PollThreadWorker& self, int fd, int new_mode);
+void pollworker_do_add_job(PollThreadWorker& self, rusty::Arc<Job> job);
+void pollworker_do_remove_job(PollThreadWorker& self, rusty::Arc<Job> job);
+
+// (ctor folded into an aggregate factory; no eventfd needed — the
+// channel is polled with try_recv() after each epoll_wait.)
+static PollThreadWorker pollworker_make(PollCmdReceiver receiver) {
+  return PollThreadWorker{std::move(receiver), Epoll(),        FdPollableMap(),
+                          FdModeMap(),         FdSet(),        JobSet(),
+                          false};
 }
 
 // @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
-rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync::mpsc::Receiver<PollCommand> receiver) {
+rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver) {
   // Create worker, then wrap in RefCell
-  PollThreadWorker worker(std::move(receiver));
+  auto worker = pollworker_make(std::move(receiver));
   return rusty::Rc<rusty::RefCell<PollThreadWorker>>::make(std::move(worker));
 }
 
-void PollThreadWorker::poll_loop() {
+void pollworker_poll_loop(PollThreadWorker& self) {
   Log_debug("[poll_loop] Starting poll loop");
-  while (!stop_) {
-    trigger_job();
+  while (!self.stop_) {
+    pollworker_trigger_job(self);
 
     // Wait for events (epoll_wait with short timeout)
     // Dispatch through proxy storage by fd; no Pollable* userdata assumptions.
-    poll_.Wait([this](int fd, int ready_events) {
-      auto poll_opt = fd_to_pollable_.get(fd);
+    self.poll_.Wait([&self](int fd, int ready_events) {
+      auto poll_opt = self.fd_to_pollable_.get(fd);
       if (poll_opt.is_none()) {
         return;
       }
@@ -2668,7 +2651,7 @@ void PollThreadWorker::poll_loop() {
       if (ready_events & PollReady::WRITABLE) {
         int new_mode = poll->handle_write();
         if (new_mode != PollMode::NO_CHANGE) {
-          do_update_mode(fd, new_mode);
+          pollworker_do_update_mode(self, fd, new_mode);
         }
       }
       if (ready_events & PollReady::ERROR) {
@@ -2677,39 +2660,39 @@ void PollThreadWorker::poll_loop() {
     });
 
     // Process commands from channel (non-blocking try_recv)
-    process_commands();
+    pollworker_process_commands(self);
 
-    trigger_job();
+    pollworker_trigger_job(self);
 
     // Process deferred removals
-    process_pending_removals();
+    pollworker_process_pending_removals(self);
 
-    trigger_job();
+    pollworker_trigger_job(self);
     Reactor::get_reactor()->loop();
 
     // Check for pending write updates (set by end_reply() during fiber execution)
     // @unsafe - const_cast needed because Arc provides const access, but we know the
     // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
-    for (auto [fd, poll] : fd_to_pollable_) {
+    for (auto [fd, poll] : self.fd_to_pollable_) {
       if (poll->check_pending_write_update()) {
-        do_update_mode(fd, PollMode::READ | PollMode::WRITE);
+        pollworker_do_update_mode(self, fd, PollMode::READ | PollMode::WRITE);
       }
     }
 
     // Check for pollables closed by handle_error() and remove them
     // This prevents fd reuse issues when old connection is closed but not removed
     rusty::Vec<int> closed_fds;
-    for (auto [fd, poll] : fd_to_pollable_) {
+    for (auto [fd, poll] : self.fd_to_pollable_) {
       if (poll->is_closed()) {
         closed_fds.push(fd);
       }
     }
     for (int fd : closed_fds) {
-      auto proxy_opt = fd_to_pollable_.get(fd);
+      auto proxy_opt = self.fd_to_pollable_.get(fd);
       if (proxy_opt.is_some()) {
         // Remove from epoll if still registered
-        if (mode_.contains_key(fd)) {
-          poll_.Remove(fd);
+        if (self.mode_.contains_key(fd)) {
+          self.poll_.Remove(fd);
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
@@ -2717,53 +2700,53 @@ void PollThreadWorker::poll_loop() {
         // PollableProxy reference, no extra deref.
         proxy_opt.unwrap()->close();
 
-        fd_to_pollable_.remove(fd);
-        mode_.remove(fd);
+        self.fd_to_pollable_.remove(fd);
+        self.mode_.remove(fd);
       }
     }
   }
 
-  Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+  Log_debug("[poll_loop] Exited while loop (self.stop_=true), starting cleanup");
   // Shutdown cleanup - remove all registered pollables
-  for (auto [fd, poll] : fd_to_pollable_) {
-    if (mode_.contains_key(fd)) {
-      poll_.Remove(fd);
+  for (auto [fd, poll] : self.fd_to_pollable_) {
+    if (self.mode_.contains_key(fd)) {
+      self.poll_.Remove(fd);
     }
   }
-  fd_to_pollable_.clear();
-  mode_.clear();
-  pending_remove_.clear();
+  self.fd_to_pollable_.clear();
+  self.mode_.clear();
+  self.pending_remove_.clear();
   Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
 }
 
 // @unsafe - calls try_recv and std::visit
-void PollThreadWorker::process_commands() {
+void pollworker_process_commands(PollThreadWorker& self) {
   // Non-blocking receive: process all pending commands
   int cmd_count = 0;
   while (true) {
-    auto result = receiver_.try_recv();
+    auto result = self.receiver_.try_recv();
     if (result.is_err()) {
       // Empty or disconnected - either way, stop processing
       break;
     }
     cmd_count++;
     auto cmd = result.unwrap();
-    std::visit([this](auto&& arg) {
+    std::visit([&self](auto&& arg) {
       using T = std::decay_t<decltype(arg)>;
       if constexpr (std::is_same_v<T, CmdAddPollable>) {
-        do_add_pollable(std::move(arg.pollable));
+        pollworker_do_add_pollable(self, std::move(arg.pollable));
       } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
-        do_remove_pollable(arg.fd);
+        pollworker_do_remove_pollable(self, arg.fd);
       } else if constexpr (std::is_same_v<T, CmdClosePollable>) {
-        do_close_pollable(arg.fd);
+        pollworker_do_close_pollable(self, arg.fd);
       } else if constexpr (std::is_same_v<T, CmdUpdateMode>) {
-        do_update_mode(arg.fd, arg.new_mode);
+        pollworker_do_update_mode(self, arg.fd, arg.new_mode);
       } else if constexpr (std::is_same_v<T, CmdAddJob>) {
-        do_add_job(std::move(arg.job));
+        pollworker_do_add_job(self, std::move(arg.job));
       } else if constexpr (std::is_same_v<T, CmdRemoveJob>) {
-        do_remove_job(std::move(arg.job));
+        pollworker_do_remove_job(self, std::move(arg.job));
       } else if constexpr (std::is_same_v<T, CmdShutdown>) {
-        stop_ = true;
+        self.stop_ = true;
       }
     }, cmd);
   }
@@ -2772,10 +2755,10 @@ void PollThreadWorker::process_commands() {
 // @safe - rusty::BTreeSet::clone/clear/insert and rusty::Arc are @safe;
 // only the raw `Job*` extraction + virtual dispatch escapes into inner
 // @unsafe blocks.
-void PollThreadWorker::trigger_job() {
+void pollworker_trigger_job(PollThreadWorker& self) {
   // Copy jobs to process (in case jobs modify the set).
-  std::set<rusty::Arc<Job>> jobs_exec = jobs_;
-  jobs_.clear();
+  std::set<rusty::Arc<Job>> jobs_exec = self.jobs_;
+  self.jobs_.clear();
 
   for (const auto& job : jobs_exec) {
     bool ready;
@@ -2796,13 +2779,13 @@ void PollThreadWorker::trigger_job() {
       // Don't re-add ready jobs that were executed.
     } else {
       // Re-add jobs that aren't ready yet - they should be checked again later.
-      jobs_.insert(job);
+      self.jobs_.insert(job);
     }
   }
 }
 
 // @unsafe - PollableProxy accessors and Epoll::Add are not borrow-checked
-void PollThreadWorker::do_add_pollable(PollableProxy poll) {
+void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll) {
   int fd;
   int poll_mode;
   // @unsafe { PollableProxy::fd, poll_mode are not borrow-checked }
@@ -2812,43 +2795,43 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
   }
 
   // Check if already exists
-  if (fd_to_pollable_.contains_key(fd)) {
+  if (self.fd_to_pollable_.contains_key(fd)) {
     return;
   }
 
   // Store in maps
-  fd_to_pollable_.insert(fd, std::move(poll));
-  mode_.insert(fd, poll_mode);
+  self.fd_to_pollable_.insert(fd, std::move(poll));
+  self.mode_.insert(fd, poll_mode);
 
   // @unsafe { Epoll::Add is not borrow-checked }
-  { poll_.Add(fd, poll_mode); }
+  { self.poll_.Add(fd, poll_mode); }
 }
 
 // @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.
-void PollThreadWorker::do_remove_pollable(int fd) {
-  if (!fd_to_pollable_.contains_key(fd)) {
+void pollworker_do_remove_pollable(PollThreadWorker& self, int fd) {
+  if (!self.fd_to_pollable_.contains_key(fd)) {
     return;
   }
   // Add to pending_remove (actual removal happens after epoll_wait).
-  pending_remove_.insert(fd);
+  self.pending_remove_.insert(fd);
 }
 
 // @safe - rusty::HashMap / HashSet ops are @safe; only the
 // Epoll::Remove syscall path and the virtual Pollable::close()
 // dispatch escape into inner @unsafe blocks.
-void PollThreadWorker::do_close_pollable(int fd) {
+void pollworker_do_close_pollable(PollThreadWorker& self, int fd) {
   // Remove from pending_remove if present.
-  pending_remove_.remove(fd);
+  self.pending_remove_.remove(fd);
 
-  auto proxy_opt = fd_to_pollable_.get(fd);
+  auto proxy_opt = self.fd_to_pollable_.get(fd);
   if (proxy_opt.is_none()) {
     return;
   }
 
   // Remove from epoll if still registered.
-  if (mode_.contains_key(fd)) {
+  if (self.mode_.contains_key(fd)) {
     // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-    { poll_.Remove(fd); }
+    { self.poll_.Remove(fd); }
   }
 
   // Close the socket via Pollable's close() method.
@@ -2857,58 +2840,58 @@ void PollThreadWorker::do_close_pollable(int fd) {
   { proxy_opt.unwrap()->close(); }
 
   // Erase from maps, dropping storage references.
-  fd_to_pollable_.remove(fd);
-  mode_.remove(fd);
+  self.fd_to_pollable_.remove(fd);
+  self.mode_.remove(fd);
 }
 
 // @unsafe - Uses raw pointers for epoll userdata and calls Epoll::Update
-void PollThreadWorker::do_update_mode(int fd, int new_mode) {
-  if (!fd_to_pollable_.contains_key(fd)) {
+void pollworker_do_update_mode(PollThreadWorker& self, int fd, int new_mode) {
+  if (!self.fd_to_pollable_.contains_key(fd)) {
     return;
   }
 
-  auto mode_opt = mode_.get(fd);
+  auto mode_opt = self.mode_.get(fd);
   if (mode_opt.is_none()) {
     return;
   }
 
   int old_mode = mode_opt.unwrap();
-  mode_.insert(fd, new_mode);
+  self.mode_.insert(fd, new_mode);
 
   if (new_mode != old_mode) {
-    poll_.Update(fd, new_mode, old_mode);
+    self.poll_.Update(fd, new_mode, old_mode);
   }
 }
 
 // @safe - rusty::BTreeSet::insert is @safe via namespace inheritance.
-void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
-  jobs_.insert(job);
+void pollworker_do_add_job(PollThreadWorker& self, rusty::Arc<Job> job) {
+  self.jobs_.insert(job);
 }
 
 // @safe - std::set::erase is the std equivalent of rusty::BTreeSet::remove.
-void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
-  jobs_.erase(job);
+void pollworker_do_remove_job(PollThreadWorker& self, rusty::Arc<Job> job) {
+  self.jobs_.erase(job);
 }
 
-// @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`
+// @safe - the rusty::HashSet / HashMap ops are @safe; only `self.poll_.Remove(fd)`
 // (Epoll::Remove, a syscall-issuing path) escapes into an inner @unsafe block.
-void PollThreadWorker::process_pending_removals() {
-  rusty::HashSet<int> remove_fds = pending_remove_.clone();
-  pending_remove_.clear();
+void pollworker_process_pending_removals(PollThreadWorker& self) {
+  rusty::HashSet<int> remove_fds = self.pending_remove_.clone();
+  self.pending_remove_.clear();
 
   for (int fd : remove_fds) {
-    if (!fd_to_pollable_.contains_key(fd)) {
+    if (!self.fd_to_pollable_.contains_key(fd)) {
       continue;
     }
 
     // Check if fd was NOT reused (still in mode map).
-    if (mode_.contains_key(fd)) {
+    if (self.mode_.contains_key(fd)) {
       // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-      { poll_.Remove(fd); }
+      { self.poll_.Remove(fd); }
     }
 
-    fd_to_pollable_.remove(fd);
-    mode_.remove(fd);
+    self.fd_to_pollable_.remove(fd);
+    self.mode_.remove(fd);
   }
 }
 
@@ -2916,9 +2899,9 @@ void PollThreadWorker::process_pending_removals() {
 // @safe - Update poll mode directly (bypasses channel)
 // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
 // SAFETY: Internal @unsafe block handles epoll operations and address-of
-void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
+void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode) {
   // @unsafe - address-of operation and epoll modification
-  { do_update_mode(poll.fd(), new_mode); }
+  { pollworker_do_update_mode(self, poll.fd(), new_mode); }
 }
 
 // =============================================================================
@@ -2976,9 +2959,9 @@ rusty::Arc<PollThread> pollthread_create() {
       // The borrow_mut guard keeps RefCell borrowed during poll_loop()
       // Using raw pointer avoids RefCell re-borrow issues in fibers
       auto guard = worker->borrow_mut();
-      PollThreadWorker::current_worker_ = &*guard;
+      g_current_poll_worker = &*guard;
       guard->poll_loop();
-      PollThreadWorker::current_worker_ = nullptr;  // Clear on exit
+      g_current_poll_worker = nullptr;  // Clear on exit
     },
     std::move(receiver)
   );

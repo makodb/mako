@@ -1287,7 +1287,7 @@ ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& f
     // The `poll_thread_` slot may be `None` for unit tests that drive
     // `TcpConnection` directly via `socketpair(2)` without a poll
     // thread (those tests are single-threaded — flag-poll is fine).
-    if (self.poll_thread_.is_some() && !PollThreadWorker::is_on_poll_thread()) {
+    if (self.poll_thread_.is_some() && !pollworker_is_on_poll_thread()) {
         self.poll_thread_.as_ref().unwrap()->update_mode(
             self.fd_.as_raw_fd(), PollMode::READ | PollMode::WRITE);
     } else {
