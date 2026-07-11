@@ -330,7 +330,7 @@ TEST_F(ReactorTest, UpdateMode) {
     p->set_mode(PollMode::WRITE);
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref, PollMode::WRITE);
+        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref.fd(), PollMode::WRITE);
     }
 
     std::this_thread::sleep_for(milliseconds(100));

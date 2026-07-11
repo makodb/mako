@@ -1157,9 +1157,10 @@ public:
     // SAFETY: Internal @unsafe block handles epoll operations and address-of
     void update_mode(Pollable& poll, int new_mode);
 
-private:
-    // Thread-local storage for current worker (raw pointer for internal use only)
-    // Only accessed via with_current_worker() which provides safe reference access.
+public:
+    // Thread-local storage for current worker (raw pointer; set by the
+    // spawn lambda in pollthread_create — public since the PollThread
+    // DSL flip made that kernel a namespace-scope free fn).
     // `inline` keeps the symbol in vague linkage — see Reactor::sp_reactor_th_ above.
     static inline thread_local PollThreadWorker* current_worker_ = nullptr;
 
@@ -1212,72 +1213,180 @@ private:
 // =============================================================================
 // PollThread - Handle for controlling the poll thread
 // =============================================================================
+// Type aliases so the DSL can spell the angle-bracketed field types.
+using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
+using PollJoinSlot =
+    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>>;
 
-// @unsafe - Handle for controlling the poll thread (has mutable fields)
-// SAFETY: Despite @unsafe annotation, PollThread is thread-safe because:
-// 1. All cross-thread communication via thread-safe mpsc channel
-// 2. Mutable fields use proper synchronization (mutex for join_handle_, atomic for shutdown_called_)
-class PollThread {
-    // Friend Arc to allow make access to private constructor
-    friend class rusty::Arc<PollThread>;
+struct PollThread;
 
-private:
-    // MPSC sender for commands to worker
-    mutable rusty::sync::mpsc::Sender<PollCommand> sender_;
+// Lifecycle + channel-send kernels for the DSL methods below (thread
+// spawn/join, mpsc sends, syscall logging). Definitions near the
+// original impl site.
+rusty::Arc<PollThread> pollthread_create();
+void pollthread_shutdown(const PollThread& self);
+void pollthread_drop(const PollThread& self);
+void pollthread_add_proxy(const PollThread& self, PollableProxy poll);
+void pollthread_remove(const PollThread& self, Pollable& poll);
+void pollthread_remove_fd(const PollThread& self, int fd);
+void pollthread_request_close(const PollThread& self, int fd);
+void pollthread_update_mode(const PollThread& self, int fd, int new_mode);
+void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job);
 
-    // Join handle for the thread (Mutex provides interior mutability)
-    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
+// `PollThread` — the poll-loop thread handle: an mpsc command sender,
+// the join slot, and shutdown/identity state. Authored as inline Rust
+// DSL. Behavioral diffs from the original C++ class:
+//   * The private ctor + `friend rusty::Arc` in-place-construction
+//     machinery is gone: rusty atomics are MOVABLE (value-moving move
+//     ctor), so pollthread_create Arc::new_'s a plain aggregate.
+//   * shutdown_called_ becomes AtomicBool (rusty) — const ops, no
+//     `mutable`; the exchange() gate becomes swap().
+//   * The zero-caller remove(Arc<Job>) overload and the
+//     one-dead-test-caller update_mode(const Pollable&) overload are
+//     dropped (a Rust impl holds no overloads); remove(Pollable&)
+//     keeps its name.
+#if RUSTYCPP_RUST
+struct PollThread {
+    sender_: PollCmdSender,
+    join_handle_: PollJoinSlot,
+    // Thread id of the poll thread as raw u64 bits (bit_cast of the
+    // native id) — used to detect self-join attempts in shutdown.
+    poll_thread_id_bits_: AtomicU64,
+    shutdown_called_: AtomicBool,
+}
 
-    // Thread ID of the poll thread - used to detect self-join attempts.
-    // Stored as raw u64 (bit_cast of `platform::threading::thread_id`) so we
-    // can use the concrete `AtomicU64` alias — Rust std has no
-    // `AtomicThreadId`, and we don't want to re-introduce the generic
-    // `Atomic<T>`. The underlying native id is either `std::thread::id`
-    // (default backend) or `pthread_t` (POSIX backend); both are 8 bytes on
-    // the platforms we target, and the static_assert below guards the cast.
-    // Conversion helpers live alongside the two access sites
-    // (create() / shutdown()).
-    mutable rusty::sync::atomic::AtomicU64 poll_thread_id_bits_{};
+impl PollThread {
+    // Factory: spawns the worker thread; returns the Arc handle.
+    fn create() -> Arc<PollThread> {
+        pollthread_create()
+    }
 
-    // Track if shutdown was called
-    mutable std::atomic<bool> shutdown_called_{false};
+    // Explicit shutdown: send CmdShutdown, join unless self-join.
+    fn shutdown(&self) {
+        pollthread_shutdown(self)
+    }
 
-    // Private constructor - use create() factory
-    explicit PollThread(rusty::sync::mpsc::Sender<PollCommand> sender);
+    fn add_proxy(&self, poll: PollableProxy) {
+        pollthread_add_proxy(self, poll)
+    }
 
-public:
-    ~PollThread();
+    fn remove(&self, poll: &mut Pollable) {
+        pollthread_remove(self, poll)
+    }
 
-    // Factory method returns Arc<PollThread>
+    // fd-keyed variant (remove only reads .fd() anyway); lets
+    // shim-only callers avoid the Pollable base entirely.
+    fn remove_fd(&self, fd: i32) {
+        pollthread_remove_fd(self, fd)
+    }
+
+    // Thread-safe close: removes from epoll, closes socket, drops
+    // proxy ownership.
+    fn request_close(&self, fd: i32) {
+        pollthread_request_close(self, fd)
+    }
+
+    fn update_mode(&self, fd: i32, new_mode: i32) {
+        pollthread_update_mode(self, fd, new_mode)
+    }
+
+    fn add(&self, job: Arc<Job>) {
+        pollthread_add_job(self, job)
+    }
+
+    // For testing — worker state is not reachable across the channel.
+    fn get_remove_count(&self) -> i32 {
+        0
+    }
+}
+
+impl Drop for PollThread {
+    fn drop(&mut self) {
+        pollthread_drop(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=3fef7a30346c94da0802af0018d3ccdd7480ddabc5cea386e08fa0ceee183864*/
+struct PollThread;
+
+struct PollThread {
+    PollCmdSender sender_;
+    PollJoinSlot join_handle_;
+    rusty::sync::atomic::AtomicU64 poll_thread_id_bits_;
+    rusty::sync::atomic::AtomicBool shutdown_called_;
+    mutable bool _rusty_forgotten = false;
+    PollThread(PollCmdSender sender__init, PollJoinSlot join_handle__init, rusty::sync::atomic::AtomicU64 poll_thread_id_bits__init, rusty::sync::atomic::AtomicBool shutdown_called__init) : sender_(std::move(sender__init)), join_handle_(std::move(join_handle__init)), poll_thread_id_bits_(std::move(poll_thread_id_bits__init)), shutdown_called_(std::move(shutdown_called__init)) {}
+    PollThread(const PollThread&) = default;
+    PollThread(PollThread&& other) noexcept : sender_(std::move(other.sender_)), join_handle_(std::move(other.join_handle_)), poll_thread_id_bits_(std::move(other.poll_thread_id_bits_)), shutdown_called_(std::move(other.shutdown_called_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    PollThread& operator=(const PollThread&) = default;
+    PollThread& operator=(PollThread&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~PollThread();
+        new (this) PollThread(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
     static rusty::Arc<PollThread> create();
-
-    // Explicit shutdown
     void shutdown() const;
-
-    // Delete copy/move
-    PollThread(const PollThread&) = delete;
-    PollThread& operator=(const PollThread&) = delete;
-    PollThread(PollThread&& other) = delete;
-    PollThread& operator=(PollThread&& other) = delete;
-
-    // Send commands to worker via channel
     void add_proxy(PollableProxy poll) const;
     void remove(Pollable& poll) const;
-    // fd-keyed variant (remove(Pollable&) only reads .fd() anyway);
-    // lets shim-only callers drop the Pollable base entirely.
-    void remove_fd(int fd) const;
-    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops proxy ownership
-    // @safe - Sends update mode command via channel
-    // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
-    void update_mode(int fd, int new_mode) const;
-    void update_mode(const Pollable& poll, int new_mode) const;
+    void remove_fd(int32_t fd) const;
+    void request_close(int32_t fd) const;
+    void update_mode(int32_t fd, int32_t new_mode) const;
     void add(rusty::Arc<Job> job) const;
-    void remove(rusty::Arc<Job> job) const;
-
-    // For testing - NOTE: This won't work with channel design
-    // since worker state is not accessible. Return 0 for now.
-    int get_remove_count() const { return 0; }
+    int32_t get_remove_count() const;
+    ~PollThread() noexcept(false);
 };
+
+
+rusty::Arc<PollThread> PollThread::create() {
+    return pollthread_create();
+}
+
+void PollThread::shutdown() const {
+    pollthread_shutdown((*this));
+}
+
+void PollThread::add_proxy(PollableProxy poll) const {
+    pollthread_add_proxy((*this), std::move(poll));
+}
+
+void PollThread::remove(Pollable& poll) const {
+    pollthread_remove((*this), poll);
+}
+
+void PollThread::remove_fd(int32_t fd) const {
+    pollthread_remove_fd((*this), std::move(fd));
+}
+
+void PollThread::request_close(int32_t fd) const {
+    pollthread_request_close((*this), std::move(fd));
+}
+
+void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
+    pollthread_update_mode((*this), std::move(fd), std::move(new_mode));
+}
+
+void PollThread::add(rusty::Arc<Job> job) const {
+    pollthread_add_job((*this), std::move(job));
+}
+
+int32_t PollThread::get_remove_count() const {
+    return static_cast<int32_t>(0);
+}
+
+PollThread::~PollThread() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    pollthread_drop((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.poll_thread*/
 
 }  // export namespace rrr
 
@@ -2816,12 +2925,6 @@ void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
 // PollThread Implementation
 // =============================================================================
 
-PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
-    : sender_(std::move(sender)),
-      join_handle_(rusty::None),
-      poll_thread_id_bits_(0),
-      shutdown_called_(false) {
-}
 
 // @safe - ThreadId<->u64 bit_cast helpers. `platform::threading::thread_id`
 // is `std::thread::id` (default backend) or `pthread_t` (POSIX backend).
@@ -2847,15 +2950,20 @@ inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
 // and passes the raw pointer into a spawned thread closure. The Arc
 // keeps the PollThread (and thus the atomic) alive until the worker
 // thread finishes; rusty-cpp can't express that lifetime relationship.
-rusty::Arc<PollThread> PollThread::create() {
+rusty::Arc<PollThread> pollthread_create() {
   // Create MPSC channel
   auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
 
-  // Create PollThread with sender
-  auto arc = rusty::Arc<PollThread>::make(std::move(sender));
+  // Movable-atomics aggregate route (no private ctor / friend Arc):
+  auto arc = rusty::Arc<PollThread>::new_(PollThread{
+      std::move(sender),
+      PollJoinSlot(rusty::None),
+      rusty::sync::atomic::AtomicU64(0),
+      rusty::sync::atomic::AtomicBool(false)});
 
-  // Pointer to atomic thread ID for safe cross-thread access
-  rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
+  // Pointer to atomic thread ID for safe cross-thread access (rusty
+  // Atomic ops are const, so a const* suffices through the Arc).
+  const rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
 
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
@@ -2884,30 +2992,30 @@ rusty::Arc<PollThread> PollThread::create() {
   return arc;
 }
 
-PollThread::~PollThread() {
+void pollthread_drop(const PollThread& self) {
   pid_t tid = syscall(SYS_gettid);
   Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", (int)tid);
-  shutdown();
+  self.shutdown();
   Log_debug("[PollThread::~PollThread] Destructor complete");
 }
 
-void PollThread::shutdown() const {
+void pollthread_shutdown(const PollThread& self) {
   pid_t main_tid = syscall(SYS_gettid);
   Log_debug("[PollThread::shutdown] Called from TID=%d", (int)main_tid);
-  if (shutdown_called_.exchange(true)) {
+  if (self.shutdown_called_.swap(true)) {
     Log_debug("[PollThread::shutdown] Already called, returning");
     return;  // Already called
   }
 
   // Send shutdown command via channel
   Log_debug("[PollThread::shutdown] Sending CmdShutdown");
-  sender_.send(CmdShutdown{});
+  const_cast<PollCmdSender&>(self.sender_).send(CmdShutdown{});
   Log_debug("[PollThread::shutdown] CmdShutdown sent");
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
   auto current_tid = rusty::thread::current_id();
   auto poll_tid = u64_to_thread_id(
-      poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
+      self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
   if (current_tid == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;
@@ -2916,7 +3024,7 @@ void PollThread::shutdown() const {
   // Join thread
   Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
   {
-    auto guard = join_handle_.lock().unwrap();
+    auto guard = self.join_handle_.lock().unwrap();
     Log_debug("[PollThread::shutdown] join_handle lock acquired");
     if ((*guard).is_some()) {
       Log_debug("[PollThread::shutdown] Calling thread.join()...");
@@ -2930,44 +3038,36 @@ void PollThread::shutdown() const {
   Log_debug("[PollThread::shutdown] Complete");
 }
 
-void PollThread::add_proxy(PollableProxy poll) const {
-  sender_.send(CmdAddPollable{std::move(poll)});
+void pollthread_add_proxy(const PollThread& self, PollableProxy poll) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdAddPollable{std::move(poll)});
 }
 
-void PollThread::remove(Pollable& poll) const {
-  sender_.send(CmdRemovePollable{poll.fd()});
+void pollthread_remove(const PollThread& self, Pollable& poll) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{poll.fd()});
 }
 
-void PollThread::remove_fd(int fd) const {
-  sender_.send(CmdRemovePollable{fd});
+void pollthread_remove_fd(const PollThread& self, int fd) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{fd});
 }
 
-void PollThread::request_close(int fd) const {
-  sender_.send(CmdClosePollable{fd});
+void pollthread_request_close(const PollThread& self, int fd) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdClosePollable{fd});
 }
 
 // @safe - Sends update mode command via channel (send wrapped @unsafe)
 // SAFETY: Channel send is thread-safe
-void PollThread::update_mode(int fd, int new_mode) const {
+void pollthread_update_mode(const PollThread& self, int fd, int new_mode) {
   // @unsafe { mpsc::Sender::send is not borrow-checked }
   {
-  auto result = sender_.send(CmdUpdateMode{fd, new_mode});
+  auto result = const_cast<PollCmdSender&>(self.sender_).send(CmdUpdateMode{fd, new_mode});
   if (result.is_err()) {
     Log_error("PollThread::update_mode: send failed! Channel disconnected?");
   }
   }
 }
 
-void PollThread::update_mode(const Pollable& poll, int new_mode) const {
-  update_mode(poll.fd(), new_mode);
-}
-
-void PollThread::add(rusty::Arc<Job> job) const {
-  sender_.send(CmdAddJob{std::move(job)});
-}
-
-void PollThread::remove(rusty::Arc<Job> job) const {
-  sender_.send(CmdRemoveJob{std::move(job)});
+void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdAddJob{std::move(job)});
 }
 
 
