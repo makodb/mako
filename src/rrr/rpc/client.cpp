@@ -1682,12 +1682,12 @@ impl ClientConnection {
     fn resume(&self) { self.paused_.set(false); }
     fn poll_mode(&self) -> i32 { PollMode::READ }
     fn content_size(&self) -> usize { 0usize }
-    fn handle_write(&mut self) -> i32 { PollMode::NO_CHANGE }
-    fn handle_read(&mut self) -> bool { false }
+    fn handle_write(&self) -> i32 { PollMode::NO_CHANGE }
+    fn handle_read(&self) -> bool { false }
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=dcc923e1642e50aa057d1ba5343ac11ec31ea234aaa277a72c7290e3cd7faaa6*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=de8d118b019723fc8cc9fe34a8adc5463bd1e21d3501c4dee13c93396fb3f467*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -1820,8 +1820,8 @@ struct ClientConnection {
     void resume() const;
     int32_t poll_mode() const;
     size_t content_size() const;
-    int32_t handle_write();
-    bool handle_read();
+    int32_t handle_write() const;
+    bool handle_read() const;
     bool is_closed() const;
 };
 
@@ -2509,11 +2509,11 @@ size_t ClientConnection::content_size() const {
     return static_cast<size_t>(0);
 }
 
-int32_t ClientConnection::handle_write() {
+int32_t ClientConnection::handle_write() const {
     return PollMode::NO_CHANGE;
 }
 
-bool ClientConnection::handle_read() {
+bool ClientConnection::handle_read() const {
     return false;
 }
 

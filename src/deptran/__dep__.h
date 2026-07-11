@@ -72,7 +72,6 @@ using namespace std;
 using namespace rrr;
 
 
-using rrr::NoCopy;
 using rrr::Log;
 using rrr::i8;
 using rrr::i16;

@@ -22,17 +22,17 @@ moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 // registrations switched to no-arg
-// `SerializableRegistry::reg<T>()` — kind auto-derived from each
+// `SerializableRegistry::reg<T>(T::static_kind())` — kind auto-derived from each
 // type's `static_kind()` (the `Serializable<T, MakoCommands>` CRTP
 // base returns the type's 1-indexed position in `MakoCommands`).
-static int volatile xx  = rrr::SerializableRegistry::reg<LogEntry>();
-static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>();
-static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>();
-static int volatile x5  = rrr::SerializableRegistry::reg<HeartBeatLog>();
-static int volatile x6  = rrr::SerializableRegistry::reg<SyncLogRequest>();
-static int volatile x7  = rrr::SerializableRegistry::reg<SyncLogResponse>();
-static int volatile x8  = rrr::SerializableRegistry::reg<SyncNoOpRequest>();
-static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>();
+static int volatile xx  = rrr::SerializableRegistry::reg<LogEntry>(LogEntry::static_kind());
+static int volatile xxx = rrr::SerializableRegistry::reg<BulkPaxosCmd>(BulkPaxosCmd::static_kind());
+static int volatile x4  = rrr::SerializableRegistry::reg<BulkPrepareLog>(BulkPrepareLog::static_kind());
+static int volatile x5  = rrr::SerializableRegistry::reg<HeartBeatLog>(HeartBeatLog::static_kind());
+static int volatile x6  = rrr::SerializableRegistry::reg<SyncLogRequest>(SyncLogRequest::static_kind());
+static int volatile x7  = rrr::SerializableRegistry::reg<SyncLogResponse>(SyncLogResponse::static_kind());
+static int volatile x8  = rrr::SerializableRegistry::reg<SyncNoOpRequest>(SyncNoOpRequest::static_kind());
+static int volatile x9  = rrr::SerializableRegistry::reg<PaxosPrepCmd>(PaxosPrepCmd::static_kind());
 
 static int shared_ptr_apprch = 1;
 
@@ -422,7 +422,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
     if(cnt <= 0)continue;
     std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
     //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, sub]() {
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&pw, sub]() {
       pw->BulkSubmit(sub);
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
@@ -536,7 +536,7 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, curr2]() {
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this, curr2]() {
       this->BulkSubmit(curr2);
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);

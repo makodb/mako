@@ -225,7 +225,7 @@ void ClientWorker::Work() {
   // Jetpack: Failover testing job
   bool failover = Config::GetConfig()->get_failover();
   if (failover) {
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this]() {
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this]() {
       int run_int = Config::GetConfig()->get_failover_run_interval() * pow(10, 6);
       int stop_int = Config::GetConfig()->get_failover_stop_interval() * pow(10, 6);
       int wait_int = 50 * pow(10, 3);
@@ -264,7 +264,7 @@ void ClientWorker::Work() {
 
   // Jetpack: Main transaction dispatch loop
   for (uint32_t n_tx = 0; n_tx < n_concurrent_; n_tx++) {
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, n_tx] () {
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this, n_tx] () {
       auto beg_time = Time::now(false);
       auto end_time = beg_time + duration * pow(10, 6);
 #ifdef DB_CHECKSUM
@@ -369,7 +369,7 @@ void ClientWorker::Work() {
   }
 
   // Jetpack: Wait for completion job
-  auto finish_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this](){
+  auto finish_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this](){
     Log_info("wait for all virtual clients to stop issuing new requests.");
     n_ceased_client_.wait_until_gte(n_concurrent_,
                                                  (duration+500)*1000000);

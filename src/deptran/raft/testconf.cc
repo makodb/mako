@@ -724,7 +724,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
-    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
       Fiber::create_run([frame]() {
         frame->svr_->HeartbeatLoop();
       });
@@ -733,7 +733,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
     // Add election timer as a job to the correct poll thread
     if (frame->svr_->failover_) {
-      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
         Fiber::create_run([frame]() {
           frame->svr_->StartElectionTimer();
         });

@@ -317,7 +317,7 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     if (auto raft_server = worker->GetRaftServer()) {
       auto poll_worker_opt = worker->GetPollThreadWorker();
       if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
           Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
                    raft_server->site_id_, raft_server->partition_id_);
           raft_server->EnsureSetup();
@@ -352,7 +352,7 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     if (auto raft_server = worker->GetRaftServer()) {
       auto poll_worker_opt = worker->GetPollThreadWorker();
       if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
           Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
                    raft_server->site_id_, raft_server->partition_id_);
           raft_server->EnsureSetup();

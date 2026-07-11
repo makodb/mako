@@ -363,7 +363,7 @@ void submit(const char* log, int len, uint32_t par_id) {
         std::copy(log, log + len, std::back_inserter(log_str));
         worker->IncSubmit();
 
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&worker,log_str,len,par_id] () {
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&worker,log_str,len,par_id] () {
             worker->Submit(log_str.data(),len, par_id);
         }));
         auto arc_job_base = rusty::Arc<Job>(arc_job);
@@ -451,7 +451,7 @@ void send_sync_logs(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncLog = createSyncLog(epoch, es->machine_id);
   auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncLog, ess](){
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
     ess->stuff_after_election_cond_.notify_all();

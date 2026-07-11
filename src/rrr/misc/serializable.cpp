@@ -1186,23 +1186,70 @@ using SerializableProxy = std::shared_ptr<SerializableBase>;
 namespace details {
 
 // Wrapper used to put a `shared_ptr<T>` inside a SerializableProxy.
-// Inherits SerializableBase so the proxy's shared_ptr dispatches
-// save/load/kind onto the underlying T through the held shared_ptr.
-// Two SerializableProxy values produced from the same source share
-// the same SerializableSharedPtrHolder via the proxy's shared_ptr
-// refcount.
+// Authored as generic inline Rust DSL with #[cpp_inherit]
+// (SerializableBase is a DSL interface trait). Behavioral diffs:
+//   * The unused default ctor (make_shared<T>() eager-construct) is
+//     dropped — every construction site adopts an existing
+//     shared_ptr<T> via the synthesized fieldwise ctor.
+//   * std::shared_ptr is not in the transpiler's auto-deref set, so
+//     the trait methods delegate to holder_* template free fns (found
+//     by ADL at instantiation) that do the -> dispatch.
+#if RUSTYCPP_RUST
+struct SerializableSharedPtrHolder<T> {
+    ptr: std::shared_ptr<T>,
+}
+
+#[cpp_inherit]
+impl<T> SerializableBase for SerializableSharedPtrHolder<T> {
+    fn save(&self, ar: &mut BinaryWriteArchive) {
+        holder_save(self, ar)
+    }
+    fn load(&mut self, ar: &mut BinaryReadArchive) {
+        holder_load(self, ar)
+    }
+    fn kind(&self) -> i32 {
+        holder_kind(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=be05fc063a8b3a66c7cda47018d08a37c2b929303cb86219404a2979b6cce2b8*/
+template<typename T>
+struct SerializableSharedPtrHolder;
+
 template<typename T>
 struct SerializableSharedPtrHolder : public SerializableBase {
-  std::shared_ptr<T> ptr;
+    std::shared_ptr<T> ptr;
+    SerializableSharedPtrHolder(std::shared_ptr<T> ptr_init) : SerializableBase(), ptr(std::move(ptr_init)) {}
+    SerializableSharedPtrHolder(SerializableSharedPtrHolder&& other) noexcept : SerializableBase(), ptr(std::move(other.ptr)) {}
 
-  SerializableSharedPtrHolder() : ptr(std::make_shared<T>()) {}
-  explicit SerializableSharedPtrHolder(std::shared_ptr<T> p)
-      : ptr(std::move(p)) {}
 
-  void save(BinaryWriteArchive& ar) const override { ptr->save(ar); }
-  void load(BinaryReadArchive& ar) override { ptr->load(ar); }
-  int32_t kind() const override { return ptr->kind(); }
+    void save(BinaryWriteArchive& ar) const {
+        holder_save((*this), ar);
+    }
+    void load(BinaryReadArchive& ar) {
+        holder_load((*this), ar);
+    }
+    int32_t kind() const {
+        return holder_kind((*this));
+    }
 };
+/*RUSTYCPP:GEN-END id=serializable.shared_ptr_holder*/
+
+// @unsafe - shared_ptr arrow dispatch onto the held T.
+template<typename T>
+inline void holder_save(const SerializableSharedPtrHolder<T>& self,
+                        BinaryWriteArchive& ar) {
+  self.ptr->save(ar);
+}
+template<typename T>
+inline void holder_load(SerializableSharedPtrHolder<T>& self,
+                        BinaryReadArchive& ar) {
+  self.ptr->load(ar);
+}
+template<typename T>
+inline int32_t holder_kind(const SerializableSharedPtrHolder<T>& self) {
+  return self.ptr->kind();
+}
 
 }  // namespace details
 
@@ -1255,63 +1302,90 @@ inline SerializableProxy make_serializable_proxy(Args&&... args) {
 }
 
 // Factory registry: maps int32_t kind tags to factories that produce
-// fresh SerializableProxy instances.
-//
-// Usage:
-//   static int reg_canary = SerializableRegistry::reg<CanaryCommand>(0xCAFE);
-//
-//   SerializableProxy proxy = SerializableRegistry::create(0xCAFE);
-//   proxy->load(reader);  // populate from wire
-//
-// Implementation lives in marshal_archive.cpp behind a SpinMutex —
-// registration runs at static init time and lookups during RPC
-// dispatch are concurrent across reactor threads.
-class SerializableRegistry {
- public:
-  // rusty::Function is move-only; the registry stores each factory by move
-  // and invokes it under the registry's SpinMutex inside `create()` (no
-  // copy-out-of-lock — see marshal_archive.cpp).
-  using Factory = rusty::Function<SerializableProxy()>;
+// fresh SerializableProxy instances. Authored as inline Rust DSL
+// (statics on an empty struct; the generic reg<T> delegates to a
+// template free fn — T is non-deducible, so it is declared before the
+// GEN block). The factory-map singleton + SpinMutex live in the impl
+// kernels below unchanged.
+using SerializableRegistryFactory = rusty::Function<SerializableProxy()>;
 
-  // Register T under `kind`. Returns 0 so it can sit at namespace
-  // scope as a static-initializer return value:
-  //   static int _reg = SerializableRegistry::reg<CanaryCommand>(0xCAFE);
-  template<class T>
-  static int reg(int32_t kind) {
-    register_factory(kind, []() -> SerializableProxy {
-      // Holder-shaped proxy so SerializableEnvelope::load gives
-      // unpack_shared<T> a refcount-shared shared_ptr<T> — no dangling
-      // pointer when the helper outlives the source envelope.
-      auto sp = std::make_shared<T>();
-      return std::make_shared<details::SerializableSharedPtrHolder<T>>(
-          std::move(sp));
-    });
-    return 0;
-  }
+struct SerializableRegistry;
+SerializableProxy serializable_registry_create_impl(int32_t kind);
+bool serializable_registry_is_registered_impl(int32_t kind);
+void serializable_registry_clear_impl();
+void serializable_registry_register_factory(int32_t kind,
+                                            SerializableRegistryFactory factory);
+template<class T> int serializable_registry_reg(int32_t kind);
 
-  // No-arg overload — auto-derives kind from `T::static_kind()`.
-  // Used by every TypeList-derived `Serializable<T, MakoCommands>`
-  // type whose kind = its 1-indexed position in `MakoCommands`.
-  //   static int _reg = SerializableRegistry::reg<TpcCommitCommand>();
-  template<class T>
-  static int reg() {
-    return reg<T>(T::static_kind());
-  }
+#if RUSTYCPP_RUST
+struct SerializableRegistry {}
 
-  // Create a fresh proxy for the given kind. Aborts via verify() if
-  // the kind is not registered.
-  static SerializableProxy create(int32_t kind);
+impl SerializableRegistry {
+    // Register T under `kind` (returns 0 for static-initializer use).
+    fn reg<T>(kind: i32) -> i32 {
+        serializable_registry_reg::<T>(kind)
+    }
 
-  // Test helper: check if a kind is registered.
-  static bool is_registered(int32_t kind);
+    // Create a fresh proxy for the given kind; aborts if unregistered.
+    fn create(kind: i32) -> SerializableProxy {
+        serializable_registry_create_impl(kind)
+    }
 
-  // Test helper: clear the registry. Not thread-safe; use only
-  // between tests in single-threaded fixtures.
-  static void clear_for_testing();
+    fn is_registered(kind: i32) -> bool {
+        serializable_registry_is_registered_impl(kind)
+    }
 
- private:
-  static void register_factory(int32_t kind, Factory factory);
+    // Test helper; not thread-safe.
+    fn clear_for_testing() {
+        serializable_registry_clear_impl()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry version=1 rust_sha256=0825f31f594471e8211386988da76a6ed2b7efbea76faff6a2ecf0fafc2bf203*/
+struct SerializableRegistry;
+
+struct SerializableRegistry {
+
+    template<typename T>
+    static int32_t reg(int32_t kind);
+    static SerializableProxy create(int32_t kind);
+    static bool is_registered(int32_t kind);
+    static void clear_for_testing();
 };
+
+
+template<typename T>
+int32_t SerializableRegistry::reg(int32_t kind) {
+    return serializable_registry_reg<T>(std::move(kind));
+}
+
+SerializableProxy SerializableRegistry::create(int32_t kind) {
+    return serializable_registry_create_impl(std::move(kind));
+}
+
+bool SerializableRegistry::is_registered(int32_t kind) {
+    return serializable_registry_is_registered_impl(std::move(kind));
+}
+
+void SerializableRegistry::clear_for_testing() {
+    serializable_registry_clear_impl();
+}
+/*RUSTYCPP:GEN-END id=serializable.registry*/
+
+// The no-arg reg<T>() (kind = T::static_kind()) can't live in the DSL
+// (a Rust impl can't overload `reg`); it keeps its call-site spelling
+// as a template free fn on the class via this shim.
+template<class T>
+inline int serializable_registry_reg(int32_t kind) {
+  serializable_registry_register_factory(kind, []() -> SerializableProxy {
+    // Holder-shaped proxy so SerializableEnvelope::load gives
+    // unpack_shared<T> a refcount-shared shared_ptr<T>.
+    auto sp = std::make_shared<T>();
+    return std::make_shared<details::SerializableSharedPtrHolder<T>>(
+        std::move(sp));
+  });
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // Layer 5: declaration-order kind tags via a central TypeList.
@@ -1457,14 +1531,14 @@ namespace {
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
 struct SerializableRegistryMap {
-    map: rusty::HashMap<i32, SerializableRegistry::Factory>,
+    map: rusty::HashMap<i32, SerializableRegistryFactory>,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.registry_map version=1 rust_sha256=86fdf7049e82b2c9a5ffdda569e5e58f144d17e43af1a83bb338aea30c052631*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry_map version=1 rust_sha256=1ec228167958ea8a4dcd5060a23c9ef2cc06ec0d1bcb4dcb9467b3b638869cf4*/
 struct SerializableRegistryMap;
 
 struct SerializableRegistryMap {
-    rusty::HashMap<int32_t, SerializableRegistry::Factory> map;
+    rusty::HashMap<int32_t, SerializableRegistryFactory> map;
 };
 /*RUSTYCPP:GEN-END id=serializable.registry_map*/
 
@@ -1480,24 +1554,24 @@ SpinMutex<SerializableRegistryMap>& registry() {
 
 }  // namespace
 
-void SerializableRegistry::register_factory(int32_t kind, Factory factory) {
+void serializable_registry_register_factory(int32_t kind, SerializableRegistryFactory factory) {
   auto guard = registry().lock().unwrap();
   (*guard).map.insert(kind, std::move(factory));
 }
 
-SerializableProxy SerializableRegistry::create(int32_t kind) {
+SerializableProxy serializable_registry_create_impl(int32_t kind) {
   auto guard = registry().lock().unwrap();
   auto entry = (*guard).map.get(kind);
   verify(entry.is_some());
   return entry.unwrap()();
 }
 
-bool SerializableRegistry::is_registered(int32_t kind) {
+bool serializable_registry_is_registered_impl(int32_t kind) {
   auto guard = registry().lock().unwrap();
   return (*guard).map.get(kind).is_some();
 }
 
-void SerializableRegistry::clear_for_testing() {
+void serializable_registry_clear_impl() {
   auto guard = registry().lock().unwrap();
   (*guard).map.clear();
 }
