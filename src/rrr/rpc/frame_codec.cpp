@@ -278,21 +278,61 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
  * defined threshold so long-lived connections don't accumulate
  * unbounded slack.
  */
-class FrameStreamReader {
- public:
-    FrameStreamReader();
-    ~FrameStreamReader();
+// The Cursor alias + construction helper let the DSL spell the field
+// type and the `new()` factory init (the DSL can't express the
+// `rusty::io::Cursor<std::vector<..>>` template args or a
+// `std::vector{}` construction inline).
+using FrameCursor = rusty::io::Cursor<std::vector<std::uint8_t>>;
 
-    FrameStreamReader(const FrameStreamReader&)            = delete;
-    FrameStreamReader& operator=(const FrameStreamReader&) = delete;
-    FrameStreamReader(FrameStreamReader&&)                 = default;
-    FrameStreamReader& operator=(FrameStreamReader&&)      = default;
+inline FrameCursor make_frame_cursor() {
+    return FrameCursor::new_(std::vector<std::uint8_t>{});
+}
+
+struct FrameStreamReader;
+
+// Hand-written backing free fns for the DSL methods whose bodies are
+// raw-pointer / std::span / std::vector interop (not DSL-expressible).
+// Definitions in the impl namespace at the bottom of this file.
+void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
+                std::size_t size);
+FrameDecodeStatus fsr_next_frame(const FrameStreamReader& self,
+                                 FrameView& out_view);
+void fsr_consume_frame(FrameStreamReader& self);
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. Construction goes through the
+// `FrameStreamReader::new_()` factory (`fn new()` in the DSL).
+#if RUSTYCPP_RUST
+struct FrameStreamReader {
+    // SP-5: the buffer + read offset are owned by the Cursor.
+    // `cursor_.position()` is the read offset (old `read_pos_`);
+    // `cursor_.get_ref()` is the backing vector (old `buf_`). The
+    // unread bytes are peeked via `cursor_.fill_buf()` (a `std::span`)
+    // and dropped via `cursor_.consume(n)`.
+    cursor_: FrameCursor,
+    // copy-`=delete` marker: the manual class deleted its copy ctor (a
+    // silent buffer copy would be a hot-path perf bug), and `FrameCursor`
+    // alone is copyable. `Cell` is in the transpiler's known-non-copyable
+    // set, so this field keeps the struct move-only. Never read.
+    noncopy_: Cell<bool>,
+}
+
+impl FrameStreamReader {
+    fn new() -> FrameStreamReader {
+        FrameStreamReader {
+            cursor_: make_frame_cursor(),
+            noncopy_: Cell::new(false),
+        }
+    }
 
     // Append `size` bytes from `data` to the internal buffer.
     // No-op if `size == 0`. `data` may be null only if `size == 0`.
     // @unsafe - takes a raw `const uint8_t*` (pointer + size pair from
     // the transport).
-    void append(const std::uint8_t* data, std::size_t size);
+    fn append(&mut self, data: *const u8, size: usize) {
+        fsr_append(self, data, size)
+    }
 
     // Try to view the next frame in the buffer.
     //   - `Complete`        — fills `out_view`. Bytes stay buffered until
@@ -301,37 +341,82 @@ class FrameStreamReader {
     //   - `Malformed`       — header decoded to a negative payload size;
     //                         caller should treat the stream as
     //                         corrupted and call `reset()`.
-    // @unsafe - computes `buf_.data() + read_pos_` and stores a raw
-    // `const uint8_t*` payload pointer into the out FrameView.
-    FrameDecodeStatus next_frame(FrameView& out_view) const;
+    // @unsafe - the free fn stores a zero-copy raw payload pointer into
+    // the out FrameView.
+    fn next_frame(&self, out_view: &mut FrameView) -> FrameDecodeStatus {
+        fsr_next_frame(self, out_view)
+    }
 
     // Drop the most recently peeked frame from the buffer. Must be
     // preceded by a `Complete` from `next_frame`. Calling without a
     // preceding `Complete` is a no-op.
-    // @unsafe - re-peeks the header via raw `buf_.data() + read_pos_`.
-    void consume_frame();
+    fn consume_frame(&mut self) {
+        fsr_consume_frame(self)
+    }
 
     // Drop everything in the buffer (e.g., after a malformed frame or
     // before a reconnect attempt).
-    void reset();
+    fn reset(&mut self) {
+        self.cursor_.get_mut().clear();
+        self.cursor_.set_position(0);
+    }
 
     // Number of buffered bytes that have not yet been consumed.
-    std::size_t buffered_bytes() const;
+    fn buffered_bytes(&self) -> usize {
+        self.cursor_.remaining_len()
+    }
 
-    bool empty() const { return buffered_bytes() == 0; }
+    fn empty(&self) -> bool {
+        self.buffered_bytes() == 0
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.frame_stream_reader version=1 rust_sha256=261c2ae9373c4fdb641b9b741b60a85e57923e8f9646d69afa82e8ecdca57065*/
+struct FrameStreamReader;
 
- private:
-    void compact_if_needed();
+struct FrameStreamReader {
+    FrameCursor cursor_;
+    rusty::Cell<bool> noncopy_;
 
-    // SP-5: the buffer + read offset are owned by a `rusty::io::Cursor`.
-    // `cursor_.position()` is the read offset (old `read_pos_`);
-    // `cursor_.get_ref()` is the backing vector (old `buf_`). The unread
-    // bytes are peeked via `cursor_.fill_buf()` (a `std::span`, no raw
-    // `buf_.data() + read_pos_` arithmetic) and dropped via
-    // `cursor_.consume(n)`.
-    rusty::io::Cursor<std::vector<std::uint8_t>> cursor_{
-        std::vector<std::uint8_t>{}};
+    static FrameStreamReader new_();
+    void append(const uint8_t* data, size_t size);
+    FrameDecodeStatus next_frame(FrameView& out_view) const;
+    void consume_frame();
+    void reset();
+    size_t buffered_bytes() const;
+    bool empty() const;
 };
+
+
+FrameStreamReader FrameStreamReader::new_() {
+    return FrameStreamReader{.cursor_ = make_frame_cursor(), .noncopy_ = rusty::Cell<bool>::new_(false)};
+}
+
+void FrameStreamReader::append(const uint8_t* data, size_t size) {
+    fsr_append((*this), data, std::move(size));
+}
+
+FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
+    return fsr_next_frame((*this), out_view);
+}
+
+void FrameStreamReader::consume_frame() {
+    fsr_consume_frame((*this));
+}
+
+void FrameStreamReader::reset() {
+    this->cursor_.get_mut().clear();
+    this->cursor_.set_position(0);
+}
+
+size_t FrameStreamReader::buffered_bytes() const {
+    return this->cursor_.remaining_len();
+}
+
+bool FrameStreamReader::empty() const {
+    return this->buffered_bytes() == static_cast<size_t>(0);
+}
+/*RUSTYCPP:GEN-END id=frame_codec.frame_stream_reader*/
 
 
 }  // export namespace rrr
@@ -398,15 +483,13 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
 // FrameStreamReader
 // ---------------------------------------------------------------------------
 
-FrameStreamReader::FrameStreamReader() = default;
-FrameStreamReader::~FrameStreamReader() = default;
-
 // @unsafe - takes raw `const uint8_t*` data + size pair from transport
 // (an inherent boundary). The buffer growth itself is via the Cursor's
 // owned vector.
-void FrameStreamReader::append(const std::uint8_t* data, std::size_t size) {
+void fsr_append(FrameStreamReader& self, const std::uint8_t* data,
+                std::size_t size) {
     if (size == 0) return;
-    auto& buf = cursor_.get_mut();
+    auto& buf = self.cursor_.get_mut();
     buf.insert(buf.end(), data, data + size);
 }
 
@@ -414,8 +497,9 @@ void FrameStreamReader::append(const std::uint8_t* data, std::size_t size) {
 // no `buf_.data() + read_pos_` arithmetic). The lone @unsafe is storing
 // the zero-copy `span.data() + kFrameHeaderSize` payload pointer into the
 // out FrameView (inherent to FrameView being a view, not an owner).
-FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
-    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
+FrameDecodeStatus fsr_next_frame(const FrameStreamReader& self,
+                                 FrameView& out_view) {
+    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
 
     FrameHeader header;
     const FrameDecodeStatus header_status =
@@ -436,10 +520,31 @@ FrameDecodeStatus FrameStreamReader::next_frame(FrameView& out_view) const {
     return FrameDecodeStatus::Complete;
 }
 
+namespace {
+
+// @safe - compacts by copying the unread tail (via `cursor_.fill_buf()`
+// span) into a fresh buffer and re-seating the Cursor — no `std::memmove`
+// + raw `buf_.data() + read_pos_` arithmetic. Rare path (only past the
+// 64 KiB compaction threshold), so the one alloc is well amortized.
+// (Was the private method `compact_if_needed`; only fsr_consume_frame
+// calls it, so it drops off the struct API entirely.)
+void fsr_compact_if_needed(FrameStreamReader& self) {
+    const std::size_t read_pos = self.cursor_.position();
+    if (read_pos == 0) return;
+    if (read_pos < kCompactThresholdBytes) return;
+
+    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
+    std::vector<std::uint8_t> compacted(rem.begin(), rem.end());
+    self.cursor_ = rusty::io::Cursor<std::vector<std::uint8_t>>::new_(
+        std::move(compacted));
+}
+
+}  // namespace
+
 // @safe-ish - peeks via `cursor_.fill_buf()` (span); advances the read
 // offset via `cursor_.consume(total)` instead of `read_pos_ += total`.
-void FrameStreamReader::consume_frame() {
-    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
+void fsr_consume_frame(FrameStreamReader& self) {
+    const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
     if (rem.size() < kFrameHeaderSize) return;
 
     FrameHeader header;
@@ -450,32 +555,8 @@ void FrameStreamReader::consume_frame() {
     const std::size_t total = static_cast<std::size_t>(header.total_frame_size());
     if (rem.size() < total) return;
 
-    cursor_.consume(total);
-    compact_if_needed();
-}
-
-void FrameStreamReader::reset() {
-    cursor_.get_mut().clear();
-    cursor_.set_position(0);
-}
-
-std::size_t FrameStreamReader::buffered_bytes() const {
-    return cursor_.remaining_len();
-}
-
-// @safe - compacts by copying the unread tail (via `cursor_.fill_buf()`
-// span) into a fresh buffer and re-seating the Cursor — no `std::memmove`
-// + raw `buf_.data() + read_pos_` arithmetic. Rare path (only past the
-// 64 KiB compaction threshold), so the one alloc is well amortized.
-void FrameStreamReader::compact_if_needed() {
-    const std::size_t read_pos = cursor_.position();
-    if (read_pos == 0) return;
-    if (read_pos < kCompactThresholdBytes) return;
-
-    const std::span<const std::uint8_t> rem = cursor_.fill_buf();
-    std::vector<std::uint8_t> compacted(rem.begin(), rem.end());
-    cursor_ = rusty::io::Cursor<std::vector<std::uint8_t>>::new_(
-        std::move(compacted));
+    self.cursor_.consume(total);
+    fsr_compact_if_needed(self);
 }
 
 

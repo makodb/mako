@@ -118,7 +118,7 @@ void         tcpconn_handle_error(TcpConnection& self);
 // / On*Callback inline, so the ctor field inits call these. (`OwnedFd`,
 // `Cell`, `Option`, and `SpinMutex<std::vector<u8>>` it spells directly.)
 inline std::vector<std::uint8_t> tcpconn_empty_buf()        { return {}; }
-inline FrameStreamReader         tcpconn_default_inbound()  { return FrameStreamReader(); }
+inline FrameStreamReader         tcpconn_default_inbound()  { return FrameStreamReader::new_(); }
 inline OnFrameCallback           tcpconn_default_on_frame() { return OnFrameCallback{}; }
 inline OnClosedCallback          tcpconn_default_on_closed(){ return OnClosedCallback{}; }
 inline OnErrorCallback           tcpconn_default_on_error() { return OnErrorCallback{}; }

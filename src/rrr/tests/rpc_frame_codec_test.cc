@@ -190,7 +190,7 @@ TEST(RpcFrameCodecTest, EncodeIntoCoalescesMultipleFrames) {
               3 * kFrameHeaderSize + sizeof(a) + sizeof(b) + 0);
 
     // Round-trip via FrameStreamReader to check ordering.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(out.data(), out.size());
 
     FrameView v{};
@@ -234,7 +234,7 @@ TEST(RpcFrameCodecTest, EncodeIntoRejectsNegativeSize) {
 // ---------------------------------------------------------------------------
 
 TEST(RpcFrameCodecTest, ReaderEmptyOnConstruction) {
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     EXPECT_EQ(reader.buffered_bytes(), 0u);
     EXPECT_TRUE(reader.empty());
     FrameView v{};
@@ -248,7 +248,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesByteByByteFragmentation) {
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload),
                                         /*ext=*/false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     FrameView v{};
     for (std::size_t i = 0; i + 1 < wire.size(); ++i) {
         reader.append(wire.data() + i, 1);
@@ -270,7 +270,7 @@ TEST(RpcFrameCodecTest, ReaderEmitsMultipleFramesFromOneAppend) {
     ASSERT_TRUE(frame_codec_encode_into(wire, f2, 1, false));
     ASSERT_TRUE(frame_codec_encode_into(wire, f3, 2, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -297,7 +297,7 @@ TEST(RpcFrameCodecTest, ReaderHandlesPartialHeaderThenRestOfFrame) {
     const std::uint8_t payload[] = {'a', 'b', 'c', 'd'};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, sizeof(payload), false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     // Feed first 2 bytes (incomplete header).
     reader.append(wire.data(), 2);
     FrameView v{};
@@ -323,7 +323,7 @@ TEST(RpcFrameCodecTest, ReaderConsumeWithoutPriorPeekIsNoOp) {
     const std::uint8_t payload[] = {0xAA, 0xBB};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 2, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     // Empty buffer: consume should be a no-op.
     reader.consume_frame();
     EXPECT_TRUE(reader.empty());
@@ -340,7 +340,7 @@ TEST(RpcFrameCodecTest, ReaderResetClearsAllBufferedBytes) {
     const std::uint8_t payload[] = {1, 2, 3, 4, 5};
     ASSERT_TRUE(frame_codec_encode_into(wire, payload, 5, false));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
     EXPECT_EQ(reader.buffered_bytes(), wire.size());
     reader.reset();
@@ -358,7 +358,7 @@ TEST(RpcFrameCodecTest, ReaderTracksExtendedHeaderFlag) {
     ASSERT_TRUE(frame_codec_encode_into(wire, plain,    1, /*ext=*/false));
     ASSERT_TRUE(frame_codec_encode_into(wire, with_ext, 2, /*ext=*/true));
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(wire.data(), wire.size());
 
     FrameView v{};
@@ -377,7 +377,7 @@ TEST(RpcFrameCodecTest, ReaderCompactsAfterManyConsumedFrames) {
     // Push enough small frames through that the consumed prefix grows
     // past the compaction threshold; afterwards, additional frames must
     // still decode correctly.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     constexpr std::size_t kFrameCount = 4096;  // 4096 * (4+8) ≈ 48 KiB header bytes
     const std::uint8_t payload[8] = {0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0x0, 0x1};
 
@@ -421,7 +421,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByDirectI32Write) {
     std::memcpy(header, &kSize, sizeof(kSize));
     const std::uint8_t payload[6] = {'r', 'e', 'q', 'X', 'Y', 'Z'};
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 
@@ -442,7 +442,7 @@ TEST(RpcFrameCodecTest, DecodesBytesProducedByEncodeResponseSize) {
     std::uint8_t payload[kPayloadSize];
     for (int i = 0; i < kPayloadSize; ++i) payload[i] = static_cast<std::uint8_t>(i);
 
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(header, sizeof(header));
     reader.append(payload, sizeof(payload));
 

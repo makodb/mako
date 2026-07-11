@@ -179,7 +179,7 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     ASSERT_EQ(n, static_cast<ssize_t>(4 + sizeof(a) + 4 + sizeof(b)));
 
     // Decode both frames out of the coalesced buffer.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(got.data(), got.size());
     FrameView v{};
     ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);
