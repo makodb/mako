@@ -112,6 +112,14 @@ log_file1="${log_prefix}_shard1-$trd.log"
 pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 
+# Crash capture: the customer-migration segfault (T4c) needs a core.
+# core_pattern is "core" (cwd-relative); shards run from the repo root.
+if [ "${MAKO_CAPTURE_CORE:-0}" == "1" ]; then
+    ulimit -c unlimited
+    rm -f core core.* 2>/dev/null
+    echo "Core dumps enabled (ulimit -c unlimited)"
+fi
+
 echo "Starting shard 0..."
 nohup bash bash/shard.sh 2 0 $trd localhost > "$log_file0" 2>&1 &
 SHARD0_PID=$!

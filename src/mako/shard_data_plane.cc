@@ -129,10 +129,16 @@ public:
     // Shedding the range IS losing ownership: upgrade the fence to MOVED so
     // stale-routed reads (not just writes) get the retryable rejection until
     // their config reloads. Rides drop_range -- no extra RPC or master step.
+    // The tombstone goes up BEFORE the first delete: a reader between a
+    // delete and a later mark would pass the (frozen = reads-allowed) fence,
+    // see a clean miss on half-emptied data, and panic workload invariants
+    // (observed live: payment ALWAYS_ERROR on the migrated warehouse during
+    // the drop window). Marked first, every read from the instant ownership
+    // is lost gets the retryable abort; pre-mark reads still see full data.
     void drop_range(const std::string& lo, const std::string& hi) override {
         engine_init_this_thread(db_);
-        janus::ShardData::drop_range(lo, hi);   // scan+remove via the gated primitives
         janus::get_migration_guard().mark_moved(table_, lo, hi);
+        janus::ShardData::drop_range(lo, hi);   // scan+remove via the gated primitives
     }
 
 private:
@@ -165,8 +171,27 @@ public:
     // big-endian field, so 16 x 0xff dominates all of them.
     static std::string widen_hi() { return std::string(16, '\xff'); }
 
+    // Full-index reads must be CHUNKED, never one one-op scan: the engine
+    // registers a read-set item per visited row and Transaction's item set
+    // hard-caps at tset_max_capacity (32768) -- a whole customer warehouse
+    // (~90k rows) runs the chunk-pointer array off the end and crashes on a
+    // garbage TransItem (both shards segfaulted live at exactly the customer
+    // migration's checksum scan). Each chunk is its own one-op txn, well
+    // under the cap; the limited scan stops registering at the limit.
     std::vector<KvPair> scan_range(const std::string&, const std::string&) override {
-        return EngineShardData::scan_range(std::string(), widen_hi());
+        static const size_t kScanChunk = 4096;
+        std::vector<KvPair> out;
+        std::string cur;   // "" = -inf
+        while (true) {
+            std::vector<KvPair> batch =
+                EngineShardData::scan_range_limited(cur, widen_hi(), kScanChunk);
+            const bool last = batch.size() < kScanChunk;
+            for (auto& kv : batch) out.push_back(std::move(kv));
+            if (last) break;
+            cur = out.back().first;
+            cur.push_back('\0');   // resume strictly after the last key
+        }
+        return out;
     }
     std::vector<KvPair> scan_range_limited(const std::string& lo, const std::string&,
                                            size_t limit) override {
