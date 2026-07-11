@@ -70,10 +70,13 @@ export MAKO_SHARDING_MODE=map
 # The four migrations (through stock's ~100k-row copy) need more benchmark
 # window than the default 30s -- the shards must keep serving until every
 # cutover lands, or the tail migrations die with the bed.
-# Long enough for eleven sequential migrations (order_line alone moves ~300k
-# rows twice: bulk + post-fence catch-up) to fire INSIDE the bench window --
-# the point is migrating under live traffic, and dbtest exits at bench end.
-export MAKO_RUNTIME_SECONDS=${MAKO_RUNTIME_SECONDS:-360}
+# Long enough for twenty-two sequential migrations (the full warehouse OUT
+# and BACK; order_line alone moves ~320k rows twice per direction: bulk +
+# post-fence catch-up mirror) to fire INSIDE the bench window -- the point
+# is migrating under live traffic, and dbtest exits at bench end. The
+# forward pass alone has taken ~10 minutes on a loaded machine (drains
+# legitimately wait multi-second 2PC stragglers to their deadline).
+export MAKO_RUNTIME_SECONDS=${MAKO_RUNTIME_SECONDS:-1500}
 
 cleanup_temp_config() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then
@@ -113,6 +116,12 @@ log_file0="${log_prefix}_shard0-$trd.log"
 log_file1="${log_prefix}_shard1-$trd.log"
 
 pkill -9 -x dbtest 2>/dev/null || true
+# Run under a bed-private binary NAME: this bed runs for many minutes, and
+# concurrent test sessions' cleanup (pkill -x dbtest) has shot it mid-flight
+# repeatedly. A copied binary with its own name is invisible to that.
+export MAKO_DBTEST_BIN="dbtest_whmig"
+cp -f "$binary_path" "./${BUILD_DIR:-build}/${MAKO_DBTEST_BIN}"
+pkill -9 -x "$MAKO_DBTEST_BIN" 2>/dev/null || true
 sleep 1
 
 # Crash capture: the customer-migration segfault (T4c) needs a core.
@@ -167,6 +176,11 @@ declare -A mig_out
 # grows history/oorder/order_line, and new_order can be fully consumed by
 # deliveries (0 rows is a legitimate commit).
 MIG_TABLES=(customer warehouse district new_order customer_name_idx history oorder oorder_c_id_idx stock stock_data order_line)
+# RETURN LEG (ping-pong, 0 -> 1): the mirror image -- customer LAST, so the
+# group signal flips back only once every scannable table is already home
+# (the resuming home worker's delivery/stock_level scans must not land on
+# still-remote proxies).
+MIG_TABLES_BACK=(warehouse district new_order customer_name_idx history oorder oorder_c_id_idx stock stock_data order_line customer)
 declare -A MIG_EXPECT=([customer]=30000 [warehouse]=1 [district]=10
                        [new_order]=0
                        [customer_name_idx]=30000 [history]=30000
@@ -174,33 +188,53 @@ declare -A MIG_EXPECT=([customer]=30000 [warehouse]=1 [district]=10
                        [stock]=100000 [stock_data]=100000
                        [order_line]=250000)
 
+# Fire one gated migration of wh:${MIG_WH}:$1 from shard $2 to shard $3,
+# recording into mig_ok/mig_out under key "$4" (pass label + table). A failed
+# attempt aborts cleanly (source intact, unfrozen), so one retry is safe --
+# and diagnostic: attempt 2 starts from an already-mostly-copied destination
+# (put-overwrite mirror), so a window-length-sensitive failure commits on
+# retry while a structural one repeats.
+run_migration() {
+    local t="$1" src="$2" dst="$3" key="$4"
+    local spec="wh:${MIG_WH}:${t}"
+    mig_ok[$key]=0
+    local attempt out rc moved
+    for attempt in 1 2; do
+        echo "Firing: mako_admin migrate ${admin_addr} ${spec} ${src} -> ${dst} (attempt ${attempt})"
+        out=$("$admin_path" migrate "$admin_addr" "$spec" x x "$src" "$dst" 30 2>&1)
+        rc=$?
+        echo "mako_admin(${key}#${attempt}): rc=${rc} output: ${out}"
+        mig_out[$key]="$out"
+        # moved is a MINIMUM: loaders add secondary rows (e.g. customer
+        # keeps balance/data keys in the same index), so >= base count.
+        moved=$(echo "$out" | sed -n 's/.*ok=1 moved=\([0-9]*\).*/\1/p')
+        if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "${MIG_EXPECT[$t]}" ]; then
+            mig_ok[$key]=1
+            mig_out[$key]="moved=${moved} (attempt ${attempt})"
+            return 0
+        fi
+    done
+    return 1
+}
+
 if [ -z "$admin_addr" ]; then
     echo "  ✗ Admin service / benchmarks did not come up within 150s"
 else
     echo "Benchmarks running on both shards; MigrationAdmin at ${admin_addr}"
     sleep 2   # a beat of steady-state traffic before the first cutover
     for t in "${MIG_TABLES[@]}"; do
-        spec="wh:${MIG_WH}:${t}"
-        # A failed attempt aborts cleanly (source intact, unfrozen), so one
-        # retry is safe -- and diagnostic: attempt 2 starts from an already-
-        # mostly-copied destination (put-overwrite), so a window-length-
-        # sensitive failure commits on retry while a structural one repeats.
-        mig_ok[$t]=0
-        for attempt in 1 2; do
-            echo "Firing: mako_admin migrate ${admin_addr} ${spec} 1 -> 0 (attempt ${attempt})"
-            out=$("$admin_path" migrate "$admin_addr" "$spec" x x 1 0 30 2>&1)
-            rc=$?
-            echo "mako_admin(${t}#${attempt}): rc=${rc} output: ${out}"
-            mig_out[$t]="$out"
-            # moved is a MINIMUM: loaders add secondary rows (e.g. customer
-            # keeps balance/data keys in the same index), so >= base count.
-            moved=$(echo "$out" | sed -n 's/.*ok=1 moved=\([0-9]*\).*/\1/p')
-            if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "${MIG_EXPECT[$t]}" ]; then
-                mig_ok[$t]=1
-                mig_out[$t]="moved=${moved} (attempt ${attempt})"
-                break
-            fi
-        done
+        run_migration "$t" 1 0 "$t"
+    done
+    # ---- PING-PONG RETURN LEG: the whole warehouse goes home, 0 -> 1 ----
+    # This is also the REMOTE-DESTINATION path from the master's seat: the
+    # destination participant is an RPC proxy, so the copy runs as PullRange
+    # (the destination pulls; rows never transit the master) and the prepare
+    # vote as the remote VerifyRange job. commit clears the returning
+    # shard's stale MOVED fence, so it serves the range again immediately.
+    echo "Return leg: migrating warehouse ${MIG_WH} back 0 -> 1"
+    sleep 2   # let post-cutover traffic settle on the new owner first
+    for t in "${MIG_TABLES_BACK[@]}"; do
+        run_migration "$t" 0 1 "back:${t}"
     done
 fi
 
@@ -284,16 +318,28 @@ fi
 echo ""
 echo "Checking live warehouse migration (warehouse ${MIG_WH}, shard 1 -> 0):"
 echo "-----------------"
-# GATED assertion: EVERY table must migrate live, including the write-hot
-# big ones (customer 90k rows, stock 100k) -- the full mechanism end to end:
-# spec resolution, adopted index, widened chunked copy, physical-name freeze,
-# per-table gen-bucket drain (participant txn boundary included), post-fence
-# catch-up copy, begin/poll checksum job, commit, publish.
+# GATED assertion: EVERY table must migrate live IN BOTH DIRECTIONS,
+# including the write-hot big ones (customer 90k rows, order_line 320k) --
+# the full mechanism end to end: spec resolution, adopted index, widened
+# chunked mirror copy, physical-name freeze, per-table gen-bucket drain
+# (participant txn boundary included), post-fence catch-up, begin/poll
+# checksum + verify jobs, commit, publish -- and on the return leg the
+# remote-destination path (PullRange copy, remote verify vote, stale-MOVED
+# fence cleared on the returning owner).
 for t in "${MIG_TABLES[@]}"; do
     if [ "${mig_ok[$t]:-0}" -eq 1 ]; then
         echo "  ✓ ${t}: committed (${mig_out[$t]}, expected >= ${MIG_EXPECT[$t]})"
     else
         echo "  ✗ ${t}: failed: ${mig_out[$t]:-not fired}"
+        failed=1
+    fi
+done
+for t in "${MIG_TABLES_BACK[@]}"; do
+    k="back:${t}"
+    if [ "${mig_ok[$k]:-0}" -eq 1 ]; then
+        echo "  ✓ ${k}: committed (${mig_out[$k]}, expected >= ${MIG_EXPECT[$t]})"
+    else
+        echo "  ✗ ${k}: failed: ${mig_out[$k]:-not fired}"
         failed=1
     fi
 done

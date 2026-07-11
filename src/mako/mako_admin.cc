@@ -17,7 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>   // sleep
+#include <time.h>     // time (submission nonce)
+#include <unistd.h>   // sleep, getpid
 
 #include <string>
 
@@ -55,12 +56,21 @@ int main(int argc, char** argv) {
     req.hi = argv[5];
     req.src = atoi(argv[6]);
     req.dst = atoi(argv[7]);
+    // Submission identity: the server delivers a job's terminal result only
+    // to the nonce that started it, so an abandoned attempt's verdict cannot
+    // leak into a retry. pid+time is unique enough across bed attempts.
+    req.nonce = static_cast<rrr::i64>(getpid()) * 1000000 +
+                static_cast<rrr::i64>(time(nullptr) % 1000000);
 
     // Migrations run as ASYNC JOBS server-side (rrr requests carry a ~1s
     // client timeout, far under a real migration): the first call replies
-    // "started", repeats reply "in progress", and the terminal result is
-    // delivered once. Poll to a generous deadline.
-    const int deadline_s = 600;
+    // "started", repeats reply "in progress" (or "busy" while ANOTHER
+    // submission's job holds the single slot -- keep polling; the first call
+    // after it frees starts ours), and the terminal result is delivered
+    // once. Poll to a generous deadline: a big-table migration under load
+    // legitimately runs many minutes, and abandoning a live job is what
+    // desynchronizes the bed.
+    const int deadline_s = 1800;
     for (int waited_ms = 0; waited_ms <= deadline_s * 1000; waited_ms += 500) {
         auto r = proxy.Migrate(req);
         if (r.is_err()) {
@@ -69,7 +79,8 @@ int main(int argc, char** argv) {
             return 2;
         }
         auto resp = r.unwrap();
-        if (resp.msg != "started" && resp.msg != "in progress") {
+        if (resp.msg != "started" && resp.msg != "in progress" &&
+            resp.msg != "busy") {
             printf("ok=%d moved=%lld msg=%s\n", static_cast<int>(resp.ok),
                    static_cast<long long>(resp.moved), resp.msg.c_str());
             return resp.ok == 1 ? 0 : 1;

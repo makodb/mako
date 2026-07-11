@@ -27,7 +27,11 @@ config_path="$path/config/local-shards${nshard}-warehouses${trd}.yml"
 if [ -n "$MAKO_CONFIG" ]; then
     config_path="$MAKO_CONFIG"
 fi
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $config_path -P $cluster"
+# MAKO_DBTEST_BIN: run under an alternate binary NAME (a copy of dbtest).
+# Long-running local beds use this to dodge concurrent test sessions'
+# process-name cleanup (pkill -x dbtest), which otherwise shoots a live
+# multi-minute run mid-flight.
+CMD="./${BUILD_DIR:-build}/${MAKO_DBTEST_BIN:-dbtest} --num-threads $trd --shard-index $shard --shard-config $config_path -P $cluster"
 
 THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
 if [ -n "$THROTTLE_ARGS" ]; then

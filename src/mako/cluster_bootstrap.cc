@@ -168,26 +168,40 @@ class MigrationAdminImpl : public MigrationAdminService {
 public:
     void Migrate(const RpcMigrateRequest& req, RpcMigrateResponse& resp,
                  rrr::DeferredReply defer) override {
+        // The key identifies the SUBMISSION, nonce included: an admin that
+        // abandons a slow job at its own deadline and retries must not be
+        // handed the abandoned attempt's terminal result (observed live:
+        // attempt 2 "finished" in 100ms with attempt 1's verdict), and a
+        // stale unconsumed result must not shadow a fresh submission.
         const std::string key = req.table_name + "|" + req.lo + "|" + req.hi + "|" +
-                                std::to_string(req.src) + "|" + std::to_string(req.dst);
+                                std::to_string(req.src) + "|" + std::to_string(req.dst) +
+                                "|" + std::to_string(req.nonce);
         resp.moved = 0;
         {
             auto st = g_mig_job.lock().unwrap();
             if ((*st).running) {
                 resp.ok = 0;
-                resp.msg = ((*st).key == key) ? "in progress"
-                                              : "another migration in flight";
+                // Same submission: keep polling. Anything else (a foreign
+                // spec, or a NEW attempt while the abandoned one still runs):
+                // busy -- the admin polls until the slot frees, and its next
+                // call starts the fresh job.
+                resp.msg = ((*st).key == key) ? "in progress" : "busy";
                 defer.reply();
                 return;
             }
-            if ((*st).has_result && (*st).key == key) {
-                // Deliver the terminal result exactly once.
-                resp.ok = (*st).ok ? 1 : 0;
-                resp.moved = (*st).moved;
-                resp.msg = (*st).msg;
+            if ((*st).has_result) {
+                if ((*st).key == key) {
+                    // Deliver the terminal result exactly once.
+                    resp.ok = (*st).ok ? 1 : 0;
+                    resp.moved = (*st).moved;
+                    resp.msg = (*st).msg;
+                    (*st).has_result = false;
+                    defer.reply();
+                    return;
+                }
+                // A different submission's unconsumed result: its poller
+                // abandoned it. Discard and serve the new submission.
                 (*st).has_result = false;
-                defer.reply();
-                return;
             }
             (*st).running = true;
             (*st).has_result = false;

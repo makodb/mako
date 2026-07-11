@@ -3,6 +3,7 @@
 #pragma once
 #include <algorithm>
 #include <atomic>
+#include <time.h>   // clock_gettime (item-cap guard rate limit)
 #include <cstdlib>
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
@@ -338,9 +339,35 @@ inline const char *oi_mbta_put_cmp(mbta_table *t, lcdf::Str key,
 // @unsafe - reads thread-local txn state; stderr diagnostics on trip
 inline void oi_mbta_guard_item_cap(const char* who) {
   if (TThread::txn != nullptr && TThread::txn->item_count() > 30000) {
-    fprintf(stderr,
-            "item-cap guard: %s at %u items on thread %d -- aborting op\n",
-            who, TThread::txn->item_count(), TThread::id());
+    // Rate-limited: at full remote-piece rate this fires hundreds of times a
+    // second, and the synchronous stderr stream alone starves the process
+    // (observed live: 648k lines in one tail while the migration admin sat
+    // "in progress" and the shard served nothing).
+    static std::atomic<long> g_cap_last_log{0};
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    long prev = g_cap_last_log.load(std::memory_order_relaxed);
+    if (ts.tv_sec != prev &&
+        g_cap_last_log.compare_exchange_strong(prev, ts.tv_sec,
+                                               std::memory_order_relaxed)) {
+      fprintf(stderr,
+              "item-cap guard: %s at %u items on thread %d -- resetting "
+              "ambient txn\n",
+              who, TThread::txn->item_count(), TThread::id());
+    }
+    // An ambient participant txn this large is ORPHANED PILE-UP, not one big
+    // transaction: a coordinator that times out a piece reply aborts locally
+    // WITHOUT notifying the participant (trans_nosend_abort), and its staged
+    // reads stay in this helper's one ambient txn. Enough of those and every
+    // later piece trips this guard forever -- the txn never shrinks on its
+    // own (observed live: a helper pinned at 30001 items for 23 minutes,
+    // 648k aborted ops, the whole shard starved). The one-txn-at-a-time
+    // discipline is already broken by then, so any install against the soup
+    // would be unsound anyway: RESET the ambient txn (participant-side
+    // unilateral abort; affected coordinators see their next op or decision
+    // fail retryably) and abort the current op.
+    Sto::silent_abort();
+    Sto::start_transaction();
     throw abstract_db::abstract_abort_exception();
   }
 }

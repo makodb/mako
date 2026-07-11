@@ -163,7 +163,18 @@ private:
 // @unsafe - delegates to the storage engine; non-owning db/index.
 class WarehouseShardData : public EngineShardData {
 public:
-    using EngineShardData::EngineShardData;
+    WarehouseShardData(abstract_db* db, ::FullOrderedIndex* idx,
+                       std::string addr, std::string physical, std::string spec)
+        : EngineShardData(db, idx, std::move(addr), std::move(physical)),
+          spec_(std::move(spec)) {}
+
+    // Cross-shard pulls resolve through the SOURCE's catalog by SPEC: the
+    // physical name is per-process (an adopted index's name has no catalog
+    // entry on the shard that serves it), and an unknown name silently
+    // creates an empty standalone table -- the destination would mirror
+    // nothing and delete its copy. The fence identity (table_) stays
+    // PHYSICAL: that is the staging fence's lookup key.
+    std::string service_table() override { return spec_; }
 
     // The whole-keyspace widening bounds. The UPPER bound is a sentinel above
     // every real key, NOT "": the range machinery treats hi as a plain
@@ -216,6 +227,9 @@ public:
     void unfreeze_range(const std::string&, const std::string&) override {
         EngineShardData::unfreeze_range(std::string(), widen_hi());
     }
+
+private:
+    std::string spec_;   // catalog-resolvable identity ("wh:<gwid>:<logical>")
 };
 
 // The production catalog: named tables created lazily as standalone fixed-id
@@ -252,7 +266,8 @@ public:
             const std::string physical =
                 get_table_registry().get_table_name(idx->get_table_id())
                     .unwrap_or(table);
-            auto* sd = new WarehouseShardData(db_, idx, own_addr_, physical);  // leaked
+            auto* sd = new WarehouseShardData(db_, idx, own_addr_, physical,
+                                              table /*spec*/);  // leaked
             tables_.emplace(table, sd);
             return sd;
         }

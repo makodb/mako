@@ -629,7 +629,13 @@ abstract service ShardDataService {
 abstract service MigrationAdmin {
     // ok=1 iff the migration COMMITTED. moved = rows in [lo,hi) on the
     // destination after commit. msg carries failure detail on ok=0.
-    defer Migrate(string table_name, string lo, string hi, i32 src, i32 dst |
-                  i32 ok, i64 moved, string msg);
+    // nonce identifies the SUBMISSION (client-chosen, one per admin attempt):
+    // the async job's terminal result is delivered only to the nonce that
+    // started it -- an admin that abandons a slow job at its own deadline
+    // must not have its RETRY handed the stale result (observed live: attempt
+    // 2 "finishing" in 100ms with attempt 1's verdict), and a foreign-spec
+    // request while a job runs gets "busy" and just keeps polling.
+    defer Migrate(string table_name, string lo, string hi, i32 src, i32 dst,
+                  i64 nonce | i32 ok, i64 moved, string msg);
 }
 %%

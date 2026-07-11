@@ -12219,6 +12219,7 @@ public:
         std::string hi;
         rrr::i32 src;
         rrr::i32 dst;
+        rrr::i64 nonce;
     };
     friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcMigrateRequest& o) {
         ar << o.table_name;
@@ -12226,6 +12227,7 @@ public:
         ar << o.hi;
         ar << o.src;
         ar << o.dst;
+        ar << o.nonce;
         return ar;
     }
     friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcMigrateRequest& o) {
@@ -12234,6 +12236,7 @@ public:
         ar >> o.hi;
         ar >> o.src;
         ar >> o.dst;
+        ar >> o.nonce;
         return ar;
     }
 
@@ -12295,6 +12298,7 @@ private:
             __req_ar__ >> __typed_req__.hi;
             __req_ar__ >> __typed_req__.src;
             __req_ar__ >> __typed_req__.dst;
+            __req_ar__ >> __typed_req__.nonce;
             auto __typed_resp__ = std::make_shared<RpcMigrateResponse>();
             rrr::DeferredReply __defer__(
                 std::move(req),
@@ -12360,6 +12364,7 @@ public:
             __m__ << req.hi;
             __m__ << req.src;
             __m__ << req.dst;
+            __m__ << req.nonce;
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<MigrateTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
