@@ -34,6 +34,7 @@ module;
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/refcell.hpp>
 #include <rusty/net.hpp>
 #include <rusty/net/tcp.hpp>
 #include <rusty/os/fd.hpp>
@@ -108,10 +109,10 @@ void         tcpconn_set_on_frame(const TcpConnection& self, OnFrameCallback cb)
 void         tcpconn_set_on_closed(const TcpConnection& self, OnClosedCallback cb);
 void         tcpconn_set_on_error(const TcpConnection& self, OnErrorCallback cb);
 int          tcpconn_poll_mode(const TcpConnection& self);
-std::size_t  tcpconn_content_size(TcpConnection& self);
-bool         tcpconn_handle_read(TcpConnection& self);
-int          tcpconn_handle_write(TcpConnection& self);
-void         tcpconn_handle_error(TcpConnection& self);
+std::size_t  tcpconn_content_size(const TcpConnection& self);
+bool         tcpconn_handle_read(const TcpConnection& self);
+int          tcpconn_handle_write(const TcpConnection& self);
+void         tcpconn_handle_error(const TcpConnection& self);
 
 // Default-init helpers for the `#[cpp_ctor]` below: the DSL struct
 // literal can't spell a default-constructed std::vector / FrameStreamReader
@@ -148,7 +149,7 @@ struct TcpConnection {
     peer_address_: std::string,
     outbound_high_water_: usize,
     outbound_: SpinMutex<std::vector<u8>>,
-    inbound_: FrameStreamReader,
+    inbound_: RefCell<FrameStreamReader>,
     closed_: Cell<bool>,
     on_closed_fired_: Cell<bool>,
     pending_write_update_: Cell<bool>,
@@ -165,7 +166,7 @@ impl TcpConnection {
             peer_address_: peer_address,
             outbound_high_water_: kTcpConnectionOutboundHighWaterDefault,
             outbound_: SpinMutex::<std::vector<u8>>::new(tcpconn_empty_buf()),
-            inbound_: tcpconn_default_inbound(),
+            inbound_: RefCell::new(tcpconn_default_inbound()),
             closed_: Cell::new(false),
             on_closed_fired_: Cell::new(false),
             pending_write_update_: Cell::new(false),
@@ -220,19 +221,19 @@ impl TcpConnection {
         tcpconn_poll_mode(self)
     }
 
-    fn content_size(&mut self) -> usize {
+    fn content_size(&self) -> usize {
         tcpconn_content_size(self)
     }
 
-    fn handle_read(&mut self) -> bool {
+    fn handle_read(&self) -> bool {
         tcpconn_handle_read(self)
     }
 
-    fn handle_write(&mut self) -> i32 {
+    fn handle_write(&self) -> i32 {
         tcpconn_handle_write(self)
     }
 
-    fn handle_error(&mut self) {
+    fn handle_error(&self) {
         tcpconn_handle_error(self)
     }
 
@@ -249,7 +250,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=51c0ba58c4909220f12b1b1cff6a1ec515b246bf9a056f40864a0826ca704b52*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=bf3c63242c260af9ccdd56656bcc59079b4d549f99376abe342ddad78c63607c*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -257,7 +258,7 @@ struct TcpConnection {
     std::string peer_address_;
     size_t outbound_high_water_;
     SpinMutex<std::vector<uint8_t>> outbound_;
-    FrameStreamReader inbound_;
+    rusty::RefCell<FrameStreamReader> inbound_;
     rusty::Cell<bool> closed_;
     rusty::Cell<bool> on_closed_fired_;
     rusty::Cell<bool> pending_write_update_;
@@ -278,10 +279,10 @@ struct TcpConnection {
     void set_on_error(OnErrorCallback cb) const;
     int32_t fd() const;
     int32_t poll_mode() const;
-    size_t content_size();
-    bool handle_read();
-    int32_t handle_write();
-    void handle_error();
+    size_t content_size() const;
+    bool handle_read() const;
+    int32_t handle_write() const;
+    void handle_error() const;
     bool check_pending_write_update() const;
     void set_poll_thread(rusty::Arc<PollThread> pt);
 };
@@ -292,7 +293,7 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
     , outbound_(SpinMutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
-    , inbound_(tcpconn_default_inbound())
+    , inbound_(rusty::RefCell<FrameStreamReader>::new_(tcpconn_default_inbound()))
     , closed_(rusty::Cell<bool>::new_(false))
     , on_closed_fired_(rusty::Cell<bool>::new_(false))
     , pending_write_update_(rusty::Cell<bool>::new_(false))
@@ -346,19 +347,19 @@ int32_t TcpConnection::poll_mode() const {
     return tcpconn_poll_mode((*this));
 }
 
-size_t TcpConnection::content_size() {
+size_t TcpConnection::content_size() const {
     return tcpconn_content_size((*this));
 }
 
-bool TcpConnection::handle_read() {
+bool TcpConnection::handle_read() const {
     return tcpconn_handle_read((*this));
 }
 
-int32_t TcpConnection::handle_write() {
+int32_t TcpConnection::handle_write() const {
     return tcpconn_handle_write((*this));
 }
 
-void TcpConnection::handle_error() {
+void TcpConnection::handle_error() const {
     tcpconn_handle_error((*this));
 }
 
@@ -467,36 +468,102 @@ void TcpChannelShim::set_on_error(OnErrorCallback cb) {
     this->conn_->set_on_error(std::move(cb));
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.channel_shim*/
+// `TcpPollableShim` — the Arc-holding PollableBase implementor over
+// TcpConnection (same recipe as TcpChannelShim above: methods are
+// &self now, so the shim forwards through the Arc with no const_cast).
+#if RUSTYCPP_RUST
+struct TcpPollableShim {
+    conn_: Arc<TcpConnection>,
+}
 
-class TcpConnectionPollableAdapter : public PollableBase {
- public:
-    explicit TcpConnectionPollableAdapter(rusty::Arc<TcpConnection> conn)
-        : conn_(std::move(conn)) {}
+#[cpp_inherit]
+impl PollableBase for TcpPollableShim {
+    fn fd(&self) -> i32 {
+        self.conn_.fd()
+    }
+    fn poll_mode(&self) -> i32 {
+        self.conn_.poll_mode()
+    }
+    fn content_size(&mut self) -> usize {
+        self.conn_.content_size()
+    }
+    fn handle_read(&mut self) -> bool {
+        self.conn_.handle_read()
+    }
+    fn handle_write(&mut self) -> i32 {
+        self.conn_.handle_write()
+    }
+    fn handle_error(&mut self) {
+        self.conn_.handle_error()
+    }
+    fn close(&mut self) {
+        self.conn_.close()
+    }
+    fn check_pending_write_update(&self) -> bool {
+        self.conn_.check_pending_write_update()
+    }
+    fn is_closed(&self) -> bool {
+        self.conn_.is_closed()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.pollable_shim version=1 rust_sha256=5a7a00daf84a4269edceb814bb284b5c11aec69daca8184daf427001bf1ce17e*/
+struct TcpPollableShim;
 
-    // @unsafe - forwards into TcpConnection::fd (returns the raw fd int).
-    int  fd() const override                          { return conn_->fd(); }
-    // @unsafe - forwards into TcpConnection::poll_mode.
-    int  poll_mode() const override                   { return conn_->poll_mode(); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    std::size_t content_size() override               { return mut_conn().content_size(); }
-    // @unsafe - forwards through mut_conn() const_cast (recv syscall path).
-    bool handle_read() override                       { return mut_conn().handle_read(); }
-    // @unsafe - forwards through mut_conn() const_cast (send syscall path).
-    int  handle_write() override                      { return mut_conn().handle_write(); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void handle_error() override                      { mut_conn().handle_error(); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void close() override                             { mut_conn().close(); }
-    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
-    bool is_closed() const override                   { return conn_->is_closed(); }
-    // @safe - forwards to TcpConnection::check_pending_write_update (Cell::get/set).
-    bool check_pending_write_update() const override  { return conn_->check_pending_write_update(); }
-
- private:
-    // @unsafe - const_cast through Arc::get<T*>().
-    TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
+struct TcpPollableShim : public PollableBase {
     rusty::Arc<TcpConnection> conn_;
+    TcpPollableShim(rusty::Arc<TcpConnection> conn__init) : PollableBase(), conn_(std::move(conn__init)) {}
+    TcpPollableShim(TcpPollableShim&& other) noexcept : PollableBase(), conn_(std::move(other.conn_)) {}
+
+
+    int32_t fd() const;
+    int32_t poll_mode() const;
+    size_t content_size();
+    bool handle_read();
+    int32_t handle_write();
+    void handle_error();
+    void close();
+    bool check_pending_write_update() const;
+    bool is_closed() const;
 };
+
+
+int32_t TcpPollableShim::fd() const {
+    return this->conn_->fd();
+}
+
+int32_t TcpPollableShim::poll_mode() const {
+    return this->conn_->poll_mode();
+}
+
+size_t TcpPollableShim::content_size() {
+    return this->conn_->content_size();
+}
+
+bool TcpPollableShim::handle_read() {
+    return this->conn_->handle_read();
+}
+
+int32_t TcpPollableShim::handle_write() {
+    return this->conn_->handle_write();
+}
+
+void TcpPollableShim::handle_error() {
+    this->conn_->handle_error();
+}
+
+void TcpPollableShim::close() {
+    this->conn_->close();
+}
+
+bool TcpPollableShim::check_pending_write_update() const {
+    return this->conn_->check_pending_write_update();
+}
+
+bool TcpPollableShim::is_closed() const {
+    return this->conn_->is_closed();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.pollable_shim*/
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
@@ -505,7 +572,7 @@ inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return rusty::make_box<TcpConnectionPollableAdapter>(std::move(conn));
+    return rusty::make_box<TcpPollableShim>(std::move(conn));
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,15 +1214,15 @@ int tcpconn_poll_mode(const TcpConnection& self) {
 }
 
 // @safe - outbound (locked) + inbound buffered byte counts.
-std::size_t tcpconn_content_size(TcpConnection& self) {
+std::size_t tcpconn_content_size(const TcpConnection& self) {
     auto guard = self.outbound_.lock().unwrap();
-    return (*guard).size() + self.inbound_.buffered_bytes();
+    return (*guard).size() + self.inbound_.borrow()->buffered_bytes();
 }
 
 // @unsafe - recv(2) syscall into a raw `char` scratch buffer +
 // FrameStreamReader::append / next_frame / consume_frame are all
 // @unsafe + raw `uint8_t*` payload pointers stored on the FrameView.
-bool tcpconn_handle_read(TcpConnection& self) {
+bool tcpconn_handle_read(const TcpConnection& self) {
     if (self.closed_.get()) return false;
 
     std::uint8_t scratch[kRecvScratchBytes];
@@ -1167,7 +1234,7 @@ bool tcpconn_handle_read(TcpConnection& self) {
         //           scratch buffer. }
         { n = ::recv(self.fd_.as_raw_fd(), scratch, sizeof(scratch), 0); }
         if (n > 0) {
-            self.inbound_.append(scratch, static_cast<std::size_t>(n));
+            self.inbound_.borrow_mut()->append(scratch, static_cast<std::size_t>(n));
             any_progress = true;
             // Drain the syscall in a loop so edge-triggered epoll users
             // don't lose readiness; cap at one iteration when the
@@ -1217,7 +1284,7 @@ bool tcpconn_handle_read(TcpConnection& self) {
     // Now drain any complete frames out of the inbound buffer.
     while (true) {
         FrameView v{};
-        const FrameDecodeStatus s = self.inbound_.next_frame(v);
+        const FrameDecodeStatus s = self.inbound_.borrow()->next_frame(v);
         if (s == FrameDecodeStatus::Complete) {
             ChannelFrame cf{v.payload, v.payload_size};
             {
@@ -1226,7 +1293,7 @@ bool tcpconn_handle_read(TcpConnection& self) {
                     (*guard)(cf);
                 }
             }
-            self.inbound_.consume_frame();
+            self.inbound_.borrow_mut()->consume_frame();
             continue;
         }
         if (s == FrameDecodeStatus::NeedMoreBytes) {
@@ -1245,7 +1312,7 @@ bool tcpconn_handle_read(TcpConnection& self) {
         // (fd teardown at close) — the documented localized-const_cast
         // pattern; every other mutation here is interior-mutable.
         const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
-        self.inbound_.reset();
+        self.inbound_.borrow_mut()->reset();
         tcpconn_deliver_on_closed_locked(self, ChannelError::Internal);
         return false;
     }
@@ -1255,7 +1322,7 @@ bool tcpconn_handle_read(TcpConnection& self) {
 
 // @unsafe - drives tcpconn_drain_outbound_locked (which is @unsafe for
 // raw `uint8_t*` arithmetic + send syscall).
-int tcpconn_handle_write(TcpConnection& self) {
+int tcpconn_handle_write(const TcpConnection& self) {
     if (self.closed_.get()) return PollMode::NO_CHANGE;
 
     auto guard = self.outbound_.lock().unwrap();
@@ -1283,13 +1350,14 @@ int tcpconn_handle_write(TcpConnection& self) {
         }
     }
     self.closed_.set(true);
-    self.fd_ = rusty::os::fd::OwnedFd{};  // RAII close
+    // Same documented localized const_cast as tcpconn_close's teardown.
+    const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
     tcpconn_deliver_on_closed_locked(self, result);
     return PollMode::READ;  // Stop watching writes; closed.
 }
 
 // @unsafe - fires on_error callback + drives tcpconn_close (::shutdown).
-void tcpconn_handle_error(TcpConnection& self) {
+void tcpconn_handle_error(const TcpConnection& self) {
     if (self.closed_.get()) return;
     {
         auto guard = self.on_error_.lock().unwrap();
