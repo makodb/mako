@@ -101,12 +101,12 @@ constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4
 // bodies can call them. Each carries its own `// @unsafe` at the
 // definition site (recv/send/shutdown syscalls, raw `uint8_t*` payload
 // pointers, callback invocation).
-ChannelError tcpconn_send_frame(TcpConnection& self, const ChannelFrame& frame);
-void         tcpconn_flush(TcpConnection& self);
-void         tcpconn_close(TcpConnection& self);
-void         tcpconn_set_on_frame(TcpConnection& self, OnFrameCallback cb);
-void         tcpconn_set_on_closed(TcpConnection& self, OnClosedCallback cb);
-void         tcpconn_set_on_error(TcpConnection& self, OnErrorCallback cb);
+ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame);
+void         tcpconn_flush(const TcpConnection& self);
+void         tcpconn_close(const TcpConnection& self);
+void         tcpconn_set_on_frame(const TcpConnection& self, OnFrameCallback cb);
+void         tcpconn_set_on_closed(const TcpConnection& self, OnClosedCallback cb);
+void         tcpconn_set_on_error(const TcpConnection& self, OnErrorCallback cb);
 int          tcpconn_poll_mode(const TcpConnection& self);
 std::size_t  tcpconn_content_size(TcpConnection& self);
 bool         tcpconn_handle_read(TcpConnection& self);
@@ -180,15 +180,15 @@ impl TcpConnection {
         self.outbound_high_water_ = bytes;
     }
 
-    fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError {
+    fn send_frame(&self, frame: &ChannelFrame) -> ChannelError {
         tcpconn_send_frame(self, frame)
     }
 
-    fn flush(&mut self) {
+    fn flush(&self) {
         tcpconn_flush(self)
     }
 
-    fn close(&mut self) {
+    fn close(&self) {
         tcpconn_close(self)
     }
 
@@ -200,15 +200,15 @@ impl TcpConnection {
         self.peer_address_
     }
 
-    fn set_on_frame(&mut self, cb: OnFrameCallback) {
+    fn set_on_frame(&self, cb: OnFrameCallback) {
         tcpconn_set_on_frame(self, cb)
     }
 
-    fn set_on_closed(&mut self, cb: OnClosedCallback) {
+    fn set_on_closed(&self, cb: OnClosedCallback) {
         tcpconn_set_on_closed(self, cb)
     }
 
-    fn set_on_error(&mut self, cb: OnErrorCallback) {
+    fn set_on_error(&self, cb: OnErrorCallback) {
         tcpconn_set_on_error(self, cb)
     }
 
@@ -249,7 +249,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=2722e2e2255377771e27e6955db63cb6b697e75d67aa0646c04f2da0c8e7fb72*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=51c0ba58c4909220f12b1b1cff6a1ec515b246bf9a056f40864a0826ca704b52*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -268,14 +268,14 @@ struct TcpConnection {
 
     TcpConnection(int32_t fd, std::string peer_address);
     void set_outbound_high_water(size_t bytes);
-    ChannelError send_frame(const ChannelFrame& frame);
-    void flush();
-    void close();
+    ChannelError send_frame(const ChannelFrame& frame) const;
+    void flush() const;
+    void close() const;
     bool is_closed() const;
     std::string peer_address() const;
-    void set_on_frame(OnFrameCallback cb);
-    void set_on_closed(OnClosedCallback cb);
-    void set_on_error(OnErrorCallback cb);
+    void set_on_frame(OnFrameCallback cb) const;
+    void set_on_closed(OnClosedCallback cb) const;
+    void set_on_error(OnErrorCallback cb) const;
     int32_t fd() const;
     int32_t poll_mode() const;
     size_t content_size();
@@ -306,15 +306,15 @@ void TcpConnection::set_outbound_high_water(size_t bytes) {
     this->outbound_high_water_ = std::move(bytes);
 }
 
-ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
+ChannelError TcpConnection::send_frame(const ChannelFrame& frame) const {
     return tcpconn_send_frame((*this), frame);
 }
 
-void TcpConnection::flush() {
+void TcpConnection::flush() const {
     tcpconn_flush((*this));
 }
 
-void TcpConnection::close() {
+void TcpConnection::close() const {
     tcpconn_close((*this));
 }
 
@@ -326,15 +326,15 @@ std::string TcpConnection::peer_address() const {
     return this->peer_address_;
 }
 
-void TcpConnection::set_on_frame(OnFrameCallback cb) {
+void TcpConnection::set_on_frame(OnFrameCallback cb) const {
     tcpconn_set_on_frame((*this), std::move(cb));
 }
 
-void TcpConnection::set_on_closed(OnClosedCallback cb) {
+void TcpConnection::set_on_closed(OnClosedCallback cb) const {
     tcpconn_set_on_closed((*this), std::move(cb));
 }
 
-void TcpConnection::set_on_error(OnErrorCallback cb) {
+void TcpConnection::set_on_error(OnErrorCallback cb) const {
     tcpconn_set_on_error((*this), std::move(cb));
 }
 
@@ -374,52 +374,99 @@ void TcpConnection::set_poll_thread(rusty::Arc<PollThread> pt) {
     this->poll_thread_ = rusty::Option<rusty::Arc<PollThread>>(std::move(pt));
 }
 /*RUSTYCPP:GEN-END id=tcp_channel.conn*/
+// `TcpChannelShim` — the Arc-holding ChannelConnectionBase implementor
+// over TcpConnection, replacing the hand-written const_cast adapter:
+// TcpConnection's dispatched methods are now &self (interior-mutable),
+// so the shim forwards straight through the Arc. Authored as inline
+// Rust DSL with #[cpp_inherit] (sanctioned: ChannelConnectionBase is an
+// impl-adjacent DSL interface trait) — the transpiler emits
+// `struct TcpChannelShim : public ChannelConnectionBase` with implicit
+// overrides and a fieldwise ctor that make_box constructs directly.
+#if RUSTYCPP_RUST
+struct TcpChannelShim {
+    conn_: Arc<TcpConnection>,
+}
 
-// ---------------------------------------------------------------------------
-// Adapters
-// ---------------------------------------------------------------------------
-//
-// The same `TcpConnection` is exposed via two proxies:
-//
-//   - The channel-facade proxy (for `ChannelConnectionBase`).
-//   - The pollable proxy (for the reactor's poll thread).
-//
-// Each adapter holds an `Arc<TcpConnection>` and forwards method calls.
-// Both adapters together ensure the connection lives until *both*
-// proxies are released.
-class TcpConnectionChannelAdapter : public ChannelConnectionBase {
- public:
-    explicit TcpConnectionChannelAdapter(rusty::Arc<TcpConnection> conn)
-        : conn_(std::move(conn)) {}
+#[cpp_inherit]
+impl ChannelConnectionBase for TcpChannelShim {
+    fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError {
+        self.conn_.send_frame(frame)
+    }
+    fn flush(&mut self) {
+        self.conn_.flush()
+    }
+    fn close(&mut self) {
+        self.conn_.close()
+    }
+    fn is_closed(&self) -> bool {
+        self.conn_.is_closed()
+    }
+    fn peer_address(&self) -> std::string {
+        self.conn_.peer_address()
+    }
+    fn set_on_frame(&mut self, cb: OnFrameCallback) {
+        self.conn_.set_on_frame(cb)
+    }
+    fn set_on_closed(&mut self, cb: OnClosedCallback) {
+        self.conn_.set_on_closed(cb)
+    }
+    fn set_on_error(&mut self, cb: OnErrorCallback) {
+        self.conn_.set_on_error(cb)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.channel_shim version=1 rust_sha256=fa2f6f6c3e0e2df428d352e50993ea73b9b19ae350486fe641baf8fd9557ba63*/
+struct TcpChannelShim;
 
-    // @unsafe - forwards through mut_conn() const_cast.
-    ChannelError send_frame(const ChannelFrame& f) override { return mut_conn().send_frame(f); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void         flush() override                            { mut_conn().flush(); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void         close() override                            { mut_conn().close(); }
-    // @safe - forwards to TcpConnection::is_closed (Cell::get is @safe).
-    bool         is_closed() const override                  { return conn_->is_closed(); }
-    // @safe - forwards to TcpConnection::peer_address (const std::string accessor).
-    std::string  peer_address() const override               { return conn_->peer_address(); }
-
-    // @unsafe - forwards through mut_conn() const_cast.
-    void set_on_frame (OnFrameCallback  cb) override { mut_conn().set_on_frame (std::move(cb)); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void set_on_closed(OnClosedCallback cb) override { mut_conn().set_on_closed(std::move(cb)); }
-    // @unsafe - forwards through mut_conn() const_cast.
-    void set_on_error (OnErrorCallback  cb) override { mut_conn().set_on_error (std::move(cb)); }
-
- private:
-    // `rusty::Arc<T>` exposes only `const T&` through its `operator->`
-    // and `operator*`. The virtual base dispatches non-const methods
-    // (e.g. `send_frame`, `close`, `set_on_*`) on the underlying
-    // connection, so we cast through here. Mirrors the
-    // `PollableTypedArcAdapter::mut_poll` idiom in `pollable_proxy.h`.
-    // @unsafe - const_cast through Arc::get<T*>().
-    TcpConnection& mut_conn() { return const_cast<TcpConnection&>(*conn_.get()); }
+struct TcpChannelShim : public ChannelConnectionBase {
     rusty::Arc<TcpConnection> conn_;
+    TcpChannelShim(rusty::Arc<TcpConnection> conn__init) : ChannelConnectionBase(), conn_(std::move(conn__init)) {}
+    TcpChannelShim(TcpChannelShim&& other) noexcept : ChannelConnectionBase(), conn_(std::move(other.conn_)) {}
+
+
+    ChannelError send_frame(const ChannelFrame& frame);
+    void flush();
+    void close();
+    bool is_closed() const;
+    std::string peer_address() const;
+    void set_on_frame(OnFrameCallback cb);
+    void set_on_closed(OnClosedCallback cb);
+    void set_on_error(OnErrorCallback cb);
 };
+
+
+ChannelError TcpChannelShim::send_frame(const ChannelFrame& frame) {
+    return this->conn_->send_frame(frame);
+}
+
+void TcpChannelShim::flush() {
+    this->conn_->flush();
+}
+
+void TcpChannelShim::close() {
+    this->conn_->close();
+}
+
+bool TcpChannelShim::is_closed() const {
+    return this->conn_->is_closed();
+}
+
+std::string TcpChannelShim::peer_address() const {
+    return this->conn_->peer_address();
+}
+
+void TcpChannelShim::set_on_frame(OnFrameCallback cb) {
+    this->conn_->set_on_frame(std::move(cb));
+}
+
+void TcpChannelShim::set_on_closed(OnClosedCallback cb) {
+    this->conn_->set_on_closed(std::move(cb));
+}
+
+void TcpChannelShim::set_on_error(OnErrorCallback cb) {
+    this->conn_->set_on_error(std::move(cb));
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.channel_shim*/
 
 class TcpConnectionPollableAdapter : public PollableBase {
  public:
@@ -453,7 +500,7 @@ class TcpConnectionPollableAdapter : public PollableBase {
 
 inline ChannelConnectionProxy make_tcp_connection_channel_proxy(
     rusty::Arc<TcpConnection> conn) {
-    return rusty::make_box<TcpConnectionChannelAdapter>(std::move(conn));
+    return rusty::make_box<TcpChannelShim>(std::move(conn));
 }
 
 inline PollableProxy make_tcp_connection_pollable_proxy(
@@ -938,14 +985,14 @@ constexpr size_t kRecvScratchBytes = static_cast<size_t>(64) * static_cast<size_
 
 // Internal helpers, forward-declared so the public free fns below can
 // call them before their definitions (mutual recursion across the set).
-ChannelError tcpconn_drain_outbound_locked(TcpConnection& self,
+ChannelError tcpconn_drain_outbound_locked(const TcpConnection& self,
                                            std::vector<std::uint8_t>& buf);
-void         tcpconn_deliver_on_closed_locked(TcpConnection& self, ChannelError reason);
+void         tcpconn_deliver_on_closed_locked(const TcpConnection& self, ChannelError reason);
 ChannelError tcpconn_errno_to_channel_error(int err);
 
 // @unsafe - encodes into the outbound buffer (raw payload pointer) and
 // posts `PollThread::update_mode` to wake the poll loop.
-ChannelError tcpconn_send_frame(TcpConnection& self, const ChannelFrame& frame) {
+ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame) {
     if (self.closed_.get()) {
         return ChannelError::ConnectionReset;
     }
@@ -1020,7 +1067,7 @@ ChannelError tcpconn_send_frame(TcpConnection& self, const ChannelFrame& frame) 
 
 // @unsafe - drives tcpconn_drain_outbound_locked (which is @unsafe for
 // raw `uint8_t*` arithmetic + send syscall).
-void tcpconn_flush(TcpConnection& self) {
+void tcpconn_flush(const TcpConnection& self) {
     if (self.closed_.get()) return;
 
     auto guard = self.outbound_.lock().unwrap();
@@ -1044,7 +1091,7 @@ void tcpconn_flush(TcpConnection& self) {
 }
 
 // @unsafe - ::shutdown libc syscall + OwnedFd RAII close + callback fire.
-void tcpconn_close(TcpConnection& self) {
+void tcpconn_close(const TcpConnection& self) {
     // Latch on first call. Idempotent for concurrent callers because
     // `Cell<bool>::set(true)` is a release-store; the first to set
     // wins, the rest observe `closed_.get() == true` here.
@@ -1059,7 +1106,10 @@ void tcpconn_close(TcpConnection& self) {
     if (self.fd_.is_valid()) {
         // @unsafe { ::shutdown is libc — initiates orderly TCP close. }
         { ::shutdown(self.fd_.as_raw_fd(), SHUT_RDWR); }
-        self.fd_ = rusty::os::fd::OwnedFd{};
+        // Irreducible plain-field assignment on the const facade
+        // (fd teardown at close) — the documented localized-const_cast
+        // pattern; every other mutation here is interior-mutable.
+        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};
     }
 
     // Deliver `on_closed(ChannelError::None)` exactly once.
@@ -1067,17 +1117,17 @@ void tcpconn_close(TcpConnection& self) {
 }
 
 // @unsafe - last-writer-wins callback store under the spinlock.
-void tcpconn_set_on_frame(TcpConnection& self, OnFrameCallback cb) {
+void tcpconn_set_on_frame(const TcpConnection& self, OnFrameCallback cb) {
     auto guard = self.on_frame_.lock().unwrap();
     *guard = std::move(cb);
 }
 
-void tcpconn_set_on_closed(TcpConnection& self, OnClosedCallback cb) {
+void tcpconn_set_on_closed(const TcpConnection& self, OnClosedCallback cb) {
     auto guard = self.on_closed_.lock().unwrap();
     *guard = std::move(cb);
 }
 
-void tcpconn_set_on_error(TcpConnection& self, OnErrorCallback cb) {
+void tcpconn_set_on_error(const TcpConnection& self, OnErrorCallback cb) {
     auto guard = self.on_error_.lock().unwrap();
     *guard = std::move(cb);
 }
@@ -1132,7 +1182,10 @@ bool tcpconn_handle_read(TcpConnection& self) {
             // Peer closed cleanly. Signal the listener; do not fire
             // on_error — this isn't a fault, it's a graceful close.
             self.closed_.set(true);
-            self.fd_ = rusty::os::fd::OwnedFd{};  // RAII close
+            // Irreducible plain-field assignment on the const facade
+        // (fd teardown at close) — the documented localized-const_cast
+        // pattern; every other mutation here is interior-mutable.
+        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
             tcpconn_deliver_on_closed_locked(self, ChannelError::None);
             return false;
         }
@@ -1153,7 +1206,10 @@ bool tcpconn_handle_read(TcpConnection& self) {
             }
         }
         self.closed_.set(true);
-        self.fd_ = rusty::os::fd::OwnedFd{};  // RAII close
+        // Irreducible plain-field assignment on the const facade
+        // (fd teardown at close) — the documented localized-const_cast
+        // pattern; every other mutation here is interior-mutable.
+        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         tcpconn_deliver_on_closed_locked(self, ch);
         return false;
     }
@@ -1185,7 +1241,10 @@ bool tcpconn_handle_read(TcpConnection& self) {
             }
         }
         self.closed_.set(true);
-        self.fd_ = rusty::os::fd::OwnedFd{};  // RAII close
+        // Irreducible plain-field assignment on the const facade
+        // (fd teardown at close) — the documented localized-const_cast
+        // pattern; every other mutation here is interior-mutable.
+        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
         self.inbound_.reset();
         tcpconn_deliver_on_closed_locked(self, ChannelError::Internal);
         return false;
@@ -1248,7 +1307,7 @@ void tcpconn_handle_error(TcpConnection& self) {
 // @unsafe - raw `uint8_t*` pointer arithmetic + send(2) syscall +
 // pointer dereference on the outbound buffer.
 ChannelError tcpconn_drain_outbound_locked(
-    TcpConnection& self, std::vector<std::uint8_t>& buf) {
+    const TcpConnection& self, std::vector<std::uint8_t>& buf) {
 
     std::size_t offset = 0;
     while (offset < buf.size()) {
@@ -1301,7 +1360,7 @@ ChannelError tcpconn_drain_outbound_locked(
 }
 
 // @unsafe - fires the on_closed callback (once) under the spinlock.
-void tcpconn_deliver_on_closed_locked(TcpConnection& self, ChannelError reason) {
+void tcpconn_deliver_on_closed_locked(const TcpConnection& self, ChannelError reason) {
     if (self.on_closed_fired_.get()) {
         return;
     }
