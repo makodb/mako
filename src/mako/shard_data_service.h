@@ -31,11 +31,12 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 
 #include <unistd.h>   // usleep (drain poll pacing)
 
+#include <condition_variable>   // fold worker handoff (see FoldJobStep)
 #include <cstdint>
 #include <map>
-#include <mutex>    // checksum job slot (guards state shared with its thread)
+#include <mutex>    // fold job slot (guards state shared with its worker)
 #include <string>
-#include <thread>   // checksum compute thread (see the Checksum handler)
+#include <thread>   // persistent fold compute worker (see FoldJobStep)
 #include <utility>
 #include <vector>
 
@@ -60,7 +61,12 @@ public:
         catalog_ = owned_single_;
     }
     ~ShardDataServiceImpl() {
-        // @unsafe { reap the checksum compute thread before members die }
+        // @unsafe { stop and reap the fold compute worker before members die }
+        {
+            std::lock_guard<std::mutex> g(ck_mu_);
+            ck_stop_ = true;
+        }
+        ck_cv_.notify_one();
         if (ck_thread_.joinable()) ck_thread_.join();
         delete owned_single_;
     }
@@ -167,19 +173,40 @@ public:
                 *job = ck_id_;
                 return ck_key_ == key ? 0 : -1;
             }
-            if (ck_thread_.joinable()) ck_thread_.join();   // reap prior compute
+            // ONE persistent compute worker, started on first use, fed by the
+            // slot -- NOT a thread per fold: fold threads engine-register on
+            // their first storage op, and a mid-run stream of REGISTER ->
+            // compute -> EXIT threads leaves the engine's epoch machinery
+            // churning (lead suspect for a live crash decoding a value from
+            // freed memory: reclamation racing a reader). A single long-lived
+            // worker matches the process-lifetime service-thread model the
+            // rest of the data plane uses.
+            if (!ck_worker_started_) {
+                ck_worker_started_ = true;
+                // @unsafe { std::thread kernel: one process-lifetime compute
+                //   worker, joined in the dtor }
+                ck_thread_ = std::thread([this]() {
+                    std::unique_lock<std::mutex> lk(ck_mu_);
+                    while (true) {
+                        ck_cv_.wait(lk, [this] { return ck_pending_ || ck_stop_; });
+                        if (ck_stop_) return;
+                        ck_pending_ = false;
+                        const int id = ck_pending_id_;
+                        const std::string t = ck_t_, l = ck_lo_, h = ck_hi_;
+                        lk.unlock();
+                        const uint64_t v = DoChecksum(t, l, h);
+                        lk.lock();
+                        if (id == ck_id_) {
+                            ck_value_ = v; ck_has_ = true; ck_running_ = false;
+                        }
+                    }
+                });
+            }
             ck_id_++; ck_key_ = key; ck_running_ = true; ck_has_ = false;
-            const int id = ck_id_;
-            const std::string t = table, l = lo, h = hi;
-            // @unsafe { std::thread kernel: single compute thread, reaped
-            //   above and joined in the dtor }
-            ck_thread_ = std::thread([this, id, t, l, h]() {
-                const uint64_t v = DoChecksum(t, l, h);
-                std::lock_guard<std::mutex> g2(ck_mu_);
-                if (id == ck_id_) {
-                    ck_value_ = v; ck_has_ = true; ck_running_ = false;
-                }
-            });
+            ck_pending_ = true;
+            ck_pending_id_ = ck_id_;
+            ck_t_ = table; ck_lo_ = lo; ck_hi_ = hi;
+            ck_cv_.notify_one();
             *job = ck_id_;
             return 0;
         }
@@ -295,12 +322,18 @@ private:
     SingleTableCatalog* owned_single_; // set by the single-table ctor
     MigrationGuard* guard_;            // non-owning; this shard's freeze registry.
 
-    // Checksum job slot (see the Checksum handler): one compute at a time,
-    // matching the serialized-migrations invariant. @unsafe { std::thread +
-    // std::mutex kernel: the thread must be reaped, rusty wrappers don't
-    // cover the joinable-handoff shape here }
+    // Fold job slot (see FoldJobStep): one compute at a time on ONE
+    // persistent worker, matching the serialized-migrations invariant.
+    // @unsafe { std::thread + std::mutex + condvar kernel: the worker must
+    // be stopped and reaped; rusty wrappers don't cover this handoff shape }
     std::mutex ck_mu_;
+    std::condition_variable ck_cv_;
     std::thread ck_thread_;
+    bool ck_worker_started_ = false;
+    bool ck_stop_ = false;
+    bool ck_pending_ = false;
+    int ck_pending_id_ = 0;
+    std::string ck_t_, ck_lo_, ck_hi_;
     int ck_id_ = 0;
     std::string ck_key_;
     bool ck_running_ = false;
