@@ -668,7 +668,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
     }
 
     if (GET_STATUS(w->status) < Status::COMMITED)
-      w->cmit_evt.wait_until_gte(1);
+      w->cmit_evt.wait_until_gte(1, /*timeout=*/0);
     
     // if (w->status >= Status::COMMITED)
     //   log_infos_[p].max_dep = std::max(log_infos_[p].max_dep, w->dep_id);
@@ -701,7 +701,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
          continue;
       
       // case 2: cycle doesn't exist or d is on the higher priority, must wait after d commits
-      d->cmit_evt.wait_until_gte(1);
+      d->cmit_evt.wait_until_gte(1, /*timeout=*/0);
       if (GET_STATUS(d->status) >= Status::EXECUTED)
         // case 2.1: d already executed else where
         continue;
@@ -871,13 +871,13 @@ void CopilotServer::waitAllPredCommit(shared_ptr<CopilotData>& ins) {
 
     if (pre_ins && !isExecuted(pre_ins) && !visited[pre_ins]) {
       if (pre_ins->status < COMMITED)
-        pre_ins->cmit_evt.wait_until_gte(1);
+        pre_ins->cmit_evt.wait_until_gte(1, /*timeout=*/0);
       stack.push(pre_ins);
     }
 
     if (dep_ins && !isExecuted(dep_ins) && !visited[dep_ins]) {
       if (dep_ins->status < COMMITED)
-        dep_ins->cmit_evt.wait_until_gte(1);
+        dep_ins->cmit_evt.wait_until_gte(1, /*timeout=*/0);
       stack.push(dep_ins);
     }
   }
@@ -897,13 +897,13 @@ void CopilotServer::waitPredCmds(shared_ptr<CopilotData>& w, shared_ptr<visited_
 
   if (pre_ins && pre_ins->status < EXECUTED && (m->find(pre_ins) == m->end())) {
     if (pre_ins->status < COMMITED)
-      pre_ins->cmit_evt.wait_until_gte(1);
+      pre_ins->cmit_evt.wait_until_gte(1, /*timeout=*/0);
     waitPredCmds(pre_ins, m);
   }
 
   if (dep_ins && dep_ins->status < EXECUTED && (m->find(dep_ins) == m->end())) {
     if (dep_ins->status < COMMITED)
-      dep_ins->cmit_evt.wait_until_gte(1);
+      dep_ins->cmit_evt.wait_until_gte(1, /*timeout=*/0);
     waitPredCmds(dep_ins, m);
   }
 }

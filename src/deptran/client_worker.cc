@@ -374,7 +374,7 @@ void ClientWorker::Work() {
     n_ceased_client_.wait_until_gte(n_concurrent_,
                                                  (duration+500)*1000000);
     Log_info("wait for all outstanding requests to finish.");
-    sp_n_tx_done_.wait_until_gte(n_tx_issued_);
+    sp_n_tx_done_.wait_until_gte(n_tx_issued_, /*timeout=*/0);
     *failover_server_quit_ = true;
     all_done_ = 1;
   }));

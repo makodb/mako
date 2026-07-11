@@ -233,7 +233,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
     return;
   }
   if (vertex->subtx(rank).waiting_all_anc_committing_) {
-    vertex->subtx(rank).wait_all_anc_commit_done_.wait_until_gte(1);
+    vertex->subtx(rank).wait_all_anc_commit_done_.wait_until_gte(1, /*timeout=*/0);
   }
 
 
@@ -351,7 +351,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 #endif
             vertex->subtx(rank).traverse_path_waitingon_ = &parent;
             vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::WAITING_NO_DEADLOCK;
-            parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
+            parent.subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
 //            parent.status_.wait_until_gte(TXN_CMT);
             self.subtx(rank).traverse_path_start_ = vertex;
             vertex->subtx(rank).traverse_path_waitingon_ = nullptr ;
@@ -688,7 +688,7 @@ void RccServer::WaitNonSccParentsExecuted(const janus::RccScc& scc1, int rank){
       auto& parent = *FindOrCreateParentVPtr(*v, pair.first, pair.second);
       if (parent.subtx(rank).Involve(partition_id_)) {
         if (parent.scchelper(rank).scc_ != scc1[0]->scchelper(rank).scc_) {
-          parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
+          parent.subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
         }
       }
     }
@@ -758,7 +758,7 @@ void RccServer::Execute(RccScc& scc, int rank) {
   auto& v_begin = *scc.begin();
   auto& v_end = scc.back();
   if (v_begin->subtx(rank).log_apply_started_) {
-    v_end->subtx(rank).log_apply_finished_.wait_until_gte(1);
+    v_end->subtx(rank).log_apply_finished_.wait_until_gte(1, /*timeout=*/0);
   } else {
     v_begin->subtx(rank).log_apply_started_ = true;
     if (v_begin->mocking_janus_) {
@@ -785,7 +785,7 @@ void RccServer::Execute(RccTx& tx, int rank) {
 
   if (tx.mocking_janus_) {
     if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1);
+      tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
 //    Fiber::create_run([sp_tx, this]() {
       verify(rank == RANK_D);
       tx.CommitValidate(rank);
@@ -804,7 +804,7 @@ void RccServer::Execute(RccTx& tx, int rank) {
     }
   } else {
     if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.wait_until_gte(1);
+      tx.subtx(rank).commit_received_.wait_until_gte(1, /*timeout=*/0);
       tx.subtx(rank).local_validated_->set(SUCCESS);
       tx.subtx(rank).sp_ev_commit_->set(1);
       tx.CommitExecute(rank);

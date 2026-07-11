@@ -244,16 +244,76 @@ class IntEvent : public Event {
   }
 };
 
-class SharedIntEvent {
- public:
-  int value_{};
-  rusty::Vec<std::shared_ptr<IntEvent>> events_;
-  // Declaration only - definition in event.cc
-  int set(const int& v);
+// `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
+// it crosses their thresholds. The `std::shared_ptr<IntEvent>` element
+// type stays std (Reactor::create_sp_event hands out shared_ptr — a
+// declared boundary type), aliased so the DSL can spell the Vec.
+using IntEventSp = std::shared_ptr<IntEvent>;
 
-  void wait(rusty::Function<bool(int)> f);
-  bool wait_until_gte(int x, int timeout=0);
+struct SharedIntEvent;
+
+// Hand-written backing free fns for the DSL methods below — the bodies
+// drive Reactor::create_sp_event / Event-status machinery (not
+// DSL-expressible). Definitions near the bottom of this file.
+int shared_int_event_set(SharedIntEvent& self, const int& v);
+bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout);
+void shared_int_event_wait(SharedIntEvent& self, EventTestFn f);
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * `wait_until_gte` lost its `timeout = 0` default argument (DSL fns
+//     have no default args); the one-arg call sites now pass 0
+//     explicitly.
+//   * The struct stays a plain aggregate, so the widespread
+//     `SharedIntEvent x{};` member value-init keeps zeroing `value_`.
+#if RUSTYCPP_RUST
+struct SharedIntEvent {
+    value_: i32,
+    events_: Vec<IntEventSp>,
+}
+
+impl SharedIntEvent {
+    fn set(&mut self, v: &i32) -> i32 {
+        shared_int_event_set(self, v)
+    }
+
+    fn wait(&mut self, f: EventTestFn) {
+        shared_int_event_wait(self, f)
+    }
+
+    fn wait_until_gte(&mut self, x: i32, timeout: i32) -> bool {
+        shared_int_event_wait_until_gte(self, x, timeout)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.shared_int_event version=1 rust_sha256=a1fe4b98eed4b6baf839a49046bc8047706af69bd90bb9c7a9c058663ce300f2*/
+struct SharedIntEvent;
+
+struct SharedIntEvent {
+    int32_t value_;
+    rusty::Vec<IntEventSp> events_;
+
+    int32_t set(const int32_t& v);
+    void wait(EventTestFn f);
+    bool wait_until_gte(int32_t x, int32_t timeout);
 };
+
+
+int32_t SharedIntEvent::set(const int32_t& v) {
+    return shared_int_event_set((*this), v);
+}
+
+void SharedIntEvent::wait(EventTestFn f) {
+    shared_int_event_wait((*this), std::move(f));
+}
+
+bool SharedIntEvent::wait_until_gte(int32_t x, int32_t timeout) {
+    return shared_int_event_wait_until_gte((*this), std::move(x), std::move(timeout));
+}
+/*RUSTYCPP:GEN-END id=reactor.shared_int_event*/
 
 
 // `NeverEvent` — an Event that is never ready, used as a pure timeout/yield
@@ -1522,10 +1582,10 @@ Event::Event() {
   // Otherwise wp_fiber_ stays as default empty weak pointer
 }
 
-int SharedIntEvent::set(const int& v) {
-  auto ret = value_;
-  value_ = v;
-  for (auto& ev : events_) {
+int shared_int_event_set(SharedIntEvent& self, const int& v) {
+  auto ret = self.value_;
+  self.value_ = v;
+  for (auto& ev : self.events_) {
     if (ev->status_.get() <= Event::WAIT) {
       if (ev->target_ <= v) {
         ev->set(v);
@@ -1539,34 +1599,34 @@ int SharedIntEvent::set(const int& v) {
 // retain() lambda capture to identity-compare against shared_ptr<IntEvent>
 // entries in `events_`. The shared_ptr keeps the target alive for the
 // duration of the call.
-bool SharedIntEvent::wait_until_gte(int x, int timeout) {
-  if (value_ >= x) {
+bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
+  if (self.value_ >= x) {
     return false;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
-  ev->value_ = value_;
+  ev->value_ = self.value_;
   ev->target_ = x;
-  events_.push(ev);
+  self.events_.push(ev);
   ev->wait(timeout);
   // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
   auto* ev_ptr = ev.get();
-  events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
+  self.events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
       [ev_ptr](const std::shared_ptr<IntEvent>& item) {
         return item.get() != ev_ptr;
       }));
   return if_timeout;
 }
 
-void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
-  if (f(value_)) {
+void shared_int_event_wait(SharedIntEvent& self, EventTestFn f) {
+  if (f(self.value_)) {
     return;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
-  ev->value_ = value_;
+  ev->value_ = self.value_;
   ev->state_.test_ = std::move(f);
-  events_.push(ev);
+  self.events_.push(ev);
 //  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
   ev->wait();

@@ -85,7 +85,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   di.id = cmd_id;
   di.str = __func__;
 
-  dispatch_quota.wait_until_gte(0);
+  dispatch_quota.wait_until_gte(0, /*timeout=*/0);
 
   bool send = false;
 
