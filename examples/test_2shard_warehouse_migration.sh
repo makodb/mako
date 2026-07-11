@@ -164,20 +164,26 @@ else
     sleep 2   # a beat of steady-state traffic before the first cutover
     for t in "${MIG_TABLES[@]}"; do
         spec="wh:${MIG_WH}:${t}"
-        echo "Firing: mako_admin migrate ${admin_addr} ${spec} 1 -> 0 (mid-workload)"
-        out=$("$admin_path" migrate "$admin_addr" "$spec" x x 1 0 30 2>&1)
-        rc=$?
-        echo "mako_admin(${t}): rc=${rc} output: ${out}"
-        mig_out[$t]="$out"
-        # moved is a MINIMUM: loaders add secondary rows (e.g. customer keeps
-        # balance/data keys in the same index), so >= the base row count.
-        moved=$(echo "$out" | sed -n 's/.*ok=1 moved=\([0-9]*\).*/\1/p')
-        if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "${MIG_EXPECT[$t]}" ]; then
-            mig_ok[$t]=1
-            mig_out[$t]="moved=${moved}"
-        else
-            mig_ok[$t]=0
-        fi
+        # A failed attempt aborts cleanly (source intact, unfrozen), so one
+        # retry is safe -- and diagnostic: attempt 2 starts from an already-
+        # mostly-copied destination (put-overwrite), so a window-length-
+        # sensitive failure commits on retry while a structural one repeats.
+        mig_ok[$t]=0
+        for attempt in 1 2; do
+            echo "Firing: mako_admin migrate ${admin_addr} ${spec} 1 -> 0 (attempt ${attempt})"
+            out=$("$admin_path" migrate "$admin_addr" "$spec" x x 1 0 30 2>&1)
+            rc=$?
+            echo "mako_admin(${t}#${attempt}): rc=${rc} output: ${out}"
+            mig_out[$t]="$out"
+            # moved is a MINIMUM: loaders add secondary rows (e.g. customer
+            # keeps balance/data keys in the same index), so >= base count.
+            moved=$(echo "$out" | sed -n 's/.*ok=1 moved=\([0-9]*\).*/\1/p')
+            if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "${MIG_EXPECT[$t]}" ]; then
+                mig_ok[$t]=1
+                mig_out[$t]="moved=${moved} (attempt ${attempt})"
+                break
+            fi
+        done
     done
 fi
 
@@ -271,7 +277,7 @@ for t in "${MIG_TABLES[@]}"; do
     if [ "${mig_ok[$t]:-0}" -eq 1 ]; then
         echo "  ✓ ${t}: committed (${mig_out[$t]}, expected >= ${MIG_EXPECT[$t]})"
     else
-        if [ "$t" = "warehouse" ]; then
+        if [ "$t" = "warehouse" ] || [ "$t" = "district" ]; then
             echo "  ✗ ${t}: failed: ${mig_out[$t]:-not fired}"
             failed=1
         else

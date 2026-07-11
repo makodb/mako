@@ -297,9 +297,24 @@ private:
                 static_cast<uint32_t>(req.src), publish_lo, publish_hi);
             const size_t dst_n = master->shard_range_count(
                 static_cast<uint32_t>(req.dst), publish_lo, publish_hi);
+            // The checksum PAIR, read pre-abort while the fence still holds
+            // the range still: this is the ground truth a divergence abort
+            // needs (the counts above go through the remote count path, which
+            // is known to read 0 for wh-specs).
+            uint64_t src_ck = 0, dst_ck = 0;
+            {
+                ShardData* s = ParticipantFor(static_cast<uint32_t>(req.src),
+                                              req.table_name);
+                ShardData* d = ParticipantFor(static_cast<uint32_t>(req.dst),
+                                              req.table_name);
+                if (s != nullptr) src_ck = s->checksum(publish_lo, publish_hi);
+                if (d != nullptr) dst_ck = d->checksum(publish_lo, publish_hi);
+            }
             Log_warn("MigrationAdmin: final_sync diverged for '%s': src rows=%zu "
-                     "dst rows=%zu faulted=%d", req.table_name.c_str(), src_n,
-                     dst_n, faulted ? 1 : 0);
+                     "dst rows=%zu src_ck=%llu dst_ck=%llu faulted=%d",
+                     req.table_name.c_str(), src_n, dst_n,
+                     static_cast<unsigned long long>(src_ck),
+                     static_cast<unsigned long long>(dst_ck), faulted ? 1 : 0);
             master->abort_migration();
             return faulted
                 ? "participant unreachable -> aborted (source intact and "
@@ -330,6 +345,19 @@ private:
     // a table-bound RemoteShardData over the peer's ShardDataService otherwise.
     // Proxies are cached per shard, handles per (shard, table); all leaked
     // (process-lifetime). Returns "" or the failure detail.
+    // The participant handle for (shard, table) -- the local catalog entry or
+    // the cached remote handle -- for diagnostics that need direct reads
+    // (e.g. the divergence checksum pair). nullptr if never attached.
+    ShardData* ParticipantFor(uint32_t sid, const std::string& table) {
+        auto& bench = BenchmarkConfig::getInstance();
+        if (sid == static_cast<uint32_t>(bench.getShardIndex())) {
+            return g_data_catalog != nullptr ? g_data_catalog->get_or_create(table)
+                                             : nullptr;
+        }
+        auto hit = remotes_.find(std::to_string(sid) + "/" + table);
+        return hit != remotes_.end() ? hit->second : nullptr;
+    }
+
     std::string EnsureParticipant(ShardMaster* master, uint32_t sid,
                                   const std::string& table) {
         auto& bench = BenchmarkConfig::getInstance();
