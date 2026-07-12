@@ -30,7 +30,8 @@ namespace {
 class InMemoryChannelTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        switchboard_ = rusty::Some(rusty::Arc<InMemorySwitchboard>::make());
+        switchboard_ = rusty::Some(
+            rusty::Arc<InMemorySwitchboard>::new_(InMemorySwitchboard::new_()));
         factory_arc_ = rusty::Some(
             rusty::Arc<InMemoryFactory>::new_(InMemoryFactory::new_(switchboard_.as_ref().unwrap().clone())));
         factory_ = rusty::Some(

@@ -308,18 +308,18 @@ RequestQueueConfig RequestQueueConfig::disabled() {
  *       // Process request
  *   }
  */
-// @safe - SpinMutex<VecDeque<QueuedRequest>>-backed pending-request queue.
+// @safe - rusty::Mutex<VecDeque<QueuedRequest>>-backed pending-request queue.
 // All public methods are already explicitly @safe from Tier 2; class-level
 // annotation lets the constructor and any future unannotated helpers
 // inherit @safe by default.
 // `RequestQueue` — buffers outgoing RPC requests for reconnect/replay, with
-// overflow + TTL-expiry policy, thread-safe via a SpinMutex<VecDeque>. Authored
+// overflow + TTL-expiry policy, thread-safe via a rusty::Mutex<VecDeque>. Authored
 // as inline-Rust DSL: the struct + two `#[cpp_ctor]` factories + the simple
 // locking/accessor methods are DSL; the methods whose bodies use try/catch +
 // callback invocation + range-for (not expressible in inline-Rust) delegate to
 // hand-written free functions below. RequestQueueConfig / OverflowStrategy /
 // QueuedRequest are already DSL aggregates (above). The locking methods are
-// `&mut self` (non-const): the C++ original used `mutable SpinMutex` to lock
+// `&mut self` (non-const): the C++ original used `mutable rusty::Mutex` to lock
 // from const methods; there are no `const RequestQueue` call sites
 // (ClientConnection holds it in a `mutable` field), so non-const is equivalent
 // and avoids a mutable-field annotation. `clear_all`'s default arg (-3) is
@@ -333,21 +333,21 @@ inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig&
 #if RUSTYCPP_RUST
 struct RequestQueue {
     config_: RequestQueueConfig,
-    queue_: SpinMutex<VecDeque<QueuedRequest>>,
+    queue_: rusty::Mutex<VecDeque<QueuedRequest>>,
 }
 
 impl RequestQueue {
     #[cpp_ctor] fn new() -> RequestQueue {
         RequestQueue {
             config_: RequestQueueConfig::defaults(),
-            queue_: SpinMutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
+            queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
         }
     }
 
     #[cpp_ctor] fn with_config(config: RequestQueueConfig) -> RequestQueue {
         RequestQueue {
             config_: config,
-            queue_: SpinMutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
+            queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
         }
     }
 
@@ -412,12 +412,12 @@ impl RequestQueue {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=cc0f9d67e2d9ec1c9d1a7c0d9f09c6a0d482194a0343189ff374bbd4efae77ee*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=033c3ea224c0b4f3cd04086cadbc2e50ea40018f47da0a0e0e49a592b8427116*/
 struct RequestQueue;
 
 struct RequestQueue {
     RequestQueueConfig config_;
-    SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;
+    rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;
 
     RequestQueue();
     RequestQueue(RequestQueueConfig config);
@@ -438,12 +438,12 @@ struct RequestQueue {
 
 RequestQueue::RequestQueue()
     : config_(RequestQueueConfig::defaults())
-    , queue_(SpinMutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
+    , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 
 RequestQueue::RequestQueue(RequestQueueConfig config)
     : config_(std::move(config))
-    , queue_(SpinMutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
+    , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 
 bool RequestQueue::enqueue(QueuedRequest request) const {

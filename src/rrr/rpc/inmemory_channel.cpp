@@ -20,7 +20,7 @@ import rrr.logging;
 import rrr.threading;
 
 // @safe - in-memory channel backend. Switchboard + Listener bodies use
-// SpinMutex + rusty::HashMap + rusty::Weak (all safe). InMemoryChannel
+// rusty::Mutex + rusty::HashMap + rusty::Weak (all safe). InMemoryChannel
 // and the four `*Adapter` shims thread through const_cast helpers
 // (`mut_state` / `mut_conn` / `mut_listener` / `mut_factory`) and
 // `send_frame` does raw `uint8_t*` byte slicing — those methods carry
@@ -45,7 +45,7 @@ class InMemoryListener;
  * an `Arc<InMemorySwitchboard>`; each listener registers itself in
  * the switchboard on `listen(addr)` and unregisters on `close()`.
  *
- * Thread-safe: an internal `SpinMutex` owns the listener map. Most
+ * Thread-safe: an internal `rusty::Mutex` owns the listener map. Most
  * tests are single-threaded but the locking lets a test fire
  * `on_frame` on one thread while another connects.
  */
@@ -56,15 +56,33 @@ class InMemoryListener;
 // `mutable` qualifier. Arc-holding callers wrap with `const_cast`.
 #if RUSTYCPP_RUST
 struct InMemorySwitchboard {
-    listeners_: SpinMutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>>,
+    listeners_: rusty::Mutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>>,
+}
+
+impl InMemorySwitchboard {
+    // Factory: rusty::Mutex has no default ctor (unlike the retired SpinMutex),
+    // so build the empty switchboard explicitly. Callers use new_() instead of
+    // Arc::make() (which would default-construct the now-non-default aggregate).
+    fn new() -> InMemorySwitchboard {
+        InMemorySwitchboard {
+            listeners_: rusty::Mutex::<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>>::new(rusty::HashMap::<std::string, rusty::sync::Weak<InMemoryListener>>::new()),
+        }
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.switchboard version=1 rust_sha256=30003e262fabab00305d5e421bd0985a89193c27f8c6845c33dfd3c6f1e2863d*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.switchboard version=1 rust_sha256=7e6dd6b8423e17c53545df8258d8ee633f61bdd1591fc8f011d3025806e388d9*/
 struct InMemorySwitchboard;
 
 struct InMemorySwitchboard {
-    SpinMutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>> listeners_;
+    rusty::Mutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>> listeners_;
+
+    static InMemorySwitchboard new_();
 };
+
+
+InMemorySwitchboard InMemorySwitchboard::new_() {
+    return InMemorySwitchboard{.listeners_ = rusty::Mutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>>::new_(rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>())};
+}
 /*RUSTYCPP:GEN-END id=inmemory_channel.switchboard*/
 
 // Free functions (non-DSL) — see definitions further down.
@@ -92,7 +110,7 @@ rusty::Option<rusty::Arc<InMemoryListener>> inmemory_switchboard_find_listener(
  * called `close()`.
  */
 // Per-channel callback table + fault-injection knobs that live inside
-// `InMemoryConnectionState::inner`'s SpinMutex.
+// `InMemoryConnectionState::inner`'s rusty::Mutex.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -154,7 +172,7 @@ struct InMemoryConnectionStateInner {
 };
 /*RUSTYCPP:GEN-END id=inmemory_channel.inner*/
 
-// SpinMutex-owned inner state (rusty-style "data inside the mutex").
+// rusty::Mutex-owned inner state (rusty-style "data inside the mutex").
 // All per-side callbacks, closed flags, and fault-injection knobs
 // live in `InMemoryConnectionStateInner`; access through
 // `inner.lock().unwrap()->...`. The legacy `mutable` qualifier on the
@@ -167,14 +185,14 @@ struct InMemoryConnectionStateInner {
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
 struct InMemoryConnectionState {
-    inner: SpinMutex<InMemoryConnectionStateInner>,
+    inner: rusty::Mutex<InMemoryConnectionStateInner>,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.state version=1 rust_sha256=aeb65d317f31a48e1aa021975b7e4d2dd8a348a4f325cfb725e4a93778f0e56e*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.state version=1 rust_sha256=2674b2babd547611539fad40ab7eaba1a73bbd93f15962b0c506a687a2391ee9*/
 struct InMemoryConnectionState;
 
 struct InMemoryConnectionState {
-    SpinMutex<InMemoryConnectionStateInner> inner;
+    rusty::Mutex<InMemoryConnectionStateInner> inner;
 };
 /*RUSTYCPP:GEN-END id=inmemory_channel.state*/
 
@@ -203,7 +221,7 @@ struct InMemoryConnectionState {
 // Authored as inline Rust DSL. The 11 ChannelConnectionBase /
 // fault-injection methods stay as free functions (defined further
 // down in the file) — their bodies do non-trivial state mutation,
-// callback dispatch under the SpinMutex, and raw byte slicing that
+// callback dispatch under the rusty::Mutex, and raw byte slicing that
 // don't translate to the DSL grammar. Same free-fn extraction
 // pattern as InMemoryListener / InMemorySwitchboard.
 struct InMemoryChannel;
@@ -415,7 +433,7 @@ inline ChannelConnectionProxy make_inmemory_channel_proxy(
 // InMemoryListener
 // ---------------------------------------------------------------------------
 
-// SpinMutex-owned mutable state for InMemoryListener (rusty-style
+// rusty::Mutex-owned mutable state for InMemoryListener (rusty-style
 // "data inside the mutex"). Sister type to InMemoryConnectionStateInner.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -472,7 +490,7 @@ rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(
 struct InMemoryListener {
     switchboard_: Arc<InMemorySwitchboard>,
     self_weak_: rusty::Option<rusty::sync::Weak<InMemoryListener>>,
-    inner_: SpinMutex<InMemoryListenerInnerState>,
+    inner_: rusty::Mutex<InMemoryListenerInnerState>,
 }
 
 impl InMemoryListener {
@@ -480,7 +498,7 @@ impl InMemoryListener {
         InMemoryListener {
             switchboard_: switchboard,
             self_weak_: rusty::None,
-            inner_: SpinMutex::<InMemoryListenerInnerState>::new(InMemoryListenerInnerState{}),
+            inner_: rusty::Mutex::<InMemoryListenerInnerState>::new(InMemoryListenerInnerState{}),
         }
     }
 
@@ -508,13 +526,13 @@ impl InMemoryListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=4147b48325afb4437b8f8ded996b4ccc8dcbe0c079003c3c238742fcea73843d*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=5cd76c272b42c17abea1a5644017f6466e59e06c9c38df7f91d9138b186f2dce*/
 struct InMemoryListener;
 
 struct InMemoryListener {
     rusty::Arc<InMemorySwitchboard> switchboard_;
     rusty::Option<rusty::sync::Weak<InMemoryListener>> self_weak_;
-    SpinMutex<InMemoryListenerInnerState> inner_;
+    rusty::Mutex<InMemoryListenerInnerState> inner_;
 
     static InMemoryListener new_(rusty::Arc<InMemorySwitchboard> switchboard);
     ChannelError listen(std::string_view addr) const;
@@ -528,7 +546,7 @@ struct InMemoryListener {
 
 
 InMemoryListener InMemoryListener::new_(rusty::Arc<InMemorySwitchboard> switchboard) {
-    return InMemoryListener{.switchboard_ = std::move(switchboard), .self_weak_ = rusty::None, .inner_ = SpinMutex<InMemoryListenerInnerState>::new_(InMemoryListenerInnerState{})};
+    return InMemoryListener{.switchboard_ = std::move(switchboard), .self_weak_ = rusty::None, .inner_ = rusty::Mutex<InMemoryListenerInnerState>::new_(InMemoryListenerInnerState{})};
 }
 
 ChannelError InMemoryListener::listen(std::string_view addr) const {
@@ -801,7 +819,7 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr);
 }  // export namespace rrr
 
 // @safe - impl namespace. InMemorySwitchboard methods are pure
-// SpinMutex + HashMap + Weak::upgrade and inherit @safe. InMemoryChannel
+// rusty::Mutex + HashMap + Weak::upgrade and inherit @safe. InMemoryChannel
 // out-of-class defs route through const_cast<InMemoryConnectionState&>(*self.state_.get()) (@unsafe) so each carries
 // a per-method `// @unsafe`. InMemoryListener::accept_for_connect,
 // InMemoryFactory::connect/make_listener, and the test helper
@@ -1179,9 +1197,12 @@ inmemory_listener_accept_for_connect(const InMemoryListener& self, const std::st
     // b_peer_address (B's identity = the server addr); B's
     // peer_address() returns a_peer_address (A's identity = the
     // client addr).
-    auto state = rusty::Arc<InMemoryConnectionState>::make();
+    // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so build
+    // the state with an explicitly value-initialized inner instead of make().
+    auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{
+        .inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(InMemoryConnectionStateInner{})});
     {
-        // No external mutators yet — but the SpinMutex-owned inner
+        // No external mutators yet — but the rusty::Mutex-owned inner
         // requires going through the lock guard for any access.
         auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
         auto guard = mut_state->inner.lock().unwrap();
@@ -1243,7 +1264,10 @@ ConnectResult inmemory_factory_connect(const InMemoryFactory& self, std::string_
 // to bootstrap the shared connection state.
 std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
 make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
-    auto state = rusty::Arc<InMemoryConnectionState>::make();
+    // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so build
+    // the state with an explicitly value-initialized inner instead of make().
+    auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{
+        .inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(InMemoryConnectionStateInner{})});
     {
         auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
         auto guard = mut_state->inner.lock().unwrap();

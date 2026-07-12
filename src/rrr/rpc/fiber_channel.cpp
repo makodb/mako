@@ -66,7 +66,7 @@ import rrr.reactor;
 import rrr.threading;
 
 // @safe - FiberChannel: fiber-blocking wrapper over a
-// `ChannelConnectionProxy`. Bodies use SpinMutex<std::deque> for the
+// `ChannelConnectionProxy`. Bodies use rusty::Mutex<std::deque> for the
 // inbound queue, `rusty::Cell<bool>` for the closed flag, and
 // IntEvent for parking. Per-method `// @unsafe` overrides cover the
 // ctor (which installs lambda callbacks through `ch_->set_on_*` —
@@ -123,7 +123,7 @@ inline std::deque<OwnedFrame>     fiberchannel_empty_queue() { return std::deque
 inline std::shared_ptr<IntEvent>  fiberchannel_null_event()  { return std::shared_ptr<IntEvent>{}; }
 
 // Fiber-blocking wrapper over a `ChannelConnectionProxy` (see file header).
-// Interior state (SpinMutex<std::deque> inbound queue + Cell<bool> closed
+// Interior state (rusty::Mutex<std::deque> inbound queue + Cell<bool> closed
 // flag, shared between the on_frame callback and recv_frame) is borrow-
 // checked; the proxy-deref / Reactor / IntEvent / fiber-suspend bodies live
 // in the `fiberchannel_*` free fns the methods delegate to. The former
@@ -137,7 +137,7 @@ inline std::shared_ptr<IntEvent>  fiberchannel_null_event()  { return std::share
 #if RUSTYCPP_RUST
 struct FiberChannel {
     ch_: ChannelConnectionProxy,
-    queue_: SpinMutex<std::deque<OwnedFrame>>,
+    queue_: rusty::Mutex<std::deque<OwnedFrame>>,
     pending_recv_event_: std::shared_ptr<IntEvent>,
     closed_: Cell<bool>,
 }
@@ -146,7 +146,7 @@ impl FiberChannel {
     #[cpp_ctor] fn new(ch: ChannelConnectionProxy) -> FiberChannel {
         FiberChannel {
             ch_: ch,
-            queue_: SpinMutex::<std::deque<OwnedFrame>>::new(fiberchannel_empty_queue()),
+            queue_: rusty::Mutex::<std::deque<OwnedFrame>>::new(fiberchannel_empty_queue()),
             pending_recv_event_: fiberchannel_null_event(),
             closed_: Cell::new(false),
         }
@@ -183,16 +183,16 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=b373655128ede95318e9e31b6bbd02911a0fd1f4be59f44d90d84c986a36c751*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=cbb1c5675c4fec6fc947672d7956a885457ec7a86b9982f8b529e96f07f3c14e*/
 struct FiberChannel;
 
 struct FiberChannel {
     ChannelConnectionProxy ch_;
-    SpinMutex<std::deque<OwnedFrame>> queue_;
+    rusty::Mutex<std::deque<OwnedFrame>> queue_;
     std::shared_ptr<IntEvent> pending_recv_event_;
     rusty::Cell<bool> closed_;
     mutable bool _rusty_forgotten = false;
-    FiberChannel(ChannelConnectionProxy ch__init, SpinMutex<std::deque<OwnedFrame>> queue__init, std::shared_ptr<IntEvent> pending_recv_event__init, rusty::Cell<bool> closed__init) : ch_(std::move(ch__init)), queue_(std::move(queue__init)), pending_recv_event_(std::move(pending_recv_event__init)), closed_(std::move(closed__init)) {}
+    FiberChannel(ChannelConnectionProxy ch__init, rusty::Mutex<std::deque<OwnedFrame>> queue__init, std::shared_ptr<IntEvent> pending_recv_event__init, rusty::Cell<bool> closed__init) : ch_(std::move(ch__init)), queue_(std::move(queue__init)), pending_recv_event_(std::move(pending_recv_event__init)), closed_(std::move(closed__init)) {}
     FiberChannel(const FiberChannel&) = delete;
     FiberChannel(FiberChannel&& other) noexcept : ch_(std::move(other.ch_)), queue_(std::move(other.queue_)), pending_recv_event_(std::move(other.pending_recv_event_)), closed_(std::move(other.closed_)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -223,7 +223,7 @@ struct FiberChannel {
 
 FiberChannel::FiberChannel(ChannelConnectionProxy ch)
     : ch_(std::move(ch))
-    , queue_(SpinMutex<std::deque<OwnedFrame>>::new_(fiberchannel_empty_queue()))
+    , queue_(rusty::Mutex<std::deque<OwnedFrame>>::new_(fiberchannel_empty_queue()))
     , pending_recv_event_(fiberchannel_null_event())
     , closed_(rusty::Cell<bool>::new_(false))
 {}

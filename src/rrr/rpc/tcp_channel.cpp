@@ -55,7 +55,7 @@ import rrr.threading;
 // Class declarations (from former tcp_channel.hpp)
 // ===========================================================================
 // @safe - TCP channel backend. State on TcpConnection / TcpListener /
-// TcpFactory is rusty::Cell / SpinMutex / Arc / Option. Methods that
+// TcpFactory is rusty::Cell / rusty::Mutex / Arc / Option. Methods that
 // drive socket / fd syscalls (socket / bind / listen / accept / send /
 // recv / close / fcntl / getsockname) or that thread through
 // const_cast `mut_conn` / `mut_listener` / `mut_factory` helpers
@@ -118,7 +118,7 @@ void         tcpconn_handle_error(const TcpConnection& self);
 // Default-init helpers for the `#[cpp_ctor]` below: the DSL struct
 // literal can't spell a default-constructed std::vector / FrameStreamReader
 // / On*Callback inline, so the ctor field inits call these. (`OwnedFd`,
-// `Cell`, `Option`, and `SpinMutex<std::vector<u8>>` it spells directly.)
+// `Cell`, `Option`, and `rusty::Mutex<std::vector<u8>>` it spells directly.)
 inline std::vector<std::uint8_t> tcpconn_empty_buf()        { return {}; }
 inline FrameStreamReader         tcpconn_default_inbound()  { return FrameStreamReader::new_(); }
 inline OnFrameCallback           tcpconn_default_on_frame() { return OnFrameCallback{}; }
@@ -133,7 +133,7 @@ inline OnErrorCallback           tcpconn_default_on_error() { return OnErrorCall
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is the
 // source of truth; the transpiler regenerates the matching GEN block.
-// All field types are already rusty (OwnedFd / SpinMutex / Cell /
+// All field types are already rusty (OwnedFd / rusty::Mutex / Cell /
 // Option), so the struct is borrow-checked; the syscall/lock bodies live
 // in the `tcpconn_*` free fns above, which the methods delegate to. The
 // former hand-written dtor only latched `closed_` defensively — provably
@@ -149,15 +149,15 @@ struct TcpConnection {
     fd_: rusty::os::fd::OwnedFd,
     peer_address_: std::string,
     outbound_high_water_: usize,
-    outbound_: SpinMutex<std::vector<u8>>,
+    outbound_: rusty::Mutex<std::vector<u8>>,
     inbound_: RefCell<FrameStreamReader>,
     closed_: Cell<bool>,
     on_closed_fired_: Cell<bool>,
     pending_write_update_: Cell<bool>,
     poll_thread_: Option<Arc<PollThread>>,
-    on_frame_: SpinMutex<OnFrameCallback>,
-    on_closed_: SpinMutex<OnClosedCallback>,
-    on_error_: SpinMutex<OnErrorCallback>,
+    on_frame_: rusty::Mutex<OnFrameCallback>,
+    on_closed_: rusty::Mutex<OnClosedCallback>,
+    on_error_: rusty::Mutex<OnErrorCallback>,
 }
 
 impl TcpConnection {
@@ -166,15 +166,15 @@ impl TcpConnection {
             fd_: rusty::os::fd::OwnedFd::from_raw_fd(fd),
             peer_address_: peer_address,
             outbound_high_water_: kTcpConnectionOutboundHighWaterDefault,
-            outbound_: SpinMutex::<std::vector<u8>>::new(tcpconn_empty_buf()),
+            outbound_: rusty::Mutex::<std::vector<u8>>::new(tcpconn_empty_buf()),
             inbound_: RefCell::new(tcpconn_default_inbound()),
             closed_: Cell::new(false),
             on_closed_fired_: Cell::new(false),
             pending_write_update_: Cell::new(false),
             poll_thread_: None,
-            on_frame_: SpinMutex::<OnFrameCallback>::new(tcpconn_default_on_frame()),
-            on_closed_: SpinMutex::<OnClosedCallback>::new(tcpconn_default_on_closed()),
-            on_error_: SpinMutex::<OnErrorCallback>::new(tcpconn_default_on_error()),
+            on_frame_: rusty::Mutex::<OnFrameCallback>::new(tcpconn_default_on_frame()),
+            on_closed_: rusty::Mutex::<OnClosedCallback>::new(tcpconn_default_on_closed()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcpconn_default_on_error()),
         }
     }
 
@@ -251,22 +251,22 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=bf3c63242c260af9ccdd56656bcc59079b4d549f99376abe342ddad78c63607c*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=bb4aa785595908af02a97c5991716d3dec5f61a732bbf2af8a04541466b46990*/
 struct TcpConnection;
 
 struct TcpConnection {
     rusty::os::fd::OwnedFd fd_;
     std::string peer_address_;
     size_t outbound_high_water_;
-    SpinMutex<std::vector<uint8_t>> outbound_;
+    rusty::Mutex<std::vector<uint8_t>> outbound_;
     rusty::RefCell<FrameStreamReader> inbound_;
     rusty::Cell<bool> closed_;
     rusty::Cell<bool> on_closed_fired_;
     rusty::Cell<bool> pending_write_update_;
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
-    SpinMutex<OnFrameCallback> on_frame_;
-    SpinMutex<OnClosedCallback> on_closed_;
-    SpinMutex<OnErrorCallback> on_error_;
+    rusty::Mutex<OnFrameCallback> on_frame_;
+    rusty::Mutex<OnClosedCallback> on_closed_;
+    rusty::Mutex<OnErrorCallback> on_error_;
 
     TcpConnection(int32_t fd, std::string peer_address);
     void set_outbound_high_water(size_t bytes);
@@ -293,15 +293,15 @@ TcpConnection::TcpConnection(int32_t fd, std::string peer_address)
     : fd_(rusty::os::fd::OwnedFd::from_raw_fd(std::move(fd)))
     , peer_address_(std::move(peer_address))
     , outbound_high_water_(kTcpConnectionOutboundHighWaterDefault)
-    , outbound_(SpinMutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
+    , outbound_(rusty::Mutex<std::vector<uint8_t>>::new_(tcpconn_empty_buf()))
     , inbound_(rusty::RefCell<FrameStreamReader>::new_(tcpconn_default_inbound()))
     , closed_(rusty::Cell<bool>::new_(false))
     , on_closed_fired_(rusty::Cell<bool>::new_(false))
     , pending_write_update_(rusty::Cell<bool>::new_(false))
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
-    , on_frame_(SpinMutex<OnFrameCallback>::new_(tcpconn_default_on_frame()))
-    , on_closed_(SpinMutex<OnClosedCallback>::new_(tcpconn_default_on_closed()))
-    , on_error_(SpinMutex<OnErrorCallback>::new_(tcpconn_default_on_error()))
+    , on_frame_(rusty::Mutex<OnFrameCallback>::new_(tcpconn_default_on_frame()))
+    , on_closed_(rusty::Mutex<OnClosedCallback>::new_(tcpconn_default_on_closed()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcpconn_default_on_error()))
 {}
 
 void TcpConnection::set_outbound_high_water(size_t bytes) {
@@ -606,7 +606,7 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
  * (`handle_read`, `handle_error`, `poll_mode`, ...) run on the poll
  * thread.
  */
-// @safe - State is rusty::Cell / Option / SpinMutex / Arc /
+// @safe - State is rusty::Cell / Option / rusty::Mutex / Arc /
 // rusty::os::fd::OwnedFd (RAII-closes listen_fd_ on drop). Methods
 // that genuinely touch the raw fd via syscalls (listen, fd,
 // handle_read) carry their own `// @unsafe` overrides at the
@@ -633,7 +633,7 @@ inline OnErrorCallback         tcplistener_default_on_error()  { return OnErrorC
 
 // Server-side TCP listener — owns a `rusty::net::TcpListener` (RAII-closes
 // the listen fd on drop) + an accept loop. All fields are already rusty
-// (net::TcpListener / Cell / Option / SpinMutex), so the struct is
+// (net::TcpListener / Cell / Option / rusty::Mutex), so the struct is
 // borrow-checked; the bind / accept-loop / callback bodies live in the
 // `tcplistener_*` free fns the methods delegate to. Held only via
 // Arc<TcpListener> (stable storage), so no explicit move-deletion is needed.
@@ -651,8 +651,8 @@ struct TcpListener {
     listened_: Cell<bool>,
     poll_thread_: Option<Arc<PollThread>>,
     self_weak_: Option<rusty::sync::Weak<TcpListener>>,
-    on_accept_: SpinMutex<OnAcceptCallback>,
-    on_error_: SpinMutex<OnErrorCallback>,
+    on_accept_: rusty::Mutex<OnAcceptCallback>,
+    on_error_: rusty::Mutex<OnErrorCallback>,
 }
 
 impl TcpListener {
@@ -664,8 +664,8 @@ impl TcpListener {
             listened_: Cell::new(false),
             poll_thread_: None,
             self_weak_: None,
-            on_accept_: SpinMutex::<OnAcceptCallback>::new(tcplistener_default_on_accept()),
-            on_error_: SpinMutex::<OnErrorCallback>::new(tcplistener_default_on_error()),
+            on_accept_: rusty::Mutex::<OnAcceptCallback>::new(tcplistener_default_on_accept()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcplistener_default_on_error()),
         }
     }
 
@@ -730,7 +730,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=9fd2e228084e0d3bb1f651589624984adcbde1d994002f8cd4e2f5fccc004293*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=a71e3290b1b4c4470cb41408fe7d7f415355401418f7ce3f7dcb0f1372ceee9f*/
 struct TcpListener;
 
 struct TcpListener {
@@ -740,8 +740,8 @@ struct TcpListener {
     rusty::Cell<bool> listened_;
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     rusty::Option<rusty::sync::Weak<TcpListener>> self_weak_;
-    SpinMutex<OnAcceptCallback> on_accept_;
-    SpinMutex<OnErrorCallback> on_error_;
+    rusty::Mutex<OnAcceptCallback> on_accept_;
+    rusty::Mutex<OnErrorCallback> on_error_;
 
     TcpListener();
     ChannelError listen(std::string_view addr) const;
@@ -769,8 +769,8 @@ TcpListener::TcpListener()
     , listened_(rusty::Cell<bool>::new_(false))
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
     , self_weak_(rusty::Option<rusty::sync::Weak<TcpListener>>{rusty::None})
-    , on_accept_(SpinMutex<OnAcceptCallback>::new_(tcplistener_default_on_accept()))
-    , on_error_(SpinMutex<OnErrorCallback>::new_(tcplistener_default_on_error()))
+    , on_accept_(rusty::Mutex<OnAcceptCallback>::new_(tcplistener_default_on_accept()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcplistener_default_on_error()))
 {}
 
 ChannelError TcpListener::listen(std::string_view addr) const {

@@ -78,7 +78,7 @@ class InMemoryE2ETest : public ::testing::Test {
  protected:
     void SetUp() override {
         switchboard_ = rusty::Some(
-            rusty::Arc<InMemorySwitchboard>::make());
+            rusty::Arc<InMemorySwitchboard>::new_(InMemorySwitchboard::new_()));
         poll_thread_ = rusty::Some(PollThread::create());
     }
 

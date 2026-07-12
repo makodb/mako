@@ -11,10 +11,10 @@ import rrr.errors;
 import rrr.threading;
 
 // @safe - Callback registry/dispatch. All operations go through rusty
-// primitives (SpinMutex / Vec / Arc / Function). No raw pointers,
+// primitives (rusty::Mutex / Vec / Arc / Function). No raw pointers,
 // syscalls, or operator-overload chains.
 //
-// `ConnectionCallbacks` (the payload struct behind the SpinMutex) and
+// `ConnectionCallbacks` (the payload struct behind the rusty::Mutex) and
 // `CallbackManager` (the public facade) are authored as inline Rust
 // DSL; the transpiler regenerates the matching
 // `/*RUSTYCPP:GEN-BEGIN ... END*/` block below.
@@ -90,22 +90,22 @@ impl ConnectionCallbacks {
 }
 
 struct CallbackManager {
-    callbacks_field: SpinMutex<ConnectionCallbacks>,
+    callbacks_field: rusty::Mutex<ConnectionCallbacks>,
 }
 
 impl CallbackManager {
     fn new() -> CallbackManager {
         CallbackManager {
-            callbacks_field: SpinMutex::<ConnectionCallbacks>::new(ConnectionCallbacks {}),
+            callbacks_field: rusty::Mutex::<ConnectionCallbacks>::new(ConnectionCallbacks {}),
         }
     }
 
-    // NOTE: field access through a `SpinMutexGuard<T>` lowers to `.`
+    // NOTE: field access through a `rusty::MutexGuard<T>` lowers to `.`
     // instead of `->` in the current transpiler (smart-pointer-guard
     // auto-deref handles method calls but not field access). We
     // dereference the guard explicitly with `(*guard).field` so the
     // emitted C++ becomes `(*guard).field.method(...)` — which
-    // compiles because `SpinMutexGuard<T>::operator*()` returns
+    // compiles because `rusty::MutexGuard<T>::operator*()` returns
     // `T&`. Method calls on the guard itself (`guard.unwrap()`,
     // `guard.lock()`, etc.) work unchanged.
     fn add_on_connected(&self, cb: OnConnectedFn) {
@@ -243,7 +243,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=d5bc268b81ae662de9728e1557d4e3cef28ba5fafd06712b683d99d66279e11a*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=4d5de7754d5f84dea7b344f8ea8ef747fe6f1922510f7b52fbd9801551f36b54*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
@@ -260,7 +260,7 @@ struct ConnectionCallbacks {
 };
 
 struct CallbackManager {
-    SpinMutex<ConnectionCallbacks> callbacks_field;
+    rusty::Mutex<ConnectionCallbacks> callbacks_field;
 
     static CallbackManager new_();
     void add_on_connected(OnConnectedFn cb) const;
@@ -301,7 +301,7 @@ void ConnectionCallbacks::clear() {
 }
 
 CallbackManager CallbackManager::new_() {
-    return CallbackManager{.callbacks_field = SpinMutex<ConnectionCallbacks>::new_(ConnectionCallbacks{})};
+    return CallbackManager{.callbacks_field = rusty::Mutex<ConnectionCallbacks>::new_(ConnectionCallbacks{})};
 }
 
 void CallbackManager::add_on_connected(OnConnectedFn cb) const {

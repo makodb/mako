@@ -371,7 +371,7 @@ inline SourceProxy make_source_proxy(BufferSource* source) {
 // convention as BufferSink (caller owns the underlying storage).
 //
 // Threading: not thread-safe. Caller is responsible for serializing
-// concurrent access (e.g. via SpinMutex around the Sink) if shared.
+// concurrent access (e.g. via rusty::Mutex around the Sink) if shared.
 // ---------------------------------------------------------------------------
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -1305,7 +1305,7 @@ inline SerializableProxy make_serializable_proxy(Args&&... args) {
 // fresh SerializableProxy instances. Authored as inline Rust DSL
 // (statics on an empty struct; the generic reg<T> delegates to a
 // template free fn — T is non-deducible, so it is declared before the
-// GEN block). The factory-map singleton + SpinMutex live in the impl
+// GEN block). The factory-map singleton + rusty::Mutex live in the impl
 // kernels below unchanged.
 using SerializableRegistryFactory = rusty::Function<SerializableProxy()>;
 
@@ -1517,13 +1517,13 @@ struct TypeList {
 // helper has its own per-function `// @unsafe` (returns a reference
 // to a process-wide singleton; rusty-cpp can't express `'static`
 // lifetimes). All other functions are lock+map dispatch through the
-// SpinMutex<SerializableRegistryMap> guard.
+// rusty::Mutex<SerializableRegistryMap> guard.
 namespace rrr {
 
 namespace {
 
 // `SerializableRegistryMap` — TU-local POD wrapping the single
-// `HashMap<i32, Factory>` the SpinMutex guards. Mirrors the shape of
+// `HashMap<i32, Factory>` the rusty::Mutex guards. Mirrors the shape of
 // `AnyMessageRegistryMap` over in any_message.cpp.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -1547,8 +1547,10 @@ struct SerializableRegistryMap {
 // doesn't express. Marked @unsafe rather than @safe so the analyzer doesn't
 // demand a `@lifetime: () -> &'a where 'a: 'static` annotation it can't yet
 // model.
-SpinMutex<SerializableRegistryMap>& registry() {
-  static SpinMutex<SerializableRegistryMap> r;
+rusty::Mutex<SerializableRegistryMap>& registry() {
+  // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so seed
+  // it with an empty registry map explicitly.
+  static rusty::Mutex<SerializableRegistryMap> r{SerializableRegistryMap{}};
   return r;
 }
 

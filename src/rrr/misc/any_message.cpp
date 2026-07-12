@@ -7,6 +7,7 @@ module;
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/result.hpp>
+#include <rusty/rusty.hpp>  // rusty::Mutex (was transitively via SpinMutex/rrr.threading)
 
 export module rrr.any_message;
 
@@ -157,21 +158,21 @@ AnyMessageSp AnyMessage::pack(std::shared_ptr<T> val) {
 /*RUSTYCPP:GEN-END id=any_message.message*/
 
 // Runtime registry: maps registered type-name string → factory and
-// std::type_index → registered name. Stored behind a SpinMutex
+// std::type_index → registered name. Stored behind a rusty::Mutex
 // (registrations run at static init time, lookups are concurrent
 // across reactor threads during RPC dispatch).
 // @safe - see file header. `name_for_type` returns a raw
-// `const std::string*` into the SpinMutex-owned HashMap; that
+// `const std::string*` into the rusty::Mutex-owned HashMap; that
 // method and its caller `AnyMessage::is_a<T>` / `AnyMessage::pack<T>`
 // carry per-method `// @unsafe`.
 // `any_message_registry` was a class with only static methods + a
 // public Factory typedef and no fields. Converted to a namespace so
 // the inventory reflects what it actually is — a namespace-scoped
-// API over the file-static SpinMutex<AnyMessageRegistryMap> below.
+// API over the file-static rusty::Mutex<AnyMessageRegistryMap> below.
 namespace any_message_registry {
 
 // rusty::Function is move-only; the registry stores each factory by
-// move and invokes it under the registry's SpinMutex inside `create()`.
+// move and invokes it under the registry's rusty::Mutex inside `create()`.
 using Factory = rusty::Function<SerializableProxy()>;
 
 // Register `T` under `name`. Returns 0 so it can sit at namespace
@@ -342,14 +343,16 @@ struct AnyMessageRegistryMap {
 };
 /*RUSTYCPP:GEN-END id=any_message.1*/
 
-SpinMutex<AnyMessageRegistryMap>& registry() {
-  static SpinMutex<AnyMessageRegistryMap> r;
+rusty::Mutex<AnyMessageRegistryMap>& registry() {
+  // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so seed
+  // it with an empty registry map explicitly.
+  static rusty::Mutex<AnyMessageRegistryMap> r{AnyMessageRegistryMap{}};
   return r;
 }
 
 }  // namespace
 
-// @unsafe - SpinMutex::lock().unwrap() + HashMap::get / contains_key /
+// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get / contains_key /
 // insert pattern not yet recognized as @safe here (annotation
 // discovery limitation across the AnyMessageRegistryMap struct).
 int any_message_registry::register_type(std::string name,
@@ -366,7 +369,7 @@ int any_message_registry::register_type(std::string name,
   return 0;
 }
 
-// @unsafe - SpinMutex::lock().unwrap() + HashMap::get + invocation
+// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get + invocation
 // through `*entry.unwrap()` (Option-of-pointer deref).
 SerializableProxy any_message_registry::create(const std::string& name) {
   auto guard = registry().lock().unwrap();
@@ -375,7 +378,7 @@ SerializableProxy any_message_registry::create(const std::string& name) {
   return entry.unwrap()();
 }
 
-// @unsafe - returns a raw `const std::string*` into the SpinMutex-
+// @unsafe - returns a raw `const std::string*` into the rusty::Mutex-
 // owned HashMap. Callers must not outlive the guard's borrow window;
 // in practice each caller dereferences immediately and discards.
 const std::string* any_message_registry::name_for_type(std::type_index ti) {
@@ -386,7 +389,7 @@ const std::string* any_message_registry::name_for_type(std::type_index ti) {
   return &entry.unwrap();
 }
 
-// @unsafe - SpinMutex::lock().unwrap() + HashMap::get + Option::is_some.
+// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get + Option::is_some.
 bool any_message_registry::is_registered_name(const std::string& name) {
   auto guard = registry().lock().unwrap();
   return (*guard).by_name.get(name).is_some();
@@ -398,7 +401,7 @@ bool any_message_registry::is_registered_type(std::type_index ti) {
   return (*guard).name_by_type_hash.get(ti.hash_code()).is_some();
 }
 
-// @unsafe - SpinMutex::lock().unwrap() + HashMap::clear().
+// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::clear().
 void any_message_registry::clear_for_testing() {
   auto guard = registry().lock().unwrap();
   (*guard).by_name.clear();
