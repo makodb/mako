@@ -80,6 +80,18 @@ pub struct AppendEntriesReply {
     follower_ack_type: u64,
 }
 
+pub struct AppendEntriesReq {
+    slot: u64,
+    ballot: i64,
+    leader_current_term: u64,
+    leader_site_id: u16,
+    leader_prev_log_index: u64,
+    leader_prev_log_term: u64,
+    leader_commit_index: u64,
+    cmd: janus::Command,
+    leader_next_log_term: u64,
+}
+
 pub struct EmptyAppendEntriesReq {
     slot: u64,
     ballot: i64,
@@ -151,7 +163,7 @@ pub struct RemoveServerReply {
     leader_hint: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=93b38104a1dddd1bea905e8d959be0c1ca1a1da9196fadff3231ddae19061ada*/
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=8b00ade947420650878b60556ca2e93af9dbf9089ea64668e9f31e57cba289f1*/
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;
@@ -159,6 +171,7 @@ struct VoteDurableReply;
 struct AppendEntriesDurableReq;
 struct AppendEntriesDurableReply;
 struct AppendEntriesReply;
+struct AppendEntriesReq;
 struct EmptyAppendEntriesReq;
 struct EmptyAppendEntriesReply;
 struct TimeoutNowReq;
@@ -208,6 +221,18 @@ struct AppendEntriesReply {
     uint64_t follower_current_term;
     uint64_t follower_last_log_index;
     uint64_t follower_ack_type;
+};
+
+struct AppendEntriesReq {
+    uint64_t slot;
+    int64_t ballot;
+    uint64_t leader_current_term;
+    uint16_t leader_site_id;
+    uint64_t leader_prev_log_index;
+    uint64_t leader_prev_log_term;
+    uint64_t leader_commit_index;
+    janus::Command cmd;
+    uint64_t leader_next_log_term;
 };
 
 struct EmptyAppendEntriesReq {
@@ -281,25 +306,6 @@ struct RemoveServerReply {
     uint64_t leader_hint;
 };
 /*RUSTYCPP:GEN-END id=messages.1*/
-
-// ---------------------------------------------------------------------------
-// AppendEntries (with command payload)
-// ---------------------------------------------------------------------------
-struct AppendEntriesReq {
-  uint64_t       slot{0};
-  ballot_t       ballot{0};
-  uint64_t       leader_current_term{0};
-  siteid_t       leader_site_id{0};
-  uint64_t       leader_prev_log_index{0};
-  uint64_t       leader_prev_log_term{0};
-  uint64_t       leader_commit_index{0};
-  // 2 step 5 (2026-05-05): `cmd` migrated from `MarshallDeputy`
-  // to `janus::Command` (= `SerializableEnvelope<MakoCommands>`)
-  // alongside the Marshallable/MarshallDeputy retirement.  Wire format
-  // is identical (`[v32 kind][payload]` for both, post-L9 alignment).
-  ::janus::Command cmd{};
-  uint64_t       leader_next_log_term{0};
-};
 
 }  // namespace raft
 }  // namespace janus
