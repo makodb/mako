@@ -310,12 +310,18 @@ struct SnapshotConfig {
 
   // @unsafe - Returns struct by value
   static SnapshotConfig defaults() {
-    return SnapshotConfig{};
+    SnapshotConfig config{};
+    config.storage_path = "";
+    config.snapshot_interval = 10000;
+    config.max_snapshots = 3;
+    config.verify_on_load = true;
+    config.chunk_size = 64 * 1024;
+    return config;
   }
 
   // @unsafe - Uses getenv and string operations
   static SnapshotConfig for_replica(uint32_t partition_id, uint32_t locale_id) {
-    SnapshotConfig config;
+    SnapshotConfig config = SnapshotConfig::defaults();
     // Use username prefix to avoid conflicts between users
     std::string username;
     auto user = std::getenv("USER");  // @unsafe

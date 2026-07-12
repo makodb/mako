@@ -4675,7 +4675,7 @@ int RaftLabTest::testSnapshotManagerSaveLoad(void) {
   // Create a temporary directory for test snapshots
   std::string test_path = "/tmp/raft_snapshot_test_" + std::to_string(getpid());
 
-  janus::raft::SnapshotConfig config;
+  janus::raft::SnapshotConfig config = janus::raft::SnapshotConfig::defaults();
   config.storage_path = test_path;
   config.max_snapshots = 5;
 
@@ -4734,7 +4734,7 @@ int RaftLabTest::testSnapshotManagerListing(void) {
 
   std::string test_path = "/tmp/raft_snapshot_list_test_" + std::to_string(getpid());
 
-  janus::raft::SnapshotConfig config;
+  janus::raft::SnapshotConfig config = janus::raft::SnapshotConfig::defaults();
   config.storage_path = test_path;
   config.max_snapshots = 3;
 
@@ -4801,7 +4801,7 @@ int RaftLabTest::testSnapshotManagerWiring(void) {
 
   // Test SetSnapshotManager with a temporary manager
   std::string test_path = "/tmp/raft_snap_wiring_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig config;
+  janus::raft::SnapshotConfig config = janus::raft::SnapshotConfig::defaults();
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
 
@@ -4849,7 +4849,7 @@ int RaftLabTest::testCreateSnapshotBasic(void) {
 
   // Set up a snapshot manager with a temporary path
   std::string test_path = "/tmp/raft_snap_create_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig config;
+  janus::raft::SnapshotConfig config = janus::raft::SnapshotConfig::defaults();
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
   auto original_mgr = server->GetSnapshotManager();
@@ -4917,7 +4917,7 @@ int RaftLabTest::testCreateSnapshotAndCompaction(void) {
 
   // Set up snapshot manager
   std::string test_path = "/tmp/raft_snap_compact_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig config;
+  janus::raft::SnapshotConfig config = janus::raft::SnapshotConfig::defaults();
   config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(config);
   auto original_mgr = server->GetSnapshotManager();
@@ -5030,7 +5030,7 @@ int RaftLabTest::testInstallSnapshotBasic(void) {
 
   // Set up a snapshot manager on the follower for persistence
   std::string test_path = "/tmp/raft_install_snap_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
   snap_config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   auto original_mgr = server->GetSnapshotManager();
@@ -5181,7 +5181,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
 
   // Set up a snapshot manager on the leader with a low threshold
   std::string test_path = "/tmp/raft_hb_snap_test_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
   snap_config.storage_path = test_path;
   auto test_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   auto original_mgr = leader_server->GetSnapshotManager();
@@ -5233,7 +5233,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
 
   // Set up a snapshot manager on the follower (so it can receive the snapshot)
   std::string follower_test_path = "/tmp/raft_hb_snap_follower_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig follower_snap_config;
+  janus::raft::SnapshotConfig follower_snap_config = janus::raft::SnapshotConfig::defaults();
   follower_snap_config.storage_path = follower_test_path;
   auto follower_mgr = std::make_shared<janus::raft::FileSnapshotManager>(follower_snap_config);
   auto follower_original_mgr = follower_server->GetSnapshotManager();
@@ -5769,7 +5769,7 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
                                std::to_string(follower_server->partition_id_);
 
   // Set up snapshot manager on the follower using the same path
-  janus::raft::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
   snap_config.storage_path = full_snap_path;
   auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   follower_server->SetSnapshotManager(snap_mgr);
@@ -5892,7 +5892,7 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
 
   // Set up snapshot manager
   std::string snap_path = "/tmp/raft_snap_advancement_test_66_" + std::to_string(getpid());
-  janus::raft::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
   snap_config.storage_path = snap_path;
   auto snap_mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   auto original_mgr = server->GetSnapshotManager();
@@ -6137,7 +6137,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
     auto server = config_->GetServer(i);
     if (server == nullptr) continue;
     original_mgrs.push_back(server->GetSnapshotManager());
-    janus::raft::SnapshotConfig snap_config;
+    janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
     snap_config.storage_path = base_path + "_s" + std::to_string(i);
     auto mgr = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
     test_mgrs.push_back(mgr);

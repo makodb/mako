@@ -423,7 +423,7 @@ void RaftServer::InitializeSnapshotManager() {
   }
 
   // Build snapshot config
-  janus::raft::SnapshotConfig snap_config;
+  janus::raft::SnapshotConfig snap_config = janus::raft::SnapshotConfig::defaults();
   // @unsafe { getenv is not borrow-checked }
   const char* custom_path = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
   if (custom_path && custom_path[0] != '\0') {
