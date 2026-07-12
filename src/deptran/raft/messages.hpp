@@ -119,8 +119,39 @@ pub struct NotifyRestartReply {
 pub struct InstallSnapshotReply {
     term_out: u64,
 }
+
+pub struct InstallSnapshotReq {
+    term: u64,
+    leader_id: u64,
+    last_included_index: u64,
+    last_included_term: u64,
+    data: std::string,
+}
+
+pub struct AddServerReq {
+    term: u64,
+    new_server_id: u64,
+    new_server_addr: std::string,
+}
+
+pub struct AddServerReply {
+    success: bool,
+    error_msg: std::string,
+    leader_hint: u64,
+}
+
+pub struct RemoveServerReq {
+    term: u64,
+    server_id: u64,
+}
+
+pub struct RemoveServerReply {
+    success: bool,
+    error_msg: std::string,
+    leader_hint: u64,
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=ab66a8b533b565ee1f10a9ac1f06ca05b8c6585b99601d691738b74ba496acff*/
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=93b38104a1dddd1bea905e8d959be0c1ca1a1da9196fadff3231ddae19061ada*/
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;
@@ -135,6 +166,11 @@ struct TimeoutNowReply;
 struct NotifyRestartReq;
 struct NotifyRestartReply;
 struct InstallSnapshotReply;
+struct InstallSnapshotReq;
+struct AddServerReq;
+struct AddServerReply;
+struct RemoveServerReq;
+struct RemoveServerReply;
 
 struct VoteReq {
     uint64_t last_log_idx;
@@ -213,6 +249,37 @@ struct NotifyRestartReply {
 struct InstallSnapshotReply {
     uint64_t term_out;
 };
+
+struct InstallSnapshotReq {
+    uint64_t term;
+    uint64_t leader_id;
+    uint64_t last_included_index;
+    uint64_t last_included_term;
+    std::string data;
+};
+
+struct AddServerReq {
+    uint64_t term;
+    uint64_t new_server_id;
+    std::string new_server_addr;
+};
+
+struct AddServerReply {
+    bool success;
+    std::string error_msg;
+    uint64_t leader_hint;
+};
+
+struct RemoveServerReq {
+    uint64_t term;
+    uint64_t server_id;
+};
+
+struct RemoveServerReply {
+    bool success;
+    std::string error_msg;
+    uint64_t leader_hint;
+};
 /*RUSTYCPP:GEN-END id=messages.1*/
 
 // ---------------------------------------------------------------------------
@@ -232,44 +299,6 @@ struct AppendEntriesReq {
   // is identical (`[v32 kind][payload]` for both, post-L9 alignment).
   ::janus::Command cmd{};
   uint64_t       leader_next_log_term{0};
-};
-
-// ---------------------------------------------------------------------------
-// InstallSnapshot
-// ---------------------------------------------------------------------------
-struct InstallSnapshotReq {
-  uint64_t    term{0};
-  uint64_t    leader_id{0};
-  uint64_t    last_included_index{0};
-  uint64_t    last_included_term{0};
-  std::string data;  // raw snapshot bytes; LZ4-compressed in RocksDB impl
-};
-
-
-// ---------------------------------------------------------------------------
-// AddServer / RemoveServer (membership change)
-// ---------------------------------------------------------------------------
-struct AddServerReq {
-  uint64_t    term{0};
-  uint64_t    new_server_id{0};
-  std::string new_server_addr;
-};
-
-struct AddServerReply {
-  bool        success{false};
-  std::string error_msg;
-  uint64_t    leader_hint{0};
-};
-
-struct RemoveServerReq {
-  uint64_t term{0};
-  uint64_t server_id{0};
-};
-
-struct RemoveServerReply {
-  bool        success{false};
-  std::string error_msg;
-  uint64_t    leader_hint{0};
 };
 
 }  // namespace raft
