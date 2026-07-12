@@ -4575,7 +4575,7 @@ int RaftLabTest::testSnapshotMetadataCreation(void) {
   Init2(50, "Snapshot metadata creation and field access");
 
   // Test default construction
-  janus::raft::SnapshotMetadata meta;
+  janus::raft::SnapshotMetadata meta{};
   Assert2(meta.last_included_index == 0,
           "Default last_included_index should be 0, got %lu", meta.last_included_index);
   Assert2(meta.last_included_term == 0,
@@ -4697,7 +4697,7 @@ int RaftLabTest::testSnapshotManagerSaveLoad(void) {
   Assert2(!mgr.HasSnapshotAtOrAfter(11), "Should not have snapshot at index 11");
 
   // Load and verify
-  janus::raft::SnapshotMetadata loaded_meta;
+  janus::raft::SnapshotMetadata loaded_meta{};
   std::string loaded_data;
   ok = mgr.LoadLatestSnapshot(&loaded_meta, &loaded_data);
   Assert2(ok, "LoadLatestSnapshot should succeed");

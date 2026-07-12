@@ -43,24 +43,48 @@ struct SnapshotMetadata;
 inline bool snapshot_metadata_is_valid(const SnapshotMetadata& metadata);
 inline std::string snapshot_metadata_to_string(const SnapshotMetadata& metadata);
 
-// @safe - POD struct
+#if RUSTYCPP_RUST
+pub struct SnapshotMetadata {
+    last_included_index: u64,
+    last_included_term: u64,
+    timestamp_ms: u64,
+    size_bytes: usize,
+    checksum: std::string,
+}
+
+impl SnapshotMetadata {
+    fn is_valid(&self) -> bool {
+        snapshot_metadata_is_valid(self)
+    }
+
+    fn to_string(&self) -> std::string {
+        snapshot_metadata_to_string(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_manager.metadata version=1 rust_sha256=53199a4922e628a778ab0ad03e5fe655b6e953a7c274a896d8a1d0298b6baf4a*/
+struct SnapshotMetadata;
+
 struct SnapshotMetadata {
-  uint64_t last_included_index{0};  // Last log entry included in snapshot
-  uint64_t last_included_term{0};   // Term of last included entry
-  uint64_t timestamp_ms{0};         // When snapshot was taken
-  size_t size_bytes{0};             // Size of snapshot data
-  std::string checksum;             // Checksum for verification (e.g., SHA256)
+    uint64_t last_included_index;
+    uint64_t last_included_term;
+    uint64_t timestamp_ms;
+    size_t size_bytes;
+    std::string checksum;
 
-  // @safe - Check if metadata is valid
-  bool is_valid() const {
-    return snapshot_metadata_is_valid(*this);
-  }
-
-  // @unsafe - String formatting
-  std::string to_string() const {
-    return snapshot_metadata_to_string(*this);
-  }
+    bool is_valid() const;
+    std::string to_string() const;
 };
+
+
+inline bool SnapshotMetadata::is_valid() const {
+    return snapshot_metadata_is_valid((*this));
+}
+
+inline std::string SnapshotMetadata::to_string() const {
+    return snapshot_metadata_to_string((*this));
+}
+/*RUSTYCPP:GEN-END id=snapshot_manager.metadata*/
 
 inline bool snapshot_metadata_is_valid(const SnapshotMetadata& metadata) {
   return metadata.last_included_index > 0;

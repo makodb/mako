@@ -16,7 +16,7 @@ TEST(MemorySnapshotManagerTest, TakeLoadRoundTrip) {
   ASSERT_TRUE(meta.is_some());
   EXPECT_EQ(meta.unwrap().last_included_index, 42u);
 
-  SnapshotMetadata meta_out;
+  SnapshotMetadata meta_out{};
   std::string data_out;
   ASSERT_TRUE(mgr.LoadLatestSnapshot(&meta_out, &data_out));
   EXPECT_EQ(meta_out.last_included_term, 7u);

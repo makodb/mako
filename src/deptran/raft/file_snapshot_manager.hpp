@@ -269,7 +269,7 @@ class FileSnapshotReader : public SnapshotReader {
   std::string path_;
   std::string file_data_;
   std::string data_;
-  SnapshotMetadata metadata_;
+  SnapshotMetadata metadata_{};
   size_t read_offset_{0};
   bool valid_{false};
 };
@@ -488,7 +488,7 @@ class FileSnapshotManager : public SnapshotManager {
       std::string name(entry->d_name);
       std::smatch match;
       if (std::regex_match(name, match, pattern)) {
-        SnapshotMetadata meta;
+        SnapshotMetadata meta{};
         meta.last_included_index = std::stoull(match[1].str());
         meta.last_included_term = std::stoull(match[2].str());
 

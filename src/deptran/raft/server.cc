@@ -1562,7 +1562,7 @@ void RaftServer::HeartbeatLoop() {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
                      site_id_, site_id, it->second, min_active_slot_);
-            janus::raft::SnapshotMetadata snap_meta;
+            janus::raft::SnapshotMetadata snap_meta{};
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
               uint64_t snap_last_idx = snap_meta.last_included_index;

@@ -70,6 +70,9 @@ FILES=(
   # Raft vote message PODs: first low-risk Raft DSL island; larger request
   # structs with janus::Command payloads stay hand-C++ for now.
   src/deptran/raft/messages.hpp
+  # Raft snapshot metadata: value struct + thin methods delegated to C++
+  # helpers; reader/writer/manager virtual interfaces stay hand-C++ for now.
+  src/deptran/raft/snapshot_manager.hpp
 )
 
 post_pass() {

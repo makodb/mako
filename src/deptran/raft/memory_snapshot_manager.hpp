@@ -113,7 +113,7 @@ class MemorySnapshotReader : public SnapshotReader {
 
  private:
   std::string      payload_;
-  SnapshotMetadata meta_;
+  SnapshotMetadata meta_{};
   size_t           offset_{0};
 };
 
