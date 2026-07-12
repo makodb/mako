@@ -13,8 +13,10 @@
  */
 
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
@@ -300,42 +302,81 @@ class SnapshotManager {
 /**
  * Configuration for snapshot behavior.
  */
-// @safe - POD struct
-struct SnapshotConfig {
-  std::string storage_path;           // Path for snapshot files
-  size_t snapshot_interval{10000};    // Take snapshot every N log entries
-  size_t max_snapshots{3};            // Maximum snapshots to keep
-  bool verify_on_load{true};          // Verify checksum when loading
-  size_t chunk_size{64 * 1024};       // Chunk size for streaming (64KB)
+struct SnapshotConfig;
 
-  // @unsafe - Returns struct by value
-  static SnapshotConfig defaults() {
-    SnapshotConfig config{};
-    config.storage_path = "";
-    config.snapshot_interval = 10000;
-    config.max_snapshots = 3;
-    config.verify_on_load = true;
-    config.chunk_size = 64 * 1024;
-    return config;
-  }
+inline SnapshotConfig snapshot_config_defaults();
+inline SnapshotConfig snapshot_config_for_replica(uint32_t partition_id,
+                                                  uint32_t locale_id);
 
-  // @unsafe - Uses getenv and string operations
-  static SnapshotConfig for_replica(uint32_t partition_id, uint32_t locale_id) {
-    SnapshotConfig config = SnapshotConfig::defaults();
-    // Use username prefix to avoid conflicts between users
-    std::string username;
-    auto user = std::getenv("USER");  // @unsafe
-    if (user) {
-      username = user;
-    } else {
-      username = "unknown";
+#if RUSTYCPP_RUST
+pub struct SnapshotConfig {
+    storage_path: std::string,
+    snapshot_interval: usize,
+    max_snapshots: usize,
+    verify_on_load: bool,
+    chunk_size: usize,
+}
+
+impl SnapshotConfig {
+    fn defaults() -> SnapshotConfig {
+        snapshot_config_defaults()
     }
-    config.storage_path = "/tmp/" + username + "_mako_snapshot_shard" +
-                         std::to_string(partition_id) + "_replica" +
-                         std::to_string(locale_id);
-    return config;
-  }
+
+    fn for_replica(partition_id: u32, locale_id: u32) -> SnapshotConfig {
+        snapshot_config_for_replica(partition_id, locale_id)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_manager.config version=1 rust_sha256=8de117da9884879ddb452353addd353f0bc00ad7292d530aff6b93217755fcda*/
+struct SnapshotConfig;
+
+struct SnapshotConfig {
+    std::string storage_path;
+    size_t snapshot_interval;
+    size_t max_snapshots;
+    bool verify_on_load;
+    size_t chunk_size;
+
+    static SnapshotConfig defaults();
+    static SnapshotConfig for_replica(uint32_t partition_id, uint32_t locale_id);
 };
+
+
+inline SnapshotConfig SnapshotConfig::defaults() {
+    return snapshot_config_defaults();
+}
+
+inline SnapshotConfig SnapshotConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
+    return snapshot_config_for_replica(std::move(partition_id), std::move(locale_id));
+}
+/*RUSTYCPP:GEN-END id=snapshot_manager.config*/
+
+inline SnapshotConfig snapshot_config_defaults() {
+  SnapshotConfig config{};
+  config.storage_path = "";
+  config.snapshot_interval = 10000;
+  config.max_snapshots = 3;
+  config.verify_on_load = true;
+  config.chunk_size = 64 * 1024;
+  return config;
+}
+
+inline SnapshotConfig snapshot_config_for_replica(uint32_t partition_id,
+                                                  uint32_t locale_id) {
+  SnapshotConfig config = SnapshotConfig::defaults();
+  // Use username prefix to avoid conflicts between users.
+  std::string username;
+  auto user = std::getenv("USER");  // @unsafe
+  if (user) {
+    username = user;
+  } else {
+    username = "unknown";
+  }
+  config.storage_path = "/tmp/" + username + "_mako_snapshot_shard" +
+                       std::to_string(partition_id) + "_replica" +
+                       std::to_string(locale_id);
+  return config;
+}
 
 }  // namespace raft
 }  // namespace janus
