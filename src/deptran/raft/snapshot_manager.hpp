@@ -36,26 +36,41 @@ using ballot_t = uint64_t;
 /**
  * Metadata about a snapshot.
  */
+struct SnapshotMetadata;
+
+// DSL-prep helpers: keep SnapshotMetadata methods thin so a later inline-Rust
+// impl can delegate string formatting to ordinary C++.
+inline bool snapshot_metadata_is_valid(const SnapshotMetadata& metadata);
+inline std::string snapshot_metadata_to_string(const SnapshotMetadata& metadata);
+
 // @safe - POD struct
 struct SnapshotMetadata {
-  slotid_t last_included_index{0};  // Last log entry included in snapshot
-  ballot_t last_included_term{0};   // Term of last included entry
+  uint64_t last_included_index{0};  // Last log entry included in snapshot
+  uint64_t last_included_term{0};   // Term of last included entry
   uint64_t timestamp_ms{0};         // When snapshot was taken
   size_t size_bytes{0};             // Size of snapshot data
   std::string checksum;             // Checksum for verification (e.g., SHA256)
 
   // @safe - Check if metadata is valid
   bool is_valid() const {
-    return last_included_index > 0;
+    return snapshot_metadata_is_valid(*this);
   }
 
   // @unsafe - String formatting
   std::string to_string() const {
-    return "Snapshot{index=" + std::to_string(last_included_index) +
-           ", term=" + std::to_string(last_included_term) +
-           ", size=" + std::to_string(size_bytes) + "}";
+    return snapshot_metadata_to_string(*this);
   }
 };
+
+inline bool snapshot_metadata_is_valid(const SnapshotMetadata& metadata) {
+  return metadata.last_included_index > 0;
+}
+
+inline std::string snapshot_metadata_to_string(const SnapshotMetadata& metadata) {
+  return "Snapshot{index=" + std::to_string(metadata.last_included_index) +
+         ", term=" + std::to_string(metadata.last_included_term) +
+         ", size=" + std::to_string(metadata.size_bytes) + "}";
+}
 
 /**
  * Abstract reader for streaming snapshot data.
