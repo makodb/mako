@@ -73,6 +73,31 @@ pub struct AppendEntriesDurableReply {
     acknowledged: bool,
 }
 
+pub struct AppendEntriesReply {
+    follower_append_ok: u64,
+    follower_current_term: u64,
+    follower_last_log_index: u64,
+    follower_ack_type: u64,
+}
+
+pub struct EmptyAppendEntriesReq {
+    slot: u64,
+    ballot: i64,
+    leader_current_term: u64,
+    leader_site_id: u16,
+    leader_prev_log_index: u64,
+    leader_prev_log_term: u64,
+    leader_commit_index: u64,
+    trigger_election_now: bool,
+}
+
+pub struct EmptyAppendEntriesReply {
+    follower_append_ok: u64,
+    follower_current_term: u64,
+    follower_last_log_index: u64,
+    follower_ack_type: u64,
+}
+
 pub struct TimeoutNowReq {
     leader_term: u64,
     leader_site_id: u16,
@@ -95,13 +120,16 @@ pub struct InstallSnapshotReply {
     term_out: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=146a5de5df5a25274e7d90735cd3a752da7e183ceb8f8f8a7fbe1e36b7e21c8d*/
+/*RUSTYCPP:GEN-BEGIN id=messages.1 version=1 rust_sha256=ab66a8b533b565ee1f10a9ac1f06ca05b8c6585b99601d691738b74ba496acff*/
 struct VoteReq;
 struct VoteReply;
 struct VoteDurableReq;
 struct VoteDurableReply;
 struct AppendEntriesDurableReq;
 struct AppendEntriesDurableReply;
+struct AppendEntriesReply;
+struct EmptyAppendEntriesReq;
+struct EmptyAppendEntriesReply;
 struct TimeoutNowReq;
 struct TimeoutNowReply;
 struct NotifyRestartReq;
@@ -139,6 +167,31 @@ struct AppendEntriesDurableReply {
     bool acknowledged;
 };
 
+struct AppendEntriesReply {
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
+    uint64_t follower_ack_type;
+};
+
+struct EmptyAppendEntriesReq {
+    uint64_t slot;
+    int64_t ballot;
+    uint64_t leader_current_term;
+    uint16_t leader_site_id;
+    uint64_t leader_prev_log_index;
+    uint64_t leader_prev_log_term;
+    uint64_t leader_commit_index;
+    bool trigger_election_now;
+};
+
+struct EmptyAppendEntriesReply {
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
+    uint64_t follower_ack_type;
+};
+
 struct TimeoutNowReq {
     uint64_t leader_term;
     uint16_t leader_site_id;
@@ -163,9 +216,6 @@ struct InstallSnapshotReply {
 /*RUSTYCPP:GEN-END id=messages.1*/
 
 // ---------------------------------------------------------------------------
-// VoteDurable — sent by a voter once its vote has been persisted.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // AppendEntries (with command payload)
 // ---------------------------------------------------------------------------
 struct AppendEntriesReq {
@@ -183,38 +233,6 @@ struct AppendEntriesReq {
   ::janus::Command cmd{};
   uint64_t       leader_next_log_term{0};
 };
-
-struct AppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
-};
-
-// ---------------------------------------------------------------------------
-// EmptyAppendEntries (heartbeat / election trigger)
-// ---------------------------------------------------------------------------
-struct EmptyAppendEntriesReq {
-  uint64_t slot{0};
-  ballot_t ballot{0};
-  uint64_t leader_current_term{0};
-  siteid_t leader_site_id{0};
-  uint64_t leader_prev_log_index{0};
-  uint64_t leader_prev_log_term{0};
-  uint64_t leader_commit_index{0};
-  bool     trigger_election_now{false};
-};
-
-struct EmptyAppendEntriesReply {
-  uint64_t follower_append_ok{0};
-  uint64_t follower_current_term{0};
-  uint64_t follower_last_log_index{0};
-  uint64_t follower_ack_type{0};
-};
-
-
-
-
 
 // ---------------------------------------------------------------------------
 // InstallSnapshot
