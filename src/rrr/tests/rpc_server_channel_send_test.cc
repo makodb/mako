@@ -157,7 +157,7 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
     const auto& bytes = stub->captured().front();
 
     Marshal body;
-    body.write(bytes.data(), bytes.size());
+    body.write_bytes(bytes.data(), bytes.size());
 
     v64 v_xid;
     v32 v_err;
@@ -186,7 +186,7 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
 
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
-    body.write(stub->captured().front().data(),
+    body.write_bytes(stub->captured().front().data(),
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;
@@ -215,7 +215,7 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
     ASSERT_EQ(stub->count(), 5u);
     for (std::size_t i = 0; i < 5u; ++i) {
         Marshal body;
-        body.write(stub->captured()[i].data(),
+        body.write_bytes(stub->captured()[i].data(),
                    stub->captured()[i].size());
         v64 v_xid;
         v32 v_err;

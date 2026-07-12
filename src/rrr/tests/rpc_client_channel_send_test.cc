@@ -157,7 +157,7 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
 
     // Decode the captured body: [v64 xid][i32 rpc_id][i32 0xDEADBEEF].
     Marshal m;
-    m.write(frames[0].data(), frames[0].size());
+    m.write_bytes(frames[0].data(), frames[0].size());
 
     v64 v_xid;
     i32 rpc_id;
@@ -206,7 +206,7 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     auto frames = stub_->captured();
     for (int i = 0; i < kCount; ++i) {
         Marshal m;
-        m.write(frames[i].data(), frames[i].size());
+        m.write_bytes(frames[i].data(), frames[i].size());
         v64 v_xid;
         i32 rpc_id;
         i32 user_arg;
@@ -225,7 +225,7 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
 // `borrow_state` int races and either throws `std::runtime_error` from
 // `add_writer` (best case — observable) or silently corrupts state.
 //
-// Post-fix: `fiber_channel_` is `SpinMutex<Option<Box<…>>>`. The lock
+// Post-fix: `fiber_channel_` is `rusty::Mutex<Option<Box<…>>>`. The lock
 // serialises concurrent dispatchers; every request must succeed and every
 // frame must reach the stub.
 // ---------------------------------------------------------------------------

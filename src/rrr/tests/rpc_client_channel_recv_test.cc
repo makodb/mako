@@ -133,7 +133,7 @@ std::vector<std::uint8_t> make_response_body(
     m << v32(error_code);
     m << v64(server_instance_id);
     if (!reply_payload.empty()) {
-        m.write(reply_payload.data(), reply_payload.size());
+        m.write_bytes(reply_payload.data(), reply_payload.size());
     }
     std::vector<std::uint8_t> bytes(m.content_size());
     if (!bytes.empty()) {
@@ -147,7 +147,7 @@ std::vector<std::uint8_t> make_response_body(
 // asserts on failure.
 i64 decode_outbound_xid(const std::vector<std::uint8_t>& body) {
     Marshal m;
-    m.write(body.data(), body.size());
+    m.write_bytes(body.data(), body.size());
     v64 v_xid;
     m >> v_xid;
     return v_xid.get();

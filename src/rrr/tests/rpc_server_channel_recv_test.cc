@@ -220,7 +220,7 @@ TEST_F(ServerChannelRecvTest, UnhandledRpcRepliesEnoent) {
 
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
-    body.write(stub->captured().front().data(),
+    body.write_bytes(stub->captured().front().data(),
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;
@@ -245,7 +245,7 @@ TEST_F(ServerChannelRecvTest, HeartbeatRpcRepliesZero) {
 
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
-    body.write(stub->captured().front().data(),
+    body.write_bytes(stub->captured().front().data(),
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;
@@ -273,7 +273,7 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
 
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
-    body.write(stub->captured().front().data(),
+    body.write_bytes(stub->captured().front().data(),
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;
@@ -335,7 +335,7 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     // The handler's reply was captured by the stub.
     ASSERT_EQ(stub->count(), 1u);
     Marshal body;
-    body.write(stub->captured().front().data(),
+    body.write_bytes(stub->captured().front().data(),
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;

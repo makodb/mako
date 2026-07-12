@@ -245,7 +245,7 @@ protected:
         size_t req_size = req->m.content_size();
         std::vector<char> req_data(req_size);
         if (req_size > 0) {
-            req->m.read(req_data.data(), req_size);
+            req->m.read(reinterpret_cast<uint8_t*>(req_data.data()), req_size);
         }
 
         // Prepare response: echo back request type and size
@@ -287,7 +287,7 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
         uint32_t req_size;
         uint32_t magic;
     } response;
-    fu->get_reply()->read(&response, sizeof(response));
+    fu->get_reply()->read(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
     EXPECT_EQ(response.req_type, TEST_REQ_TYPE_START);
     EXPECT_EQ(response.req_size, request_data.size());
@@ -312,7 +312,7 @@ TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
             uint32_t req_size;
             uint32_t magic;
         } response;
-        fu->get_reply()->read(&response, sizeof(response));
+        fu->get_reply()->read(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
         EXPECT_EQ(response.req_type, req_type);
     }
@@ -362,7 +362,7 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
         uint32_t req_size;
         uint32_t magic;
     } response;
-    fu->get_reply()->read(&response, sizeof(response));
+    fu->get_reply()->read(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
     EXPECT_EQ(response.req_size, payload_size);
 }
