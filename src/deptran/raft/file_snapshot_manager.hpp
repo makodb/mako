@@ -34,6 +34,19 @@
 namespace janus {
 namespace raft {
 
+inline std::string file_snapshot_path(const std::string& storage_path,
+                                      slotid_t index,
+                                      ballot_t term) {
+  return storage_path + "/snapshot_" + std::to_string(index) + "_" +
+         std::to_string(term) + ".snap";
+}
+
+inline std::string file_snapshot_temp_path(const std::string& storage_path,
+                                           slotid_t index,
+                                           ballot_t term) {
+  return file_snapshot_path(storage_path, index, term) + ".tmp";
+}
+
 /**
  * File-based snapshot writer.
  * Accumulates data in memory, writes to temp file, renames on finalize.
@@ -298,8 +311,10 @@ class FileSnapshotManager : public SnapshotManager {
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
       slotid_t last_index, ballot_t last_term) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string final_path = GetSnapshotPath(last_index, last_term);
-    std::string temp_path = GetTempPath(last_index, last_term);
+    std::string final_path = file_snapshot_path(config_.storage_path,
+                                                last_index, last_term);
+    std::string temp_path = file_snapshot_temp_path(config_.storage_path,
+                                                    last_index, last_term);
     return std::make_unique<FileSnapshotWriter>(final_path, temp_path,
                                                  last_index, last_term);
   }
@@ -325,8 +340,9 @@ class FileSnapshotManager : public SnapshotManager {
   std::unique_ptr<SnapshotReader> BeginLoad(
       const SnapshotMetadata& metadata) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string path = GetSnapshotPath(metadata.last_included_index,
-                                        metadata.last_included_term);
+    std::string path = file_snapshot_path(config_.storage_path,
+                                          metadata.last_included_index,
+                                          metadata.last_included_term);
     auto reader = std::make_unique<FileSnapshotReader>(path);
     if (!reader->IsValid()) {
       return nullptr;
@@ -344,8 +360,9 @@ class FileSnapshotManager : public SnapshotManager {
     }
 
     auto meta = latest.unwrap();
-    std::string path = GetSnapshotPath(meta.last_included_index,
-                                        meta.last_included_term);
+    std::string path = file_snapshot_path(config_.storage_path,
+                                          meta.last_included_index,
+                                          meta.last_included_term);
     FileSnapshotReader reader(path);
     if (!reader.IsValid()) {
       return false;
@@ -408,8 +425,9 @@ class FileSnapshotManager : public SnapshotManager {
 
     for (const auto& snap : snapshots) {
       if (snap.last_included_index < keep_after_index) {
-        std::string path = GetSnapshotPath(snap.last_included_index,
-                                            snap.last_included_term);
+        std::string path = file_snapshot_path(config_.storage_path,
+                                              snap.last_included_index,
+                                              snap.last_included_term);
         if (unlink(path.c_str()) == 0) {
           Log_info("[SNAPSHOT-MGR] Pruned snapshot: %s", path.c_str());
           deleted++;
@@ -426,8 +444,9 @@ class FileSnapshotManager : public SnapshotManager {
     size_t deleted = 0;
 
     for (const auto& snap : snapshots) {
-      std::string path = GetSnapshotPath(snap.last_included_index,
-                                          snap.last_included_term);
+      std::string path = file_snapshot_path(config_.storage_path,
+                                            snap.last_included_index,
+                                            snap.last_included_term);
       if (unlink(path.c_str()) == 0) {
         deleted++;
       }
@@ -460,17 +479,6 @@ class FileSnapshotManager : public SnapshotManager {
     return mkdir(config_.storage_path.c_str(), 0755) == 0;
   }
 
-  // @unsafe - Generates path
-  std::string GetSnapshotPath(slotid_t index, ballot_t term) const {
-    return config_.storage_path + "/snapshot_" + std::to_string(index) +
-           "_" + std::to_string(term) + ".snap";
-  }
-
-  // @unsafe - Generates temp path
-  std::string GetTempPath(slotid_t index, ballot_t term) const {
-    return GetSnapshotPath(index, term) + ".tmp";
-  }
-
   // @unsafe - Directory operations (must hold mutex). DIR* is closed before
   // return; only complete .snap files are returned, not .tmp files.
   std::vector<SnapshotMetadata> ListSnapshotsUnlocked() const {
@@ -493,7 +501,9 @@ class FileSnapshotManager : public SnapshotManager {
         meta.last_included_term = std::stoull(match[2].str());
 
         // Get file size
-        std::string path = config_.storage_path + "/" + name;
+        std::string path = file_snapshot_path(config_.storage_path,
+                                              meta.last_included_index,
+                                              meta.last_included_term);
         struct stat st;
         if (stat(path.c_str(), &st) == 0) {
           meta.size_bytes = st.st_size;
@@ -531,8 +541,9 @@ class FileSnapshotManager : public SnapshotManager {
 
     // Delete oldest snapshots beyond retention limit
     for (size_t i = config_.max_snapshots; i < snapshots.size(); i++) {
-      std::string path = GetSnapshotPath(snapshots[i].last_included_index,
-                                          snapshots[i].last_included_term);
+      std::string path = file_snapshot_path(config_.storage_path,
+                                            snapshots[i].last_included_index,
+                                            snapshots[i].last_included_term);
       if (unlink(path.c_str()) == 0) {
         Log_info("[SNAPSHOT-MGR] Retention policy: deleted %s", path.c_str());
       }
