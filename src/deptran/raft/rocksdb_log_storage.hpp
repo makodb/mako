@@ -234,7 +234,7 @@ public:
         std::string value = copy_slice(value_ptr, value_len);
         rocksdb_free(value_ptr);
 
-        LogEntry entry;
+        LogEntry entry = LogEntry::defaults();
         if (!deserialize_entry(value, &entry)) {  // @unsafe
             return rusty::None;
         }
@@ -324,7 +324,7 @@ public:
                 break;
             }
 
-            LogEntry entry;
+            LogEntry entry = LogEntry::defaults();
             std::string value = copy_slice(value_ptr, value_len);
             if (deserialize_entry(value, &entry)) {  // @unsafe
                 result.push_back(entry);

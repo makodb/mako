@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
@@ -48,121 +49,201 @@ using ballot_t = uint64_t;
  * - Raft: term, log index, command, committed flag
  * - Paxos: ballot, slot, accepted command, committed flag
  */
-// @safe - POD-like struct with Marshallable serialization
+struct LogEntry;
+
+inline LogEntry log_entry_defaults();
+inline LogEntry log_entry_with_slot_term(slotid_t slot, ballot_t term);
+inline LogEntry log_entry_with_command(slotid_t slot,
+                                       ballot_t term,
+                                       Command cmd,
+                                       bool commit);
+inline bool log_entry_less_than(const LogEntry& lhs, const LogEntry& rhs);
+inline bool log_entry_equals(const LogEntry& lhs, const LogEntry& rhs);
+inline void log_entry_save(const LogEntry& entry, BinaryWriteArchive& ar);
+inline void log_entry_load(LogEntry& entry, BinaryReadArchive& ar);
+
+#if RUSTYCPP_RUST
+pub struct LogEntry {
+    slot_id: u64,
+    term: u64,
+    max_ballot_seen: u64,
+    max_ballot_accepted: u64,
+    command: Command,
+    committed: bool,
+    is_no_op: bool,
+}
+
+impl LogEntry {
+    fn defaults() -> LogEntry {
+        log_entry_defaults()
+    }
+
+    fn with_slot_term(slot: u64, term: u64) -> LogEntry {
+        log_entry_with_slot_term(slot, term)
+    }
+
+    fn with_command(slot: u64, term: u64, cmd: Command, commit: bool) -> LogEntry {
+        log_entry_with_command(slot, term, cmd, commit)
+    }
+
+    fn save(&self, ar: &mut BinaryWriteArchive) {
+        log_entry_save(self, ar);
+    }
+
+    fn load(&mut self, ar: &mut BinaryReadArchive) {
+        log_entry_load(self, ar);
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=log_storage.log_entry version=1 rust_sha256=4f817e60d3bcd92f8a9f23b2760a0793a7bfcf2d1ff4c8c05e9395b3eb3b6225*/
+struct LogEntry;
+
 struct LogEntry {
-    slotid_t slot_id{0};              // Primary key (log index / slot)
-    ballot_t term{0};                 // Raft term or Paxos epoch
-    ballot_t max_ballot_seen{0};      // Highest ballot seen (Paxos)
-    ballot_t max_ballot_accepted{0};  // Highest accepted ballot (Paxos)
-    // the persistent log's
-    // polymorphic command field migrated from
-    // `shared_ptr<Marshallable>` to `janus::Command`
-    // (`SerializableEnvelope<MakoCommands>`).  Command's internal
-    // storage is still a `shared_ptr<Marshallable>` (callers crossing
-    // the boundary into APIs that still take
-    // `shared_ptr<Marshallable>` use `command.inner_marshallable()`),
-    // so wire format is byte-for-byte unchanged.  See
-    // `docs/dev/l10-unblock-plan.md` for the broader migration plan.
-    Command command{};                // The replicated command
-    bool committed{false};            // Whether entry is committed
-    bool is_no_op{false};             // No-op entry flag
+    uint64_t slot_id;
+    uint64_t term;
+    uint64_t max_ballot_seen;
+    uint64_t max_ballot_accepted;
+    Command command;
+    bool committed;
+    bool is_no_op;
 
-    // @safe - Default constructor
-    LogEntry() = default;
-
-    // @safe - Constructor with slot and term
-    LogEntry(slotid_t slot, ballot_t t)
-        : slot_id(slot), term(t) {}
-
-    // @safe - Full constructor.  `cmd` accepts any
-    // `shared_ptr<T>` for T inheriting Marshallable (via Command's
-    // templated ctor), so callers passing `shared_ptr<Marshallable>`
-    // / `shared_ptr<TestCommand>` continue to compile unchanged.
-    LogEntry(slotid_t slot, ballot_t t, Command cmd, bool commit = false)
-        : slot_id(slot), term(t), command(std::move(cmd)), committed(commit) {}
-
-    // @safe - Comparison for ordering
-    bool operator<(const LogEntry& other) const {
-        return slot_id < other.slot_id;
-    }
-
-    // @safe - Equality comparison
-    bool operator==(const LogEntry& other) const {
-        return slot_id == other.slot_id &&
-               term == other.term &&
-               max_ballot_seen == other.max_ballot_seen &&
-               max_ballot_accepted == other.max_ballot_accepted &&
-               committed == other.committed &&
-               is_no_op == other.is_no_op;
-        // Note: command comparison requires deep equality
-    }
-
-    /**
-     * Serialize the log entry to a `BinaryWriteArchive`.
-     * Format: slot_id, term, max_ballot_seen, max_ballot_accepted,
-     *         committed, is_no_op, has_command, [command]
-     * Note: bools are serialized as i8 since the wire format doesn't
-     * carry a native bool primitive.
-     *
-     * migrated from the legacy
-     * `Marshal& to_marshal(Marshal&) const` / `from_marshal` member
-     * pair to `save(BinaryWriteArchive&)` / `load(BinaryReadArchive&)`.
-     * Wire format byte-for-byte preserved (the new archive operators
-     * for primitives + the Phase 3f-prep MarshallDeputy archive op
-     * produce the same bytes as their legacy Marshal counterparts).
-     * The lone production callers in `rocksdb_log_storage.hpp` were
-     * updated; no other callers existed.
-     */
-    // @unsafe - delegates to BinaryWriteArchive primitive operators
-    void save(BinaryWriteArchive& ar) const {
-        ar << slot_id;
-        ar << term;
-        ar << max_ballot_seen;
-        ar << max_ballot_accepted;
-        ar << static_cast<i8>(committed ? 1 : 0);
-        ar << static_cast<i8>(is_no_op ? 1 : 0);
-
-        // drive the polymorphic command through Command's
-        // own archive operator instead of wrapping it in a temporary
-        // MarshallDeputy.  Wire format is identical (Command emits
-        // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
-        i8 has_command = command.has_value() ? 1 : 0;
-        ar << has_command;
-        if (has_command) {
-            ar << command;
-        }
-    }
-
-    /**
-     * Deserialize a log entry from a `BinaryReadArchive`.
-     * Required: archive's source must be a `MarshalSource` (the
-     * prep `operator>>(BinaryReadArchive&, MarshallDeputy&)`
-     * needs a backing `Marshal` to drain into the legacy decode path).
-     */
-    // @unsafe - delegates to BinaryReadArchive primitive operators
-    void load(BinaryReadArchive& ar) {
-        ar >> slot_id;
-        ar >> term;
-        ar >> max_ballot_seen;
-        ar >> max_ballot_accepted;
-
-        i8 committed_byte = 0;
-        ar >> committed_byte;
-        committed = (committed_byte != 0);
-
-        i8 is_no_op_byte = 0;
-        ar >> is_no_op_byte;
-        is_no_op = (is_no_op_byte != 0);
-
-        i8 has_command = 0;
-        ar >> has_command;
-        if (has_command) {
-            ar >> command;
-        } else {
-            command = Command{};
-        }
-    }
+    static LogEntry defaults();
+    static LogEntry with_slot_term(uint64_t slot, uint64_t term);
+    static LogEntry with_command(uint64_t slot, uint64_t term, Command cmd, bool commit);
+    void save(BinaryWriteArchive& ar) const;
+    void load(BinaryReadArchive& ar);
 };
+
+
+inline LogEntry LogEntry::defaults() {
+    return log_entry_defaults();
+}
+
+inline LogEntry LogEntry::with_slot_term(uint64_t slot, uint64_t term) {
+    return log_entry_with_slot_term(std::move(slot), std::move(term));
+}
+
+inline LogEntry LogEntry::with_command(uint64_t slot, uint64_t term, Command cmd, bool commit) {
+    return log_entry_with_command(std::move(slot), std::move(term), std::move(cmd), std::move(commit));
+}
+
+inline void LogEntry::save(BinaryWriteArchive& ar) const {
+    log_entry_save((*this), ar);
+}
+
+inline void LogEntry::load(BinaryReadArchive& ar) {
+    log_entry_load((*this), ar);
+}
+/*RUSTYCPP:GEN-END id=log_storage.log_entry*/
+
+inline LogEntry log_entry_defaults() {
+    LogEntry entry{};
+    entry.slot_id = 0;
+    entry.term = 0;
+    entry.max_ballot_seen = 0;
+    entry.max_ballot_accepted = 0;
+    entry.command = Command{};
+    entry.committed = false;
+    entry.is_no_op = false;
+    return entry;
+}
+
+inline LogEntry log_entry_with_slot_term(slotid_t slot, ballot_t term) {
+    LogEntry entry = LogEntry::defaults();
+    entry.slot_id = slot;
+    entry.term = term;
+    return entry;
+}
+
+inline LogEntry log_entry_with_command(slotid_t slot,
+                                       ballot_t term,
+                                       Command cmd,
+                                       bool commit) {
+    LogEntry entry = LogEntry::with_slot_term(slot, term);
+    entry.command = std::move(cmd);
+    entry.committed = commit;
+    return entry;
+}
+
+inline bool log_entry_less_than(const LogEntry& lhs, const LogEntry& rhs) {
+    return lhs.slot_id < rhs.slot_id;
+}
+
+inline bool log_entry_equals(const LogEntry& lhs, const LogEntry& rhs) {
+    return lhs.slot_id == rhs.slot_id &&
+           lhs.term == rhs.term &&
+           lhs.max_ballot_seen == rhs.max_ballot_seen &&
+           lhs.max_ballot_accepted == rhs.max_ballot_accepted &&
+           lhs.committed == rhs.committed &&
+           lhs.is_no_op == rhs.is_no_op;
+    // Note: command comparison requires deep equality
+}
+
+inline bool operator<(const LogEntry& lhs, const LogEntry& rhs) {
+    return log_entry_less_than(lhs, rhs);
+}
+
+inline bool operator==(const LogEntry& lhs, const LogEntry& rhs) {
+    return log_entry_equals(lhs, rhs);
+}
+
+/**
+ * Serialize the log entry to a `BinaryWriteArchive`.
+ * Format: slot_id, term, max_ballot_seen, max_ballot_accepted,
+ *         committed, is_no_op, has_command, [command]
+ * Note: bools are serialized as i8 since the wire format doesn't
+ * carry a native bool primitive.
+ *
+ * This remains hand-written C++ after the struct-shape DSL migration
+ * so the persistent storage format stays byte-for-byte unchanged.
+ */
+// @unsafe - delegates to BinaryWriteArchive primitive operators
+inline void log_entry_save(const LogEntry& entry, BinaryWriteArchive& ar) {
+    ar << entry.slot_id;
+    ar << entry.term;
+    ar << entry.max_ballot_seen;
+    ar << entry.max_ballot_accepted;
+    ar << static_cast<i8>(entry.committed ? 1 : 0);
+    ar << static_cast<i8>(entry.is_no_op ? 1 : 0);
+
+    // Drive the polymorphic command through Command's own archive operator.
+    // Wire format is identical (Command emits `[v32 kind][payload]`).
+    i8 has_command = entry.command.has_value() ? 1 : 0;
+    ar << has_command;
+    if (has_command) {
+        ar << entry.command;
+    }
+}
+
+/**
+ * Deserialize a log entry from a `BinaryReadArchive`.
+ * Required: archive's source must be a `MarshalSource` (the
+ * prep `operator>>(BinaryReadArchive&, MarshallDeputy&)`
+ * needs a backing `Marshal` to drain into the legacy decode path).
+ */
+// @unsafe - delegates to BinaryReadArchive primitive operators
+inline void log_entry_load(LogEntry& entry, BinaryReadArchive& ar) {
+    ar >> entry.slot_id;
+    ar >> entry.term;
+    ar >> entry.max_ballot_seen;
+    ar >> entry.max_ballot_accepted;
+
+    i8 committed_byte = 0;
+    ar >> committed_byte;
+    entry.committed = (committed_byte != 0);
+
+    i8 is_no_op_byte = 0;
+    ar >> is_no_op_byte;
+    entry.is_no_op = (is_no_op_byte != 0);
+
+    i8 has_command = 0;
+    ar >> has_command;
+    if (has_command) {
+        ar >> entry.command;
+    } else {
+        entry.command = Command{};
+    }
+}
 
 /**
  * Abstract interface for log storage backends.

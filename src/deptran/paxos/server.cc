@@ -520,7 +520,7 @@ void PaxosServer::PersistLogEntry(slotid_t slot_id, const PaxosData& data) {
     return;
   }
 
-  janus::raft::LogEntry entry;
+  janus::raft::LogEntry entry = janus::raft::LogEntry::defaults();
   entry.slot_id = slot_id;
   entry.term = cur_epoch;
   entry.max_ballot_seen = data.max_ballot_seen_;
@@ -553,7 +553,7 @@ void PaxosServer::PersistLogEntries(
   log_entries.reserve(entries.size());
 
   for (const auto& [slot_id, data] : entries) {
-    janus::raft::LogEntry entry;
+    janus::raft::LogEntry entry = janus::raft::LogEntry::defaults();
     entry.slot_id = slot_id;
     entry.term = cur_epoch;
     entry.max_ballot_seen = data->max_ballot_seen_;

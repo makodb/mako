@@ -232,7 +232,7 @@ void RaftServer::PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& d
     return;
   }
 
-  janus::raft::LogEntry entry(slot_id, data.term);
+  janus::raft::LogEntry entry = janus::raft::LogEntry::with_slot_term(slot_id, data.term);
   entry.command = data.log_;
   entry.max_ballot_seen = data.max_ballot_seen_;
   entry.max_ballot_accepted = data.max_ballot_accepted_;
@@ -255,7 +255,7 @@ void RaftServer::PersistLogEntriesToLogStorage(const std::vector<std::pair<sloti
   log_entries.reserve(entries.size());
 
   for (const auto& [slot_id, data] : entries) {
-    janus::raft::LogEntry entry(slot_id, data->term);
+    janus::raft::LogEntry entry = janus::raft::LogEntry::with_slot_term(slot_id, data->term);
     entry.command = data->log_;
     entry.max_ballot_seen = data->max_ballot_seen_;
     entry.max_ballot_accepted = data->max_ballot_accepted_;
