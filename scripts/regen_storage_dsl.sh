@@ -53,7 +53,7 @@ FILES=(
   src/cluster/config_watcher.h
   # ShardingPolicyBuilder: DSL-friendly reshape (value struct +
   # Result-based build; fluent TablePolicyBuilder deleted).
-  src/cluster/sharding_policy_builder.h
+  #src/cluster/sharding_policy_builder.h
   # Shard: stub in-memory KV shard (stand-in for a masstree shard) — the
   # data holder the ShardManager migrates on KillShard.
   src/cluster/shard.h
@@ -76,6 +76,12 @@ FILES=(
   # Raft in-memory snapshot helper: value-style metadata constructor only;
   # virtual reader/writer/manager classes stay hand-C++.
   src/deptran/raft/memory_snapshot_manager.hpp
+  # Raft file snapshot path helpers only; file I/O and virtual manager
+  # implementation stay hand-C++.
+  src/deptran/raft/file_snapshot_manager.hpp
+  # Raft recovery config value type only; RecoveryManager filesystem/storage
+  # orchestration stays hand-C++.
+  src/deptran/raft/recovery_manager.hpp
 )
 
 post_pass() {
