@@ -35,7 +35,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
                                  const janus::Command& cmd) {
   //Log_info("invoke BroadcastSuggest, slot_id:%d", slot_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<MenciusSuggestQuorumEvent>(n, n/2+1);
 //  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n);
 
   auto src_coroid = e->get_fiber_id();
