@@ -14,9 +14,11 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <rusty/cell.hpp>
 
@@ -40,37 +42,81 @@ enum class RecoveryMode {
 /**
  * Configuration for recovery behavior.
  */
-// @safe - POD struct
-struct RecoveryConfig {
-  std::string storage_path;              // Path for RocksDB storage
-  bool force_fresh_start{false};         // Force fresh start even if data exists
-  uint32_t recovery_timeout_ms{30000};   // Timeout for recovery operations
-  bool verify_on_recovery{true};         // Verify data integrity after recovery
-  bool clear_on_forced_fresh{true};      // Clear storage when forcing fresh start
+struct RecoveryConfig;
 
-  // @unsafe - Returns struct by value
-  static RecoveryConfig defaults() {
-    return RecoveryConfig{};  // @unsafe
-  }
+inline RecoveryConfig recovery_config_defaults();
+inline RecoveryConfig recovery_config_for_replica(uint32_t partition_id,
+                                                  uint32_t locale_id);
 
-  // @unsafe - Uses getenv and string operations
-  static RecoveryConfig for_replica(uint32_t partition_id, uint32_t locale_id) {
-    RecoveryConfig config;
-    // Use username prefix to avoid conflicts between users
-    std::string username;
-    // @unsafe { getenv is not borrow-checked }
-    auto user = std::getenv("USER");  // @unsafe
-    if (user) {
-      username = user;  // @unsafe
-    } else {
-      username = "unknown";  // @unsafe
+#if RUSTYCPP_RUST
+pub struct RecoveryConfig {
+    storage_path: std::string,
+    force_fresh_start: bool,
+    recovery_timeout_ms: u32,
+    verify_on_recovery: bool,
+    clear_on_forced_fresh: bool,
+}
+
+impl RecoveryConfig {
+    fn defaults() -> RecoveryConfig {
+        recovery_config_defaults()
     }
-    config.storage_path = "/tmp/" + username + "_mako_log_shard" +
-                         std::to_string(partition_id) + "_replica" +
-                         std::to_string(locale_id);
-    return config;  // @unsafe
-  }
+
+    fn for_replica(partition_id: u32, locale_id: u32) -> RecoveryConfig {
+        recovery_config_for_replica(partition_id, locale_id)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.config version=1 rust_sha256=cf73357af5c6b57f725c90d16cccaebcb6648a7ecf0d0a5ecc3ee46b8ad448e0*/
+struct RecoveryConfig;
+
+struct RecoveryConfig {
+    std::string storage_path;
+    bool force_fresh_start;
+    uint32_t recovery_timeout_ms;
+    bool verify_on_recovery;
+    bool clear_on_forced_fresh;
+
+    static RecoveryConfig defaults();
+    static RecoveryConfig for_replica(uint32_t partition_id, uint32_t locale_id);
 };
+
+
+inline RecoveryConfig RecoveryConfig::defaults() {
+    return recovery_config_defaults();
+}
+
+inline RecoveryConfig RecoveryConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
+    return recovery_config_for_replica(std::move(partition_id), std::move(locale_id));
+}
+/*RUSTYCPP:GEN-END id=recovery_manager.config*/
+
+inline RecoveryConfig recovery_config_defaults() {
+  RecoveryConfig config{};
+  config.storage_path = "";
+  config.force_fresh_start = false;
+  config.recovery_timeout_ms = 30000;
+  config.verify_on_recovery = true;
+  config.clear_on_forced_fresh = true;
+  return config;
+}
+
+inline RecoveryConfig recovery_config_for_replica(uint32_t partition_id,
+                                                  uint32_t locale_id) {
+  RecoveryConfig config = RecoveryConfig::defaults();
+  // Use username prefix to avoid conflicts between users.
+  std::string username;
+  auto user = std::getenv("USER");  // @unsafe
+  if (user) {
+    username = user;
+  } else {
+    username = "unknown";
+  }
+  config.storage_path = "/tmp/" + username + "_mako_log_shard" +
+                       std::to_string(partition_id) + "_replica" +
+                       std::to_string(locale_id);
+  return config;
+}
 
 /**
  * Results from a recovery operation.

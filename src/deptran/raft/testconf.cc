@@ -690,7 +690,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
              svr, frame->svr_->async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
-    raft::RecoveryConfig config;
+    raft::RecoveryConfig config = raft::RecoveryConfig::defaults();
     std::string base_path = "/tmp";
     config.storage_path = base_path + "/raft_" + std::to_string(svr) +
                          "_partition_" + std::to_string(site_info->partition_id_);

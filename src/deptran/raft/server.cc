@@ -927,7 +927,7 @@ void RaftServer::Setup() {
              site_id_, partition_id_, async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
-    raft::RecoveryConfig config;
+    raft::RecoveryConfig config = raft::RecoveryConfig::defaults();
     std::string base_path = "/tmp";
     const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
     if (custom_path && custom_path[0] != '\0') {
