@@ -26,26 +26,43 @@
 #include <mutex>
 #include <regex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "snapshot_format.hpp"
 #include "snapshot_manager.hpp"
+#include "rusty/slice.hpp"
 
 namespace janus {
 namespace raft {
 
-inline std::string file_snapshot_path(const std::string& storage_path,
-                                      slotid_t index,
-                                      ballot_t term) {
-  return storage_path + "/snapshot_" + std::to_string(index) + "_" +
-         std::to_string(term) + ".snap";
+#if RUSTYCPP_RUST
+pub fn file_snapshot_path(storage_path: &std::string,
+                          index: u64,
+                          term: u64) -> std::string {
+    storage_path + std::string("/snapshot_") + std::to_string(index) +
+        std::string("_") + std::to_string(term) + std::string(".snap")
 }
 
-inline std::string file_snapshot_temp_path(const std::string& storage_path,
-                                           slotid_t index,
-                                           ballot_t term) {
-  return file_snapshot_path(storage_path, index, term) + ".tmp";
+pub fn file_snapshot_temp_path(storage_path: &std::string,
+                               index: u64,
+                               term: u64) -> std::string {
+    storage_path + std::string("/snapshot_") + std::to_string(index) +
+        std::string("_") + std::to_string(term) + std::string(".snap.tmp")
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.paths version=1 rust_sha256=3de54b7f5a6178dee5430ee423f133d5a2bdc7fcc82a29f5aab899834c8c75ae*/
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
+
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+    return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap");
+}
+
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+    return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap.tmp");
+}
+/*RUSTYCPP:GEN-END id=file_snapshot_manager.paths*/
 
 /**
  * File-based snapshot writer.
