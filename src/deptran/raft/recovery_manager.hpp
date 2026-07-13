@@ -121,32 +121,93 @@ inline RecoveryConfig recovery_config_for_replica(uint32_t partition_id,
 /**
  * Results from a recovery operation.
  */
-// @safe - POD struct
+struct RecoveryResult;
+
+inline RecoveryResult recovery_result_defaults();
+inline RecoveryResult recovery_result_success_fresh();
+inline RecoveryResult recovery_result_failure(const std::string& error);
+
+#if RUSTYCPP_RUST
+pub struct RecoveryResult {
+    mode: RecoveryMode,
+    success: bool,
+    error_message: std::string,
+    recovered_entries: u64,
+    recovered_term: u64,
+    recovered_epoch: u64,
+    recovery_time_ms: u64,
+}
+
+impl RecoveryResult {
+    fn defaults() -> RecoveryResult {
+        recovery_result_defaults()
+    }
+
+    fn success_fresh() -> RecoveryResult {
+        recovery_result_success_fresh()
+    }
+
+    fn failure(error: &std::string) -> RecoveryResult {
+        recovery_result_failure(error)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.result version=1 rust_sha256=23802ad907328337a65459c9cc51e48b006d4168a69feb16971aa87d1fcad2e1*/
+struct RecoveryResult;
+
 struct RecoveryResult {
-  RecoveryMode mode{RecoveryMode::FRESH_START};
-  bool success{false};
-  std::string error_message;
-  uint64_t recovered_entries{0};
-  uint64_t recovered_term{0};      // For Raft: currentTerm
-  uint64_t recovered_epoch{0};     // For Paxos: cur_epoch
-  uint64_t recovery_time_ms{0};
+    RecoveryMode mode;
+    bool success;
+    std::string error_message;
+    uint64_t recovered_entries;
+    uint64_t recovered_term;
+    uint64_t recovered_epoch;
+    uint64_t recovery_time_ms;
 
-  // @unsafe - constructs RecoveryResult with std::string member
-  static RecoveryResult success_fresh() {
-    RecoveryResult result; // @unsafe { std::string default construction }
-    result.mode = RecoveryMode::FRESH_START;
-    result.success = true;
-    return result;
-  }
-
-  // @unsafe - String assignment
-  static RecoveryResult failure(const std::string& error) {
-    RecoveryResult result;
-    result.success = false;
-    result.error_message = error;  // @unsafe
-    return result;  // @unsafe
-  }
+    static RecoveryResult defaults();
+    static RecoveryResult success_fresh();
+    static RecoveryResult failure(const std::string& error);
 };
+
+
+inline RecoveryResult RecoveryResult::defaults() {
+    return recovery_result_defaults();
+}
+
+inline RecoveryResult RecoveryResult::success_fresh() {
+    return recovery_result_success_fresh();
+}
+
+inline RecoveryResult RecoveryResult::failure(const std::string& error) {
+    return recovery_result_failure(error);
+}
+/*RUSTYCPP:GEN-END id=recovery_manager.result*/
+
+inline RecoveryResult recovery_result_defaults() {
+  RecoveryResult result{};
+  result.mode = RecoveryMode::FRESH_START;
+  result.success = false;
+  result.error_message = "";
+  result.recovered_entries = 0;
+  result.recovered_term = 0;
+  result.recovered_epoch = 0;
+  result.recovery_time_ms = 0;
+  return result;
+}
+
+inline RecoveryResult recovery_result_success_fresh() {
+  RecoveryResult result = RecoveryResult::defaults();
+  result.mode = RecoveryMode::FRESH_START;
+  result.success = true;
+  return result;
+}
+
+inline RecoveryResult recovery_result_failure(const std::string& error) {
+  RecoveryResult result = RecoveryResult::defaults();
+  result.success = false;
+  result.error_message = error;
+  return result;
+}
 
 /**
  * Recovery Manager coordinates the recovery sequence for Raft/Paxos servers.
@@ -260,7 +321,7 @@ class RecoveryManager {
    */
   template <typename SetStorageFn, typename RecoverFn, typename GetStatsFn>
   RecoveryResult recover(SetStorageFn set_storage, RecoverFn recover, GetStatsFn get_stats) {
-    RecoveryResult result;
+    RecoveryResult result = RecoveryResult::defaults();
     result.mode = detected_mode_.get();
 
     auto start_time = std::chrono::steady_clock::now();
