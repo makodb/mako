@@ -28,6 +28,16 @@
 namespace janus {
 namespace raft {
 
+inline SnapshotMetadata memory_snapshot_metadata(slotid_t last_index,
+                                                 ballot_t last_term,
+                                                 size_t size) {
+  SnapshotMetadata meta{};
+  meta.last_included_index = last_index;
+  meta.last_included_term = last_term;
+  meta.size_bytes = size;
+  return meta;
+}
+
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
   // @unsafe - borrows MemorySnapshotManager internals. The writer must not
@@ -56,9 +66,8 @@ class MemorySnapshotWriter : public SnapshotWriter {
   bool Finalize() override {
     std::lock_guard<std::mutex> lk(*mtx_);
     *dest_payload_ = std::move(buffer_);
-    dest_meta_->last_included_index = last_index_;
-    dest_meta_->last_included_term  = last_term_;
-    dest_meta_->size_bytes          = dest_payload_->size();
+    *dest_meta_ = memory_snapshot_metadata(last_index_, last_term_,
+                                           dest_payload_->size());
     *has_snapshot_ = true;
     finalized_ = true;
     return true;
@@ -135,9 +144,7 @@ class MemorySnapshotManager : public SnapshotManager {
                     const char* data, size_t size) override {
     std::lock_guard<std::mutex> lk(mtx_);
     payload_.assign(data, size);
-    meta_.last_included_index = last_index;
-    meta_.last_included_term  = last_term;
-    meta_.size_bytes          = size;
+    meta_ = memory_snapshot_metadata(last_index, last_term, size);
     has_snapshot_             = true;
     return true;
   }
