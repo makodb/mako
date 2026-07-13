@@ -221,7 +221,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
   int n = 0;
   // @unsafe
   { n = Config::GetConfig()->GetPartitionSize(par_id); }
-  auto e = Reactor::create_sp_event<RaftVoteQuorumEvent>(n, n/2);
+  auto e = std::make_shared<RaftVoteQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {

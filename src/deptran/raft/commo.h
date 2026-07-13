@@ -40,14 +40,14 @@ enum class NotifyRestartStatus {
 };
 
 // @unsafe - inherits from non-@interface base QuorumEvent
-class RaftVoteQuorumEvent: public QuorumEvent {
+class RaftVoteQuorumEvent: public QuorumEventWrapper {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
   std::set<siteid_t> spec_voters_;
   std::mutex voters_mtx_;
 
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   // @safe
   bool HasAcceptedValue() {
     return false;
@@ -65,9 +65,9 @@ class RaftVoteQuorumEvent: public QuorumEvent {
       }
     } else {
       vote_no();
-      if(term > highest_term_)
+      if(term > q().highest_term_)
       {
-        highest_term_ = term ;
+        q().highest_term_ = term ;
       }
     }
   }
@@ -79,7 +79,7 @@ class RaftVoteQuorumEvent: public QuorumEvent {
 
   // @safe
   int64_t Term() {
-    return highest_term_;
+    return q().highest_term_;
   }
 
   // @unsafe - Get the set of sites that voted yes (memory votes)
