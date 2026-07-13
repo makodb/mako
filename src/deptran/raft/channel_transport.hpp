@@ -88,34 +88,65 @@ namespace raft {
 // Fault-injection configuration
 // ---------------------------------------------------------------------------
 
+struct ChannelFaults;
+
+inline bool channel_faults_is_dropped(const ChannelFaults& faults,
+                                      siteid_t from,
+                                      siteid_t to);
+inline int channel_faults_find_partition(const ChannelFaults& faults,
+                                         siteid_t site);
+
+#if RUSTYCPP_RUST
+pub struct ChannelFaults {
+    dropped: std::vector<std::pair<u16, u16>>,
+    partitions: std::vector<std::vector<u16>>,
+}
+
+impl ChannelFaults {
+    fn is_dropped(&self, from: u16, to: u16) -> bool {
+        channel_faults_is_dropped(self, from, to)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.faults version=1 rust_sha256=d72e873ce88c41732e9b246ee3a1e5ca0e550d9d286e4405f6c45e41a1faba83*/
+struct ChannelFaults;
+
 struct ChannelFaults {
-  std::vector<std::pair<siteid_t, siteid_t>> dropped;
-  std::vector<std::vector<siteid_t>> partitions;
+    std::vector<std::pair<uint16_t, uint16_t>> dropped;
+    std::vector<std::vector<uint16_t>> partitions;
 
-  // @safe
-  bool is_dropped(siteid_t from, siteid_t to) const {
-    for (auto& p : dropped) {
-      if (p.first == from && p.second == to) return true;
-    }
-    if (!partitions.empty()) {
-      auto pf = find_partition(from);
-      auto pt = find_partition(to);
-      if (pf != pt) return true;
-    }
-    return false;
-  }
-
- private:
-  // @safe
-  int find_partition(siteid_t s) const {
-    for (size_t i = 0; i < partitions.size(); ++i) {
-      for (auto x : partitions[i]) {
-        if (x == s) return static_cast<int>(i);
-      }
-    }
-    return -1;
-  }
+    bool is_dropped(uint16_t from, uint16_t to) const;
 };
+
+
+inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
+    return channel_faults_is_dropped((*this), std::move(from), std::move(to));
+}
+/*RUSTYCPP:GEN-END id=channel_transport.faults*/
+
+inline bool channel_faults_is_dropped(const ChannelFaults& faults,
+                                      siteid_t from,
+                                      siteid_t to) {
+  for (auto& p : faults.dropped) {
+    if (p.first == from && p.second == to) return true;
+  }
+  if (!faults.partitions.empty()) {
+    auto pf = channel_faults_find_partition(faults, from);
+    auto pt = channel_faults_find_partition(faults, to);
+    if (pf != pt) return true;
+  }
+  return false;
+}
+
+inline int channel_faults_find_partition(const ChannelFaults& faults,
+                                         siteid_t site) {
+  for (size_t i = 0; i < faults.partitions.size(); ++i) {
+    for (auto x : faults.partitions[i]) {
+      if (x == site) return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
 
 // ---------------------------------------------------------------------------
 // ChannelSwitchboard
