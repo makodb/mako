@@ -73,6 +73,9 @@ FILES=(
   # Raft snapshot metadata: value struct + thin methods delegated to C++
   # helpers; reader/writer/manager virtual interfaces stay hand-C++ for now.
   src/deptran/raft/snapshot_manager.hpp
+  # Raft in-memory snapshot helper: value-style metadata constructor only;
+  # virtual reader/writer/manager classes stay hand-C++.
+  src/deptran/raft/memory_snapshot_manager.hpp
 )
 
 post_pass() {
@@ -92,13 +95,15 @@ import re, sys
 p = sys.argv[1]
 lines = open(p).read().split('\n')
 out, in_gen = [], False
-defpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+is_header = not p.endswith(('.cc', '.cpp', '.cxx'))
+methodpat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\w+::~?\w+\s*\(')
+freepat = re.compile(r'^(?!inline\b|class\b|struct\b|template\b|namespace\b|/\*|//|\})\S.*\s+\w+\s*\(')
 for ln in lines:
     if ln.startswith('/*RUSTYCPP:GEN-BEGIN'):
         in_gen = True
     elif ln.startswith('/*RUSTYCPP:GEN-END'):
         in_gen = False
-    elif in_gen and defpat.match(ln):
+    elif in_gen and (methodpat.match(ln) or (is_header and freepat.match(ln))):
         ln = 'inline ' + ln
     out.append(ln)
 open(p, 'w').write('\n'.join(out))

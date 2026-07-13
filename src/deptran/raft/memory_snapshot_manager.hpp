@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "snapshot_manager.hpp"
@@ -28,15 +29,24 @@
 namespace janus {
 namespace raft {
 
-inline SnapshotMetadata memory_snapshot_metadata(slotid_t last_index,
-                                                 ballot_t last_term,
-                                                 size_t size) {
-  SnapshotMetadata meta{};
-  meta.last_included_index = last_index;
-  meta.last_included_term = last_term;
-  meta.size_bytes = size;
-  return meta;
+#if RUSTYCPP_RUST
+pub fn memory_snapshot_metadata(last_index: slotid_t,
+                                last_term: ballot_t,
+                                size: usize) -> SnapshotMetadata {
+    SnapshotMetadata {
+        last_included_index: last_index,
+        last_included_term: last_term,
+        timestamp_ms: 0,
+        size_bytes: size,
+        checksum: std::string(),
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.metadata version=1 rust_sha256=82488d064a477f8ab7adc9829e08a475c4a3801aeecb8cbf717835428270d19b*/
+inline SnapshotMetadata memory_snapshot_metadata(slotid_t last_index, ballot_t last_term, size_t size) {
+    return SnapshotMetadata{.last_included_index = std::move(last_index), .last_included_term = std::move(last_term), .timestamp_ms = 0, .size_bytes = std::move(size), .checksum = std::string()};
+}
+/*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
 
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
