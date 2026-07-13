@@ -16,6 +16,9 @@ import rrr.debugging;  // for verify
 // @safe
 export namespace rrr {
 
+#ifdef __APPLE__
+using pthread_spinlock_t = pthread_mutex_t;
+#endif
 
 // The Pthread_* wrappers below pass through a raw pointer (provided
 // by the caller) to a libc pthread_* function and `verify()` the
@@ -26,25 +29,42 @@ export namespace rrr {
 // @safe
 inline void Pthread_spin_init(pthread_spinlock_t* lock, int pshared) {
     // @unsafe { libc pthread_spin_init }
+#ifdef __APPLE__
+    (void) pshared;
+    { verify(pthread_mutex_init(lock, nullptr) == 0); }
+#else
     { verify(pthread_spin_init(lock, pshared) == 0); }
+#endif
 }
 
 // @safe
 inline void Pthread_spin_lock(pthread_spinlock_t* lock) {
     // @unsafe { libc pthread_spin_lock }
+#ifdef __APPLE__
+    { verify(pthread_mutex_lock(lock) == 0); }
+#else
     { verify(pthread_spin_lock(lock) == 0); }
+#endif
 }
 
 // @safe
 inline void Pthread_spin_unlock(pthread_spinlock_t* lock) {
     // @unsafe { libc pthread_spin_unlock }
+#ifdef __APPLE__
+    { verify(pthread_mutex_unlock(lock) == 0); }
+#else
     { verify(pthread_spin_unlock(lock) == 0); }
+#endif
 }
 
 // @safe
 inline void Pthread_spin_destroy(pthread_spinlock_t* lock) {
     // @unsafe { libc pthread_spin_destroy }
+#ifdef __APPLE__
+    { verify(pthread_mutex_destroy(lock) == 0); }
+#else
     { verify(pthread_spin_destroy(lock) == 0); }
+#endif
 }
 
 // @safe
