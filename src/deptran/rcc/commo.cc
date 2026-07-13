@@ -103,8 +103,8 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
   req.rank = rank;
   auto fu_result = proxy->async_RccInquire(req, fuattr);
   // Arc auto-released
-//  ev->wait(60*1000*1000);
-//  verify(ev->status_ != Event::TIMEOUT);
+//  ev->wait_timeout(60*1000*1000);
+//  verify(ev->status_ != EventStatus::TIMEOUT);
   ev->wait();
   return ret;
 }

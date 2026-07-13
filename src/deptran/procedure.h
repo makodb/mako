@@ -63,7 +63,7 @@ class TxWorkspace {
 
   Value& WaitAt(int32_t k) {
     auto e = Reactor::create_sp_event<Event>();
-    e->wait([this, k](int x)->bool{
+    e->wait_pred([this, k](int x)->bool{
       auto it = this->values_->find(k);
       return (it != this->values_->end());
     });

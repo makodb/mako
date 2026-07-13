@@ -162,6 +162,14 @@ class Event {
     wait();
   }
 
+  // Composition-flattening transition names (S2): timed waits and
+  // predicate waits are being renamed at call sites so the flattened
+  // per-kind structs can carry single-arity, non-overloaded methods
+  // (the inline-Rust DSL has no overloads or default args). These
+  // delegate to the legacy overload set for now.
+  void wait_timeout(uint64_t timeout) { wait(timeout); }
+  void wait_pred(rusty::Function<bool(int)> f) { wait(std::move(f)); }
+
   virtual void log(){return;}
   virtual uint64_t get_fiber_id();
   void record_place(const char* file, int line);
@@ -186,6 +194,13 @@ class Event {
 // protected:
   Event();
 };
+
+// Composition-flattening transition name (S2): callers qualify the
+// status enumerators as `EventStatus::X` instead of `Event::X`, so the
+// spelling survives the flip that hoists the enum out of the class.
+// (C++11 permits Enum::Enumerator qualification, so this alias makes
+// `EventStatus::TIMEOUT` valid against the still-nested enum today.)
+using EventStatus = Event::EventStatus;
 
 template <class Type>
 class BoxEvent : public Event {
@@ -415,7 +430,7 @@ class WaitAll : public Event {
       if (!e) {
         return false;
       }
-      if (!(e->is_ready() || e->status_.get() == Event::DONE)) {
+      if (!(e->is_ready() || e->status_.get() == EventStatus::DONE)) {
         return false;
       }
     }
@@ -1673,7 +1688,7 @@ int shared_int_event_set(SharedIntEvent& self, const int& v) {
   auto ret = self.value_;
   self.value_ = v;
   for (auto& ev : self.events_) {
-    if (ev->status_.get() <= Event::WAIT) {
+    if (ev->status_.get() <= EventStatus::WAIT) {
       if (ev->target_ <= v) {
         ev->set(v);
       }
@@ -1695,9 +1710,9 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
   ev->target_ = x;
   self.events_.push(ev);
   ev->wait(timeout);
-  // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
+  // verify(ev->status_.get() != EventStatus::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
-  bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
+  bool if_timeout = (ev->status_.get() == EventStatus::TIMEOUT);
   auto* ev_ptr = ev.get();
   self.events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
       [ev_ptr](const std::shared_ptr<IntEvent>& item) {
@@ -1715,7 +1730,7 @@ void shared_int_event_wait(SharedIntEvent& self, EventTestFn f) {
   ev->state_.test_ = std::move(f);
   self.events_.push(ev);
 //  ev->wait(1000*1000*1000);
-//  verify(ev->status_ != Event::TIMEOUT);
+//  verify(ev->status_ != EventStatus::TIMEOUT);
   ev->wait();
 }
 
@@ -2304,14 +2319,14 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     auto& sp = (*guard)[i];
     Event& event = *sp;
     auto status = event.status_.get();
-    if (status == Event::WAIT) {
+    if (status == EventStatus::WAIT) {
       const auto& wakeup_time = event.state_.wakeup_time_;
       verify(wakeup_time > 0);
       if (time_now >= wakeup_time) {
         if (event.is_ready()) {
-          event.status_.set(Event::READY);
+          event.status_.set(EventStatus::READY);
         } else {
-          event.status_.set(Event::TIMEOUT);
+          event.status_.set(EventStatus::TIMEOUT);
         }
       }
     }
@@ -2323,7 +2338,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
         [](const std::shared_ptr<Event>& sp) {
           auto status = sp->status_.get();
-          return status == Event::READY || status == Event::TIMEOUT;
+          return status == EventStatus::READY || status == EventStatus::TIMEOUT;
         }));
     ready_events.append(std::move(timed_out));
   }
@@ -2333,7 +2348,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     guard->retain(
       rusty::Function<bool(const std::shared_ptr<Event>&)>(
         [](const std::shared_ptr<Event>& sp) {
-          return sp->status_.get() != Event::DONE;
+          return sp->status_.get() != EventStatus::DONE;
         }));
   }
 }
@@ -2384,7 +2399,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           auto ready_from_waiting = waiting_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
               [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == Event::READY;
+                return ev->status_.get() == EventStatus::READY;
               }));
           if (!ready_from_waiting.is_empty()) {
             ready_events.append(std::move(ready_from_waiting));
@@ -2396,7 +2411,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           waiting_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
               [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != Event::DONE;
+                return ev->status_.get() != EventStatus::DONE;
               }));
         }
       }
@@ -2411,7 +2426,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           auto ready_from_composite = composite_guard->extract_if(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
               [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == Event::READY;
+                return ev->status_.get() == EventStatus::READY;
               }));
           if (!ready_from_composite.is_empty()) {
             ready_events.append(std::move(ready_from_composite));
@@ -2422,7 +2437,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           composite_guard->retain(
             rusty::Function<bool(const std::shared_ptr<Event>&)>(
               [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != Event::DONE;
+                return ev->status_.get() != EventStatus::DONE;
               }));
         }
       }
@@ -2443,7 +2458,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       {
         for (size_t i = 0; i < ready_events.len(); ++i) {
           auto& ev = ready_events[i];
-          if (ev->status_.get() == Event::DONE) {
+          if (ev->status_.get() == EventStatus::DONE) {
             continue;
           }
           auto option_fiber = ev->state_.wp_fiber_.upgrade();
@@ -2455,10 +2470,10 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             continue;
           }
           verify(fiber->status_.get() == Fiber::PAUSED);
-          if (ev->status_.get() == Event::READY) {
-            ev->status_.set(Event::DONE);
+          if (ev->status_.get() == EventStatus::READY) {
+            ev->status_.set(EventStatus::DONE);
           } else {
-            verify(ev->status_.get() == Event::TIMEOUT);
+            verify(ev->status_.get() == EventStatus::TIMEOUT);
           }
           continue_fiber(fiber);
         }
@@ -3218,7 +3233,7 @@ void QuorumEvent::finalize(
      avoid accesing the quorum event object or its members after this line */
 
     // didn't receive all RPC replies
-    if (final_ev->status_.get() == Event::TIMEOUT) {
+    if (final_ev->status_.get() == EventStatus::TIMEOUT) {
       // Log_info("finalized timeout");
       ret = finalize_func(dangling_rpc);
     }
@@ -3239,7 +3254,7 @@ void QuorumEvent::vote_yes() {
   test();
   vec_timestamp_.push(Time::now(true) - begin_timestamp_);
 
-  if (finalize_event_->status_.get() != Event::TIMEOUT)
+  if (finalize_event_->status_.get() != EventStatus::TIMEOUT)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
@@ -3247,7 +3262,7 @@ void QuorumEvent::vote_no() {
   n_voted_no_++;
   test();
 
-  if (finalize_event_->status_.get() != Event::TIMEOUT)
+  if (finalize_event_->status_.get() != EventStatus::TIMEOUT)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 

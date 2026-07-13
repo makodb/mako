@@ -71,7 +71,7 @@ import std;
 //   rrr::IntEvent::set: [safe, (&'a mut, int) -> void]
 //   rrr::IntEvent::wait: [safe, (&'a, int) -> void]
 //   rrr::Event::wait: [safe, (&'a, int) -> void]
-//   rrr::Event::TIMEOUT: [safe, () -> int]
+//   rrr::EventStatus::TIMEOUT: [safe, () -> int]
 //   janus::View::View: [safe, (...) -> owned]
 //   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
 //   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
@@ -1453,7 +1453,7 @@ void RaftServer::HeartbeatLoop() {
         ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
         ready_for_replication_->set(0);
       }
-      ready_for_replication_->wait(heartbeat_interval_us_);
+      ready_for_replication_->wait_timeout(heartbeat_interval_us_);
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
@@ -1709,9 +1709,9 @@ void RaftServer::HeartbeatLoop() {
         auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
         auto& resp = *pending.response;  // Access response data
 
-        resp.event->wait(PER_RPC_TIMEOUT);
+        resp.event->wait_timeout(PER_RPC_TIMEOUT);
 
-        if (resp.event->status_.get() == Event::TIMEOUT) {
+        if (resp.event->status_.get() == EventStatus::TIMEOUT) {
           Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
           continue;  // Skip this follower, try again next round
         }
@@ -2045,7 +2045,7 @@ bool RaftServer::RequestVote() {
   // @unsafe
   {
   sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
-  sp_quorum->wait(1000000);
+  sp_quorum->wait_timeout(1000000);
   }
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
 #ifdef RAFT_LEADER_ELECTION_DEBUG

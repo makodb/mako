@@ -125,7 +125,7 @@ void CoordinatorClassic::GotoNextPhase() {
 				}
 				Log_info("total: %d", commo()->total_);
 				auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
-				t->wait(0.1*1000*1000);
+				t->wait_timeout(0.1*1000*1000);
 			}*/
 			DispatchAsync(true);
       break;
@@ -273,10 +273,10 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   sp_int_event = commo()->BroadcastDispatch(cmds_by_par, this, txn);
   phase_t phase = phase_;
 
-  sp_int_event->wait(txn_timeout_);
+  sp_int_event->wait_timeout(txn_timeout_);
 
   // Check for timeout
-  if (sp_int_event->status_.get() == Event::TIMEOUT) {
+  if (sp_int_event->status_.get() == EventStatus::TIMEOUT) {
     Log_warn("Transaction %lu: DispatchAsync timed out after %lu us",
              (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
     aborted_ = true;
@@ -406,10 +406,10 @@ void CoordinatorClassic::Prepare() {
                                           cmd_->id_,
                                           sids);
 
-	quorum_event->wait(txn_timeout_);
+	quorum_event->wait_timeout(txn_timeout_);
 
   // Check for timeout
-  if (quorum_event->status_.get() == Event::TIMEOUT) {
+  if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
     Log_warn("Transaction %lu: Prepare timed out after %lu us",
              (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
     aborted_ = true;
@@ -505,10 +505,10 @@ void CoordinatorClassic::Commit() {
 
 		Log_info("send commit tid: %ld",
             cmd_->id_);
-		quorum_event->wait(txn_timeout_);
+		quorum_event->wait_timeout(txn_timeout_);
 
     // Check for timeout (best-effort commit to reachable shards)
-    if (quorum_event->status_.get() == Event::TIMEOUT) {
+    if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
       Log_warn("Transaction %lu: Commit timed out after %lu us (some shards unreachable)",
                (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
       // Note: committed to reachable shards, unreachable shards missed
@@ -555,10 +555,10 @@ void CoordinatorClassic::Commit() {
                                            tx_data().id_);
 		Log_info("send abort tid: %ld",
             cmd_->id_);
-    quorum_event->wait(txn_timeout_);
+    quorum_event->wait_timeout(txn_timeout_);
 
     // Check for timeout (best-effort abort on reachable shards)
-    if (quorum_event->status_.get() == Event::TIMEOUT) {
+    if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
       Log_warn("Transaction %lu: Abort timed out after %lu us (some shards unreachable)",
                (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
       // Note: aborted on reachable shards, unreachable shards missed

@@ -236,21 +236,21 @@ void ClientWorker::Work() {
       locid_t idx = 0;
       while (!*failover_server_quit_) {
         auto r = Reactor::create_sp_event<NeverEvent>();
-        r->wait(run_int);
+        r->wait_timeout(run_int);
         *failover_trigger_ = true;
         while (*failover_trigger_) {
           auto e = Reactor::create_sp_event<NeverEvent>();
-          e->wait(wait_int);
+          e->wait_timeout(wait_int);
           if (*failover_server_quit_) return;
         }
         Pause(idx);
         *failover_trigger_ = true;
         Log_info("server %d paused for failover test", idx);
         auto s = Reactor::create_sp_event<NeverEvent>();
-        s->wait(stop_int);
+        s->wait_timeout(stop_int);
         while (*failover_trigger_) {
           auto e = Reactor::create_sp_event<NeverEvent>();
-          e->wait(wait_int);
+          e->wait_timeout(wait_int);
           if (*failover_server_quit_) return;
         }
         Resume(idx);
@@ -291,7 +291,7 @@ void ClientWorker::Work() {
           }
           if (config_->client_max_undone_ > 0
               && n_undone_tx > config_->client_max_undone_) {
-            Reactor::create_sp_event<NeverEvent>()->wait(pow(10, 4));
+            Reactor::create_sp_event<NeverEvent>()->wait_timeout(pow(10, 4));
           } else {
             break;
           }
@@ -335,12 +335,12 @@ void ClientWorker::Work() {
           sprintf(txid, "%" PRIx64 "|", coo->ongoing_tx_id_);
           ev->state_.wait_place_ = std::string(txid);
 #endif
-          wait_recordplace(ev, wait(600*1000*1000));
+          wait_recordplace(ev, wait_timeout(600*1000*1000));
           this->outbound--;
-          verify(ev->status_.get() != Event::TIMEOUT);
+          verify(ev->status_.get() != EventStatus::TIMEOUT);
         } else {
           auto sp_event = Reactor::create_sp_event<NeverEvent>();
-          wait_recordplace(sp_event, wait(pow(10, 6)));
+          wait_recordplace(sp_event, wait_timeout(pow(10, 6)));
         }
         Fiber::create_run([this, coo](){
           verify(coo->_inuse_);
@@ -349,7 +349,7 @@ void ClientWorker::Work() {
           verify(coo->coo_id_ > 0);
           verify(coo->_inuse_);
           verify(coo->coo_id_ > 0);
-          verify(ev->status_.get() != Event::TIMEOUT);
+          verify(ev->status_.get() != EventStatus::TIMEOUT);
           if (coo->committed_) {
             success++;
           }
@@ -534,7 +534,7 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
 
       coo->sp_ev_commit_->set(1);
       auto status = coo->sp_ev_done_->status_.get();
-      verify(status == Event::WAIT || status == Event::INIT);
+      verify(status == EventStatus::WAIT || status == EventStatus::INIT);
       coo->sp_ev_done_->set(1);
       delete req;
     };

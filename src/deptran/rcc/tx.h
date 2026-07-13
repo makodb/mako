@@ -115,8 +115,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
       sp_ev->value_ = value_;
       sp_ev->target_ = x;
       events_.push_back(sp_ev);
-//  sp_ev->wait(1000*1000*1000);
-//  verify(sp_ev->status_ != Event::TIMEOUT);
+//  sp_ev->wait_timeout(1000*1000*1000);
+//  verify(sp_ev->status_ != EventStatus::TIMEOUT);
       sp_ev->wait();
     }
   };

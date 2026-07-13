@@ -84,7 +84,7 @@ class RaftQuorum {
   bool wait_until_quorum(uint64_t timeout_us) {
     // @unsafe { rrr::IntEvent::wait yields the fiber via the reactor;
     //           rrr-boundary call }
-    ready_->wait(timeout_us);
+    ready_->wait_timeout(timeout_us);
     // @unsafe { rrr::IntEvent::is_ready compares value_ >= target_ }
     return ready_->is_ready();
   }

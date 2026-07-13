@@ -365,7 +365,7 @@ void FpgaRaftServer::StartTimer()
                     /*while(req_voting_)
                     {
                       auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(wait_int_);
-                      sp_e1->wait(wait_int_) ;
+                      sp_e1->wait_timeout(wait_int_) ;
                       if(stop_) return ;
                     }*/
                     Log_debug("start a new timer") ;

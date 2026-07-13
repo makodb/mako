@@ -85,9 +85,9 @@ TEST(AndEventTest, AndWithTimeout) {
     
     reactor->create_run_fiber([and_event, &timed_out, &completed]() {
         // Wait with 50ms timeout
-        and_event->wait(50000);
+        and_event->wait_timeout(50000);
         completed = true;
-        if (and_event->status_.get() == Event::TIMEOUT) {
+        if (and_event->status_.get() == EventStatus::TIMEOUT) {
             timed_out = true;
         }
     });
@@ -101,7 +101,7 @@ TEST(AndEventTest, AndWithTimeout) {
 
     EXPECT_TRUE(completed);
     // Should have timed out since event2 was never set
-    EXPECT_TRUE(timed_out || and_event->status_.get() == Event::TIMEOUT);
+    EXPECT_TRUE(timed_out || and_event->status_.get() == EventStatus::TIMEOUT);
 }
 
 TEST(AndEventTest, VariadicConstructor) {

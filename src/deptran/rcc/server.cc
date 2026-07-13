@@ -793,8 +793,8 @@ void RccServer::Execute(RccTx& tx, int rank) {
 //          sp_tx->local_validation_result_);
       tx.subtx(rank).sp_ev_commit_->set(1);
       // TODO recover this?
-//      tx.subtx(rank).global_validated_->wait(40*1000*1000);
-//      verify(tx.subtx(rank).global_validated_->status_ != Event::TIMEOUT);
+//      tx.subtx(rank).global_validated_->wait_timeout(40*1000*1000);
+//      verify(tx.subtx(rank).global_validated_->status_ != EventStatus::TIMEOUT);
       tx.CommitExecute(rank);
 //    });
     } else {
@@ -842,7 +842,7 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
       sp_tx->sp_ev_commit_->set(1);
       // TODO recover this?
 //      sp_tx->global_validated_->wait();
-//      verify(sp_tx->global_validated_->status_ != Event::TIMEOUT);
+//      verify(sp_tx->global_validated_->status_ != EventStatus::TIMEOUT);
       sp_tx->CommitExecute();
 //      sp_tx->local_validated_->get();
 //    });
@@ -900,8 +900,8 @@ int RccServer::OnInquireValidation(txid_t tx_id, int rank) {
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(tx_id, rank));
   int ret = 0;
   verify(dtxn->subtx(rank).__debug_commit_received_);
-  dtxn->subtx(rank).local_validated_->wait(60*1000*1000);
-  if (dtxn->subtx(rank).local_validated_->status_.get() == Event::TIMEOUT) {
+  dtxn->subtx(rank).local_validated_->wait_timeout(60*1000*1000);
+  if (dtxn->subtx(rank).local_validated_->status_.get() == EventStatus::TIMEOUT) {
     verify(dtxn->subtx(rank).status()>=TXN_CMT);
     verify(0);
     ret = -1; //TODO come back and remove this after the correctness checker.
@@ -1175,8 +1175,8 @@ int RccServer::OnCommit(const txnid_t cmd_id,
       auto& subtx = sp_tx->subtx(rank);
       return subtx.local_validated_->is_set_;
     };
-    sp_e->wait(60 * 1000 * 1000);
-    if (sp_e->status_.get() == Event::TIMEOUT) {
+    sp_e->wait_timeout(60 * 1000 * 1000);
+    if (sp_e->status_.get() == EventStatus::TIMEOUT) {
       verify(!weird);
       verify(0);
     }
@@ -1228,9 +1228,9 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //  subtx.local_validated_->wait();
 //  }
   // TODO verify by a wait time.
-//    dtxn->sp_ev_commit_->wait(1*1000*1000);
+//    dtxn->sp_ev_commit_->wait_timeout(1*1000*1000);
 //    dtxn->sp_ev_commit_->wait();
-//    verify(dtxn->sp_ev_commit_->status_ != Event::TIMEOUT);
+//    verify(dtxn->sp_ev_commit_->status_ != EventStatus::TIMEOUT);
 //    ret = dtxn->local_validation_result_ > 0 ? SUCCESS : REJECT;
 //  return subtx.local_validated_->get();
   return 0;
