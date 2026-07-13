@@ -11,9 +11,9 @@ class TxData;
 // removed `class FpgaRaftForwardQuorumEvent`
 // — only constructed by the now-deleted `FpgaRaftCommo::SendForward`.
 
-class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
+class FpgaRaftPrepareQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
 //  ballot_t max_ballot_{0};
   bool HasAcceptedValue() {
     // TODO implement this
@@ -28,9 +28,9 @@ class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
   }
 };
 
-class FpgaRaftVoteQuorumEvent: public QuorumEvent {
+class FpgaRaftVoteQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   bool HasAcceptedValue() {
     return false;
   }
@@ -39,21 +39,21 @@ class FpgaRaftVoteQuorumEvent: public QuorumEvent {
       vote_yes();
     } else {
       vote_no();
-      if(term > highest_term_)
+      if(term > q().highest_term_)
       {
-        highest_term_ = term ;
+        q().highest_term_ = term ;
       }      
     }
   }
   
   int64_t Term() {
-    return highest_term_;
+    return q().highest_term_;
   }
 };
 
-class FpgaRaftVote2FPGAQuorumEvent: public QuorumEvent {
+class FpgaRaftVote2FPGAQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   bool HasAcceptedValue() {
     return false;
   }
@@ -62,21 +62,21 @@ class FpgaRaftVote2FPGAQuorumEvent: public QuorumEvent {
       vote_yes();
     } else {
       vote_no();
-      if(term > highest_term_)
+      if(term > q().highest_term_)
       {
-        highest_term_ = term ;
+        q().highest_term_ = term ;
       }      
     }
   }
   
   int64_t Term() {
-    return highest_term_;
+    return q().highest_term_;
   }
 };
 
-class FpgaRaftAcceptQuorumEvent: public QuorumEvent {
+class FpgaRaftAcceptQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   void FeedResponse(bool y) {
     if (y) {
       vote_yes();
@@ -89,13 +89,13 @@ class FpgaRaftAcceptQuorumEvent: public QuorumEvent {
   }
 };
 
-class FpgaRaftAppendQuorumEvent: public QuorumEvent {
+class FpgaRaftAppendQuorumEvent: public QuorumEventWrapper {
  public:
     uint64_t minIndex;
-    using QuorumEvent::QuorumEvent;
+    using QuorumEventWrapper::QuorumEventWrapper;
     void FeedResponse(bool appendOK, uint64_t index, std::string ip_addr = "") {
         if (appendOK) {
-            if ((n_voted_yes_ == 0) && (n_voted_no_ == 0))
+            if ((q().n_voted_yes_ == 0) && (q().n_voted_no_ == 0))
                 minIndex = index;
             else
                 minIndex = std::min(minIndex, index);

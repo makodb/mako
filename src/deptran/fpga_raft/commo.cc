@@ -144,7 +144,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
                                       uint64_t commitIndex,
                                       const janus::Command& cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<FpgaRaftAppendQuorumEvent>(n, n/2 + 1);
+  auto e = std::make_shared<FpgaRaftAppendQuorumEvent>(n, n/2 + 1);
   auto proxies = rpc_par_proxies_[par_id];
 
   unordered_set<std::string> ip_addrs {};
@@ -272,7 +272,7 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
                                     parid_t self_id,
                                     ballot_t cur_term ) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<FpgaRaftVoteQuorumEvent>(n, n/2);
+  auto e = std::make_shared<FpgaRaftVoteQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -316,7 +316,7 @@ FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
                                     parid_t self_id,
                                     ballot_t cur_term ) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<FpgaRaftVote2FPGAQuorumEvent>(n, n/2);
+  auto e = std::make_shared<FpgaRaftVote2FPGAQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {
