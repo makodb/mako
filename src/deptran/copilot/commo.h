@@ -43,10 +43,12 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
   vector<vector<CopilotData> > ret_cmds_by_status_;
 
  public:
-  // using QuorumEvent::QuorumEvent;
-  bool committed_seen_ = false;
+  // committed_seen_ + the readiness short-circuit now live on QuorumEvent
+  // as QuorumPolicy::COMMITTED_SHORT (S3).
   CopilotPrepareQuorumEvent(int n_total, int quorum)
-      : QuorumEvent(n_total, quorum), ret_cmds_by_status_(n_status) {}
+      : QuorumEvent(n_total, quorum), ret_cmds_by_status_(n_status) {
+    policy_ = QuorumPolicy::COMMITTED_SHORT;
+  }
 
   void FeedResponse(bool y) {
     if (y)
@@ -64,7 +66,6 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
                   enum Status status);
   size_t GetCount(enum Status status);
   vector<CopilotData>& GetCmds(enum Status status);
-  bool is_ready() override;
   void Show();
 };
 
@@ -74,11 +75,13 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
  */
 class CopilotFakeQuorumEvent : public QuorumEvent {
  public:
+  // Readiness now lives on QuorumEvent as QuorumPolicy::ALWAYS_READY (S3).
   CopilotFakeQuorumEvent(int n_total)
-    : QuorumEvent(n_total, 0) {}
+    : QuorumEvent(n_total, 0) {
+    policy_ = QuorumPolicy::ALWAYS_READY;
+  }
 
   void FeedResponse() { vote_yes(); }
-  bool is_ready() override { return true; }
 };
 
 class CopilotCommo : public Communicator {

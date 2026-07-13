@@ -65,7 +65,12 @@ class PaxosAcceptQuorumEvent: public QuorumEvent {
 
 class GetLeaderQuorumEvent : public QuorumEvent {
  public:
-  using QuorumEvent::QuorumEvent;
+  // Quorum math now lives on QuorumEvent as QuorumPolicy::ALL_NO (S3):
+  // no() == every voter said no; is_ready() == yes()||no().
+  GetLeaderQuorumEvent(int n_total, int quorum)
+      : QuorumEvent(n_total, quorum) {
+    policy_ = QuorumPolicy::ALL_NO;
+  }
   void FeedResponse(bool y, locid_t leader_id) {
     if (y) {
       leader_id_ = leader_id;
@@ -74,18 +79,6 @@ class GetLeaderQuorumEvent : public QuorumEvent {
       vote_no();
     }
   }
-
-  bool no() override { return n_voted_no_ == n_total_; }
-
-  bool is_ready() override {
-    if (yes()) {
-      return true;
-    } else if (no()) {
-      return true;
-    }
-
-    return false;
-  }
 };
 
 /************************RULE begin*********************************/
@@ -93,17 +86,17 @@ class GetLeaderQuorumEvent : public QuorumEvent {
 class RuleSpeculativeExecuteQuorumEvent: public QuorumEvent {
   bool has_result_ = false;
   value_t result_;
-  int num_leader_{0};
-  int n_leader_yes_{0};
-  int n_leader_no_{0};
  public:
+  // Quorum math now lives on QuorumEvent as QuorumPolicy::LEADER_AND (S3):
+  // yes() additionally requires n_leader_yes_ >= num_leader_; no()
+  // additionally trips on any leader-no. The leader counters are hoisted
+  // onto QuorumEvent so the policy only reads its own fields.
   RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
     : QuorumEvent(n_total, quorum) {
+      policy_ = QuorumPolicy::LEADER_AND;
       num_leader_ = num_leader;
   }
   void FeedResponse(bool y, value_t result, bool is_leader);
-  bool yes() override;
-  bool no() override;
   value_t GetResult();
 };
 

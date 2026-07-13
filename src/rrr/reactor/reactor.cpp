@@ -1402,28 +1402,55 @@ using rrr::IntEvent;
 using rrr::verify;
 using std::shared_ptr;
 
+// Quorum-math specialization (composition-flattening S3): the former
+// per-protocol QuorumEvent subclasses expressed their yes()/no()/is_ready()
+// variations by overriding; those variations are DATA, captured exactly by
+// this policy enum. The full live override matrix across all 19 protocol
+// subclasses reduces to:
+//   DEFAULT         — yes: n_voted_yes_ >= quorum_;
+//                     no: n_voted_no_ > n_total_ - quorum_;
+//                     ready: timeouted_ || yes || no
+//   ALL_NO          — (GetLeader) no: every voter said no
+//                     (n_voted_no_ == n_total_); ready: yes || no. The
+//                     dropped timeouted_ check is equivalent to DEFAULT
+//                     because timeouted_ has zero writers repo-wide (do not
+//                     add one without revisiting this policy).
+//   LEADER_AND      — (RuleSpeculativeExecute) yes additionally requires
+//                     n_leader_yes_ >= num_leader_; no additionally trips
+//                     on any leader-no (n_leader_no_ > 0).
+//   COMMITTED_SHORT — (CopilotPrepare) ready short-circuits on
+//                     committed_seen_ (a committed reply obviates the
+//                     quorum), then falls back to DEFAULT's shape.
+//   ALWAYS_READY    — (CopilotFake) no quorum semantics at all.
+enum class QuorumPolicy : int {
+  DEFAULT = 0,
+  ALL_NO = 1,
+  LEADER_AND = 2,
+  COMMITTED_SHORT = 3,
+  ALWAYS_READY = 4,
+};
+
 class QuorumEvent : public Event {
  public:
-	static uint64_t count;
   int32_t n_voted_yes_{0};
   int32_t n_voted_no_{0};
   rusty::HashMap<uint16_t, rrr::i64> xids_;
-  uint64_t begin_timestamp_;
 
  public:
   int32_t n_total_ = -1;
   int32_t quorum_ = -1;
+  QuorumPolicy policy_{QuorumPolicy::DEFAULT};
+  // Policy-specific state, hoisted from the former subclasses so the
+  // readiness predicate only ever reads QuorumEvent's own fields:
+  bool committed_seen_ = false;   // COMMITTED_SHORT (CopilotPrepare)
+  int32_t num_leader_{0};         // LEADER_AND (RuleSpeculativeExecute)
+  int32_t n_leader_yes_{0};       // LEADER_AND
+  int32_t n_leader_no_{0};        // LEADER_AND
   int64_t highest_term_{0} ;
-  bool timeouted_ = false;
-  uint64_t cmt_idx_{0} ;
+  bool timeouted_ = false;        // kept public and never written (see ALL_NO note)
   uint32_t leader_id_{0} ;
-  uint64_t coro_id_ = -1;
   int64_t par_id_ = -1;
   uint64_t id_ = -1;
-	uint64_t server_id_ = -1;
-  std::chrono::steady_clock::time_point ready_time;
-  // fast vote result.
-  rusty::Vec<uint64_t> vec_timestamp_{};
   shared_ptr<IntEvent> finalize_event_;
 
   QuorumEvent() = delete;
@@ -1459,13 +1486,26 @@ class QuorumEvent : public Event {
   void finalize(uint64_t timeout,
                 rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
 
+  // Formerly virtual with per-protocol overrides; now a policy switch
+  // (kept virtual through the transition — no overriders remain).
   virtual bool yes() {
-    return n_voted_yes_ >= quorum_;
+    bool base = n_voted_yes_ >= quorum_;
+    if (policy_ == QuorumPolicy::LEADER_AND) {
+      return base && n_leader_yes_ >= num_leader_;
+    }
+    return base;
   }
 
   virtual bool no() {
+    if (policy_ == QuorumPolicy::ALL_NO) {
+      return n_voted_no_ == n_total_;
+    }
     verify(n_total_ >= quorum_);
-    return n_voted_no_ > (n_total_ - quorum_);
+    bool base = n_voted_no_ > (n_total_ - quorum_);
+    if (policy_ == QuorumPolicy::LEADER_AND) {
+      return base || n_leader_no_ > 0;
+    }
+    return base;
   }
 
   // @safe - test(), Time::now(false), rusty::Vec::push, IntEvent::set
@@ -1477,27 +1517,32 @@ class QuorumEvent : public Event {
   void vote_no();
 
   bool is_ready() override {
-    if (timeouted_) {
-      // TODO add time out support
-      return true;
+    switch (policy_) {
+      case QuorumPolicy::ALWAYS_READY:
+        return true;
+      case QuorumPolicy::ALL_NO:
+        // GetLeader shape: no timeouted_ short-circuit (equivalent to
+        // DEFAULT while timeouted_ has zero writers — see the enum note).
+        return yes() || no();
+      case QuorumPolicy::COMMITTED_SHORT:
+        if (timeouted_) {
+          return true;
+        }
+        if (committed_seen_) {
+          return true;
+        }
+        return yes() || no();
+      default:
+        if (timeouted_) {
+          // TODO add time out support
+          return true;
+        }
+        return yes() || no();
     }
-    if (yes()) {
-//      Log_info("voted: %d is equal or greater than quorum: %d",
-//                (int)n_voted_yes_, (int) quorum_);
-      ready_time = std::chrono::steady_clock::now();
-      return true;
-    } else if (no()) {
-      return true;
-    }
-//    Log_debug("voted: %d is smaller than quorum: %d",
-//              (int)n_voted_, (int) quorum_);
-    return false;
   }
 
   // Mark as composite event - will be polled in reactor loop
   bool is_composite_event() override { return true; }
-
-  void log_event();
 
 };
 
@@ -3209,7 +3254,6 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
     : Event(), n_total_(n_total), quorum_(quorum) {
   finalize_event_ = std::make_shared<IntEvent>(n_total_);
   finalize_event_->state_.__debug_creator = 1;
-  begin_timestamp_ = Time::now(true);
 }
 
 void QuorumEvent::finalize(
@@ -3252,7 +3296,6 @@ void QuorumEvent::remove_xid(uint16_t site) {
 void QuorumEvent::vote_yes() {
   n_voted_yes_++;
   test();
-  vec_timestamp_.push(Time::now(true) - begin_timestamp_);
 
   if (finalize_event_->status_.get() != EventStatus::TIMEOUT)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
@@ -3266,10 +3309,5 @@ void QuorumEvent::vote_no() {
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
-void QuorumEvent::log_event() {
-  for (auto t : vec_timestamp_)
-    std::cout << " " << t;
-  std::cout << std::endl;
-}
 
 }  // namespace janus (definitions)

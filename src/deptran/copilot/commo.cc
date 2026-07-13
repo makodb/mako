@@ -63,27 +63,6 @@ vector<CopilotData>& CopilotPrepareQuorumEvent::GetCmds(enum Status status) {
   return ret_cmds_by_status_[status];
 }
 
-bool CopilotPrepareQuorumEvent::is_ready() {
-  if (timeouted_) {
-    // TODO add time out support
-    return true;
-  }
-  if (committed_seen_) {
-    return true;
-  }
-  if (yes()) {
-    //      Log_info("voted: %d is equal or greater than quorum: %d",
-    //                (int)n_voted_yes_, (int) quorum_);
-    // ready_time = std::chrono::steady_clock::now();
-    return true;
-  } else if (no()) {
-    return true;
-  }
-  //    Log_debug("voted: %d is smaller than quorum: %d",
-  //              (int)n_voted_, (int) quorum_);
-  return false;
-}
-
 void CopilotPrepareQuorumEvent::Show() {
   std::cout << committed_seen_ << std::endl;
   for (int i = 0; i < ret_cmds_by_status_.size(); i++)

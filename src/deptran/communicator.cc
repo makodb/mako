@@ -45,17 +45,6 @@ void RuleSpeculativeExecuteQuorumEvent::FeedResponse(bool y, value_t result, boo
   }
 }
 
-bool RuleSpeculativeExecuteQuorumEvent::yes() {
-  // Log_info("Yes condition: n_voted_yes_(%d) >= quorum_(%d) && n_leader_yes_(%d) >= num_leader_(%d)", n_voted_yes_, quorum_, n_leader_yes_, num_leader_);
-  return n_voted_yes_ >= quorum_ && n_leader_yes_ >= num_leader_;
-}
-
-bool RuleSpeculativeExecuteQuorumEvent::no() {
-  // if ((n_voted_no_ > (n_total_ - quorum_)) || (n_leader_no_ > 0))
-  //   Log_info("RuleSpeculativeExecuteQuorumEventNo: %d %d", n_voted_no_, n_leader_no_);
-  return (n_voted_no_ > (n_total_ - quorum_)) || (n_leader_no_ > 0);
-}
-
 value_t RuleSpeculativeExecuteQuorumEvent::GetResult() {
   return result_;
 }
