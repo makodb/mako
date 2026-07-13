@@ -115,15 +115,55 @@ enum class AckType : uint64_t {
   Durable = 1
 };
 
-// Response data for async AppendEntries RPC
-// Uses shared_ptr semantics to ensure memory validity when callback fires
+// Response data for async AppendEntries RPC.
+// Uses shared_ptr semantics to ensure memory validity when callback fires.
+struct AppendEntriesResponse;
+
+inline AppendEntriesResponse append_entries_response_defaults();
+
+#if RUSTYCPP_RUST
+pub struct AppendEntriesResponse {
+    event: shared_ptr<IntEvent>,
+    status: u64,
+    term: u64,
+    last_log_index: u64,
+    ack_type: u64,
+}
+
+impl AppendEntriesResponse {
+    fn defaults() -> AppendEntriesResponse {
+        append_entries_response_defaults()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_response version=1 rust_sha256=c051d7c6b60ae5f3a5a0a80b20bdecb4f483c9d80f80d57489b8d5395135f6e9*/
+struct AppendEntriesResponse;
+
 struct AppendEntriesResponse {
-  shared_ptr<IntEvent> event;
-  uint64_t status = 0;
-  uint64_t term = 0;
-  uint64_t last_log_index = 0;
-  uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
+    shared_ptr<IntEvent> event;
+    uint64_t status;
+    uint64_t term;
+    uint64_t last_log_index;
+    uint64_t ack_type;
+
+    static AppendEntriesResponse defaults();
 };
+
+
+inline AppendEntriesResponse AppendEntriesResponse::defaults() {
+    return append_entries_response_defaults();
+}
+/*RUSTYCPP:GEN-END id=commo.append_entries_response*/
+
+inline AppendEntriesResponse append_entries_response_defaults() {
+  AppendEntriesResponse response{};
+  response.event = shared_ptr<IntEvent>();
+  response.status = 0;
+  response.term = 0;
+  response.last_log_index = 0;
+  response.ack_type = 0;
+  return response;
+}
 
 
 // @unsafe - legacy RPC communicator. It owns no peer proxies directly; proxy

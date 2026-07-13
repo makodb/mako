@@ -76,6 +76,9 @@ FILES=(
   # Raft in-process test transport fault state; channel workers/adapters stay
   # hand-C++ because they own closures, channels, and blocking worker loops.
   src/deptran/raft/channel_transport.hpp
+  # Raft async AppendEntries response value only; RaftCommo and callback/Future
+  # lifetimes stay hand-C++.
+  src/deptran/raft/commo.h
   # Raft snapshot metadata: value struct + thin methods delegated to C++
   # helpers; reader/writer/manager virtual interfaces stay hand-C++ for now.
   src/deptran/raft/snapshot_manager.hpp

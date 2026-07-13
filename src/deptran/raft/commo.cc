@@ -52,7 +52,8 @@ namespace janus
   {
     // Allocate response data with shared_ptr; the async callback captures it
     // and signals response->event when the legacy Future completes.
-    auto response = std::make_shared<AppendEntriesResponse>();
+    auto response = std::make_shared<AppendEntriesResponse>(
+        AppendEntriesResponse::defaults());
     response->event = Reactor::create_sp_event<IntEvent>();
 
     auto proxies = rpc_par_proxies_[par_id];
