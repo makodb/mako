@@ -19,18 +19,18 @@ void CopilotFastAcceptQuorumEvent::FeedResponse(bool y, bool ok) {
 }
 
 void CopilotFastAcceptQuorumEvent::FeedRetDep(uint64_t dep) {
-  verify(ret_deps_.size() < n_total_);
+  verify(ret_deps_.size() < q().n_total_);
   ret_deps_.push_back(dep);
 }
 
 uint64_t CopilotFastAcceptQuorumEvent::GetFinalDep() {
-  verify(ret_deps_.size() >= n_total_ / 2 + 1);
+  verify(ret_deps_.size() >= q().n_total_ / 2 + 1);
   std::sort(ret_deps_.begin(), ret_deps_.end());
-  return ret_deps_[n_total_ / 2];
+  return ret_deps_[q().n_total_ / 2];
 }
 
 bool CopilotFastAcceptQuorumEvent::FastYes() {
-  return n_fastac_ok_ >= CopilotCommo::fastQuorumSize(n_total_);
+  return n_fastac_ok_ >= CopilotCommo::fastQuorumSize(q().n_total_);
 }
 
 bool CopilotFastAcceptQuorumEvent::FastNo() {
@@ -47,7 +47,7 @@ inline void CopilotPrepareQuorumEvent::FeedRetCmd(ballot_t ballot,
   // int_status &= CLR_FLAG_TAKEOVER;
   verify(int_status <= n_status);
   if (int_status >= Status::COMMITED) { // committed or executed
-    committed_seen_ = true;
+    q().committed_seen_ = true;
     int_status = Status::COMMITED;  // reduce all status greater than COMMIT to COMMIT
   } else if (int_status == Status::FAST_ACCEPTED) {
     int_status = Status::FAST_ACCEPTED_EQ; // reduce FAST_ACCEPTED to FAST_ACCEPTED_EQ
@@ -64,7 +64,7 @@ vector<CopilotData>& CopilotPrepareQuorumEvent::GetCmds(enum Status status) {
 }
 
 void CopilotPrepareQuorumEvent::Show() {
-  std::cout << committed_seen_ << std::endl;
+  std::cout << q().committed_seen_ << std::endl;
   for (int i = 0; i < ret_cmds_by_status_.size(); i++)
     std::cout << i << ":" << ret_cmds_by_status_[i].size() << std::endl;
 }
@@ -78,7 +78,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
                                slotid_t slot_id,
                                ballot_t ballot) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotPrepareQuorumEvent>(n, quorumSize(n));
+  auto e = std::make_shared<CopilotPrepareQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -136,7 +136,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
                                   uint64_t dep,
                                   const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
+  auto e = std::make_shared<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 #ifdef FULL_LOG_DEBUG
@@ -213,7 +213,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
                               uint64_t dep,
                               const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotAcceptQuorumEvent>(n, quorumSize(n));
+  auto e = std::make_shared<CopilotAcceptQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -269,7 +269,7 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
                                    uint64_t dep,
                                    const janus::Command& cmd_env) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<CopilotFakeQuorumEvent>(n);
+  auto e = std::make_shared<CopilotFakeQuorumEvent>(n);
   auto proxies = rpc_par_proxies_[par_id];
 
   // WAN_WAIT;

@@ -105,7 +105,7 @@ start_prepare:
    * full details appear in our accompanying technical report
    */
   direct_commit_ = false;
-  if (sq_quorum->committed_seen_) {
+  if (sq_quorum->q().committed_seen_) {
     /**
      * If any of the PrepareOk messages indicate an entry is committed,
      * the pilot short-circuits waiting and commits that entry with the
