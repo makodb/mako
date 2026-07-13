@@ -3295,8 +3295,13 @@ using rrr::verify;
 
 QuorumEvent::QuorumEvent(int n_total, int quorum)
     : Event(), n_total_(n_total), quorum_(quorum) {
-  finalize_event_ = std::make_shared<IntEvent>(n_total_);
-  finalize_event_->state_.__debug_creator = 1;
+  // Registered via create_sp_event (not bare make_shared) so the event has a
+  // live self-reference: the finalize fiber's wait() and the vote-side set()
+  // push get_self() into the reactor queues, which for an unregistered event
+  // is null (latent crash on the copilot finalize path). Nested create is
+  // safe here: this ctor runs inside the outer create_sp_event's make_shared,
+  // BEFORE the outer all_events_ borrow is taken.
+  finalize_event_ = rrr::Reactor::create_sp_event<IntEvent>(n_total_);
 }
 
 void QuorumEvent::finalize(
@@ -3323,6 +3328,12 @@ void QuorumEvent::finalize(
     if (final_ev->status_.get() == EventStatus::TIMEOUT) {
       // Log_info("finalized timeout");
       ret = finalize_func(dangling_rpc);
+      // Drain guard: a TIMEOUT'd event is never evicted by the reactor loop
+      // (extract takes READY, retain drops DONE), so a registered
+      // finalize_event_ would otherwise linger in the queues forever at
+      // broadcast rate. Mark it DONE here (we run on the owner thread) so
+      // the next pass evicts and prune can free it.
+      final_ev->status_.set(EventStatus::DONE);
     }
     (void)ret;
   }, __FILE__, __LINE__);
@@ -3340,7 +3351,8 @@ void QuorumEvent::vote_yes() {
   n_voted_yes_++;
   test();
 
-  if (finalize_event_->status_.get() != EventStatus::TIMEOUT)
+  if (finalize_event_->status_.get() != EventStatus::TIMEOUT &&
+      finalize_event_->status_.get() != EventStatus::DONE)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
@@ -3348,7 +3360,8 @@ void QuorumEvent::vote_no() {
   n_voted_no_++;
   test();
 
-  if (finalize_event_->status_.get() != EventStatus::TIMEOUT)
+  if (finalize_event_->status_.get() != EventStatus::TIMEOUT &&
+      finalize_event_->status_.get() != EventStatus::DONE)
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
