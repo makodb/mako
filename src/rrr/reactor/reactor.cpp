@@ -1546,6 +1546,49 @@ class QuorumEvent : public Event {
 
 };
 
+// Composition base for the per-protocol quorum events (flattening S3b).
+// The former `class XQuorumEvent : public QuorumEvent` subclasses become
+// `class XQuorumEvent : public QuorumEventWrapper` — they OWN the reactor-
+// registered QuorumEvent instead of BEING it, so nothing outside rrr
+// inherits the event type (a hard requirement for flattening QuorumEvent
+// to an inline-Rust DSL struct, which cannot be a base class). The wrapper
+// itself is not an Event and is never registered; waiting/voting forward
+// to the owned, registered `q_`.
+//
+// Field access through a wrapper goes via `q()`:  e->timeouted_  becomes
+// e->q().timeouted_. The common verb surface is forwarded so method call
+// sites compile unchanged. `q_` is set once at construction and never
+// reseated.
+class QuorumEventWrapper {
+ public:
+  std::shared_ptr<QuorumEvent> q_;
+
+  QuorumEventWrapper(int n_total, int quorum)
+      : q_(rrr::Reactor::create_sp_event<QuorumEvent>(n_total, quorum)) {}
+
+  QuorumEvent& q() { return *q_; }
+  const QuorumEvent& q() const { return *q_; }
+
+  // Forwarded verb surface (matches the former inherited methods):
+  void wait() { q_->wait(); }
+  void wait_timeout(uint64_t timeout) { q_->wait_timeout(timeout); }
+  void log() { q_->log(); }
+  uint64_t get_fiber_id() { return q_->get_fiber_id(); }
+  void vote_yes() { q_->vote_yes(); }
+  void vote_no() { q_->vote_no(); }
+  bool yes() { return q_->yes(); }
+  bool no() { return q_->no(); }
+  bool is_ready() { return q_->is_ready(); }
+  bool is_slow() { return q_->is_slow(); }
+  void test() { q_->test(); }
+  void add_xid(uint16_t site, rrr::i64 xid) { q_->add_xid(site, xid); }
+  void remove_xid(uint16_t site) { q_->remove_xid(site); }
+  void finalize(uint64_t timeout,
+                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> f) {
+    q_->finalize(timeout, std::move(f));
+  }
+};
+
 }  // export namespace janus
 
 // ===========================================================================

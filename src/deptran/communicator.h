@@ -28,9 +28,9 @@ typedef std::pair<siteid_t, ClassicProxy*> SiteProxyPair;
 typedef std::pair<siteid_t, ClientControlProxy*> ClientSiteProxyPair;
 
 
-class PaxosPrepareQuorumEvent: public QuorumEvent {
+class PaxosPrepareQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
 //  ballot_t max_ballot_{0};
   bool HasAcceptedValue() {
     // TODO implement this
@@ -38,9 +38,9 @@ class PaxosPrepareQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y) {
     if (y) {
-      n_voted_yes_++;
+      q().n_voted_yes_++;
     } else {
-      n_voted_no_++;
+      q().n_voted_no_++;
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
@@ -49,31 +49,31 @@ class PaxosPrepareQuorumEvent: public QuorumEvent {
 
 };
 
-class PaxosAcceptQuorumEvent: public QuorumEvent {
+class PaxosAcceptQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   void FeedResponse(bool y) {
     if (y) {
-      n_voted_yes_++;
+      q().n_voted_yes_++;
     } else {
-      n_voted_no_++;
+      q().n_voted_no_++;
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
   }
 };
 
-class GetLeaderQuorumEvent : public QuorumEvent {
+class GetLeaderQuorumEvent : public QuorumEventWrapper {
  public:
   // Quorum math now lives on QuorumEvent as QuorumPolicy::ALL_NO (S3):
   // no() == every voter said no; is_ready() == yes()||no().
   GetLeaderQuorumEvent(int n_total, int quorum)
-      : QuorumEvent(n_total, quorum) {
-    policy_ = QuorumPolicy::ALL_NO;
+      : QuorumEventWrapper(n_total, quorum) {
+    q().policy_ = QuorumPolicy::ALL_NO;
   }
   void FeedResponse(bool y, locid_t leader_id) {
     if (y) {
-      leader_id_ = leader_id;
+      q().leader_id_ = leader_id;
       vote_yes();
     } else {
       vote_no();
@@ -83,7 +83,7 @@ class GetLeaderQuorumEvent : public QuorumEvent {
 
 /************************RULE begin*********************************/
 
-class RuleSpeculativeExecuteQuorumEvent: public QuorumEvent {
+class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
   bool has_result_ = false;
   value_t result_;
  public:
@@ -92,17 +92,17 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEvent {
   // additionally trips on any leader-no. The leader counters are hoisted
   // onto QuorumEvent so the policy only reads its own fields.
   RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
-    : QuorumEvent(n_total, quorum) {
-      policy_ = QuorumPolicy::LEADER_AND;
-      num_leader_ = num_leader;
+    : QuorumEventWrapper(n_total, quorum) {
+      q().policy_ = QuorumPolicy::LEADER_AND;
+      q().num_leader_ = num_leader;
   }
   void FeedResponse(bool y, value_t result, bool is_leader);
   value_t GetResult();
 };
 
-class JetpackPullIdSetQuorumEvent: public QuorumEvent {
+class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   std::vector<shared_ptr<VecRecData>> id_sets_;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
@@ -146,16 +146,16 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackPullCmdQuorumEvent: public QuorumEvent {
+class JetpackPullCmdQuorumEvent: public QuorumEventWrapper {
  public:
   JetpackPullCmdQuorumEvent(int n_total, int quorum, const std::vector<key_t>& keys)
-      : QuorumEvent(n_total, quorum), ordered_keys_(keys) {
+      : QuorumEventWrapper(n_total, quorum), ordered_keys_(keys) {
     key_states_.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); i++) {
       key_index_[keys[i]] = i;
       key_states_.push_back(KeyState{keys[i], {}, 0, janus::Command{}});
     }
-    int f = (n_total_ - 1) / 2;
+    int f = (q().n_total_ - 1) / 2;
     majority_threshold_ = (f + 2 + 1) / 2;
   }
 
@@ -227,9 +227,9 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   int majority_threshold_{0};
 };
 
-class JetpackPrepareQuorumEvent: public QuorumEvent {
+class JetpackPrepareQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_accepted_ballot_ = -1;
@@ -276,9 +276,9 @@ class JetpackPrepareQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackAcceptQuorumEvent: public QuorumEvent {
+class JetpackAcceptQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_seen_ballot_ = -1;
@@ -302,9 +302,9 @@ class JetpackAcceptQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
+class JetpackPullRecSetInsQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   // recovered_cmd_ migrated

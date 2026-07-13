@@ -36,11 +36,11 @@ void RuleSpeculativeExecuteQuorumEvent::FeedResponse(bool y, value_t result, boo
       result_ = result;
     }
     if (is_leader)
-      n_leader_yes_++;
+      q().n_leader_yes_++;
     vote_yes();
   } else {
     if (is_leader)
-      n_leader_no_++;
+      q().n_leader_no_++;
     vote_no();
   }
 }
@@ -1233,7 +1233,7 @@ void Communicator::AddMessageHandler(
 shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
     parid_t par_id, locid_t cur_pause) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<GetLeaderQuorumEvent>(n - 1, 1);
+  auto e = std::make_shared<GetLeaderQuorumEvent>(n - 1, 1);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -1438,7 +1438,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
 shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(parid_t par_id, locid_t loc_id,
                                                                            epoch_t jepoch, epoch_t oepoch) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<JetpackPullIdSetQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<JetpackPullIdSetQuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1488,7 +1488,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   // Log_info("[JETPACK-DEBUG] Partition size n=%d", n);
   
-  auto e = Reactor::create_sp_event<JetpackPullCmdQuorumEvent>(n, n/2+1, keys);
+  auto e = std::make_shared<JetpackPullCmdQuorumEvent>(n, n/2+1, keys);
   // if (!e) {
   //   Log_info("[JETPACK-DEBUG] ERROR: Failed to create JetpackPullCmdQuorumEvent!");
   // }
@@ -1617,7 +1617,7 @@ shared_ptr<JetpackPrepareQuorumEvent> Communicator::JetpackBroadcastPrepare(pari
                                                                       epoch_t jepoch, epoch_t oepoch, 
                                                                       ballot_t max_seen_ballot) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<JetpackPrepareQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<JetpackPrepareQuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1668,7 +1668,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
                                                                           epoch_t jepoch, epoch_t oepoch, 
                                                                           ballot_t max_seen_ballot, int sid, int set_size) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<JetpackAcceptQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<JetpackAcceptQuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -1737,7 +1737,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, loc
 
 shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRecSetIns(parid_t par_id, locid_t loc_id, epoch_t jepoch, epoch_t oepoch, int sid, int rid) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<JetpackPullRecSetInsQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<JetpackPullRecSetInsQuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;

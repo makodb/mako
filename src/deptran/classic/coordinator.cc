@@ -714,10 +714,10 @@ retry:
   e->wait();
   if (e->yes()) {
     // assign new leader
-    Log_debug("set a new leader %d", e->leader_id_);
-    commo()->SetNewLeaderProxy(par_id, e->leader_id_);
-    if (prev_pause_srv != e->leader_id_) {
-      *cur_pause = e->leader_id_;
+    Log_debug("set a new leader %d", e->q().leader_id_);
+    commo()->SetNewLeaderProxy(par_id, e->q().leader_id_);
+    if (prev_pause_srv != e->q().leader_id_) {
+      *cur_pause = e->q().leader_id_;
     }
   } else if (e->no()) {
     auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);

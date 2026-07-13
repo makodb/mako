@@ -37,7 +37,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
 //  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, n);
+  auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, n);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
   // int cur_batch_idx = current_proxy_batch_idx;
@@ -172,7 +172,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   Log_info("invoke BroadcastSyncLog to prepare for the failover");
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k);
+  auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, k);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -218,7 +218,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
                                   const std::function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1, 1);
+  auto e = std::make_shared<PaxosAcceptQuorumEvent>(1, 1);
   e->FeedResponse(1);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
@@ -252,7 +252,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -298,7 +298,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
   auto proxies = rpc_par_proxies_[par_id];
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
