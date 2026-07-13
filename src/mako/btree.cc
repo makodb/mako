@@ -526,14 +526,14 @@ public:
     keys.clear();
     if (!reverse_) {
       if (end)
-        btr->search_range_bounded(begin, *end, *this);
+        btr->search_range_call_bounded(begin, *end, *this);
       else
-        btr->search_range_unbounded(begin, *this);
+        btr->search_range_call_unbounded(begin, *this);
     } else {
       if (end)
-        btr->rsearch_range_bounded(begin, *end, *this);
+        btr->rsearch_range_call_bounded(begin, *end, *this);
       else
-        btr->rsearch_range_unbounded(begin, *this);
+        btr->rsearch_range_call_unbounded(begin, *this);
     }
     if (expectation.tag == 0) {
       switch (ex_type) {
