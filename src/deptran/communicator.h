@@ -14,28 +14,10 @@
 
 namespace janus {
 
-static void _wan_wait() {
-  int num = 50;
-  Reactor::create_sp_event<NeverEvent>()->wait(num*1000);
-}
-
-static void _wan_wait_time(int m) {
-  this_thread::sleep_for(chrono::milliseconds(m));
-}
-
-
-#ifdef SIMULATE_WAN
-
-#define WAN_WAIT _wan_wait();
-
-#define WAN_WAIT_TIME(m) _wan_wait_time(m);
-
-#else
-
+// SIMULATE_WAN plumbing removed (never enabled — constants.h keeps the
+// define commented out); the macros stay as no-ops for the live call sites.
 #define WAN_WAIT ;
-#define WAN_WAIT_TIME ;
-
-#endif
+#define WAN_WAIT_TIME(m) ;
 
 class Coordinator;
 class ClassicProxy;
@@ -45,20 +27,6 @@ class TxLogServer;
 typedef std::pair<siteid_t, ClassicProxy*> SiteProxyPair;
 typedef std::pair<siteid_t, ClientControlProxy*> ClientSiteProxyPair;
 
-class MessageEvent : public IntEvent {
- public:
-  shardid_t shard_id_;
-  svrid_t svr_id_;
-  string msg_;
-  MessageEvent(svrid_t svr_id) : IntEvent(), svr_id_(svr_id) {
-
-  }
-
-  MessageEvent(shardid_t shard_id, svrid_t svr_id)
-      : IntEvent(), shard_id_(shard_id), svr_id_(svr_id) {
-
-  }
-};
 
 class PaxosPrepareQuorumEvent: public QuorumEvent {
  public:
@@ -554,10 +522,6 @@ class Communicator {
    * @param svr_id 0 means broadcast to all replicas in that shard.
    * @param msg
    */
-  vector<shared_ptr<MessageEvent>> BroadcastMessage(shardid_t shard_id,
-                                                    svrid_t svr_id,
-                                                    string& msg);
-  std::shared_ptr<MessageEvent> SendMessage(svrid_t svr_id, string& msg);
 
   void AddMessageHandler(std::function<bool(const string&, string&)>);
   void AddMessageHandler(std::function<bool(const janus::Command&,

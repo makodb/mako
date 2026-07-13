@@ -1236,45 +1236,6 @@ void Communicator::SendForwardTxnRequest(
   // Arc auto-released (fire-and-forget pattern)
 }
 
-vector<shared_ptr<MessageEvent>>
-Communicator::BroadcastMessage(shardid_t shard_id,
-                               svrid_t svr_id,
-                               string& msg) {
-  verify(0);
-  // TODO
-  vector<shared_ptr<MessageEvent>> events;
-
-  for (auto& p : rpc_par_proxies_[shard_id]) {
-    auto site_id = p.first;
-    auto proxy = (p.second);
-    verify(proxy != nullptr);
-    FutureAttr fuattr;
-    auto msg_ev = std::make_shared<MessageEvent>(shard_id, site_id);
-    events.push_back(msg_ev);
-    fuattr.callback = [msg_ev] (rusty::Arc<Future> fu) {
-      if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
-        return;
-      }
-      auto marshal = fu->get_reply();
-      marshal >> msg_ev->msg_;
-      msg_ev->set(1);
-    };
-    // TODO: Actually send the RPC (currently this function is not implemented)
-  }
-  return events;
-}
-
-shared_ptr<MessageEvent>
-Communicator::SendMessage(siteid_t site_id,
-                          string& msg) {
-  verify(0);
-  // TODO
-  auto ev = std::make_shared<MessageEvent>(site_id);
-  return ev;
-}
-
-
 void Communicator::AddMessageHandler(
     function<bool(const janus::Command&, janus::Command&)> f) {
    msg_marshall_handlers_.push_back(f);
