@@ -27,6 +27,60 @@
 namespace janus {
 namespace raft {
 
+inline std::string rocksdb_log_take_error_cpp(char** errptr) {
+    if (errptr == nullptr || *errptr == nullptr) {
+        return "";
+    }
+    std::string err(*errptr);
+    rocksdb_free(*errptr);
+    *errptr = nullptr;
+    return err;
+}
+
+inline std::string rocksdb_log_copy_slice_cpp(const uint8_t* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return "";
+    }
+    return std::string(reinterpret_cast<const char*>(data), len);
+}
+
+inline std::string rocksdb_log_make_log_key_cpp(uint64_t slot_id) {
+    std::ostringstream ss;
+    ss << "log:" << std::setfill('0') << std::setw(20) << slot_id;
+    return ss.str();
+}
+
+#if RUSTYCPP_RUST
+pub fn rocksdb_log_copy_slice(data: *const u8, len: usize) -> std::string {
+    rocksdb_log_copy_slice_cpp(data, len)
+}
+
+pub fn rocksdb_log_make_log_key(slot_id: u64) -> std::string {
+    rocksdb_log_make_log_key_cpp(slot_id)
+}
+
+pub fn rocksdb_log_make_meta_key(key: &std::string) -> std::string {
+    std::string("meta:") + key
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.helpers version=1 rust_sha256=3afb8483aa780e4d0405da17cc13f22bff33f451bd85841482465b0bf0b56736*/
+inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len);
+inline std::string rocksdb_log_make_log_key(uint64_t slot_id);
+inline std::string rocksdb_log_make_meta_key(const std::string& key);
+
+inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len) {
+    return rocksdb_log_copy_slice_cpp(data, std::move(len));
+}
+
+inline std::string rocksdb_log_make_log_key(uint64_t slot_id) {
+    return rocksdb_log_make_log_key_cpp(std::move(slot_id));
+}
+
+inline std::string rocksdb_log_make_meta_key(const std::string& key) {
+    return std::string("meta:") + key;
+}
+/*RUSTYCPP:GEN-END id=rocksdb_log_storage.helpers*/
+
 /**
  * RocksDB-backed implementation of LogStorage.
  *
@@ -63,33 +117,22 @@ private:
 
     // @unsafe - Frees RocksDB error strings returned through char** out params.
     static std::string take_rocksdb_error(char** errptr) {
-        if (errptr == nullptr || *errptr == nullptr) {
-            return "";
-        }
-        std::string err(*errptr);
-        rocksdb_free(*errptr);
-        *errptr = nullptr;
-        return err;
+        return rocksdb_log_take_error_cpp(errptr);
     }
 
     // @unsafe - std::string constructor is treated as non-borrow-checked
     static std::string copy_slice(const char* data, size_t len) {
-        if (data == nullptr || len == 0) {
-            return ""; // @unsafe
-        }
-        return std::string(data, len); // @unsafe
+        return rocksdb_log_copy_slice(reinterpret_cast<const uint8_t*>(data), len);
     }
 
     // @unsafe - Uses ostringstream operations
     std::string make_log_key(slotid_t slot_id) const {
-        std::ostringstream ss;
-        ss << LOG_PREFIX << std::setfill('0') << std::setw(20) << slot_id;  // @unsafe
-        return ss.str();  // @unsafe
+        return rocksdb_log_make_log_key(slot_id);
     }
 
     // @unsafe - String concatenation
     std::string make_meta_key(const std::string& key) const {
-        return std::string(META_PREFIX) + key;  // @unsafe
+        return rocksdb_log_make_meta_key(key);
     }
 
     // @unsafe - Uses Marshal which has non-borrow-checked operations.

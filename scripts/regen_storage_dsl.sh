@@ -101,6 +101,9 @@ FILES=(
   # Raft recovery config value type only; RecoveryManager filesystem/storage
   # orchestration stays hand-C++.
   src/deptran/raft/recovery_manager.hpp
+  # Raft RocksDB log storage string/key helper boundaries only; RocksDB C API
+  # operations and storage orchestration stay hand-C++.
+  src/deptran/raft/rocksdb_log_storage.hpp
   # Raft replicated DB batch operation value type only; command
   # serialization/RocksDB/Raft integration stay hand-C++.
   src/deptran/raft/replicated_db.h
@@ -182,6 +185,9 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::NORMAL_RECOVERY);',
             'return mode == RecoveryMode::NORMAL_RECOVERY;')
+        ln = ln.replace(
+            'return std::string("meta:") + rusty::detail::deref_if_pointer_like(key);',
+            'return std::string("meta:") + key;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
