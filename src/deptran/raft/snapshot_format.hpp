@@ -169,6 +169,15 @@ class CRC32 {
     return crc.Finalize();
   }
 
+  // DSL wrapper target; keep the table-driven implementation in Calculate().
+  static uint32_t calculate(const char* data, size_t size) {
+    return Calculate(data, size);
+  }
+
+  static uint32_t calculate(const uint8_t* data, size_t size) {
+    return Calculate(reinterpret_cast<const char*>(data), size);
+  }
+
  private:
   uint32_t crc_;
 
@@ -220,10 +229,21 @@ class CRC32 {
       0xD7A8D017, 0xA0AFE081, 0x39A6B13B, 0x4EA181AD};
 };
 
-// @unsafe - Reads from raw snapshot/checksum buffer; wrapper isolates the
-// raw-pointer checksum boundary for a later DSL migration.
+#if RUSTYCPP_RUST
+pub fn snapshot_crc32(data: *const u8, size: usize) -> u32 {
+    CRC32::calculate(data, size)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.3 version=1 rust_sha256=806411356a34b347f15210e8fe691574054596416297b55d4eb211c98f257729*/
+inline uint32_t snapshot_crc32(const uint8_t* data, size_t size);
+
+inline uint32_t snapshot_crc32(const uint8_t* data, size_t size) {
+    return CRC32::calculate(data, std::move(size));
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.3*/
+
 inline uint32_t snapshot_crc32(const char* data, size_t size) {
-  return CRC32::Calculate(data, size);
+  return snapshot_crc32(reinterpret_cast<const uint8_t*>(data), size);
 }
 
 /**
