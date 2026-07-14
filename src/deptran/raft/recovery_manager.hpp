@@ -33,11 +33,28 @@ namespace raft {
  * Mode of operation for recovery.
  */
 // @safe - Simple enum
+#if RUSTYCPP_RUST
+pub enum RecoveryMode {
+    FRESH_START,
+    NORMAL_RECOVERY,
+    FORCED_FRESH,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.1 version=1 rust_sha256=277fe509da36d69e8bf08f6c863af4f7adc21208cec820ebb7922eeb1fbe48ff*/
+enum class RecoveryMode;
+constexpr RecoveryMode RecoveryMode_FRESH_START();
+constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
+constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
+
 enum class RecoveryMode {
-  FRESH_START,      // No previous state, start fresh
-  NORMAL_RECOVERY,  // Previous state found, recover from storage
-  FORCED_FRESH      // User requested fresh start even if data exists
+    FRESH_START,
+    NORMAL_RECOVERY,
+    FORCED_FRESH
 };
+inline constexpr RecoveryMode RecoveryMode_FRESH_START() { return RecoveryMode::FRESH_START; }
+inline constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY() { return RecoveryMode::NORMAL_RECOVERY; }
+inline constexpr RecoveryMode RecoveryMode_FORCED_FRESH() { return RecoveryMode::FORCED_FRESH; }
+/*RUSTYCPP:GEN-END id=recovery_manager.1*/
 
 /**
  * Configuration for recovery behavior.

@@ -15,11 +15,29 @@ namespace janus {
 class RaftServer;  // Forward declaration
 
 // @safe - Trivially copyable enum for operation type
+#if RUSTYCPP_RUST
+#[repr(u8)]
+pub enum ReplicatedDBOp {
+    PUT = 1,
+    DELETE = 2,
+    BATCH = 3,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.op version=1 rust_sha256=b0157873ab7f852c9b85b14b7d0706820a098f4147396bfa18a4c502e809c276*/
+enum class ReplicatedDBOp : uint8_t;
+constexpr ReplicatedDBOp ReplicatedDBOp_PUT();
+constexpr ReplicatedDBOp ReplicatedDBOp_DELETE();
+constexpr ReplicatedDBOp ReplicatedDBOp_BATCH();
+
 enum class ReplicatedDBOp : uint8_t {
     PUT = 1,
     DELETE = 2,
     BATCH = 3
 };
+inline constexpr ReplicatedDBOp ReplicatedDBOp_PUT() { return ReplicatedDBOp::PUT; }
+inline constexpr ReplicatedDBOp ReplicatedDBOp_DELETE() { return ReplicatedDBOp::DELETE; }
+inline constexpr ReplicatedDBOp ReplicatedDBOp_BATCH() { return ReplicatedDBOp::BATCH; }
+/*RUSTYCPP:GEN-END id=replicated_db.op*/
 
 struct KVOperation;
 

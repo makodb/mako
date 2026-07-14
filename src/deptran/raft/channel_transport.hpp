@@ -55,11 +55,24 @@ namespace raft {
 // with its local dispatcher, it calls the matching handle_* and
 // forwards the return value through whatever reply channel the
 // closure captured.
+using EnvelopeDeliverFn = rusty::Function<void(DispatcherProxy&)>;
+
+#if RUSTYCPP_RUST
+pub struct Envelope {
+    from: siteid_t,
+    to: siteid_t,
+    deliver: EnvelopeDeliverFn,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.1 version=1 rust_sha256=fb1f7f720fe2acb8a1d137369c772851558644ca1b43c78129e51b1de8b6806c*/
+struct Envelope;
+
 struct Envelope {
-  siteid_t from{0};
-  siteid_t to{0};
-  rusty::Function<void(DispatcherProxy&)> deliver;
+    siteid_t from;
+    siteid_t to;
+    EnvelopeDeliverFn deliver;
 };
+/*RUSTYCPP:GEN-END id=channel_transport.1*/
 
 }  // namespace raft
 }  // namespace janus

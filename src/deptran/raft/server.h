@@ -59,11 +59,28 @@ class ReplicatedDB;
  * - HigherTerm: Saw higher term from another server.
  *   Entries may still be valid, no automatic rollback notification.
  */
+#if RUSTYCPP_RUST
+pub enum StepDownReason {
+    UnsecuredFailure,
+    SecuredFailure,
+    HigherTerm,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=258d018ce58e8adb11536a93cbb5afb4bdf975e92088befcc4a110b7537276a7*/
+enum class StepDownReason;
+constexpr StepDownReason StepDownReason_UnsecuredFailure();
+constexpr StepDownReason StepDownReason_SecuredFailure();
+constexpr StepDownReason StepDownReason_HigherTerm();
+
 enum class StepDownReason {
-  UnsecuredFailure,  // Lost spec quorum while unsecured
-  SecuredFailure,    // Lost quorum but was secured
-  HigherTerm         // Saw higher term from another server
+    UnsecuredFailure,
+    SecuredFailure,
+    HigherTerm
 };
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure() { return StepDownReason::UnsecuredFailure; }
+inline constexpr StepDownReason StepDownReason_SecuredFailure() { return StepDownReason::SecuredFailure; }
+inline constexpr StepDownReason StepDownReason_HigherTerm() { return StepDownReason::HigherTerm; }
+/*RUSTYCPP:GEN-END id=server.1*/
 
 /**
  * CommitStatus - Notification status for client callbacks
@@ -73,11 +90,28 @@ enum class StepDownReason {
  * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
  * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
  */
+#if RUSTYCPP_RUST
+pub enum CommitStatus {
+    SPECULATIVE,
+    DURABLE,
+    ROLLEDBACK,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.2 version=1 rust_sha256=c556ede4067b5cb3936397f9027b1a2b153fa316d70eb7ebe5be557414044b09*/
+enum class CommitStatus;
+constexpr CommitStatus CommitStatus_SPECULATIVE();
+constexpr CommitStatus CommitStatus_DURABLE();
+constexpr CommitStatus CommitStatus_ROLLEDBACK();
+
 enum class CommitStatus {
-  SPECULATIVE,  // Entry reached memory quorum
-  DURABLE,      // Entry reached disk quorum with secured leader
-  ROLLEDBACK    // Entry will not commit (best-effort notification)
+    SPECULATIVE,
+    DURABLE,
+    ROLLEDBACK
 };
+inline constexpr CommitStatus CommitStatus_SPECULATIVE() { return CommitStatus::SPECULATIVE; }
+inline constexpr CommitStatus CommitStatus_DURABLE() { return CommitStatus::DURABLE; }
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK() { return CommitStatus::ROLLEDBACK; }
+/*RUSTYCPP:GEN-END id=server.2*/
 
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
@@ -104,10 +138,20 @@ struct RaftData {
 };
 
 // @safe - simple POD struct
+#if RUSTYCPP_RUST
+pub struct KeyValue {
+    key: i32,
+    value: i32,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.3 version=1 rust_sha256=8fbf17da15ef0ea0f533c3d6b345b770b027c42155db17045c72e6a3de5ab946*/
+struct KeyValue;
+
 struct KeyValue {
-	int key;
-	i32 value;
+    int32_t key;
+    int32_t value;
 };
+/*RUSTYCPP:GEN-END id=server.3*/
 
 #ifdef RAFT_TEST_CORO
 #define HEARTBEAT_INTERVAL 100000

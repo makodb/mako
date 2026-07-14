@@ -32,21 +32,57 @@ namespace raft {
  * Currently only NONE is implemented; others reserved for future.
  */
 // @safe - POD enum
+#if RUSTYCPP_RUST
+#[repr(u8)]
+pub enum SnapshotCompression {
+    NONE = 0,
+    SNAPPY = 1,
+    ZSTD = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.compression version=1 rust_sha256=383c1ccff718dcbc919edc958d7984e068f0afe7afa5530729f35574074eea7f*/
+enum class SnapshotCompression : uint8_t;
+constexpr SnapshotCompression SnapshotCompression_NONE();
+constexpr SnapshotCompression SnapshotCompression_SNAPPY();
+constexpr SnapshotCompression SnapshotCompression_ZSTD();
+
 enum class SnapshotCompression : uint8_t {
-  NONE = 0,    // No compression
-  SNAPPY = 1,  // Snappy compression (reserved)
-  ZSTD = 2     // ZSTD compression (reserved)
+    NONE = 0,
+    SNAPPY = 1,
+    ZSTD = 2
 };
+inline constexpr SnapshotCompression SnapshotCompression_NONE() { return SnapshotCompression::NONE; }
+inline constexpr SnapshotCompression SnapshotCompression_SNAPPY() { return SnapshotCompression::SNAPPY; }
+inline constexpr SnapshotCompression SnapshotCompression_ZSTD() { return SnapshotCompression::ZSTD; }
+/*RUSTYCPP:GEN-END id=snapshot_format.compression*/
 
 /**
  * Checksum algorithm for snapshot verification.
  */
 // @safe - POD enum
+#if RUSTYCPP_RUST
+#[repr(u8)]
+pub enum SnapshotChecksumType {
+    NONE = 0,
+    CRC32 = 1,
+    SHA256 = 2,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.checksum_type version=1 rust_sha256=cfce591d089c8fc3c4b050b87d0635c00b30e61d29de4c7697cb2d3e9d5dd786*/
+enum class SnapshotChecksumType : uint8_t;
+constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
+constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
+constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
+
 enum class SnapshotChecksumType : uint8_t {
-  NONE = 0,    // No checksum
-  CRC32 = 1,   // CRC32 (fast, 4 bytes)
-  SHA256 = 2   // SHA256 (reserved, 32 bytes)
+    NONE = 0,
+    CRC32 = 1,
+    SHA256 = 2
 };
+inline constexpr SnapshotChecksumType SnapshotChecksumType_NONE() { return SnapshotChecksumType::NONE; }
+inline constexpr SnapshotChecksumType SnapshotChecksumType_CRC32() { return SnapshotChecksumType::CRC32; }
+inline constexpr SnapshotChecksumType SnapshotChecksumType_SHA256() { return SnapshotChecksumType::SHA256; }
+/*RUSTYCPP:GEN-END id=snapshot_format.checksum_type*/
 
 #pragma pack(push, 1)
 #if RUSTYCPP_RUST

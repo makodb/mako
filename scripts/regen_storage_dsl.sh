@@ -83,6 +83,9 @@ FILES=(
   # Raft async AppendEntries response value only; RaftCommo and callback/Future
   # lifetimes stay hand-C++.
   src/deptran/raft/commo.h
+  # Raft server enums and tiny POD helpers only; RaftServer itself remains
+  # hand-C++ because it owns threading, persistence, and consensus state.
+  src/deptran/raft/server.h
   # Raft snapshot metadata: value struct + thin methods delegated to C++
   # helpers; reader/writer/manager virtual interfaces stay hand-C++ for now.
   src/deptran/raft/snapshot_manager.hpp
@@ -130,6 +133,21 @@ for ln in lines:
         in_gen = False
     elif in_gen and (methodpat.match(ln) or (is_header and freepat.match(ln))):
         ln = 'inline ' + ln
+    if in_gen:
+        # The a4bcff5f transpiler parses #[repr(...)] on Rust enums but does
+        # not emit the matching C++ fixed underlying type yet. Keep Raft
+        # wire/storage enum layout stable until that lands upstream.
+        enum_reprs = {
+            'SnapshotCompression': 'uint8_t',
+            'SnapshotChecksumType': 'uint8_t',
+            'ReplicatedDBOp': 'uint8_t',
+            'AckType': 'uint64_t',
+        }
+        for name, repr_type in enum_reprs.items():
+            ln = ln.replace(f'enum class {name};',
+                            f'enum class {name} : {repr_type};')
+            ln = ln.replace(f'enum class {name} {{',
+                            f'enum class {name} : {repr_type} {{')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

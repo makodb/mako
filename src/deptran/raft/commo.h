@@ -35,11 +35,28 @@ class TxData;
  * - DOWN: Peer responded with "I'm down" (svr_ == nullptr), no retry needed
  * - PENDING: Should send/retry NotifyRestart (not yet acknowledged or timed out)
  */
+#if RUSTYCPP_RUST
+pub enum NotifyRestartStatus {
+    ACKNOWLEDGED,
+    DOWN,
+    PENDING,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.1 version=1 rust_sha256=49a2d41c8e5a2dbf51a9143474e2bcdffb9a9adaba6a56dbbebec0d97ba501c5*/
+enum class NotifyRestartStatus;
+constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
+constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
+
 enum class NotifyRestartStatus {
-  ACKNOWLEDGED,  // Peer reconnected to us
-  DOWN,          // Peer told us it's down (no retry needed, will reconnect when it restarts)
-  PENDING        // Need to send/retry NotifyRestart
+    ACKNOWLEDGED,
+    DOWN,
+    PENDING
 };
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED() { return NotifyRestartStatus::ACKNOWLEDGED; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN() { return NotifyRestartStatus::DOWN; }
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING() { return NotifyRestartStatus::PENDING; }
+/*RUSTYCPP:GEN-END id=commo.1*/
 
 // @unsafe - inherits from non-@interface base QuorumEvent and tracks voters
 // behind a std::mutex; keep hand-written until the event hierarchy migrates.
@@ -149,10 +166,25 @@ inline SendAppendEntriesResults send_append_entries_results_defaults() {
  * Memory: Entry appended to in-memory log (immediate response)
  * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
  */
+#if RUSTYCPP_RUST
+#[repr(u64)]
+pub enum AckType {
+    Memory = 0,
+    Durable = 1,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.ack_type version=1 rust_sha256=caffdb0a63dea9cf984c3f302fc0dab2480826a989ae350fd27b63222f73e2d5*/
+enum class AckType : uint64_t;
+constexpr AckType AckType_Memory();
+constexpr AckType AckType_Durable();
+
 enum class AckType : uint64_t {
-  Memory = 0,
-  Durable = 1
+    Memory = 0,
+    Durable = 1
 };
+inline constexpr AckType AckType_Memory() { return AckType::Memory; }
+inline constexpr AckType AckType_Durable() { return AckType::Durable; }
+/*RUSTYCPP:GEN-END id=commo.ack_type*/
 
 // Response data for async AppendEntries RPC.
 // Uses shared_ptr semantics to ensure memory validity when callback fires.
