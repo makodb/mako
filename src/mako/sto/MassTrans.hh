@@ -271,7 +271,7 @@ private:
         // add any new nodes as a result of splits, etc. to the read/absent set
 #if !ABORT_ON_WRITE_READ_CONFLICT
         for (auto&& pair : lp.new_nodes()) {
-          auto nodeitem = Sto::new_item(this, tag_inter(pair.first));
+          auto nodeitem = Sto::new_item(this, make_internode_key(pair.first));
           if (Opacity)
             nodeitem.add_read_opaque(pair.second);
           else
@@ -566,8 +566,8 @@ public:
         return txn.try_lock(item, vv->version());
     }
   bool check(TransItem& item, Transaction&) override {
-    if (is_inter(item)) {
-      auto n = untag_inter(item.key<leaf_type*>());
+    if (has_internode_key(item)) {
+      auto n = internode_from_item(item);
       auto cur_version = n->full_version_value();
       auto read_version = item.template read_value<typename unlocked_cursor_type::nodeversion_value_type>();
       return cur_version == read_version;
@@ -589,7 +589,7 @@ public:
     header->data_size = 0; 
 
   void install(TransItem& item, Transaction& t) override {
-    assert(!is_inter(item));
+    assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
     assert(is_locked(e->version()));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
@@ -789,7 +789,7 @@ protected:
   template <typename NODE, typename VERSION>
   void ensureNotFound(NODE n, VERSION v) {
     // TODO: could be more efficient to use fresh_item here, but that will also require more work for read-then-insert
-    auto item = t_read_only_item(tag_inter(n));
+    auto item = t_read_only_item(make_internode_key(n));
     if (Opacity)
       item.add_read_opaque(v);
     else
@@ -798,7 +798,7 @@ protected:
 
   template <typename NODE, typename VERSION>
   bool updateNodeVersion(NODE *node, VERSION prev_version, VERSION new_version) {
-    if (auto node_item = Sto::check_item(this, tag_inter(node))) {
+    if (auto node_item = Sto::check_item(this, make_internode_key(node))) {
       if (node_item->has_read() &&
           prev_version == node_item->template read_value<VERSION>()) {
         node_item->update_read(node_item->template read_value<VERSION>(),
@@ -847,20 +847,35 @@ protected:
   static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
   static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit<<1;
 
+private:
+  // @unsafe - pointer tagging stores the internode marker in the low alignment bit.
   template <typename T>
   static T* tag_inter(T* p) {
     return (T*)((uintptr_t)p | internode_bit);
   }
+  // @unsafe - clears the internode marker before the pointer is dereferenced.
   template <typename T>
   static T* untag_inter(T* p) {
     return (T*)((uintptr_t)p & ~internode_bit);
   }
+  // @unsafe - inspects the low alignment bit of a possibly tagged pointer.
   template <typename T>
   static bool is_inter(T* p) {
     return (uintptr_t)p & internode_bit;
   }
-  static bool is_inter(const TransItem& t) {
-      return is_inter(t.key<versioned_value*>());
+
+protected:
+  template <typename T>
+  static T* make_internode_key(T* node) {
+    return tag_inter(node);
+  }
+
+  static leaf_type* internode_from_item(const TransItem& item) {
+    return untag_inter(item.key<leaf_type*>());
+  }
+
+  static bool has_internode_key(const TransItem& item) {
+    return is_inter(item.key<versioned_value*>());
   }
 
   static void check_opacity(Version& v) {
