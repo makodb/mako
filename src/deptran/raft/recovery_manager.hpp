@@ -226,6 +226,49 @@ inline RecoveryResult recovery_result_failure(const std::string& error) {
   return result;
 }
 
+#if RUSTYCPP_RUST
+pub fn recovery_mode_is_fresh_start(mode: RecoveryMode) -> bool {
+    mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH
+}
+
+pub fn recovery_mode_needs_recovery(mode: RecoveryMode) -> bool {
+    mode == RecoveryMode::NORMAL_RECOVERY
+}
+
+pub fn recovery_result_mark_fresh_success(result: &mut RecoveryResult) {
+    result.success = true;
+    result.recovered_entries = 0;
+}
+
+pub fn recovery_result_mark_success(result: &mut RecoveryResult,
+                                    recovered_entries: u64,
+                                    recovery_time_ms: u64) {
+    result.success = true;
+    result.recovered_entries = recovered_entries;
+    result.recovery_time_ms = recovery_time_ms;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=6cb714ac89e470ff50b87b0cab4a6baa90276efc26a9fb8d217e9bf098c9e8f6*/
+inline bool recovery_mode_is_fresh_start(RecoveryMode mode) {
+    return mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH;
+}
+
+inline bool recovery_mode_needs_recovery(RecoveryMode mode) {
+    return mode == RecoveryMode::NORMAL_RECOVERY;
+}
+
+inline void recovery_result_mark_fresh_success(RecoveryResult& result) {
+    result.success = true;
+    result.recovered_entries = 0;
+}
+
+inline void recovery_result_mark_success(RecoveryResult& result, uint64_t recovered_entries, uint64_t recovery_time_ms) {
+    result.success = true;
+    result.recovered_entries = std::move(recovered_entries);
+    result.recovery_time_ms = std::move(recovery_time_ms);
+}
+/*RUSTYCPP:GEN-END id=recovery_manager.small_helpers*/
+
 /**
  * Recovery Manager coordinates the recovery sequence for Raft/Paxos servers.
  *
@@ -310,7 +353,7 @@ class RecoveryManager {
 
   // @safe - Check if recovery is needed (vs fresh start)
   bool needs_recovery() const {
-    return detected_mode_.get() == RecoveryMode::NORMAL_RECOVERY;
+    return recovery_mode_needs_recovery(detected_mode_.get());
   }
 
   // @safe - Get detected mode
@@ -344,14 +387,12 @@ class RecoveryManager {
     auto start_time = std::chrono::steady_clock::now();
 
     // Fresh start: nothing to recover
-    if (result.mode == RecoveryMode::FRESH_START ||
-        result.mode == RecoveryMode::FORCED_FRESH) {
+    if (recovery_mode_is_fresh_start(result.mode)) {
       // Set storage for future persistence
       if (storage_) {
         set_storage(storage_);
       }
-      result.success = true;
-      result.recovered_entries = 0;
+      recovery_result_mark_fresh_success(result);
       return result;
     }
 
@@ -369,14 +410,15 @@ class RecoveryManager {
     }
 
     // Get statistics
-    result.recovered_entries = storage_->size();
+    uint64_t recovered_entries = storage_->size();
+    result.recovered_entries = recovered_entries;
     get_stats(result);
 
     auto end_time = std::chrono::steady_clock::now();
-    result.recovery_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+    uint64_t recovery_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time).count();
 
-    result.success = true;
+    recovery_result_mark_success(result, recovered_entries, recovery_time_ms);
     Log_info("Recovery complete: %lu entries in %lu ms",
              result.recovered_entries, result.recovery_time_ms);
     return result;

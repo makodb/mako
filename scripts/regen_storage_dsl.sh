@@ -176,6 +176,12 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));',
             'return valid && offset >= data_size;')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FRESH_START)) || (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FORCED_FRESH));',
+            'return mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::NORMAL_RECOVERY);',
+            'return mode == RecoveryMode::NORMAL_RECOVERY;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
