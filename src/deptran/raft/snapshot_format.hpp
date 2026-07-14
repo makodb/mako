@@ -42,9 +42,9 @@ pub enum SnapshotCompression {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.compression version=1 rust_sha256=383c1ccff718dcbc919edc958d7984e068f0afe7afa5530729f35574074eea7f*/
 enum class SnapshotCompression : uint8_t;
-constexpr SnapshotCompression SnapshotCompression_NONE();
-constexpr SnapshotCompression SnapshotCompression_SNAPPY();
-constexpr SnapshotCompression SnapshotCompression_ZSTD();
+inline constexpr SnapshotCompression SnapshotCompression_NONE();
+inline constexpr SnapshotCompression SnapshotCompression_SNAPPY();
+inline constexpr SnapshotCompression SnapshotCompression_ZSTD();
 
 enum class SnapshotCompression : uint8_t {
     NONE = 0,
@@ -70,9 +70,9 @@ pub enum SnapshotChecksumType {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.checksum_type version=1 rust_sha256=cfce591d089c8fc3c4b050b87d0635c00b30e61d29de4c7697cb2d3e9d5dd786*/
 enum class SnapshotChecksumType : uint8_t;
-constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
-constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
-constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
+inline constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
+inline constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
+inline constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
 
 enum class SnapshotChecksumType : uint8_t {
     NONE = 0,
@@ -172,6 +172,26 @@ inline SnapshotHeader snapshot_header_make(SnapshotCompression compression, Snap
     return SnapshotHeader{.magic = 1347305811, .version = 1, .header_size = 52, .data_size = std::move(data_size), .compression = static_cast<uint8_t>(compression), .checksum_type = static_cast<uint8_t>(checksum_type), .last_index = std::move(last_index), .last_term = std::move(last_term), .timestamp_ms = std::move(timestamp_ms), .header_crc = 0, .padding_0 = 0, .padding_1 = 0};
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.2*/
+
+inline uint64_t snapshot_current_time_ms_cpp() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+}
+
+#if RUSTYCPP_RUST
+pub fn snapshot_current_time_ms() -> u64 {
+    snapshot_current_time_ms_cpp()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.current_time_ms version=1 rust_sha256=53550cb839bce9c07add3c5ed8d79654ea61ebb26ef359a151d0c17748024df2*/
+inline uint64_t snapshot_current_time_ms();
+
+inline uint64_t snapshot_current_time_ms() {
+    return snapshot_current_time_ms_cpp();
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.current_time_ms*/
 
 /**
  * CRC32 checksum calculator (IEEE 802.3 polynomial).
@@ -478,11 +498,11 @@ class SnapshotFormat {
   }
 
  private:
-  // @unsafe - Uses std::chrono
+  // @safe - Thin compatibility wrapper around the DSL-owned time helper.
+  // The std::chrono boundary is isolated in snapshot_current_time_ms_cpp();
+  // callers keep using the existing SnapshotFormat API.
   static uint64_t GetCurrentTimeMs() {
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    return snapshot_current_time_ms();
   }
 };
 
