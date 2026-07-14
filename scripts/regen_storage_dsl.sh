@@ -16,7 +16,11 @@ cd "$(dirname "$0")/.."
 
 CHECK=0
 if [[ "${1:-}" == "--check" ]]; then CHECK=1; shift; fi
-TRANSPILER="${1:-build_local/rusty-cpp-transpiler-a4bcff5f}"
+DEFAULT_TRANSPILER="build_local/rusty-cpp-transpiler-a4bcff5f"
+if [[ ! -x "$DEFAULT_TRANSPILER" && -x "third-party/rusty-cpp/target/release/rusty-cpp-transpiler" ]]; then
+  DEFAULT_TRANSPILER="third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
+fi
+TRANSPILER="${1:-$DEFAULT_TRANSPILER}"
 
 FILES=(
   src/mako/storage/abstract_ordered_index.h
@@ -91,6 +95,9 @@ FILES=(
   # Raft recovery config value type only; RecoveryManager filesystem/storage
   # orchestration stays hand-C++.
   src/deptran/raft/recovery_manager.hpp
+  # Raft replicated DB batch operation value type only; command
+  # serialization/RocksDB/Raft integration stay hand-C++.
+  src/deptran/raft/replicated_db.h
 )
 
 post_pass() {

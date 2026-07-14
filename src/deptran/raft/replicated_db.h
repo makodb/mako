@@ -2,6 +2,7 @@
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
+#include "rusty/rusty.hpp"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -20,34 +21,89 @@ enum class ReplicatedDBOp : uint8_t {
     BATCH = 3
 };
 
-// @safe - Plain data struct for batch operations
+struct KVOperation;
+
+inline KVOperation kv_operation_defaults();
+inline KVOperation kv_operation_make(ReplicatedDBOp op,
+                                     const std::string& key,
+                                     const std::string& value);
+
+#if RUSTYCPP_RUST
+pub struct KVOperation {
+    op: janus::ReplicatedDBOp,
+    key: std::string,
+    value: std::string,
+}
+
+impl KVOperation {
+    fn defaults() -> KVOperation {
+        kv_operation_defaults()
+    }
+
+    fn make(op: janus::ReplicatedDBOp,
+            key: std::string,
+            value: std::string) -> KVOperation {
+        kv_operation_make(op, key, value)
+    }
+
+    fn put(key: std::string, value: std::string) -> KVOperation {
+        kv_operation_make(janus::ReplicatedDBOp::PUT, key, value)
+    }
+
+    fn delete_key(key: std::string) -> KVOperation {
+        kv_operation_make(janus::ReplicatedDBOp::DELETE, key, "")
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.1 version=1 rust_sha256=5536196124b0b9fe676d3704d9f3fcec6fa296040c8bc0835f6bb27355a23e2a*/
+struct KVOperation;
+
 struct KVOperation {
-    ReplicatedDBOp op = ReplicatedDBOp::PUT;
+    janus::ReplicatedDBOp op;
     std::string key;
-    std::string value;  // empty for DELETE
+    std::string value;
 
-    static KVOperation defaults() {
-        return KVOperation{};
-    }
-
-    static KVOperation make(ReplicatedDBOp op,
-                            const std::string& key,
-                            const std::string& value) {
-        KVOperation kv_op = KVOperation::defaults();
-        kv_op.op = op;
-        kv_op.key = key;
-        kv_op.value = value;
-        return kv_op;
-    }
-
-    static KVOperation put(const std::string& key, const std::string& value) {
-        return KVOperation::make(ReplicatedDBOp::PUT, key, value);
-    }
-
-    static KVOperation delete_key(const std::string& key) {
-        return KVOperation::make(ReplicatedDBOp::DELETE, key, "");
-    }
+    static KVOperation defaults();
+    static KVOperation make(janus::ReplicatedDBOp op, std::string key, std::string value);
+    static KVOperation put(std::string key, std::string value);
+    static KVOperation delete_key(std::string key);
 };
+
+
+inline KVOperation KVOperation::defaults() {
+    return kv_operation_defaults();
+}
+
+inline KVOperation KVOperation::make(janus::ReplicatedDBOp op, std::string key, std::string value) {
+    return kv_operation_make(std::move(op), std::move(key), std::move(value));
+}
+
+inline KVOperation KVOperation::put(std::string key, std::string value) {
+    return kv_operation_make(rusty::clone(rusty::clone(janus::ReplicatedDBOp::PUT)), std::move(key), std::move(value));
+}
+
+inline KVOperation KVOperation::delete_key(std::string key) {
+    return kv_operation_make(rusty::clone(rusty::clone(janus::ReplicatedDBOp::DELETE)), std::move(key), "");
+}
+/*RUSTYCPP:GEN-END id=replicated_db.1*/
+
+inline KVOperation kv_operation_defaults() {
+    KVOperation kv_op{};
+    kv_op.op = ReplicatedDBOp::PUT;
+    kv_op.key = "";
+    kv_op.value = "";
+    return kv_op;
+}
+
+inline KVOperation kv_operation_make(ReplicatedDBOp op,
+                                     const std::string& key,
+                                     const std::string& value) {
+    KVOperation kv_op = kv_operation_defaults();
+    kv_op.op = op;
+    kv_op.key = key;
+    kv_op.value = value;
+    return kv_op;
+}
 
 // TypeList-derived kind. Wire payload preserved
 // byte-for-byte:
