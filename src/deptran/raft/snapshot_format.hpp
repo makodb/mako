@@ -220,6 +220,12 @@ class CRC32 {
       0xD7A8D017, 0xA0AFE081, 0x39A6B13B, 0x4EA181AD};
 };
 
+// @unsafe - Reads from raw snapshot/checksum buffer; wrapper isolates the
+// raw-pointer checksum boundary for a later DSL migration.
+inline uint32_t snapshot_crc32(const char* data, size_t size) {
+  return CRC32::Calculate(data, size);
+}
+
 /**
  * Snapshot format serialization and deserialization utilities.
  */
@@ -270,13 +276,13 @@ class SnapshotFormat {
 
     // Calculate header CRC (excluding header_crc field itself and padding)
     // CRC covers bytes 0..43 (before header_crc field at offset 44)
-    header.header_crc = CRC32::Calculate(
+    header.header_crc = snapshot_crc32(
         reinterpret_cast<const char*>(&header), 44);
 
     // Calculate data checksum
     uint32_t data_crc = 0;
     if (checksum_type == SnapshotChecksumType::CRC32) {
-      data_crc = CRC32::Calculate(data, size);
+      data_crc = snapshot_crc32(data, size);
     }
 
     // Calculate output size: header + data + checksum
@@ -348,7 +354,7 @@ class SnapshotFormat {
     }
 
     // Verify header CRC
-    uint32_t expected_header_crc = CRC32::Calculate(input, 44);
+    uint32_t expected_header_crc = snapshot_crc32(input, 44);
     if (header.header_crc != expected_header_crc) {
       Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x%08X != 0x%08X)",
                 header.header_crc, expected_header_crc);
@@ -378,7 +384,7 @@ class SnapshotFormat {
     if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
       uint32_t expected_crc;
       std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
-      uint32_t actual_crc = CRC32::Calculate(data_ptr, header.data_size);
+      uint32_t actual_crc = snapshot_crc32(data_ptr, header.data_size);
       if (expected_crc != actual_crc) {
         Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x%08X != 0x%08X)",
                   expected_crc, actual_crc);
@@ -411,7 +417,7 @@ class SnapshotFormat {
       return false;
     }
     // Verify header CRC
-    uint32_t expected_crc = CRC32::Calculate(input, 44);
+    uint32_t expected_crc = snapshot_crc32(input, 44);
     return header->header_crc == expected_crc;
   }
 
