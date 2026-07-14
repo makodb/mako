@@ -4626,7 +4626,7 @@ int RaftLabTest::testSnapshotFormatRoundTrip(void) {
           "Serialized data should be larger than header");
 
   // Verify header
-  janus::raft::SnapshotHeader header;
+  janus::raft::SnapshotHeader header = janus::raft::snapshot_header_defaults();
   ok = janus::raft::SnapshotFormat::GetHeader(serialized.data(), serialized.size(), &header);
   Assert2(ok, "GetHeader should succeed");
   Assert2(header.last_index == test_index,

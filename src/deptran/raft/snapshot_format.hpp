@@ -79,6 +79,39 @@ struct SnapshotHeader {
 
 static_assert(sizeof(SnapshotHeader) == 52, "SnapshotHeader must be 52 bytes");
 
+inline SnapshotHeader snapshot_header_defaults() {
+  SnapshotHeader header{};
+  header.magic = 0x504E4153;
+  header.version = 1;
+  header.header_size = sizeof(SnapshotHeader);
+  header.data_size = 0;
+  header.compression = static_cast<uint8_t>(SnapshotCompression::NONE);
+  header.checksum_type = static_cast<uint8_t>(SnapshotChecksumType::NONE);
+  header.last_index = 0;
+  header.last_term = 0;
+  header.timestamp_ms = 0;
+  header.header_crc = 0;
+  header.padding[0] = 0;
+  header.padding[1] = 0;
+  return header;
+}
+
+inline SnapshotHeader snapshot_header_make(SnapshotCompression compression,
+                                           SnapshotChecksumType checksum_type,
+                                           uint64_t data_size,
+                                           uint64_t last_index,
+                                           uint64_t last_term,
+                                           uint64_t timestamp_ms) {
+  SnapshotHeader header = snapshot_header_defaults();
+  header.compression = static_cast<uint8_t>(compression);
+  header.checksum_type = static_cast<uint8_t>(checksum_type);
+  header.data_size = data_size;
+  header.last_index = last_index;
+  header.last_term = last_term;
+  header.timestamp_ms = timestamp_ms;
+  return header;
+}
+
 /**
  * CRC32 checksum calculator (IEEE 802.3 polynomial).
  * Table-driven implementation for speed.
@@ -202,18 +235,13 @@ class SnapshotFormat {
       return false;
     }
 
-    // Build header
-    SnapshotHeader header;
-    header.magic = MAGIC;
-    header.version = VERSION;
-    header.header_size = sizeof(SnapshotHeader);
-    header.data_size = size;
-    header.compression = static_cast<uint8_t>(compression);
-    header.checksum_type = static_cast<uint8_t>(checksum_type);
-    header.last_index = last_index;
-    header.last_term = last_term;
-    // Get current time
-    header.timestamp_ms = GetCurrentTimeMs();
+    SnapshotHeader header = snapshot_header_make(
+        compression,
+        checksum_type,
+        size,
+        last_index,
+        last_term,
+        GetCurrentTimeMs());
 
     // Calculate header CRC (excluding header_crc field itself and padding)
     // CRC covers bytes 0..43 (before header_crc field at offset 44)
@@ -280,7 +308,7 @@ class SnapshotFormat {
     }
 
     // Copy header
-    SnapshotHeader header;
+    SnapshotHeader header = snapshot_header_defaults();
     std::memcpy(&header, input, sizeof(SnapshotHeader));
 
     // Validate magic and version

@@ -247,7 +247,7 @@ class FileSnapshotReader : public SnapshotReader {
     metadata_.size_bytes = data_.size();
 
     // Get header for timestamp
-    SnapshotHeader header;
+    SnapshotHeader header = snapshot_header_defaults();
     if (SnapshotFormat::GetHeader(file_data_.data(), file_data_.size(), &header)) {
       metadata_.timestamp_ms = header.timestamp_ms;
     }
