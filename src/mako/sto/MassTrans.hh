@@ -17,6 +17,7 @@
 #include "sync_util.hh"
 #include "lib/common.h"
 #include <atomic>
+#include <rusty/function.hpp>
 #include "common.hh"
 #include "stdlib.h"
 
@@ -317,29 +318,15 @@ public:
     return size_count_;
   }
 
-  // goddammit templates/hax
-  template <typename Callback, typename V2>
-  static bool query_callback_overload(Str key, versioned_value_struct<V2> *val, Callback c) {
-    return c(key, val->read_value());
-  }
+  using RangeCallback = rusty::Function<bool(Str, value_type&)>;
+  using ValueAllocator = rusty::Function<value_type*()>;
 
-  template <typename Callback>
-  static bool query_callback_overload(Str key, versioned_str_struct *val, Callback c) {
-    return c(key, val);
+  static value_type* allocate_value(ValueAllocator* allocator) {
+    return allocator ? (*allocator)() : nullptr;
   }
-
-  // unused (we just stack alloc if no allocator is passed)
-  class DefaultValAllocator {
-  public:
-    value_type* operator()() {
-      assert(0);
-      return new value_type();
-    }
-  };
 
   // range queries
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void transQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+  void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -363,7 +350,7 @@ public:
 // #endif
       // not sure of a better way to do this
       value_type stack_val;
-      value_type& val = va ? *(*va)() : stack_val;
+      value_type& val = va ? *allocate_value(va) : stack_val;
       Version v;
       if(!atomicRead(e, v, val)){
         Sto::abort();
@@ -379,7 +366,7 @@ public:
                                           TThread::txn->get_current_term(), 
                                           sync_util::sync_logger::hist_timestamp);
       if (ret){
-        return callback(key, val);//query_callback_overload(key, val, callback);
+        return callback(key, val);
       }else {
         deleted_cnt++;
         if (deleted_cnt>10){
@@ -393,8 +380,7 @@ public:
     table_.scan(begin, true, scanner, *ti.ti);
   }
 
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void transRQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+  void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -403,7 +389,7 @@ public:
       auto item = this->t_read_only_item(e);
       // not sure of a better way to do this
       value_type stack_val;
-      value_type& val = va ? *(*va)() : stack_val;
+      value_type& val = va ? *allocate_value(va) : stack_val;
 // #if READ_MY_WRITES
 //       if (has_delete(item)) {
 //         return true;
@@ -431,7 +417,7 @@ public:
                                           TThread::txn->get_current_term(), 
                                           sync_util::sync_logger::hist_timestamp);
       if (ret)
-        return callback(key, val);//query_callback_overload(key, val, callback);
+        return callback(key, val);
       else {
         deleted_cnt++;
         if (deleted_cnt>10){
@@ -446,11 +432,10 @@ public:
   }
 
 #if READ_MY_WRITES
-  template <typename Callback, typename ValAllocator>
   // for some reason inlining this/not making it a function gives a 5% slowdown on g++...
-  static __attribute__((noinline)) bool range_query_has_insert(Callback callback, Str key, versioned_value *e, ValAllocator *va) {
+  static __attribute__((noinline)) bool range_query_has_insert(RangeCallback& callback, Str key, versioned_value *e, ValueAllocator *va) {
     value_type stack_val;
-    value_type& val = va ? *(*va)() : stack_val;
+    value_type& val = va ? *allocate_value(va) : stack_val;
     assign_val(val, e->read_value());
     return callback(key, val);
   }
@@ -550,22 +535,20 @@ public:
 
   // Forward range scan over [begin, end). Callback is invoked per
   // key-value pair; return false from the callback to stop early.
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void scan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+  void scan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
             threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transQuery(begin, end, callback, va, ti);
+    transQuery(begin, end, std::move(callback), va, ti);
     Sto::commit();
   }
 
   // Reverse range scan; same contract as scan but descending order.
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void rscan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+  void rscan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transRQuery(begin, end, callback, va, ti);
+    transRQuery(begin, end, std::move(callback), va, ti);
     Sto::commit();
   }
 
