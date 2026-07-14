@@ -254,12 +254,26 @@ public:
         int gwid = 0;
         std::string logical;
         if (parse_warehouse_spec(table, &gwid, &logical)) {
+            // Hang forensics: the FIRST wh-spec resolve on a shard has been
+            // observed to wedge intermittently WHILE HOLDING mu_ -- which
+            // mutes this whole data plane (every later op of any kind queues
+            // behind the catalog lock; standalone preflights that resolved
+            // earlier keep working, the selective-muteness signature). The
+            // two suspects are the mid-run engine thread registration and
+            // the directory resolve; the step logs draw the line.
+            // @unsafe { stderr diagnostics }
+            fprintf(stderr, "ShardDataCatalog: resolving spec '%s' (engine init)\n",
+                    table.c_str());
             // The directory's opener runs open_index -> needs an engine-
             // registered thread (rrr handler threads are not).
             engine_init_this_thread(db_);
+            fprintf(stderr, "ShardDataCatalog: resolving spec '%s' (directory)\n",
+                    table.c_str());
             ::FullOrderedIndex* idx =
                 get_warehouse_directory().local_for_migration(logical, gwid,
                                                               my_shard_);
+            fprintf(stderr, "ShardDataCatalog: resolved spec '%s' (idx=%p)\n",
+                    table.c_str(), static_cast<void*>(idx));
             if (idx == nullptr) return nullptr;   // no TPC-C directory here
             // Fence entries must carry the PHYSICAL table name (what the
             // staging fence resolves from the index at write time).

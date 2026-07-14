@@ -372,6 +372,18 @@ private:
         src_proxies_.emplace(addr, proxy);
         return proxy;
     }
+    // Drop a cached pull-source proxy whose connection went bad: the cache
+    // is keyed by address and otherwise lives forever, so one dead
+    // connection would poison every later pull from that source.
+    void EvictSourceProxy(const std::string& addr) {
+        auto lk = src_mu_.lock().unwrap();
+        auto it = src_proxies_.find(addr);
+        if (it != src_proxies_.end()) {
+            // Proxy (and its client Arc) leak by design elsewhere in this
+            // file; the map entry is what matters for freshness.
+            src_proxies_.erase(it);
+        }
+    }
 
     ShardDataCatalog* catalog_;        // non-owning (unless owned_single_)
     SingleTableCatalog* owned_single_; // set by the single-table ctor
@@ -451,6 +463,14 @@ public:
         bool any_reply = false;
         int errs = 0;
         for (int waited_ms = 0; waited_ms < 600000; ) {
+            // A destination that has replied to NOTHING in ~15s is not
+            // congested -- its cached connection is dead (observed live: the
+            // handle minted during the forward leg went 462 straight
+            // timeouts, zero replies, against a service that had just
+            // answered hundreds of forward RPCs). Fail fast and latch: the
+            // coordinator evicts the faulted handle and the retry attempt
+            // reconnects fresh.
+            if (!any_reply && waited_ms > 15000) break;
             ShardDataServiceProxy::RpcPullRangeRequest req;
             req.table_name = table_;
             req.lo = lo; req.hi = hi;
@@ -730,9 +750,16 @@ inline long ShardDataServiceImpl::DoPullRange(const std::string& table,
                                               const std::string& src_addr,
                                               const std::string& src_table) {
     ShardData* dest = resolve(table);
-    if (dest == nullptr) return -1;
+    if (dest == nullptr) {
+        Log_warn("ShardDataPlane: pull FAILED resolving local '%s'", table.c_str());
+        return -1;
+    }
     ShardDataServiceProxy* sp = SourceProxy(src_addr);
-    if (sp == nullptr) return -1;
+    if (sp == nullptr) {
+        Log_warn("ShardDataPlane: pull FAILED connecting source %s for '%s'",
+                 src_addr.c_str(), table.c_str());
+        return -1;
+    }
     RemoteShardData src(sp, src_table);
     // The DESTINATION participant drives the pull: its copy_range_from knows
     // its own range semantics (wh-spec participants widen to the whole
@@ -741,7 +768,16 @@ inline long ShardDataServiceImpl::DoPullRange(const std::string& table,
     // dest is local to this process, so the base mirror runs right here with
     // local puts/removes and chunked RPC scans of the source.
     const size_t copied = dest->copy_range_from(&src, lo, hi);
-    if (src.faulted()) return -1;   // dead source: report failure, not a short copy
+    if (src.faulted()) {
+        // Dead source: report failure, not a short copy -- and evict the
+        // cached connection so the coordinator's retry pulls over a fresh
+        // one instead of the same dead socket.
+        Log_warn("ShardDataPlane: pull of '%s' FAULTED against source %s "
+                 "table '%s' (scans unanswered); evicting cached source proxy",
+                 table.c_str(), src_addr.c_str(), src_table.c_str());
+        EvictSourceProxy(src_addr);
+        return -1;
+    }
     pull_range_calls++;
     Log_info("ShardDataPlane: pulled %zu rows of '%s' [%s,%s) directly from %s",
              copied, table.c_str(), lo.c_str(), hi.c_str(), src_addr.c_str());

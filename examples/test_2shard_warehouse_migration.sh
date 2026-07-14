@@ -240,6 +240,25 @@ else
     done
     if [ "$preflight_ok" -eq 1 ]; then
         echo "Preflight migration committed: both data planes answering"
+        # REVERSE PREFLIGHT: send the same empty table straight back (0 -> 1).
+        # This is the REMOTE-DESTINATION path (PullRange to shard 1, shard 1
+        # pulling from shard 0, remote VerifyRange vote) -- the exact leg the
+        # warehouse return exercises -- in seconds and BEFORE the ten-minute
+        # forward pass. A failure here is the minimal reproduction of the
+        # return-leg transport bug; a pass isolates any later return failure
+        # to forward-accumulated state.
+        preflight_back_ok=0
+        for pf in 1 2 3; do
+            pf_out=$("$admin_path" migrate "$admin_addr" "__preflight__" a b 0 1 5 2>&1)
+            if echo "$pf_out" | grep -aq "ok=1"; then preflight_back_ok=1; break; fi
+            echo "Reverse-preflight attempt ${pf}: ${pf_out}"
+            sleep 5
+        done
+        if [ "$preflight_back_ok" -eq 1 ]; then
+            echo "Reverse preflight committed: remote-destination pull path answering"
+        else
+            echo "REVERSE PREFLIGHT FAILED: the remote-destination pull path is broken from t=0"
+        fi
         for t in "${MIG_TABLES[@]}"; do
             run_migration "$t" 1 0 "$t"
         done
