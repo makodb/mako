@@ -18,7 +18,7 @@ TEST(AndEventTest, BasicAndEvent) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
     // Create WaitAll that waits for both
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2};
+    rusty::Vec<std::shared_ptr<EventPollable>> events = {event1, event2};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> and_triggered{false};
@@ -46,7 +46,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2, event3};
+    rusty::Vec<std::shared_ptr<EventPollable>> events = {event1, event2, event3};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<int> completion_value{0};
@@ -77,7 +77,7 @@ TEST(AndEventTest, AndWithTimeout) {
     auto event1 = Reactor::create_sp_event<IntEvent>();
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2};
+    rusty::Vec<std::shared_ptr<EventPollable>> events = {event1, event2};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> timed_out{false};
@@ -137,7 +137,7 @@ TEST(AndEventTest, MixedEventTypes) {
     auto int_event = Reactor::create_sp_event<IntEvent>();
     auto timeout_event = Reactor::create_sp_event<TimeoutEvent>(100000); // 100ms
     
-    rusty::Vec<std::shared_ptr<Event>> events = {int_event, timeout_event};
+    rusty::Vec<std::shared_ptr<EventPollable>> events = {int_event, timeout_event};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> completed{false};

@@ -182,6 +182,22 @@ template <class U> class EventPollableAdapterRef;
 template <class U> class EventPollableAdapterRefMut;
 /*RUSTYCPP:GEN-END id=reactor.event_pollable*/
 
+// Kernel forward declarations (definitions live with the other out-of-line
+// event machinery below): the flattened DSL structs' generated method
+// bodies call these by ordinary lookup, so the names must exist first.
+template <typename W> void event_wait_impl(W& self, uint64_t timeout);
+template <typename W> bool event_test_impl(W& self);
+
+// Per-type construction factory used by Reactor::create_sp_event. The
+// primary template forwards to make_shared (every legacy Event subclass
+// has real constructors); flattened DSL structs — which are field-wise
+// aggregates with no default arguments — specialize it to supply their
+// core-field defaults in exactly one audited place.
+template <typename Ev, typename... Args>
+std::shared_ptr<Ev> event_make(Args&&... args) {
+  return std::make_shared<Ev>(std::forward<Args>(args)...);
+}
+
 class Event : public EventPollable {
  protected:
   // Self-reference for adding to queues (using weak_ptr for shared ownership)
@@ -405,10 +421,197 @@ bool SharedIntEvent::wait_until_gte(int32_t x, int32_t timeout) {
 // `NeverEvent` — an Event that is never ready, used as a pure timeout/yield
 // handle (`create_sp_event<NeverEvent>()->wait(us)`). Hand-written subclass of
 // the stateful `Event` base; adds no fields and overrides only `is_ready()`.
-class NeverEvent : public Event {
- public:
-  bool is_ready() override { return false; }
+// `NeverEvent` — never ready on its own; a pure timeout/yield handle
+// (`create_sp_event<NeverEvent>()->wait_timeout(us)`). FIRST FLATTENED
+// EVENT TYPE (S4): a flat inline-Rust DSL struct carrying the event core
+// fields directly (so the event_wait_impl/event_test_impl kernels see the
+// same duck-typed surface as the legacy Event), implementing EventPollable
+// via #[cpp_inherit]. Constructed ONLY through Reactor::create_sp_event's
+// event_make<NeverEvent>() factory (aggregate defaults live there — the
+// DSL has no field initializers).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+// Kernel declarations for the generated NeverEvent method bodies below
+// (ordinary lookup requires them before the GEN block; definitions follow it).
+struct NeverEvent;
+using SrcFileCStr = const char*;
+void never_event_record_place(NeverEvent& self, SrcFileCStr file, int line);
+std::shared_ptr<EventPollable> never_event_self_lock(const NeverEvent& self);
+void never_event_set_self(NeverEvent& self, std::weak_ptr<EventPollable> p);
+uint64_t never_event_wakeup_time(const NeverEvent& self);
+rusty::Option<rusty::Rc<Fiber>> never_event_upgrade_fiber(const NeverEvent& self);
+
+#if RUSTYCPP_RUST
+struct NeverEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: std::weak_ptr<EventPollable>,
+}
+
+impl NeverEvent {
+    fn wait_timeout(&mut self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn record_place(&mut self, file: SrcFileCStr, line: i32) {
+        never_event_record_place(self, file, line)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+        never_event_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+        never_event_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for NeverEvent {
+    fn test(&mut self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&mut self) -> bool {
+        false
+    }
+    fn log(&mut self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        never_event_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        never_event_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=1faab215037ef60d9425e7aff9a969bf9a957a819cbbe10d914f971d22533fa5*/
+struct NeverEvent;
+
+struct NeverEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    std::weak_ptr<EventPollable> self_;
+    NeverEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)) {}
+    NeverEvent(NeverEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)) {}
+
+
+    void wait_timeout(uint64_t timeout);
+    void record_place(SrcFileCStr file, int32_t line);
+    bool is_composite_event() const;
+    std::shared_ptr<EventPollable> get_self() const;
+    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    bool test();
+    bool is_ready();
+    void log();
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
 };
+
+
+void NeverEvent::wait_timeout(uint64_t timeout) {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+void NeverEvent::record_place(SrcFileCStr file, int32_t line) {
+    never_event_record_place((*this), std::move(file), std::move(line));
+}
+
+bool NeverEvent::is_composite_event() const {
+    return false;
+}
+
+std::shared_ptr<EventPollable> NeverEvent::get_self() const {
+    return never_event_self_lock((*this));
+}
+
+void NeverEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+    never_event_set_self((*this), std::move(self_ptr));
+}
+
+bool NeverEvent::test() {
+    return event_test_impl((*this));
+}
+
+bool NeverEvent::is_ready() {
+    return false;
+}
+
+void NeverEvent::log() {
+}
+
+EventStatus NeverEvent::status() const {
+    return this->status_.get();
+}
+
+void NeverEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t NeverEvent::wakeup_time() const {
+    return never_event_wakeup_time((*this));
+}
+
+bool NeverEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void NeverEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> NeverEvent::upgrade_fiber() const {
+    return never_event_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.never_event*/
+
+// Hand kernels for NeverEvent's EventState-crossing accessors (the DSL
+// body cannot deref the weak_ptr / read nested state fields directly).
+// @unsafe - weak_ptr::lock / nested field reads.
+inline void never_event_record_place(NeverEvent& self, SrcFileCStr file, int line) {
+  char buff[200];
+  sprintf(buff, "%s:%d", file, line);
+  self.state_.wait_place_ += std::string(buff);
+  self.state_.rcd_wait_ = true;
+}
+inline std::shared_ptr<EventPollable> never_event_self_lock(const NeverEvent& self) {
+  return self.self_.lock();
+}
+inline void never_event_set_self(NeverEvent& self, std::weak_ptr<EventPollable> p) {
+  self.self_ = std::move(p);
+}
+inline uint64_t never_event_wakeup_time(const NeverEvent& self) {
+  return self.state_.wakeup_time_;
+}
+inline rusty::Option<rusty::Rc<Fiber>> never_event_upgrade_fiber(const NeverEvent& self) {
+  return self.state_.wp_fiber_.upgrade();
+}
+
+// Aggregate factory: the flat DSL struct has no default constructor, so
+// its core-field defaults live here (declared now, defined after Fiber —
+// the fiber capture mirrors the legacy Event constructor).
+template <>
+std::shared_ptr<NeverEvent> event_make<NeverEvent>();
 
 // `TimeoutEvent` — an Event that becomes ready once `wait_us_` microseconds
 // have elapsed past construction. Hand-written subclass of the stateful `Event`
@@ -438,9 +641,9 @@ class TimeoutEvent : public Event {
 // Hand-written subclass of the stateful `Event` base.
 class WaitAny : public Event {
  public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
+  rusty::Vec<std::shared_ptr<EventPollable>> events_;
 
-  WaitAny(std::shared_ptr<Event> a, std::shared_ptr<Event> b) {
+  WaitAny(std::shared_ptr<EventPollable> a, std::shared_ptr<EventPollable> b) {
     events_.push(std::move(a));
     events_.push(std::move(b));
   }
@@ -461,13 +664,13 @@ class WaitAny : public Event {
 
 class WaitAll : public Event {
  public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
+  rusty::Vec<std::shared_ptr<EventPollable>> events_;
 
   // Default constructor (mako-dev)
   WaitAll() {}
 
   // Constructor for vector of events
-  explicit WaitAll(const rusty::Vec<std::shared_ptr<Event>>& evs) {
+  explicit WaitAll(const rusty::Vec<std::shared_ptr<EventPollable>>& evs) {
     events_.reserve(evs.len());
     for (const auto& ev : evs) {
       events_.push(ev);
@@ -479,13 +682,13 @@ class WaitAll : public Event {
   }
 
   template<typename... Args>
-  void add_event(std::shared_ptr<Event> x, Args... rest) {
+  void add_event(std::shared_ptr<EventPollable> x, Args... rest) {
     events_.push(std::move(x));
     add_event(rest...);
   }
 
   template<typename... Args>
-  WaitAll(std::shared_ptr<Event> first, Args... rest) {
+  WaitAll(std::shared_ptr<EventPollable> first, Args... rest) {
     add_event(std::move(first), rest...);
   }
 
@@ -501,7 +704,7 @@ class WaitAll : public Event {
       if (!e) {
         return false;
       }
-      if (!(e->is_ready() || e->status_.get() == EventStatus::DONE)) {
+      if (!(e->is_ready() || e->status() == EventStatus::DONE)) {
         return false;
       }
     }
@@ -1063,7 +1266,7 @@ class Reactor {
   // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
   template <typename Ev, typename... Args>
   static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
-    auto ev = std::make_shared<Ev>(args...);
+    auto ev = event_make<Ev>(args...);
     ev->state_.__debug_creator = 1;
     // Set self-reference for cross-thread signaling (weak_ptr)
     ev->set_self(ev);
@@ -1713,14 +1916,21 @@ bool Event::is_slow() {
 //   }
 // }
 
-void Event::wait(uint64_t timeout) {
+// Flattening S4: the wait/test machinery, extracted VERBATIM from
+// Event::wait/Event::test as templates over the concrete event type W.
+// Duck-typed surface: W provides status_, state_, owner_thread_,
+// is_ready(), is_composite_event(), get_self(). Works identically for
+// the legacy Event hierarchy (virtual dispatch through W=Event) and the
+// flattened per-kind DSL structs (static dispatch).
+template <typename W>
+void event_wait_impl(W& self, uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
   verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
-  if (status_.get() == EventStatus::DONE) return; // TODO: yidawu add for the second use the event.
+  if (self.status_.get() == EventStatus::DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
-  if (is_ready()) {
-    status_.set(EventStatus::DONE); // no need to wait.
+  if (self.is_ready()) {
+    self.status_.set(EventStatus::DONE); // no need to wait.
     return;
   } else {
 //    if (status_ == WAIT) {
@@ -1738,18 +1948,18 @@ void Event::wait(uint64_t timeout) {
 
     // Use RefCell borrow_mut() for safe interior mutability
     auto reactor_rc = Reactor::get_reactor();
-    reactor_rc->waiting_events_.borrow_mut()->push_back(get_self());
+    reactor_rc->waiting_events_.borrow_mut()->push_back(self.get_self());
 
     // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via test() - zero overhead!
-    if (is_composite_event()) {
-      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(get_self());
+    if (self.is_composite_event()) {
+      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(self.get_self());
     }
 
 #ifdef EVENT_TIMEOUT_CHECK
     if (timeout == 0) {
-      __debug_timeout_ = true;
+      self.__debug_timeout_ = true;
       timeout = 200 * 1000 * 1000;
 //#ifdef SIMULATE_WAN
 //      timeout = 600 * 1000 * 1000;
@@ -1758,10 +1968,10 @@ void Event::wait(uint64_t timeout) {
 #endif
     if (timeout > 0) {
       auto now = Time::now(true);
-      state_.wakeup_time_ = now + timeout;
+      self.state_.wakeup_time_ = now + timeout;
       //Log_info("WAITING: %p", get_self().get());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
-      reactor_rc->timeout_events_.borrow_mut()->push_back(get_self());
+      reactor_rc->timeout_events_.borrow_mut()->push_back(self.get_self());
     }
     // TODO optimize timeout_events, sort by wakeup time.
 //      auto it = timeout_events.end();
@@ -1779,18 +1989,22 @@ void Event::wait(uint64_t timeout) {
     // Transpiled Weak has no implicit Rc→Weak conversion / op= — use
     // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
     // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
-    state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
-    status_.set(EventStatus::WAIT);
+    self.state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
+    self.status_.set(EventStatus::WAIT);
     auto fiber_status = fiber->status_.get();
     verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
     fiber->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
-    if (__debug_timeout_ && status_.get() == EventStatus::TIMEOUT) {
+    if (self.__debug_timeout_ && self.status_.get() == EventStatus::TIMEOUT) {
       Log_info("timeout");
       verify(0);
     }
 #endif
   }
+}
+
+void Event::wait(uint64_t timeout) {
+  event_wait_impl(*this, timeout);
 }
 
 void Event::record_place(const char* file, int line) {
@@ -1802,38 +2016,45 @@ void Event::record_place(const char* file, int line) {
 
 // @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
 // and Log_debug are all @safe.
-bool Event::test() {
-  verify(state_.__debug_creator);
-  if (is_ready()) {
-    if (status_.get() == EventStatus::INIT) {
-      status_.set(EventStatus::DONE);
-    } else if (status_.get() == EventStatus::WAIT) {
-      if (rusty::thread::current_id() == owner_thread_) {
+// Verbatim test() machinery as a kernel over the concrete event type W
+// (see event_wait_impl above for the duck-typed surface contract).
+template <typename W>
+bool event_test_impl(W& self) {
+  verify(self.state_.__debug_creator);
+  if (self.is_ready()) {
+    if (self.status_.get() == EventStatus::INIT) {
+      self.status_.set(EventStatus::DONE);
+    } else if (self.status_.get() == EventStatus::WAIT) {
+      if (rusty::thread::current_id() == self.owner_thread_) {
         // Owner-thread-only: upgrading the weak fiber ref mutates a plain
         // (non-atomic) Rc strong count; doing this from a foreign thread
         // races the owner's own Rc<Fiber> clones and corrupts the count.
         // The upgraded handle is used only for this liveness assertion.
-        auto option_fiber = state_.wp_fiber_.upgrade();
+        auto option_fiber = self.state_.wp_fiber_.upgrade();
         verify(option_fiber.is_some());
-        verify(status_.get() != EventStatus::DEBUG);
+        verify(self.status_.get() != EventStatus::DEBUG);
       }
-      status_.set(EventStatus::READY);
-    } else if (status_.get() == EventStatus::READY) {
+      self.status_.set(EventStatus::READY);
+    } else if (self.status_.get() == EventStatus::READY) {
       Log_debug("event status ready, triggered?");
-    } else if (status_.get() == EventStatus::DONE) {
+    } else if (self.status_.get() == EventStatus::DONE) {
       // do nothing
-    } else if (status_.get() == EventStatus::TIMEOUT) {
+    } else if (self.status_.get() == EventStatus::TIMEOUT) {
       // do nothing
     } else {
       verify(0);
     }
     return true;
   } else {
-    if (status_.get() == EventStatus::DONE) {
-      status_.set(EventStatus::INIT);
+    if (self.status_.get() == EventStatus::DONE) {
+      self.status_.set(EventStatus::INIT);
     }
   }
   return false;
+}
+
+bool Event::test() {
+  return event_test_impl(*this);
 }
 
 Event::Event() {
@@ -1847,6 +2068,26 @@ Event::Event() {
     state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
   // Otherwise wp_fiber_ stays as default empty weak pointer
+}
+
+// Flattened-struct factory (see the declaration next to NeverEvent):
+// replicates the legacy Event constructor's seeding — wait_place_ tag and
+// the creating-fiber capture — on top of the aggregate's zero state.
+template <>
+std::shared_ptr<NeverEvent> event_make<NeverEvent>() {
+  auto sp = std::make_shared<NeverEvent>(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      std::weak_ptr<EventPollable>{});
+  sp->state_.wait_place_ = "not recorded";
+  auto fiber_opt = Fiber::current_fiber();
+  if (fiber_opt.is_some()) {
+    auto rc_fiber = fiber_opt.unwrap();
+    sp->state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
+  }
+  return sp;
 }
 
 int shared_int_event_set(SharedIntEvent& self, const int& v) {
