@@ -194,6 +194,12 @@ class Event : public EventPollable {
   bool __debug_timeout_{false};
 #endif
   rusty::Cell<EventStatus> status_{EventStatus::INIT};
+  // Thread that created (and therefore polls/resumes) this event. test()'s
+  // fiber-liveness assertion upgrades wp_fiber_ — an UNSYNCHRONIZED Rc
+  // strong-count mutation — so it must only run on this thread; cross-thread
+  // signalers (fiber_channel's direct-channel set(), vote paths) skip it and
+  // rely on the owner's blanket poll to rediscover readiness.
+  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
   void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
 
   // The nine relocated data fields live in a composed inline-Rust struct (see
@@ -1802,9 +1808,15 @@ bool Event::test() {
     if (status_.get() == EventStatus::INIT) {
       status_.set(EventStatus::DONE);
     } else if (status_.get() == EventStatus::WAIT) {
-      auto option_fiber = state_.wp_fiber_.upgrade();
-      verify(option_fiber.is_some());
-      verify(status_.get() != EventStatus::DEBUG);
+      if (rusty::thread::current_id() == owner_thread_) {
+        // Owner-thread-only: upgrading the weak fiber ref mutates a plain
+        // (non-atomic) Rc strong count; doing this from a foreign thread
+        // races the owner's own Rc<Fiber> clones and corrupts the count.
+        // The upgraded handle is used only for this liveness assertion.
+        auto option_fiber = state_.wp_fiber_.upgrade();
+        verify(option_fiber.is_some());
+        verify(status_.get() != EventStatus::DEBUG);
+      }
       status_.set(EventStatus::READY);
     } else if (status_.get() == EventStatus::READY) {
       Log_debug("event status ready, triggered?");
