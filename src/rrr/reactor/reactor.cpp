@@ -89,6 +89,19 @@ class Fiber;
 // `#ifdef EVENT_TIMEOUT_CHECK __debug_timeout_`.
 // `wp_fiber_` is a weak ref because an Event usually lives on a fiber stack and
 // must not keep its owning fiber alive.
+// Event status machine, hoisted out of `class Event` (flattening S4 prep):
+// the flat DSL structs each carry a `status_: Cell<EventStatus>`, and a
+// DSL `#[repr(i32)] enum` lowers to exactly this `enum class` shape. All
+// call sites already spell `EventStatus::X` (S2).
+enum class EventStatus : int32_t {
+  INIT = 0,
+  WAIT = 1,
+  READY = 2,
+  DONE = 3,
+  TIMEOUT = 4,
+  DEBUG = 5,
+};
+
 using EventTestFn = rusty::Function<bool(int)>;
 #if RUSTYCPP_RUST
 struct EventState {
@@ -119,20 +132,68 @@ struct EventState {
 };
 /*RUSTYCPP:GEN-END id=reactor.event_state*/
 
-class Event {
+// `EventPollable` — the reactor's polymorphic surface over queued events
+// (flattening S4): exactly what the loop/timeout/prune machinery invokes
+// through the four event queues, and nothing else. Data-free trait; the
+// hand-written `Event` derives it as a bridge during the transition, and
+// each flattened per-kind DSL struct will `#[cpp_inherit] impl` it.
+// wait()/set_self()/state_ stay OFF the trait: they are only ever touched
+// through concrete-typed handles.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+pub trait EventPollable {
+    fn test(&mut self) -> bool;
+    fn is_ready(&mut self) -> bool;
+    fn log(&mut self);
+    fn status(&self) -> EventStatus;
+    fn set_status(&self, s: EventStatus);
+    fn wakeup_time(&self) -> u64;
+    fn prunable(&self) -> bool;
+    fn set_prunable(&self, v: bool);
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>>;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.event_pollable version=1 rust_sha256=a0e9c68e0972929eebf915a3f8a0012c2b06406dd6acefb72d864528c71d90e6*/
+class EventPollable {
+public:
+    virtual ~EventPollable() noexcept(false) {}
+    virtual bool test() = 0;
+    virtual bool is_ready() = 0;
+    virtual void log() = 0;
+    virtual EventStatus status() const = 0;
+    virtual void set_status(EventStatus s) const = 0;
+    virtual uint64_t wakeup_time() const = 0;
+    virtual bool prunable() const = 0;
+    virtual void set_prunable(bool v) const = 0;
+    virtual rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const = 0;
+    EventPollable(const EventPollable&) = delete;
+    EventPollable& operator=(const EventPollable&) = delete;
+    EventPollable(EventPollable&&) = delete;
+    EventPollable& operator=(EventPollable&&) = delete;
+protected:
+    EventPollable() = default;
+};
+
+template <class U> class EventPollableAdapter;
+template <class U> class EventPollableAdapterRef;
+template <class U> class EventPollableAdapterRefMut;
+/*RUSTYCPP:GEN-END id=reactor.event_pollable*/
+
+class Event : public EventPollable {
  protected:
   // Self-reference for adding to queues (using weak_ptr for shared ownership)
   // Set by CreateSpEvent after construction
-  std::weak_ptr<Event> self_;
+  std::weak_ptr<EventPollable> self_;
 //class Event {
  public:
-  enum EventStatus { INIT = 0, WAIT = 1, READY = 2,
-      DONE = 3, TIMEOUT = 4, DEBUG};
 
 #ifdef EVENT_TIMEOUT_CHECK
   bool __debug_timeout_{false};
 #endif
-  rusty::Cell<EventStatus> status_{INIT};
+  rusty::Cell<EventStatus> status_{EventStatus::INIT};
   void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
 
   // The nine relocated data fields live in a composed inline-Rust struct (see
@@ -151,8 +212,16 @@ class Event {
   // weak_ptr `self_` (get_self()), so a pruned/freed event is observed as null
   // rather than dangling — no use-after-free.
   rusty::Cell<bool> prunable_{true};
-  bool prunable() const { return prunable_.get(); }
-  void set_prunable(bool v) { prunable_.set(v); }
+  bool prunable() const override { return prunable_.get(); }
+  void set_prunable(bool v) const override { prunable_.set(v); }
+
+  // Trait accessors over the Cell/EventState-backed fields (all const-safe).
+  EventStatus status() const override { return status_.get(); }
+  void set_status(EventStatus s) const override { status_.set(s); }
+  uint64_t wakeup_time() const override { return state_.wakeup_time_; }
+  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
+    return state_.wp_fiber_.upgrade();
+  }
 
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
@@ -170,14 +239,14 @@ class Event {
   void wait_timeout(uint64_t timeout) { wait(timeout); }
   void wait_pred(rusty::Function<bool(int)> f) { wait(std::move(f)); }
 
-  virtual void log(){return;}
+  void log() override {return;}
   virtual uint64_t get_fiber_id();
   void record_place(const char* file, int line);
 
   // @safe - Tests if event is ready
-  virtual bool test();
+  bool test() override;
   virtual bool is_slow();
-  virtual bool is_ready() {
+  bool is_ready() override {
     if (!state_.test_) return false;
     return state_.test_(0);
   }
@@ -186,21 +255,17 @@ class Event {
   // Added at END to preserve vtable layout for binary compatibility
   virtual bool is_composite_event() { return false; }
 
-  // Self-reference management (uses shared_ptr for polymorphism support)
-  void set_self(std::weak_ptr<Event> self) { self_ = self; }
-  std::shared_ptr<Event> get_self() const { return self_.lock(); }
+  // Self-reference management (uses shared_ptr for polymorphism support).
+  // Holds the TRAIT pointer: get_self()'s results are what wait() pushes
+  // into the reactor's EventPollable queues.
+  void set_self(std::weak_ptr<EventPollable> self) { self_ = self; }
+  std::shared_ptr<EventPollable> get_self() const { return self_.lock(); }
 
   friend Reactor;
 // protected:
   Event();
 };
 
-// Composition-flattening transition name (S2): callers qualify the
-// status enumerators as `EventStatus::X` instead of `Event::X`, so the
-// spelling survives the flip that hoists the enum out of the class.
-// (C++11 permits Enum::Enumerator qualification, so this alias makes
-// `EventStatus::TIMEOUT` valid against the still-nested enum today.)
-using EventStatus = Event::EventStatus;
 
 template <class Type>
 class BoxEvent : public Event {
@@ -799,10 +864,10 @@ class Reactor {
    */
   // Events managed with std::shared_ptr<Event> for polymorphism support
   // Using RefCell<VecDeque> for safe interior mutability in const methods
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> all_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> waiting_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> timeout_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> all_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> waiting_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> timeout_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
   // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
@@ -854,7 +919,7 @@ class Reactor {
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
-  void check_timeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
+  void check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>&) const;
   /**
    * @param ev. is usually allocated on a fiber stack. memory managed by user.
    */
@@ -1646,10 +1711,10 @@ void Event::wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
   verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
-  if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
+  if (status_.get() == EventStatus::DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
   if (is_ready()) {
-    status_.set(DONE); // no need to wait.
+    status_.set(EventStatus::DONE); // no need to wait.
     return;
   } else {
 //    if (status_ == WAIT) {
@@ -1709,12 +1774,12 @@ void Event::wait(uint64_t timeout) {
     // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
     // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
     state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
-    status_.set(WAIT);
+    status_.set(EventStatus::WAIT);
     auto fiber_status = fiber->status_.get();
     verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
     fiber->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
-    if (__debug_timeout_ && status_.get() == TIMEOUT) {
+    if (__debug_timeout_ && status_.get() == EventStatus::TIMEOUT) {
       Log_info("timeout");
       verify(0);
     }
@@ -1734,26 +1799,26 @@ void Event::record_place(const char* file, int line) {
 bool Event::test() {
   verify(state_.__debug_creator);
   if (is_ready()) {
-    if (status_.get() == INIT) {
-      status_.set(DONE);
-    } else if (status_.get() == WAIT) {
+    if (status_.get() == EventStatus::INIT) {
+      status_.set(EventStatus::DONE);
+    } else if (status_.get() == EventStatus::WAIT) {
       auto option_fiber = state_.wp_fiber_.upgrade();
       verify(option_fiber.is_some());
-      verify(status_.get() != DEBUG);
-      status_.set(READY);
-    } else if (status_.get() == READY) {
+      verify(status_.get() != EventStatus::DEBUG);
+      status_.set(EventStatus::READY);
+    } else if (status_.get() == EventStatus::READY) {
       Log_debug("event status ready, triggered?");
-    } else if (status_.get() == DONE) {
+    } else if (status_.get() == EventStatus::DONE) {
       // do nothing
-    } else if (status_.get() == TIMEOUT) {
+    } else if (status_.get() == EventStatus::TIMEOUT) {
       // do nothing
     } else {
       verify(0);
     }
     return true;
   } else {
-    if (status_.get() == DONE) {
-      status_.set(INIT);
+    if (status_.get() == EventStatus::DONE) {
+      status_.set(EventStatus::INIT);
     }
   }
   return false;
@@ -2395,7 +2460,7 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 }
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
-void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
+void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& ready_events) const {
   // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
   int64_t time_now = Time::now(true);
 
@@ -2405,16 +2470,16 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // First pass: update status of timed-out events
   for (size_t i = 0; i < guard->len(); ++i) {
     auto& sp = (*guard)[i];
-    Event& event = *sp;
-    auto status = event.status_.get();
+    EventPollable& event = *sp;
+    auto status = event.status();
     if (status == EventStatus::WAIT) {
-      const auto& wakeup_time = event.state_.wakeup_time_;
+      const auto wakeup_time = event.wakeup_time();
       verify(wakeup_time > 0);
-      if (time_now >= wakeup_time) {
+      if (time_now >= static_cast<int64_t>(wakeup_time)) {
         if (event.is_ready()) {
-          event.status_.set(EventStatus::READY);
+          event.set_status(EventStatus::READY);
         } else {
-          event.status_.set(EventStatus::TIMEOUT);
+          event.set_status(EventStatus::TIMEOUT);
         }
       }
     }
@@ -2423,9 +2488,9 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // Extract events that are READY or TIMEOUT (timed out)
   {
     auto timed_out = guard->extract_if(
-      rusty::Function<bool(const std::shared_ptr<Event>&)>(
-        [](const std::shared_ptr<Event>& sp) {
-          auto status = sp->status_.get();
+      rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+        [](const std::shared_ptr<EventPollable>& sp) {
+          auto status = sp->status();
           return status == EventStatus::READY || status == EventStatus::TIMEOUT;
         }));
     ready_events.append(std::move(timed_out));
@@ -2434,9 +2499,9 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // Remove events that are DONE (shouldn't happen often, but clean up)
   {
     guard->retain(
-      rusty::Function<bool(const std::shared_ptr<Event>&)>(
-        [](const std::shared_ptr<Event>& sp) {
-          return sp->status_.get() != EventStatus::DONE;
+      rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+        [](const std::shared_ptr<EventPollable>& sp) {
+          return sp->status() != EventStatus::DONE;
         }));
   }
 }
@@ -2454,8 +2519,8 @@ void Reactor::prune_finished_events() const {
   if (guard->len() < prune_hwm) {
     return;
   }
-  guard->retain(rusty::Function<bool(const std::shared_ptr<Event>&)>(
-    [](const std::shared_ptr<Event>& e) {
+  guard->retain(rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+    [](const std::shared_ptr<EventPollable>& e) {
       return e.use_count() > 1 || !e->prunable();
     }));
   prune_hwm = guard->len() * 2 + 64;
@@ -2473,7 +2538,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       if (process_stackless_tasks()) {
         found_ready_events = true;
       }
-      rusty::VecDeque<std::shared_ptr<Event>> ready_events;
+      rusty::VecDeque<std::shared_ptr<EventPollable>> ready_events;
 
       // Process waiting events using RefCell
       {
@@ -2485,9 +2550,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Extract READY events
         {
           auto ready_from_waiting = waiting_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == EventStatus::READY;
+            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+              [](const std::shared_ptr<EventPollable>& ev) {
+                return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_waiting.is_empty()) {
             ready_events.append(std::move(ready_from_waiting));
@@ -2497,9 +2562,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Remove DONE events
         {
           waiting_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != EventStatus::DONE;
+            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+              [](const std::shared_ptr<EventPollable>& ev) {
+                return ev->status() != EventStatus::DONE;
               }));
         }
       }
@@ -2512,9 +2577,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           auto ready_from_composite = composite_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == EventStatus::READY;
+            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+              [](const std::shared_ptr<EventPollable>& ev) {
+                return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_composite.is_empty()) {
             ready_events.append(std::move(ready_from_composite));
@@ -2523,9 +2588,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           composite_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != EventStatus::DONE;
+            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
+              [](const std::shared_ptr<EventPollable>& ev) {
+                return ev->status() != EventStatus::DONE;
               }));
         }
       }
@@ -2546,10 +2611,10 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       {
         for (size_t i = 0; i < ready_events.len(); ++i) {
           auto& ev = ready_events[i];
-          if (ev->status_.get() == EventStatus::DONE) {
+          if (ev->status() == EventStatus::DONE) {
             continue;
           }
-          auto option_fiber = ev->state_.wp_fiber_.upgrade();
+          auto option_fiber = ev->upgrade_fiber();
           if (option_fiber.is_none()) {
             continue;
           }
@@ -2558,10 +2623,10 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             continue;
           }
           verify(fiber->status_.get() == Fiber::PAUSED);
-          if (ev->status_.get() == EventStatus::READY) {
-            ev->status_.set(EventStatus::DONE);
+          if (ev->status() == EventStatus::READY) {
+            ev->set_status(EventStatus::DONE);
           } else {
-            verify(ev->status_.get() == EventStatus::TIMEOUT);
+            verify(ev->status() == EventStatus::TIMEOUT);
           }
           continue_fiber(fiber);
         }
@@ -3292,6 +3357,9 @@ using rrr::IntEvent;
 using rrr::Fiber;
 using rrr::Time;
 using rrr::verify;
+// EventStatus used to be Event's nested enum (found via base-class scope in
+// these member definitions); it now lives at rrr namespace scope (S4 hoist).
+using rrr::EventStatus;
 
 QuorumEvent::QuorumEvent(int n_total, int quorum)
     : Event(), n_total_(n_total), quorum_(quorum) {
