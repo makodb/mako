@@ -48,6 +48,50 @@ inline SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t l
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
 
+#if RUSTYCPP_RUST
+pub fn memory_snapshot_advance_offset(offset: usize, size: usize) -> usize {
+    offset + size
+}
+
+pub fn memory_snapshot_reader_bytes_to_read(payload_size: usize,
+                                            offset: usize,
+                                            buffer_size: usize) -> usize {
+    let remaining = payload_size - offset;
+    if buffer_size < remaining {
+        buffer_size
+    } else {
+        remaining
+    }
+}
+
+pub fn memory_snapshot_reader_is_complete(payload_size: usize,
+                                          offset: usize) -> bool {
+    offset >= payload_size
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.stream_helpers version=1 rust_sha256=d98f5868cc5d5a7f49cde4ce1883e770ee25ece0c944988a8a8e95fc364028f1*/
+inline size_t memory_snapshot_advance_offset(size_t offset, size_t size);
+inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
+inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
+
+inline size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
+    return offset + size;
+}
+
+inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
+    auto remaining = payload_size - offset;
+    if (buffer_size < remaining) {
+        return std::move(buffer_size);
+    } else {
+        return std::move(remaining);
+    }
+}
+
+inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
+    return offset >= payload_size;
+}
+/*RUSTYCPP:GEN-END id=memory_snapshot_manager.stream_helpers*/
+
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
   // @unsafe - borrows MemorySnapshotManager internals. The writer must not
@@ -68,7 +112,7 @@ class MemorySnapshotWriter : public SnapshotWriter {
   // @unsafe - raw pointer append to internal buffer
   bool Write(const char* data, size_t size) override {
     buffer_.append(data, size);
-    offset_ += size;
+    offset_ = memory_snapshot_advance_offset(offset_, size);
     return true;
   }
 
@@ -84,7 +128,12 @@ class MemorySnapshotWriter : public SnapshotWriter {
   }
 
   // @safe
-  bool Abort() override { buffer_.clear(); return true; }
+  bool Abort() override {
+    buffer_.clear();
+    offset_ = 0;
+    finalized_ = false;
+    return true;
+  }
 
   // @safe
   size_t GetOffset() const override { return offset_; }
@@ -113,16 +162,19 @@ class MemorySnapshotReader : public SnapshotReader {
 
   // @unsafe - raw buffer copy from internal string
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
-    size_t remaining = payload_.size() - offset_;
-    size_t n = buffer_size < remaining ? buffer_size : remaining;
+    size_t n = memory_snapshot_reader_bytes_to_read(payload_.size(),
+                                                    offset_,
+                                                    buffer_size);
     std::memcpy(buffer, payload_.data() + offset_, n);
-    offset_ += n;
+    offset_ = memory_snapshot_advance_offset(offset_, n);
     *bytes_read = n;
     return true;
   }
 
   // @safe
-  bool IsComplete() const override { return offset_ >= payload_.size(); }
+  bool IsComplete() const override {
+    return memory_snapshot_reader_is_complete(payload_.size(), offset_);
+  }
 
   // @safe
   const SnapshotMetadata& GetMetadata() const override { return meta_; }

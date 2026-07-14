@@ -158,6 +158,18 @@ for ln in lines:
         ln = ln.replace(
             'snapshot_crc32_read_byte_cpp(data, std::move(i))',
             'snapshot_crc32_read_byte_cpp(data, i)')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);',
+            'return offset + size;')
+        ln = ln.replace(
+            'auto remaining = rusty::detail::deref_if_pointer_like(payload_size) - rusty::detail::deref_if_pointer_like(offset);',
+            'auto remaining = payload_size - offset;')
+        ln = ln.replace(
+            'if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {',
+            'if (buffer_size < remaining) {')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);',
+            'return offset >= payload_size;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
