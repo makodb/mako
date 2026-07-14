@@ -22,9 +22,31 @@ enum class ReplicatedDBOp : uint8_t {
 
 // @safe - Plain data struct for batch operations
 struct KVOperation {
-    ReplicatedDBOp op;
+    ReplicatedDBOp op = ReplicatedDBOp::PUT;
     std::string key;
     std::string value;  // empty for DELETE
+
+    static KVOperation defaults() {
+        return KVOperation{};
+    }
+
+    static KVOperation make(ReplicatedDBOp op,
+                            const std::string& key,
+                            const std::string& value) {
+        KVOperation kv_op = KVOperation::defaults();
+        kv_op.op = op;
+        kv_op.key = key;
+        kv_op.value = value;
+        return kv_op;
+    }
+
+    static KVOperation put(const std::string& key, const std::string& value) {
+        return KVOperation::make(ReplicatedDBOp::PUT, key, value);
+    }
+
+    static KVOperation delete_key(const std::string& key) {
+        return KVOperation::make(ReplicatedDBOp::DELETE, key, "");
+    }
 };
 
 // TypeList-derived kind. Wire payload preserved

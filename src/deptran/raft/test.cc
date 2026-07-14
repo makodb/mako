@@ -7566,9 +7566,9 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
 
   // Create a batch with 3 operations
   std::vector<KVOperation> ops;
-  ops.push_back({ReplicatedDBOp::PUT, "key1", "value1"});
-  ops.push_back({ReplicatedDBOp::DELETE, "key2", ""});
-  ops.push_back({ReplicatedDBOp::PUT, "key3", "value3"});
+  ops.push_back(KVOperation::put("key1", "value1"));
+  ops.push_back(KVOperation::delete_key("key2"));
+  ops.push_back(KVOperation::put("key3", "value3"));
 
   // @unsafe { Factory creates shared_ptr }
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
@@ -7629,7 +7629,14 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   std::vector<KVOperation> large_ops;
   for (int i = 0; i < 100; i++) {
     ReplicatedDBOp op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
-    large_ops.push_back({op, "key_" + std::to_string(i), "val_" + std::to_string(i)});
+    if (op == ReplicatedDBOp::PUT) {
+      large_ops.push_back(KVOperation::put("key_" + std::to_string(i),
+                                           "val_" + std::to_string(i)));
+    } else {
+      large_ops.push_back(KVOperation::make(op,
+                                            "key_" + std::to_string(i),
+                                            "val_" + std::to_string(i)));
+    }
   }
   // @unsafe { Factory creates shared_ptr }
   auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
