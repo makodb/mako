@@ -92,6 +92,9 @@ FILES=(
   # Raft file snapshot path helpers only; file I/O and virtual manager
   # implementation stay hand-C++.
   src/deptran/raft/file_snapshot_manager.hpp
+  # Raft snapshot binary header value type only; CRC and serialization
+  # routines stay hand-C++ to preserve the exact wire/storage format.
+  src/deptran/raft/snapshot_format.hpp
   # Raft recovery config value type only; RecoveryManager filesystem/storage
   # orchestration stays hand-C++.
   src/deptran/raft/recovery_manager.hpp

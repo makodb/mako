@@ -48,33 +48,41 @@ enum class SnapshotChecksumType : uint8_t {
   SHA256 = 2   // SHA256 (reserved, 32 bytes)
 };
 
-/**
- * Binary header for snapshot files.
- * Fixed size: 50 bytes (padded to 56 for alignment)
- */
-// @safe - POD struct
 #pragma pack(push, 1)
+#if RUSTYCPP_RUST
+pub struct SnapshotHeader {
+    magic: u32,
+    version: u32,
+    header_size: u32,
+    data_size: u64,
+    compression: u8,
+    checksum_type: u8,
+    last_index: u64,
+    last_term: u64,
+    timestamp_ms: u64,
+    header_crc: u32,
+    padding_0: u8,
+    padding_1: u8,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.1 version=1 rust_sha256=b74ec3683c4b1bf832130aa69425ce786773dbcdde4858cee0a9f00f32958a6e*/
+struct SnapshotHeader;
+
 struct SnapshotHeader {
-  uint32_t magic{0};            // "SNAP" = 0x504E4153
-  uint32_t version{0};          // Format version
-  uint32_t header_size{0};      // Size of header (for forward compat)
-  uint64_t data_size{0};        // Uncompressed data size
-  uint8_t compression{0};       // SnapshotCompression value
-  uint8_t checksum_type{0};     // SnapshotChecksumType value
-  uint64_t last_index{0};       // Last included log index
-  uint64_t last_term{0};        // Term of last included entry
-  uint64_t timestamp_ms{0};     // Snapshot timestamp (ms since epoch)
-  uint32_t header_crc{0};       // CRC32 of header (excluding this field)
-  uint8_t padding[2]{0, 0};     // Padding for 8-byte alignment
-
-  // @safe - Default constructor
-  SnapshotHeader() = default;
-
-  // @safe - Check if header is valid
-  bool is_valid() const {
-    return magic == 0x504E4153 && version == 1;
-  }
+    uint32_t magic;
+    uint32_t version;
+    uint32_t header_size;
+    uint64_t data_size;
+    uint8_t compression;
+    uint8_t checksum_type;
+    uint64_t last_index;
+    uint64_t last_term;
+    uint64_t timestamp_ms;
+    uint32_t header_crc;
+    uint8_t padding_0;
+    uint8_t padding_1;
 };
+/*RUSTYCPP:GEN-END id=snapshot_format.1*/
 #pragma pack(pop)
 
 static_assert(sizeof(SnapshotHeader) == 52, "SnapshotHeader must be 52 bytes");
@@ -91,8 +99,8 @@ inline SnapshotHeader snapshot_header_defaults() {
   header.last_term = 0;
   header.timestamp_ms = 0;
   header.header_crc = 0;
-  header.padding[0] = 0;
-  header.padding[1] = 0;
+  header.padding_0 = 0;
+  header.padding_1 = 0;
   return header;
 }
 
