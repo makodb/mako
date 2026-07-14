@@ -64,6 +64,51 @@ inline std::string file_snapshot_temp_path(const std::string& storage_path, uint
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.paths*/
 
+#if RUSTYCPP_RUST
+pub fn file_snapshot_advance_offset(offset: usize, size: usize) -> usize {
+    offset + size
+}
+
+pub fn file_snapshot_reader_bytes_to_read(data_size: usize,
+                                          offset: usize,
+                                          buffer_size: usize) -> usize {
+    let remaining = data_size - offset;
+    if buffer_size < remaining {
+        buffer_size
+    } else {
+        remaining
+    }
+}
+
+pub fn file_snapshot_reader_is_complete(valid: bool,
+                                        data_size: usize,
+                                        offset: usize) -> bool {
+    valid && offset >= data_size
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.stream_helpers version=1 rust_sha256=6f2839462fe22645de0bfeb72dd69dae9a76b0ba8e3c4199b4ac65ac98cf9643*/
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size);
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
+
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size) {
+    return offset + size;
+}
+
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
+    auto remaining = data_size - offset;
+    if (buffer_size < remaining) {
+        return std::move(buffer_size);
+    } else {
+        return std::move(remaining);
+    }
+}
+
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
+    return valid && offset >= data_size;
+}
+/*RUSTYCPP:GEN-END id=file_snapshot_manager.stream_helpers*/
+
 /**
  * File-based snapshot writer.
  * Accumulates data in memory, writes to temp file, renames on finalize.
@@ -102,7 +147,7 @@ class FileSnapshotWriter : public SnapshotWriter {
       return false;
     }
     buffer_.append(data, size);
-    offset_ += size;
+    offset_ = file_snapshot_advance_offset(offset_, size);
     return true;
   }
 
@@ -269,11 +314,12 @@ class FileSnapshotReader : public SnapshotReader {
       return false;
     }
 
-    size_t remaining = data_.size() - read_offset_;
-    size_t to_read = std::min(buffer_size, remaining);
+    size_t to_read = file_snapshot_reader_bytes_to_read(data_.size(),
+                                                        read_offset_,
+                                                        buffer_size);
     if (to_read > 0) {
       std::memcpy(buffer, data_.data() + read_offset_, to_read);
-      read_offset_ += to_read;
+      read_offset_ = file_snapshot_advance_offset(read_offset_, to_read);
     }
     *bytes_read = to_read;
     return true;
@@ -281,7 +327,7 @@ class FileSnapshotReader : public SnapshotReader {
 
   // @unsafe - Check if all data read
   bool IsComplete() const override {
-    return valid_ && read_offset_ >= data_.size();
+    return file_snapshot_reader_is_complete(valid_, data_.size(), read_offset_);
   }
 
   // @lifetime: (&'a) -> &'a

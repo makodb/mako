@@ -170,6 +170,12 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);',
             'return offset >= payload_size;')
+        ln = ln.replace(
+            'auto remaining = rusty::detail::deref_if_pointer_like(data_size) - rusty::detail::deref_if_pointer_like(offset);',
+            'auto remaining = data_size - offset;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));',
+            'return valid && offset >= data_size;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
