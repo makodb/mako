@@ -117,6 +117,7 @@ inline KVOperation kv_operation_make(ReplicatedDBOp op,
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
 // top of a MarshalSink/MarshalSource and delegate to save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
+
 class ReplicatedDBCommand : public rrr::Serializable<ReplicatedDBCommand,
                                                      MakoCommands> {
 public:
@@ -151,6 +152,44 @@ ReplicatedDBCommand replicated_db_command_put(const std::string& key,
                                               const std::string& value);
 ReplicatedDBCommand replicated_db_command_delete(const std::string& key);
 ReplicatedDBCommand replicated_db_command_batch(const std::vector<KVOperation>& ops);
+
+#if RUSTYCPP_RUST
+pub fn replicated_db_command_defaults_dsl() -> janus::ReplicatedDBCommand {
+    replicated_db_command_defaults()
+}
+
+pub fn replicated_db_command_put_dsl(key: std::string,
+                                     value: std::string) -> janus::ReplicatedDBCommand {
+    replicated_db_command_put(key, value)
+}
+
+pub fn replicated_db_command_delete_dsl(key: std::string) -> janus::ReplicatedDBCommand {
+    replicated_db_command_delete(key)
+}
+
+pub fn replicated_db_command_batch_dsl(
+    ops: std::vector<janus::KVOperation>
+) -> janus::ReplicatedDBCommand {
+    replicated_db_command_batch(ops)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.2 version=1 rust_sha256=a5e09d09cab6ae0917950fca55c2e545f2edc220fd93a5910a733bd2799dae53*/
+inline janus::ReplicatedDBCommand replicated_db_command_defaults_dsl() {
+    return replicated_db_command_defaults();
+}
+
+inline janus::ReplicatedDBCommand replicated_db_command_put_dsl(std::string key, std::string value) {
+    return replicated_db_command_put(std::move(key), std::move(value));
+}
+
+inline janus::ReplicatedDBCommand replicated_db_command_delete_dsl(std::string key) {
+    return replicated_db_command_delete(std::move(key));
+}
+
+inline janus::ReplicatedDBCommand replicated_db_command_batch_dsl(std::vector<janus::KVOperation> ops) {
+    return replicated_db_command_batch(std::move(ops));
+}
+/*RUSTYCPP:GEN-END id=replicated_db.2*/
 
 /**
  * ReplicatedDB - A replicated key-value store built on Raft + RocksDB.
