@@ -87,38 +87,55 @@ struct SnapshotHeader {
 
 static_assert(sizeof(SnapshotHeader) == 52, "SnapshotHeader must be 52 bytes");
 
-inline SnapshotHeader snapshot_header_defaults() {
-  SnapshotHeader header{};
-  header.magic = 0x504E4153;
-  header.version = 1;
-  header.header_size = sizeof(SnapshotHeader);
-  header.data_size = 0;
-  header.compression = static_cast<uint8_t>(SnapshotCompression::NONE);
-  header.checksum_type = static_cast<uint8_t>(SnapshotChecksumType::NONE);
-  header.last_index = 0;
-  header.last_term = 0;
-  header.timestamp_ms = 0;
-  header.header_crc = 0;
-  header.padding_0 = 0;
-  header.padding_1 = 0;
-  return header;
+#if RUSTYCPP_RUST
+pub fn snapshot_header_defaults() -> SnapshotHeader {
+    SnapshotHeader {
+        magic: 0x504E4153,
+        version: 1,
+        header_size: 52,
+        data_size: 0,
+        compression: SnapshotCompression::NONE as u8,
+        checksum_type: SnapshotChecksumType::NONE as u8,
+        last_index: 0,
+        last_term: 0,
+        timestamp_ms: 0,
+        header_crc: 0,
+        padding_0: 0,
+        padding_1: 0,
+    }
 }
 
-inline SnapshotHeader snapshot_header_make(SnapshotCompression compression,
-                                           SnapshotChecksumType checksum_type,
-                                           uint64_t data_size,
-                                           uint64_t last_index,
-                                           uint64_t last_term,
-                                           uint64_t timestamp_ms) {
-  SnapshotHeader header = snapshot_header_defaults();
-  header.compression = static_cast<uint8_t>(compression);
-  header.checksum_type = static_cast<uint8_t>(checksum_type);
-  header.data_size = data_size;
-  header.last_index = last_index;
-  header.last_term = last_term;
-  header.timestamp_ms = timestamp_ms;
-  return header;
+pub fn snapshot_header_make(compression: SnapshotCompression,
+                            checksum_type: SnapshotChecksumType,
+                            data_size: u64,
+                            last_index: u64,
+                            last_term: u64,
+                            timestamp_ms: u64) -> SnapshotHeader {
+    SnapshotHeader {
+        magic: 0x504E4153,
+        version: 1,
+        header_size: 52,
+        data_size,
+        compression: compression as u8,
+        checksum_type: checksum_type as u8,
+        last_index,
+        last_term,
+        timestamp_ms,
+        header_crc: 0,
+        padding_0: 0,
+        padding_1: 0,
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.2 version=1 rust_sha256=f76ce10c957962fbbcdb4719341799084e0a0c05ba27443b6966d585b065f3eb*/
+inline SnapshotHeader snapshot_header_defaults() {
+    return SnapshotHeader{.magic = 1347305811, .version = 1, .header_size = 52, .data_size = 0, .compression = static_cast<uint8_t>(SnapshotCompression::NONE), .checksum_type = static_cast<uint8_t>(SnapshotChecksumType::NONE), .last_index = 0, .last_term = 0, .timestamp_ms = 0, .header_crc = 0, .padding_0 = 0, .padding_1 = 0};
+}
+
+inline SnapshotHeader snapshot_header_make(SnapshotCompression compression, SnapshotChecksumType checksum_type, uint64_t data_size, uint64_t last_index, uint64_t last_term, uint64_t timestamp_ms) {
+    return SnapshotHeader{.magic = 1347305811, .version = 1, .header_size = 52, .data_size = std::move(data_size), .compression = static_cast<uint8_t>(compression), .checksum_type = static_cast<uint8_t>(checksum_type), .last_index = std::move(last_index), .last_term = std::move(last_term), .timestamp_ms = std::move(timestamp_ms), .header_crc = 0, .padding_0 = 0, .padding_1 = 0};
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.2*/
 
 /**
  * CRC32 checksum calculator (IEEE 802.3 polynomial).
