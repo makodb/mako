@@ -44,9 +44,9 @@ pub enum NotifyRestartStatus {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.1 version=1 rust_sha256=49a2d41c8e5a2dbf51a9143474e2bcdffb9a9adaba6a56dbbebec0d97ba501c5*/
 enum class NotifyRestartStatus;
-constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
-constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
-constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
 
 enum class NotifyRestartStatus {
     ACKNOWLEDGED,
@@ -175,8 +175,8 @@ pub enum AckType {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.ack_type version=1 rust_sha256=caffdb0a63dea9cf984c3f302fc0dab2480826a989ae350fd27b63222f73e2d5*/
 enum class AckType : uint64_t;
-constexpr AckType AckType_Memory();
-constexpr AckType AckType_Durable();
+inline constexpr AckType AckType_Memory();
+inline constexpr AckType AckType_Durable();
 
 enum class AckType : uint64_t {
     Memory = 0,

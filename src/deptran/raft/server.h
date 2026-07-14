@@ -68,9 +68,9 @@ pub enum StepDownReason {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=258d018ce58e8adb11536a93cbb5afb4bdf975e92088befcc4a110b7537276a7*/
 enum class StepDownReason;
-constexpr StepDownReason StepDownReason_UnsecuredFailure();
-constexpr StepDownReason StepDownReason_SecuredFailure();
-constexpr StepDownReason StepDownReason_HigherTerm();
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure();
+inline constexpr StepDownReason StepDownReason_SecuredFailure();
+inline constexpr StepDownReason StepDownReason_HigherTerm();
 
 enum class StepDownReason {
     UnsecuredFailure,
@@ -99,9 +99,9 @@ pub enum CommitStatus {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.2 version=1 rust_sha256=c556ede4067b5cb3936397f9027b1a2b153fa316d70eb7ebe5be557414044b09*/
 enum class CommitStatus;
-constexpr CommitStatus CommitStatus_SPECULATIVE();
-constexpr CommitStatus CommitStatus_DURABLE();
-constexpr CommitStatus CommitStatus_ROLLEDBACK();
+inline constexpr CommitStatus CommitStatus_SPECULATIVE();
+inline constexpr CommitStatus CommitStatus_DURABLE();
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK();
 
 enum class CommitStatus {
     SPECULATIVE,

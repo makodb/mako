@@ -42,9 +42,9 @@ pub enum RecoveryMode {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=recovery_manager.1 version=1 rust_sha256=277fe509da36d69e8bf08f6c863af4f7adc21208cec820ebb7922eeb1fbe48ff*/
 enum class RecoveryMode;
-constexpr RecoveryMode RecoveryMode_FRESH_START();
-constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
-constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
+inline constexpr RecoveryMode RecoveryMode_FRESH_START();
+inline constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
+inline constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
 
 enum class RecoveryMode {
     FRESH_START,
