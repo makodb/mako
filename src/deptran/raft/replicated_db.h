@@ -146,6 +146,12 @@ public:
     Marshal& from_marshal(Marshal& m);
 };
 
+ReplicatedDBCommand replicated_db_command_defaults();
+ReplicatedDBCommand replicated_db_command_put(const std::string& key,
+                                              const std::string& value);
+ReplicatedDBCommand replicated_db_command_delete(const std::string& key);
+ReplicatedDBCommand replicated_db_command_batch(const std::vector<KVOperation>& ops);
+
 /**
  * ReplicatedDB - A replicated key-value store built on Raft + RocksDB.
  *

@@ -30,33 +30,62 @@ static int volatile x_replicated_db =
 // ReplicatedDBCommand factory methods and serialization
 // ===========================================================================
 
+ReplicatedDBCommand janus::replicated_db_command_defaults() {
+  ReplicatedDBCommand cmd;
+  cmd.op_ = ReplicatedDBOp::PUT;
+  cmd.key_ = "";
+  cmd.value_ = "";
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_put(const std::string& key,
+                                                     const std::string& value) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::PUT;
+  cmd.key_ = key;
+  cmd.value_ = value;
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_delete(const std::string& key) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::DELETE;
+  cmd.key_ = key;
+  cmd.value_ = "";
+  cmd.batch_ops_.clear();
+  return cmd;
+}
+
+ReplicatedDBCommand janus::replicated_db_command_batch(const std::vector<KVOperation>& ops) {
+  ReplicatedDBCommand cmd = replicated_db_command_defaults();
+  cmd.op_ = ReplicatedDBOp::BATCH;
+  cmd.key_ = "";
+  cmd.value_ = "";
+  cmd.batch_ops_ = ops;
+  return cmd;
+}
+
 // @unsafe - Creates shared_ptr (non-borrow-checked ownership)
 shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreatePut(
     const std::string& key, const std::string& value) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::PUT;
-  cmd->key_ = key;
-  cmd->value_ = value;
-  return cmd;
+  return std::make_shared<ReplicatedDBCommand>(
+      replicated_db_command_put(key, value));
 }
 
 // @unsafe - Creates shared_ptr (non-borrow-checked ownership)
 shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateDelete(
     const std::string& key) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::DELETE;
-  cmd->key_ = key;
-  cmd->value_ = "";
-  return cmd;
+  return std::make_shared<ReplicatedDBCommand>(
+      replicated_db_command_delete(key));
 }
 
 // @unsafe - Creates shared_ptr (non-borrow-checked ownership)
 shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
     const std::vector<KVOperation>& ops) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::BATCH;
-  cmd->batch_ops_ = ops;
-  return cmd;
+  return std::make_shared<ReplicatedDBCommand>(
+      replicated_db_command_batch(ops));
 }
 
 // Serializable save/load — moved here from
