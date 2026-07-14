@@ -380,6 +380,22 @@ inline bool snapshot_get_header(const uint8_t* input, size_t input_size, Snapsho
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.get_header*/
 
+#if RUSTYCPP_RUST
+pub fn snapshot_serialize(last_index: u64,
+                          last_term: u64,
+                          data: *const u8,
+                          size: usize,
+                          output: *mut std::string,
+                          compression: SnapshotCompression,
+                          checksum_type: SnapshotChecksumType) -> bool {
+    snapshot_serialize_cpp(last_index, last_term, data, size, output, compression, checksum_type)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.9 version=1 rust_sha256=ece82ea3594ceb5230d453b9903fa01b1eb555c98fef53985614e9aea57f5b93*/
+inline bool snapshot_serialize(uint64_t last_index, uint64_t last_term, const uint8_t* data, size_t size, std::string* output, SnapshotCompression compression, SnapshotChecksumType checksum_type) {
+    return snapshot_serialize_cpp(std::move(last_index), std::move(last_term), data, std::move(size), output, std::move(compression), std::move(checksum_type));
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.9*/
 inline bool snapshot_serialize_cpp(uint64_t last_index,
                                    uint64_t last_term,
                                    const char* data,
@@ -435,6 +451,23 @@ inline bool snapshot_serialize_cpp(uint64_t last_index,
 
   return true;
 }
+
+#if RUSTYCPP_RUST
+pub fn snapshot_deserialize(input: *const u8,
+                            input_size: usize,
+                            last_index: *mut u64,
+                            last_term: *mut u64,
+                            data: *mut std::string) -> bool {
+    snapshot_deserialize_cpp(input, input_size, last_index, last_term, data)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.10 version=1 rust_sha256=fe06e33fb4af8feb19719fd55e0ef7b11d892b0b426970a8dcec444a59cee155*/
+inline bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data);
+
+inline bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data) {
+    return snapshot_deserialize_cpp(input, std::move(input_size), last_index, last_term, data);
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.10*/
 
 inline bool snapshot_deserialize_cpp(const char* input,
                                      size_t input_size,
