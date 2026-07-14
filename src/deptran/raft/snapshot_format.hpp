@@ -18,6 +18,7 @@
  * RustyCpp Compliance: Uses @safe/@unsafe annotations
  */
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -302,6 +303,36 @@ inline uint32_t snapshot_crc32(const char* data, size_t size) {
   return snapshot_crc32(reinterpret_cast<const uint8_t*>(data), size);
 }
 
+inline bool snapshot_get_header_cpp(const uint8_t* input,
+                                    size_t input_size,
+                                    SnapshotHeader* header) {
+  if (!input || !header) {
+    return false;
+  }
+  if (input_size < sizeof(SnapshotHeader)) {
+    return false;
+  }
+  std::memcpy(header, input, sizeof(SnapshotHeader));
+  if (header->magic != 0x504E4153 || header->version != 1) {
+    return false;
+  }
+  uint32_t expected_crc = snapshot_crc32(input, 44);
+  return header->header_crc == expected_crc;
+}
+
+#if RUSTYCPP_RUST
+pub fn snapshot_get_header(input: *const u8,
+                           input_size: usize,
+                           header: *mut SnapshotHeader) -> bool {
+    snapshot_get_header_cpp(input, input_size, header)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.get_header version=1 rust_sha256=f0cfa72bf461b5b2e555b77cf8d74614ce257abdb5075c50bbe5aca3bc213fed*/
+inline bool snapshot_get_header(const uint8_t* input, size_t input_size, SnapshotHeader* header) {
+    return snapshot_get_header_cpp(input, std::move(input_size), header);
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.get_header*/
+
 /**
  * Snapshot format serialization and deserialization utilities.
  */
@@ -480,21 +511,12 @@ class SnapshotFormat {
    * Get the header from a snapshot buffer without full deserialization.
    * Useful for quick metadata inspection.
    */
-  // @unsafe - Reads from raw pointer
+  // @unsafe - Compatibility wrapper for raw pointer input/output params.
+  // The bounds checks, memcpy, and CRC validation live in snapshot_get_header().
   static bool GetHeader(const char* input, size_t input_size, SnapshotHeader* header) {
-    if (!input || !header) {
-      return false;
-    }
-    if (input_size < sizeof(SnapshotHeader)) {
-      return false;
-    }
-    std::memcpy(header, input, sizeof(SnapshotHeader));
-    if (header->magic != MAGIC || header->version != VERSION) {
-      return false;
-    }
-    // Verify header CRC
-    uint32_t expected_crc = snapshot_crc32(input, 44);
-    return header->header_crc == expected_crc;
+    return snapshot_get_header(reinterpret_cast<const uint8_t*>(input),
+                               input_size,
+                               header);
   }
 
  private:
