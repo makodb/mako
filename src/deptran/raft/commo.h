@@ -92,17 +92,56 @@ class RaftVoteQuorumEvent: public QuorumEvent {
   }
 };
 
-// @unsafe - contains std::recursive_mutex (non-borrow-checked type)
-class SendAppendEntriesResults {
- public:
-  std::recursive_mutex mtx;
-  bool done = false;
-  uint64_t ok = 0;
-  uint64_t followerTerm = 0;
-  uint64_t followerLastLogIndex = 0;
-  uint64_t followerAckType = 0;  // 0=Memory, 1=Durable
-  bool empty = true;
+struct SendAppendEntriesResults;
+
+inline SendAppendEntriesResults send_append_entries_results_defaults();
+
+#if RUSTYCPP_RUST
+pub struct SendAppendEntriesResults {
+    done: bool,
+    ok: u64,
+    followerTerm: u64,
+    followerLastLogIndex: u64,
+    followerAckType: u64,
+    empty: bool,
+}
+
+impl SendAppendEntriesResults {
+    fn defaults() -> SendAppendEntriesResults {
+        send_append_entries_results_defaults()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.send_append_entries_results version=1 rust_sha256=a26d13a9b3118404a9773198ad508022eff105b484c564e122efc81f6b094a77*/
+struct SendAppendEntriesResults;
+
+struct SendAppendEntriesResults {
+    bool done;
+    uint64_t ok;
+    uint64_t followerTerm;
+    uint64_t followerLastLogIndex;
+    uint64_t followerAckType;
+    bool empty;
+
+    static SendAppendEntriesResults defaults();
 };
+
+
+inline SendAppendEntriesResults SendAppendEntriesResults::defaults() {
+    return send_append_entries_results_defaults();
+}
+/*RUSTYCPP:GEN-END id=commo.send_append_entries_results*/
+
+inline SendAppendEntriesResults send_append_entries_results_defaults() {
+  SendAppendEntriesResults results{};
+  results.done = false;
+  results.ok = 0;
+  results.followerTerm = 0;
+  results.followerLastLogIndex = 0;
+  results.followerAckType = 0;
+  results.empty = true;
+  return results;
+}
 
 /**
  * AckType - Speculative Replication acknowledgment type

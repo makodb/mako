@@ -152,7 +152,8 @@ namespace janus
                                bool trigger_election_now)
   {
     // verify(par_id == 0);
-    auto res = std::make_shared<SendAppendEntriesResults>();
+    auto res = std::make_shared<SendAppendEntriesResults>(
+        SendAppendEntriesResults::defaults());
     auto proxies = rpc_par_proxies_[par_id];
     // vector<rusty::Arc<Future>> fus;
     WAN_WAIT;
@@ -177,7 +178,6 @@ namespace janus
           Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
           return;
         }
-        // std::lock_guard<std::recursive_mutex> lk(res->mtx);
         fu->get_reply() >> res->ok;
         fu->get_reply() >> res->followerTerm;
         fu->get_reply() >> res->followerLastLogIndex;
