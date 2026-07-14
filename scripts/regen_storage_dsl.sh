@@ -148,6 +148,16 @@ for ln in lines:
                             f'enum class {name} : {repr_type};')
             ln = ln.replace(f'enum class {name} {{',
                             f'enum class {name} : {repr_type} {{')
+        # The transpiler lowers simple scalar while-loop comparisons through
+        # rusty::detail::deref_if_pointer_like, which would require
+        # rusty/slice.hpp in this header and conflicts with the module build.
+        # Keep this generated CRC32 loop as ordinary scalar C++.
+        ln = ln.replace(
+            'while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(size)) {',
+            'while (i < size) {')
+        ln = ln.replace(
+            'snapshot_crc32_read_byte_cpp(data, std::move(i))',
+            'snapshot_crc32_read_byte_cpp(data, i)')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

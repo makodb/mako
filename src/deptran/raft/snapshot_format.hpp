@@ -333,16 +333,32 @@ inline uint32_t snapshot_crc32_finalize(uint32_t crc) {
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.crc32_parts*/
 
+inline uint8_t snapshot_crc32_read_byte_cpp(const uint8_t* data, size_t index) {
+  return data[index];
+}
+
 #if RUSTYCPP_RUST
 pub fn snapshot_crc32(data: *const u8, size: usize) -> u32 {
-    CRC32::calculate(data, size)
+    let mut crc = snapshot_crc32_initial();
+    let mut i: usize = 0;
+    while i < size {
+        crc = snapshot_crc32_update_byte(crc, snapshot_crc32_read_byte_cpp(data, i));
+        i += 1;
+    }
+    snapshot_crc32_finalize(crc)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=snapshot_format.3 version=1 rust_sha256=806411356a34b347f15210e8fe691574054596416297b55d4eb211c98f257729*/
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.3 version=1 rust_sha256=50e492e4c9d0384dc725a6592c16afe38270c4237519f55a47d61aa265ce5a6a*/
 inline uint32_t snapshot_crc32(const uint8_t* data, size_t size);
 
 inline uint32_t snapshot_crc32(const uint8_t* data, size_t size) {
-    return CRC32::calculate(data, std::move(size));
+    auto crc = snapshot_crc32_initial();
+    size_t i = static_cast<size_t>(0);
+    while (i < size) {
+        crc = snapshot_crc32_update_byte(std::move(crc), snapshot_crc32_read_byte_cpp(data, i));
+        i += 1;
+    }
+    return snapshot_crc32_finalize(std::move(crc));
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.3*/
 
@@ -380,6 +396,20 @@ inline bool snapshot_get_header(const uint8_t* input, size_t input_size, Snapsho
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.get_header*/
 
+inline bool snapshot_serialize_cpp(uint64_t last_index,
+                                   uint64_t last_term,
+                                   const uint8_t* data,
+                                   size_t size,
+                                   std::string* output,
+                                   SnapshotCompression compression,
+                                   SnapshotChecksumType checksum_type);
+
+inline bool snapshot_deserialize_cpp(const uint8_t* input,
+                                     size_t input_size,
+                                     uint64_t* last_index,
+                                     uint64_t* last_term,
+                                     std::string* data);
+
 #if RUSTYCPP_RUST
 pub fn snapshot_serialize(last_index: u64,
                           last_term: u64,
@@ -398,7 +428,7 @@ inline bool snapshot_serialize(uint64_t last_index, uint64_t last_term, const ui
 /*RUSTYCPP:GEN-END id=snapshot_format.9*/
 inline bool snapshot_serialize_cpp(uint64_t last_index,
                                    uint64_t last_term,
-                                   const char* data,
+                                   const uint8_t* data,
                                    size_t size,
                                    std::string* output,
                                    SnapshotCompression compression,
@@ -424,7 +454,7 @@ inline bool snapshot_serialize_cpp(uint64_t last_index,
 
   // CRC covers bytes 0..43, before header_crc at offset 44.
   header.header_crc = snapshot_crc32(
-      reinterpret_cast<const char*>(&header), 44);
+      reinterpret_cast<const uint8_t*>(&header), 44);
 
   uint32_t data_crc = 0;
   if (checksum_type == SnapshotChecksumType::CRC32) {
@@ -469,7 +499,7 @@ inline bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.10*/
 
-inline bool snapshot_deserialize_cpp(const char* input,
+inline bool snapshot_deserialize_cpp(const uint8_t* input,
                                      size_t input_size,
                                      uint64_t* last_index,
                                      uint64_t* last_term,
@@ -521,7 +551,7 @@ inline bool snapshot_deserialize_cpp(const char* input,
     return false;
   }
 
-  const char* data_ptr = input + sizeof(SnapshotHeader);
+  const uint8_t* data_ptr = input + sizeof(SnapshotHeader);
   if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
     uint32_t expected_crc;
     std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
@@ -535,7 +565,7 @@ inline bool snapshot_deserialize_cpp(const char* input,
 
   *last_index = header.last_index;
   *last_term = header.last_term;
-  data->assign(data_ptr, header.data_size);
+  data->assign(reinterpret_cast<const char*>(data_ptr), header.data_size);
 
   return true;
 }
@@ -569,13 +599,13 @@ class SnapshotFormat {
                         std::string* output,
                         SnapshotCompression compression = SnapshotCompression::NONE,
                         SnapshotChecksumType checksum_type = SnapshotChecksumType::CRC32) {
-    return snapshot_serialize_cpp(last_index,
-                                  last_term,
-                                  data,
-                                  size,
-                                  output,
-                                  compression,
-                                  checksum_type);
+    return snapshot_serialize(last_index,
+                              last_term,
+                              reinterpret_cast<const uint8_t*>(data),
+                              size,
+                              output,
+                              compression,
+                              checksum_type);
   }
 
   /**
@@ -593,11 +623,11 @@ class SnapshotFormat {
                           uint64_t* last_index,
                           uint64_t* last_term,
                           std::string* data) {
-    return snapshot_deserialize_cpp(input,
-                                    input_size,
-                                    last_index,
-                                    last_term,
-                                    data);
+    return snapshot_deserialize(reinterpret_cast<const uint8_t*>(input),
+                                input_size,
+                                last_index,
+                                last_term,
+                                data);
   }
 
   /**
