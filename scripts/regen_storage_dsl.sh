@@ -77,6 +77,9 @@ FILES=(
   # Raft persistent log entry: struct shape + thin methods in DSL, archive
   # save/load bodies stay delegated to C++ helpers to preserve storage format.
   src/deptran/raft/log_storage.hpp
+  # Raft in-memory log storage helper predicates only; storage map/mutex
+  # operations stay hand-C++.
+  src/deptran/raft/memory_log_storage.hpp
   # Raft in-process test transport fault state; channel workers/adapters stay
   # hand-C++ because they own closures, channels, and blocking worker loops.
   src/deptran/raft/channel_transport.hpp
@@ -188,6 +191,45 @@ for ln in lines:
         ln = ln.replace(
             'return std::string("meta:") + rusty::detail::deref_if_pointer_like(key);',
             'return std::string("meta:") + key;')
+        ln = ln.replace(
+            'return std::move(is_open);',
+            'return is_open;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end);',
+            'return start < end;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(size) == static_cast<size_t>(0);',
+            'return size == 0;')
+        ln = ln.replace(
+            'return std::move(found);',
+            'return found;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(is_open) && rusty::detail::deref_if_pointer_like(has_db);',
+            'return is_open && has_db;')
+        ln = ln.replace(
+            'return std::move(has_value);',
+            'return has_value;')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(end_key)) && rusty::detail::deref_if_pointer_like(is_log_key);',
+            'return key < end_key && is_log_key;')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FORCED_FRESH)) && rusty::detail::deref_if_pointer_like(clear_on_forced_fresh);',
+            'return mode == RecoveryMode::FORCED_FRESH && clear_on_forced_fresh;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);',
+            'return offset + size;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);',
+            'return snapshot_index < keep_after_index;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;',
+            'return snapshot_count > 0;')
+        ln = ln.replace(
+            'if (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) {',
+            'if (snapshot_count > max_snapshots) {')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));',
+            'return snapshot_count > max_snapshots && position >= max_snapshots;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

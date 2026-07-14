@@ -62,11 +62,38 @@ pub fn rocksdb_log_make_log_key(slot_id: u64) -> std::string {
 pub fn rocksdb_log_make_meta_key(key: &std::string) -> std::string {
     std::string("meta:") + key
 }
+
+pub fn rocksdb_log_storage_ready(is_open: bool, has_db: bool) -> bool {
+    is_open && has_db
+}
+
+pub fn rocksdb_log_range_valid(start: u64, end: u64) -> bool {
+    start < end
+}
+
+pub fn rocksdb_log_empty_from_size(size: usize) -> bool {
+    size == 0
+}
+
+pub fn rocksdb_log_value_present(has_value: bool) -> bool {
+    has_value
+}
+
+pub fn rocksdb_log_key_in_range(key: &std::string,
+                                end_key: &std::string,
+                                is_log_key: bool) -> bool {
+    key < end_key && is_log_key
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.helpers version=1 rust_sha256=3afb8483aa780e4d0405da17cc13f22bff33f451bd85841482465b0bf0b56736*/
+/*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.helpers version=1 rust_sha256=0a3b6f0293563a2e30a7c72b3e5674b8c14f7b5ce73c2e60ef8f7045d5dc9b24*/
 inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len);
 inline std::string rocksdb_log_make_log_key(uint64_t slot_id);
 inline std::string rocksdb_log_make_meta_key(const std::string& key);
+inline bool rocksdb_log_storage_ready(bool is_open, bool has_db);
+inline bool rocksdb_log_range_valid(uint64_t start, uint64_t end);
+inline bool rocksdb_log_empty_from_size(size_t size);
+inline bool rocksdb_log_value_present(bool has_value);
+inline bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key);
 
 inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len) {
     return rocksdb_log_copy_slice_cpp(data, std::move(len));
@@ -78,6 +105,26 @@ inline std::string rocksdb_log_make_log_key(uint64_t slot_id) {
 
 inline std::string rocksdb_log_make_meta_key(const std::string& key) {
     return std::string("meta:") + key;
+}
+
+inline bool rocksdb_log_storage_ready(bool is_open, bool has_db) {
+    return is_open && has_db;
+}
+
+inline bool rocksdb_log_range_valid(uint64_t start, uint64_t end) {
+    return start < end;
+}
+
+inline bool rocksdb_log_empty_from_size(size_t size) {
+    return size == 0;
+}
+
+inline bool rocksdb_log_value_present(bool has_value) {
+    return has_value;
+}
+
+inline bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key) {
+    return key < end_key && is_log_key;
 }
 /*RUSTYCPP:GEN-END id=rocksdb_log_storage.helpers*/
 
@@ -257,7 +304,7 @@ public:
     // @unsafe - Uses RocksDB API. The returned value buffer is owned by
     // RocksDB and must be released with rocksdb_free().
     rusty::Option<LogEntry> get(slotid_t slot_id) const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return rusty::None;
         }
 
@@ -270,7 +317,7 @@ public:
             take_rocksdb_error(&err);
             return rusty::None;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;
         }
 
@@ -287,7 +334,7 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool put(const LogEntry& entry) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 
@@ -309,7 +356,7 @@ public:
     // @unsafe - Uses RocksDB API. The existence-check buffer is owned by
     // RocksDB and must be released with rocksdb_free().
     bool remove(slotid_t slot_id) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 
@@ -323,7 +370,7 @@ public:
             take_rocksdb_error(&err);
             return false;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return false;  // Key doesn't exist
         }
         rocksdb_free(value_ptr);
@@ -344,7 +391,8 @@ public:
     // before return.
     std::vector<LogEntry> get_range(slotid_t start, slotid_t end) const override {
         std::vector<LogEntry> result;
-        if (!is_open_.get() || db_ == nullptr || start >= end) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr) ||
+            !rocksdb_log_range_valid(start, end)) {
             return result;
         }
 
@@ -363,7 +411,9 @@ public:
             const char* key_ptr = rocksdb_iter_key(it, &key_len);
             const char* value_ptr = rocksdb_iter_value(it, &value_len);
             std::string key = copy_slice(key_ptr, key_len);
-            if (key >= end_key || key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) != 0) {
+            if (!rocksdb_log_key_in_range(
+                    key, end_key,
+                    key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) == 0)) {
                 break;
             }
 
@@ -387,7 +437,7 @@ public:
     // @unsafe - Uses RocksDB API. Write batch is a temporary handle destroyed
     // on every exit path after creation.
     bool put_batch(const std::vector<LogEntry>& entries) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 
@@ -419,7 +469,8 @@ public:
     // @unsafe - Uses RocksDB API. Write batch and iterator are temporary
     // handles destroyed on every exit path after creation.
     bool remove_range(slotid_t start, slotid_t end) override {
-        if (!is_open_.get() || db_ == nullptr || start >= end) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr) ||
+            !rocksdb_log_range_valid(start, end)) {
             return false;
         }
 
@@ -443,7 +494,9 @@ public:
             size_t key_len = 0;
             const char* key_ptr = rocksdb_iter_key(it, &key_len);
             std::string key = copy_slice(key_ptr, key_len);
-            if (key >= end_key || key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) != 0) {
+            if (!rocksdb_log_key_in_range(
+                    key, end_key,
+                    key.compare(0, std::strlen(LOG_PREFIX), LOG_PREFIX) == 0)) {
                 break;
             }
             rocksdb_writebatch_delete(batch, key.data(), key.size());
@@ -475,7 +528,7 @@ public:
     // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
     // before return.
     slotid_t get_first_index() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return 0;
         }
 
@@ -510,7 +563,7 @@ public:
     // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
     // before return.
     slotid_t get_last_index() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return 0;
         }
 
@@ -562,7 +615,7 @@ public:
     // @unsafe - Uses RocksDB API. Iterator is a temporary handle destroyed
     // before return.
     size_t size() const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return 0;
         }
 
@@ -595,7 +648,7 @@ public:
 
     // @unsafe - Calls size() which uses RocksDB
     bool empty() const override {
-        return size() == 0;  // @unsafe
+        return rocksdb_log_empty_from_size(size());  // @unsafe
     }
 
     // ========================================================================
@@ -604,7 +657,7 @@ public:
 
     // @unsafe - Uses RocksDB API
     bool set_metadata(const std::string& key, const std::string& value) override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 
@@ -622,7 +675,7 @@ public:
     // @unsafe - Uses RocksDB API. The returned value buffer is owned by
     // RocksDB and must be released with rocksdb_free().
     rusty::Option<std::string> get_metadata(const std::string& key) const override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return rusty::None;
         }
 
@@ -637,7 +690,7 @@ public:
             take_rocksdb_error(&err);
             return rusty::None;
         }
-        if (value_ptr == nullptr) {
+        if (!rocksdb_log_value_present(value_ptr != nullptr)) {
             return rusty::None;
         }
 
@@ -653,7 +706,7 @@ public:
     // @unsafe - Uses RocksDB API. Flush options are a temporary handle
     // destroyed before return.
     bool sync() override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 
@@ -697,7 +750,7 @@ public:
     // @unsafe - Uses RocksDB API. Write batch and iterator are temporary
     // handles destroyed on every exit path after creation.
     bool clear() override {
-        if (!is_open_.get() || db_ == nullptr) {
+        if (!rocksdb_log_storage_ready(is_open_.get(), db_ != nullptr)) {
             return false;
         }
 

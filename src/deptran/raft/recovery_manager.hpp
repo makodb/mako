@@ -247,8 +247,25 @@ pub fn recovery_result_mark_success(result: &mut RecoveryResult,
     result.recovered_entries = recovered_entries;
     result.recovery_time_ms = recovery_time_ms;
 }
+
+pub fn recovery_should_clear_forced_fresh(mode: RecoveryMode,
+                                          clear_on_forced_fresh: bool) -> bool {
+    mode == RecoveryMode::FORCED_FRESH && clear_on_forced_fresh
+}
+
+pub fn recovery_storage_open_failed(has_storage: bool,
+                                    storage_is_open: bool) -> bool {
+    !has_storage || !storage_is_open
+}
+
+pub fn recovery_result_assign_recovery_time(result: &mut RecoveryResult,
+                                            recovery_time_ms: u64) {
+    result.recovery_time_ms = recovery_time_ms;
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=6cb714ac89e470ff50b87b0cab4a6baa90276efc26a9fb8d217e9bf098c9e8f6*/
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=2dc9559327bd79a04c16b1d8c7ae0e718a8326e978257f96873a8bfa7580f323*/
+inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open);
+
 inline bool recovery_mode_is_fresh_start(RecoveryMode mode) {
     return mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH;
 }
@@ -265,6 +282,18 @@ inline void recovery_result_mark_fresh_success(RecoveryResult& result) {
 inline void recovery_result_mark_success(RecoveryResult& result, uint64_t recovered_entries, uint64_t recovery_time_ms) {
     result.success = true;
     result.recovered_entries = std::move(recovered_entries);
+    result.recovery_time_ms = std::move(recovery_time_ms);
+}
+
+inline bool recovery_should_clear_forced_fresh(RecoveryMode mode, bool clear_on_forced_fresh) {
+    return mode == RecoveryMode::FORCED_FRESH && clear_on_forced_fresh;
+}
+
+inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open) {
+    return !has_storage || !storage_is_open;
+}
+
+inline void recovery_result_assign_recovery_time(RecoveryResult& result, uint64_t recovery_time_ms) {
     result.recovery_time_ms = std::move(recovery_time_ms);
 }
 /*RUSTYCPP:GEN-END id=recovery_manager.small_helpers*/
@@ -321,8 +350,8 @@ class RecoveryManager {
     detected_mode_.set(detect_mode());
 
     // Handle forced fresh start
-    if (detected_mode_.get() == RecoveryMode::FORCED_FRESH &&
-        config_.clear_on_forced_fresh) {
+    if (recovery_should_clear_forced_fresh(detected_mode_.get(),
+                                           config_.clear_on_forced_fresh)) {
       // @unsafe { filesystem operations }
       std::error_code ec;
       std::filesystem::remove_all(config_.storage_path, ec);
@@ -334,7 +363,8 @@ class RecoveryManager {
 
     // Create storage
     storage_ = std::make_shared<RocksDBLogStorage>(config_.storage_path);
-    if (!storage_->is_open()) {
+    if (recovery_storage_open_failed(storage_ != nullptr,
+                                     storage_ != nullptr && storage_->is_open())) {
       Log_error("Failed to open RocksDB at %s", config_.storage_path.c_str());
       storage_ = nullptr;
       return nullptr;
@@ -418,6 +448,7 @@ class RecoveryManager {
     uint64_t recovery_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         end_time - start_time).count();
 
+    recovery_result_assign_recovery_time(result, recovery_time_ms);
     recovery_result_mark_success(result, recovered_entries, recovery_time_ms);
     Log_info("Recovery complete: %lu entries in %lu ms",
              result.recovered_entries, result.recovery_time_ms);
