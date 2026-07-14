@@ -201,19 +201,16 @@ inline uint64_t snapshot_current_time_ms() {
 class CRC32 {
  public:
   // @safe - Default constructor
-  CRC32() : crc_(0xFFFFFFFF) {}
+  CRC32() : crc_(initial_value()) {}
 
   // @unsafe - Reads from raw pointer
   void Update(const char* data, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-      uint8_t byte = static_cast<uint8_t>(data[i]);
-      crc_ = TABLE[(crc_ ^ byte) & 0xFF] ^ (crc_ >> 8);
-    }
+    update(data, size);
   }
 
   // @safe - Returns final CRC value
   uint32_t Finalize() const {
-    return crc_ ^ 0xFFFFFFFF;
+    return finalize_value(crc_);
   }
 
   /**
@@ -233,6 +230,25 @@ class CRC32 {
 
   static uint32_t calculate(const uint8_t* data, size_t size) {
     return Calculate(reinterpret_cast<const char*>(data), size);
+  }
+
+  static constexpr uint32_t initial_value() {
+    return 0xFFFFFFFF;
+  }
+
+  static constexpr uint32_t finalize_value(uint32_t crc) {
+    return crc ^ 0xFFFFFFFF;
+  }
+
+  static uint32_t update_byte(uint32_t crc, uint8_t byte) {
+    return TABLE[(crc ^ byte) & 0xFF] ^ (crc >> 8);
+  }
+
+  // @unsafe - Reads from raw pointer
+  void update(const char* data, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+      crc_ = update_byte(crc_, static_cast<uint8_t>(data[i]));
+    }
   }
 
  private:
@@ -287,6 +303,37 @@ class CRC32 {
 };
 
 #if RUSTYCPP_RUST
+pub fn snapshot_crc32_initial() -> u32 {
+    CRC32::initial_value()
+}
+
+pub fn snapshot_crc32_update_byte(crc: u32, byte: u8) -> u32 {
+    CRC32::update_byte(crc, byte)
+}
+
+pub fn snapshot_crc32_finalize(crc: u32) -> u32 {
+    CRC32::finalize_value(crc)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_format.crc32_parts version=1 rust_sha256=e96fd61bf111839acceb74694e8cd60b23ea5865158d225c61899260d73afa00*/
+inline uint32_t snapshot_crc32_initial();
+inline uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte);
+inline uint32_t snapshot_crc32_finalize(uint32_t crc);
+
+inline uint32_t snapshot_crc32_initial() {
+    return CRC32::initial_value();
+}
+
+inline uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte) {
+    return CRC32::update_byte(std::move(crc), std::move(byte));
+}
+
+inline uint32_t snapshot_crc32_finalize(uint32_t crc) {
+    return CRC32::finalize_value(std::move(crc));
+}
+/*RUSTYCPP:GEN-END id=snapshot_format.crc32_parts*/
+
+#if RUSTYCPP_RUST
 pub fn snapshot_crc32(data: *const u8, size: usize) -> u32 {
     CRC32::calculate(data, size)
 }
@@ -333,6 +380,133 @@ inline bool snapshot_get_header(const uint8_t* input, size_t input_size, Snapsho
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.get_header*/
 
+inline bool snapshot_serialize_cpp(uint64_t last_index,
+                                   uint64_t last_term,
+                                   const char* data,
+                                   size_t size,
+                                   std::string* output,
+                                   SnapshotCompression compression,
+                                   SnapshotChecksumType checksum_type) {
+  if (!output) {
+    Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
+    return false;
+  }
+
+  // Only NONE compression is supported.
+  if (compression != SnapshotCompression::NONE) {
+    Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
+    return false;
+  }
+
+  SnapshotHeader header = snapshot_header_make(
+      compression,
+      checksum_type,
+      size,
+      last_index,
+      last_term,
+      snapshot_current_time_ms());
+
+  // CRC covers bytes 0..43, before header_crc at offset 44.
+  header.header_crc = snapshot_crc32(
+      reinterpret_cast<const char*>(&header), 44);
+
+  uint32_t data_crc = 0;
+  if (checksum_type == SnapshotChecksumType::CRC32) {
+    data_crc = snapshot_crc32(data, size);
+  }
+
+  size_t checksum_size = (checksum_type == SnapshotChecksumType::CRC32) ? 4 : 0;
+  size_t total_size = sizeof(SnapshotHeader) + size + checksum_size;
+
+  output->resize(total_size);
+  char* ptr = output->data();
+
+  std::memcpy(ptr, &header, sizeof(SnapshotHeader));
+  ptr += sizeof(SnapshotHeader);
+
+  if (size > 0 && data != nullptr) {
+    std::memcpy(ptr, data, size);
+    ptr += size;
+  }
+
+  if (checksum_type == SnapshotChecksumType::CRC32) {
+    std::memcpy(ptr, &data_crc, 4);
+  }
+
+  return true;
+}
+
+inline bool snapshot_deserialize_cpp(const char* input,
+                                     size_t input_size,
+                                     uint64_t* last_index,
+                                     uint64_t* last_term,
+                                     std::string* data) {
+  if (!input || !last_index || !last_term || !data) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
+    return false;
+  }
+
+  if (input_size < sizeof(SnapshotHeader)) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small (%zu < %zu)",
+              input_size, sizeof(SnapshotHeader));
+    return false;
+  }
+
+  SnapshotHeader header = snapshot_header_defaults();
+  std::memcpy(&header, input, sizeof(SnapshotHeader));
+
+  if (header.magic != 0x504E4153) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x%08X (expected 0x%08X)",
+              header.magic, 0x504E4153);
+    return false;
+  }
+  if (header.version != 1) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version %u", header.version);
+    return false;
+  }
+
+  uint32_t expected_header_crc = snapshot_crc32(input, 44);
+  if (header.header_crc != expected_header_crc) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x%08X != 0x%08X)",
+              header.header_crc, expected_header_crc);
+    return false;
+  }
+
+  if (static_cast<SnapshotCompression>(header.compression) != SnapshotCompression::NONE) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
+    return false;
+  }
+
+  size_t checksum_size = 0;
+  if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
+    checksum_size = 4;
+  }
+  size_t expected_size = sizeof(SnapshotHeader) + header.data_size + checksum_size;
+  if (input_size < expected_size) {
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated (%zu < %zu)",
+              input_size, expected_size);
+    return false;
+  }
+
+  const char* data_ptr = input + sizeof(SnapshotHeader);
+  if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
+    uint32_t expected_crc;
+    std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
+    uint32_t actual_crc = snapshot_crc32(data_ptr, header.data_size);
+    if (expected_crc != actual_crc) {
+      Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x%08X != 0x%08X)",
+                expected_crc, actual_crc);
+      return false;
+    }
+  }
+
+  *last_index = header.last_index;
+  *last_term = header.last_term;
+  data->assign(data_ptr, header.data_size);
+
+  return true;
+}
+
 /**
  * Snapshot format serialization and deserialization utilities.
  */
@@ -362,60 +536,13 @@ class SnapshotFormat {
                         std::string* output,
                         SnapshotCompression compression = SnapshotCompression::NONE,
                         SnapshotChecksumType checksum_type = SnapshotChecksumType::CRC32) {
-    if (!output) {
-      Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
-      return false;
-    }
-
-    // Only NONE compression is supported
-    if (compression != SnapshotCompression::NONE) {
-      Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
-      return false;
-    }
-
-    SnapshotHeader header = snapshot_header_make(
-        compression,
-        checksum_type,
-        size,
-        last_index,
-        last_term,
-        GetCurrentTimeMs());
-
-    // Calculate header CRC (excluding header_crc field itself and padding)
-    // CRC covers bytes 0..43 (before header_crc field at offset 44)
-    header.header_crc = snapshot_crc32(
-        reinterpret_cast<const char*>(&header), 44);
-
-    // Calculate data checksum
-    uint32_t data_crc = 0;
-    if (checksum_type == SnapshotChecksumType::CRC32) {
-      data_crc = snapshot_crc32(data, size);
-    }
-
-    // Calculate output size: header + data + checksum
-    size_t checksum_size = (checksum_type == SnapshotChecksumType::CRC32) ? 4 : 0;
-    size_t total_size = sizeof(SnapshotHeader) + size + checksum_size;
-
-    // Resize output and copy data
-    output->resize(total_size);
-    char* ptr = output->data();
-
-    // Copy header
-    std::memcpy(ptr, &header, sizeof(SnapshotHeader));
-    ptr += sizeof(SnapshotHeader);
-
-    // Copy data
-    if (size > 0 && data != nullptr) {
-      std::memcpy(ptr, data, size);
-      ptr += size;
-    }
-
-    // Copy checksum
-    if (checksum_type == SnapshotChecksumType::CRC32) {
-      std::memcpy(ptr, &data_crc, 4);
-    }
-
-    return true;
+    return snapshot_serialize_cpp(last_index,
+                                  last_term,
+                                  data,
+                                  size,
+                                  output,
+                                  compression,
+                                  checksum_type);
   }
 
   /**
@@ -433,78 +560,11 @@ class SnapshotFormat {
                           uint64_t* last_index,
                           uint64_t* last_term,
                           std::string* data) {
-    if (!input || !last_index || !last_term || !data) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
-      return false;
-    }
-
-    // Check minimum size
-    if (input_size < sizeof(SnapshotHeader)) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small (%zu < %zu)",
-                input_size, sizeof(SnapshotHeader));
-      return false;
-    }
-
-    // Copy header
-    SnapshotHeader header = snapshot_header_defaults();
-    std::memcpy(&header, input, sizeof(SnapshotHeader));
-
-    // Validate magic and version
-    if (header.magic != MAGIC) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x%08X (expected 0x%08X)",
-                header.magic, MAGIC);
-      return false;
-    }
-    if (header.version != VERSION) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version %u", header.version);
-      return false;
-    }
-
-    // Verify header CRC
-    uint32_t expected_header_crc = snapshot_crc32(input, 44);
-    if (header.header_crc != expected_header_crc) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x%08X != 0x%08X)",
-                header.header_crc, expected_header_crc);
-      return false;
-    }
-
-    // Check compression support
-    if (static_cast<SnapshotCompression>(header.compression) != SnapshotCompression::NONE) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
-      return false;
-    }
-
-    // Calculate expected total size
-    size_t checksum_size = 0;
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
-      checksum_size = 4;
-    }
-    size_t expected_size = sizeof(SnapshotHeader) + header.data_size + checksum_size;
-    if (input_size < expected_size) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated (%zu < %zu)",
-                input_size, expected_size);
-      return false;
-    }
-
-    // Verify data checksum
-    const char* data_ptr = input + sizeof(SnapshotHeader);
-    if (static_cast<SnapshotChecksumType>(header.checksum_type) == SnapshotChecksumType::CRC32) {
-      uint32_t expected_crc;
-      std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
-      uint32_t actual_crc = snapshot_crc32(data_ptr, header.data_size);
-      if (expected_crc != actual_crc) {
-        Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x%08X != 0x%08X)",
-                  expected_crc, actual_crc);
-        return false;
-      }
-    }
-
-    // Extract fields
-    *last_index = header.last_index;
-    *last_term = header.last_term;
-    data->assign(data_ptr, header.data_size);
-
-    return true;
+    return snapshot_deserialize_cpp(input,
+                                    input_size,
+                                    last_index,
+                                    last_term,
+                                    data);
   }
 
   /**
