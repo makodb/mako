@@ -548,8 +548,7 @@ public:
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transRQuery(begin, end, std::move(callback), va, ti);
-    Sto::commit();
+    transRQuery(begin, end, std::move(callback), va, ti);we    Sto::commit();
   }
 
   // implementation of TObject methods
