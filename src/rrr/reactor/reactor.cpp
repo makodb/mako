@@ -215,6 +215,10 @@ template <typename W> void event_core_record_place(W& self, SrcFileCStr file, in
 // fiber, not event state), declared here for the flat structs that expose
 // it (defined after Fiber below).
 uint64_t event_core_get_fiber_id();
+// Seeds an event's EventState (wait_place_ tag + creating-fiber capture),
+// matching the legacy Event constructor. Declared here so the BoxEvent
+// hand-bridge's inline ctor (below) can call it; defined after Fiber.
+void event_state_seed(EventState& st);
 
 // Per-type construction factory used by Reactor::create_sp_event. Legacy
 // Event subclasses fall through to make_shared (they have real
@@ -335,14 +339,33 @@ class Event : public EventPollable {
 };
 
 
+// `BoxEvent<Type>` — a one-shot slot event (ready once `set()`). FLATTENED
+// (S4): a hand-written bridge deriving EventPollable directly (no longer
+// `: public Event`), so no event type inherits another. It stays a
+// template — the inline-Rust DSL cannot express one — but it is otherwise
+// the same shape as the flattened structs: the five event-core fields laid
+// out identically, driven by the shared event_wait_impl / event_test_impl
+// / event_core_* kernels. `StatusBox` (rcc) still derives BoxEvent<int>
+// unchanged. Instantiated only with <int>/<bool>; the kernels are exported
+// from this module, so cross-TU instantiation resolves.
+// @unsafe - bridges the DSL trait to the hand-written slot payload.
 template <class Type>
-class BoxEvent : public Event {
+class BoxEvent : public EventPollable {
  public:
+  // Event core — same fields/order as the flattened DSL structs so the
+  // shared kernels see an identical duck-typed surface.
+  rusty::Cell<EventStatus> status_{EventStatus::INIT};
+  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
+  EventState state_{};
+  rusty::Cell<bool> prunable_{true};
+  std::weak_ptr<EventPollable> self_;
+  // Slot payload.
   Type content_{};
   bool is_set_{false};
-  Type& get() {
-    return content_;
-  }
+
+  BoxEvent() { event_state_seed(state_); }
+
+  Type& get() { return content_; }
   void set(const Type& c) {
     is_set_ = true;
     content_ = c;
@@ -350,10 +373,27 @@ class BoxEvent : public Event {
   }
   void clear() {
     is_set_ = false;
-    content_ = {};
+    content_ = Type{};
   }
-  virtual bool is_ready() override {
-    return is_set_;
+
+  // Concrete event surface (matches the flattened structs' inherent fns).
+  void wait() { event_wait_impl(*this, static_cast<uint64_t>(0)); }
+  void wait_timeout(uint64_t timeout) { event_wait_impl(*this, timeout); }
+  bool is_composite_event() { return false; }
+  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
+  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+
+  // EventPollable trait surface.
+  bool test() override { return event_test_impl(*this); }
+  bool is_ready() override { return is_set_; }
+  void log() override {}
+  EventStatus status() const override { return status_.get(); }
+  void set_status(EventStatus s) const override { status_.set(s); }
+  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
+  bool prunable() const override { return prunable_.get(); }
+  void set_prunable(bool v) const override { prunable_.set(v); }
+  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
+    return event_core_upgrade_fiber(*this);
   }
 };
 
@@ -2400,7 +2440,7 @@ uint64_t event_core_get_fiber_id() {
   return fiber_opt.unwrap()->id;
 }
 
-static void event_state_seed(EventState& st) {
+void event_state_seed(EventState& st) {
   st.wait_place_ = "not recorded";
   auto fiber_opt = Fiber::current_fiber();
   if (fiber_opt.is_some()) {

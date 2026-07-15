@@ -100,7 +100,7 @@ T& fiber_future_get(const std::shared_ptr<BoxEvent<T>>* state) {
   return (*state)->get();
 }
 
-// @unsafe - bounded wait; shared_ptr deref through `(*state)->wait(timeout_us)`.
+// @unsafe - bounded wait; shared_ptr deref through `(*state)->wait_timeout(timeout_us)`.
 // `timeout_us == 0` blocks indefinitely (Event::wait's default).
 template <typename T>
 bool fiber_future_wait_for(const std::shared_ptr<BoxEvent<T>>* state, uint64_t timeout_us) {
@@ -110,7 +110,7 @@ bool fiber_future_wait_for(const std::shared_ptr<BoxEvent<T>>* state, uint64_t t
   if ((*state)->is_set_) {
     return true;
   }
-  (*state)->wait(timeout_us);
+  (*state)->wait_timeout(timeout_us);
   return (*state)->is_set_;
 }
 
