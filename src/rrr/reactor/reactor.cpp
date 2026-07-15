@@ -188,14 +188,60 @@ template <class U> class EventPollableAdapterRefMut;
 template <typename W> void event_wait_impl(W& self, uint64_t timeout);
 template <typename W> bool event_test_impl(W& self);
 
-// Per-type construction factory used by Reactor::create_sp_event. The
-// primary template forwards to make_shared (every legacy Event subclass
-// has real constructors); flattened DSL structs — which are field-wise
-// aggregates with no default arguments — specialize it to supply their
-// core-field defaults in exactly one audited place.
+// Shared core-field kernels for the flattened DSL structs (each carries
+// the same five event-core fields, so one template set serves them all;
+// the generated method bodies resolve these by ordinary lookup, and the
+// templates instantiate once the concrete struct is complete).
+using SrcFileCStr = const char*;
+template <typename W> std::shared_ptr<EventPollable> event_core_self_lock(const W& self) {
+  return self.self_.lock();
+}
+template <typename W> void event_core_set_self(W& self, std::weak_ptr<EventPollable> p) {
+  self.self_ = std::move(p);
+}
+template <typename W> uint64_t event_core_wakeup_time(const W& self) {
+  return self.state_.wakeup_time_;
+}
+template <typename W> rusty::Option<rusty::Rc<Fiber>> event_core_upgrade_fiber(const W& self) {
+  return self.state_.wp_fiber_.upgrade();
+}
+template <typename W> void event_core_record_place(W& self, SrcFileCStr file, int line) {
+  char buff[200];
+  sprintf(buff, "%s:%d", file, line);
+  self.state_.wait_place_ += std::string(buff);
+  self.state_.rcd_wait_ = true;
+}
+// Current fiber id — matches Event::get_fiber_id (reads the running
+// fiber, not event state), declared here for the flat structs that expose
+// it (defined after Fiber below).
+uint64_t event_core_get_fiber_id();
+
+// Per-type construction factory used by Reactor::create_sp_event. Legacy
+// Event subclasses fall through to make_shared (they have real
+// constructors); the flattened DSL structs — field-wise aggregates with
+// no default arguments — dispatch to plain factory functions that supply
+// their defaults in exactly one audited place each.
+struct NeverEvent;
+struct TimeoutEvent;
+struct IntEvent;
+std::shared_ptr<NeverEvent> never_event_make();
+std::shared_ptr<TimeoutEvent> timeout_event_make(uint64_t wait_us);
+std::shared_ptr<IntEvent> int_event_make(int32_t target);
 template <typename Ev, typename... Args>
 std::shared_ptr<Ev> event_make(Args&&... args) {
-  return std::make_shared<Ev>(std::forward<Args>(args)...);
+  if constexpr (std::is_same_v<Ev, NeverEvent>) {
+    return never_event_make();
+  } else if constexpr (std::is_same_v<Ev, TimeoutEvent>) {
+    return timeout_event_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, IntEvent>) {
+    if constexpr (sizeof...(Args) == 0) {
+      return int_event_make(1);  // IntEvent() had target_{1}
+    } else {
+      return int_event_make(std::forward<Args>(args)...);
+    }
+  } else {
+    return std::make_shared<Ev>(std::forward<Args>(args)...);
+  }
 }
 
 class Event : public EventPollable {
@@ -315,36 +361,213 @@ class BoxEvent : public Event {
 // inherited `test_` predicate passes). Hand-written subclass of the stateful
 // `Event` base (Event is intentionally not trait-ified — it carries data fields
 // and non-pure default-bodied virtuals).
-class IntEvent : public Event {
- public:
-  int32_t value_{0};
-  int32_t target_{1};
+// `IntEvent` — fires when value_ reaches target_ (or a custom `test_`
+// predicate passes). FLATTENED (S4): flat inline-Rust DSL struct on the
+// NeverEvent pattern. Defaults (value_=0, target_=1) live in
+// int_event_make; set() runs the shared test kernel and returns the
+// previous value, exactly as before.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+int32_t int_event_set(IntEvent& self, int32_t n);
+bool int_event_is_ready(IntEvent& self);
+uint64_t event_core_get_fiber_id();
 
-  IntEvent() = default;
-  IntEvent(int32_t tar) : value_(0), target_(tar) {}
+#if RUSTYCPP_RUST
+struct IntEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: std::weak_ptr<EventPollable>,
+    value_: i32,
+    target_: i32,
+}
 
-  int32_t get() const { return value_; }
-
-  // @safe - sets value_ and runs the readiness test() (inherited virtual);
-  // returns the previous value.
-  int32_t set(int32_t n) {
-    int32_t t = value_;
-    value_ = n;
-    // @unsafe { Event::test() — inherited virtual dispatch }
-    test();
-    return t;
-  }
-
-  // @safe - readiness: a custom inherited `test_` predicate if set, else
-  // value_ >= target_.
-  bool is_ready() override {
-    // @unsafe { reads inherited Event::state_.test_ (rusty::Function<bool(int)>) }
-    if (state_.test_) {
-      return state_.test_(value_);
+impl IntEvent {
+    fn get(&self) -> i32 {
+        self.value_
     }
-    return value_ >= target_;
-  }
+    fn set(&mut self, n: i32) -> i32 {
+        int_event_set(self, n)
+    }
+    fn wait(&mut self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&mut self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn record_place(&mut self, file: SrcFileCStr, line: i32) {
+        event_core_record_place(self, file, line)
+    }
+    fn get_fiber_id(&self) -> u64 {
+        event_core_get_fiber_id()
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for IntEvent {
+    fn test(&mut self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&mut self) -> bool {
+        int_event_is_ready(self)
+    }
+    fn log(&mut self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=51b5894250b1b5eb767558d90a953e71ae0940ddf526ba802036c5ae1b2224f0*/
+struct IntEvent;
+
+struct IntEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    std::weak_ptr<EventPollable> self_;
+    int32_t value_;
+    int32_t target_;
+    IntEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init, int32_t value__init, int32_t target__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), value_(std::move(value__init)), target_(std::move(target__init)) {}
+    IntEvent(IntEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), value_(std::move(other.value_)), target_(std::move(other.target_)) {}
+
+
+    int32_t get() const;
+    int32_t set(int32_t n);
+    void wait();
+    void wait_timeout(uint64_t timeout);
+    void record_place(SrcFileCStr file, int32_t line);
+    uint64_t get_fiber_id() const;
+    bool is_composite_event() const;
+    std::shared_ptr<EventPollable> get_self() const;
+    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    bool test();
+    bool is_ready();
+    void log();
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
 };
+
+
+int32_t IntEvent::get() const {
+    return this->value_;
+}
+
+int32_t IntEvent::set(int32_t n) {
+    return int_event_set((*this), std::move(n));
+}
+
+void IntEvent::wait() {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void IntEvent::wait_timeout(uint64_t timeout) {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+void IntEvent::record_place(SrcFileCStr file, int32_t line) {
+    event_core_record_place((*this), std::move(file), std::move(line));
+}
+
+uint64_t IntEvent::get_fiber_id() const {
+    return event_core_get_fiber_id();
+}
+
+bool IntEvent::is_composite_event() const {
+    return false;
+}
+
+std::shared_ptr<EventPollable> IntEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void IntEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool IntEvent::test() {
+    return event_test_impl((*this));
+}
+
+bool IntEvent::is_ready() {
+    return int_event_is_ready((*this));
+}
+
+void IntEvent::log() {
+}
+
+EventStatus IntEvent::status() const {
+    return this->status_.get();
+}
+
+void IntEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t IntEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool IntEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void IntEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> IntEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.int_event*/
+
+// @safe - sets value_ and runs the readiness test kernel; returns the
+// previous value (verbatim from the legacy IntEvent::set).
+inline int32_t int_event_set(IntEvent& self, int32_t n) {
+  int32_t t = self.value_;
+  self.value_ = n;
+  event_test_impl(self);
+  return t;
+}
+
+// @unsafe - invokes the state_.test_ rusty::Function (custom predicate).
+inline bool int_event_is_ready(IntEvent& self) {
+  if (self.state_.test_) {
+    return self.state_.test_(self.value_);
+  }
+  return self.value_ >= self.target_;
+}
 
 // `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
 // it crosses their thresholds. The `std::shared_ptr<IntEvent>` element
@@ -433,16 +656,6 @@ bool SharedIntEvent::wait_until_gte(int32_t x, int32_t timeout) {
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
-// Kernel declarations for the generated NeverEvent method bodies below
-// (ordinary lookup requires them before the GEN block; definitions follow it).
-struct NeverEvent;
-using SrcFileCStr = const char*;
-void never_event_record_place(NeverEvent& self, SrcFileCStr file, int line);
-std::shared_ptr<EventPollable> never_event_self_lock(const NeverEvent& self);
-void never_event_set_self(NeverEvent& self, std::weak_ptr<EventPollable> p);
-uint64_t never_event_wakeup_time(const NeverEvent& self);
-rusty::Option<rusty::Rc<Fiber>> never_event_upgrade_fiber(const NeverEvent& self);
-
 #if RUSTYCPP_RUST
 struct NeverEvent {
     status_: Cell<EventStatus>,
@@ -457,16 +670,16 @@ impl NeverEvent {
         event_wait_impl(self, timeout)
     }
     fn record_place(&mut self, file: SrcFileCStr, line: i32) {
-        never_event_record_place(self, file, line)
+        event_core_record_place(self, file, line)
     }
     fn is_composite_event(&self) -> bool {
         false
     }
     fn get_self(&self) -> std::shared_ptr<EventPollable> {
-        never_event_self_lock(self)
+        event_core_self_lock(self)
     }
     fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
-        never_event_set_self(self, self_ptr)
+        event_core_set_self(self, self_ptr)
     }
 }
 
@@ -486,7 +699,7 @@ impl EventPollable for NeverEvent {
         self.status_.set(s)
     }
     fn wakeup_time(&self) -> u64 {
-        never_event_wakeup_time(self)
+        event_core_wakeup_time(self)
     }
     fn prunable(&self) -> bool {
         self.prunable_.get()
@@ -495,11 +708,11 @@ impl EventPollable for NeverEvent {
         self.prunable_.set(v)
     }
     fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
-        never_event_upgrade_fiber(self)
+        event_core_upgrade_fiber(self)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=1faab215037ef60d9425e7aff9a969bf9a957a819cbbe10d914f971d22533fa5*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=c24312ddfb83416ce8c2844b24c0876764758ee23f7655c759825ecef9c384f0*/
 struct NeverEvent;
 
 struct NeverEvent : public EventPollable {
@@ -534,7 +747,7 @@ void NeverEvent::wait_timeout(uint64_t timeout) {
 }
 
 void NeverEvent::record_place(SrcFileCStr file, int32_t line) {
-    never_event_record_place((*this), std::move(file), std::move(line));
+    event_core_record_place((*this), std::move(file), std::move(line));
 }
 
 bool NeverEvent::is_composite_event() const {
@@ -542,11 +755,11 @@ bool NeverEvent::is_composite_event() const {
 }
 
 std::shared_ptr<EventPollable> NeverEvent::get_self() const {
-    return never_event_self_lock((*this));
+    return event_core_self_lock((*this));
 }
 
 void NeverEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
-    never_event_set_self((*this), std::move(self_ptr));
+    event_core_set_self((*this), std::move(self_ptr));
 }
 
 bool NeverEvent::test() {
@@ -569,7 +782,7 @@ void NeverEvent::set_status(EventStatus s) const {
 }
 
 uint64_t NeverEvent::wakeup_time() const {
-    return never_event_wakeup_time((*this));
+    return event_core_wakeup_time((*this));
 }
 
 bool NeverEvent::prunable() const {
@@ -581,60 +794,167 @@ void NeverEvent::set_prunable(bool v) const {
 }
 
 rusty::Option<rusty::Rc<Fiber>> NeverEvent::upgrade_fiber() const {
-    return never_event_upgrade_fiber((*this));
+    return event_core_upgrade_fiber((*this));
 }
 /*RUSTYCPP:GEN-END id=reactor.never_event*/
 
-// Hand kernels for NeverEvent's EventState-crossing accessors (the DSL
-// body cannot deref the weak_ptr / read nested state fields directly).
-// @unsafe - weak_ptr::lock / nested field reads.
-inline void never_event_record_place(NeverEvent& self, SrcFileCStr file, int line) {
-  char buff[200];
-  sprintf(buff, "%s:%d", file, line);
-  self.state_.wait_place_ += std::string(buff);
-  self.state_.rcd_wait_ = true;
-}
-inline std::shared_ptr<EventPollable> never_event_self_lock(const NeverEvent& self) {
-  return self.self_.lock();
-}
-inline void never_event_set_self(NeverEvent& self, std::weak_ptr<EventPollable> p) {
-  self.self_ = std::move(p);
-}
-inline uint64_t never_event_wakeup_time(const NeverEvent& self) {
-  return self.state_.wakeup_time_;
-}
-inline rusty::Option<rusty::Rc<Fiber>> never_event_upgrade_fiber(const NeverEvent& self) {
-  return self.state_.wp_fiber_.upgrade();
+
+
+// `TimeoutEvent` — ready once `wait_us_` microseconds have elapsed past
+// construction (`wakeup_time_` is its OWN deadline field, distinct from
+// `state_.wakeup_time_` which the wait machinery stamps). FLATTENED (S4):
+// flat inline-Rust DSL struct on the NeverEvent pattern; the deadline is
+// computed at construction inside timeout_event_make (the DSL has no
+// field initializers). Its `wait()` keeps the historical no-argument
+// shape: it waits with its own wait_us_ as the timeout.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+bool timeout_event_is_ready(const TimeoutEvent& self);
+
+#if RUSTYCPP_RUST
+struct TimeoutEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: std::weak_ptr<EventPollable>,
+    wakeup_time_: u64,
+    wait_us_: u64,
 }
 
-// Aggregate factory: the flat DSL struct has no default constructor, so
-// its core-field defaults live here (declared now, defined after Fiber —
-// the fiber capture mirrors the legacy Event constructor).
-template <>
-std::shared_ptr<NeverEvent> event_make<NeverEvent>();
+impl TimeoutEvent {
+    fn wait(&mut self) {
+        event_wait_impl(self, self.wait_us_)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
 
-// `TimeoutEvent` — an Event that becomes ready once `wait_us_` microseconds
-// have elapsed past construction. Hand-written subclass of the stateful `Event`
-// base. `wakeup_time_` is TimeoutEvent's own field (distinct from the base's
-// `state_.wakeup_time_`).
-class TimeoutEvent : public Event {
- public:
-  uint64_t wakeup_time_;
-  uint64_t wait_us_;
+#[cpp_inherit]
+impl EventPollable for TimeoutEvent {
+    fn test(&mut self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&mut self) -> bool {
+        timeout_event_is_ready(self)
+    }
+    fn log(&mut self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=410d9234858448c6b1e85e412ea0856130e227a00bb3f2fc2374e728549e96dd*/
+struct TimeoutEvent;
 
-  TimeoutEvent(uint64_t wait_us)
-      : wakeup_time_(Time::now(true) + wait_us), wait_us_(wait_us) {}
+struct TimeoutEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    std::weak_ptr<EventPollable> self_;
+    uint64_t wakeup_time_;
+    uint64_t wait_us_;
+    TimeoutEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init, uint64_t wakeup_time__init, uint64_t wait_us__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), wakeup_time_(std::move(wakeup_time__init)), wait_us_(std::move(wait_us__init)) {}
+    TimeoutEvent(TimeoutEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), wakeup_time_(std::move(other.wakeup_time_)), wait_us_(std::move(other.wait_us_)) {}
 
-  // @safe - blocks up to wait_us_ via the inherited Event::wait (final virtual).
-  void wait() {
-    // @unsafe { Event::wait — inherited final virtual dispatch }
-    Event::wait(wait_us_);
-  }
 
-  bool is_ready() override {
-    return Time::now(true) > wakeup_time_;
-  }
+    void wait();
+    bool is_composite_event() const;
+    std::shared_ptr<EventPollable> get_self() const;
+    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    bool test();
+    bool is_ready();
+    void log();
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
 };
+
+
+void TimeoutEvent::wait() {
+    event_wait_impl((*this), this->wait_us_);
+}
+
+bool TimeoutEvent::is_composite_event() const {
+    return false;
+}
+
+std::shared_ptr<EventPollable> TimeoutEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void TimeoutEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool TimeoutEvent::test() {
+    return event_test_impl((*this));
+}
+
+bool TimeoutEvent::is_ready() {
+    return timeout_event_is_ready((*this));
+}
+
+void TimeoutEvent::log() {
+}
+
+EventStatus TimeoutEvent::status() const {
+    return this->status_.get();
+}
+
+void TimeoutEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t TimeoutEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool TimeoutEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void TimeoutEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> TimeoutEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.timeout_event*/
+
+// @unsafe - Time::now read; strict `>` preserved from the original.
+inline bool timeout_event_is_ready(const TimeoutEvent& self) {
+  return Time::now(true) > self.wakeup_time_;
+}
 
 // `WaitAny` — a composite Event that is ready as soon as ANY of its child
 // events is ready (polled in the reactor loop via `is_composite_event()`).
@@ -2070,23 +2390,59 @@ Event::Event() {
   // Otherwise wp_fiber_ stays as default empty weak pointer
 }
 
-// Flattened-struct factory (see the declaration next to NeverEvent):
+// Flattened-struct factories (declared next to event_make): each
 // replicates the legacy Event constructor's seeding — wait_place_ tag and
-// the creating-fiber capture — on top of the aggregate's zero state.
-template <>
-std::shared_ptr<NeverEvent> event_make<NeverEvent>() {
+// the creating-fiber capture — on top of the aggregate's zero state, plus
+// the type's own defaults. Field order matches the DSL struct exactly.
+uint64_t event_core_get_fiber_id() {
+  auto fiber_opt = Fiber::current_fiber();
+  verify(fiber_opt.is_some());
+  return fiber_opt.unwrap()->id;
+}
+
+static void event_state_seed(EventState& st) {
+  st.wait_place_ = "not recorded";
+  auto fiber_opt = Fiber::current_fiber();
+  if (fiber_opt.is_some()) {
+    auto rc_fiber = fiber_opt.unwrap();
+    st.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
+  }
+}
+
+std::shared_ptr<NeverEvent> never_event_make() {
   auto sp = std::make_shared<NeverEvent>(
       rusty::Cell<EventStatus>::new_(EventStatus::INIT),
       rusty::thread::current_id(),
       EventState{},
       rusty::Cell<bool>::new_(true),
       std::weak_ptr<EventPollable>{});
-  sp->state_.wait_place_ = "not recorded";
-  auto fiber_opt = Fiber::current_fiber();
-  if (fiber_opt.is_some()) {
-    auto rc_fiber = fiber_opt.unwrap();
-    sp->state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
-  }
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+std::shared_ptr<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
+  auto sp = std::make_shared<TimeoutEvent>(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      std::weak_ptr<EventPollable>{},
+      Time::now(true) + wait_us,  // wakeup_time_: the deadline, at construction
+      wait_us);
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+std::shared_ptr<IntEvent> int_event_make(int32_t target) {
+  auto sp = std::make_shared<IntEvent>(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      std::weak_ptr<EventPollable>{},
+      0,        // value_
+      target);
+  event_state_seed(sp->state_);
   return sp;
 }
 
@@ -2115,7 +2471,7 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
   ev->value_ = self.value_;
   ev->target_ = x;
   self.events_.push(ev);
-  ev->wait(timeout);
+  ev->wait_timeout(timeout);
   // verify(ev->status_.get() != EventStatus::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == EventStatus::TIMEOUT);
@@ -3641,7 +3997,7 @@ void QuorumEvent::finalize(
     for (auto it : xids_)
       dangling_rpc.push(it);  // fetch out dangling rpc info before it's freed (see comment A)
 
-    final_ev->wait(timeout);
+    final_ev->wait_timeout(timeout);
     /* A: by the time this fires, the quorum event could have been freed. Thus,
      avoid accesing the quorum event object or its members after this line */
 
