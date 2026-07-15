@@ -2088,6 +2088,23 @@ using rrr::Event;
 using rrr::IntEvent;
 using rrr::verify;
 using std::shared_ptr;
+// S4 flatten: QuorumEvent derives EventPollable and drives the shared event
+// kernels directly, so it now names these rrr entities unqualified. (The
+// kernels can't be found by ADL here — `*this` is janus::QuorumEvent — so the
+// using-declarations are required, not just convenient.)
+using rrr::EventPollable;
+using rrr::EventStatus;
+using rrr::EventState;
+using rrr::Reactor;
+using rrr::Fiber;
+using rrr::event_state_seed;
+using rrr::event_core_get_fiber_id;
+using rrr::event_core_self_lock;
+using rrr::event_core_set_self;
+using rrr::event_core_wakeup_time;
+using rrr::event_core_upgrade_fiber;
+using rrr::event_wait_impl;
+using rrr::event_test_impl;
 
 // Quorum-math specialization (composition-flattening S3): the former
 // per-protocol QuorumEvent subclasses expressed their yes()/no()/is_ready()
@@ -2117,8 +2134,23 @@ enum class QuorumPolicy : int {
   ALWAYS_READY = 4,
 };
 
-class QuorumEvent : public Event {
+// FLATTENED (S4): QuorumEvent no longer derives Event. It is a hand-written
+// bridge deriving EventPollable directly, carrying the five event-core fields
+// inline and driven by the shared event_wait_impl / event_test_impl /
+// event_core_* kernels — the same duck-typed surface the flattened DSL structs
+// and BoxEvent use. It stays hand-written C++ (not inline-Rust DSL) because it
+// owns Function-typed finalize state and a nested finalize_event_. The owning
+// QuorumEventWrapper (shared_ptr<QuorumEvent>) is unchanged.
+// @unsafe - bridges the DSL trait to the quorum voting/finalize state.
+class QuorumEvent : public EventPollable {
  public:
+  // Event core — same fields/order as the flattened DSL structs.
+  rusty::Cell<EventStatus> status_{EventStatus::INIT};
+  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
+  EventState state_{};
+  rusty::Cell<bool> prunable_{true};
+  std::weak_ptr<EventPollable> self_;
+
   int32_t n_voted_yes_{0};
   int32_t n_voted_no_{0};
   rusty::HashMap<uint16_t, rrr::i64> xids_;
@@ -2228,9 +2260,36 @@ class QuorumEvent : public Event {
     }
   }
 
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
+  // Mark as composite event - polled in reactor loop. Off-trait (dispatched
+  // on the concrete type inside event_wait_impl<W>), so no `override`.
+  bool is_composite_event() { return true; }
 
+  // Concrete event surface (the wrapper forwards wait/wait_timeout/log/
+  // get_fiber_id/is_slow/test to this).
+  void wait() { event_wait_impl(*this, static_cast<uint64_t>(0)); }
+  void wait_timeout(uint64_t timeout) { event_wait_impl(*this, timeout); }
+  uint64_t get_fiber_id() { return event_core_get_fiber_id(); }
+  // @unsafe - reads/clears the reactor's shared slow_ flag (matches the
+  // former Event::is_slow); slow_ is public and Reactor is complete here.
+  bool is_slow() {
+    bool result = Reactor::get_reactor()->slow_.get();
+    Reactor::get_reactor()->slow_.set(false);
+    return result;
+  }
+  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
+  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+
+  // EventPollable trait surface.
+  bool test() override { return event_test_impl(*this); }
+  void log() override {}
+  EventStatus status() const override { return status_.get(); }
+  void set_status(EventStatus s) const override { status_.set(s); }
+  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
+  bool prunable() const override { return prunable_.get(); }
+  void set_prunable(bool v) const override { prunable_.set(v); }
+  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
+    return event_core_upgrade_fiber(*this);
+  }
 };
 
 // Composition base for the per-protocol quorum events (flattening S3b).
@@ -4064,7 +4123,9 @@ using rrr::verify;
 using rrr::EventStatus;
 
 QuorumEvent::QuorumEvent(int n_total, int quorum)
-    : Event(), n_total_(n_total), quorum_(quorum) {
+    : n_total_(n_total), quorum_(quorum) {
+  // Flattened (S4): seed the event-core state directly (was Event()'s job).
+  event_state_seed(state_);
   // Registered via create_sp_event (not bare make_shared) so the event has a
   // live self-reference: the finalize fiber's wait() and the vote-side set()
   // push get_self() into the reactor queues, which for an unregistered event
