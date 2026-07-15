@@ -996,41 +996,80 @@ inline bool timeout_event_is_ready(const TimeoutEvent& self) {
   return Time::now(true) > self.wakeup_time_;
 }
 
-// `WaitAny` — a composite Event that is ready as soon as ANY of its child
+// `WaitAny` — a composite event that is ready as soon as ANY of its child
 // events is ready (polled in the reactor loop via `is_composite_event()`).
-// Hand-written subclass of the stateful `Event` base.
-class WaitAny : public Event {
+// FLATTENED (S4): a hand-written bridge deriving EventPollable directly
+// (no longer `: public Event`), carrying the five event-core fields inline
+// and driven by the shared event_wait_impl / event_test_impl / event_core_*
+// kernels — the same duck-typed surface the flattened DSL structs use. It
+// stays hand-written C++ (not inline-Rust DSL) because it owns a child
+// vector and, for WaitAll, a variadic ctor the DSL cannot express.
+// @unsafe - bridges the DSL trait to the composite child-event vector.
+class WaitAny : public EventPollable {
  public:
+  // Event core — same fields/order as the flattened DSL structs so the
+  // shared kernels see an identical duck-typed surface.
+  rusty::Cell<EventStatus> status_{EventStatus::INIT};
+  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
+  EventState state_{};
+  rusty::Cell<bool> prunable_{true};
+  std::weak_ptr<EventPollable> self_;
   rusty::Vec<std::shared_ptr<EventPollable>> events_;
 
   WaitAny(std::shared_ptr<EventPollable> a, std::shared_ptr<EventPollable> b) {
+    event_state_seed(state_);
     events_.push(std::move(a));
     events_.push(std::move(b));
   }
 
+  // Concrete event surface (matches the flattened structs' inherent fns).
+  void wait() { event_wait_impl(*this, static_cast<uint64_t>(0)); }
+  void wait_timeout(uint64_t timeout) { event_wait_impl(*this, timeout); }
+  bool is_composite_event() { return true; }
+  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
+  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+
+  // EventPollable trait surface.
+  bool test() override { return event_test_impl(*this); }
   // @safe - ready as soon as any child event is ready.
   bool is_ready() override {
     for (const auto& e : events_) {
-      // @unsafe { Event::is_ready — child virtual dispatch }
+      // @unsafe { child virtual dispatch through EventPollable }
       if (e && e->is_ready()) {
         return true;
       }
     }
     return false;
   }
-
-  bool is_composite_event() override { return true; }
+  void log() override {}
+  EventStatus status() const override { return status_.get(); }
+  void set_status(EventStatus s) const override { status_.set(s); }
+  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
+  bool prunable() const override { return prunable_.get(); }
+  void set_prunable(bool v) const override { prunable_.set(v); }
+  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
+    return event_core_upgrade_fiber(*this);
+  }
 };
 
-class WaitAll : public Event {
+// `WaitAll` — composite event ready once ALL child events are ready (or DONE).
+// Flattened the same way as WaitAny; keeps its default/vector/variadic ctors.
+// @unsafe - bridges the DSL trait to the composite child-event vector.
+class WaitAll : public EventPollable {
  public:
+  rusty::Cell<EventStatus> status_{EventStatus::INIT};
+  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
+  EventState state_{};
+  rusty::Cell<bool> prunable_{true};
+  std::weak_ptr<EventPollable> self_;
   rusty::Vec<std::shared_ptr<EventPollable>> events_;
 
   // Default constructor (mako-dev)
-  WaitAll() {}
+  WaitAll() { event_state_seed(state_); }
 
   // Constructor for vector of events
   explicit WaitAll(const rusty::Vec<std::shared_ptr<EventPollable>>& evs) {
+    event_state_seed(state_);
     events_.reserve(evs.len());
     for (const auto& ev : evs) {
       events_.push(ev);
@@ -1049,15 +1088,24 @@ class WaitAll : public Event {
 
   template<typename... Args>
   WaitAll(std::shared_ptr<EventPollable> first, Args... rest) {
+    event_state_seed(state_);
     add_event(std::move(first), rest...);
   }
 
+  // Concrete event surface.
+  void wait() { event_wait_impl(*this, static_cast<uint64_t>(0)); }
+  void wait_timeout(uint64_t timeout) { event_wait_impl(*this, timeout); }
+  bool is_composite_event() { return true; }
+  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
+  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+
+  // EventPollable trait surface.
+  bool test() override { return event_test_impl(*this); }
   void log() override {
     for(size_t i = 0; i < events_.len(); i++){
       events_[i]->log();
     }
   }
-
   bool is_ready() override {
     // All events must be ready (or DONE) for WaitAll to be ready.
     for (const auto& e : events_) {
@@ -1070,9 +1118,14 @@ class WaitAll : public Event {
     }
     return true;
   }
-
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
+  EventStatus status() const override { return status_.get(); }
+  void set_status(EventStatus s) const override { status_.set(s); }
+  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
+  bool prunable() const override { return prunable_.get(); }
+  void set_prunable(bool v) const override { prunable_.set(v); }
+  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
+    return event_core_upgrade_fiber(*this);
+  }
 };
 
 // --- from fiber_impl.h ---------------------------------------------------
