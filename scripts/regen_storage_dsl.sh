@@ -248,6 +248,21 @@ for ln in lines:
         ln = ln.replace(
             'return (static_cast<size_t>(52) + rusty::detail::deref_if_pointer_like(data_size)) + rusty::detail::deref_if_pointer_like(checksum_size);',
             'return static_cast<size_t>(52) + data_size + checksum_size;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(last_applied_index);',
+            'return index <= last_applied_index;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(expected_kind);',
+            'return kind == expected_kind;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::PUT);',
+            'return op == janus::ReplicatedDBOp::PUT;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::DELETE);',
+            'return op == janus::ReplicatedDBOp::DELETE;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH);',
+            'return op == janus::ReplicatedDBOp::BATCH;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

@@ -353,17 +353,18 @@ bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
 
 // @unsafe - Applies committed Raft entries to local RocksDB
 void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
-  if (!db_ || !cmd.has_value()) return;
+  if (!db_ || !replicated_db_has_command_payload(cmd.has_value())) return;
 
   uint64_t index = static_cast<uint64_t>(slot);
 
   // Idempotency: skip already-applied entries
-  if (index <= last_applied_index_) {
+  if (replicated_db_should_skip_applied(index, last_applied_index_)) {
     return;
   }
 
   // Only process ReplicatedDBCommand entries
-  if (cmd.kind_ != ReplicatedDBCommand::static_kind()) {
+  if (!replicated_db_command_kind_matches(cmd.kind_,
+                                          ReplicatedDBCommand::static_kind())) {
     // Not our command type; still advance the index to avoid re-processing
     last_applied_index_ = index;
     PersistLastAppliedIndex();
@@ -379,32 +380,24 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   }
 
   // Apply the operation
-  switch (db_cmd->op_) {
-    case ReplicatedDBOp::PUT:
-      ApplyPut(db_cmd->key_, db_cmd->value_);
-      break;
-    case ReplicatedDBOp::DELETE:
-      ApplyDelete(db_cmd->key_);
-      break;
-    case ReplicatedDBOp::BATCH:
-      for (const auto& op : db_cmd->batch_ops_) {
-        switch (op.op) {
-          case ReplicatedDBOp::PUT:
-            ApplyPut(op.key, op.value);
-            break;
-          case ReplicatedDBOp::DELETE:
-            ApplyDelete(op.key);
-            break;
-          default:
-            Log_error("[ReplicatedDB] Unknown batch sub-operation %d", static_cast<int>(op.op));
-            break;
-        }
+  if (replicated_db_command_is_put(db_cmd->op_)) {
+    ApplyPut(db_cmd->key_, db_cmd->value_);
+  } else if (replicated_db_command_is_delete(db_cmd->op_)) {
+    ApplyDelete(db_cmd->key_);
+  } else if (replicated_db_command_is_batch(db_cmd->op_)) {
+    for (const auto& op : db_cmd->batch_ops_) {
+      if (replicated_db_command_is_put(op.op)) {
+        ApplyPut(op.key, op.value);
+      } else if (replicated_db_command_is_delete(op.op)) {
+        ApplyDelete(op.key);
+      } else {
+        Log_error("[ReplicatedDB] Unknown batch sub-operation %d",
+                  static_cast<int>(op.op));
       }
-      break;
-    default:
-      Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
-                static_cast<int>(db_cmd->op_), index);
-      break;
+    }
+  } else {
+    Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
+              static_cast<int>(db_cmd->op_), index);
   }
 
   // Update and persist last applied index

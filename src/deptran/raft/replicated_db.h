@@ -209,6 +209,62 @@ inline janus::ReplicatedDBCommand replicated_db_command_batch_dsl(std::vector<ja
 }
 /*RUSTYCPP:GEN-END id=replicated_db.2*/
 
+#if RUSTYCPP_RUST
+pub fn replicated_db_has_command_payload(has_value: bool) -> bool {
+    has_value
+}
+
+pub fn replicated_db_should_skip_applied(index: u64,
+                                         last_applied_index: u64) -> bool {
+    index <= last_applied_index
+}
+
+pub fn replicated_db_command_kind_matches(kind: i32, expected_kind: i32) -> bool {
+    kind == expected_kind
+}
+
+pub fn replicated_db_command_is_put(op: janus::ReplicatedDBOp) -> bool {
+    op == janus::ReplicatedDBOp::PUT
+}
+
+pub fn replicated_db_command_is_delete(op: janus::ReplicatedDBOp) -> bool {
+    op == janus::ReplicatedDBOp::DELETE
+}
+
+pub fn replicated_db_command_is_batch(op: janus::ReplicatedDBOp) -> bool {
+    op == janus::ReplicatedDBOp::BATCH
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=b84cdb0404fba5c6826be7b84b600dddd5c875bcf0df01587b38761c936ad429*/
+inline bool replicated_db_has_command_payload(bool has_value);
+inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
+inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
+
+inline bool replicated_db_has_command_payload(bool has_value) {
+    return has_value;
+}
+
+inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index) {
+    return index <= last_applied_index;
+}
+
+inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind) {
+    return kind == expected_kind;
+}
+
+inline bool replicated_db_command_is_put(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::PUT;
+}
+
+inline bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::DELETE;
+}
+
+inline bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::BATCH;
+}
+/*RUSTYCPP:GEN-END id=replicated_db.command_helpers*/
+
 /**
  * ReplicatedDB - A replicated key-value store built on Raft + RocksDB.
  *
