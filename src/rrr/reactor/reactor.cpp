@@ -248,95 +248,6 @@ std::shared_ptr<Ev> event_make(Args&&... args) {
   }
 }
 
-class Event : public EventPollable {
- protected:
-  // Self-reference for adding to queues (using weak_ptr for shared ownership)
-  // Set by CreateSpEvent after construction
-  std::weak_ptr<EventPollable> self_;
-//class Event {
- public:
-
-#ifdef EVENT_TIMEOUT_CHECK
-  bool __debug_timeout_{false};
-#endif
-  rusty::Cell<EventStatus> status_{EventStatus::INIT};
-  // Thread that created (and therefore polls/resumes) this event. test()'s
-  // fiber-liveness assertion upgrades wp_fiber_ — an UNSYNCHRONIZED Rc
-  // strong-count mutation — so it must only run on this thread; cross-thread
-  // signalers (fiber_channel's direct-channel set(), vote paths) skip it and
-  // rely on the owner's blanket poll to rediscover readiness.
-  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
-  void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
-
-  // The nine relocated data fields live in a composed inline-Rust struct (see
-  // `EventState` above). Value-initialized so primitives zero and the rusty
-  // members default-construct, matching the original in-class initializers;
-  // `wait_place_`'s "not recorded" seed is restored in Event::Event().
-  EventState state_{};
-  const EventState& state() const { return state_; }
-  EventState& state_mut() { return state_; }
-
-  // When true (the default), the reactor's amortized prune may drop this event
-  // from `all_events_` once it is sole-owned (shared_ptr use_count()==1 — no
-  // fiber, waiter, or other shared_ptr references it). `create_event()` hands
-  // out a bare `Event&` kept alive ONLY by `all_events_`, so it clears this to
-  // keep such events retained. Cross-thread signalers reach an event via the
-  // weak_ptr `self_` (get_self()), so a pruned/freed event is observed as null
-  // rather than dangling — no use-after-free.
-  rusty::Cell<bool> prunable_{true};
-  bool prunable() const override { return prunable_.get(); }
-  void set_prunable(bool v) const override { prunable_.set(v); }
-
-  // Trait accessors over the Cell/EventState-backed fields (all const-safe).
-  EventStatus status() const override { return status_.get(); }
-  void set_status(EventStatus s) const override { status_.set(s); }
-  uint64_t wakeup_time() const override { return state_.wakeup_time_; }
-  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
-    return state_.wp_fiber_.upgrade();
-  }
-
-  // @unsafe
-  virtual void wait(uint64_t timeout=0) final;
-
-  void wait(rusty::Function<bool(int)> f) {
-    state_.test_ = std::move(f);
-    wait();
-  }
-
-  // Composition-flattening transition names (S2): timed waits and
-  // predicate waits are being renamed at call sites so the flattened
-  // per-kind structs can carry single-arity, non-overloaded methods
-  // (the inline-Rust DSL has no overloads or default args). These
-  // delegate to the legacy overload set for now.
-  void wait_timeout(uint64_t timeout) { wait(timeout); }
-  void wait_pred(rusty::Function<bool(int)> f) { wait(std::move(f)); }
-
-  void log() override {return;}
-  virtual uint64_t get_fiber_id();
-  void record_place(const char* file, int line);
-
-  // @safe - Tests if event is ready
-  bool test() override;
-  virtual bool is_slow();
-  bool is_ready() override {
-    if (!state_.test_) return false;
-    return state_.test_(0);
-  }
-
-  // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
-  // Added at END to preserve vtable layout for binary compatibility
-  virtual bool is_composite_event() { return false; }
-
-  // Self-reference management (uses shared_ptr for polymorphism support).
-  // Holds the TRAIT pointer: get_self()'s results are what wait() pushes
-  // into the reactor's EventPollable queues.
-  void set_self(std::weak_ptr<EventPollable> self) { self_ = self; }
-  std::shared_ptr<EventPollable> get_self() const { return self_.lock(); }
-
-  friend Reactor;
-// protected:
-  Event();
-};
 
 
 // `BoxEvent<Type>` — a one-shot slot event (ready once `set()`). FLATTENED
@@ -1287,7 +1198,6 @@ class fiber_task_t {
 };
 
 class Reactor;
-class Event;
 
 /**
  * Fiber - A stackful fiber (execution context).
@@ -1665,7 +1575,6 @@ class Reactor {
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
-  friend Event;
 
   // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
   // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
@@ -2084,7 +1993,6 @@ export namespace janus {
 // janus-namespace purview of the consolidated `rrr.reactor` module so
 // `QuorumEvent` can name `Event` / `IntEvent` / `verify` / `shared_ptr`
 // unqualified, matching the original source.
-using rrr::Event;
 using rrr::IntEvent;
 using rrr::verify;
 using std::shared_ptr;
@@ -2350,17 +2258,7 @@ namespace rrr {
 
 // --- from event.cc -------------------------------------------------------
 
-uint64_t Event::get_fiber_id(){
-  auto fiber_opt = Fiber::current_fiber();
-  verify(fiber_opt.is_some());
-  return fiber_opt.unwrap()->id;
-}
 
-bool Event::is_slow() {
-	bool result = Reactor::get_reactor()->slow_.get();
-	Reactor::get_reactor()->slow_.set(false);
-	return result;
-}
 
 // void Event::Wait(uint64_t timeoutuint64_t timeout) {
 // //  verify(__debug_creator); // if this fails, the event is not created by reactor.
@@ -2475,16 +2373,7 @@ void event_wait_impl(W& self, uint64_t timeout) {
   }
 }
 
-void Event::wait(uint64_t timeout) {
-  event_wait_impl(*this, timeout);
-}
 
-void Event::record_place(const char* file, int line) {
-  char buff[200];
-  sprintf(buff, "%s:%d", file, line);
-  state_.wait_place_ += std::string(buff);
-  state_.rcd_wait_ = true;
-}
 
 // @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
 // and Log_debug are all @safe.
@@ -2525,22 +2414,7 @@ bool event_test_impl(W& self) {
   return false;
 }
 
-bool Event::test() {
-  return event_test_impl(*this);
-}
 
-Event::Event() {
-  state_.wait_place_ = "not recorded";
-  auto fiber_opt = Fiber::current_fiber();
-  // It's OK if no fiber is running - event might be created outside a fiber
-  // and Wait() called later from within one
-  if (fiber_opt.is_some()) {
-    // Same Rc→Weak conversion fix as above.
-    auto rc_fiber = fiber_opt.unwrap();
-    state_.wp_fiber_ = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
-  }
-  // Otherwise wp_fiber_ stays as default empty weak pointer
-}
 
 // Flattened-struct factories (declared next to event_make): each
 // replicates the legacy Event constructor's seeding — wait_place_ tag and
@@ -4113,7 +3987,6 @@ void fiber_task_t::entry_trampoline() {
 // @safe - QuorumEvent impl. Methods carry per-method annotations.
 namespace janus {
 
-using rrr::Event;
 using rrr::IntEvent;
 using rrr::Fiber;
 using rrr::Time;

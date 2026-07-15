@@ -1170,7 +1170,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   bool weird = subtx.HasLogApplyStarted();
 #ifdef DEBUG_CHECK
   Fiber::create_run([sp_tx, weird, rank](){
-    auto sp_e = Reactor::create_sp_event<Event>();
+    auto sp_e = Reactor::create_sp_event<rrr::IntEvent>();
     sp_e->state_.test_ = [sp_tx, rank] (int v) -> bool {
       auto& subtx = sp_tx->subtx(rank);
       return subtx.local_validated_->is_set_;
