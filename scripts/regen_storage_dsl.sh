@@ -230,6 +230,24 @@ for ln in lines:
         ln = ln.replace(
             'return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));',
             'return snapshot_count > max_snapshots && position >= max_snapshots;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(magic) == static_cast<uint32_t>(1347305811);',
+            'return magic == 0x504E4153;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(version) == static_cast<uint32_t>(1);',
+            'return version == 1;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(compression) == rusty::clone(SnapshotCompression::NONE);',
+            'return compression == SnapshotCompression::NONE;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(checksum_type) == rusty::clone(SnapshotChecksumType::CRC32);',
+            'return checksum_type == SnapshotChecksumType::CRC32;')
+        ln = ln.replace(
+            'if (::snapshot_checksum_enabled(std::move(checksum_type))) {',
+            'if (snapshot_checksum_enabled(checksum_type)) {')
+        ln = ln.replace(
+            'return (static_cast<size_t>(52) + rusty::detail::deref_if_pointer_like(data_size)) + rusty::detail::deref_if_pointer_like(checksum_size);',
+            'return static_cast<size_t>(52) + data_size + checksum_size;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
