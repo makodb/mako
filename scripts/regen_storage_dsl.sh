@@ -302,6 +302,18 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(received) >= rusty::detail::deref_if_pointer_like(needed);',
             'return received >= needed;')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(total) / static_cast<size_t>(2)) + static_cast<size_t>(1);',
+            'return (total / 2) + 1;')
+        ln = ln.replace(
+            'return ((rusty::detail::deref_if_pointer_like(total) / static_cast<size_t>(2))) + static_cast<size_t>(1);',
+            'return (total / 2) + 1;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(quorum);',
+            'return count >= quorum;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(count) < rusty::detail::deref_if_pointer_like(quorum);',
+            'return count < quorum;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

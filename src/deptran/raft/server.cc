@@ -11,6 +11,7 @@
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
 #include "file_snapshot_manager.hpp"
+#include "quorum.hpp"
 #include "replicated_db.h"
 
 import std;
@@ -1889,7 +1890,7 @@ void RaftServer::HeartbeatLoop() {
           // Leader's own log counts as an ack (we have the entry)
           ack_count += 1;  // +1 for leader's own entry
 
-          if (ack_count >= quorum) {
+          if (raft::raft_quorum_count_reached(ack_count, quorum)) {
             // Verify the entry is from current term
             auto instance = GetRaftInstance(idx);
             if (instance && instance->term == currentTerm) {
@@ -2278,7 +2279,8 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
 
   // Check if we've achieved secured leader status
   size_t quorum = GetQuorumSize();
-  if (!securedLeader_ && durableVoters_.size() >= quorum) {
+  if (!securedLeader_ &&
+      raft::raft_quorum_count_reached(durableVoters_.size(), quorum)) {
     securedLeader_ = true;
     Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
              site_id_, durableVoters_.size(), quorum);
@@ -2330,7 +2332,8 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
     uint64_t newSecuredIndex = securedLogIndex_;
     for (uint64_t idx = securedLogIndex_ + 1; idx <= lastLogIndex && idx <= specCommitIndex_; ++idx) {
       auto it = durableAcks_.find(idx);
-      if (it != durableAcks_.end() && it->second.size() >= quorum) {
+      if (it != durableAcks_.end() &&
+          raft::raft_quorum_count_reached(it->second.size(), quorum)) {
         newSecuredIndex = idx;
       } else {
         // Stop at first index without quorum (monotonic advance)
@@ -3404,7 +3407,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
     // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
     // or RequestElection), so no +1 needed. This matches OnVoteDurable() at line 1417.
     size_t durable_vote_count = durableVoters_.size();
-    if (durable_vote_count >= quorum) {
+    if (raft::raft_quorum_count_reached(durable_vote_count, quorum)) {
       // We have durable quorum - become secured leader
       // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
       securedLeader_ = true;
@@ -3416,7 +3419,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
       // Note: site_id_ is already in specVoters_ (inserted by ResetSpeculativeState
       // or RequestElection), so no +1 needed.
       size_t vote_count = specVoters_.size();
-      if (vote_count < quorum) {
+      if (raft::raft_quorum_count_below(vote_count, quorum)) {
         // No durable quorum AND no speculative quorum - must step down
         Log_info("[SPEC-RAFT] Site %d: Lost both spec quorum (%zu/%zu) and durable quorum (%zu/%zu) - stepping down",
                  site_id_, vote_count, quorum, durable_vote_count, quorum);
@@ -3570,7 +3573,7 @@ size_t RaftServer::GetQuorumSize() const {
   size_t config_size = 0;
   // @unsafe
   { config_size = current_config_.size(); }
-  return config_size / 2 + 1;
+  return raft::raft_quorum_majority_count(config_size);
 }
 
 // @safe - Read-only accessor

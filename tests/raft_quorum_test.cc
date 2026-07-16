@@ -16,6 +16,10 @@
 import std;
 
 using janus::raft::RaftQuorum;
+using janus::raft::raft_quorum_count_below;
+using janus::raft::raft_quorum_count_reached;
+using janus::raft::raft_quorum_majority_count;
+using janus::raft::raft_quorum_reached;
 using siteid_t_test = uint16_t;
 
 namespace {
@@ -34,6 +38,19 @@ void pump_reactor(const ::rrr::Reactor* reactor, int iterations = 8) {
 // ---------------------------------------------------------------------------
 // Construction + accessors
 // ---------------------------------------------------------------------------
+
+TEST(RaftQuorumTest, HelperPredicates) {
+  EXPECT_EQ(raft_quorum_majority_count(1), 1u);
+  EXPECT_EQ(raft_quorum_majority_count(2), 2u);
+  EXPECT_EQ(raft_quorum_majority_count(5), 3u);
+  EXPECT_EQ(raft_quorum_majority_count(6), 4u);
+
+  EXPECT_TRUE(raft_quorum_reached(3, 3));
+  EXPECT_TRUE(raft_quorum_count_reached(4, 3));
+  EXPECT_FALSE(raft_quorum_count_reached(2, 3));
+  EXPECT_TRUE(raft_quorum_count_below(2, 3));
+  EXPECT_FALSE(raft_quorum_count_below(3, 3));
+}
 
 TEST(RaftQuorumTest, ConstructionAndAccessors) {
   // Need a reactor on the test thread because RaftQuorum's ctor calls

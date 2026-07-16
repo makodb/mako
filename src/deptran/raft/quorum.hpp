@@ -44,7 +44,6 @@ namespace raft {
 // rrr::IntEvent wakeup stay in RaftQuorum::on_reply(); this helper only names
 // the scalar decision that a quorum has enough replies.
 #if RUSTYCPP_RUST
-#[rust_name = "raft_quorum_reached"]
 pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {
     received >= needed
 }
@@ -56,6 +55,40 @@ inline bool raft_quorum_reached(int32_t received, int32_t needed) {
     return received >= needed;
 }
 /*RUSTYCPP:GEN-END id=raft_quorum_reached*/
+
+// @safe - pure quorum arithmetic over copied counts. Server membership,
+// ack/vote sets, and leader state stay in RaftServer; these helpers only
+// centralize majority and count-threshold decisions.
+#if RUSTYCPP_RUST
+pub fn raft_quorum_majority_count(total: usize) -> usize {
+    (total / 2) + 1
+}
+
+pub fn raft_quorum_count_reached(count: usize, quorum: usize) -> bool {
+    count >= quorum
+}
+
+pub fn raft_quorum_count_below(count: usize, quorum: usize) -> bool {
+    count < quorum
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_count_helpers version=1 rust_sha256=01f7d5ca71f0af6f14f62d91341c869fcd10baef83d1f5068dc7f02f01997ae4*/
+inline size_t raft_quorum_majority_count(size_t total);
+inline bool raft_quorum_count_reached(size_t count, size_t quorum);
+inline bool raft_quorum_count_below(size_t count, size_t quorum);
+
+inline size_t raft_quorum_majority_count(size_t total) {
+    return (total / 2) + 1;
+}
+
+inline bool raft_quorum_count_reached(size_t count, size_t quorum) {
+    return count >= quorum;
+}
+
+inline bool raft_quorum_count_below(size_t count, size_t quorum) {
+    return count < quorum;
+}
+/*RUSTYCPP:GEN-END id=raft_quorum_count_helpers*/
 
 template <typename Reply>
 class RaftQuorum {
