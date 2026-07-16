@@ -49,6 +49,23 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 1. **`Option<V&>` reference-lowering** — unblocks **487 lines in client.cpp alone** (biggest single lever).
 2. **`&str`-literal → `const char*` return lowering** — unblocks ~11 identical `*_to_string` enum switches (~150 lines) at once.
 
+## Phase 6 generator flip — complete emit-site map (turnkey)
+
+`src/rrr/pylib/simplerpcgen/lang_cpp.py` — flip these CALL-SITE emits (`<<`→`rrr::Serialize_::serialize(x, m)`,
+`>>`→`rrr::Deserialize_::deserialize(x, ar)`); the generic catch-all (Phase 3) makes them resolve for any type:
+- **write:** 179 `__m__ << arg`, 258 `__m__ << param`, 379 `m << __typed_resp__->f`, 417/457/492 `m << __typed_resp__.f`
+- **read:** 237 `__reply_ar__ >> __typed_resp__.f`, 370/393/433/472 `__req_ar__ >> __typed_req__.f`, 576 `__reply_ar__ >> *param`
+
+STRUCT operators (36/39/43/46 emit_struct, 101/104/107/110 emit_marshaled_typed_struct) — leave as operators
+for now (bridged by the catch-all); flip to `serialize`/`deserialize` free fns at Phase 8 when operators are deleted.
+
+Then: regen 4 stubs (`bin/rpcgen --cpp --python` on rcc_rpc.rpc + helloworld.rpc + network.rpc + benchmark_service.rpc;
+CMake target `rcc_rpc_gen` at CMakeLists:918 covers rcc_rpc). Update `rpcgen_typed_structs_test.py` — it pins EXACT
+text incl. call sites (e.g. 181 `__req_ar__ >> __typed_req__.id;`, 191 `m << __typed_resp__.msg;`, 229/239, and the
+async/stream paths); ~several asserts to rewrite to the serialize/deserialize form. Run `test_rpc_rpcgen_typed_structs`
++ `test_rpc_rpcgen_compile` locally (validates EMIT). Runtime = PR CI (generated RPC over a socket). Phase 7 = same
+`<<`→`serialize` flip for the ~875 hand-written deptran/mako call sites; Phase 8 = delete operators.
+
 ## Progress log
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
