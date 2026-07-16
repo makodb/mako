@@ -53,7 +53,18 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-16 — **Phase 2a DONE (`d2bbd77e`)**: `impl Serialize/Deserialize` for the 8 scalar leaves
+  (i8/i16/i64/u8/u16/u32/u64/f64), `unsafe{}` byte kernels, operators forward. Build green, 2/2 tests.
+- 2026-07-16 — **Phase 1 DONE (`14da1093`)**: `Serialize`/`Deserialize` DSL traits + `read_or_abort` +
+  i32 canary; operators repointed to forward. Build green, 2/2 tests (byte-compat via forwarders). Proves
+  the whole approach end-to-end (trait lowers to UFCS free fn; `unsafe{}` byte kernel = byte-identical).
 - 2026-07-15 — baseline measured (8,193 hand-written LOC); this tracker created.
+
+**Next:** Phase 2b — v32/v64 + std::string leaves. These have structured bodies (C-array buffers,
+`sparseint_dump`, `resize`), so they'll be relocated into hand-written `Serialize_`/`Deserialize_` free
+functions (like Phase 3 containers — legitimate byte kernels, not DSL), with operators forwarding. Then
+Phase 3 (11 containers), Phase 4 (polymorphic bridge), Phase 5 (hand-written types), then the PR-CI-gated
+Phase 6 (generator flip) / 7 (~875 call-site sweep) / 8 (delete operators).
 
 ## Active / next target
 
