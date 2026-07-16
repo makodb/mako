@@ -14,6 +14,23 @@ Work on tasks defined in this TODO file. Repeat the following steps, don't stop 
 
 -->
 
+- [ ] *medium* Continue RustyCpp inline-Rust Raft migration
+  - [x] *medium* Document helper-only DSL safety boundaries. [26:07:16] The
+    migrated helper islands now identify whether they are pure scalar/value
+    logic or explicit C++ boundary wrappers. Comments call out the runtime
+    pieces that intentionally remain hand-C++: RPC callback lifetimes, raw
+    buffers, RocksDB handles, file I/O, atomics, mutexes, reactor events, and
+    snapshot binary layout.
+  - [ ] *medium* Keep full stateful Raft classes in C++ until their pure
+    decision logic is split out. Current non-targets include `RaftServer`,
+    `RaftCommo`, `RaftWorker`, `RaftFrame`, snapshot reader/writer/manager
+    classes, channel worker/switchboard loops, and storage orchestration.
+  - [ ] *medium* For the next riskier migrations, first extract small pure
+    helpers from the runtime path, verify those helpers, and only then consider
+    moving more orchestration. Good candidates are quorum/count predicates,
+    server scalar decisions, recovery policy decisions, and snapshot/log
+    validation helpers.
+
 - [x] Raft: build a production-ready consensus module for Mako
   - [x] *high* Implement Raft snapshotting and log compaction
     - [x] *high* Define snapshot data format and metadata structure. [26:04:13, 19:00] A snapshot captures the state machine state at a given log index/term. Add `SnapshotMetadata` struct to `server.h` with fields: `last_included_index`, `last_included_term`, `data` (serialized state machine). The `snapshot_manager_` field already exists at `server.h:123` but is unused. Design doc: docs/dev/raft_snapshot_design.md. Implementation: SnapshotMetadata/SnapshotManager/FileSnapshotManager already existed in src/rrr/rpc/. Wired up snapshot_manager_ via InitializeSnapshotManager() in Setup(), added HasSnapshot()/GetSnapshotIndex()/GetSnapshotTerm() accessors, added 5 unit tests (Tests 50-54) covering metadata creation, format round-trip, save/load, listing/pruning, and RaftServer wiring.
