@@ -442,7 +442,7 @@ public:
 #endif
 
 protected:
-  // range query class thang
+  // range query class
   template <typename Nodecallback, typename Valuecallback, bool Reverse = false>
   class range_scanner {
   public:
