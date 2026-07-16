@@ -668,17 +668,129 @@ impl Serialize for i32 {
         }
     }
 }
+impl Serialize for i8 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const i8) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<i8>());
+        }
+    }
+}
+impl Serialize for i16 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const i16) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<i16>());
+        }
+    }
+}
+impl Serialize for i64 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const i64) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<i64>());
+        }
+    }
+}
+impl Serialize for u8 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const u8) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<u8>());
+        }
+    }
+}
+impl Serialize for u16 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const u16) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<u16>());
+        }
+    }
+}
+impl Serialize for u32 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const u32) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<u32>());
+        }
+    }
+}
+impl Serialize for u64 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const u64) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<u64>());
+        }
+    }
+}
+impl Serialize for f64 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const f64) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<f64>());
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=258fb6afd50f55324028407e30a34f658b4852b1b712bb43d52cc0610fe60cbc*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=13a3341df2ed41e945eb4ff0af97671579193fc4e3a74fd543778951ea8aa197*/
 // Extension trait free-function forward declarations
 namespace rusty_ext {
     void serialize(const int32_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const int8_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const int16_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const int64_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const uint8_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const uint16_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const uint32_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const uint64_t& self_, BinaryWriteArchive& ar);
+
+    void serialize(const double& self_, BinaryWriteArchive& ar);
 
 }
 
 
 namespace Serialize_ {
     void serialize(const int32_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const int8_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const int16_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const int64_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const uint8_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const uint16_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const uint32_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const uint64_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const double& self_, BinaryWriteArchive& ar);
 }
 using namespace Serialize_;
 class Serialize {
@@ -714,6 +826,142 @@ void serialize(BinaryWriteArchive& ar) const {
 }
 #endif  // patcher: end orphan-impl stub
 
+// TODO orphan impl: methods for `i8` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i8
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<int8_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `i16` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i16
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<int16_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `i64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i64
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<int64_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u8` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u8
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u16` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u16
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u32
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u64
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `f64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for f64
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<double>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
 // Extension trait Serialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
     void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
@@ -722,6 +970,78 @@ namespace rusty_ext {
         {
             const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&self_)));
             ar.write_bytes(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+    void serialize(const int8_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int8_t>());
+        }
+    }
+
+    void serialize(const int16_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int16_t>());
+        }
+    }
+
+    void serialize(const int64_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int64_t>());
+        }
+    }
+
+    void serialize(const uint8_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
+        }
+    }
+
+    void serialize(const uint16_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
+        }
+    }
+
+    void serialize(const uint32_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
+        }
+    }
+
+    void serialize(const uint64_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
+        }
+    }
+
+    void serialize(const double& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<double>());
         }
     }
 
@@ -757,6 +1077,246 @@ public:
     }
 };
 
+template <>
+class SerializeAdapter<int8_t> final : public Serialize {
+    int8_t value_;
+public:
+    explicit SerializeAdapter(int8_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<int8_t> final : public Serialize {
+    const int8_t& value_;
+public:
+    explicit SerializeAdapterRef(const int8_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<int8_t> final : public Serialize {
+    int8_t& value_;
+public:
+    explicit SerializeAdapterRefMut(int8_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<int16_t> final : public Serialize {
+    int16_t value_;
+public:
+    explicit SerializeAdapter(int16_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<int16_t> final : public Serialize {
+    const int16_t& value_;
+public:
+    explicit SerializeAdapterRef(const int16_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<int16_t> final : public Serialize {
+    int16_t& value_;
+public:
+    explicit SerializeAdapterRefMut(int16_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<int64_t> final : public Serialize {
+    int64_t value_;
+public:
+    explicit SerializeAdapter(int64_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<int64_t> final : public Serialize {
+    const int64_t& value_;
+public:
+    explicit SerializeAdapterRef(const int64_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<int64_t> final : public Serialize {
+    int64_t& value_;
+public:
+    explicit SerializeAdapterRefMut(int64_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<uint8_t> final : public Serialize {
+    uint8_t value_;
+public:
+    explicit SerializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<uint8_t> final : public Serialize {
+    const uint8_t& value_;
+public:
+    explicit SerializeAdapterRef(const uint8_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<uint8_t> final : public Serialize {
+    uint8_t& value_;
+public:
+    explicit SerializeAdapterRefMut(uint8_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<uint16_t> final : public Serialize {
+    uint16_t value_;
+public:
+    explicit SerializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<uint16_t> final : public Serialize {
+    const uint16_t& value_;
+public:
+    explicit SerializeAdapterRef(const uint16_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<uint16_t> final : public Serialize {
+    uint16_t& value_;
+public:
+    explicit SerializeAdapterRefMut(uint16_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<uint32_t> final : public Serialize {
+    uint32_t value_;
+public:
+    explicit SerializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<uint32_t> final : public Serialize {
+    const uint32_t& value_;
+public:
+    explicit SerializeAdapterRef(const uint32_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<uint32_t> final : public Serialize {
+    uint32_t& value_;
+public:
+    explicit SerializeAdapterRefMut(uint32_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<uint64_t> final : public Serialize {
+    uint64_t value_;
+public:
+    explicit SerializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<uint64_t> final : public Serialize {
+    const uint64_t& value_;
+public:
+    explicit SerializeAdapterRef(const uint64_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<uint64_t> final : public Serialize {
+    uint64_t& value_;
+public:
+    explicit SerializeAdapterRefMut(uint64_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<double> final : public Serialize {
+    double value_;
+public:
+    explicit SerializeAdapter(double v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<double> final : public Serialize {
+    const double& value_;
+public:
+    explicit SerializeAdapterRef(const double& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<double> final : public Serialize {
+    double& value_;
+public:
+    explicit SerializeAdapterRefMut(double& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
 
 // UFCS trait migration: free functions for `impl Serialize for ...`
 namespace Serialize_ {
@@ -770,6 +1330,102 @@ namespace Serialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const int8_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int8_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const int16_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int16_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const int64_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int64_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const uint8_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const uint16_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const uint32_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const uint64_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const double& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<double>());
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.serialize_trait*/
 
 // ---- Fixed-width primitives. ------------------------------------------
@@ -777,15 +1433,15 @@ namespace Serialize_ {
 // uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
 // makes the byte view explicit (the previous `const void*` form
 // hid it behind implicit conversion).
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int8_t v)   { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int16_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int8_t v)   { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int16_t v)  { Serialize_::serialize(v, ar); return ar; }
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int32_t v)  { Serialize_::serialize(v, ar); return ar; }  // forwards to impl Serialize for i32
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int64_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint8_t v)  { ar.write_bytes(&v, sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint16_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint32_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint64_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int64_t v)  { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint8_t v)  { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint16_t v) { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint32_t v) { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint64_t v) { Serialize_::serialize(v, ar); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { Serialize_::serialize(v, ar); return ar; }
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) {
@@ -1035,17 +1691,129 @@ impl Deserialize for i32 {
         }
     }
 }
+impl Deserialize for i8 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut i8) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<i8>());
+        }
+    }
+}
+impl Deserialize for i16 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut i16) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<i16>());
+        }
+    }
+}
+impl Deserialize for i64 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut i64) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<i64>());
+        }
+    }
+}
+impl Deserialize for u8 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut u8) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<u8>());
+        }
+    }
+}
+impl Deserialize for u16 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut u16) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<u16>());
+        }
+    }
+}
+impl Deserialize for u32 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut u32) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<u32>());
+        }
+    }
+}
+impl Deserialize for u64 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut u64) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<u64>());
+        }
+    }
+}
+impl Deserialize for f64 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut f64) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<f64>());
+        }
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=3bd31ad77ef828f4ed11414d9ddfa3f830aa6ca0868a39c7ec6d14f6a95d753c*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=c6ac757c5ad16cf6e179f391583e30ecf04552bcf551e369f5a73be178a98eac*/
 // Extension trait free-function forward declarations
 namespace rusty_ext {
     void deserialize(int32_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(int8_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(int16_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(int64_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(uint8_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(uint16_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(uint32_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(uint64_t& self_, BinaryReadArchive& ar);
+
+    void deserialize(double& self_, BinaryReadArchive& ar);
 
 }
 
 
 namespace Deserialize_ {
     void deserialize(int32_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(int8_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(int16_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(int64_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(uint8_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(uint16_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(uint32_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(uint64_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(double& self_, BinaryReadArchive& ar);
 }
 using namespace Deserialize_;
 class Deserialize {
@@ -1081,6 +1849,142 @@ void deserialize(BinaryReadArchive& ar) {
 }
 #endif  // patcher: end orphan-impl stub
 
+// TODO orphan impl: methods for `i8` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i8
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `i16` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i16
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `i64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i64
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u8` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u8
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u16` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u16
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u32
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `u64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for u64
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `f64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for f64
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<double>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
 // Extension trait Deserialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
     void deserialize(int32_t& self_, BinaryReadArchive& ar) {
@@ -1089,6 +1993,78 @@ namespace rusty_ext {
         {
             uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&self_))));
             ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+    void deserialize(int8_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
+        }
+    }
+
+    void deserialize(int16_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
+        }
+    }
+
+    void deserialize(int64_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
+        }
+    }
+
+    void deserialize(uint8_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
+        }
+    }
+
+    void deserialize(uint16_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
+        }
+    }
+
+    void deserialize(uint32_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
+        }
+    }
+
+    void deserialize(uint64_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
+        }
+    }
+
+    void deserialize(double& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<double>());
         }
     }
 
@@ -1124,6 +2100,246 @@ public:
     }
 };
 
+template <>
+class DeserializeAdapter<int8_t> final : public Deserialize {
+    int8_t value_;
+public:
+    explicit DeserializeAdapter(int8_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<int8_t> final : public Deserialize {
+    const int8_t& value_;
+public:
+    explicit DeserializeAdapterRef(const int8_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<int8_t> final : public Deserialize {
+    int8_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(int8_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<int16_t> final : public Deserialize {
+    int16_t value_;
+public:
+    explicit DeserializeAdapter(int16_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<int16_t> final : public Deserialize {
+    const int16_t& value_;
+public:
+    explicit DeserializeAdapterRef(const int16_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<int16_t> final : public Deserialize {
+    int16_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(int16_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<int64_t> final : public Deserialize {
+    int64_t value_;
+public:
+    explicit DeserializeAdapter(int64_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<int64_t> final : public Deserialize {
+    const int64_t& value_;
+public:
+    explicit DeserializeAdapterRef(const int64_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<int64_t> final : public Deserialize {
+    int64_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(int64_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<uint8_t> final : public Deserialize {
+    uint8_t value_;
+public:
+    explicit DeserializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<uint8_t> final : public Deserialize {
+    const uint8_t& value_;
+public:
+    explicit DeserializeAdapterRef(const uint8_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<uint8_t> final : public Deserialize {
+    uint8_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(uint8_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<uint16_t> final : public Deserialize {
+    uint16_t value_;
+public:
+    explicit DeserializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<uint16_t> final : public Deserialize {
+    const uint16_t& value_;
+public:
+    explicit DeserializeAdapterRef(const uint16_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<uint16_t> final : public Deserialize {
+    uint16_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(uint16_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<uint32_t> final : public Deserialize {
+    uint32_t value_;
+public:
+    explicit DeserializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<uint32_t> final : public Deserialize {
+    const uint32_t& value_;
+public:
+    explicit DeserializeAdapterRef(const uint32_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<uint32_t> final : public Deserialize {
+    uint32_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(uint32_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<uint64_t> final : public Deserialize {
+    uint64_t value_;
+public:
+    explicit DeserializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<uint64_t> final : public Deserialize {
+    const uint64_t& value_;
+public:
+    explicit DeserializeAdapterRef(const uint64_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<uint64_t> final : public Deserialize {
+    uint64_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(uint64_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<double> final : public Deserialize {
+    double value_;
+public:
+    explicit DeserializeAdapter(double v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<double> final : public Deserialize {
+    const double& value_;
+public:
+    explicit DeserializeAdapterRef(const double& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<double> final : public Deserialize {
+    double& value_;
+public:
+    explicit DeserializeAdapterRefMut(double& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
 
 // UFCS trait migration: free functions for `impl Deserialize for ...`
 namespace Deserialize_ {
@@ -1137,6 +2353,102 @@ namespace Deserialize_ {
     }
 
 }
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(int8_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(int16_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(int64_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(uint8_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(uint16_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(uint32_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(uint64_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
+        }
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(double& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<double>());
+        }
+    }
+
+}
 /*RUSTYCPP:GEN-END id=serializable.deserialize_trait*/
 
 // ---- Fixed-width primitives. ------------------------------------------
@@ -1144,15 +2456,15 @@ namespace Deserialize_ {
 // truncation it aborts via `verify` (matches the existing
 // `Marshal::read` contract — short reads at the boundary are
 // programming errors at this layer, not recoverable conditions).
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { Deserialize_::deserialize(v, ar); return ar; }  // forwards to impl Deserialize for i32
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { Deserialize_::deserialize(v, ar); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
 // SparseInt's first byte determines the total length; we peek it,
