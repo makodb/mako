@@ -29,6 +29,8 @@
 namespace janus {
 namespace raft {
 
+// @safe - builds metadata from copied scalar fields. Snapshot payload storage,
+// reader/writer lifetime, and manager mutation remain in the C++ classes.
 #if RUSTYCPP_RUST
 pub fn memory_snapshot_metadata(last_index: u64,
                                 last_term: u64,
@@ -48,6 +50,8 @@ inline SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t l
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
 
+// @safe - stream-position arithmetic over copied sizes. Buffer copies and
+// bounds checks against caller-provided memory stay in the reader methods.
 #if RUSTYCPP_RUST
 pub fn memory_snapshot_advance_offset(offset: usize, size: usize) -> usize {
     offset + size

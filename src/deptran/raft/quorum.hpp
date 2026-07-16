@@ -40,6 +40,9 @@
 namespace janus {
 namespace raft {
 
+// @safe - pure threshold predicate. The atomic increment, reply storage, and
+// rrr::IntEvent wakeup stay in RaftQuorum::on_reply(); this helper only names
+// the scalar decision that a quorum has enough replies.
 #if RUSTYCPP_RUST
 #[rust_name = "raft_quorum_reached"]
 pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {

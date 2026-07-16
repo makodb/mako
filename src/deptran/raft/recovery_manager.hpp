@@ -226,6 +226,9 @@ inline RecoveryResult recovery_result_failure(const std::string& error) {
   return result;
 }
 
+// @safe - pure recovery policy/result helpers. Filesystem cleanup, storage
+// open/rebuild, RocksDB handles, and snapshot/log replay stay in
+// RecoveryManager's hand-C++ orchestration.
 #if RUSTYCPP_RUST
 pub fn recovery_mode_is_fresh_start(mode: RecoveryMode) -> bool {
     mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH

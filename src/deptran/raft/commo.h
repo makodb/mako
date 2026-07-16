@@ -187,6 +187,9 @@ inline SendAppendEntriesResults send_append_entries_results_defaults() {
   return results;
 }
 
+// @safe - value-only interpretation of an AppendEntries callback result. The
+// async callback lifetime, shared result object, and RPC fanout stay in
+// RaftCommo; these helpers only classify already-copied scalar reply fields.
 #if RUSTYCPP_RUST
 pub fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
     !has_cmd
@@ -248,6 +251,8 @@ inline constexpr AckType AckType_Memory() { return AckType::Memory; }
 inline constexpr AckType AckType_Durable() { return AckType::Durable; }
 /*RUSTYCPP:GEN-END id=commo.ack_type*/
 
+// @safe - wire-format predicates for the scalar ack_type field. The durable
+// ack callback path and server-side quorum bookkeeping remain hand-C++.
 #if RUSTYCPP_RUST
 pub fn commo_ack_type_is_memory(ack_type: u64) -> bool {
     ack_type == AckType::Memory as u64

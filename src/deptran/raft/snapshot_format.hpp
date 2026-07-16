@@ -366,6 +366,9 @@ inline uint32_t snapshot_crc32(const char* data, size_t size) {
   return snapshot_crc32(reinterpret_cast<const uint8_t*>(data), size);
 }
 
+// @safe - validation and size helpers over copied header fields. Raw buffer
+// layout, memcpy, compression handling, and checksum placement stay in the
+// serialize/deserialize C++ kernels below.
 #if RUSTYCPP_RUST
 pub fn snapshot_magic_valid(magic: u32) -> bool {
     magic == 0x504E4153
@@ -448,6 +451,9 @@ inline bool snapshot_get_header_cpp(const uint8_t* input,
   return header->header_crc == expected_crc;
 }
 
+// @unsafe boundary wrapper - the DSL exposes the call shape, but the raw
+// pointer validation, memcpy, and header CRC check are delegated to the C++
+// kernel so the binary layout remains exactly one implementation.
 #if RUSTYCPP_RUST
 pub fn snapshot_get_header(input: *const u8,
                            input_size: usize,
@@ -475,6 +481,9 @@ inline bool snapshot_deserialize_cpp(const uint8_t* input,
                                      uint64_t* last_term,
                                      std::string* data);
 
+// @unsafe boundary wrapper - serialization works with raw payload pointers
+// and a mutable std::string output. The DSL wrapper forwards to C++; the C++
+// kernel owns null checks, resize, memcpy, CRC, and exact wire format.
 #if RUSTYCPP_RUST
 pub fn snapshot_serialize(last_index: u64,
                           last_term: u64,
@@ -544,9 +553,12 @@ inline bool snapshot_serialize_cpp(uint64_t last_index,
     std::memcpy(ptr, &data_crc, 4);
   }
 
-  return true;
+    return true;
 }
 
+// @unsafe boundary wrapper - deserialization reads raw bytes and writes through
+// output pointers. Bounds checks, header validation, string assignment, and CRC
+// verification remain centralized in the C++ kernel.
 #if RUSTYCPP_RUST
 pub fn snapshot_deserialize(input: *const u8,
                             input_size: usize,

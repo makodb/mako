@@ -137,6 +137,9 @@ inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
 }
 /*RUSTYCPP:GEN-END id=channel_transport.faults*/
 
+// @safe - stateless predicates used by the in-process transport. Channel
+// ownership, closure delivery, blocking recv loops, and switchboard mutation
+// stay in C++; these helpers only compare copied site/partition ids.
 #if RUSTYCPP_RUST
 pub fn channel_faults_drop_matches(drop_from: u16,
                                    drop_to: u16,

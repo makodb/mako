@@ -50,6 +50,9 @@ inline std::string rocksdb_log_make_log_key_cpp(uint64_t slot_id) {
     return ss.str();
 }
 
+// @safe boundary split - the DSL owns pure key construction and status/range
+// predicates. Raw RocksDB handles, iterators, write batches, and error object
+// lifetimes remain inside RocksDBLogStorage's C++ methods.
 #if RUSTYCPP_RUST
 pub fn rocksdb_log_copy_slice(data: *const u8, len: usize) -> std::string {
     rocksdb_log_copy_slice_cpp(data, len)

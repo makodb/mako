@@ -36,6 +36,8 @@
 namespace janus {
 namespace raft {
 
+// @safe - deterministic path builders from copied values. Directory creation,
+// file opening, rename/delete, and fs error handling stay in C++.
 #if RUSTYCPP_RUST
 pub fn file_snapshot_path(storage_path: &std::string,
                           index: u64,
@@ -75,6 +77,9 @@ inline SnapshotMetadata file_snapshot_metadata_from_name_parts_cpp(
   return meta;
 }
 
+// @safe boundary split - reader offset/retention predicates are pure scalar
+// logic. std::ifstream/ofstream state, directory scanning, regex parsing, and
+// deletion remain hand-C++.
 #if RUSTYCPP_RUST
 pub fn file_snapshot_advance_offset(offset: usize, size: usize) -> usize {
     offset + size

@@ -21,6 +21,8 @@
 namespace janus {
 namespace raft {
 
+// @safe - storage-state predicates over copied counters/flags. The map,
+// mutex, and log-entry ownership remain in InMemoryLogStorage methods.
 #if RUSTYCPP_RUST
 pub fn memory_log_storage_is_usable(is_open: bool) -> bool {
     is_open
