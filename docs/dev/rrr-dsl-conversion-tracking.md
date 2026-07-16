@@ -116,8 +116,68 @@ fn shl(&mut self, v: Rhs) -> &mut Marshal { …; self } }`; templates via `impl<
      transpiler already emits partial scaffolding (`namespace std::ops::rusty_ext` fwd-decl) — the fix is
      to complete it. This is the general "extension method / orphan impl" gap.
 
-### Plan (next)
+### ★ PIVOT (2026-07-15): drop the operators entirely → serde-style value-side Serialize/Deserialize trait
 
-Start with the Marshal-central operator family in `marshal.cpp` (scalars + pair/Vec/map/string) as
-`impl Shl<…>/Shr<…> for Marshal`, scalar bodies delegating to `marshal_write_*`/`marshal_read_*`
-`@unsafe` kernels. Probe a 2-type-param template (`impl<K,V> Shl<&Map<K,V>>`) before committing the map ops.
+The A/B/C operator-conversion options above are **superseded**. Decision (user): get rid of `<<`/`>>`
+overloads and switch to the Rust idiom — a value-side `Serialize`/`Deserialize` DSL trait. Two probe
+findings drove this (both corrected earlier wrong assertions of mine):
+
+1. **`impl <DSL trait> for i32` WORKS** — it lowers to a **UFCS free function**
+   `Serialize_::serialize(const int32_t& self_, Sink& ar)` (self→explicit first param, static dispatch by
+   overload), for primitive/std/foreign types alike, **NO orphan problem** (unlike `impl Shl for Marshal`),
+   plus `SerializeAdapter<T>` vtable wrappers for dynamic dispatch. (probe `scratchpad/ser_probe.cpp`.)
+   → My "a DSL trait is a vtable, can't impl for int" claim was WRONG. It's exactly serde's static model.
+2. **DSL `unsafe { }` byte kernels lower** — `unsafe { let p = (self as *const i32) as *const u8; … }` →
+   `// @unsafe { const uint8_t* p = reinterpret_cast<const uint8_t*>(static_cast<const int32_t*>(&self_)); … }`
+   (probe `scratchpad/unsafe_probe.cpp`). → the leaf byte surgery becomes a **DSL unsafe block**, no
+   hand-written C++ kernel. So this is a REAL floor reduction (category-D byte kernels + category-E operator
+   metaprogramming both move into DSL), not a dispatch rename.
+
+Scope accepted (user): ~4,800 `<<`/`>>` sites + the `lang_cpp.py` generator + regenerate all stubs; wire
+backbone, runtime-validatable only by PR CI. "Just needs patience."
+
+## Serde-trait migration plan (design wf_f9f1cc21)
+
+**Traits** (in serializable.cpp, module rrr.serializable), TWO because write is const-self, read is mut-self:
+```rust
+pub trait Serialize   { fn serialize(&self,  ar: &mut BinaryWriteArchive); }
+pub trait Deserialize { fn deserialize(&mut self, ar: &mut BinaryReadArchive); }
+```
+Lower to UFCS free fns `Serialize_::serialize(const T&, BinaryWriteArchive&)` / `Deserialize_::deserialize(T&,
+BinaryReadArchive&)` — static dispatch by overload, no orphan, impl-in-own-file. Deserialize is `&mut self`
+(mutating out-ref, NOT `->Self`) — matches legacy operator>> in-place read (container default-construct+read-into).
+
+**Sink decision:** trait is over `BinaryWriteArchive`/`BinaryReadArchive` (NOT Marshal, NOT raw SinkBase). Marshal
+write sites bridge via a `BinaryWriteArchive` over `make_sink_proxy(&marshal)`. Add `read_or_abort(void*,size_t)` to
+BinaryReadArchive (wraps `verify(read_exact(...))` — the abort-on-truncation contract).
+
+**Four shapes:** LEAF (scalars/varints/string) = DSL `impl` with `unsafe{}` reinterpret_cast byte kernels (no C++
+kernel). COMPOSITE/11 CONTAINERS = hand-written C++ generic templates in `Serialize_`/`Deserialize_` ns (std-container
+iterator kernels), recurse via `Serialize_::serialize(elem, ar)`. POLYMORPHIC = reuse SerializableBase (dyn/kind
+layer) unchanged; `SerializableSharedPtrHolder<T>::save/load` bridge one line down to the static trait.
+
+**Coexistence (keeps tree green):** operators STAY as thin FORWARDERS — as soon as a type gets its trait impl,
+repoint its operator body to `Serialize_::serialize(v, *this)`, so there's exactly ONE byte kernel and byte-compat is
+automatic. Operators deleted only in Phase 8.
+
+**Generator:** lang_cpp.py emits the lowered `namespace Serialize_ { inline void serialize(const T&, ...){...} }`
+(not DSL source — rpcgen output compiles directly) + flips the field-by-field call-site emitters. Wire format
+byte-identical.
+
+**Phases** (local ctest gate = `test_marshal|test_rpc_marshal_archive|test_rpc_marshallable_proxy`; PR CI for 6-8):
+1. **Scaffolding + i32 canary** (local) — add the 2 DSL traits + `read_or_abort`; impl i32 both dirs; repoint the
+   archive's `operator<<(int32_t)`/`operator>>(int32_t&)` to forward; byte-compat canary test.
+2. **All leaf impls** — scalars/varints/string; repoint each leaf operator. (local)
+3. **Composite + 11 container impls** (C++ templates in Serialize_ ns); repoint. ⚠ mirror clang-22 HashSet/HashMap
+   guards exactly. Confirm here whether transpiler does `impl<T> Serialize for Vec<T>` (else keep C++ templates). (local)
+4. **Polymorphic bridge** — route SerializableSharedPtrHolder save/load through the static trait. (local)
+5. **Hand-written user types** — IdempotencyKey, SimpleCommand, mdb::Value, Command/Envelope, AnyMessage + ~24
+   method-body files. MUST land before Phase 6 (generator serializes these). (local)
+6. **Generator flip + regenerate** rcc_rpc.h/network.h/benchmark_service.h + rpcgen self-tests. (local emit + PR CI)
+7. **Hand-written call-site sweep** — ~875 statements: ~395 writes + ~361 reads (1:1), ~119 chains (sequence-split
+   `m<<a<<b` → ordered serialize calls), 115 `get_reply()>>` reply-reads (⚠ temporary RefMut — can't re-call). (PR CI)
+8. **Delete all operators** — archive members + Marshal's 48 + guards + `--archive` flag, after grep shows zero users.
+
+**Top risks:** chaining sequence-split; `get_reply()>>` rvalue-guard temporary; two write paths (Marshal write vs
+archive read); Deserialize `&mut` direction; generated-regen fan-out (~1760 stmts + 2 exact-text self-tests); clang-22
+hashbrown mangler on HashSet/HashMap; ordering (user types before generator); PR-CI-only for generated + reply-reads.
