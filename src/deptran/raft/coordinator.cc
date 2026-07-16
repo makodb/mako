@@ -179,7 +179,7 @@ void CoordinatorRaft::Commit() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   commit_callback_();
   }
-  verify(phase_ == Phase::COMMIT);
+  verify(coordinator_raft_phase_is_commit(phase_));
   GotoNextPhase();
 }
 
@@ -190,7 +190,7 @@ void CoordinatorRaft::LeaderLearn() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     commit_callback_();
     }
-    verify(phase_ == Phase::COMMIT);
+    verify(coordinator_raft_phase_is_commit(phase_));
     // @unsafe
     { GotoNextPhase(); }
 }
@@ -198,16 +198,18 @@ void CoordinatorRaft::LeaderLearn() {
 // @unsafe - calls @safe AppendEntries and @safe LeaderLearn
 void CoordinatorRaft::GotoNextPhase() {
   int n_phase = 4;
-  int current_phase = phase_ % n_phase;
+  int current_phase = coordinator_raft_phase_value(phase_, n_phase);
   phase_++;
   switch (current_phase) {
     case Phase::INIT_END:
       if (IsLeader()) {
         phase_++; // skip prepare phase for "leader"
-        verify(phase_ % n_phase == Phase::ACCEPT);
+        verify(coordinator_raft_phase_is_accept(
+            coordinator_raft_phase_value(phase_, n_phase)));
         AppendEntries();
         phase_++;
-        verify(phase_ % n_phase == Phase::COMMIT);
+        verify(coordinator_raft_phase_is_commit(
+            coordinator_raft_phase_value(phase_, n_phase)));
       } else {
         // TODO: non-leader should forward to leader
         // @unsafe { Log_warn is not borrow-checked }
@@ -216,7 +218,8 @@ void CoordinatorRaft::GotoNextPhase() {
         phase_ = Phase::COMMIT;
       }
     case Phase::ACCEPT:
-      verify(phase_ % n_phase == Phase::COMMIT);
+      verify(coordinator_raft_phase_is_commit(
+          coordinator_raft_phase_value(phase_, n_phase)));
       if (committed_) {
         LeaderLearn();
       } else {
@@ -226,7 +229,8 @@ void CoordinatorRaft::GotoNextPhase() {
       }
       break;
     case Phase::PREPARE:
-      verify(phase_ % n_phase == Phase::ACCEPT);
+      verify(coordinator_raft_phase_is_accept(
+          coordinator_raft_phase_value(phase_, n_phase)));
       AppendEntries();
       break;
     case Phase::COMMIT:

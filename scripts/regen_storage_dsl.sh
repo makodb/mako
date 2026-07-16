@@ -92,6 +92,9 @@ FILES=(
   # Raft server enums and tiny POD helpers only; RaftServer itself remains
   # hand-C++ because it owns threading, persistence, and consensus state.
   src/deptran/raft/server.h
+  # Raft coordinator phase/quorum helpers only; CoordinatorRaft keeps raw
+  # server/commo links and command orchestration in C++.
+  src/deptran/raft/coordinator.h
   # Raft snapshot metadata: value struct + thin methods delegated to C++
   # helpers; reader/writer/manager virtual interfaces stay hand-C++ for now.
   src/deptran/raft/snapshot_manager.hpp
@@ -341,6 +344,21 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);',
             'return index > boundary;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(phase) % rusty::detail::deref_if_pointer_like(n_phase);',
+            'return phase % n_phase;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(phase) == static_cast<int32_t>(1);',
+            'return phase == 1;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(phase) == static_cast<int32_t>(2);',
+            'return phase == 2;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(phase) == static_cast<int32_t>(3);',
+            'return phase == 3;')
+        ln = ln.replace(
+            'return ((rusty::detail::deref_if_pointer_like(n_replica) / static_cast<uint32_t>(2))) + static_cast<uint32_t>(1);',
+            'return (n_replica / 2) + 1;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

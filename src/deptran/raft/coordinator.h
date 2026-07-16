@@ -20,6 +20,59 @@ namespace janus {
 
 class RaftCommo;
 class RaftServer;
+
+// @safe - pure CoordinatorRaft phase/quorum helpers over copied scalar
+// values. The CoordinatorRaft class keeps inherited phase_ state, raw
+// server/commo back-pointers, and command orchestration in C++.
+#if RUSTYCPP_RUST
+pub fn coordinator_raft_phase_value(phase: i32, n_phase: i32) -> i32 {
+    phase % n_phase
+}
+
+pub fn coordinator_raft_phase_is_prepare(phase: i32) -> bool {
+    phase == 1
+}
+
+pub fn coordinator_raft_phase_is_accept(phase: i32) -> bool {
+    phase == 2
+}
+
+pub fn coordinator_raft_phase_is_commit(phase: i32) -> bool {
+    phase == 3
+}
+
+pub fn coordinator_raft_majority_count(n_replica: u32) -> u32 {
+    (n_replica / 2) + 1
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=coordinator.1 version=1 rust_sha256=db86be189ce372c2ac19ed914ec6d050a6bd9cee73e201ecd6d08d0f79da48fa*/
+inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase);
+inline bool coordinator_raft_phase_is_prepare(int32_t phase);
+inline bool coordinator_raft_phase_is_accept(int32_t phase);
+inline bool coordinator_raft_phase_is_commit(int32_t phase);
+inline uint32_t coordinator_raft_majority_count(uint32_t n_replica);
+
+inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase) {
+    return phase % n_phase;
+}
+
+inline bool coordinator_raft_phase_is_prepare(int32_t phase) {
+    return phase == 1;
+}
+
+inline bool coordinator_raft_phase_is_accept(int32_t phase) {
+    return phase == 2;
+}
+
+inline bool coordinator_raft_phase_is_commit(int32_t phase) {
+    return phase == 3;
+}
+
+inline uint32_t coordinator_raft_majority_count(uint32_t n_replica) {
+    return (n_replica / 2) + 1;
+}
+/*RUSTYCPP:GEN-END id=coordinator.1*/
+
 // @unsafe - inherits from non-@interface Coordinator and keeps borrowed raw
 // back-pointers into RaftFrame/RaftServer state.
 class CoordinatorRaft : public Coordinator {
@@ -88,7 +141,7 @@ class CoordinatorRaft : public Coordinator {
 
   // @safe
   uint32_t GetQuorum() {
-    return n_replica() / 2 + 1;
+    return coordinator_raft_majority_count(n_replica());
   }
 
   // @safe
