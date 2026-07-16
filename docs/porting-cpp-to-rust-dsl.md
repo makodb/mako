@@ -461,13 +461,12 @@ A recurring lesson: **hand-written rusty-library gaps masquerade as transpiler b
 
 Be honest: some patterns are genuinely resistant. Don't reshape them into thin shells; leave them as good C++ and document why.
 
-- **Atomic + compare-and-swap** (connection state, reconnect coordination). `Cell` can't preserve cross-thread atomicity. Reactor-core critical.
-- **Type-parameterized template factories** (`create_event<T>()`, `make_arc<U>()`). The DSL emits monomorphic functions and static methods, not generic impl blocks over a *type*.
+- **Type-parameterized template factories** (`create_event<T>()`, `make_arc<U>()`). The DSL emits monomorphic functions and static methods, not generic impl blocks over a *type*. (But a template *type* can still be a hand-bridge that derives a DSL trait — see §7.2.)
 - **Re-entrant intrusive lists.** The `VecDeque` reshape doesn't apply: re-entrant code holds an iterator, re-enters, and calls `remove()` — indices/references held mid-flight go invalid. Needs intrusive-node memory safety.
-- **`void*` I/O serialization** (binary archives, ~40 `operator<<`/`>>` over `memcpy` of arbitrary bytes). The DSL fundamentally cannot emit `void*` I/O. The adapters around it are DSL-expressible; the core is not.
-- **Template + operator forwarding** (e.g., `SpinMutex<T>` / its guard with `operator*`, `operator->`, `operator[]`). The DSL can't emit operator overloads as part of a template class.
+- **Raw-pointer / `memcpy` / `void*` byte *kernels*** (the innermost bytes-in-bytes-out of a serializer, framer, or buffer sink). The DSL is a memory-safe subset *by design* and deliberately cannot express raw-pointer surgery — nor should it. These stay `@unsafe` C++ precisely because they are the layer the DSL protects everything else from.
+- **Compile-time typing metaprogramming** (CRTP, `TypeList`, SFINAE conversion ctors, `static_assert`-driven type machinery). No Rust-DSL spelling. (Distinct from template *functions*/operators, which often *do* convert — see §7.4.)
 
-> **Deferral is effectively permanent.** These are *not* reshape candidates — leaving them hand-written is the answer, not a temporary holding pattern. Revisit an item only if you deliberately invest in a transpiler buildout that targets it (e.g., an atomic/CAS emitter). Absent that, expect this list to stay static; do not periodically re-litigate it.
+> **⚠ The floor is PROVISIONAL, not permanent — re-probe before you skip.** An earlier draft of this guide listed **atomic+CAS**, **`void*` I/O serialization (binary archives)**, and **template+operator overloading** here as "defer, effectively permanent." **All three were later dissolved** — see **§7**: movable atomics flipped the reactor-core connection/pollthread classes (§7.3), the entire Marshal + Binary{Write,Read}Archive wire layer became DSL via free-operator shims (§7.4), and a whole polymorphic virtual hierarchy was flattened by composition (§7.1). More broadly, several "assumed-floored" primitives (capturing closures, `thread::spawn`, `Fiber::create_run`, data-carrying enums) each turned out to lower fine once probed. **The lesson: PROBE the specific blocker in isolation against the *current* transpiler before declaring anything floor. Measure and classify by reason (§7.5), don't inherit an old verdict.** What genuinely remains permanent is the short list above (§7.6): the unsafe substrate the DSL is built to sit on, and compile-time type metaprogramming.
 
 ### (D) The justified floor — reshapable but not worth it
 
@@ -489,11 +488,14 @@ Some classes *could* be reshaped but the value doesn't justify the cost: dead co
 | Namespaced container blocks | Transpiler: suppress preamble |
 | Mutex+container classes | Transpiler: API completion + field qualification |
 | Non-copyable field inits | Transpiler: move-init via `std::move` |
-| Atomic + CAS | **Defer (permanent)** |
-| Type-param template factories | **Defer (permanent)** |
+| Atomic + CAS | ~~Defer~~ → **Dissolved: movable atomics (§7.3)** |
+| `void*` I/O serialization (the *classes*) | ~~Defer~~ → **Dissolved: free-operator shims + single-field-proxy flip (§7.4)** |
+| Member operator overload families | ~~Defer~~ → **Dissolved: convert to free operators, identical call syntax (§7.4)** |
+| Polymorphic virtual hierarchy | ~~Keep hand-written~~ → **Dissolved: composition-flatten to a data-free trait + shared kernels (§7.1)** |
+| Type-param template factories | **Defer (permanent)** — but the type can be a hand-bridge deriving a DSL trait (§7.2) |
 | Re-entrant intrusive lists | **Defer (permanent)** |
-| `void*` I/O serialization | **Defer (permanent)** |
-| Template + operator overloading | **Defer (permanent)** |
+| Raw-ptr / `memcpy` / `void*` byte *kernels* | **Floor by design** (safe subset excludes unsafe memory ops, §7.6) |
+| Compile-time typing metaprograms (CRTP/TypeList/SFINAE) | **Floor by design** (no Rust-DSL spelling, §7.6) |
 
 ---
 
@@ -636,4 +638,60 @@ The reusable **PATTERNS** matter more than the **PROCESS** discipline — a patt
 ### And two that are both
 
 11. **Library gaps masquerade as transpiler bugs.** A missing `Mutex::new_()` / `Condvar::new_()` is a one-line header factory, not a codegen problem. Check the rusty library before filing a transpiler ask — and check the submodule commit before assuming a *feature* is missing; several "blockers" are already shipped.
-12. **Be honest about the floor, and keep a living plan doc.** Atomic+CAS, type-parameterized factories, re-entrant intrusive lists, and `void*` serialization stay hand-written — permanently, absent a dedicated transpiler buildout; document why so nobody re-litigates. Keep hundreds of small, bisectable commits and a TODO/plan doc with current bucket counts, so a new worker onboards in half an hour and `grep`s the log to see how far the migration has come.
+12. **Be honest about the floor, and keep a living plan doc.** Type-parameterized factories, re-entrant intrusive lists, raw byte/`void*` kernels, and compile-time type metaprograms stay hand-written; document why so nobody re-litigates. Keep hundreds of small, bisectable commits and a TODO/plan doc with current bucket counts, so a new worker onboards in half an hour and `grep`s the log to see how far the migration has come.
+13. **Re-probe your own "permanent floor" — it is provisional (see §7).** The single biggest mistake this guide made in an earlier draft was calling things permanent that weren't. Atomic+CAS, `void*` archives, member-operator families, and an entire polymorphic hierarchy were each "permanent floor" until a pattern dissolved them; capturing closures, `thread::spawn`, `Fiber::create_run`, and data-carrying enums were each "can't lower" until an isolated probe showed they lower fine. Before you skip a class, **probe the exact blocker against the current transpiler and classify the remainder by *reason*, not by file** (§7.5). The true floor is much smaller than it first looks — mostly the unsafe substrate the DSL is *designed* to sit on (§7.6).
+
+---
+
+## 7. Advanced Patterns: Dissolving the "Permanent" Floor
+
+*This section was added after the guide's first draft, once the rrr migration reached what looked like its floor and then kept going. Everything here **supersedes the "defer permanent" verdicts in §4(C)** for the patterns it names. The meta-lesson (§6 #13) is the point: a floor verdict is a hypothesis about the current transpiler and the current design — re-test it.*
+
+### 7.1 Composition over inheritance: flatten a polymorphic hierarchy
+
+**The blocker §3/§4 gave up on.** A deep polymorphic C++ hierarchy — a virtual base with many subclasses, some of them *templates*, some adding their *own* virtuals and fields — fits neither `#[cpp_inherit]` (single-trait, and it can't express `Concrete : public OtherConcrete`) nor a tagged enum (heterogeneous/templated payloads can't live in one variant type). The old advice was "keep the whole thing hand-written."
+
+**The dissolution: replace inheritance-between-concrete-types with composition around a data-free trait.**
+
+1. **Extract a data-free trait.** Pull the base's pure virtual *interface* (no fields) into a DSL `pub trait` (`EventPollable`: `test`/`is_ready`/`status`/…). Every concrete type derives *this* directly — so no concrete type inherits another.
+2. **Inline the shared state into each concrete type.** The state the base used to hold (the "core": status, owner thread, wait-state, self-weak-ref) becomes ordinary inline fields on every concrete type, **laid out identically** so shared logic can be duck-typed across them.
+3. **Extract the base's shared method bodies into template kernels.** `template<typename W> void event_wait_impl(W& self, ...)` operates on the duck-typed core (`self.status_`, `self.is_ready()`, …). Every concrete type's method is a one-liner delegating to the kernel. **Put the kernels in the *exported* namespace** so cross-module / cross-TU instantiation resolves.
+4. **Split concrete types by expressibility.** Types the DSL can express (plain fields + control flow) become **flat DSL structs**, each `#[cpp_inherit] impl Trait for X`. Types it can't (templates, variadic ctors, `Function`-typed state) become **hand-bridges** (§7.2) — still deriving the trait, still calling the same kernels.
+5. **Delete the base.** Once nothing inherits the old base, it's just another leaf. If it survives only at a couple of call sites, move those to a sibling type and delete the class outright.
+
+The result: the tangled `Base → Sub → SubSub<T>` hierarchy becomes a flat set of trait-implementing leaves sharing one copy of the logic in the kernels. Call sites and runtime behavior are unchanged. (This is how rrr's `Event → BoxEvent<T> → StatusBox` chain, plus `QuorumEvent` with its own virtuals and ~18 fields, was flattened and the `Event` base then deleted.)
+
+### 7.2 The hand-bridge: keep it C++, still derive the DSL trait
+
+Some concrete types genuinely can't be DSL structs — a **template** (`BoxEvent<T>`), a **variadic ctor** (`WaitAll(a, b, c, …)`), or **stored `Function`-typed state**. They don't have to leave the trait, though. Write them as hand-written C++ classes that **derive the DSL-emitted trait base directly** (`template<class T> class BoxEvent : public EventPollable`), carry the same inline core fields, and delegate to the same shared kernels (§7.1). They're `@unsafe` C++, but they are **leaves that inherit nothing but the trait** — so they don't reintroduce a hierarchy. This is what "minimal-C floor" should look like: a handful of trait-implementing leaves, not a tangled base class.
+
+- **Namespace gotcha.** If a hand-bridge lives in a *different* namespace than the trait and kernels, its unqualified references won't resolve, and **ADL can't find the kernels** (their argument is a type in *your* namespace, so ADL searches your namespace, not the trait's). Add an explicit `using their_ns::X;` for every referenced entity (the trait, the enums, each kernel). This cost one wasted long build before it was understood.
+
+### 7.3 Movable atomics dissolve "Atomic + CAS"
+
+§4(C) called atomic+CAS permanent because `Cell` can't be cross-thread-atomic. The unblock is a library property, not a transpiler feature: a rusty `Atomic<T>` whose **move ctor value-moves** (load `Relaxed`, reinit). That one property makes a struct holding an atomic field **movable**, which is exactly what the DSL needs to build it via `Arc::new_(T{ … })` instead of an in-place `Arc::make` + `friend` + private-ctor triangle. Recipe: swap `std::atomic<bool>` → `AtomicBool`; now all fields are movable → aggregate factory; `exchange` → `swap`, one CAS → `compare_exchange(…).is_ok()`; sweep the `std::memory_order` spellings to the rusty `Ordering` API at the call sites. This flipped `ReconnectState` **and** `PollThread` — a reactor-core class the old floor called untouchable.
+
+### 7.4 Operator overloads → free operators (the wire layer)
+
+§4(C) called `void*` I/O serialization and template+operator overloading permanent. Both dissolved, in two moves:
+
+- **Member `operator<<`/`>>` families → free operators, identical call syntax.** A class with dozens of member serialization operators (even ~60, including templates over `pair`/`Vec<T>`/`map`) converts by moving them to **free** `operator<<(Archive&, const T&)` — `ar << x` still resolves the same. Do it in two commits: **stage A** slims the class to a shell by relocating the operators (independently build-verifiable), **stage B** flips the now-thin shell to DSL.
+- **Single-field proxy holders flip *ctor-less*.** When the DSL struct wraps exactly one field (a `SinkProxy`), **C++20 paren-aggregate-init** makes `Type x(one_arg);` initialize that lone field — so *hundreds* of construction sites, including ones in **generated** wire headers, need **zero** changes and no generator edits. (The misfill hazard only appears with ≥2 fields — then you must switch call sites to a factory.)
+- What stays floor is only the innermost `void*`/`memcpy` **byte kernel** (§7.6); the *classes* around it (Marshal, Binary{Write,Read}Archive) are now fully DSL.
+
+### 7.5 Find the real floor: measure, then classify by *reason*
+
+Before asserting "N lines can't convert," **measure** instead of estimating:
+
+1. **Count hand-written code deterministically.** A ~30-line script that walks each file and subtracts every `/*RUSTYCPP:GEN-BEGIN … GEN-END*/` region and every `#if RUSTYCPP_RUST … #endif` region gives you the exact hand-written-code line count per file — ground truth, not an LLM guess. (Doing this on rrr corrected a "~9,300" estimate to a measured 8,193.)
+2. **Classify the remainder by reason, not by file.** Bucket every hand-written region into: asm / mmap / syscalls / raw-pointer (the *true* unsafe substrate); compile-time metaprogramming (templates/operators/CRTP); `Function`-typed state + closures; logging/boilerplate; and — critically — a **"genuinely convertible"** bucket and a **"blocked on one transpiler feature"** bucket. The reason-taxonomy is what tells you which floor is real (a safe-subset boundary) versus merely undone work or a single missing feature. A fan-out (one reviewer per file-group, each reconciling to the measured per-file total) makes this tractable on a large tree, and a single missing feature (e.g. `&str`-literal → `const char*` return lowering) can turn out to gate a whole cluster of near-identical helpers at once — higher ROI than hand-converting them one by one.
+
+### 7.6 What is *actually* permanent floor
+
+After §7.1–7.4, the genuine, by-design floor is small and falls into three kinds:
+
+- **The unsafe substrate the DSL is built to sit on, not replace.** Hand-written assembly (context switches), `mmap` stack management, raw syscalls (sockets, `epoll`, `pthread`, `fcntl`, `getaddrinfo`), and raw-pointer/`memcpy` byte kernels. The DSL is a *memory-safe subset by design* — converting these would move unsafe code *into* the language built to exclude it, which is backwards. Keep them `@unsafe` C++; that boundary is the whole point.
+- **Compile-time type metaprogramming with no Rust spelling.** CRTP, `TypeList`/discriminant machinery, SFINAE conversion ctors, variadic factory *types*. (Note the asymmetry: template *functions* and *operators* frequently convert as free templates — §7.4; it's type-level metaprogramming that has no DSL form.)
+- **Third-party and generated wire types** (`extern "C"`, rpcgen output) — convert *at the edge* (§5's FFI note), never across the boundary.
+
+Everything else is done, convertible today, or gated on one identifiable transpiler feature. Treat that last set as the work queue — **not** the floor.
