@@ -88,15 +88,25 @@ fn shl(&mut self, v: Rhs) -> &mut Marshal { …; self } }`; templates via `impl<
    (guide §3). Container bodies (recurse `m << v.first << v.second`, element loops) go fully in DSL.
    So this converts the operator *interface* + recursion logic to DSL; it does NOT eliminate the
    ~D-category byte kernels underneath (those are genuine floor).
-2. **`impl Shl for Marshal` emits a MEMBER operator** (`Marshal::operator<<`), whereas the current
-   operators are **free** (`operator<<(Marshal&, const T&)`, one per type, defined near each type —
-   the §7.4 shim form). `m << v` resolves identically either way, but the DSL/member form **centralizes
-   every operator into Marshal's impl block** (Marshal must name every serializable RHS type). Rust has
-   no free-operator syntax, so keeping operators defined-near-their-type means keeping them free/hand-written.
-   → **Design decision needed:** centralize into `impl Shl for Marshal`/`Archive` (DSL, but couples Marshal
-   to all types) vs. keep the type-scattered ones as free shims. The Marshal-central scalar/container
-   operators (marshal.cpp ~495-630) are the clean win; type-specific ones (serializable.cpp) are the
-   coupling question.
+2. **`impl Shl<Rhs> for Marshal` emits a MEMBER operator** (`Marshal::operator<<(const Rhs&)`), and
+   **cross-file/orphan impls are NOT supported** (PROBED, `scratchpad/op_probe2.cpp`). The operator is
+   always `impl Shl<&Rhs> for Marshal` — the impl is on the LHS type (Marshal). If that impl lives in a
+   DIFFERENT DSL block than where `Marshal` is defined, the transpiler flags an **orphan impl** ("host
+   type lives in another module / TU") and **stubs it out under `#if 0`** — because C++ can't add a
+   member to a class from another TU, and the transpiler's free-fn fallback emits `this` (invalid outside
+   a member). So every operator must live in **Marshal's own DSL block** → centralized member operators
+   (Marshal names every serializable RHS type). This is a TRANSPILER limitation, not a Rust one (Rust's
+   orphan rule would allow `impl Shl<&Rhs> for Marshal` in Rhs's file since Marshal is crate-local).
+
+   → **Three options** (decision needed for the type-scattered operators):
+   - **A. Centralize** into `impl Shl<…>/Shr<…> for Marshal`/`Archive`. Full DSL, works today; couples
+     Marshal to every RHS type. Clean for the Marshal-central scalar/container ops (marshal.cpp ~495-630).
+   - **B. Keep type-scattered ops as free shims** (serializable.cpp) — hand-written, no coupling. Works today.
+   - **C. Transpiler feature (reusable):** make orphan operator-trait impls emit a real FREE operator
+     (`Marshal& operator<<(Marshal& self_, const Rhs&)`, receiver→first param, `this`→`self_`) instead of
+     a stubbed member. Valid C++ across TUs; lets `impl Shl<&Rhs> for Marshal` live next to Rhs. The
+     transpiler already emits partial scaffolding (`namespace std::ops::rusty_ext` fwd-decl) — the fix is
+     to complete it. This is the general "extension method / orphan impl" gap.
 
 ### Plan (next)
 
