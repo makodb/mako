@@ -146,27 +146,27 @@ inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 
 inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::UnsecuredFailure());
+    return reason == StepDownReason::UnsecuredFailure;
 }
 
 inline bool server_step_down_reason_is_secured_failure(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::SecuredFailure());
+    return reason == StepDownReason::SecuredFailure;
 }
 
 inline bool server_step_down_reason_is_higher_term(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::HigherTerm());
+    return reason == StepDownReason::HigherTerm;
 }
 
 inline bool server_commit_status_is_durable(CommitStatus status) {
-    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(CommitStatus::DURABLE);
+    return status == CommitStatus::DURABLE;
 }
 
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
-    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);
+    return index <= boundary;
 }
 
 inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
-    return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);
+    return index > boundary;
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 

@@ -314,6 +314,33 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(count) < rusty::detail::deref_if_pointer_like(quorum);',
             'return count < quorum;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::clone(StepDownReason::UnsecuredFailure);',
+            'return reason == StepDownReason::UnsecuredFailure;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::UnsecuredFailure());',
+            'return reason == StepDownReason::UnsecuredFailure;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::clone(StepDownReason::SecuredFailure);',
+            'return reason == StepDownReason::SecuredFailure;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::SecuredFailure());',
+            'return reason == StepDownReason::SecuredFailure;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::clone(StepDownReason::HigherTerm);',
+            'return reason == StepDownReason::HigherTerm;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::HigherTerm());',
+            'return reason == StepDownReason::HigherTerm;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(status) == rusty::clone(CommitStatus::DURABLE);',
+            'return status == CommitStatus::DURABLE;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);',
+            'return index <= boundary;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);',
+            'return index > boundary;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
