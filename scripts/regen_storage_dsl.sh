@@ -287,6 +287,15 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(ack_type) == (static_cast<uint64_t>(AckType::Durable));',
             'return ack_type == static_cast<uint64_t>(AckType::Durable);')
+        ln = ln.replace(
+            'return (rusty::detail::deref_if_pointer_like(drop_from) == rusty::detail::deref_if_pointer_like(from)) && (rusty::detail::deref_if_pointer_like(drop_to) == rusty::detail::deref_if_pointer_like(to));',
+            'return drop_from == from && drop_to == to;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(from_partition) != rusty::detail::deref_if_pointer_like(to_partition);',
+            'return from_partition != to_partition;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(envelope_to) == rusty::detail::deref_if_pointer_like(site);',
+            'return envelope_to == site;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

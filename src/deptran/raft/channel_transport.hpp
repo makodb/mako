@@ -137,16 +137,52 @@ inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
 }
 /*RUSTYCPP:GEN-END id=channel_transport.faults*/
 
+#if RUSTYCPP_RUST
+pub fn channel_faults_drop_matches(drop_from: u16,
+                                   drop_to: u16,
+                                   from: u16,
+                                   to: u16) -> bool {
+    drop_from == from && drop_to == to
+}
+
+pub fn channel_faults_partitions_block(from_partition: i32,
+                                       to_partition: i32) -> bool {
+    from_partition != to_partition
+}
+
+pub fn channel_envelope_matches_destination(envelope_to: u16,
+                                            site: u16) -> bool {
+    envelope_to == site
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.small_helpers version=1 rust_sha256=79f5eaf4cbb3e6137d5ee633b66a7a7ee99d2db35066a1c67b0df7e0cfc45173*/
+inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
+inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
+inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
+
+inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
+    return drop_from == from && drop_to == to;
+}
+
+inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
+    return from_partition != to_partition;
+}
+
+inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
+    return envelope_to == site;
+}
+/*RUSTYCPP:GEN-END id=channel_transport.small_helpers*/
+
 inline bool channel_faults_is_dropped(const ChannelFaults& faults,
                                       siteid_t from,
                                       siteid_t to) {
   for (auto& p : faults.dropped) {
-    if (p.first == from && p.second == to) return true;
+    if (channel_faults_drop_matches(p.first, p.second, from, to)) return true;
   }
   if (!faults.partitions.empty()) {
     auto pf = channel_faults_find_partition(faults, from);
     auto pt = channel_faults_find_partition(faults, to);
-    if (pf != pt) return true;
+    if (channel_faults_partitions_block(pf, pt)) return true;
   }
   return false;
 }
@@ -181,7 +217,7 @@ class ChannelSwitchboard {
   void send(Envelope env) {
     if (faults_.is_dropped(env.from, env.to)) return;
     for (auto& pair : senders_) {
-      if (pair.first == env.to) {
+      if (channel_envelope_matches_destination(env.to, pair.first)) {
         (void)pair.second.send(std::move(env));
         return;
       }
