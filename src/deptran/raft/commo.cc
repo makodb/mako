@@ -182,17 +182,11 @@ namespace janus
         fu->get_reply() >> res->followerTerm;
         fu->get_reply() >> res->followerLastLogIndex;
         fu->get_reply() >> res->followerAckType;
-        res->empty = !cmd.has_value();
+        res->empty = commo_append_entries_empty_from_cmd(cmd.has_value());
         // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
         // only set res->done if it's not a lost RPC
-        if (res->ok == false && res->followerTerm == 0 && res->followerLastLogIndex == 0)
-        {
-          res->done = false;
-        }
-        else
-        {
-          res->done = true;
-        }
+        res->done = commo_append_entries_done_from_reply(
+            res->ok, res->followerTerm, res->followerLastLogIndex);
       };
 
       if (!cmd.has_value())
@@ -656,7 +650,7 @@ namespace janus
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
         for (auto &pair : notify_restart_status_)
         {
-          if (pair.second == NotifyRestartStatus::PENDING)
+          if (commo_notify_restart_is_pending(pair.second))
           {
             pending_sites.push(pair.first);
           }
@@ -756,7 +750,7 @@ namespace janus
       std::lock_guard<std::mutex> lock(notify_restart_mtx_);
       for (auto &pair : notify_restart_status_)
       {
-        if (pair.second == NotifyRestartStatus::PENDING)
+        if (commo_notify_restart_is_pending(pair.second))
         {
           return true;
         }

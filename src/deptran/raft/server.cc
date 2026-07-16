@@ -1786,7 +1786,7 @@ void RaftServer::HeartbeatLoop() {
             // ack_type=0 means Memory ack (immediate response before fsync)
             // ack_type=1 means Durable ack (handled via AppendEntriesDurable RPC)
             // ==================================================================
-            if (resp.ack_type == 0) {  // Memory ack
+            if (commo_ack_type_is_memory(resp.ack_type)) {
               // Add follower to memoryAcks for all indices up to last_log_index
               for (uint64_t idx = 1; idx <= resp.last_log_index; ++idx) {
                 memoryAcks_[idx].insert(pending.follower_id);

@@ -263,6 +263,30 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH);',
             'return op == janus::ReplicatedDBOp::BATCH;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::PENDING);',
+            'return status == NotifyRestartStatus::PENDING;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::ACKNOWLEDGED);',
+            'return status == NotifyRestartStatus::ACKNOWLEDGED;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::DOWN);',
+            'return status == NotifyRestartStatus::DOWN;')
+        ln = ln.replace(
+            'return !rusty::detail::deref_if_pointer_like(has_cmd);',
+            'return !has_cmd;')
+        ln = ln.replace(
+            'return ((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(last_log_index) == static_cast<uint64_t>(0));',
+            'return ok == 0 && term == 0 && last_log_index == 0;')
+        ln = ln.replace(
+            'return !::commo_append_entries_reply_lost(std::move(ok), std::move(term), std::move(last_log_index));',
+            'return !commo_append_entries_reply_lost(ok, term, last_log_index);')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(ack_type) == (static_cast<uint64_t>(AckType::Memory));',
+            'return ack_type == static_cast<uint64_t>(AckType::Memory);')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(ack_type) == (static_cast<uint64_t>(AckType::Durable));',
+            'return ack_type == static_cast<uint64_t>(AckType::Durable);')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF

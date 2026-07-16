@@ -58,6 +58,33 @@ inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN() { return NotifyR
 inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING() { return NotifyRestartStatus::PENDING; }
 /*RUSTYCPP:GEN-END id=commo.1*/
 
+#if RUSTYCPP_RUST
+pub fn commo_notify_restart_is_pending(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::PENDING
+}
+
+pub fn commo_notify_restart_is_acknowledged(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::ACKNOWLEDGED
+}
+
+pub fn commo_notify_restart_is_down(status: NotifyRestartStatus) -> bool {
+    status == NotifyRestartStatus::DOWN
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.notify_restart_helpers version=1 rust_sha256=4982eba0239b313218739f794edbf2bf5eb185851fb1bbca410230298075554c*/
+inline bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::PENDING;
+}
+
+inline bool commo_notify_restart_is_acknowledged(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::ACKNOWLEDGED;
+}
+
+inline bool commo_notify_restart_is_down(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::DOWN;
+}
+/*RUSTYCPP:GEN-END id=commo.notify_restart_helpers*/
+
 // @unsafe - inherits from non-@interface base QuorumEvent and tracks voters
 // behind a std::mutex; keep hand-written until the event hierarchy migrates.
 class RaftVoteQuorumEvent: public QuorumEvent {
@@ -160,6 +187,41 @@ inline SendAppendEntriesResults send_append_entries_results_defaults() {
   return results;
 }
 
+#if RUSTYCPP_RUST
+pub fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub fn commo_append_entries_reply_lost(ok: u64,
+                                       term: u64,
+                                       last_log_index: u64) -> bool {
+    ok == 0 && term == 0 && last_log_index == 0
+}
+
+pub fn commo_append_entries_done_from_reply(ok: u64,
+                                            term: u64,
+                                            last_log_index: u64) -> bool {
+    !commo_append_entries_reply_lost(ok, term, last_log_index)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=99dfd0b1a3cd17a6af5e8a87efebc27952bf26da06424da6c76ba5ebb557ccf0*/
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd) {
+    return !has_cmd;
+}
+
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return ok == 0 && term == 0 && last_log_index == 0;
+}
+
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return !commo_append_entries_reply_lost(ok, term, last_log_index);
+}
+/*RUSTYCPP:GEN-END id=commo.append_entries_result_helpers*/
+
 /**
  * AckType - Speculative Replication acknowledgment type
  *
@@ -185,6 +247,28 @@ enum class AckType : uint64_t {
 inline constexpr AckType AckType_Memory() { return AckType::Memory; }
 inline constexpr AckType AckType_Durable() { return AckType::Durable; }
 /*RUSTYCPP:GEN-END id=commo.ack_type*/
+
+#if RUSTYCPP_RUST
+pub fn commo_ack_type_is_memory(ack_type: u64) -> bool {
+    ack_type == AckType::Memory as u64
+}
+
+pub fn commo_ack_type_is_durable(ack_type: u64) -> bool {
+    ack_type == AckType::Durable as u64
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.ack_type_helpers version=1 rust_sha256=7ee87e627fd2c0d1ba0229b3295f4b88bc77aeb18aa6195d41e0457405ac3318*/
+inline bool commo_ack_type_is_memory(uint64_t ack_type);
+inline bool commo_ack_type_is_durable(uint64_t ack_type);
+
+inline bool commo_ack_type_is_memory(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Memory);
+}
+
+inline bool commo_ack_type_is_durable(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Durable);
+}
+/*RUSTYCPP:GEN-END id=commo.ack_type_helpers*/
 
 // Response data for async AppendEntries RPC.
 // Uses shared_ptr semantics to ensure memory validity when callback fires.
