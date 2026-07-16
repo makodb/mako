@@ -113,6 +113,63 @@ inline constexpr CommitStatus CommitStatus_DURABLE() { return CommitStatus::DURA
 inline constexpr CommitStatus CommitStatus_ROLLEDBACK() { return CommitStatus::ROLLEDBACK; }
 /*RUSTYCPP:GEN-END id=server.2*/
 
+// @safe - pure enum/index predicates over copied values. RaftServer owns the
+// locks, callbacks, persistence, and state transitions; these helpers only
+// name scalar decisions used by those hand-C++ paths.
+#if RUSTYCPP_RUST
+pub fn server_step_down_reason_is_unsecured_failure(reason: StepDownReason) -> bool {
+    reason == StepDownReason::UnsecuredFailure
+}
+
+pub fn server_step_down_reason_is_secured_failure(reason: StepDownReason) -> bool {
+    reason == StepDownReason::SecuredFailure
+}
+
+pub fn server_step_down_reason_is_higher_term(reason: StepDownReason) -> bool {
+    reason == StepDownReason::HigherTerm
+}
+
+pub fn server_commit_status_is_durable(status: CommitStatus) -> bool {
+    status == CommitStatus::DURABLE
+}
+
+pub fn server_log_index_at_or_below(index: u64, boundary: u64) -> bool {
+    index <= boundary
+}
+
+pub fn server_log_index_above(index: u64, boundary: u64) -> bool {
+    index > boundary
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=a7f26520868ac9a1f57dade3a490a26a358b5d0b06244dc129f38e4802522dce*/
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
+inline bool server_log_index_above(uint64_t index, uint64_t boundary);
+
+inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
+    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::UnsecuredFailure());
+}
+
+inline bool server_step_down_reason_is_secured_failure(StepDownReason reason) {
+    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::SecuredFailure());
+}
+
+inline bool server_step_down_reason_is_higher_term(StepDownReason reason) {
+    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::HigherTerm());
+}
+
+inline bool server_commit_status_is_durable(CommitStatus status) {
+    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(CommitStatus::DURABLE);
+}
+
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
+    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);
+}
+
+inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
+    return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);
+}
+/*RUSTYCPP:GEN-END id=server.scalar_helpers*/
+
 // @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 //
 // polymorphic command fields

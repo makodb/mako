@@ -48,7 +48,7 @@ pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {
     received >= needed
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_quorum_reached version=1 rust_sha256=669720209badaef1012460f208c3d1747ec85953cc8d482fc029be400f873699*/
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_reached version=1 rust_sha256=4ff716e366ead197cfd9ce2e06b793adbdf3f2b584d698677a0c0fc5ecc895cd*/
 inline bool raft_quorum_reached(int32_t received, int32_t needed);
 
 inline bool raft_quorum_reached(int32_t received, int32_t needed) {
@@ -72,7 +72,7 @@ pub fn raft_quorum_count_below(count: usize, quorum: usize) -> bool {
     count < quorum
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_quorum_count_helpers version=1 rust_sha256=01f7d5ca71f0af6f14f62d91341c869fcd10baef83d1f5068dc7f02f01997ae4*/
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_count_helpers version=1 rust_sha256=105d43fa5ff3bdbbcdf702c82053586a047fd87033fe67606c1f2a1642b626ef*/
 inline size_t raft_quorum_majority_count(size_t total);
 inline bool raft_quorum_count_reached(size_t count, size_t quorum);
 inline bool raft_quorum_count_below(size_t count, size_t quorum);

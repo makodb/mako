@@ -3380,7 +3380,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   size_t entries_affected = 0;
   for (auto& entry : memoryAcks_) {
     uint64_t idx = entry.first;
-    if (idx > securedLogIndex_) {
+    if (server_log_index_above(idx, securedLogIndex_)) {
       if (entry.second.erase(restarted_site_id) > 0) {
         entries_affected++;
       }
@@ -3437,12 +3437,10 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
 // ============================================================================
 
 static const char* StepDownReasonToString(StepDownReason reason) {
-  switch (reason) {
-    case StepDownReason::UnsecuredFailure: return "UnsecuredFailure";
-    case StepDownReason::SecuredFailure: return "SecuredFailure";
-    case StepDownReason::HigherTerm: return "HigherTerm";
-    default: return "Unknown";
-  }
+  if (server_step_down_reason_is_unsecured_failure(reason)) return "UnsecuredFailure";
+  if (server_step_down_reason_is_secured_failure(reason)) return "SecuredFailure";
+  if (server_step_down_reason_is_higher_term(reason)) return "HigherTerm";
+  return "Unknown";
 }
 
 void RaftServer::stepDown(StepDownReason reason) {
@@ -3481,14 +3479,14 @@ void RaftServer::RegisterCommitCallback(uint64_t index,
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // If already speculatively committed, invoke immediately
-  if (index <= specCommitIndex_) {
+  if (server_log_index_at_or_below(index, specCommitIndex_)) {
     Log_debug("[SPEC-CALLBACK] Index %lu already spec-committed, notifying SPECULATIVE",
               index);
     callback(CommitStatus::SPECULATIVE);
   }
 
   // If already durably committed, invoke immediately
-  if (securedLeader_ && index <= securedLogIndex_) {
+  if (securedLeader_ && server_log_index_at_or_below(index, securedLogIndex_)) {
     Log_debug("[SPEC-CALLBACK] Index %lu already durable-committed, notifying DURABLE",
               index);
     callback(CommitStatus::DURABLE);
@@ -3513,7 +3511,7 @@ void RaftServer::NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status
       it->second(status);
 
       // If DURABLE, remove callback (fully committed)
-      if (status == CommitStatus::DURABLE) {
+      if (server_commit_status_is_durable(status)) {
         pendingCallbacks_.erase(it);
       }
     }
@@ -3530,30 +3528,24 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
            StepDownReasonToString(reason), pendingCallbacks_.size(),
            commitIndex, specCommitIndex_, securedLogIndex_, lastLogIndex);
 
-  switch (reason) {
-    case StepDownReason::UnsecuredFailure:
-      // Lost speculative quorum while unsecured leader.
-      // All current-term entries are suspect -> rollback everything
-      // from commitIndex + 1 to lastLogIndex.
-      Log_info("[SPEC-CALLBACK] UnsecuredFailure: rolling back entries (%lu, %lu]",
-               commitIndex, lastLogIndex);
-      NotifyCallbacks(commitIndex, lastLogIndex, CommitStatus::ROLLEDBACK);  // @unsafe
-      break;
-
-    case StepDownReason::SecuredFailure:
-      // Lost quorum but was secured leader. Only unsecured entries
-      // (above securedLogIndex_) are suspect -> rollback from
-      // securedLogIndex_ + 1 to specCommitIndex_.
-      Log_info("[SPEC-CALLBACK] SecuredFailure: rolling back entries (%lu, %lu]",
-               securedLogIndex_, specCommitIndex_);
-      NotifyCallbacks(securedLogIndex_, specCommitIndex_, CommitStatus::ROLLEDBACK);  // @unsafe
-      break;
-
-    case StepDownReason::HigherTerm:
-      // Saw higher term from another server. Entries may still be
-      // valid under the new leader - don't send rollback notifications.
-      Log_info("[SPEC-CALLBACK] HigherTerm step-down - no automatic rollback");
-      break;
+  if (server_step_down_reason_is_unsecured_failure(reason)) {
+    // Lost speculative quorum while unsecured leader.
+    // All current-term entries are suspect -> rollback everything
+    // from commitIndex + 1 to lastLogIndex.
+    Log_info("[SPEC-CALLBACK] UnsecuredFailure: rolling back entries (%lu, %lu]",
+             commitIndex, lastLogIndex);
+    NotifyCallbacks(commitIndex, lastLogIndex, CommitStatus::ROLLEDBACK);  // @unsafe
+  } else if (server_step_down_reason_is_secured_failure(reason)) {
+    // Lost quorum but was secured leader. Only unsecured entries
+    // (above securedLogIndex_) are suspect -> rollback from
+    // securedLogIndex_ + 1 to specCommitIndex_.
+    Log_info("[SPEC-CALLBACK] SecuredFailure: rolling back entries (%lu, %lu]",
+             securedLogIndex_, specCommitIndex_);
+    NotifyCallbacks(securedLogIndex_, specCommitIndex_, CommitStatus::ROLLEDBACK);  // @unsafe
+  } else if (server_step_down_reason_is_higher_term(reason)) {
+    // Saw higher term from another server. Entries may still be
+    // valid under the new leader - don't send rollback notifications.
+    Log_info("[SPEC-CALLBACK] HigherTerm step-down - no automatic rollback");
   }
 
   // Clear ALL pending callbacks regardless of reason (we're no longer leader)
