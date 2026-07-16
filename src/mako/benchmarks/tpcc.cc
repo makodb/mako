@@ -2281,6 +2281,21 @@ tpcc_worker::txn_new_order()
 #else
   const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
 
+  // Departed-home gate (mirrors txn_delivery / txn_order_status /
+  // txn_stock_level). new_order's customer, district and warehouse are all
+  // the HOME warehouse; there is no "remote leg" for its own customer. Once
+  // this warehouse migrates off the shard, tbl_customer(warehouse_id) is the
+  // LOCAL index whose rows are tombstoned at cutover -- reading one back and
+  // Decode()-ing it runs the varint reader off the end of the moved marker
+  // into poison and aborts the whole process (SIGABRT in read_uvint32_slow).
+  // That crash killed the migration SOURCE right after the forward pass and
+  // left the ping-pong return leg with no destination. A single-home txn
+  // belongs wholesale at the new owner, so skip it here -- the bench's
+  // stand-in for client rerouting.
+  if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
+                        BenchmarkConfig::getInstance().getShardIndex()))
+    return txn_result(true, 0);
+
   // if (BenchmarkConfig::getInstance().getCluster().compare("learner")==0){
   //  scan_entire_warehouses(warehouse_id);
   // }
@@ -2573,8 +2588,11 @@ tpcc_worker::txn_delivery()
   // scan, not multi-row range scans (a proxy tx_scan reads a clean EMPTY,
   // and the workload panics on the must-find miss; observed live). This is
   // the bench's stand-in for client rerouting: new requests for a moved
-  // warehouse belong at its new owner. Point-op txns (payment, new_order)
-  // keep running against the moved warehouse through the remote legs.
+  // warehouse belong at its new owner. new_order and payment carry the same
+  // gate at their own tops -- their home customer read is the LOCAL customer
+  // index, tombstoned after cutover, so they cannot keep running locally
+  // either (Decode of a tombstoned customer aborts the process; observed as
+  // a SIGABRT on the migration source that broke the ping-pong return leg).
   if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
                         BenchmarkConfig::getInstance().getShardIndex()))
     return txn_result(true, 0);
@@ -2868,6 +2886,14 @@ if (TThread::get_is_micro()) {
   return txn_payment_micro();
 }
   const uint warehouse_id = PickWarehouseId(r, warehouse_id_start, warehouse_id_end);
+  // Departed-home gate (mirrors txn_delivery / txn_new_order): payment updates
+  // the home warehouse+district and (85%) reads the home customer via the local
+  // tbl_customer(warehouse_id); after this warehouse departs, those rows are
+  // tombstoned and Decode()-ing one aborts the process (SIGABRT in the varint
+  // reader). The whole txn reroutes to the new owner, so skip it here.
+  if (!WarehouseInShard(WarehouseLocal2Global(warehouse_id),
+                        BenchmarkConfig::getInstance().getShardIndex()))
+    return txn_result(true, 0);
   const uint districtID = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   uint customerDistrictID, customerWarehouseID;
   bool allLocal = true;  // not on the local warehouse, but it's possible still on the same shard server
