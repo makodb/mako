@@ -102,6 +102,14 @@ fn shl(&mut self, v: Rhs) -> &mut Marshal { …; self } }`; templates via `impl<
    - **A. Centralize** into `impl Shl<…>/Shr<…> for Marshal`/`Archive`. Full DSL, works today; couples
      Marshal to every RHS type. Clean for the Marshal-central scalar/container ops (marshal.cpp ~495-630).
    - **B. Keep type-scattered ops as free shims** (serializable.cpp) — hand-written, no coupling. Works today.
+   - **(Rejected) Flip the operand order** — `impl Shl<&mut Marshal> for ThatType` (impl on the VALUE
+     type) emits a clean member `ThatType::operator<<(Marshal&)` in ThatType's own block (probed,
+     `op_probe3.cpp` — NO orphan problem). But it gives `value << marshal`, which **breaks chaining**:
+     `a << m << b` parses as `(a<<m) << b` = `Marshal << b`, forcing a marshal-left op (orphan again).
+     Serialization is written `m << a << b << c` (stream-on-left, so each `<<` returns the marshal for
+     the next) — chaining REQUIRES the stream as the consistent left operand → `impl Shl for Marshal`.
+     Also inverts the universal `cout << x` / `cin >> x` convention and is inconsistent with the
+     marshal-central scalar/container ops. Not viable for a chaining API.
    - **C. Transpiler feature (reusable):** make orphan operator-trait impls emit a real FREE operator
      (`Marshal& operator<<(Marshal& self_, const Rhs&)`, receiver→first param, `this`→`self_`) instead of
      a stubbed member. Valid C++ across TUs; lets `impl Shl<&Rhs> for Marshal` live next to Rhs. The
