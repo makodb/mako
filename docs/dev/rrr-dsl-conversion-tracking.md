@@ -49,6 +49,17 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 1. **`Option<V&>` reference-lowering** — unblocks **487 lines in client.cpp alone** (biggest single lever).
 2. **`&str`-literal → `const char*` return lowering** — unblocks ~11 identical `*_to_string` enum switches (~150 lines) at once.
 
+## ⚠ Phase 6+ BLOCKED in this local env: `bin/rpcgen` has no `yapps`
+
+`bin/rpcgen` (which regenerates the committed stubs and backs `test_rpc_rpcgen_*`) imports `yapps.runtime`.
+The vendored `src/rrr/pylib/yapps` here was untracked stale `.pyc`-only bytecode (removed); `yapps` is NOT
+in git and `pip install yapps2` does not provide `yapps.runtime`. So **the stubs cannot be regenerated and
+the rpcgen self-tests cannot run locally** — CI has a working yapps (that's how the committed stubs exist).
+The 12 call-site emits in lang_cpp.py were flipped and REVERTED (can't regen → would drift vs committed
+`.h`). **To execute Phase 6, use a yapps-capable env (CI, or restore yapps):** apply the call-site flip
+below to lang_cpp.py, run `bin/rpcgen --cpp --python` on all 4 `.rpc`, update the `rpcgen_typed_structs_test.py`
+exact-text asserts, run `test_rpc_rpcgen_typed_structs`/`_compile`, then PR CI for runtime.
+
 ## Phase 6 generator flip — complete emit-site map (turnkey)
 
 `src/rrr/pylib/simplerpcgen/lang_cpp.py` — flip these CALL-SITE emits (`<<`→`rrr::Serialize_::serialize(x, m)`,
