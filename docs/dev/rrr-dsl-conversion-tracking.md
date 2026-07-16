@@ -53,6 +53,9 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-16 — **Phase 2b DONE (`7bd1585c`)**: v32/v64 + std::string leaves relocated to hand-written
+  `Serialize_`/`Deserialize_` kernels (char[]/sparseint bodies; DSL char/int8_t friction), operators forward.
+  **LEAF LAYER COMPLETE** — all 13 write + 12 read leaf operators are forwarders. Build green, 2/2 tests.
 - 2026-07-16 — **Phase 2a DONE (`d2bbd77e`)**: `impl Serialize/Deserialize` for the 8 scalar leaves
   (i8/i16/i64/u8/u16/u32/u64/f64), `unsafe{}` byte kernels, operators forward. Build green, 2/2 tests.
 - 2026-07-16 — **Phase 1 DONE (`14da1093`)**: `Serialize`/`Deserialize` DSL traits + `read_or_abort` +
