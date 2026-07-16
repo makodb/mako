@@ -1443,36 +1443,43 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint32_t v) { Seri
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint64_t v) { Serialize_::serialize(v, ar); return ar; }
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { Serialize_::serialize(v, ar); return ar; }
 
-// ---- Variable-length integer encoding (SparseInt). --------------------
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) {
+// ---- Serde-trait leaf kernels: varints + strings. Hand-written byte
+// kernels (like the containers below) — the DSL's char/int8_t distinction
+// makes sparseint_dump/char[] awkward as DSL bodies. operator<< forwards here.
+namespace Serialize_ {
+inline void serialize(const rrr::v32& self_, BinaryWriteArchive& ar) {
   char buf[5];
-  size_t bsize = rrr::sparseint_dump(v.get(), buf);
+  size_t bsize = rrr::sparseint_dump(self_.get(), buf);
   ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
-  return ar;
 }
-
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v64 v) {
+inline void serialize(const rrr::v64& self_, BinaryWriteArchive& ar) {
   char buf[9];
-  size_t bsize = rrr::sparseint_dump(v.get(), buf);
+  size_t bsize = rrr::sparseint_dump(self_.get(), buf);
   ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
-  return ar;
 }
+inline void serialize(std::string_view self_, BinaryWriteArchive& ar) {
+  rrr::v64 v_len{static_cast<rrr::i64>(self_.size())};
+  serialize(v_len, ar);
+  if (self_.size() > 0) {
+    ar.write_bytes(reinterpret_cast<const uint8_t*>(self_.data()), self_.size());
+  }
+}
+inline void serialize(const std::string& self_, BinaryWriteArchive& ar) {
+  serialize(std::string_view{self_}, ar);
+}
+}  // namespace Serialize_
+
+// ---- Variable-length integer encoding (SparseInt). --------------------
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) { Serialize_::serialize(v, ar); return ar; }
+
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v64 v) { Serialize_::serialize(v, ar); return ar; }
 
 // ---- Variable-length byte sequences. ----------------------------------
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, std::string_view s) {
-  rrr::v64 v_len{static_cast<rrr::i64>(s.size())};
-  ar << v_len;
-  if (s.size() > 0) {
-    ar.write_bytes(reinterpret_cast<const uint8_t*>(s.data()), s.size());
-  }
-  return ar;
-}
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, std::string_view s) { Serialize_::serialize(s, ar); return ar; }
 
 // std::string is a convenience overload — same wire format as
 // string_view (length-prefixed bytes).
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::string& s) {
-  return ar << std::string_view{s};
-}
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::string& s) { Serialize_::serialize(s, ar); return ar; }
 
 // ---- Composites. ------------------------------------------------------
 // std::pair: write first then second, no length prefix (each side
@@ -2466,43 +2473,47 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { Deser
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { Deserialize_::deserialize(v, ar); return ar; }
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { Deserialize_::deserialize(v, ar); return ar; }
 
-// ---- Variable-length integer encoding (SparseInt). --------------------
-// SparseInt's first byte determines the total length; we peek it,
-// read the remaining bytes, then decode.
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) {
+// ---- Serde-trait leaf kernels (read side): varints + strings. ----------
+namespace Deserialize_ {
+inline void deserialize(rrr::v32& self_, BinaryReadArchive& ar) {
   char buf[5];
   verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
     verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
-  v.set(rrr::sparseint_load_i32(buf));
-  return ar;
+  self_.set(rrr::sparseint_load_i32(buf));
 }
-
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) {
+inline void deserialize(rrr::v64& self_, BinaryReadArchive& ar) {
   char buf[9];
   verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
     verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
   }
-  v.set(rrr::sparseint_load_i64(buf));
-  return ar;
+  self_.set(rrr::sparseint_load_i64(buf));
 }
+inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  auto len = static_cast<size_t>(v_len.get());
+  self_.resize(len);
+  if (len > 0) {
+    // @unsafe { writing into string's internal buffer via &self_[0] }
+    verify(ar.read_exact(reinterpret_cast<uint8_t*>(&self_[0]), len));
+  }
+}
+}  // namespace Deserialize_
+
+// ---- Variable-length integer encoding (SparseInt). --------------------
+// SparseInt's first byte determines the total length; we peek it,
+// read the remaining bytes, then decode.
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) { Deserialize_::deserialize(v, ar); return ar; }
+
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Variable-length byte sequences. ----------------------------------
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  auto len = static_cast<size_t>(v_len.get());
-  s.resize(len);
-  if (len > 0) {
-    // @unsafe { writing into string's internal buffer via &s[0] }
-    verify(ar.read_exact(reinterpret_cast<uint8_t*>(&s[0]), len));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) { Deserialize_::deserialize(s, ar); return ar; }
 
 // ---- Composites. ------------------------------------------------------
 template<class T1, class T2>
