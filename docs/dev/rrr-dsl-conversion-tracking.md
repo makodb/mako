@@ -53,6 +53,17 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-16 — **Phase 3 DONE (`c2286fe6`)**: generic `serialize`/`deserialize` catch-all bridge
+  (`template<T> serialize(const T&, ar){ ar << t; }`). ★ TRAIT MACHINERY NOW FUNCTIONALLY COMPLETE —
+  `serialize(x,ar)`/`deserialize(x,ar)` resolve for EVERY type (specific overload if migrated, else the
+  bridge → its operator). Overload resolution unchanged for existing forwarders. Build green, 2/2 tests.
+  ★ Containers are NOT physically relocated — reached via the bridge; they get relocated at Phase 8.
+  ★ REMAINING (all PR-CI-gated, mechanical): Phase 6 generator flip (`lang_cpp.py` emit `serialize(field,ar)`
+  instead of `ar<<field` in emit_struct/emit_marshaled_typed_struct/proxy request+reply emitters; regen
+  rcc_rpc.h/benchmark_service.h/network.h; update 2 rpcgen self-tests) → Phase 7 ~875 hand-written call-site
+  sweep (`m<<x`→`serialize(x,m)`, chains sequence-split, get_reply()>> rvalue-guard care) → Phase 8 delete
+  operators + relocate containers to trait recursion. From here it's a mechanical `<<`→`serialize` sweep,
+  not new machinery.
 - 2026-07-16 — **Phase 2b DONE (`7bd1585c`)**: v32/v64 + std::string leaves relocated to hand-written
   `Serialize_`/`Deserialize_` kernels (char[]/sparseint bodies; DSL char/int8_t friction), operators forward.
   **LEAF LAYER COMPLETE** — all 13 write + 12 read leaf operators are forwarders. Build green, 2/2 tests.
