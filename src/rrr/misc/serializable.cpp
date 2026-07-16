@@ -649,6 +649,129 @@ void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
 }
 /*RUSTYCPP:GEN-END id=serializable.write_archive*/
 
+// ---- Serde-style Serialize trait (wire migration). --------------------
+// Value-side serialization: each type implements how to write itself into
+// a BinaryWriteArchive. Lowers to a UFCS free fn
+// `Serialize_::serialize(const T&, BinaryWriteArchive&)` (static dispatch by
+// overload, no orphan rule, impl-in-own-file). The `operator<<` overloads
+// below forward here, so the byte kernel lives in exactly one place and
+// byte-compat is automatic during the operator→trait coexistence.
+#if RUSTYCPP_RUST
+pub trait Serialize {
+    fn serialize(&self, ar: &mut BinaryWriteArchive);
+}
+impl Serialize for i32 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        unsafe {
+            let p: *const u8 = (self as *const i32) as *const u8;
+            ar.write_bytes(p, std::mem::size_of::<i32>());
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=258fb6afd50f55324028407e30a34f658b4852b1b712bb43d52cc0610fe60cbc*/
+// Extension trait free-function forward declarations
+namespace rusty_ext {
+    void serialize(const int32_t& self_, BinaryWriteArchive& ar);
+
+}
+
+
+namespace Serialize_ {
+    void serialize(const int32_t& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+class Serialize {
+public:
+    virtual ~Serialize() noexcept(false) {}
+    virtual void serialize(BinaryWriteArchive& ar) const = 0;
+    Serialize(const Serialize&) = delete;
+    Serialize& operator=(const Serialize&) = delete;
+    Serialize(Serialize&&) = delete;
+    Serialize& operator=(Serialize&&) = delete;
+protected:
+    Serialize() = default;
+};
+
+template <class U> class SerializeAdapter;
+template <class U> class SerializeAdapterRef;
+template <class U> class SerializeAdapterRefMut;
+
+// TODO orphan impl: methods for `i32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i32
+void serialize(BinaryWriteArchive& ar) const {
+    // @unsafe
+    {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&(*this))));
+        ar.write_bytes(p, rusty::mem::size_of<int32_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// Extension trait Serialize lowered to rusty_ext:: free functions
+namespace rusty_ext {
+    void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+}
+
+template <>
+class SerializeAdapter<int32_t> final : public Serialize {
+    int32_t value_;
+public:
+    explicit SerializeAdapter(int32_t v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<int32_t> final : public Serialize {
+    const int32_t& value_;
+public:
+    explicit SerializeAdapterRef(const int32_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<int32_t> final : public Serialize {
+    int32_t& value_;
+public:
+    explicit SerializeAdapterRefMut(int32_t& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&self_)));
+            ar.write_bytes(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+}
+/*RUSTYCPP:GEN-END id=serializable.serialize_trait*/
+
 // ---- Fixed-width primitives. ------------------------------------------
 // Each scalar's byte representation is `reinterpret_cast<const
 // uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
@@ -656,7 +779,7 @@ void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
 // hid it behind implicit conversion).
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int8_t v)   { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int16_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int32_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int32_t v)  { Serialize_::serialize(v, ar); return ar; }  // forwards to impl Serialize for i32
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int64_t v)  { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint8_t v)  { ar.write_bytes(&v, sizeof(v)); return ar; }
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint16_t v) { ar.write_bytes(reinterpret_cast<const uint8_t*>(&v), sizeof(v)); return ar; }
@@ -851,20 +974,31 @@ impl BinaryReadArchive {
     fn read_exact(&mut self, p: *mut u8, n: usize) -> bool {
         bra_read_exact(self, p, n)
     }
+    // Read exactly n bytes or abort — the operator>> truncation contract
+    // (short reads at this layer are programming errors, not recoverable).
+    // The DSL leaf Deserialize impls call this so the verify() lives once.
+    fn read_or_abort(&mut self, p: *mut u8, n: usize) {
+        verify(self.read_exact(p, n));
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.read_archive version=1 rust_sha256=374c7bfbe6fb7868add3bb9adfab547b3eef450e27c96acaf02928770b62b47f*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.read_archive version=1 rust_sha256=59c8686129a09ffcb6f6fb74eb086ff01f9ea8bb79f11e1078df41d7bc82ea3b*/
 struct BinaryReadArchive;
 
 struct BinaryReadArchive {
     SourceProxy source_;
 
     bool read_exact(uint8_t* p, size_t n);
+    void read_or_abort(uint8_t* p, size_t n);
 };
 
 
 bool BinaryReadArchive::read_exact(uint8_t* p, size_t n) {
     return bra_read_exact((*this), p, std::move(n));
+}
+
+void BinaryReadArchive::read_or_abort(uint8_t* p, size_t n) {
+    verify(this->read_exact(p, std::move(n)));
 }
 /*RUSTYCPP:GEN-END id=serializable.read_archive*/
 
@@ -883,6 +1017,128 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
   return got == n;
 }
 
+// ---- Serde-style Deserialize trait (wire migration). ------------------
+// Value-side deserialization: each type reads itself from a
+// BinaryReadArchive, mutating in place (`&mut self`, NOT `-> Self`, so
+// container reads keep the default-construct-then-read-into shape). Lowers
+// to a UFCS free fn `Deserialize_::deserialize(T&, BinaryReadArchive&)`.
+// The `operator>>` overloads below forward here.
+#if RUSTYCPP_RUST
+pub trait Deserialize {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive);
+}
+impl Deserialize for i32 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        unsafe {
+            let p: *mut u8 = (self as *mut i32) as *mut u8;
+            ar.read_or_abort(p, std::mem::size_of::<i32>());
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=3bd31ad77ef828f4ed11414d9ddfa3f830aa6ca0868a39c7ec6d14f6a95d753c*/
+// Extension trait free-function forward declarations
+namespace rusty_ext {
+    void deserialize(int32_t& self_, BinaryReadArchive& ar);
+
+}
+
+
+namespace Deserialize_ {
+    void deserialize(int32_t& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+class Deserialize {
+public:
+    virtual ~Deserialize() noexcept(false) {}
+    virtual void deserialize(BinaryReadArchive& ar) = 0;
+    Deserialize(const Deserialize&) = delete;
+    Deserialize& operator=(const Deserialize&) = delete;
+    Deserialize(Deserialize&&) = delete;
+    Deserialize& operator=(Deserialize&&) = delete;
+protected:
+    Deserialize() = default;
+};
+
+template <class U> class DeserializeAdapter;
+template <class U> class DeserializeAdapterRef;
+template <class U> class DeserializeAdapterRefMut;
+
+// TODO orphan impl: methods for `i32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for i32
+void deserialize(BinaryReadArchive& ar) {
+    // @unsafe
+    {
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&(*this)))));
+        ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
+    }
+}
+#endif  // patcher: end orphan-impl stub
+
+// Extension trait Deserialize lowered to rusty_ext:: free functions
+namespace rusty_ext {
+    void deserialize(int32_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+}
+
+template <>
+class DeserializeAdapter<int32_t> final : public Deserialize {
+    int32_t value_;
+public:
+    explicit DeserializeAdapter(int32_t v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<int32_t> final : public Deserialize {
+    const int32_t& value_;
+public:
+    explicit DeserializeAdapterRef(const int32_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<int32_t> final : public Deserialize {
+    int32_t& value_;
+public:
+    explicit DeserializeAdapterRefMut(int32_t& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(int32_t& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        // @unsafe
+        {
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&self_))));
+            ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
+        }
+    }
+
+}
+/*RUSTYCPP:GEN-END id=serializable.deserialize_trait*/
+
 // ---- Fixed-width primitives. ------------------------------------------
 // Each operator>> verifies the read produced sizeof(T) bytes; on
 // truncation it aborts via `verify` (matches the existing
@@ -890,7 +1146,7 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
 // programming errors at this layer, not recoverable conditions).
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { Deserialize_::deserialize(v, ar); return ar; }  // forwards to impl Deserialize for i32
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { verify(ar.read_exact(reinterpret_cast<uint8_t*>(&v), sizeof(v))); return ar; }
