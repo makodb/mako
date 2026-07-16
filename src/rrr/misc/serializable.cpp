@@ -1467,6 +1467,15 @@ inline void serialize(std::string_view self_, BinaryWriteArchive& ar) {
 inline void serialize(const std::string& self_, BinaryWriteArchive& ar) {
   serialize(std::string_view{self_}, ar);
 }
+// Generic bridge: any type is trait-serializable. A migrated type resolves to
+// its specific (more-specialized) overload above; anything else falls through
+// to its operator<< here. This is what lets `serialize(field, ar)` work for
+// EVERY field type (containers, polymorphic messages, un-migrated user structs)
+// during the operator->trait coexistence — the enabler for the generator flip.
+// (At Phase 8, when operators are deleted, every type has a specific overload,
+// so this bridge is dropped.)
+template<typename T>
+inline void serialize(const T& v, BinaryWriteArchive& ar) { ar << v; }
 }  // namespace Serialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
@@ -2503,6 +2512,9 @@ inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
     verify(ar.read_exact(reinterpret_cast<uint8_t*>(&self_[0]), len));
   }
 }
+// Generic bridge (read side): mirror of the serialize catch-all.
+template<typename T>
+inline void deserialize(T& v, BinaryReadArchive& ar) { ar >> v; }
 }  // namespace Deserialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
