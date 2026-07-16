@@ -40,6 +40,20 @@
 namespace janus {
 namespace raft {
 
+#if RUSTYCPP_RUST
+#[rust_name = "raft_quorum_reached"]
+pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {
+    received >= needed
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_quorum_reached version=1 rust_sha256=669720209badaef1012460f208c3d1747ec85953cc8d482fc029be400f873699*/
+inline bool raft_quorum_reached(int32_t received, int32_t needed);
+
+inline bool raft_quorum_reached(int32_t received, int32_t needed) {
+    return received >= needed;
+}
+/*RUSTYCPP:GEN-END id=raft_quorum_reached*/
+
 template <typename Reply>
 class RaftQuorum {
  public:
@@ -71,7 +85,7 @@ class RaftQuorum {
     int n = n_received_.fetch_add(
                 1, ::rusty::sync::atomic::Ordering::AcqRel) +
             1;
-    if (n >= n_needed_) {
+    if (raft_quorum_reached(n, n_needed_)) {
       // @unsafe { rrr::IntEvent::set bumps value_ and triggers Event::test;
       //           multiple sets past the threshold are idempotent because
       //           is_ready() / status_ stays terminal once fired. }

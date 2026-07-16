@@ -83,6 +83,9 @@ FILES=(
   # Raft in-process test transport fault state; channel workers/adapters stay
   # hand-C++ because they own closures, channels, and blocking worker loops.
   src/deptran/raft/channel_transport.hpp
+  # Raft quorum threshold predicate only; atomics, mutexes, and rrr::IntEvent
+  # wait/wake machinery stay hand-C++.
+  src/deptran/raft/quorum.hpp
   # Raft async AppendEntries response value only; RaftCommo and callback/Future
   # lifetimes stay hand-C++.
   src/deptran/raft/commo.h
@@ -296,6 +299,9 @@ for ln in lines:
         ln = ln.replace(
             'return rusty::detail::deref_if_pointer_like(envelope_to) == rusty::detail::deref_if_pointer_like(site);',
             'return envelope_to == site;')
+        ln = ln.replace(
+            'return rusty::detail::deref_if_pointer_like(received) >= rusty::detail::deref_if_pointer_like(needed);',
+            'return received >= needed;')
     out.append(ln)
 open(p, 'w').write('\n'.join(out))
 EOF
