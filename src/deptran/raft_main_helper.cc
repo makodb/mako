@@ -417,6 +417,11 @@ void apply_callbacks_for_partition(uint32_t par_id) {
 
 }  // anonymous namespace
 
+bool is_replication_leader(uint32_t par_id) {
+  auto* worker = find_worker(par_id);
+  return worker != nullptr && worker->IsLeader(par_id);
+}
+
 // @safe - Helper function accessible from janus:: namespace for leader change handling.
 // Calls internal functions to apply callbacks and notify waiting threads.
 // No ownership transfer; uses references to internal state.

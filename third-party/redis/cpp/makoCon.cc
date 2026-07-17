@@ -48,6 +48,7 @@ static std::shared_mutex g_redis_keyspace_mutex;
 static constexpr size_t kRedisTxnLockStripes = 256;
 static std::array<std::mutex, kRedisTxnLockStripes> g_redis_txn_key_mutexes;
 static bool g_redis_single_worker_mode = false;
+static bool g_redis_replication_enabled = false;
 
 // Thread-local state for transaction handling
 thread_local str_arena* tl_arena = nullptr;
@@ -126,6 +127,17 @@ static bool env_enabled(const char* name) {
         return static_cast<char>(std::tolower(c));
     });
     return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
+static bool redis_can_write_here() {
+    return !g_redis_replication_enabled
+        || is_replication_leader(static_cast<uint32_t>(TThread::getLocalPartitionID()));
+}
+
+static void wait_for_redis_replication() {
+    if (g_redis_replication_enabled) {
+        wait_for_submit(static_cast<uint32_t>(TThread::getLocalPartitionID()));
+    }
 }
 
 static uint64_t redis_lock_hash(const uint8_t* data, size_t len) {
@@ -394,6 +406,7 @@ static bool execute_flushdb_chunked(size_t chunk_size = 1024) {
             }
 
             g_mako_db->Commit(txn);
+            wait_for_redis_replication();
         } catch (abstract_db::abstract_abort_exception&) {
             g_mako_db->Rollback(txn);
             return false;
@@ -411,6 +424,16 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
 
     if (!makocon_ffi::allocate_response(request, response)) {
         return false;
+    }
+
+    const bool has_write = redis_request_has_write(request);
+    if (has_write && !redis_can_write_here()) {
+        response->transaction_success = false;
+        for (size_t i = 0; i < response->num_results; ++i) {
+            response->results[i].success = false;
+        }
+        g_mako_txn_aborts.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     std::unique_lock<std::shared_mutex> redis_keyspace_exclusive_lock;
@@ -431,7 +454,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
             const TxnOperation& op = request->ops[0];
             const size_t stripe = redis_lock_hash(op.key_ptr, op.key_len) % kRedisTxnLockStripes;
             redis_single_key_lock = std::unique_lock<std::mutex>(g_redis_txn_key_mutexes[stripe]);
-        } else if (redis_request_has_write(request)) {
+        } else if (has_write) {
             const std::vector<size_t> stripes = redis_request_lock_stripes(request);
             redis_key_locks.reserve(stripes.size());
             for (size_t stripe : stripes) {
@@ -1023,6 +1046,7 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     g_mako_db->Rollback(scan_txn);
                 } else {
                     g_mako_db->Commit(scan_txn);
+                    wait_for_redis_replication();
                 }
 
                 if (callback.seen() < kDbSizeChunkSize || last_storage_key.empty()) {
@@ -5834,6 +5858,9 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         // Commit or rollback based on success
         if (all_success) {
             g_mako_db->Commit(txn);
+            if (has_write) {
+                wait_for_redis_replication();
+            }
             response->transaction_success = true;
             g_mako_txn_commits.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -5925,6 +5952,12 @@ int main() {
             mako_paxos_proc_name ? mako_paxos_proc_name : "localhost";  // Leader by default
     bool replication_enabled = env_enabled("MAKO_REPLICATION_ENABLED");
     bool is_leader = paxos_proc_name == "localhost";
+    g_redis_replication_enabled = replication_enabled;
+    if (replication_enabled) {
+        // Redis replies are per-command durability promises. A larger Mako
+        // batch could leave acknowledged commands only in process memory.
+        setenv("MAKO_BATCH_SIZE", "1", 1);
+    }
 
     // Build config path (same pattern as simpleTransactionRep.cc)
     std::string config_path = get_current_absolute_path()

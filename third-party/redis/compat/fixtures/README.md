@@ -60,11 +60,27 @@ replicated Mako deployment:
 MAKO_G3_START_CMD='...' \
 MAKO_G3_KILL_CMD='...' \
 MAKO_G3_RECOVER_CMD='...' \
+MAKO_G3_RECOVER_HOST='127.0.0.1' \
+MAKO_G3_RECOVER_PORT='6393' \
 python3 third-party/redis/compat/run_failover_durability.py
 ```
 
 The default Redis binary in this PR does not enable replication, so the harness
 is `N/A` until a real replicated fixture is supplied.
+
+Local replicated fixture:
+
+```bash
+MAKOCON_BIN=/path/to/makoCon \
+MAKOCON_LD_LIBRARY_PATH=/path/to/runtime/libs \
+MAKO_PORT=6390 \
+MAKO_G3_USE_REPLICATED_FIXTURE=1 \
+python3 third-party/redis/compat/run_failover_durability.py
+```
+
+This starts a Paxos leader, two followers, and one learner. The fault hook kills
+the leader, and recovery waits until the learner is promoted and can complete a
+write before the G3 client reconnects to port 6393.
 
 Local restart smoke hook:
 
@@ -78,7 +94,9 @@ This starts one local `makoCon`, kills it with `SIGKILL`, restarts it, and runs
 the acknowledged-write oracle. It is useful for exercising the hook contract,
 but it is not the replicated failover durability claim. A real G3 PASS still
 requires a replicated Redis-facing Mako deployment and hooks that kill/recover
-the current leader while clients reconnect to a live service.
+the current leader while clients reconnect to a live service. When failover
+moves the service to another address, `MAKO_G3_RECOVER_HOST` and
+`MAKO_G3_RECOVER_PORT` select that promoted endpoint.
 
 ## G4 Serializable Isolation
 

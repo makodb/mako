@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from harness_common import connect, env_int, fail, main_guard, require_env
+from harness_common import RedisTarget, connect, env_int, fail, main_guard, require_env
 
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -35,11 +35,23 @@ def main() -> None:
         os.environ.setdefault("MAKO_G3_KILL_CMD", f"bash {script} kill")
         os.environ.setdefault("MAKO_G3_RECOVER_CMD", f"bash {script} recover")
 
+    if os.environ.get("MAKO_G3_USE_REPLICATED_FIXTURE") == "1":
+        script = ROOT_DIR / "third-party" / "redis" / "compat" / "fixtures" / "makocon_g3_replicated.sh"
+        os.environ.setdefault("MAKO_G3_START_CMD", f"bash {script} start")
+        os.environ.setdefault("MAKO_G3_KILL_CMD", f"bash {script} kill")
+        os.environ.setdefault("MAKO_G3_RECOVER_CMD", f"bash {script} recover")
+        os.environ.setdefault("MAKO_G3_RECOVER_HOST", "127.0.0.1")
+        os.environ.setdefault("MAKO_G3_RECOVER_PORT", "6393")
+
     start_cmd = require_env("MAKO_G3_START_CMD")
     kill_cmd = require_env("MAKO_G3_KILL_CMD")
     recover_cmd = require_env("MAKO_G3_RECOVER_CMD")
     count = env_int("MAKO_G3_WRITES", 100)
     prefix = f"g3:failover:{int(time.time() * 1000)}"
+    recovery_target = RedisTarget(
+        host=os.environ.get("MAKO_G3_RECOVER_HOST", os.environ.get("MAKO_HOST", "127.0.0.1")),
+        port=env_int("MAKO_G3_RECOVER_PORT", env_int("MAKO_PORT", 6380)),
+    )
 
     run_shell(start_cmd)
     client = connect()
@@ -55,10 +67,10 @@ def main() -> None:
             run_shell(recover_cmd)
             time.sleep(float(os.environ.get("MAKO_G3_RECOVER_WAIT_S", "1.0")))
             client.close()
-            client = connect()
+            client = connect(recovery_target)
 
     client.close()
-    verifier = connect()
+    verifier = connect(recovery_target)
     missing: list[str] = []
     wrong: list[str] = []
     for key, expected in acked:
