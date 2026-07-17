@@ -149,57 +149,177 @@ inline bool memory_snapshot_reader_read_cpp(const std::string& payload,
   return true;
 }
 
+// MemorySnapshotWriterCore is the DSL-owned state and behavior for the memory
+// writer. MemorySnapshotWriter remains a tiny C++ hand-bridge because the
+// transpiler cannot currently attach #[cpp_inherit] to a trait defined in the
+// included snapshot_manager.hpp file.
+#if RUSTYCPP_RUST
+pub struct MemorySnapshotWriterCore {
+    dest_payload_: *mut std::string,
+    dest_meta_: *mut SnapshotMetadata,
+    has_snapshot_: *mut bool,
+    mtx_: *mut std::mutex,
+    buffer_: std::string,
+    offset_: usize,
+    last_index_: u64,
+    last_term_: u64,
+    finalized_: bool,
+}
+
+impl MemorySnapshotWriterCore {
+    // @unsafe - borrows MemorySnapshotManager internals. The writer must not
+    // outlive the manager that created it.
+    #[cpp_ctor]
+    fn new(dest_payload: *mut std::string,
+           dest_meta: *mut SnapshotMetadata,
+           has_snapshot: *mut bool,
+           mtx: *mut std::mutex,
+           last_index: u64,
+           last_term: u64) -> MemorySnapshotWriterCore {
+        MemorySnapshotWriterCore {
+            dest_payload_: dest_payload,
+            dest_meta_: dest_meta,
+            has_snapshot_: has_snapshot,
+            mtx_: mtx,
+            buffer_: std::string(),
+            offset_: 0usize,
+            last_index_: last_index,
+            last_term_: last_term,
+            finalized_: false,
+        }
+    }
+
+    // @unsafe - raw pointer append to internal buffer.
+    fn Write(&mut self, data: *const c_char, size: usize) -> bool {
+        unsafe {
+            memory_snapshot_writer_write_cpp(&mut self.buffer_,
+                                             &mut self.offset_,
+                                             data,
+                                             size)
+        }
+    }
+
+    // @unsafe - publishes buffer under mutex.
+    fn Finalize(&mut self) -> bool {
+        unsafe {
+            memory_snapshot_writer_finalize_cpp(&mut self.buffer_,
+                                                self.dest_payload_,
+                                                self.dest_meta_,
+                                                self.has_snapshot_,
+                                                self.mtx_,
+                                                self.last_index_,
+                                                self.last_term_,
+                                                &mut self.finalized_)
+        }
+    }
+
+    // @safe
+    fn Abort(&mut self) -> bool {
+        unsafe {
+            memory_snapshot_writer_abort_cpp(&mut self.buffer_,
+                                             &mut self.offset_,
+                                             &mut self.finalized_)
+        }
+    }
+
+    // @safe
+    fn GetOffset(&self) -> usize {
+        self.offset_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.writer_core version=1 rust_sha256=84ee4df3ddc722dee0fe6c4bb16f4fa4d875880775ff75e49edc0d861c938fe2*/
+struct MemorySnapshotWriterCore;
+
+struct MemorySnapshotWriterCore {
+    std::string* dest_payload_;
+    SnapshotMetadata* dest_meta_;
+    bool* has_snapshot_;
+    std::mutex* mtx_;
+    std::string buffer_;
+    size_t offset_;
+    uint64_t last_index_;
+    uint64_t last_term_;
+    bool finalized_;
+
+    MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term);
+    bool Write(const c_char* data, size_t size);
+    bool Finalize();
+    bool Abort();
+    size_t GetOffset() const;
+};
+
+
+MemorySnapshotWriterCore::MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term)
+    : dest_payload_(dest_payload)
+    , dest_meta_(dest_meta)
+    , has_snapshot_(has_snapshot)
+    , mtx_(mtx)
+    , buffer_(std::string())
+    , offset_(static_cast<size_t>(0))
+    , last_index_(last_index)
+    , last_term_(last_term)
+    , finalized_(false)
+{}
+
+bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
+    // @unsafe
+    {
+        return memory_snapshot_writer_write_cpp(&this->buffer_, &this->offset_, data, std::move(size));
+    }
+}
+
+bool MemorySnapshotWriterCore::Finalize() {
+    // @unsafe
+    {
+        return memory_snapshot_writer_finalize_cpp(&this->buffer_, this->dest_payload_, this->dest_meta_, this->has_snapshot_, this->mtx_, this->last_index_, this->last_term_, &this->finalized_);
+    }
+}
+
+bool MemorySnapshotWriterCore::Abort() {
+    // @unsafe
+    {
+        return memory_snapshot_writer_abort_cpp(&this->buffer_, &this->offset_, &this->finalized_);
+    }
+}
+
+size_t MemorySnapshotWriterCore::GetOffset() const {
+    return this->offset_;
+}
+/*RUSTYCPP:GEN-END id=memory_snapshot_manager.writer_core*/
+
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
-  // @unsafe - borrows MemorySnapshotManager internals. The writer must not
-  // outlive the manager that created it.
+  // @unsafe - borrows MemorySnapshotManager internals via core_.
   MemorySnapshotWriter(std::string* dest_payload,
                        SnapshotMetadata* dest_meta,
                        bool* has_snapshot,
                        std::mutex* mtx,
                        slotid_t last_index,
                        ballot_t last_term)
-      : dest_payload_(dest_payload),
-        dest_meta_(dest_meta),
-        has_snapshot_(has_snapshot),
-        mtx_(mtx),
-        last_index_(last_index),
-        last_term_(last_term) {}
+      : core_(dest_payload, dest_meta, has_snapshot, mtx, last_index,
+              last_term) {}
 
   // @unsafe - raw pointer append to internal buffer
   bool Write(const char* data, size_t size) override {
-    return memory_snapshot_writer_write_cpp(&buffer_, &offset_, data, size);
+    return core_.Write(data, size);
   }
 
   // @unsafe - publishes buffer under mutex
   bool Finalize() override {
-    return memory_snapshot_writer_finalize_cpp(
-        &buffer_, dest_payload_, dest_meta_, has_snapshot_, mtx_,
-        last_index_, last_term_, &finalized_);
+    return core_.Finalize();
   }
 
   // @safe
   bool Abort() override {
-    return memory_snapshot_writer_abort_cpp(&buffer_, &offset_, &finalized_);
+    return core_.Abort();
   }
 
   // @safe
-  size_t GetOffset() const override { return offset_; }
+  size_t GetOffset() const override { return core_.GetOffset(); }
 
  private:
-  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
-  std::string*         dest_payload_{nullptr};
-  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
-  SnapshotMetadata*    dest_meta_{nullptr};
-  // @unsafe - borrowed from MemorySnapshotManager; not owned or deleted here.
-  bool*                has_snapshot_{nullptr};
-  // @unsafe - borrowed from MemorySnapshotManager; guards the borrowed fields.
-  std::mutex*          mtx_{nullptr};
-  std::string          buffer_{};
-  size_t               offset_{0};
-  slotid_t             last_index_{0};
-  ballot_t             last_term_{0};
-  bool                 finalized_{false};
+  MemorySnapshotWriterCore core_;
 };
 
 class MemorySnapshotReader : public SnapshotReader {
