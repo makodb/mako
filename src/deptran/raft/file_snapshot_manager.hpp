@@ -280,6 +280,98 @@ inline bool file_snapshot_writer_abort_cpp(const std::string* temp_path,
   return true;
 }
 
+// @unsafe - opens, stats, reads, deserializes, and verifies a snapshot file.
+inline bool file_snapshot_reader_open_cpp(const std::string* path,
+                                          std::string* file_data,
+                                          std::string* data,
+                                          SnapshotMetadata* metadata,
+                                          bool* valid) {
+  int fd = open(path->c_str(), O_RDONLY);
+  if (fd < 0) {
+    Log_error("[SNAPSHOT-READER] Failed to open: %s (%s)",
+              path->c_str(), strerror(errno));
+    *valid = false;
+    return false;
+  }
+
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    Log_error("[SNAPSHOT-READER] Failed to stat: %s", path->c_str());
+    close(fd);
+    *valid = false;
+    return false;
+  }
+
+  file_data->resize(st.st_size);
+  ssize_t bytes_read = read(fd, file_data->data(), st.st_size);
+  close(fd);
+
+  if (bytes_read != st.st_size) {
+    Log_error("[SNAPSHOT-READER] Failed to read: got %zd of %ld",
+              bytes_read, st.st_size);
+    *valid = false;
+    return false;
+  }
+
+  uint64_t last_index, last_term;
+  if (!SnapshotFormat::Deserialize(file_data->data(), file_data->size(),
+                                   &last_index, &last_term, data)) {
+    Log_error("[SNAPSHOT-READER] Failed to deserialize: %s", path->c_str());
+    *valid = false;
+    return false;
+  }
+
+  metadata->last_included_index = last_index;
+  metadata->last_included_term = last_term;
+  metadata->size_bytes = data->size();
+
+  SnapshotHeader header = snapshot_header_defaults();
+  if (SnapshotFormat::GetHeader(file_data->data(), file_data->size(), &header)) {
+    metadata->timestamp_ms = header.timestamp_ms;
+  }
+
+  *valid = true;
+  Log_info("[SNAPSHOT-READER] Opened snapshot: index=%lu term=%lu size=%zu",
+           last_index, last_term, data->size());
+  return true;
+}
+
+// @unsafe - copies snapshot payload bytes into caller-owned raw output buffer.
+inline bool file_snapshot_reader_read_cpp(const std::string* data,
+                                          size_t* read_offset,
+                                          bool valid,
+                                          char* buffer,
+                                          size_t buffer_size,
+                                          size_t* bytes_read) {
+  if (!valid) {
+    *bytes_read = 0;
+    return false;
+  }
+
+  size_t to_read = file_snapshot_reader_bytes_to_read(data->size(),
+                                                      *read_offset,
+                                                      buffer_size);
+  if (to_read > 0) {
+    std::memcpy(buffer, data->data() + *read_offset, to_read);
+    *read_offset = file_snapshot_advance_offset(*read_offset, to_read);
+  }
+  *bytes_read = to_read;
+  return true;
+}
+
+// @safe - checks reader-local stream position.
+inline bool file_snapshot_reader_is_complete_cpp(const std::string* data,
+                                                 bool valid,
+                                                 size_t read_offset) {
+  return file_snapshot_reader_is_complete(valid, data->size(), read_offset);
+}
+
+// @lifetime: (&'a) -> &'a
+inline const SnapshotMetadata& file_snapshot_reader_metadata_cpp(
+    const SnapshotMetadata* metadata) {
+  return *metadata;
+}
+
 /**
  * File-based snapshot writer.
  * Accumulates data in memory, writes to temp file, renames on finalize.
@@ -463,110 +555,176 @@ class FileSnapshotWriter : public SnapshotWriter {
  * File-based snapshot reader.
  * Reads and verifies snapshot on construction, provides streaming read.
  */
+// FileSnapshotReaderCore is the DSL-owned reader state and method surface.
+// FileSnapshotReader remains the C++ virtual bridge for SnapshotReader.
+#if RUSTYCPP_RUST
+pub struct FileSnapshotReaderCore {
+    path_: std::string,
+    file_data_: std::string,
+    data_: std::string,
+    metadata_: SnapshotMetadata,
+    read_offset_: usize,
+    valid_: bool,
+}
+
+impl FileSnapshotReaderCore {
+    // @unsafe - Stores path, then Open() owns file I/O through a C++ helper.
+    #[cpp_ctor]
+    fn new(path: std::string) -> FileSnapshotReaderCore {
+        FileSnapshotReaderCore {
+            path_: path,
+            file_data_: std::string(),
+            data_: std::string(),
+            metadata_: SnapshotMetadata {},
+            read_offset_: 0usize,
+            valid_: false,
+        }
+    }
+
+    // @unsafe - opens, reads, deserializes, and verifies the file.
+    fn Open(&mut self) -> bool {
+        unsafe {
+            file_snapshot_reader_open_cpp(&self.path_,
+                                          &mut self.file_data_,
+                                          &mut self.data_,
+                                          &mut self.metadata_,
+                                          &mut self.valid_)
+        }
+    }
+
+    // @unsafe - Writes to raw buffer.
+    fn Read(&mut self, buffer: *mut c_char, buffer_size: usize,
+            bytes_read: *mut usize) -> bool {
+        unsafe {
+            file_snapshot_reader_read_cpp(&self.data_,
+                                          &mut self.read_offset_,
+                                          self.valid_,
+                                          buffer,
+                                          buffer_size,
+                                          bytes_read)
+        }
+    }
+
+    // @safe
+    fn IsComplete(&self) -> bool {
+        file_snapshot_reader_is_complete_cpp(&self.data_,
+                                             self.valid_,
+                                             self.read_offset_)
+    }
+
+    // @lifetime: (&'a) -> &'a
+    fn GetMetadata(&self) -> &SnapshotMetadata {
+        unsafe { file_snapshot_reader_metadata_cpp(&self.metadata_) }
+    }
+
+    // @safe - Returns current offset.
+    fn GetOffset(&self) -> usize {
+        self.read_offset_
+    }
+
+    // @safe - Check if reader is valid.
+    fn IsValid(&self) -> bool {
+        self.valid_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.reader_core version=1 rust_sha256=309ea541afaae6d7bfc437e89938e041575f6792aa4bf446e0bd315306f5bea0*/
+struct FileSnapshotReaderCore;
+
+struct FileSnapshotReaderCore {
+    std::string path_;
+    std::string file_data_;
+    std::string data_;
+    SnapshotMetadata metadata_;
+    size_t read_offset_;
+    bool valid_;
+
+    FileSnapshotReaderCore(std::string path);
+    bool Open();
+    bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read);
+    bool IsComplete() const;
+    const SnapshotMetadata& GetMetadata() const;
+    size_t GetOffset() const;
+    bool IsValid() const;
+};
+
+
+FileSnapshotReaderCore::FileSnapshotReaderCore(std::string path)
+    : path_(path)
+    , file_data_(std::string())
+    , data_(std::string())
+    , metadata_(SnapshotMetadata{})
+    , read_offset_(static_cast<size_t>(0))
+    , valid_(false)
+{}
+
+bool FileSnapshotReaderCore::Open() {
+    // @unsafe
+    {
+        return file_snapshot_reader_open_cpp(&this->path_, &this->file_data_, &this->data_, &this->metadata_, &this->valid_);
+    }
+}
+
+bool FileSnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
+    // @unsafe
+    {
+        return file_snapshot_reader_read_cpp(&this->data_, &this->read_offset_, this->valid_, buffer, std::move(buffer_size), bytes_read);
+    }
+}
+
+bool FileSnapshotReaderCore::IsComplete() const {
+    return file_snapshot_reader_is_complete_cpp(&this->data_, this->valid_, this->read_offset_);
+}
+
+const SnapshotMetadata& FileSnapshotReaderCore::GetMetadata() const {
+    // @unsafe
+    {
+        return file_snapshot_reader_metadata_cpp(&this->metadata_);
+    }
+}
+
+size_t FileSnapshotReaderCore::GetOffset() const {
+    return this->read_offset_;
+}
+
+bool FileSnapshotReaderCore::IsValid() const {
+    return this->valid_;
+}
+/*RUSTYCPP:GEN-END id=file_snapshot_manager.reader_core*/
+
 class FileSnapshotReader : public SnapshotReader {
  public:
   // @unsafe - Opens the snapshot path with a local fd, reads it fully, closes
-  // the fd, then owns the decoded payload in data_.
-  explicit FileSnapshotReader(const std::string& path) : path_(path) {
-    // Read entire file
-    int fd = open(path.c_str(), O_RDONLY);
-    if (fd < 0) {
-      Log_error("[SNAPSHOT-READER] Failed to open: %s (%s)",
-                path.c_str(), strerror(errno));
-      valid_ = false;
-      return;
-    }
-
-    struct stat st;
-    if (fstat(fd, &st) < 0) {
-      Log_error("[SNAPSHOT-READER] Failed to stat: %s", path.c_str());
-      close(fd);
-      valid_ = false;
-      return;
-    }
-
-    file_data_.resize(st.st_size);
-    ssize_t bytes_read = read(fd, file_data_.data(), st.st_size);
-    close(fd);
-
-    if (bytes_read != st.st_size) {
-      Log_error("[SNAPSHOT-READER] Failed to read: got %zd of %ld",
-                bytes_read, st.st_size);
-      valid_ = false;
-      return;
-    }
-
-    // Deserialize and verify
-    uint64_t last_index, last_term;
-    if (!SnapshotFormat::Deserialize(file_data_.data(), file_data_.size(),
-                                     &last_index, &last_term, &data_)) {
-      Log_error("[SNAPSHOT-READER] Failed to deserialize: %s", path.c_str());
-      valid_ = false;
-      return;
-    }
-
-    // Populate metadata
-    metadata_.last_included_index = last_index;
-    metadata_.last_included_term = last_term;
-    metadata_.size_bytes = data_.size();
-
-    // Get header for timestamp
-    SnapshotHeader header = snapshot_header_defaults();
-    if (SnapshotFormat::GetHeader(file_data_.data(), file_data_.size(), &header)) {
-      metadata_.timestamp_ms = header.timestamp_ms;
-    }
-
-    valid_ = true;
-    Log_info("[SNAPSHOT-READER] Opened snapshot: index=%lu term=%lu size=%zu",
-             last_index, last_term, data_.size());
+  // the fd, then owns the decoded payload in core_.
+  explicit FileSnapshotReader(const std::string& path) : core_(path) {
+    core_.Open();
   }
 
   ~FileSnapshotReader() override = default;
 
-  /**
-   * Read a chunk of snapshot data.
-   */
   // @unsafe - Writes to raw buffer
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
-    if (!valid_) {
-      *bytes_read = 0;
-      return false;
-    }
-
-    size_t to_read = file_snapshot_reader_bytes_to_read(data_.size(),
-                                                        read_offset_,
-                                                        buffer_size);
-    if (to_read > 0) {
-      std::memcpy(buffer, data_.data() + read_offset_, to_read);
-      read_offset_ = file_snapshot_advance_offset(read_offset_, to_read);
-    }
-    *bytes_read = to_read;
-    return true;
+    return core_.Read(buffer, buffer_size, bytes_read);
   }
 
-  // @unsafe - Check if all data read
+  // @safe
   bool IsComplete() const override {
-    return file_snapshot_reader_is_complete(valid_, data_.size(), read_offset_);
+    return core_.IsComplete();
   }
 
   // @lifetime: (&'a) -> &'a
-  const SnapshotMetadata& GetMetadata() const override { return metadata_; }
+  const SnapshotMetadata& GetMetadata() const override {
+    return core_.GetMetadata();
+  }
 
   // @safe - Returns current offset
-  size_t GetOffset() const override { return read_offset_; }
+  size_t GetOffset() const override { return core_.GetOffset(); }
 
   // @safe - Check if reader is valid
-  bool IsValid() const { return valid_; }
+  bool IsValid() const { return core_.IsValid(); }
 
  private:
-  // @unsafe - path is retained for diagnostics; file_data_/data_ are owned
-  // in-memory copies, not borrowed file-backed buffers.
-  std::string path_;
-  std::string file_data_;
-  std::string data_;
-  SnapshotMetadata metadata_{};
-  size_t read_offset_{0};
-  bool valid_{false};
+  FileSnapshotReaderCore core_;
 };
 
 /**
