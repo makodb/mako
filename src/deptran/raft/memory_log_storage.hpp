@@ -49,25 +49,25 @@ pub fn memory_log_storage_metadata_found(found: bool) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_log_storage.helpers version=1 rust_sha256=d98f0d679c6e6740c2d5a52d66f279042e8e5d85fc7a7bdb86086cbec18d6f5d*/
-bool memory_log_storage_is_usable(bool is_open);
-bool memory_log_storage_range_valid(uint64_t start, uint64_t end);
-bool memory_log_storage_empty_from_size(size_t size);
-uint64_t memory_log_storage_index_or_zero(bool has_entry, uint64_t index);
-bool memory_log_storage_metadata_found(bool found);
+inline bool memory_log_storage_is_usable(bool is_open);
+inline bool memory_log_storage_range_valid(uint64_t start, uint64_t end);
+inline bool memory_log_storage_empty_from_size(size_t size);
+inline uint64_t memory_log_storage_index_or_zero(bool has_entry, uint64_t index);
+inline bool memory_log_storage_metadata_found(bool found);
 
-bool memory_log_storage_is_usable(bool is_open) {
-    return std::move(is_open);
+inline bool memory_log_storage_is_usable(bool is_open) {
+    return is_open;
 }
 
-bool memory_log_storage_range_valid(uint64_t start, uint64_t end) {
-    return rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end);
+inline bool memory_log_storage_range_valid(uint64_t start, uint64_t end) {
+    return start < end;
 }
 
-bool memory_log_storage_empty_from_size(size_t size) {
-    return rusty::detail::deref_if_pointer_like(size) == static_cast<size_t>(0);
+inline bool memory_log_storage_empty_from_size(size_t size) {
+    return size == 0;
 }
 
-uint64_t memory_log_storage_index_or_zero(bool has_entry, uint64_t index) {
+inline uint64_t memory_log_storage_index_or_zero(bool has_entry, uint64_t index) {
     if (has_entry) {
         return std::move(index);
     } else {
@@ -75,8 +75,8 @@ uint64_t memory_log_storage_index_or_zero(bool has_entry, uint64_t index) {
     }
 }
 
-bool memory_log_storage_metadata_found(bool found) {
-    return std::move(found);
+inline bool memory_log_storage_metadata_found(bool found) {
+    return found;
 }
 /*RUSTYCPP:GEN-END id=memory_log_storage.helpers*/
 

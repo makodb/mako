@@ -45,7 +45,7 @@ pub fn memory_snapshot_metadata(last_index: u64,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.metadata version=1 rust_sha256=3678b8c2aca40b44613126d24c67e673f791cd4fe51ca6b49a74a69ae31d1b57*/
-SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
+inline SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
     return SnapshotMetadata{.last_included_index = std::move(last_index), .last_included_term = std::move(last_term), .timestamp_ms = 0, .size_bytes = std::move(size), .checksum = std::string()};
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
@@ -74,25 +74,25 @@ pub fn memory_snapshot_reader_is_complete(payload_size: usize,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.stream_helpers version=1 rust_sha256=d98f5868cc5d5a7f49cde4ce1883e770ee25ece0c944988a8a8e95fc364028f1*/
-size_t memory_snapshot_advance_offset(size_t offset, size_t size);
-size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
-bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
+inline size_t memory_snapshot_advance_offset(size_t offset, size_t size);
+inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
+inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
 
-size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
-    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
+inline size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
+    return offset + size;
 }
 
-size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
-    auto remaining = rusty::detail::deref_if_pointer_like(payload_size) - rusty::detail::deref_if_pointer_like(offset);
-    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
+inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
+    auto remaining = payload_size - offset;
+    if (buffer_size < remaining) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
-    return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);
+inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
+    return offset >= payload_size;
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.stream_helpers*/
 
@@ -262,7 +262,7 @@ struct MemorySnapshotWriterCore {
 };
 
 
-MemorySnapshotWriterCore::MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term)
+inline MemorySnapshotWriterCore::MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term)
     : dest_payload_(dest_payload)
     , dest_meta_(dest_meta)
     , has_snapshot_(has_snapshot)
@@ -274,28 +274,28 @@ MemorySnapshotWriterCore::MemorySnapshotWriterCore(std::string* dest_payload, Sn
     , finalized_(false)
 {}
 
-bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
+inline bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
     // @unsafe
     {
         return memory_snapshot_writer_write_cpp(&this->buffer_, &this->offset_, data, std::move(size));
     }
 }
 
-bool MemorySnapshotWriterCore::Finalize() {
+inline bool MemorySnapshotWriterCore::Finalize() {
     // @unsafe
     {
         return memory_snapshot_writer_finalize_cpp(&this->buffer_, this->dest_payload_, this->dest_meta_, this->has_snapshot_, this->mtx_, this->last_index_, this->last_term_, &this->finalized_);
     }
 }
 
-bool MemorySnapshotWriterCore::Abort() {
+inline bool MemorySnapshotWriterCore::Abort() {
     // @unsafe
     {
         return memory_snapshot_writer_abort_cpp(&this->buffer_, &this->offset_, &this->finalized_);
     }
 }
 
-size_t MemorySnapshotWriterCore::GetOffset() const {
+inline size_t MemorySnapshotWriterCore::GetOffset() const {
     return this->offset_;
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.writer_core*/
@@ -399,31 +399,31 @@ struct MemorySnapshotReaderCore {
 };
 
 
-MemorySnapshotReaderCore::MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta)
+inline MemorySnapshotReaderCore::MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta)
     : payload_(payload)
     , meta_(meta)
     , offset_(static_cast<size_t>(0))
 {}
 
-bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
+inline bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
     // @unsafe
     {
         return memory_snapshot_reader_read_cpp(&this->payload_, &this->offset_, buffer, std::move(buffer_size), bytes_read);
     }
 }
 
-bool MemorySnapshotReaderCore::IsComplete() const {
+inline bool MemorySnapshotReaderCore::IsComplete() const {
     return memory_snapshot_reader_is_complete_cpp(&this->payload_, this->offset_);
 }
 
-const SnapshotMetadata& MemorySnapshotReaderCore::GetMetadata() const {
+inline const SnapshotMetadata& MemorySnapshotReaderCore::GetMetadata() const {
     // @unsafe
     {
         return memory_snapshot_reader_metadata_cpp(&this->meta_);
     }
 }
 
-size_t MemorySnapshotReaderCore::GetOffset() const {
+inline size_t MemorySnapshotReaderCore::GetOffset() const {
     return this->offset_;
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.reader_core*/

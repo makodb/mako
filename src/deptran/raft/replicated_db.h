@@ -24,12 +24,12 @@ pub enum ReplicatedDBOp {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=replicated_db.op version=1 rust_sha256=b0157873ab7f852c9b85b14b7d0706820a098f4147396bfa18a4c502e809c276*/
-enum class ReplicatedDBOp;
-constexpr ReplicatedDBOp ReplicatedDBOp_PUT();
-constexpr ReplicatedDBOp ReplicatedDBOp_DELETE();
-constexpr ReplicatedDBOp ReplicatedDBOp_BATCH();
+enum class ReplicatedDBOp : uint8_t;
+inline constexpr ReplicatedDBOp ReplicatedDBOp_PUT();
+inline constexpr ReplicatedDBOp ReplicatedDBOp_DELETE();
+inline constexpr ReplicatedDBOp ReplicatedDBOp_BATCH();
 
-enum class ReplicatedDBOp {
+enum class ReplicatedDBOp : uint8_t {
     PUT = 1,
     DELETE = 2,
     BATCH = 3
@@ -88,19 +88,19 @@ struct KVOperation {
 };
 
 
-KVOperation KVOperation::defaults() {
+inline KVOperation KVOperation::defaults() {
     return kv_operation_defaults();
 }
 
-KVOperation KVOperation::make(janus::ReplicatedDBOp op, std::string key, std::string value) {
+inline KVOperation KVOperation::make(janus::ReplicatedDBOp op, std::string key, std::string value) {
     return kv_operation_make(std::move(op), std::move(key), std::move(value));
 }
 
-KVOperation KVOperation::put(std::string key, std::string value) {
+inline KVOperation KVOperation::put(std::string key, std::string value) {
     return kv_operation_make(rusty::clone(rusty::clone(janus::ReplicatedDBOp::PUT)), std::move(key), std::move(value));
 }
 
-KVOperation KVOperation::delete_key(std::string key) {
+inline KVOperation KVOperation::delete_key(std::string key) {
     return kv_operation_make(rusty::clone(rusty::clone(janus::ReplicatedDBOp::DELETE)), std::move(key), "");
 }
 /*RUSTYCPP:GEN-END id=replicated_db.1*/
@@ -192,19 +192,19 @@ pub fn replicated_db_command_batch_dsl(
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=replicated_db.2 version=1 rust_sha256=a5e09d09cab6ae0917950fca55c2e545f2edc220fd93a5910a733bd2799dae53*/
-janus::ReplicatedDBCommand replicated_db_command_defaults_dsl() {
+inline janus::ReplicatedDBCommand replicated_db_command_defaults_dsl() {
     return replicated_db_command_defaults();
 }
 
-janus::ReplicatedDBCommand replicated_db_command_put_dsl(std::string key, std::string value) {
+inline janus::ReplicatedDBCommand replicated_db_command_put_dsl(std::string key, std::string value) {
     return replicated_db_command_put(std::move(key), std::move(value));
 }
 
-janus::ReplicatedDBCommand replicated_db_command_delete_dsl(std::string key) {
+inline janus::ReplicatedDBCommand replicated_db_command_delete_dsl(std::string key) {
     return replicated_db_command_delete(std::move(key));
 }
 
-janus::ReplicatedDBCommand replicated_db_command_batch_dsl(std::vector<janus::KVOperation> ops) {
+inline janus::ReplicatedDBCommand replicated_db_command_batch_dsl(std::vector<janus::KVOperation> ops) {
     return replicated_db_command_batch(std::move(ops));
 }
 /*RUSTYCPP:GEN-END id=replicated_db.2*/
@@ -236,32 +236,32 @@ pub fn replicated_db_command_is_batch(op: janus::ReplicatedDBOp) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=b84cdb0404fba5c6826be7b84b600dddd5c875bcf0df01587b38761c936ad429*/
-bool replicated_db_has_command_payload(bool has_value);
-bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
-bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
+inline bool replicated_db_has_command_payload(bool has_value);
+inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
+inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
 
-bool replicated_db_has_command_payload(bool has_value) {
-    return std::move(has_value);
+inline bool replicated_db_has_command_payload(bool has_value) {
+    return has_value;
 }
 
-bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index) {
-    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(last_applied_index);
+inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index) {
+    return index <= last_applied_index;
 }
 
-bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind) {
-    return rusty::detail::deref_if_pointer_like(kind) == rusty::detail::deref_if_pointer_like(expected_kind);
+inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind) {
+    return kind == expected_kind;
 }
 
-bool replicated_db_command_is_put(janus::ReplicatedDBOp op) {
-    return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::PUT);
+inline bool replicated_db_command_is_put(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::PUT;
 }
 
-bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
-    return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::DELETE);
+inline bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::DELETE;
 }
 
-bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
-    return rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH);
+inline bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
+    return op == janus::ReplicatedDBOp::BATCH;
 }
 /*RUSTYCPP:GEN-END id=replicated_db.command_helpers*/
 

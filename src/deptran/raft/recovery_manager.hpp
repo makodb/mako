@@ -42,9 +42,9 @@ pub enum RecoveryMode {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=recovery_manager.1 version=1 rust_sha256=277fe509da36d69e8bf08f6c863af4f7adc21208cec820ebb7922eeb1fbe48ff*/
 enum class RecoveryMode;
-constexpr RecoveryMode RecoveryMode_FRESH_START();
-constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
-constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
+inline constexpr RecoveryMode RecoveryMode_FRESH_START();
+inline constexpr RecoveryMode RecoveryMode_NORMAL_RECOVERY();
+inline constexpr RecoveryMode RecoveryMode_FORCED_FRESH();
 
 enum class RecoveryMode {
     FRESH_START,
@@ -99,11 +99,11 @@ struct RecoveryConfig {
 };
 
 
-RecoveryConfig RecoveryConfig::defaults() {
+inline RecoveryConfig RecoveryConfig::defaults() {
     return recovery_config_defaults();
 }
 
-RecoveryConfig RecoveryConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
+inline RecoveryConfig RecoveryConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
     return recovery_config_for_replica(std::move(partition_id), std::move(locale_id));
 }
 /*RUSTYCPP:GEN-END id=recovery_manager.config*/
@@ -187,15 +187,15 @@ struct RecoveryResult {
 };
 
 
-RecoveryResult RecoveryResult::defaults() {
+inline RecoveryResult RecoveryResult::defaults() {
     return recovery_result_defaults();
 }
 
-RecoveryResult RecoveryResult::success_fresh() {
+inline RecoveryResult RecoveryResult::success_fresh() {
     return recovery_result_success_fresh();
 }
 
-RecoveryResult RecoveryResult::failure(const std::string& error) {
+inline RecoveryResult RecoveryResult::failure(const std::string& error) {
     return recovery_result_failure(error);
 }
 /*RUSTYCPP:GEN-END id=recovery_manager.result*/
@@ -267,36 +267,36 @@ pub fn recovery_result_assign_recovery_time(result: &mut RecoveryResult,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=2dc9559327bd79a04c16b1d8c7ae0e718a8326e978257f96873a8bfa7580f323*/
-bool recovery_storage_open_failed(bool has_storage, bool storage_is_open);
+inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open);
 
-bool recovery_mode_is_fresh_start(RecoveryMode mode) {
-    return (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FRESH_START)) || (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FORCED_FRESH));
+inline bool recovery_mode_is_fresh_start(RecoveryMode mode) {
+    return mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH;
 }
 
-bool recovery_mode_needs_recovery(RecoveryMode mode) {
-    return rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::NORMAL_RECOVERY);
+inline bool recovery_mode_needs_recovery(RecoveryMode mode) {
+    return mode == RecoveryMode::NORMAL_RECOVERY;
 }
 
-void recovery_result_mark_fresh_success(RecoveryResult& result) {
+inline void recovery_result_mark_fresh_success(RecoveryResult& result) {
     result.success = true;
     result.recovered_entries = 0;
 }
 
-void recovery_result_mark_success(RecoveryResult& result, uint64_t recovered_entries, uint64_t recovery_time_ms) {
+inline void recovery_result_mark_success(RecoveryResult& result, uint64_t recovered_entries, uint64_t recovery_time_ms) {
     result.success = true;
     result.recovered_entries = std::move(recovered_entries);
     result.recovery_time_ms = std::move(recovery_time_ms);
 }
 
-bool recovery_should_clear_forced_fresh(RecoveryMode mode, bool clear_on_forced_fresh) {
-    return (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FORCED_FRESH)) && rusty::detail::deref_if_pointer_like(clear_on_forced_fresh);
+inline bool recovery_should_clear_forced_fresh(RecoveryMode mode, bool clear_on_forced_fresh) {
+    return mode == RecoveryMode::FORCED_FRESH && clear_on_forced_fresh;
 }
 
-bool recovery_storage_open_failed(bool has_storage, bool storage_is_open) {
+inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open) {
     return !has_storage || !storage_is_open;
 }
 
-void recovery_result_assign_recovery_time(RecoveryResult& result, uint64_t recovery_time_ms) {
+inline void recovery_result_assign_recovery_time(RecoveryResult& result, uint64_t recovery_time_ms) {
     result.recovery_time_ms = std::move(recovery_time_ms);
 }
 /*RUSTYCPP:GEN-END id=recovery_manager.small_helpers*/

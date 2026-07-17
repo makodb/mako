@@ -132,7 +132,7 @@ struct ChannelFaults {
 };
 
 
-bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
+inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
     return channel_faults_is_dropped((*this), std::move(from), std::move(to));
 }
 /*RUSTYCPP:GEN-END id=channel_transport.faults*/
@@ -159,20 +159,20 @@ pub fn channel_envelope_matches_destination(envelope_to: u16,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel_transport.small_helpers version=1 rust_sha256=79f5eaf4cbb3e6137d5ee633b66a7a7ee99d2db35066a1c67b0df7e0cfc45173*/
-bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
-bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
-bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
+inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
+inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
+inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
 
-bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
-    return (rusty::detail::deref_if_pointer_like(drop_from) == rusty::detail::deref_if_pointer_like(from)) && (rusty::detail::deref_if_pointer_like(drop_to) == rusty::detail::deref_if_pointer_like(to));
+inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
+    return drop_from == from && drop_to == to;
 }
 
-bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
-    return rusty::detail::deref_if_pointer_like(from_partition) != rusty::detail::deref_if_pointer_like(to_partition);
+inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
+    return from_partition != to_partition;
 }
 
-bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
-    return rusty::detail::deref_if_pointer_like(envelope_to) == rusty::detail::deref_if_pointer_like(site);
+inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
+    return envelope_to == site;
 }
 /*RUSTYCPP:GEN-END id=channel_transport.small_helpers*/
 

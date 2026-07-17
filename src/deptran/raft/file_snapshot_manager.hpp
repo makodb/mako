@@ -54,14 +54,14 @@ pub fn file_snapshot_temp_path(storage_path: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.paths version=1 rust_sha256=3de54b7f5a6178dee5430ee423f133d5a2bdc7fcc82a29f5aab899834c8c75ae*/
-std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
-std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
 
-std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap");
 }
 
-std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap.tmp");
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.paths*/
@@ -133,52 +133,52 @@ pub fn file_snapshot_metadata_from_name_parts(index_part: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.stream_helpers version=1 rust_sha256=2b8291cb63e1f96746a07c22b18c93e1cfb7425b6e4e9e797486be9c3d5f5e3f*/
-size_t file_snapshot_advance_offset(size_t offset, size_t size);
-size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
-bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
-bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
-bool file_snapshot_has_latest(size_t snapshot_count);
-size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
-bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size);
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
+inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
+inline bool file_snapshot_has_latest(size_t snapshot_count);
+inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
+inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
 
-size_t file_snapshot_advance_offset(size_t offset, size_t size) {
-    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size) {
+    return offset + size;
 }
 
-size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
-    auto remaining = rusty::detail::deref_if_pointer_like(data_size) - rusty::detail::deref_if_pointer_like(offset);
-    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
+    auto remaining = data_size - offset;
+    if (buffer_size < remaining) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
-    return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
+    return valid && offset >= data_size;
 }
 
-bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
-    return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);
+inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
+    return snapshot_index < keep_after_index;
 }
 
-bool file_snapshot_has_latest(size_t snapshot_count) {
-    return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;
+inline bool file_snapshot_has_latest(size_t snapshot_count) {
+    return snapshot_count > 0;
 }
 
-size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
-    if (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) {
+inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
+    if (snapshot_count > max_snapshots) {
         return std::move(max_snapshots);
     } else {
         return std::move(snapshot_count);
     }
 }
 
-bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
-    return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));
+inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
+    return snapshot_count > max_snapshots && position >= max_snapshots;
 }
 
-SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
+inline SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
     return file_snapshot_metadata_from_name_parts_cpp(index_part, term_part, std::move(size_bytes));
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.stream_helpers*/

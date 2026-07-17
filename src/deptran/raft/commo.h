@@ -44,9 +44,9 @@ pub enum NotifyRestartStatus {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.1 version=1 rust_sha256=49a2d41c8e5a2dbf51a9143474e2bcdffb9a9adaba6a56dbbebec0d97ba501c5*/
 enum class NotifyRestartStatus;
-constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
-constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
-constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_ACKNOWLEDGED();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_DOWN();
+inline constexpr NotifyRestartStatus NotifyRestartStatus_PENDING();
 
 enum class NotifyRestartStatus {
     ACKNOWLEDGED,
@@ -72,16 +72,16 @@ pub fn commo_notify_restart_is_down(status: NotifyRestartStatus) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.notify_restart_helpers version=1 rust_sha256=4982eba0239b313218739f794edbf2bf5eb185851fb1bbca410230298075554c*/
-bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
-    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::PENDING);
+inline bool commo_notify_restart_is_pending(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::PENDING;
 }
 
-bool commo_notify_restart_is_acknowledged(NotifyRestartStatus status) {
-    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::ACKNOWLEDGED);
+inline bool commo_notify_restart_is_acknowledged(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::ACKNOWLEDGED;
 }
 
-bool commo_notify_restart_is_down(NotifyRestartStatus status) {
-    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(NotifyRestartStatus::DOWN);
+inline bool commo_notify_restart_is_down(NotifyRestartStatus status) {
+    return status == NotifyRestartStatus::DOWN;
 }
 /*RUSTYCPP:GEN-END id=commo.notify_restart_helpers*/
 
@@ -171,7 +171,7 @@ struct SendAppendEntriesResults {
 };
 
 
-SendAppendEntriesResults SendAppendEntriesResults::defaults() {
+inline SendAppendEntriesResults SendAppendEntriesResults::defaults() {
     return send_append_entries_results_defaults();
 }
 /*RUSTYCPP:GEN-END id=commo.send_append_entries_results*/
@@ -208,20 +208,20 @@ pub fn commo_append_entries_done_from_reply(ok: u64,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=99dfd0b1a3cd17a6af5e8a87efebc27952bf26da06424da6c76ba5ebb557ccf0*/
-bool commo_append_entries_empty_from_cmd(bool has_cmd);
-bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
-bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
 
-bool commo_append_entries_empty_from_cmd(bool has_cmd) {
+inline bool commo_append_entries_empty_from_cmd(bool has_cmd) {
     return !has_cmd;
 }
 
-bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
-    return ((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(last_log_index) == static_cast<uint64_t>(0));
+inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return ok == 0 && term == 0 && last_log_index == 0;
 }
 
-bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
-    return !::commo_append_entries_reply_lost(std::move(ok), std::move(term), std::move(last_log_index));
+inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
+    return !commo_append_entries_reply_lost(ok, term, last_log_index);
 }
 /*RUSTYCPP:GEN-END id=commo.append_entries_result_helpers*/
 
@@ -239,11 +239,11 @@ pub enum AckType {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.ack_type version=1 rust_sha256=caffdb0a63dea9cf984c3f302fc0dab2480826a989ae350fd27b63222f73e2d5*/
-enum class AckType;
-constexpr AckType AckType_Memory();
-constexpr AckType AckType_Durable();
+enum class AckType : uint64_t;
+inline constexpr AckType AckType_Memory();
+inline constexpr AckType AckType_Durable();
 
-enum class AckType {
+enum class AckType : uint64_t {
     Memory = 0,
     Durable = 1
 };
@@ -263,15 +263,15 @@ pub fn commo_ack_type_is_durable(ack_type: u64) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=commo.ack_type_helpers version=1 rust_sha256=7ee87e627fd2c0d1ba0229b3295f4b88bc77aeb18aa6195d41e0457405ac3318*/
-bool commo_ack_type_is_memory(uint64_t ack_type);
-bool commo_ack_type_is_durable(uint64_t ack_type);
+inline bool commo_ack_type_is_memory(uint64_t ack_type);
+inline bool commo_ack_type_is_durable(uint64_t ack_type);
 
-bool commo_ack_type_is_memory(uint64_t ack_type) {
-    return rusty::detail::deref_if_pointer_like(ack_type) == (static_cast<uint64_t>(AckType::Memory));
+inline bool commo_ack_type_is_memory(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Memory);
 }
 
-bool commo_ack_type_is_durable(uint64_t ack_type) {
-    return rusty::detail::deref_if_pointer_like(ack_type) == (static_cast<uint64_t>(AckType::Durable));
+inline bool commo_ack_type_is_durable(uint64_t ack_type) {
+    return ack_type == static_cast<uint64_t>(AckType::Durable);
 }
 /*RUSTYCPP:GEN-END id=commo.ack_type_helpers*/
 
@@ -310,7 +310,7 @@ struct AppendEntriesResponse {
 };
 
 
-AppendEntriesResponse AppendEntriesResponse::defaults() {
+inline AppendEntriesResponse AppendEntriesResponse::defaults() {
     return append_entries_response_defaults();
 }
 /*RUSTYCPP:GEN-END id=commo.append_entries_response*/

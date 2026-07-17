@@ -68,9 +68,9 @@ pub enum StepDownReason {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=258d018ce58e8adb11536a93cbb5afb4bdf975e92088befcc4a110b7537276a7*/
 enum class StepDownReason;
-constexpr StepDownReason StepDownReason_UnsecuredFailure();
-constexpr StepDownReason StepDownReason_SecuredFailure();
-constexpr StepDownReason StepDownReason_HigherTerm();
+inline constexpr StepDownReason StepDownReason_UnsecuredFailure();
+inline constexpr StepDownReason StepDownReason_SecuredFailure();
+inline constexpr StepDownReason StepDownReason_HigherTerm();
 
 enum class StepDownReason {
     UnsecuredFailure,
@@ -99,9 +99,9 @@ pub enum CommitStatus {
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.2 version=1 rust_sha256=c556ede4067b5cb3936397f9027b1a2b153fa316d70eb7ebe5be557414044b09*/
 enum class CommitStatus;
-constexpr CommitStatus CommitStatus_SPECULATIVE();
-constexpr CommitStatus CommitStatus_DURABLE();
-constexpr CommitStatus CommitStatus_ROLLEDBACK();
+inline constexpr CommitStatus CommitStatus_SPECULATIVE();
+inline constexpr CommitStatus CommitStatus_DURABLE();
+inline constexpr CommitStatus CommitStatus_ROLLEDBACK();
 
 enum class CommitStatus {
     SPECULATIVE,
@@ -142,31 +142,31 @@ pub fn server_log_index_above(index: u64, boundary: u64) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=a7f26520868ac9a1f57dade3a490a26a358b5d0b06244dc129f38e4802522dce*/
-bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
-bool server_log_index_above(uint64_t index, uint64_t boundary);
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
+inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 
-bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::UnsecuredFailure());
+inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
+    return reason == StepDownReason::UnsecuredFailure;
 }
 
-bool server_step_down_reason_is_secured_failure(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::SecuredFailure());
+inline bool server_step_down_reason_is_secured_failure(StepDownReason reason) {
+    return reason == StepDownReason::SecuredFailure;
 }
 
-bool server_step_down_reason_is_higher_term(StepDownReason reason) {
-    return rusty::detail::deref_if_pointer_like(reason) == rusty::detail::deref_if_pointer_like(StepDownReason::HigherTerm());
+inline bool server_step_down_reason_is_higher_term(StepDownReason reason) {
+    return reason == StepDownReason::HigherTerm;
 }
 
-bool server_commit_status_is_durable(CommitStatus status) {
-    return rusty::detail::deref_if_pointer_like(status) == rusty::clone(CommitStatus::DURABLE);
+inline bool server_commit_status_is_durable(CommitStatus status) {
+    return status == CommitStatus::DURABLE;
 }
 
-bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
-    return rusty::detail::deref_if_pointer_like(index) <= rusty::detail::deref_if_pointer_like(boundary);
+inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
+    return index <= boundary;
 }
 
-bool server_log_index_above(uint64_t index, uint64_t boundary) {
-    return rusty::detail::deref_if_pointer_like(index) > rusty::detail::deref_if_pointer_like(boundary);
+inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
+    return index > boundary;
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 

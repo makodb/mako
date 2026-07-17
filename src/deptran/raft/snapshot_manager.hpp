@@ -80,11 +80,11 @@ struct SnapshotMetadata {
 };
 
 
-bool SnapshotMetadata::is_valid() const {
+inline bool SnapshotMetadata::is_valid() const {
     return snapshot_metadata_is_valid((*this));
 }
 
-std::string SnapshotMetadata::to_string() const {
+inline std::string SnapshotMetadata::to_string() const {
     return snapshot_metadata_to_string((*this));
 }
 /*RUSTYCPP:GEN-END id=snapshot_manager.metadata*/
@@ -335,11 +335,11 @@ struct SnapshotConfig {
 };
 
 
-SnapshotConfig SnapshotConfig::defaults() {
+inline SnapshotConfig SnapshotConfig::defaults() {
     return snapshot_config_defaults();
 }
 
-SnapshotConfig SnapshotConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
+inline SnapshotConfig SnapshotConfig::for_replica(uint32_t partition_id, uint32_t locale_id) {
     return snapshot_config_for_replica(std::move(partition_id), std::move(locale_id));
 }
 /*RUSTYCPP:GEN-END id=snapshot_manager.config*/
