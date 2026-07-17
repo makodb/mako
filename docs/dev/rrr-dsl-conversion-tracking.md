@@ -94,6 +94,11 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-17 — **Phase 6 DONE (`14a3ca4b`)**: generator (`lang_cpp.py`) flipped — all 12 call-site emits
+  now emit `serialize()`/`deserialize()`; regenerated all 4 stubs (rcc_rpc.h/network.h/helloworld.h/
+  benchmark_service.h). Compiles+links through full deptran/dbtest build; marshal tests + rpcgen self-test
+  green. Also FIXED the pre-broken rpcgen_typed_structs_test (was stale at baseline). yapps unblocked +
+  vendored (`ac99fb06`). Struct operators still emitted (bridged); flip at Phase 8.
 - 2026-07-16 — **Phase 3 DONE (`c2286fe6`)**: generic `serialize`/`deserialize` catch-all bridge
   (`template<T> serialize(const T&, ar){ ar << t; }`). ★ TRAIT MACHINERY NOW FUNCTIONALLY COMPLETE —
   `serialize(x,ar)`/`deserialize(x,ar)` resolve for EVERY type (specific overload if migrated, else the
