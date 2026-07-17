@@ -89,45 +89,45 @@ pub fn rocksdb_log_key_in_range(key: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.helpers version=1 rust_sha256=0a3b6f0293563a2e30a7c72b3e5674b8c14f7b5ce73c2e60ef8f7045d5dc9b24*/
-inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len);
-inline std::string rocksdb_log_make_log_key(uint64_t slot_id);
-inline std::string rocksdb_log_make_meta_key(const std::string& key);
-inline bool rocksdb_log_storage_ready(bool is_open, bool has_db);
-inline bool rocksdb_log_range_valid(uint64_t start, uint64_t end);
-inline bool rocksdb_log_empty_from_size(size_t size);
-inline bool rocksdb_log_value_present(bool has_value);
-inline bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key);
+std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len);
+std::string rocksdb_log_make_log_key(uint64_t slot_id);
+std::string rocksdb_log_make_meta_key(const std::string& key);
+bool rocksdb_log_storage_ready(bool is_open, bool has_db);
+bool rocksdb_log_range_valid(uint64_t start, uint64_t end);
+bool rocksdb_log_empty_from_size(size_t size);
+bool rocksdb_log_value_present(bool has_value);
+bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key);
 
-inline std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len) {
+std::string rocksdb_log_copy_slice(const uint8_t* data, size_t len) {
     return rocksdb_log_copy_slice_cpp(data, std::move(len));
 }
 
-inline std::string rocksdb_log_make_log_key(uint64_t slot_id) {
+std::string rocksdb_log_make_log_key(uint64_t slot_id) {
     return rocksdb_log_make_log_key_cpp(std::move(slot_id));
 }
 
-inline std::string rocksdb_log_make_meta_key(const std::string& key) {
-    return std::string("meta:") + key;
+std::string rocksdb_log_make_meta_key(const std::string& key) {
+    return std::string("meta:") + rusty::detail::deref_if_pointer_like(key);
 }
 
-inline bool rocksdb_log_storage_ready(bool is_open, bool has_db) {
-    return is_open && has_db;
+bool rocksdb_log_storage_ready(bool is_open, bool has_db) {
+    return rusty::detail::deref_if_pointer_like(is_open) && rusty::detail::deref_if_pointer_like(has_db);
 }
 
-inline bool rocksdb_log_range_valid(uint64_t start, uint64_t end) {
-    return start < end;
+bool rocksdb_log_range_valid(uint64_t start, uint64_t end) {
+    return rusty::detail::deref_if_pointer_like(start) < rusty::detail::deref_if_pointer_like(end);
 }
 
-inline bool rocksdb_log_empty_from_size(size_t size) {
-    return size == 0;
+bool rocksdb_log_empty_from_size(size_t size) {
+    return rusty::detail::deref_if_pointer_like(size) == static_cast<size_t>(0);
 }
 
-inline bool rocksdb_log_value_present(bool has_value) {
-    return has_value;
+bool rocksdb_log_value_present(bool has_value) {
+    return std::move(has_value);
 }
 
-inline bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key) {
-    return key < end_key && is_log_key;
+bool rocksdb_log_key_in_range(const std::string& key, const std::string& end_key, bool is_log_key) {
+    return (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(end_key)) && rusty::detail::deref_if_pointer_like(is_log_key);
 }
 /*RUSTYCPP:GEN-END id=rocksdb_log_storage.helpers*/
 

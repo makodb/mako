@@ -49,10 +49,10 @@ pub fn raft_quorum_reached(received: i32, needed: i32) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=raft_quorum_reached version=1 rust_sha256=4ff716e366ead197cfd9ce2e06b793adbdf3f2b584d698677a0c0fc5ecc895cd*/
-inline bool raft_quorum_reached(int32_t received, int32_t needed);
+bool raft_quorum_reached(int32_t received, int32_t needed);
 
-inline bool raft_quorum_reached(int32_t received, int32_t needed) {
-    return received >= needed;
+bool raft_quorum_reached(int32_t received, int32_t needed) {
+    return rusty::detail::deref_if_pointer_like(received) >= rusty::detail::deref_if_pointer_like(needed);
 }
 /*RUSTYCPP:GEN-END id=raft_quorum_reached*/
 
@@ -73,20 +73,20 @@ pub fn raft_quorum_count_below(count: usize, quorum: usize) -> bool {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=raft_quorum_count_helpers version=1 rust_sha256=105d43fa5ff3bdbbcdf702c82053586a047fd87033fe67606c1f2a1642b626ef*/
-inline size_t raft_quorum_majority_count(size_t total);
-inline bool raft_quorum_count_reached(size_t count, size_t quorum);
-inline bool raft_quorum_count_below(size_t count, size_t quorum);
+size_t raft_quorum_majority_count(size_t total);
+bool raft_quorum_count_reached(size_t count, size_t quorum);
+bool raft_quorum_count_below(size_t count, size_t quorum);
 
-inline size_t raft_quorum_majority_count(size_t total) {
-    return (total / 2) + 1;
+size_t raft_quorum_majority_count(size_t total) {
+    return ((rusty::detail::deref_if_pointer_like(total) / static_cast<size_t>(2))) + static_cast<size_t>(1);
 }
 
-inline bool raft_quorum_count_reached(size_t count, size_t quorum) {
-    return count >= quorum;
+bool raft_quorum_count_reached(size_t count, size_t quorum) {
+    return rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(quorum);
 }
 
-inline bool raft_quorum_count_below(size_t count, size_t quorum) {
-    return count < quorum;
+bool raft_quorum_count_below(size_t count, size_t quorum) {
+    return rusty::detail::deref_if_pointer_like(count) < rusty::detail::deref_if_pointer_like(quorum);
 }
 /*RUSTYCPP:GEN-END id=raft_quorum_count_helpers*/
 

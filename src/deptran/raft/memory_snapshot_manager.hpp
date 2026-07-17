@@ -45,7 +45,7 @@ pub fn memory_snapshot_metadata(last_index: u64,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.metadata version=1 rust_sha256=3678b8c2aca40b44613126d24c67e673f791cd4fe51ca6b49a74a69ae31d1b57*/
-inline SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
+SnapshotMetadata memory_snapshot_metadata(uint64_t last_index, uint64_t last_term, size_t size) {
     return SnapshotMetadata{.last_included_index = std::move(last_index), .last_included_term = std::move(last_term), .timestamp_ms = 0, .size_bytes = std::move(size), .checksum = std::string()};
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.metadata*/
@@ -74,25 +74,25 @@ pub fn memory_snapshot_reader_is_complete(payload_size: usize,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.stream_helpers version=1 rust_sha256=d98f5868cc5d5a7f49cde4ce1883e770ee25ece0c944988a8a8e95fc364028f1*/
-inline size_t memory_snapshot_advance_offset(size_t offset, size_t size);
-inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
-inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
+size_t memory_snapshot_advance_offset(size_t offset, size_t size);
+size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size);
+bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset);
 
-inline size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
-    return offset + size;
+size_t memory_snapshot_advance_offset(size_t offset, size_t size) {
+    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
 }
 
-inline size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
-    auto remaining = payload_size - offset;
-    if (buffer_size < remaining) {
+size_t memory_snapshot_reader_bytes_to_read(size_t payload_size, size_t offset, size_t buffer_size) {
+    auto remaining = rusty::detail::deref_if_pointer_like(payload_size) - rusty::detail::deref_if_pointer_like(offset);
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-inline bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
-    return offset >= payload_size;
+bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
+    return rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(payload_size);
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.stream_helpers*/
 

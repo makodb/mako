@@ -115,23 +115,23 @@ struct LogEntry {
 };
 
 
-inline LogEntry LogEntry::defaults() {
+LogEntry LogEntry::defaults() {
     return log_entry_defaults();
 }
 
-inline LogEntry LogEntry::with_slot_term(uint64_t slot, uint64_t term) {
+LogEntry LogEntry::with_slot_term(uint64_t slot, uint64_t term) {
     return log_entry_with_slot_term(std::move(slot), std::move(term));
 }
 
-inline LogEntry LogEntry::with_command(uint64_t slot, uint64_t term, Command cmd, bool commit) {
+LogEntry LogEntry::with_command(uint64_t slot, uint64_t term, Command cmd, bool commit) {
     return log_entry_with_command(std::move(slot), std::move(term), std::move(cmd), std::move(commit));
 }
 
-inline void LogEntry::save(BinaryWriteArchive& ar) const {
+void LogEntry::save(BinaryWriteArchive& ar) const {
     log_entry_save((*this), ar);
 }
 
-inline void LogEntry::load(BinaryReadArchive& ar) {
+void LogEntry::load(BinaryReadArchive& ar) {
     log_entry_load((*this), ar);
 }
 /*RUSTYCPP:GEN-END id=log_storage.log_entry*/

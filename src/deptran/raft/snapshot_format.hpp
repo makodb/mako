@@ -42,12 +42,12 @@ pub enum SnapshotCompression {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.compression version=1 rust_sha256=383c1ccff718dcbc919edc958d7984e068f0afe7afa5530729f35574074eea7f*/
-enum class SnapshotCompression : uint8_t;
-inline constexpr SnapshotCompression SnapshotCompression_NONE();
-inline constexpr SnapshotCompression SnapshotCompression_SNAPPY();
-inline constexpr SnapshotCompression SnapshotCompression_ZSTD();
+enum class SnapshotCompression;
+constexpr SnapshotCompression SnapshotCompression_NONE();
+constexpr SnapshotCompression SnapshotCompression_SNAPPY();
+constexpr SnapshotCompression SnapshotCompression_ZSTD();
 
-enum class SnapshotCompression : uint8_t {
+enum class SnapshotCompression {
     NONE = 0,
     SNAPPY = 1,
     ZSTD = 2
@@ -70,12 +70,12 @@ pub enum SnapshotChecksumType {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.checksum_type version=1 rust_sha256=cfce591d089c8fc3c4b050b87d0635c00b30e61d29de4c7697cb2d3e9d5dd786*/
-enum class SnapshotChecksumType : uint8_t;
-inline constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
-inline constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
-inline constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
+enum class SnapshotChecksumType;
+constexpr SnapshotChecksumType SnapshotChecksumType_NONE();
+constexpr SnapshotChecksumType SnapshotChecksumType_CRC32();
+constexpr SnapshotChecksumType SnapshotChecksumType_SHA256();
 
-enum class SnapshotChecksumType : uint8_t {
+enum class SnapshotChecksumType {
     NONE = 0,
     CRC32 = 1,
     SHA256 = 2
@@ -165,11 +165,11 @@ pub fn snapshot_header_make(compression: SnapshotCompression,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.2 version=1 rust_sha256=f76ce10c957962fbbcdb4719341799084e0a0c05ba27443b6966d585b065f3eb*/
-inline SnapshotHeader snapshot_header_defaults() {
+SnapshotHeader snapshot_header_defaults() {
     return SnapshotHeader{.magic = 1347305811, .version = 1, .header_size = 52, .data_size = 0, .compression = static_cast<uint8_t>(SnapshotCompression::NONE), .checksum_type = static_cast<uint8_t>(SnapshotChecksumType::NONE), .last_index = 0, .last_term = 0, .timestamp_ms = 0, .header_crc = 0, .padding_0 = 0, .padding_1 = 0};
 }
 
-inline SnapshotHeader snapshot_header_make(SnapshotCompression compression, SnapshotChecksumType checksum_type, uint64_t data_size, uint64_t last_index, uint64_t last_term, uint64_t timestamp_ms) {
+SnapshotHeader snapshot_header_make(SnapshotCompression compression, SnapshotChecksumType checksum_type, uint64_t data_size, uint64_t last_index, uint64_t last_term, uint64_t timestamp_ms) {
     return SnapshotHeader{.magic = 1347305811, .version = 1, .header_size = 52, .data_size = std::move(data_size), .compression = static_cast<uint8_t>(compression), .checksum_type = static_cast<uint8_t>(checksum_type), .last_index = std::move(last_index), .last_term = std::move(last_term), .timestamp_ms = std::move(timestamp_ms), .header_crc = 0, .padding_0 = 0, .padding_1 = 0};
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.2*/
@@ -187,9 +187,9 @@ pub fn snapshot_current_time_ms() -> u64 {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.current_time_ms version=1 rust_sha256=53550cb839bce9c07add3c5ed8d79654ea61ebb26ef359a151d0c17748024df2*/
-inline uint64_t snapshot_current_time_ms();
+uint64_t snapshot_current_time_ms();
 
-inline uint64_t snapshot_current_time_ms() {
+uint64_t snapshot_current_time_ms() {
     return snapshot_current_time_ms_cpp();
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.current_time_ms*/
@@ -316,19 +316,19 @@ pub fn snapshot_crc32_finalize(crc: u32) -> u32 {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.crc32_parts version=1 rust_sha256=e96fd61bf111839acceb74694e8cd60b23ea5865158d225c61899260d73afa00*/
-inline uint32_t snapshot_crc32_initial();
-inline uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte);
-inline uint32_t snapshot_crc32_finalize(uint32_t crc);
+uint32_t snapshot_crc32_initial();
+uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte);
+uint32_t snapshot_crc32_finalize(uint32_t crc);
 
-inline uint32_t snapshot_crc32_initial() {
+uint32_t snapshot_crc32_initial() {
     return CRC32::initial_value();
 }
 
-inline uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte) {
+uint32_t snapshot_crc32_update_byte(uint32_t crc, uint8_t byte) {
     return CRC32::update_byte(std::move(crc), std::move(byte));
 }
 
-inline uint32_t snapshot_crc32_finalize(uint32_t crc) {
+uint32_t snapshot_crc32_finalize(uint32_t crc) {
     return CRC32::finalize_value(std::move(crc));
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.crc32_parts*/
@@ -349,13 +349,13 @@ pub fn snapshot_crc32(data: *const u8, size: usize) -> u32 {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.3 version=1 rust_sha256=50e492e4c9d0384dc725a6592c16afe38270c4237519f55a47d61aa265ce5a6a*/
-inline uint32_t snapshot_crc32(const uint8_t* data, size_t size);
+uint32_t snapshot_crc32(const uint8_t* data, size_t size);
 
-inline uint32_t snapshot_crc32(const uint8_t* data, size_t size) {
+uint32_t snapshot_crc32(const uint8_t* data, size_t size) {
     auto crc = snapshot_crc32_initial();
     size_t i = static_cast<size_t>(0);
-    while (i < size) {
-        crc = snapshot_crc32_update_byte(std::move(crc), snapshot_crc32_read_byte_cpp(data, i));
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(size)) {
+        crc = snapshot_crc32_update_byte(std::move(crc), snapshot_crc32_read_byte_cpp(data, std::move(i)));
         i += 1;
     }
     return snapshot_crc32_finalize(std::move(crc));
@@ -400,36 +400,36 @@ pub fn snapshot_expected_serialized_size(data_size: usize,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.validation_helpers version=1 rust_sha256=e54415163f61fb9e671dffb7488efb7b6997b192b0acc23dd46b786e14c20d81*/
-inline bool snapshot_magic_valid(uint32_t magic);
-inline bool snapshot_version_valid(uint32_t version);
-inline size_t snapshot_expected_serialized_size(size_t data_size, size_t checksum_size);
+bool snapshot_magic_valid(uint32_t magic);
+bool snapshot_version_valid(uint32_t version);
+size_t snapshot_expected_serialized_size(size_t data_size, size_t checksum_size);
 
-inline bool snapshot_magic_valid(uint32_t magic) {
-    return magic == 0x504E4153;
+bool snapshot_magic_valid(uint32_t magic) {
+    return rusty::detail::deref_if_pointer_like(magic) == static_cast<uint32_t>(1347305811);
 }
 
-inline bool snapshot_version_valid(uint32_t version) {
-    return version == 1;
+bool snapshot_version_valid(uint32_t version) {
+    return rusty::detail::deref_if_pointer_like(version) == static_cast<uint32_t>(1);
 }
 
-inline bool snapshot_compression_supported(SnapshotCompression compression) {
-    return compression == SnapshotCompression::NONE;
+bool snapshot_compression_supported(SnapshotCompression compression) {
+    return rusty::detail::deref_if_pointer_like(compression) == rusty::clone(SnapshotCompression::NONE);
 }
 
-inline bool snapshot_checksum_enabled(SnapshotChecksumType checksum_type) {
-    return checksum_type == SnapshotChecksumType::CRC32;
+bool snapshot_checksum_enabled(SnapshotChecksumType checksum_type) {
+    return rusty::detail::deref_if_pointer_like(checksum_type) == rusty::clone(SnapshotChecksumType::CRC32);
 }
 
-inline size_t snapshot_checksum_size(SnapshotChecksumType checksum_type) {
-    if (snapshot_checksum_enabled(checksum_type)) {
+size_t snapshot_checksum_size(SnapshotChecksumType checksum_type) {
+    if (::snapshot_checksum_enabled(std::move(checksum_type))) {
         return static_cast<size_t>(4);
     } else {
         return static_cast<size_t>(0);
     }
 }
 
-inline size_t snapshot_expected_serialized_size(size_t data_size, size_t checksum_size) {
-    return static_cast<size_t>(52) + data_size + checksum_size;
+size_t snapshot_expected_serialized_size(size_t data_size, size_t checksum_size) {
+    return (static_cast<size_t>(52) + rusty::detail::deref_if_pointer_like(data_size)) + rusty::detail::deref_if_pointer_like(checksum_size);
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.validation_helpers*/
 
@@ -462,7 +462,7 @@ pub fn snapshot_get_header(input: *const u8,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.get_header version=1 rust_sha256=f0cfa72bf461b5b2e555b77cf8d74614ce257abdb5075c50bbe5aca3bc213fed*/
-inline bool snapshot_get_header(const uint8_t* input, size_t input_size, SnapshotHeader* header) {
+bool snapshot_get_header(const uint8_t* input, size_t input_size, SnapshotHeader* header) {
     return snapshot_get_header_cpp(input, std::move(input_size), header);
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.get_header*/
@@ -496,7 +496,7 @@ pub fn snapshot_serialize(last_index: u64,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.9 version=1 rust_sha256=ece82ea3594ceb5230d453b9903fa01b1eb555c98fef53985614e9aea57f5b93*/
-inline bool snapshot_serialize(uint64_t last_index, uint64_t last_term, const uint8_t* data, size_t size, std::string* output, SnapshotCompression compression, SnapshotChecksumType checksum_type) {
+bool snapshot_serialize(uint64_t last_index, uint64_t last_term, const uint8_t* data, size_t size, std::string* output, SnapshotCompression compression, SnapshotChecksumType checksum_type) {
     return snapshot_serialize_cpp(std::move(last_index), std::move(last_term), data, std::move(size), output, std::move(compression), std::move(checksum_type));
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.9*/
@@ -569,9 +569,9 @@ pub fn snapshot_deserialize(input: *const u8,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=snapshot_format.10 version=1 rust_sha256=fe06e33fb4af8feb19719fd55e0ef7b11d892b0b426970a8dcec444a59cee155*/
-inline bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data);
+bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data);
 
-inline bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data) {
+bool snapshot_deserialize(const uint8_t* input, size_t input_size, uint64_t* last_index, uint64_t* last_term, std::string* data) {
     return snapshot_deserialize_cpp(input, std::move(input_size), last_index, last_term, data);
 }
 /*RUSTYCPP:GEN-END id=snapshot_format.10*/
