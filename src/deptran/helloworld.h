@@ -73,13 +73,13 @@ private:
         {
             RpcTxnReadRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__._req;
+            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->val;
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -120,7 +120,7 @@ public:
             RpcTxnReadResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.val;
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -129,7 +129,7 @@ public:
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req._req;
+            rrr::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());

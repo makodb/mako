@@ -540,15 +540,15 @@ private:
         {
             RpcPrepareRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->coro_id;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
                 },
                 []() {});
             this->Prepare(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -560,17 +560,17 @@ private:
         {
             RpcAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.time;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.time, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->coro_id;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
                 },
                 []() {});
             this->Accept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -582,9 +582,9 @@ private:
         {
             RpcDecideRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -601,17 +601,17 @@ private:
         {
             RpcForwardToLearnerServerRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.par_id;
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcForwardToLearnerServerResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ret_slot;
-                    m << __typed_resp__->ret_ballot;
+                    rrr::Serialize_::serialize(__typed_resp__->ret_slot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret_ballot, m);
                 },
                 []() {});
             this->ForwardToLearnerServer(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -623,14 +623,14 @@ private:
         {
             RpcBulkAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcBulkAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
+                    rrr::Serialize_::serialize(__typed_resp__->ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
             this->BulkAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -642,15 +642,15 @@ private:
         {
             RpcSyncLogRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSyncLogResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
-                    m << __typed_resp__->ret;
+                    rrr::Serialize_::serialize(__typed_resp__->ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret, m);
                 },
                 []() {});
             this->SyncLog(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -662,14 +662,14 @@ private:
         {
             RpcSyncCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSyncCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
+                    rrr::Serialize_::serialize(__typed_resp__->ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
             this->SyncCommit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -681,14 +681,14 @@ private:
         {
             RpcBulkDecideRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcBulkDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ballot;
-                    m << __typed_resp__->val;
+                    rrr::Serialize_::serialize(__typed_resp__->ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
             this->BulkDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -743,8 +743,8 @@ public:
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.coro_id;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -753,8 +753,8 @@ public:
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -796,8 +796,8 @@ public:
             RpcAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.coro_id;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -806,10 +806,10 @@ public:
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.time;
-            __m__ << req.ballot;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.time, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -857,9 +857,9 @@ public:
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -901,8 +901,8 @@ public:
             RpcForwardToLearnerServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ret_slot;
-            __reply_ar__ >> __typed_resp__.ret_ballot;
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_slot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_ballot, __reply_ar__);
             return rusty::Result<RpcForwardToLearnerServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -911,10 +911,10 @@ public:
     };
     rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32> async_ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::FORWARDTOLEARNERSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.par_id;
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.par_id, __m__);
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<ForwardToLearnerServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -956,8 +956,8 @@ public:
             RpcBulkAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
+            rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -966,7 +966,7 @@ public:
     };
     rusty::Result<BulkAcceptTypedFuture, rrr::i32> async_BulkAccept(const RpcBulkAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::BULKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<BulkAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1008,9 +1008,9 @@ public:
             RpcSyncLogResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
-            __reply_ar__ >> __typed_resp__.ret;
+            rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcSyncLogResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1019,7 +1019,7 @@ public:
     };
     rusty::Result<SyncLogTypedFuture, rrr::i32> async_SyncLog(const RpcSyncLogRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCLOG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<SyncLogTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1061,8 +1061,8 @@ public:
             RpcSyncCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
+            rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcSyncCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1071,7 +1071,7 @@ public:
     };
     rusty::Result<SyncCommitTypedFuture, rrr::i32> async_SyncCommit(const RpcSyncCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::SYNCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<SyncCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1113,8 +1113,8 @@ public:
             RpcBulkDecideResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ballot;
-            __reply_ar__ >> __typed_resp__.val;
+            rrr::Deserialize_::deserialize(__typed_resp__.ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcBulkDecideResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1123,7 +1123,7 @@ public:
     };
     rusty::Result<BulkDecideTypedFuture, rrr::i32> async_BulkDecide(const RpcBulkDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MultiPaxosService::BULKDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<BulkDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1297,15 +1297,15 @@ private:
         {
             RpcPrepareRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->coro_id;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
                 },
                 []() {});
             this->Prepare(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1317,20 +1317,20 @@ private:
         {
             RpcSuggestRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.time;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.sender;
-            __req_ar__ >> __typed_req__.skip_commits;
-            __req_ar__ >> __typed_req__.skip_potentials;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.time, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sender, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.skip_commits, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.skip_potentials, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSuggestResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->coro_id;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
                 },
                 []() {});
             this->Suggest(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1342,9 +1342,9 @@ private:
         {
             RpcDecideRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -1394,8 +1394,8 @@ public:
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.coro_id;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1404,8 +1404,8 @@ public:
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1447,8 +1447,8 @@ public:
             RpcSuggestResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.coro_id;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcSuggestResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -1457,13 +1457,13 @@ public:
     };
     rusty::Result<SuggestTypedFuture, rrr::i32> async_Suggest(const RpcSuggestRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::SUGGEST, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.time;
-            __m__ << req.ballot;
-            __m__ << req.sender;
-            __m__ << req.skip_commits;
-            __m__ << req.skip_potentials;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.time, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.sender, __m__);
+            rrr::Serialize_::serialize(req.skip_commits, __m__);
+            rrr::Serialize_::serialize(req.skip_potentials, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<SuggestTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1511,9 +1511,9 @@ public:
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(MenciusService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -1840,14 +1840,14 @@ private:
         {
             RpcHeartbeatRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.leaderPrevLogIndex;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcHeartbeatResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->followerPrevLogIndex;
+                    rrr::Serialize_::serialize(__typed_resp__->followerPrevLogIndex, m);
                 },
                 []() {});
             this->Heartbeat(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1859,17 +1859,17 @@ private:
         {
             RpcVoteRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.lst_log_idx;
-            __req_ar__ >> __typed_req__.lst_log_term;
-            __req_ar__ >> __typed_req__.par_id;
-            __req_ar__ >> __typed_req__.cur_term;
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cur_term, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcVoteResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->vote_granted;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->vote_granted, m);
                 },
                 []() {});
             this->Vote(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1881,17 +1881,17 @@ private:
         {
             RpcVote2FPGARequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.lst_log_idx;
-            __req_ar__ >> __typed_req__.lst_log_term;
-            __req_ar__ >> __typed_req__.par_id;
-            __req_ar__ >> __typed_req__.cur_term;
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.par_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cur_term, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcVote2FPGAResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->vote_granted;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->vote_granted, m);
                 },
                 []() {});
             this->Vote2FPGA(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1903,22 +1903,22 @@ private:
         {
             RpcAppendEntriesRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.leaderCurrentTerm;
-            __req_ar__ >> __typed_req__.leaderPrevLogIndex;
-            __req_ar__ >> __typed_req__.leaderPrevLogTerm;
-            __req_ar__ >> __typed_req__.leaderCommitIndex;
-            __req_ar__ >> __typed_req__.dep_id;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAppendEntriesResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->followerAppendOK;
-                    m << __typed_resp__->followerCurrentTerm;
-                    m << __typed_resp__->followerLastLogIndex;
+                    rrr::Serialize_::serialize(__typed_resp__->followerAppendOK, m);
+                    rrr::Serialize_::serialize(__typed_resp__->followerCurrentTerm, m);
+                    rrr::Serialize_::serialize(__typed_resp__->followerLastLogIndex, m);
                 },
                 []() {});
             this->AppendEntries(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1930,22 +1930,22 @@ private:
         {
             RpcAppendEntries2Request __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.leaderCurrentTerm;
-            __req_ar__ >> __typed_req__.leaderPrevLogIndex;
-            __req_ar__ >> __typed_req__.leaderPrevLogTerm;
-            __req_ar__ >> __typed_req__.leaderCommitIndex;
-            __req_ar__ >> __typed_req__.dep_id;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAppendEntries2Response>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->followerAppendOK;
-                    m << __typed_resp__->followerCurrentTerm;
-                    m << __typed_resp__->followerLastLogIndex;
+                    rrr::Serialize_::serialize(__typed_resp__->followerAppendOK, m);
+                    rrr::Serialize_::serialize(__typed_resp__->followerCurrentTerm, m);
+                    rrr::Serialize_::serialize(__typed_resp__->followerLastLogIndex, m);
                 },
                 []() {});
             this->AppendEntries2(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -1957,10 +1957,10 @@ private:
         {
             RpcDecideRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.dep_id;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -2016,7 +2016,7 @@ public:
             RpcHeartbeatResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerPrevLogIndex;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerPrevLogIndex, __reply_ar__);
             return rusty::Result<RpcHeartbeatResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -2025,8 +2025,8 @@ public:
     };
     rusty::Result<HeartbeatTypedFuture, rrr::i32> async_Heartbeat(const RpcHeartbeatRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::HEARTBEAT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.leaderPrevLogIndex;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<HeartbeatTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2068,8 +2068,8 @@ public:
             RpcVoteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.vote_granted;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -2078,10 +2078,10 @@ public:
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.lst_log_idx;
-            __m__ << req.lst_log_term;
-            __m__ << req.par_id;
-            __m__ << req.cur_term;
+            rrr::Serialize_::serialize(req.lst_log_idx, __m__);
+            rrr::Serialize_::serialize(req.lst_log_term, __m__);
+            rrr::Serialize_::serialize(req.par_id, __m__);
+            rrr::Serialize_::serialize(req.cur_term, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<VoteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2123,8 +2123,8 @@ public:
             RpcVote2FPGAResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.vote_granted;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVote2FPGAResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -2133,10 +2133,10 @@ public:
     };
     rusty::Result<Vote2FPGATypedFuture, rrr::i32> async_Vote2FPGA(const RpcVote2FPGARequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::VOTE2FPGA, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.lst_log_idx;
-            __m__ << req.lst_log_term;
-            __m__ << req.par_id;
-            __m__ << req.cur_term;
+            rrr::Serialize_::serialize(req.lst_log_idx, __m__);
+            rrr::Serialize_::serialize(req.lst_log_term, __m__);
+            rrr::Serialize_::serialize(req.par_id, __m__);
+            rrr::Serialize_::serialize(req.cur_term, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<Vote2FPGATypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2178,9 +2178,9 @@ public:
             RpcAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerAppendOK;
-            __reply_ar__ >> __typed_resp__.followerCurrentTerm;
-            __reply_ar__ >> __typed_resp__.followerLastLogIndex;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
             return rusty::Result<RpcAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -2189,14 +2189,14 @@ public:
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.leaderCurrentTerm;
-            __m__ << req.leaderPrevLogIndex;
-            __m__ << req.leaderPrevLogTerm;
-            __m__ << req.leaderCommitIndex;
-            __m__ << req.dep_id;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.leaderCurrentTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderCommitIndex, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2238,9 +2238,9 @@ public:
             RpcAppendEntries2Response __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerAppendOK;
-            __reply_ar__ >> __typed_resp__.followerCurrentTerm;
-            __reply_ar__ >> __typed_resp__.followerLastLogIndex;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
             return rusty::Result<RpcAppendEntries2Response, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -2249,14 +2249,14 @@ public:
     };
     rusty::Result<AppendEntries2TypedFuture, rrr::i32> async_AppendEntries2(const RpcAppendEntries2Request& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::APPENDENTRIES2, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.leaderCurrentTerm;
-            __m__ << req.leaderPrevLogIndex;
-            __m__ << req.leaderPrevLogTerm;
-            __m__ << req.leaderCommitIndex;
-            __m__ << req.dep_id;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.leaderCurrentTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderCommitIndex, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AppendEntries2TypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2304,10 +2304,10 @@ public:
     };
     rusty::Result<DecideTypedFuture, rrr::i32> async_Decide(const RpcDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(FpgaRaftService::DECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.dep_id;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<DecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -2798,10 +2798,10 @@ private:
         {
             RpcVoteRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.lst_log_idx;
-            __req_ar__ >> __typed_req__.lst_log_term;
-            __req_ar__ >> __typed_req__.site_id;
-            __req_ar__ >> __typed_req__.cur_term;
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_idx, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.site_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cur_term, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2814,8 +2814,8 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.max_ballot;
-                            m << __typed_resp__.vote_granted;
+                            rrr::Serialize_::serialize(__typed_resp__.max_ballot, m);
+                            rrr::Serialize_::serialize(__typed_resp__.vote_granted, m);
                         });
                     }
                 }
@@ -2829,8 +2829,8 @@ private:
         {
             RpcVoteDurableRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.term;
-            __req_ar__ >> __typed_req__.voter_id;
+            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.voter_id, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2843,7 +2843,7 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.acknowledged;
+                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
                         });
                     }
                 }
@@ -2857,15 +2857,15 @@ private:
         {
             RpcAppendEntriesRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.leaderCurrentTerm;
-            __req_ar__ >> __typed_req__.leaderSiteId;
-            __req_ar__ >> __typed_req__.leaderPrevLogIndex;
-            __req_ar__ >> __typed_req__.leaderPrevLogTerm;
-            __req_ar__ >> __typed_req__.leaderCommitIndex;
-            __req_ar__ >> __typed_req__.cmd;
-            __req_ar__ >> __typed_req__.leaderNextLogTerm;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderSiteId, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderNextLogTerm, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2878,10 +2878,10 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.followerAppendOK;
-                            m << __typed_resp__.followerCurrentTerm;
-                            m << __typed_resp__.followerLastLogIndex;
-                            m << __typed_resp__.followerAckType;
+                            rrr::Serialize_::serialize(__typed_resp__.followerAppendOK, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerCurrentTerm, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerLastLogIndex, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerAckType, m);
                         });
                     }
                 }
@@ -2895,14 +2895,14 @@ private:
         {
             RpcEmptyAppendEntriesRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.leaderCurrentTerm;
-            __req_ar__ >> __typed_req__.leaderSiteId;
-            __req_ar__ >> __typed_req__.leaderPrevLogIndex;
-            __req_ar__ >> __typed_req__.leaderPrevLogTerm;
-            __req_ar__ >> __typed_req__.leaderCommitIndex;
-            __req_ar__ >> __typed_req__.trigger_election_now;
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCurrentTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderSiteId, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.trigger_election_now, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2915,10 +2915,10 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.followerAppendOK;
-                            m << __typed_resp__.followerCurrentTerm;
-                            m << __typed_resp__.followerLastLogIndex;
-                            m << __typed_resp__.followerAckType;
+                            rrr::Serialize_::serialize(__typed_resp__.followerAppendOK, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerCurrentTerm, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerLastLogIndex, m);
+                            rrr::Serialize_::serialize(__typed_resp__.followerAckType, m);
                         });
                     }
                 }
@@ -2932,9 +2932,9 @@ private:
         {
             RpcAppendEntriesDurableRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.term;
-            __req_ar__ >> __typed_req__.follower_id;
-            __req_ar__ >> __typed_req__.lastLogIndex;
+            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.follower_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.lastLogIndex, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2947,7 +2947,7 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.acknowledged;
+                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
                         });
                     }
                 }
@@ -2961,8 +2961,8 @@ private:
         {
             RpcTimeoutNowRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.leaderTerm;
-            __req_ar__ >> __typed_req__.leaderSiteId;
+            rrr::Deserialize_::deserialize(__typed_req__.leaderTerm, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leaderSiteId, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -2975,8 +2975,8 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.followerTerm;
-                            m << __typed_resp__.success;
+                            rrr::Serialize_::serialize(__typed_resp__.followerTerm, m);
+                            rrr::Serialize_::serialize(__typed_resp__.success, m);
                         });
                     }
                 }
@@ -2990,7 +2990,7 @@ private:
         {
             RpcNotifyRestartRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.restartedSiteId;
+            rrr::Deserialize_::deserialize(__typed_req__.restartedSiteId, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -3003,7 +3003,7 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.acknowledged;
+                            rrr::Serialize_::serialize(__typed_resp__.acknowledged, m);
                         });
                     }
                 }
@@ -3017,11 +3017,11 @@ private:
         {
             RpcInstallSnapshotRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.term;
-            __req_ar__ >> __typed_req__.leader_id;
-            __req_ar__ >> __typed_req__.last_included_index;
-            __req_ar__ >> __typed_req__.last_included_term;
-            __req_ar__ >> __typed_req__.data;
+            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.leader_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.last_included_index, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.last_included_term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.data, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -3034,7 +3034,7 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.term_out;
+                            rrr::Serialize_::serialize(__typed_resp__.term_out, m);
                         });
                     }
                 }
@@ -3048,9 +3048,9 @@ private:
         {
             RpcAddServerRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.term;
-            __req_ar__ >> __typed_req__.new_server_id;
-            __req_ar__ >> __typed_req__.new_server_addr;
+            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.new_server_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.new_server_addr, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -3063,9 +3063,9 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.success;
-                            m << __typed_resp__.error_msg;
-                            m << __typed_resp__.leader_hint;
+                            rrr::Serialize_::serialize(__typed_resp__.success, m);
+                            rrr::Serialize_::serialize(__typed_resp__.error_msg, m);
+                            rrr::Serialize_::serialize(__typed_resp__.leader_hint, m);
                         });
                     }
                 }
@@ -3079,8 +3079,8 @@ private:
         {
             RpcRemoveServerRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.term;
-            __req_ar__ >> __typed_req__.server_id;
+            rrr::Deserialize_::deserialize(__typed_req__.term, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.server_id, __req_ar__);
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -3093,9 +3093,9 @@ private:
                     } else {
                         auto __typed_resp__ = __typed_result__.unwrap();
                         const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::BinaryWriteArchive& m) {
-                            m << __typed_resp__.success;
-                            m << __typed_resp__.error_msg;
-                            m << __typed_resp__.leader_hint;
+                            rrr::Serialize_::serialize(__typed_resp__.success, m);
+                            rrr::Serialize_::serialize(__typed_resp__.error_msg, m);
+                            rrr::Serialize_::serialize(__typed_resp__.leader_hint, m);
                         });
                     }
                 }
@@ -3156,8 +3156,8 @@ public:
             RpcVoteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.vote_granted;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.vote_granted, __reply_ar__);
             return rusty::Result<RpcVoteResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3166,10 +3166,10 @@ public:
     };
     rusty::Result<VoteTypedFuture, rrr::i32> async_Vote(const RpcVoteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::VOTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.lst_log_idx;
-            __m__ << req.lst_log_term;
-            __m__ << req.site_id;
-            __m__ << req.cur_term;
+            rrr::Serialize_::serialize(req.lst_log_idx, __m__);
+            rrr::Serialize_::serialize(req.lst_log_term, __m__);
+            rrr::Serialize_::serialize(req.site_id, __m__);
+            rrr::Serialize_::serialize(req.cur_term, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<VoteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3211,7 +3211,7 @@ public:
             RpcVoteDurableResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.acknowledged;
+            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcVoteDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3220,8 +3220,8 @@ public:
     };
     rusty::Result<VoteDurableTypedFuture, rrr::i32> async_VoteDurable(const RpcVoteDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::VOTEDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.term;
-            __m__ << req.voter_id;
+            rrr::Serialize_::serialize(req.term, __m__);
+            rrr::Serialize_::serialize(req.voter_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<VoteDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3263,10 +3263,10 @@ public:
             RpcAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerAppendOK;
-            __reply_ar__ >> __typed_resp__.followerCurrentTerm;
-            __reply_ar__ >> __typed_resp__.followerLastLogIndex;
-            __reply_ar__ >> __typed_resp__.followerAckType;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3275,15 +3275,15 @@ public:
     };
     rusty::Result<AppendEntriesTypedFuture, rrr::i32> async_AppendEntries(const RpcAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.leaderCurrentTerm;
-            __m__ << req.leaderSiteId;
-            __m__ << req.leaderPrevLogIndex;
-            __m__ << req.leaderPrevLogTerm;
-            __m__ << req.leaderCommitIndex;
-            __m__ << req.cmd;
-            __m__ << req.leaderNextLogTerm;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.leaderCurrentTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderSiteId, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderCommitIndex, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
+            rrr::Serialize_::serialize(req.leaderNextLogTerm, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3325,10 +3325,10 @@ public:
             RpcEmptyAppendEntriesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerAppendOK;
-            __reply_ar__ >> __typed_resp__.followerCurrentTerm;
-            __reply_ar__ >> __typed_resp__.followerLastLogIndex;
-            __reply_ar__ >> __typed_resp__.followerAckType;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAppendOK, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerCurrentTerm, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerLastLogIndex, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.followerAckType, __reply_ar__);
             return rusty::Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3337,14 +3337,14 @@ public:
     };
     rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32> async_EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::EMPTYAPPENDENTRIES, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.leaderCurrentTerm;
-            __m__ << req.leaderSiteId;
-            __m__ << req.leaderPrevLogIndex;
-            __m__ << req.leaderPrevLogTerm;
-            __m__ << req.leaderCommitIndex;
-            __m__ << req.trigger_election_now;
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.leaderCurrentTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderSiteId, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogIndex, __m__);
+            rrr::Serialize_::serialize(req.leaderPrevLogTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderCommitIndex, __m__);
+            rrr::Serialize_::serialize(req.trigger_election_now, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<EmptyAppendEntriesTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3386,7 +3386,7 @@ public:
             RpcAppendEntriesDurableResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.acknowledged;
+            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcAppendEntriesDurableResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3395,9 +3395,9 @@ public:
     };
     rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32> async_AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::APPENDENTRIESDURABLE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.term;
-            __m__ << req.follower_id;
-            __m__ << req.lastLogIndex;
+            rrr::Serialize_::serialize(req.term, __m__);
+            rrr::Serialize_::serialize(req.follower_id, __m__);
+            rrr::Serialize_::serialize(req.lastLogIndex, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AppendEntriesDurableTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3439,8 +3439,8 @@ public:
             RpcTimeoutNowResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.followerTerm;
-            __reply_ar__ >> __typed_resp__.success;
+            rrr::Deserialize_::deserialize(__typed_resp__.followerTerm, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcTimeoutNowResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3449,8 +3449,8 @@ public:
     };
     rusty::Result<TimeoutNowTypedFuture, rrr::i32> async_TimeoutNow(const RpcTimeoutNowRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::TIMEOUTNOW, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.leaderTerm;
-            __m__ << req.leaderSiteId;
+            rrr::Serialize_::serialize(req.leaderTerm, __m__);
+            rrr::Serialize_::serialize(req.leaderSiteId, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<TimeoutNowTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3492,7 +3492,7 @@ public:
             RpcNotifyRestartResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.acknowledged;
+            rrr::Deserialize_::deserialize(__typed_resp__.acknowledged, __reply_ar__);
             return rusty::Result<RpcNotifyRestartResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3501,7 +3501,7 @@ public:
     };
     rusty::Result<NotifyRestartTypedFuture, rrr::i32> async_NotifyRestart(const RpcNotifyRestartRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::NOTIFYRESTART, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.restartedSiteId;
+            rrr::Serialize_::serialize(req.restartedSiteId, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<NotifyRestartTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3543,7 +3543,7 @@ public:
             RpcInstallSnapshotResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.term_out;
+            rrr::Deserialize_::deserialize(__typed_resp__.term_out, __reply_ar__);
             return rusty::Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3552,11 +3552,11 @@ public:
     };
     rusty::Result<InstallSnapshotTypedFuture, rrr::i32> async_InstallSnapshot(const RpcInstallSnapshotRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::INSTALLSNAPSHOT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.term;
-            __m__ << req.leader_id;
-            __m__ << req.last_included_index;
-            __m__ << req.last_included_term;
-            __m__ << req.data;
+            rrr::Serialize_::serialize(req.term, __m__);
+            rrr::Serialize_::serialize(req.leader_id, __m__);
+            rrr::Serialize_::serialize(req.last_included_index, __m__);
+            rrr::Serialize_::serialize(req.last_included_term, __m__);
+            rrr::Serialize_::serialize(req.data, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<InstallSnapshotTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3598,9 +3598,9 @@ public:
             RpcAddServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.success;
-            __reply_ar__ >> __typed_resp__.error_msg;
-            __reply_ar__ >> __typed_resp__.leader_hint;
+            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
             return rusty::Result<RpcAddServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3609,9 +3609,9 @@ public:
     };
     rusty::Result<AddServerTypedFuture, rrr::i32> async_AddServer(const RpcAddServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::ADDSERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.term;
-            __m__ << req.new_server_id;
-            __m__ << req.new_server_addr;
+            rrr::Serialize_::serialize(req.term, __m__);
+            rrr::Serialize_::serialize(req.new_server_id, __m__);
+            rrr::Serialize_::serialize(req.new_server_addr, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AddServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3653,9 +3653,9 @@ public:
             RpcRemoveServerResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.success;
-            __reply_ar__ >> __typed_resp__.error_msg;
-            __reply_ar__ >> __typed_resp__.leader_hint;
+            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.error_msg, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.leader_hint, __reply_ar__);
             return rusty::Result<RpcRemoveServerResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -3664,8 +3664,8 @@ public:
     };
     rusty::Result<RemoveServerTypedFuture, rrr::i32> async_RemoveServer(const RpcRemoveServerRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(RaftService::REMOVESERVER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.term;
-            __m__ << req.server_id;
+            rrr::Serialize_::serialize(req.term, __m__);
+            rrr::Serialize_::serialize(req.server_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RemoveServerTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -3898,19 +3898,19 @@ private:
         {
             RpcPrepareRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.is_pilot;
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ret_cmd;
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->dep;
-                    m << __typed_resp__->status;
+                    rrr::Serialize_::serialize(__typed_resp__->ret_cmd, m);
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->dep, m);
+                    rrr::Serialize_::serialize(__typed_resp__->status, m);
                 },
                 []() {});
             this->Prepare(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -3922,19 +3922,19 @@ private:
         {
             RpcFastAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.is_pilot;
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.dep;
-            __req_ar__ >> __typed_req__.cmd;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcFastAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
-                    m << __typed_resp__->ret_dep;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret_dep, m);
                 },
                 []() {});
             this->FastAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -3946,18 +3946,18 @@ private:
         {
             RpcAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.is_pilot;
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.dep;
-            __req_ar__ >> __typed_req__.cmd;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->max_ballot;
+                    rrr::Serialize_::serialize(__typed_resp__->max_ballot, m);
                 },
                 []() {});
             this->Accept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -3969,10 +3969,10 @@ private:
         {
             RpcCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.is_pilot;
-            __req_ar__ >> __typed_req__.slot;
-            __req_ar__ >> __typed_req__.dep;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.is_pilot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -4024,10 +4024,10 @@ public:
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ret_cmd;
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.dep;
-            __reply_ar__ >> __typed_resp__.status;
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_cmd, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.dep, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.status, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -4036,10 +4036,10 @@ public:
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.is_pilot;
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.is_pilot, __m__);
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -4081,8 +4081,8 @@ public:
             RpcFastAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
-            __reply_ar__ >> __typed_resp__.ret_dep;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_dep, __reply_ar__);
             return rusty::Result<RpcFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -4091,12 +4091,12 @@ public:
     };
     rusty::Result<FastAcceptTypedFuture, rrr::i32> async_FastAccept(const RpcFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::FASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.is_pilot;
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.dep;
-            __m__ << req.cmd;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.is_pilot, __m__);
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.dep, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<FastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -4138,7 +4138,7 @@ public:
             RpcAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.max_ballot;
+            rrr::Deserialize_::deserialize(__typed_resp__.max_ballot, __reply_ar__);
             return rusty::Result<RpcAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -4147,12 +4147,12 @@ public:
     };
     rusty::Result<AcceptTypedFuture, rrr::i32> async_Accept(const RpcAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::ACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.is_pilot;
-            __m__ << req.slot;
-            __m__ << req.ballot;
-            __m__ << req.dep;
-            __m__ << req.cmd;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.is_pilot, __m__);
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.dep, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -4200,10 +4200,10 @@ public:
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(CopilotService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.is_pilot;
-            __m__ << req.slot;
-            __m__ << req.dep;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.is_pilot, __m__);
+            rrr::Serialize_::serialize(req.slot, __m__);
+            rrr::Serialize_::serialize(req.dep, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<CommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -5985,13 +5985,13 @@ private:
         {
             RpcMsgStringRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.arg;
+            rrr::Deserialize_::deserialize(__typed_req__.arg, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcMsgStringResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ret;
+                    rrr::Serialize_::serialize(__typed_resp__->ret, m);
                 },
                 []() {});
             this->MsgString(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6003,13 +6003,13 @@ private:
         {
             RpcMsgMarshallRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.arg;
+            rrr::Deserialize_::deserialize(__typed_req__.arg, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcMsgMarshallResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ret;
+                    rrr::Serialize_::serialize(__typed_resp__->ret, m);
                 },
                 []() {});
             this->MsgMarshall(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6025,7 +6025,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->success;
+                    rrr::Serialize_::serialize(__typed_resp__->success, m);
                 },
                 []() {});
             this->ReElect(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6037,15 +6037,15 @@ private:
         {
             RpcRuleSpeculativeExecuteRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.md;
+            rrr::Deserialize_::deserialize(__typed_req__.md, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRuleSpeculativeExecuteResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->accepted;
-                    m << __typed_resp__->result;
-                    m << __typed_resp__->is_leader;
+                    rrr::Serialize_::serialize(__typed_resp__->accepted, m);
+                    rrr::Serialize_::serialize(__typed_resp__->result, m);
+                    rrr::Serialize_::serialize(__typed_resp__->is_leader, m);
                 },
                 []() {});
             this->RuleSpeculativeExecute(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6057,18 +6057,18 @@ private:
         {
             RpcDispatchRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tid;
-            __req_ar__ >> __typed_req__.dep_id;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDispatchResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
-                    m << __typed_resp__->coro_id;
-                    m << __typed_resp__->view_data;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
+                    rrr::Serialize_::serialize(__typed_resp__->view_data, m);
                 },
                 []() {});
             this->Dispatch(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6080,17 +6080,17 @@ private:
         {
             RpcPrepareRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tid;
-            __req_ar__ >> __typed_req__.sids;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sids, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcPrepareResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->slow;
-                    m << __typed_resp__->coro_id;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->slow, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
                 },
                 []() {});
             this->Prepare(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6102,18 +6102,18 @@ private:
         {
             RpcCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tid;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->slow;
-                    m << __typed_resp__->coro_id;
-                    m << __typed_resp__->profile;
-                    m << __typed_resp__->view_data;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->slow, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
+                    rrr::Serialize_::serialize(__typed_resp__->profile, m);
+                    rrr::Serialize_::serialize(__typed_resp__->view_data, m);
                 },
                 []() {});
             this->Commit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6125,18 +6125,18 @@ private:
         {
             RpcAbortRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tid;
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcAbortResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->slow;
-                    m << __typed_resp__->coro_id;
-                    m << __typed_resp__->profile;
-                    m << __typed_resp__->view_data;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->slow, m);
+                    rrr::Serialize_::serialize(__typed_resp__->coro_id, m);
+                    rrr::Serialize_::serialize(__typed_resp__->profile, m);
+                    rrr::Serialize_::serialize(__typed_resp__->view_data, m);
                 },
                 []() {});
             this->Abort(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6148,13 +6148,13 @@ private:
         {
             RpcEarlyAbortRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tid;
+            rrr::Deserialize_::deserialize(__typed_req__.tid, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcEarlyAbortResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->EarlyAbort(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6166,13 +6166,13 @@ private:
         {
             RpcUpgradeEpochRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.curr_epoch;
+            rrr::Deserialize_::deserialize(__typed_req__.curr_epoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcUpgradeEpochResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->UpgradeEpoch(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6184,7 +6184,7 @@ private:
         {
             RpcTruncateEpochRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.old_epoch;
+            rrr::Deserialize_::deserialize(__typed_req__.old_epoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTruncateEpochResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6201,13 +6201,13 @@ private:
         {
             RpcIsLeaderRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cur_pause;
+            rrr::Deserialize_::deserialize(__typed_req__.cur_pause, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcIsLeaderResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->is_leader;
+                    rrr::Serialize_::serialize(__typed_resp__->is_leader, m);
                 },
                 []() {});
             this->IsLeader(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6219,13 +6219,13 @@ private:
         {
             RpcIsFPGALeaderRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cur_pause;
+            rrr::Deserialize_::deserialize(__typed_req__.cur_pause, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcIsFPGALeaderResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->is_leader;
+                    rrr::Serialize_::serialize(__typed_resp__->is_leader, m);
                 },
                 []() {});
             this->IsFPGALeader(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6237,13 +6237,13 @@ private:
         {
             RpcSimpleCmdRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSimpleCmdResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->SimpleCmd(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6259,7 +6259,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->FailoverPauseSocketOut(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6275,7 +6275,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->FailoverResumeSocketOut(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6302,9 +6302,9 @@ private:
         {
             RpcTapirAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd_id;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.decision;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.decision, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTapirAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6321,14 +6321,14 @@ private:
         {
             RpcTapirFastAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd_id;
-            __req_ar__ >> __typed_req__.txn_cmds;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.txn_cmds, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTapirFastAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->TapirFastAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6340,8 +6340,8 @@ private:
         {
             RpcTapirDecideRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd_id;
-            __req_ar__ >> __typed_req__.commit;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.commit, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTapirDecideResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6358,15 +6358,15 @@ private:
         {
             RpcRccDispatchRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccDispatchResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
-                    m << __typed_resp__->md_graph;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
+                    rrr::Serialize_::serialize(__typed_resp__->md_graph, m);
                 },
                 []() {});
             this->RccDispatch(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6378,14 +6378,14 @@ private:
         {
             RpcRccFinishRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.id;
-            __req_ar__ >> __typed_req__.md_graph;
+            rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.md_graph, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccFinishResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->outputs;
+                    rrr::Serialize_::serialize(__typed_resp__->outputs, m);
                 },
                 []() {});
             this->RccFinish(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6397,14 +6397,14 @@ private:
         {
             RpcRccInquireRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccInquireResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->out_0;
+                    rrr::Serialize_::serialize(__typed_resp__->out_0, m);
                 },
                 []() {});
             this->RccInquire(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6416,13 +6416,13 @@ private:
         {
             RpcRccDispatchRoRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccDispatchRoResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->output;
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
                 },
                 []() {});
             this->RccDispatchRo(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6434,14 +6434,14 @@ private:
         {
             RpcRccInquireValidationRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tx_id;
-            __req_ar__ >> __typed_req__.rank;
+            rrr::Deserialize_::deserialize(__typed_req__.tx_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccInquireValidationResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->RccInquireValidation(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6453,9 +6453,9 @@ private:
         {
             RpcRccNotifyGlobalValidationRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.tx_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.res;
+            rrr::Deserialize_::deserialize(__typed_req__.tx_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.res, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccNotifyGlobalValidationResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6472,15 +6472,15 @@ private:
         {
             RpcJanusDispatchRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusDispatchResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
-                    m << __typed_resp__->ret_graph;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret_graph, m);
                 },
                 []() {});
             this->JanusDispatch(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6492,17 +6492,17 @@ private:
         {
             RpcRccCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.need_validation;
-            __req_ar__ >> __typed_req__.parents;
+            rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.parents, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
                 },
                 []() {});
             this->RccCommit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6514,17 +6514,17 @@ private:
         {
             RpcJanusCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.need_validation;
-            __req_ar__ >> __typed_req__.graph;
+            rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.graph, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
                 },
                 []() {});
             this->JanusCommit(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6536,16 +6536,16 @@ private:
         {
             RpcJanusCommitWoGraphRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.need_validation;
+            rrr::Deserialize_::deserialize(__typed_req__.id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.need_validation, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusCommitWoGraphResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->output;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->output, m);
                 },
                 []() {});
             this->JanusCommitWoGraph(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6557,14 +6557,14 @@ private:
         {
             RpcJanusInquireRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.epoch;
-            __req_ar__ >> __typed_req__.txn_id;
+            rrr::Deserialize_::deserialize(__typed_req__.epoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusInquireResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ret_graph;
+                    rrr::Serialize_::serialize(__typed_resp__->ret_graph, m);
                 },
                 []() {});
             this->JanusInquire(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6576,16 +6576,16 @@ private:
         {
             RpcRccPreAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccPreAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->x;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->x, m);
                 },
                 []() {});
             this->RccPreAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6597,17 +6597,17 @@ private:
         {
             RpcJanusPreAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.cmd;
-            __req_ar__ >> __typed_req__.graph;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.graph, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusPreAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->ret_graph;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret_graph, m);
                 },
                 []() {});
             this->JanusPreAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6619,16 +6619,16 @@ private:
         {
             RpcJanusPreAcceptWoGraphRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.cmd;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusPreAcceptWoGraphResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
-                    m << __typed_resp__->ret_graph;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
+                    rrr::Serialize_::serialize(__typed_resp__->ret_graph, m);
                 },
                 []() {});
             this->JanusPreAcceptWoGraph(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6640,16 +6640,16 @@ private:
         {
             RpcRccAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.p;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.p, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcRccAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->RccAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6661,16 +6661,16 @@ private:
         {
             RpcJanusAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.txn_id;
-            __req_ar__ >> __typed_req__.rank;
-            __req_ar__ >> __typed_req__.ballot;
-            __req_ar__ >> __typed_req__.graph;
+            rrr::Deserialize_::deserialize(__typed_req__.txn_id, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rank, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.graph, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJanusAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->JanusAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6682,9 +6682,9 @@ private:
         {
             RpcJetpackBeginRecoveryRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.old_view;
-            __req_ar__ >> __typed_req__.new_view;
-            __req_ar__ >> __typed_req__.new_view_id;
+            rrr::Deserialize_::deserialize(__typed_req__.old_view, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.new_view, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.new_view_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackBeginRecoveryResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6701,19 +6701,19 @@ private:
         {
             RpcJetpackPullIdSetRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackPullIdSetResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ok;
-                    m << __typed_resp__->reply_jepoch;
-                    m << __typed_resp__->reply_oepoch;
-                    m << __typed_resp__->reply_old_view;
-                    m << __typed_resp__->reply_new_view;
-                    m << __typed_resp__->id_set;
+                    rrr::Serialize_::serialize(__typed_resp__->ok, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_jepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_oepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_old_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_new_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->id_set, m);
                 },
                 []() {});
             this->JetpackPullIdSet(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6725,20 +6725,20 @@ private:
         {
             RpcJetpackPullCmdRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.key_batch;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.key_batch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackPullCmdResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ok;
-                    m << __typed_resp__->reply_jepoch;
-                    m << __typed_resp__->reply_oepoch;
-                    m << __typed_resp__->reply_old_view;
-                    m << __typed_resp__->reply_new_view;
-                    m << __typed_resp__->cmd_batch;
+                    rrr::Serialize_::serialize(__typed_resp__->ok, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_jepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_oepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_old_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_new_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->cmd_batch, m);
                 },
                 []() {});
             this->JetpackPullCmd(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6750,11 +6750,11 @@ private:
         {
             RpcJetpackRecordCmdRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.sid;
-            __req_ar__ >> __typed_req__.rid;
-            __req_ar__ >> __typed_req__.cmd_batch;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.cmd_batch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackRecordCmdResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6771,23 +6771,23 @@ private:
         {
             RpcJetpackPrepareRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.max_seen_ballot;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.max_seen_ballot, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackPrepareResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ok;
-                    m << __typed_resp__->reply_jepoch;
-                    m << __typed_resp__->reply_oepoch;
-                    m << __typed_resp__->reply_old_view;
-                    m << __typed_resp__->reply_new_view;
-                    m << __typed_resp__->reply_max_seen_ballot;
-                    m << __typed_resp__->accepted_ballot;
-                    m << __typed_resp__->replied_sid;
-                    m << __typed_resp__->replied_set_size;
+                    rrr::Serialize_::serialize(__typed_resp__->ok, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_jepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_oepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_old_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_new_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_max_seen_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->accepted_ballot, m);
+                    rrr::Serialize_::serialize(__typed_resp__->replied_sid, m);
+                    rrr::Serialize_::serialize(__typed_resp__->replied_set_size, m);
                 },
                 []() {});
             this->JetpackPrepare(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6799,22 +6799,22 @@ private:
         {
             RpcJetpackAcceptRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.max_seen_ballot;
-            __req_ar__ >> __typed_req__.sid;
-            __req_ar__ >> __typed_req__.set_size;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.max_seen_ballot, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.set_size, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackAcceptResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ok;
-                    m << __typed_resp__->reply_jepoch;
-                    m << __typed_resp__->reply_oepoch;
-                    m << __typed_resp__->reply_old_view;
-                    m << __typed_resp__->reply_new_view;
-                    m << __typed_resp__->reply_max_seen_ballot;
+                    rrr::Serialize_::serialize(__typed_resp__->ok, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_jepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_oepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_old_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_new_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_max_seen_ballot, m);
                 },
                 []() {});
             this->JetpackAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6826,10 +6826,10 @@ private:
         {
             RpcJetpackCommitRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.sid;
-            __req_ar__ >> __typed_req__.set_size;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.set_size, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackCommitResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -6846,21 +6846,21 @@ private:
         {
             RpcJetpackPullRecSetInsRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.jepoch;
-            __req_ar__ >> __typed_req__.oepoch;
-            __req_ar__ >> __typed_req__.sid;
-            __req_ar__ >> __typed_req__.rid;
+            rrr::Deserialize_::deserialize(__typed_req__.jepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.sid, __req_ar__);
+            rrr::Deserialize_::deserialize(__typed_req__.rid, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackPullRecSetInsResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->ok;
-                    m << __typed_resp__->reply_jepoch;
-                    m << __typed_resp__->reply_oepoch;
-                    m << __typed_resp__->reply_old_view;
-                    m << __typed_resp__->reply_new_view;
-                    m << __typed_resp__->cmd;
+                    rrr::Serialize_::serialize(__typed_resp__->ok, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_jepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_oepoch, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_old_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->reply_new_view, m);
+                    rrr::Serialize_::serialize(__typed_resp__->cmd, m);
                 },
                 []() {});
             this->JetpackPullRecSetIns(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -6872,7 +6872,7 @@ private:
         {
             RpcJetpackFinishRecoveryRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.oepoch;
+            rrr::Deserialize_::deserialize(__typed_req__.oepoch, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcJetpackFinishRecoveryResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
@@ -7006,7 +7006,7 @@ public:
             RpcMsgStringResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ret;
+            rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgStringResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7015,7 +7015,7 @@ public:
     };
     rusty::Result<MsgStringTypedFuture, rrr::i32> async_MsgString(const RpcMsgStringRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::MSGSTRING, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.arg;
+            rrr::Serialize_::serialize(req.arg, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<MsgStringTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7057,7 +7057,7 @@ public:
             RpcMsgMarshallResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ret;
+            rrr::Deserialize_::deserialize(__typed_resp__.ret, __reply_ar__);
             return rusty::Result<RpcMsgMarshallResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7066,7 +7066,7 @@ public:
     };
     rusty::Result<MsgMarshallTypedFuture, rrr::i32> async_MsgMarshall(const RpcMsgMarshallRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::MSGMARSHALL, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.arg;
+            rrr::Serialize_::serialize(req.arg, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<MsgMarshallTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7108,7 +7108,7 @@ public:
             RpcReElectResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.success;
+            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcReElectResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7158,9 +7158,9 @@ public:
             RpcRuleSpeculativeExecuteResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.accepted;
-            __reply_ar__ >> __typed_resp__.result;
-            __reply_ar__ >> __typed_resp__.is_leader;
+            rrr::Deserialize_::deserialize(__typed_resp__.accepted, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcRuleSpeculativeExecuteResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7169,7 +7169,7 @@ public:
     };
     rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32> async_RuleSpeculativeExecute(const RpcRuleSpeculativeExecuteRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RULESPECULATIVEEXECUTE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.md;
+            rrr::Serialize_::serialize(req.md, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RuleSpeculativeExecuteTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7211,10 +7211,10 @@ public:
             RpcDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
-            __reply_ar__ >> __typed_resp__.coro_id;
-            __reply_ar__ >> __typed_resp__.view_data;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7223,9 +7223,9 @@ public:
     };
     rusty::Result<DispatchTypedFuture, rrr::i32> async_Dispatch(const RpcDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::DISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tid;
-            __m__ << req.dep_id;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.tid, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<DispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7267,9 +7267,9 @@ public:
             RpcPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.slow;
-            __reply_ar__ >> __typed_resp__.coro_id;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
             return rusty::Result<RpcPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7278,9 +7278,9 @@ public:
     };
     rusty::Result<PrepareTypedFuture, rrr::i32> async_Prepare(const RpcPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::PREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tid;
-            __m__ << req.sids;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.tid, __m__);
+            rrr::Serialize_::serialize(req.sids, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<PrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7322,11 +7322,11 @@ public:
             RpcCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.slow;
-            __reply_ar__ >> __typed_resp__.coro_id;
-            __reply_ar__ >> __typed_resp__.profile;
-            __reply_ar__ >> __typed_resp__.view_data;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.profile, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7335,8 +7335,8 @@ public:
     };
     rusty::Result<CommitTypedFuture, rrr::i32> async_Commit(const RpcCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::COMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tid;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.tid, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<CommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7378,11 +7378,11 @@ public:
             RpcAbortResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.slow;
-            __reply_ar__ >> __typed_resp__.coro_id;
-            __reply_ar__ >> __typed_resp__.profile;
-            __reply_ar__ >> __typed_resp__.view_data;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.slow, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.coro_id, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.profile, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.view_data, __reply_ar__);
             return rusty::Result<RpcAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7391,8 +7391,8 @@ public:
     };
     rusty::Result<AbortTypedFuture, rrr::i32> async_Abort(const RpcAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tid;
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.tid, __m__);
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<AbortTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7434,7 +7434,7 @@ public:
             RpcEarlyAbortResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcEarlyAbortResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7443,7 +7443,7 @@ public:
     };
     rusty::Result<EarlyAbortTypedFuture, rrr::i32> async_EarlyAbort(const RpcEarlyAbortRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::EARLYABORT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tid;
+            rrr::Serialize_::serialize(req.tid, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<EarlyAbortTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7485,7 +7485,7 @@ public:
             RpcUpgradeEpochResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcUpgradeEpochResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7494,7 +7494,7 @@ public:
     };
     rusty::Result<UpgradeEpochTypedFuture, rrr::i32> async_UpgradeEpoch(const RpcUpgradeEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::UPGRADEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.curr_epoch;
+            rrr::Serialize_::serialize(req.curr_epoch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<UpgradeEpochTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7542,7 +7542,7 @@ public:
     };
     rusty::Result<TruncateEpochTypedFuture, rrr::i32> async_TruncateEpoch(const RpcTruncateEpochRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TRUNCATEEPOCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.old_epoch;
+            rrr::Serialize_::serialize(req.old_epoch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<TruncateEpochTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7584,7 +7584,7 @@ public:
             RpcIsLeaderResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.is_leader;
+            rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsLeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7593,7 +7593,7 @@ public:
     };
     rusty::Result<IsLeaderTypedFuture, rrr::i32> async_IsLeader(const RpcIsLeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ISLEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cur_pause;
+            rrr::Serialize_::serialize(req.cur_pause, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<IsLeaderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7635,7 +7635,7 @@ public:
             RpcIsFPGALeaderResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.is_leader;
+            rrr::Deserialize_::deserialize(__typed_resp__.is_leader, __reply_ar__);
             return rusty::Result<RpcIsFPGALeaderResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7644,7 +7644,7 @@ public:
     };
     rusty::Result<IsFPGALeaderTypedFuture, rrr::i32> async_IsFPGALeader(const RpcIsFPGALeaderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::ISFPGALEADER, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cur_pause;
+            rrr::Serialize_::serialize(req.cur_pause, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<IsFPGALeaderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7686,7 +7686,7 @@ public:
             RpcSimpleCmdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcSimpleCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7695,7 +7695,7 @@ public:
     };
     rusty::Result<SimpleCmdTypedFuture, rrr::i32> async_SimpleCmd(const RpcSimpleCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::SIMPLECMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<SimpleCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7737,7 +7737,7 @@ public:
             RpcFailoverPauseSocketOutResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverPauseSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7787,7 +7787,7 @@ public:
             RpcFailoverResumeSocketOutResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcFailoverResumeSocketOutResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7890,9 +7890,9 @@ public:
     };
     rusty::Result<TapirAcceptTypedFuture, rrr::i32> async_TapirAccept(const RpcTapirAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.ballot;
-            __m__ << req.decision;
+            rrr::Serialize_::serialize(req.cmd_id, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.decision, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<TapirAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7934,7 +7934,7 @@ public:
             RpcTapirFastAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcTapirFastAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -7943,8 +7943,8 @@ public:
     };
     rusty::Result<TapirFastAcceptTypedFuture, rrr::i32> async_TapirFastAccept(const RpcTapirFastAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRFASTACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.txn_cmds;
+            rrr::Serialize_::serialize(req.cmd_id, __m__);
+            rrr::Serialize_::serialize(req.txn_cmds, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<TapirFastAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -7992,8 +7992,8 @@ public:
     };
     rusty::Result<TapirDecideTypedFuture, rrr::i32> async_TapirDecide(const RpcTapirDecideRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::TAPIRDECIDE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd_id;
-            __m__ << req.commit;
+            rrr::Serialize_::serialize(req.cmd_id, __m__);
+            rrr::Serialize_::serialize(req.commit, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<TapirDecideTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8035,9 +8035,9 @@ public:
             RpcRccDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
-            __reply_ar__ >> __typed_resp__.md_graph;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.md_graph, __reply_ar__);
             return rusty::Result<RpcRccDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8046,7 +8046,7 @@ public:
     };
     rusty::Result<RccDispatchTypedFuture, rrr::i32> async_RccDispatch(const RpcRccDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccDispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8088,7 +8088,7 @@ public:
             RpcRccFinishResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.outputs;
+            rrr::Deserialize_::deserialize(__typed_resp__.outputs, __reply_ar__);
             return rusty::Result<RpcRccFinishResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8097,8 +8097,8 @@ public:
     };
     rusty::Result<RccFinishTypedFuture, rrr::i32> async_RccFinish(const RpcRccFinishRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCFINISH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.id;
-            __m__ << req.md_graph;
+            rrr::Serialize_::serialize(req.id, __m__);
+            rrr::Serialize_::serialize(req.md_graph, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccFinishTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8140,7 +8140,7 @@ public:
             RpcRccInquireResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.out_0;
+            rrr::Deserialize_::deserialize(__typed_resp__.out_0, __reply_ar__);
             return rusty::Result<RpcRccInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8149,8 +8149,8 @@ public:
     };
     rusty::Result<RccInquireTypedFuture, rrr::i32> async_RccInquire(const RpcRccInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccInquireTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8192,7 +8192,7 @@ public:
             RpcRccDispatchRoResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.output;
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccDispatchRoResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8201,7 +8201,7 @@ public:
     };
     rusty::Result<RccDispatchRoTypedFuture, rrr::i32> async_RccDispatchRo(const RpcRccDispatchRoRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCDISPATCHRO, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccDispatchRoTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8243,7 +8243,7 @@ public:
             RpcRccInquireValidationResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccInquireValidationResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8252,8 +8252,8 @@ public:
     };
     rusty::Result<RccInquireValidationTypedFuture, rrr::i32> async_RccInquireValidation(const RpcRccInquireValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCINQUIREVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tx_id;
-            __m__ << req.rank;
+            rrr::Serialize_::serialize(req.tx_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccInquireValidationTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8301,9 +8301,9 @@ public:
     };
     rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32> async_RccNotifyGlobalValidation(const RpcRccNotifyGlobalValidationRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCNOTIFYGLOBALVALIDATION, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.tx_id;
-            __m__ << req.rank;
-            __m__ << req.res;
+            rrr::Serialize_::serialize(req.tx_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.res, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccNotifyGlobalValidationTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8345,9 +8345,9 @@ public:
             RpcJanusDispatchResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
-            __reply_ar__ >> __typed_resp__.ret_graph;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusDispatchResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8356,7 +8356,7 @@ public:
     };
     rusty::Result<JanusDispatchTypedFuture, rrr::i32> async_JanusDispatch(const RpcJanusDispatchRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSDISPATCH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusDispatchTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8398,8 +8398,8 @@ public:
             RpcRccCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcRccCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8408,10 +8408,10 @@ public:
     };
     rusty::Result<RccCommitTypedFuture, rrr::i32> async_RccCommit(const RpcRccCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.id;
-            __m__ << req.rank;
-            __m__ << req.need_validation;
-            __m__ << req.parents;
+            rrr::Serialize_::serialize(req.id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.need_validation, __m__);
+            rrr::Serialize_::serialize(req.parents, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8453,8 +8453,8 @@ public:
             RpcJanusCommitResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8463,10 +8463,10 @@ public:
     };
     rusty::Result<JanusCommitTypedFuture, rrr::i32> async_JanusCommit(const RpcJanusCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.id;
-            __m__ << req.rank;
-            __m__ << req.need_validation;
-            __m__ << req.graph;
+            rrr::Serialize_::serialize(req.id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.need_validation, __m__);
+            rrr::Serialize_::serialize(req.graph, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8508,8 +8508,8 @@ public:
             RpcJanusCommitWoGraphResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.output;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.output, __reply_ar__);
             return rusty::Result<RpcJanusCommitWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8518,9 +8518,9 @@ public:
     };
     rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32> async_JanusCommitWoGraph(const RpcJanusCommitWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSCOMMITWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.id;
-            __m__ << req.rank;
-            __m__ << req.need_validation;
+            rrr::Serialize_::serialize(req.id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.need_validation, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusCommitWoGraphTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8562,7 +8562,7 @@ public:
             RpcJanusInquireResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ret_graph;
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusInquireResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8571,8 +8571,8 @@ public:
     };
     rusty::Result<JanusInquireTypedFuture, rrr::i32> async_JanusInquire(const RpcJanusInquireRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSINQUIRE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.epoch;
-            __m__ << req.txn_id;
+            rrr::Serialize_::serialize(req.epoch, __m__);
+            rrr::Serialize_::serialize(req.txn_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusInquireTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8614,8 +8614,8 @@ public:
             RpcRccPreAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.x;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.x, __reply_ar__);
             return rusty::Result<RpcRccPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8624,9 +8624,9 @@ public:
     };
     rusty::Result<RccPreAcceptTypedFuture, rrr::i32> async_RccPreAccept(const RpcRccPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccPreAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8668,8 +8668,8 @@ public:
             RpcJanusPreAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.ret_graph;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8678,10 +8678,10 @@ public:
     };
     rusty::Result<JanusPreAcceptTypedFuture, rrr::i32> async_JanusPreAccept(const RpcJanusPreAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
-            __m__ << req.cmd;
-            __m__ << req.graph;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
+            rrr::Serialize_::serialize(req.graph, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusPreAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8723,8 +8723,8 @@ public:
             RpcJanusPreAcceptWoGraphResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
-            __reply_ar__ >> __typed_resp__.ret_graph;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.ret_graph, __reply_ar__);
             return rusty::Result<RpcJanusPreAcceptWoGraphResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8733,9 +8733,9 @@ public:
     };
     rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32> async_JanusPreAcceptWoGraph(const RpcJanusPreAcceptWoGraphRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSPREACCEPTWOGRAPH, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
-            __m__ << req.cmd;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.cmd, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusPreAcceptWoGraphTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8777,7 +8777,7 @@ public:
             RpcRccAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcRccAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8786,10 +8786,10 @@ public:
     };
     rusty::Result<RccAcceptTypedFuture, rrr::i32> async_RccAccept(const RpcRccAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::RCCACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
-            __m__ << req.ballot;
-            __m__ << req.p;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.p, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<RccAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8831,7 +8831,7 @@ public:
             RpcJanusAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcJanusAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8840,10 +8840,10 @@ public:
     };
     rusty::Result<JanusAcceptTypedFuture, rrr::i32> async_JanusAccept(const RpcJanusAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JANUSACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.txn_id;
-            __m__ << req.rank;
-            __m__ << req.ballot;
-            __m__ << req.graph;
+            rrr::Serialize_::serialize(req.txn_id, __m__);
+            rrr::Serialize_::serialize(req.rank, __m__);
+            rrr::Serialize_::serialize(req.ballot, __m__);
+            rrr::Serialize_::serialize(req.graph, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JanusAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8891,9 +8891,9 @@ public:
     };
     rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32> async_JetpackBeginRecovery(const RpcJetpackBeginRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKBEGINRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.old_view;
-            __m__ << req.new_view;
-            __m__ << req.new_view_id;
+            rrr::Serialize_::serialize(req.old_view, __m__);
+            rrr::Serialize_::serialize(req.new_view, __m__);
+            rrr::Serialize_::serialize(req.new_view_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackBeginRecoveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8935,12 +8935,12 @@ public:
             RpcJetpackPullIdSetResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ok;
-            __reply_ar__ >> __typed_resp__.reply_jepoch;
-            __reply_ar__ >> __typed_resp__.reply_oepoch;
-            __reply_ar__ >> __typed_resp__.reply_old_view;
-            __reply_ar__ >> __typed_resp__.reply_new_view;
-            __reply_ar__ >> __typed_resp__.id_set;
+            rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_old_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_new_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.id_set, __reply_ar__);
             return rusty::Result<RpcJetpackPullIdSetResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -8949,8 +8949,8 @@ public:
     };
     rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32> async_JetpackPullIdSet(const RpcJetpackPullIdSetRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLIDSET, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackPullIdSetTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -8992,12 +8992,12 @@ public:
             RpcJetpackPullCmdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ok;
-            __reply_ar__ >> __typed_resp__.reply_jepoch;
-            __reply_ar__ >> __typed_resp__.reply_oepoch;
-            __reply_ar__ >> __typed_resp__.reply_old_view;
-            __reply_ar__ >> __typed_resp__.reply_new_view;
-            __reply_ar__ >> __typed_resp__.cmd_batch;
+            rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_old_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_new_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.cmd_batch, __reply_ar__);
             return rusty::Result<RpcJetpackPullCmdResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -9006,9 +9006,9 @@ public:
     };
     rusty::Result<JetpackPullCmdTypedFuture, rrr::i32> async_JetpackPullCmd(const RpcJetpackPullCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.key_batch;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.key_batch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackPullCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9056,11 +9056,11 @@ public:
     };
     rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32> async_JetpackRecordCmd(const RpcJetpackRecordCmdRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKRECORDCMD, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.sid;
-            __m__ << req.rid;
-            __m__ << req.cmd_batch;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.sid, __m__);
+            rrr::Serialize_::serialize(req.rid, __m__);
+            rrr::Serialize_::serialize(req.cmd_batch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackRecordCmdTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9102,15 +9102,15 @@ public:
             RpcJetpackPrepareResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ok;
-            __reply_ar__ >> __typed_resp__.reply_jepoch;
-            __reply_ar__ >> __typed_resp__.reply_oepoch;
-            __reply_ar__ >> __typed_resp__.reply_old_view;
-            __reply_ar__ >> __typed_resp__.reply_new_view;
-            __reply_ar__ >> __typed_resp__.reply_max_seen_ballot;
-            __reply_ar__ >> __typed_resp__.accepted_ballot;
-            __reply_ar__ >> __typed_resp__.replied_sid;
-            __reply_ar__ >> __typed_resp__.replied_set_size;
+            rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_old_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_new_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_max_seen_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.accepted_ballot, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.replied_sid, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.replied_set_size, __reply_ar__);
             return rusty::Result<RpcJetpackPrepareResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -9119,9 +9119,9 @@ public:
     };
     rusty::Result<JetpackPrepareTypedFuture, rrr::i32> async_JetpackPrepare(const RpcJetpackPrepareRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPREPARE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.max_seen_ballot;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.max_seen_ballot, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackPrepareTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9163,12 +9163,12 @@ public:
             RpcJetpackAcceptResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ok;
-            __reply_ar__ >> __typed_resp__.reply_jepoch;
-            __reply_ar__ >> __typed_resp__.reply_oepoch;
-            __reply_ar__ >> __typed_resp__.reply_old_view;
-            __reply_ar__ >> __typed_resp__.reply_new_view;
-            __reply_ar__ >> __typed_resp__.reply_max_seen_ballot;
+            rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_old_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_new_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_max_seen_ballot, __reply_ar__);
             return rusty::Result<RpcJetpackAcceptResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -9177,11 +9177,11 @@ public:
     };
     rusty::Result<JetpackAcceptTypedFuture, rrr::i32> async_JetpackAccept(const RpcJetpackAcceptRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKACCEPT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.max_seen_ballot;
-            __m__ << req.sid;
-            __m__ << req.set_size;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.max_seen_ballot, __m__);
+            rrr::Serialize_::serialize(req.sid, __m__);
+            rrr::Serialize_::serialize(req.set_size, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackAcceptTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9229,10 +9229,10 @@ public:
     };
     rusty::Result<JetpackCommitTypedFuture, rrr::i32> async_JetpackCommit(const RpcJetpackCommitRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKCOMMIT, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.sid;
-            __m__ << req.set_size;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.sid, __m__);
+            rrr::Serialize_::serialize(req.set_size, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackCommitTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9274,12 +9274,12 @@ public:
             RpcJetpackPullRecSetInsResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.ok;
-            __reply_ar__ >> __typed_resp__.reply_jepoch;
-            __reply_ar__ >> __typed_resp__.reply_oepoch;
-            __reply_ar__ >> __typed_resp__.reply_old_view;
-            __reply_ar__ >> __typed_resp__.reply_new_view;
-            __reply_ar__ >> __typed_resp__.cmd;
+            rrr::Deserialize_::deserialize(__typed_resp__.ok, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_jepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_oepoch, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_old_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.reply_new_view, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.cmd, __reply_ar__);
             return rusty::Result<RpcJetpackPullRecSetInsResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -9288,10 +9288,10 @@ public:
     };
     rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32> async_JetpackPullRecSetIns(const RpcJetpackPullRecSetInsRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKPULLRECSETINS, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.jepoch;
-            __m__ << req.oepoch;
-            __m__ << req.sid;
-            __m__ << req.rid;
+            rrr::Serialize_::serialize(req.jepoch, __m__);
+            rrr::Serialize_::serialize(req.oepoch, __m__);
+            rrr::Serialize_::serialize(req.sid, __m__);
+            rrr::Serialize_::serialize(req.rid, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackPullRecSetInsTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9339,7 +9339,7 @@ public:
     };
     rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32> async_JetpackFinishRecovery(const RpcJetpackFinishRecoveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClassicService::JETPACKFINISHRECOVERY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.oepoch;
+            rrr::Serialize_::serialize(req.oepoch, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<JetpackFinishRecoveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -9516,7 +9516,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->server_ready(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9532,7 +9532,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->server_heart_beat_with_data(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -9641,7 +9641,7 @@ public:
             RpcServerReadyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -9691,7 +9691,7 @@ public:
             RpcServerHeartBeatWithDataResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcServerHeartBeatWithDataResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10027,7 +10027,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->txn_names;
+                    rrr::Serialize_::serialize(__typed_resp__->txn_names, m);
                 },
                 []() {});
             this->client_get_txn_names(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10069,13 +10069,13 @@ private:
         {
             RpcClientResponseRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.dep_id;
+            rrr::Deserialize_::deserialize(__typed_req__.dep_id, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcClientResponseResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->client_response(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10091,7 +10091,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->client_ready(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10107,7 +10107,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->res;
+                    rrr::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
             this->client_ready_block(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10134,13 +10134,13 @@ private:
         {
             RpcDispatchTxnRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.req;
+            rrr::Deserialize_::deserialize(__typed_req__.req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcDispatchTxnResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->result;
+                    rrr::Serialize_::serialize(__typed_resp__->result, m);
                 },
                 []() {});
             this->DispatchTxn(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10195,7 +10195,7 @@ public:
             RpcClientGetTxnNamesResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.txn_names;
+            rrr::Deserialize_::deserialize(__typed_resp__.txn_names, __reply_ar__);
             return rusty::Result<RpcClientGetTxnNamesResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10339,7 +10339,7 @@ public:
             RpcClientResponseResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientResponseResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10348,7 +10348,7 @@ public:
     };
     rusty::Result<client_responseTypedFuture, rrr::i32> async_client_response(const RpcClientResponseRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::CLIENT_RESPONSE, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.dep_id;
+            rrr::Serialize_::serialize(req.dep_id, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<client_responseTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -10390,7 +10390,7 @@ public:
             RpcClientReadyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10440,7 +10440,7 @@ public:
             RpcClientReadyBlockResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.res;
+            rrr::Deserialize_::deserialize(__typed_resp__.res, __reply_ar__);
             return rusty::Result<RpcClientReadyBlockResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10537,7 +10537,7 @@ public:
             RpcDispatchTxnResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.result;
+            rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDispatchTxnResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10546,7 +10546,7 @@ public:
     };
     rusty::Result<DispatchTxnTypedFuture, rrr::i32> async_DispatchTxn(const RpcDispatchTxnRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ClientControlService::DISPATCHTXN, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.req;
+            rrr::Serialize_::serialize(req.req, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<DispatchTxnTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -10818,15 +10818,15 @@ private:
         {
             RpcGetConfigRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.client_version;
+            rrr::Deserialize_::deserialize(__typed_req__.client_version, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcGetConfigResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->current_version;
-                    m << __typed_resp__->has_update;
-                    m << __typed_resp__->config_data;
+                    rrr::Serialize_::serialize(__typed_resp__->current_version, m);
+                    rrr::Serialize_::serialize(__typed_resp__->has_update, m);
+                    rrr::Serialize_::serialize(__typed_resp__->config_data, m);
                 },
                 []() {});
             this->GetConfig(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10842,7 +10842,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->version;
+                    rrr::Serialize_::serialize(__typed_resp__->version, m);
                 },
                 []() {});
             this->GetConfigVersion(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10858,7 +10858,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->has_config;
+                    rrr::Serialize_::serialize(__typed_resp__->has_config, m);
                 },
                 []() {});
             this->HasConfig(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10870,13 +10870,13 @@ private:
         {
             RpcSetShardingPolicyRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.policy_data;
+            rrr::Deserialize_::deserialize(__typed_req__.policy_data, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcSetShardingPolicyResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->success;
+                    rrr::Serialize_::serialize(__typed_resp__->success, m);
                 },
                 []() {});
             this->SetShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10888,15 +10888,15 @@ private:
         {
             RpcGetShardingPolicyRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
-            __req_ar__ >> __typed_req__.client_version;
+            rrr::Deserialize_::deserialize(__typed_req__.client_version, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcGetShardingPolicyResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->current_version;
-                    m << __typed_resp__->has_update;
-                    m << __typed_resp__->policy_data;
+                    rrr::Serialize_::serialize(__typed_resp__->current_version, m);
+                    rrr::Serialize_::serialize(__typed_resp__->has_update, m);
+                    rrr::Serialize_::serialize(__typed_resp__->policy_data, m);
                 },
                 []() {});
             this->GetShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10912,7 +10912,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->version;
+                    rrr::Serialize_::serialize(__typed_resp__->version, m);
                 },
                 []() {});
             this->GetShardingPolicyVersion(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10928,7 +10928,7 @@ private:
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->has_policy;
+                    rrr::Serialize_::serialize(__typed_resp__->has_policy, m);
                 },
                 []() {});
             this->HasShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -10981,9 +10981,9 @@ public:
             RpcGetConfigResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.current_version;
-            __reply_ar__ >> __typed_resp__.has_update;
-            __reply_ar__ >> __typed_resp__.config_data;
+            rrr::Deserialize_::deserialize(__typed_resp__.current_version, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.has_update, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.config_data, __reply_ar__);
             return rusty::Result<RpcGetConfigResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -10992,7 +10992,7 @@ public:
     };
     rusty::Result<GetConfigTypedFuture, rrr::i32> async_GetConfig(const RpcGetConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.client_version;
+            rrr::Serialize_::serialize(req.client_version, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<GetConfigTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -11034,7 +11034,7 @@ public:
             RpcGetConfigVersionResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.version;
+            rrr::Deserialize_::deserialize(__typed_resp__.version, __reply_ar__);
             return rusty::Result<RpcGetConfigVersionResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -11084,7 +11084,7 @@ public:
             RpcHasConfigResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.has_config;
+            rrr::Deserialize_::deserialize(__typed_resp__.has_config, __reply_ar__);
             return rusty::Result<RpcHasConfigResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -11134,7 +11134,7 @@ public:
             RpcSetShardingPolicyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.success;
+            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
             return rusty::Result<RpcSetShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -11143,7 +11143,7 @@ public:
     };
     rusty::Result<SetShardingPolicyTypedFuture, rrr::i32> async_SetShardingPolicy(const RpcSetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ConfigServiceService::SETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.policy_data;
+            rrr::Serialize_::serialize(req.policy_data, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<SetShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -11185,9 +11185,9 @@ public:
             RpcGetShardingPolicyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.current_version;
-            __reply_ar__ >> __typed_resp__.has_update;
-            __reply_ar__ >> __typed_resp__.policy_data;
+            rrr::Deserialize_::deserialize(__typed_resp__.current_version, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.has_update, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.policy_data, __reply_ar__);
             return rusty::Result<RpcGetShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -11196,7 +11196,7 @@ public:
     };
     rusty::Result<GetShardingPolicyTypedFuture, rrr::i32> async_GetShardingPolicy(const RpcGetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req.client_version;
+            rrr::Serialize_::serialize(req.client_version, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<GetShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
@@ -11238,7 +11238,7 @@ public:
             RpcGetShardingPolicyVersionResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.version;
+            rrr::Deserialize_::deserialize(__typed_resp__.version, __reply_ar__);
             return rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -11288,7 +11288,7 @@ public:
             RpcHasShardingPolicyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
-            __reply_ar__ >> __typed_resp__.has_policy;
+            rrr::Deserialize_::deserialize(__typed_resp__.has_policy, __reply_ar__);
             return rusty::Result<RpcHasShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
