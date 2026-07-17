@@ -49,7 +49,20 @@ Prior context: the event hierarchy was flattened + the `Event` class deleted thi
 1. **`Option<V&>` reference-lowering** — unblocks **487 lines in client.cpp alone** (biggest single lever).
 2. **`&str`-literal → `const char*` return lowering** — unblocks ~11 identical `*_to_string` enum switches (~150 lines) at once.
 
-## ⚠ Phase 6+ BLOCKED in this local env: `bin/rpcgen` has no `yapps`
+## Phase 6 status: yapps RESOLVED (`ac99fb06`); now gated on a pre-broken rpcgen test
+
+★ yapps blocker RESOLVED — vendored yapps 2.2.0 runtime into `src/rrr/pylib/yapps/` (`ac99fb06`).
+**bin/rpcgen works locally now**; stubs regenerate + iterate locally (helloworld.h regen = zero diff).
+★ NEW gate: `test_rpc_rpcgen_typed_structs` is PRE-EXISTINGLY BROKEN (stale vs generator — expects
+`MarshalSource __req_src__(&req->m)` + `reply(...unwrap_err())`; generator emits
+`make_source_proxy(&req->m)` direct + `reply(..., rrr::ServerReplyFn{})`). Verified: fails at BASELINE.
+The Phase 6 generator flip exact-text-couples to this test, so **prerequisite = bring the whole test
+current** (all asserts; snippets live in Python string literals two ways — single multi-line strings AND
+concatenated `"a\n" "b\n"` — so handle both forms + the `<<`→serialize/deserialize call-site lines).
+`rpcgen_compile_test.py` (compiles output, no exact-text asserts) is fine. The generator call-site flip
+itself is verified correct by inspecting actual output; it was reverted here to keep the tree clean.
+
+## (historical) Phase 6+ was BLOCKED: `bin/rpcgen` had no `yapps`
 
 `bin/rpcgen` (which regenerates the committed stubs and backs `test_rpc_rpcgen_*`) imports `yapps.runtime`.
 The vendored `src/rrr/pylib/yapps` here was untracked stale `.pyc`-only bytecode (removed); `yapps` is NOT
