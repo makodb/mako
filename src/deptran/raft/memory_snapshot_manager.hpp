@@ -149,6 +149,18 @@ inline bool memory_snapshot_reader_read_cpp(const std::string& payload,
   return true;
 }
 
+// @safe - checks reader-local stream position against owned payload size.
+inline bool memory_snapshot_reader_is_complete_cpp(const std::string* payload,
+                                                   size_t offset) {
+  return memory_snapshot_reader_is_complete(payload->size(), offset);
+}
+
+// @lifetime: (&'a) -> &'a
+inline const SnapshotMetadata& memory_snapshot_reader_metadata_cpp(
+    const SnapshotMetadata* metadata) {
+  return *metadata;
+}
+
 // MemorySnapshotWriterCore is the DSL-owned state and behavior for the memory
 // writer. MemorySnapshotWriter remains a tiny C++ hand-bridge because the
 // transpiler cannot currently attach #[cpp_inherit] to a trait defined in the
@@ -322,33 +334,126 @@ class MemorySnapshotWriter : public SnapshotWriter {
   MemorySnapshotWriterCore core_;
 };
 
+// MemorySnapshotReaderCore is the DSL-owned state and behavior for the memory
+// reader. MemorySnapshotReader remains a C++ hand-bridge for the virtual
+// SnapshotReader interface.
+#if RUSTYCPP_RUST
+pub struct MemorySnapshotReaderCore {
+    payload_: std::string,
+    meta_: SnapshotMetadata,
+    offset_: usize,
+}
+
+impl MemorySnapshotReaderCore {
+    // @safe
+    #[cpp_ctor]
+    fn new(payload: std::string, meta: SnapshotMetadata) -> MemorySnapshotReaderCore {
+        MemorySnapshotReaderCore {
+            payload_: payload,
+            meta_: meta,
+            offset_: 0usize,
+        }
+    }
+
+    // @unsafe - raw buffer copy from internal string.
+    fn Read(&mut self, buffer: *mut c_char, buffer_size: usize,
+            bytes_read: *mut usize) -> bool {
+        unsafe {
+            memory_snapshot_reader_read_cpp(&self.payload_,
+                                            &mut self.offset_,
+                                            buffer,
+                                            buffer_size,
+                                            bytes_read)
+        }
+    }
+
+    // @safe
+    fn IsComplete(&self) -> bool {
+        memory_snapshot_reader_is_complete_cpp(&self.payload_, self.offset_)
+    }
+
+    // @lifetime: (&'a) -> &'a
+    fn GetMetadata(&self) -> &SnapshotMetadata {
+        unsafe { memory_snapshot_reader_metadata_cpp(&self.meta_) }
+    }
+
+    // @safe
+    fn GetOffset(&self) -> usize {
+        self.offset_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.reader_core version=1 rust_sha256=4d59bec3000742efc712aaf7fc42ed96b6ace8929202344053e35af894b6b97e*/
+struct MemorySnapshotReaderCore;
+
+struct MemorySnapshotReaderCore {
+    std::string payload_;
+    SnapshotMetadata meta_;
+    size_t offset_;
+
+    MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta);
+    bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read);
+    bool IsComplete() const;
+    const SnapshotMetadata& GetMetadata() const;
+    size_t GetOffset() const;
+};
+
+
+MemorySnapshotReaderCore::MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta)
+    : payload_(payload)
+    , meta_(meta)
+    , offset_(static_cast<size_t>(0))
+{}
+
+bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
+    // @unsafe
+    {
+        return memory_snapshot_reader_read_cpp(&this->payload_, &this->offset_, buffer, std::move(buffer_size), bytes_read);
+    }
+}
+
+bool MemorySnapshotReaderCore::IsComplete() const {
+    return memory_snapshot_reader_is_complete_cpp(&this->payload_, this->offset_);
+}
+
+const SnapshotMetadata& MemorySnapshotReaderCore::GetMetadata() const {
+    // @unsafe
+    {
+        return memory_snapshot_reader_metadata_cpp(&this->meta_);
+    }
+}
+
+size_t MemorySnapshotReaderCore::GetOffset() const {
+    return this->offset_;
+}
+/*RUSTYCPP:GEN-END id=memory_snapshot_manager.reader_core*/
+
 class MemorySnapshotReader : public SnapshotReader {
  public:
   // @safe
   MemorySnapshotReader(std::string payload, SnapshotMetadata meta)
-      : payload_(std::move(payload)), meta_(std::move(meta)) {}
+      : core_(std::move(payload), std::move(meta)) {}
 
   // @unsafe - raw buffer copy from internal string
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
-    return memory_snapshot_reader_read_cpp(payload_, &offset_, buffer,
-                                           buffer_size, bytes_read);
+    return core_.Read(buffer, buffer_size, bytes_read);
   }
 
   // @safe
   bool IsComplete() const override {
-    return memory_snapshot_reader_is_complete(payload_.size(), offset_);
+    return core_.IsComplete();
   }
 
   // @safe
-  const SnapshotMetadata& GetMetadata() const override { return meta_; }
+  const SnapshotMetadata& GetMetadata() const override {
+    return core_.GetMetadata();
+  }
 
   // @safe
-  size_t GetOffset() const override { return offset_; }
+  size_t GetOffset() const override { return core_.GetOffset(); }
 
  private:
-  std::string      payload_;
-  SnapshotMetadata meta_{};
-  size_t           offset_{0};
+  MemorySnapshotReaderCore core_;
 };
 
 class MemorySnapshotManager : public SnapshotManager {
