@@ -96,6 +96,59 @@ bool memory_snapshot_reader_is_complete(size_t payload_size, size_t offset) {
 }
 /*RUSTYCPP:GEN-END id=memory_snapshot_manager.stream_helpers*/
 
+// @unsafe - raw pointer append to a caller-owned staging buffer.
+inline bool memory_snapshot_writer_write_cpp(std::string* buffer,
+                                             size_t* offset,
+                                             const char* data,
+                                             size_t size) {
+  buffer->append(data, size);
+  *offset = memory_snapshot_advance_offset(*offset, size);
+  return true;
+}
+
+// @unsafe - publishes a completed in-memory snapshot under the manager mutex.
+inline bool memory_snapshot_writer_finalize_cpp(std::string* buffer,
+                                                std::string* dest_payload,
+                                                SnapshotMetadata* dest_meta,
+                                                bool* has_snapshot,
+                                                std::mutex* mtx,
+                                                slotid_t last_index,
+                                                ballot_t last_term,
+                                                bool* finalized) {
+  std::lock_guard<std::mutex> lk(*mtx);
+  *dest_payload = std::move(*buffer);
+  *dest_meta = memory_snapshot_metadata(last_index, last_term,
+                                        dest_payload->size());
+  *has_snapshot = true;
+  *finalized = true;
+  return true;
+}
+
+// @safe - resets writer-local staging state.
+inline bool memory_snapshot_writer_abort_cpp(std::string* buffer,
+                                             size_t* offset,
+                                             bool* finalized) {
+  buffer->clear();
+  *offset = 0;
+  *finalized = false;
+  return true;
+}
+
+// @unsafe - copies snapshot payload bytes into caller-owned raw output buffer.
+inline bool memory_snapshot_reader_read_cpp(const std::string& payload,
+                                            size_t* offset,
+                                            char* buffer,
+                                            size_t buffer_size,
+                                            size_t* bytes_read) {
+  size_t n = memory_snapshot_reader_bytes_to_read(payload.size(),
+                                                  *offset,
+                                                  buffer_size);
+  std::memcpy(buffer, payload.data() + *offset, n);
+  *offset = memory_snapshot_advance_offset(*offset, n);
+  *bytes_read = n;
+  return true;
+}
+
 class MemorySnapshotWriter : public SnapshotWriter {
  public:
   // @unsafe - borrows MemorySnapshotManager internals. The writer must not
@@ -115,28 +168,19 @@ class MemorySnapshotWriter : public SnapshotWriter {
 
   // @unsafe - raw pointer append to internal buffer
   bool Write(const char* data, size_t size) override {
-    buffer_.append(data, size);
-    offset_ = memory_snapshot_advance_offset(offset_, size);
-    return true;
+    return memory_snapshot_writer_write_cpp(&buffer_, &offset_, data, size);
   }
 
   // @unsafe - publishes buffer under mutex
   bool Finalize() override {
-    std::lock_guard<std::mutex> lk(*mtx_);
-    *dest_payload_ = std::move(buffer_);
-    *dest_meta_ = memory_snapshot_metadata(last_index_, last_term_,
-                                           dest_payload_->size());
-    *has_snapshot_ = true;
-    finalized_ = true;
-    return true;
+    return memory_snapshot_writer_finalize_cpp(
+        &buffer_, dest_payload_, dest_meta_, has_snapshot_, mtx_,
+        last_index_, last_term_, &finalized_);
   }
 
   // @safe
   bool Abort() override {
-    buffer_.clear();
-    offset_ = 0;
-    finalized_ = false;
-    return true;
+    return memory_snapshot_writer_abort_cpp(&buffer_, &offset_, &finalized_);
   }
 
   // @safe
@@ -166,13 +210,8 @@ class MemorySnapshotReader : public SnapshotReader {
 
   // @unsafe - raw buffer copy from internal string
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {
-    size_t n = memory_snapshot_reader_bytes_to_read(payload_.size(),
-                                                    offset_,
-                                                    buffer_size);
-    std::memcpy(buffer, payload_.data() + offset_, n);
-    offset_ = memory_snapshot_advance_offset(offset_, n);
-    *bytes_read = n;
-    return true;
+    return memory_snapshot_reader_read_cpp(payload_, &offset_, buffer,
+                                           buffer_size, bytes_read);
   }
 
   // @safe
