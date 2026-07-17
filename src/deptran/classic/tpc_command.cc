@@ -25,20 +25,20 @@ static int volatile x5 = rrr::SerializableRegistry::reg<TpcBatchCommand>(TpcBatc
 // overloads make this byte-for-byte equivalent to the legacy
 // Marshal encoding.
 void TpcPrepareCommand::save(BinaryWriteArchive& ar) const {
-  ar << tx_id_;
-  ar << ret_;
+  rrr::Serialize_::serialize(tx_id_, ar);
+  rrr::Serialize_::serialize(ret_, ar);
   // cmd_ is janus::Command — drive its archive op
   // directly instead of wrapping it in a temporary MarshallDeputy.
   // Wire format identical (`[v32 kind][payload]`).
-  ar << cmd_;
+  rrr::Serialize_::serialize(cmd_, ar);
 }
 
 void TpcPrepareCommand::load(BinaryReadArchive& ar) {
-  ar >> tx_id_;
-  ar >> ret_;
+  rrr::Deserialize_::deserialize(tx_id_, ar);
+  rrr::Deserialize_::deserialize(ret_, ar);
   // cmd_ load through Command's archive op.
   if (!cmd_.has_value()) {
-    ar >> cmd_;
+    rrr::Deserialize_::deserialize(cmd_, ar);
   } else {
     verify(0);
   }
@@ -53,36 +53,36 @@ void TpcPrepareCommand::load(BinaryReadArchive& ar) {
 // overloads make this byte-for-byte equivalent to the legacy
 // Marshal encoding.
 void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
-  ar << tx_id_;
-  ar << ret_;
-  ar << term;
+  rrr::Serialize_::serialize(tx_id_, ar);
+  rrr::Serialize_::serialize(ret_, ar);
+  rrr::Serialize_::serialize(term, ar);
   // drive cmd_ through Command's archive op directly.
-  ar << cmd_;
+  rrr::Serialize_::serialize(cmd_, ar);
   bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
-  ar << has_view_data;
+  rrr::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
     // was MarshallDeputy view_md(sp_view_data_) — Command
     // produces identical wire bytes via the same registry-dispatched
     // save/load path.
     janus::Command view_md = sp_view_data_;
-    ar << view_md;
+    rrr::Serialize_::serialize(view_md, ar);
   }
 }
 
 void TpcCommitCommand::load(BinaryReadArchive& ar) {
-  ar >> tx_id_;
-  ar >> ret_;
-  ar >> term;
+  rrr::Deserialize_::deserialize(tx_id_, ar);
+  rrr::Deserialize_::deserialize(ret_, ar);
+  rrr::Deserialize_::deserialize(term, ar);
   // cmd_ load through Command's archive op.
   if (!cmd_.has_value())
-    ar >> cmd_;
+    rrr::Deserialize_::deserialize(cmd_, ar);
   else
     verify(0);
   bool_t has_view_data;
-  ar >> has_view_data;
+  rrr::Deserialize_::deserialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
-    ar >> view_md;
+    rrr::Deserialize_::deserialize(view_md, ar);
     sp_view_data_ = marshallable_cast<ViewData>(view_md);
   }
 }
@@ -99,14 +99,14 @@ void TpcCommitCommand::load(BinaryReadArchive& ar) {
 // legacy encoding.
 void TpcBatchCommand::save(BinaryWriteArchive& ar) const {
   verify(size_ == cmds_.size());
-  ar << size_;
+  rrr::Serialize_::serialize(size_, ar);
   for (auto it = cmds_.begin(); it != cmds_.end(); ++it) {
     (*it)->save(ar);
   }
 }
 
 void TpcBatchCommand::load(BinaryReadArchive& ar) {
-  ar >> size_;
+  rrr::Deserialize_::deserialize(size_, ar);
   for (uint32_t i = 0; i < size_; i++) {
     cmds_.emplace_back(std::make_shared<TpcCommitCommand>());
     cmds_[i]->load(ar);

@@ -70,38 +70,38 @@ rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) {
 // operators in procedure.cc.
 rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCommand &cmd) {
   verify(cmd.input.size() < 10000);
-  ar << cmd.id_;
-  ar << cmd.type_;
-  ar << cmd.inn_id_;
-  ar << cmd.root_id_;
-  ar << cmd.root_type_;
-  ar << cmd.client_id_;
-  ar << cmd.cmd_id_in_client_;
-  ar << cmd.rule_mode_on_and_is_original_path_only_command_;
-  ar << cmd.input;
-  ar << cmd.output;
-  ar << cmd.output_size;
-  ar << cmd.partition_id_;
-  ar << cmd.timestamp_;
-  ar << cmd.rank_;
+  rrr::Serialize_::serialize(cmd.id_, ar);
+  rrr::Serialize_::serialize(cmd.type_, ar);
+  rrr::Serialize_::serialize(cmd.inn_id_, ar);
+  rrr::Serialize_::serialize(cmd.root_id_, ar);
+  rrr::Serialize_::serialize(cmd.root_type_, ar);
+  rrr::Serialize_::serialize(cmd.client_id_, ar);
+  rrr::Serialize_::serialize(cmd.cmd_id_in_client_, ar);
+  rrr::Serialize_::serialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
+  rrr::Serialize_::serialize(cmd.input, ar);
+  rrr::Serialize_::serialize(cmd.output, ar);
+  rrr::Serialize_::serialize(cmd.output_size, ar);
+  rrr::Serialize_::serialize(cmd.partition_id_, ar);
+  rrr::Serialize_::serialize(cmd.timestamp_, ar);
+  rrr::Serialize_::serialize(cmd.rank_, ar);
   return ar;
 }
 
 rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, SimpleCommand &cmd) {
-  ar >> cmd.id_;
-  ar >> cmd.type_;
-  ar >> cmd.inn_id_;
-  ar >> cmd.root_id_;
-  ar >> cmd.root_type_;
-  ar >> cmd.client_id_;
-  ar >> cmd.cmd_id_in_client_;
-  ar >> cmd.rule_mode_on_and_is_original_path_only_command_;
-  ar >> cmd.input;
-  ar >> cmd.output;
-  ar >> cmd.output_size;
-  ar >> cmd.partition_id_;
-  ar >> cmd.timestamp_;
-  ar >> cmd.rank_;
+  rrr::Deserialize_::deserialize(cmd.id_, ar);
+  rrr::Deserialize_::deserialize(cmd.type_, ar);
+  rrr::Deserialize_::deserialize(cmd.inn_id_, ar);
+  rrr::Deserialize_::deserialize(cmd.root_id_, ar);
+  rrr::Deserialize_::deserialize(cmd.root_type_, ar);
+  rrr::Deserialize_::deserialize(cmd.client_id_, ar);
+  rrr::Deserialize_::deserialize(cmd.cmd_id_in_client_, ar);
+  rrr::Deserialize_::deserialize(cmd.rule_mode_on_and_is_original_path_only_command_, ar);
+  rrr::Deserialize_::deserialize(cmd.input, ar);
+  rrr::Deserialize_::deserialize(cmd.output, ar);
+  rrr::Deserialize_::deserialize(cmd.output_size, ar);
+  rrr::Deserialize_::deserialize(cmd.partition_id_, ar);
+  rrr::Deserialize_::deserialize(cmd.timestamp_, ar);
+  rrr::Deserialize_::deserialize(cmd.rank_, ar);
   return ar;
 }
 

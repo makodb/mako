@@ -64,36 +64,36 @@ shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
 // the BinaryWriteArchive/BinaryReadArchive `<<`/`>>` overloads for
 // uint8_t / uint32_t / std::string match the legacy Marshal encoding.
 void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
-  ar << static_cast<uint8_t>(op_);
-  ar << key_;
-  ar << value_;
+  rrr::Serialize_::serialize(static_cast<uint8_t>(op_), ar);
+  rrr::Serialize_::serialize(key_, ar);
+  rrr::Serialize_::serialize(value_, ar);
   if (op_ == ReplicatedDBOp::BATCH) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
-    ar << count;
+    rrr::Serialize_::serialize(count, ar);
     for (const auto& op : batch_ops_) {
-      ar << static_cast<uint8_t>(op.op);
-      ar << op.key;
-      ar << op.value;
+      rrr::Serialize_::serialize(static_cast<uint8_t>(op.op), ar);
+      rrr::Serialize_::serialize(op.key, ar);
+      rrr::Serialize_::serialize(op.value, ar);
     }
   }
 }
 
 void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
   uint8_t op_val;
-  ar >> op_val;
+  rrr::Deserialize_::deserialize(op_val, ar);
   op_ = static_cast<ReplicatedDBOp>(op_val);
-  ar >> key_;
-  ar >> value_;
+  rrr::Deserialize_::deserialize(key_, ar);
+  rrr::Deserialize_::deserialize(value_, ar);
   if (op_ == ReplicatedDBOp::BATCH) {
     uint32_t count;
-    ar >> count;
+    rrr::Deserialize_::deserialize(count, ar);
     batch_ops_.resize(count);
     for (uint32_t i = 0; i < count; i++) {
       uint8_t sub_op_val;
-      ar >> sub_op_val;
+      rrr::Deserialize_::deserialize(sub_op_val, ar);
       batch_ops_[i].op = static_cast<ReplicatedDBOp>(sub_op_val);
-      ar >> batch_ops_[i].key;
-      ar >> batch_ops_[i].value;
+      rrr::Deserialize_::deserialize(batch_ops_[i].key, ar);
+      rrr::Deserialize_::deserialize(batch_ops_[i].value, ar);
     }
   }
 }

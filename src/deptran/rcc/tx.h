@@ -355,12 +355,12 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
 // archive emission to serialize parent_set_t fields (a typedef for
 // vector<pair<txid_t, ParentEdge<RccTx>>>).
 inline rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const ParentEdge<RccTx> &e) {
-  ar << e.partitions_;
+  rrr::Serialize_::serialize(e.partitions_, ar);
   return ar;
 }
 
 inline rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, ParentEdge<RccTx> &e) {
-  ar >> e.partitions_;
+  rrr::Deserialize_::deserialize(e.partitions_, ar);
   return ar;
 }
 

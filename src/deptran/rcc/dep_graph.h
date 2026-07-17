@@ -79,13 +79,13 @@ class RccGraph : public Graph<RccTx> {
     uint64_t n = size();
     verify(n == 0);  // RccTx archive operators are not implemented;
                      // only empty graphs ever round-trip in practice.
-    ar << n;
+    rrr::Serialize_::serialize(n, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     verify(size() == 0);
     uint64_t n;
-    ar >> n;
+    rrr::Deserialize_::deserialize(n, ar);
     verify(n == 0);  // matches the legacy `m >> *v` verify(0) stub
                      // for non-empty graphs.
   }

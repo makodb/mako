@@ -124,15 +124,15 @@ bool SimpleRWCommand::same_as(SimpleRWCommand &other) {
 // identical to the legacy to_marshal/from_marshal pair (just three
 // fields: type_, key_, value_).
 void SimpleRWCommand::save(BinaryWriteArchive& ar) const {
-  ar << type_;
-  ar << key_;
-  ar << value_;
+  rrr::Serialize_::serialize(type_, ar);
+  rrr::Serialize_::serialize(key_, ar);
+  rrr::Serialize_::serialize(value_, ar);
 }
 
 void SimpleRWCommand::load(BinaryReadArchive& ar) {
-  ar >> type_;
-  ar >> key_;
-  ar >> value_;
+  rrr::Deserialize_::deserialize(type_, ar);
+  rrr::Deserialize_::deserialize(key_, ar);
+  rrr::Deserialize_::deserialize(value_, ar);
 }
 
 bool SimpleRWCommand::IsRead() {

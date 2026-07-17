@@ -44,22 +44,22 @@ class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
   BulkPrepareLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << static_cast<int32_t>(min_prepared_slots.size());
-    for (auto i : min_prepared_slots) ar << i;
-    ar << leader_id;
-    ar << epoch;
+    rrr::Serialize_::serialize(static_cast<int32_t>(min_prepared_slots.size()), ar);
+    for (auto i : min_prepared_slots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       pair<uint32_t, slotid_t> pr;
-      ar >> pr;
+      rrr::Deserialize_::deserialize(pr, ar);
       min_prepared_slots.push_back(pr);
     }
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
   }
 };
 
@@ -76,28 +76,28 @@ class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   // prefix is `slots.size()` instead of `ballots.size()` — wire
   // format byte-for-byte identical.
   void save(BinaryWriteArchive& ar) const {
-    ar << static_cast<int32_t>(slots.size());
-    for (auto i : slots) ar << i;
-    ar << static_cast<int32_t>(slots.size());
-    for (auto i : ballots) ar << i;
-    ar << leader_id;
+    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : slots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : ballots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(leader_id, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       slots.push_back(x);
     }
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       ballot_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       ballots.push_back(x);
     }
-    ar >> leader_id;
+    rrr::Deserialize_::deserialize(leader_id, ar);
   }
 };
 
@@ -110,13 +110,13 @@ class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   HeartBeatLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << leader_id;
-    ar << epoch;
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
   }
 };
 
@@ -130,22 +130,22 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      ar << leader_id;
-      ar << epoch;
-      ar << static_cast<int32_t>(sync_commit_slot.size());
+      rrr::Serialize_::serialize(leader_id, ar);
+      rrr::Serialize_::serialize(epoch, ar);
+      rrr::Serialize_::serialize(static_cast<int32_t>(sync_commit_slot.size()), ar);
       for (size_t i = 0; i < sync_commit_slot.size(); i++) {
-        ar << sync_commit_slot[i];
+        rrr::Serialize_::serialize(sync_commit_slot[i], ar);
       }
     }
 
     void load(BinaryReadArchive& ar) {
-      ar >> leader_id;
-      ar >> epoch;
+      rrr::Deserialize_::deserialize(leader_id, ar);
+      rrr::Deserialize_::deserialize(epoch, ar);
       int32_t sz;
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         slotid_t x;
-        ar >> x;
+        rrr::Deserialize_::deserialize(x, ar);
         sync_commit_slot.push_back(x);
       }
     }
@@ -168,35 +168,35 @@ class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      ar << static_cast<int32_t>(sync_data.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(sync_data.size()), ar);
       for (size_t i = 0; i < sync_data.size(); i++) {
-        ar << *sync_data[i];
+        rrr::Serialize_::serialize(*sync_data[i], ar);
       }
-      ar << static_cast<int32_t>(missing_slots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots.size()), ar);
       for (size_t i = 0; i < missing_slots.size(); i++) {
-        ar << static_cast<int32_t>(missing_slots[i].size());
+        rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots[i].size()), ar);
         for (size_t j = 0; j < missing_slots[i].size(); j++) {
-          ar << missing_slots[i][j];
+          rrr::Serialize_::serialize(missing_slots[i][j], ar);
         }
       }
     }
 
     void load(BinaryReadArchive& ar) {
       int32_t sz;
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         auto x = std::make_shared<janus::Command>();
-        ar >> *x;
+        rrr::Deserialize_::deserialize(*x, ar);
         sync_data.push_back(std::move(x));
       }
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         int32_t sz1;
-        ar >> sz1;
+        rrr::Deserialize_::deserialize(sz1, ar);
         vector<slotid_t> cur;
         for (int j = 0; j < sz1; j++) {
           slotid_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           cur.push_back(x);
         }
         missing_slots.push_back(std::move(cur));
@@ -214,22 +214,22 @@ class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
   SyncNoOpRequest() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << leader_id;
-    ar << epoch;
-    ar << static_cast<int32_t>(sync_slots.size());
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
+    rrr::Serialize_::serialize(static_cast<int32_t>(sync_slots.size()), ar);
     for (size_t i = 0; i < sync_slots.size(); i++) {
-      ar << sync_slots[i];
+      rrr::Serialize_::serialize(sync_slots[i], ar);
     }
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       sync_slots.push_back(x);
     }
   }
@@ -291,41 +291,41 @@ public:
   }
 
   void save(BinaryWriteArchive& ar) const {
-      ar << static_cast<int32_t>(leader_id);
-      ar << static_cast<int32_t>(slots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(leader_id), ar);
+      rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
       for (auto i : slots) {
-          ar << i;
+          rrr::Serialize_::serialize(i, ar);
       }
-      ar << static_cast<int32_t>(ballots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(ballots.size()), ar);
       for (auto i : ballots) {
-          ar << i;
+          rrr::Serialize_::serialize(i, ar);
       }
-      ar << static_cast<int32_t>(cmds.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(cmds.size()), ar);
       for (const auto& sp : cmds) {
-          ar << *sp;
+          rrr::Serialize_::serialize(*sp, ar);
       }
   }
 
   void load(BinaryReadArchive& ar) {
       int32_t szs, szb, szc;
-      ar >> leader_id;
-      ar >> szs;
+      rrr::Deserialize_::deserialize(leader_id, ar);
+      rrr::Deserialize_::deserialize(szs, ar);
       for (int i = 0; i < szs; i++) {
           slotid_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           slots.push_back(x);
       }
-      ar >> szb;
+      rrr::Deserialize_::deserialize(szb, ar);
       // Read exactly the number of ballots that were serialized.
       for (int i = 0; i < szb; i++) {
           ballot_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           ballots.push_back(x);
       }
-      ar >> szc;
+      rrr::Deserialize_::deserialize(szc, ar);
       for (int i = 0; i < szc; i++) {
           auto sp_md = std::make_shared<janus::Command>();
-          ar >> *sp_md;
+          rrr::Deserialize_::deserialize(*sp_md, ar);
           cmds.push_back(std::move(sp_md));
       }
   }

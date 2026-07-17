@@ -44,21 +44,21 @@ static int shared_ptr_apprch = 1;
 // effective branch of the legacy from_marshal — the
 // `false && shared_ptr_apprch` arm was unreachable).
 void LogEntry::save(BinaryWriteArchive& ar) const {
-  ar << length;
+  rrr::Serialize_::serialize(length, ar);
   if (shared_ptr_apprch) {
     if (operation_test.get()) {
-      ar << std::string(operation_test.get(), length);
+      rrr::Serialize_::serialize(std::string(operation_test.get(), length), ar);
     } else {
-      ar << log_entry;
+      rrr::Serialize_::serialize(log_entry, ar);
     }
   } else {
-    ar << log_entry;
+    rrr::Serialize_::serialize(log_entry, ar);
   }
 }
 
 void LogEntry::load(BinaryReadArchive& ar) {
-  ar >> length;
-  ar >> log_entry;
+  rrr::Deserialize_::deserialize(length, ar);
+  rrr::Deserialize_::deserialize(log_entry, ar);
 }
 
 void PaxosWorker::SetupBase() {

@@ -100,26 +100,27 @@ Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
 // terminated by k=-1.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws) {
-  ar << ws.keys_;
+  rrr::Serialize_::serialize(ws.keys_, ar);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
     auto it = input_vars.find(k);
     if (it != input_vars.end()) {
-      ar << k << it->second;
+      rrr::Serialize_::serialize(k, ar);
+      rrr::Serialize_::serialize(it->second, ar);
     }
   }
-  ar << static_cast<int32_t>(-1);
+  rrr::Serialize_::serialize(static_cast<int32_t>(-1), ar);
   return ar;
 }
 
 BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
-  ar >> ws.keys_;
+  rrr::Deserialize_::deserialize(ws.keys_, ar);
   while (true) {
     int32_t k;
-    ar >> k;
+    rrr::Deserialize_::deserialize(k, ar);
     if (k >= 0) {
       Value v;
-      ar >> v;
+      rrr::Deserialize_::deserialize(v, ar);
       (*ws.values_)[k] = v;
     } else {
       break;
@@ -180,36 +181,36 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
 //   time_ (double) | txn_type_ (i32) |
 //   has_view_data (bool_t) | optional MarshallDeputy view_md
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
-  ar << reply.res_;
-  ar << reply.output_;
-  ar << reply.n_try_;
+  rrr::Serialize_::serialize(reply.res_, ar);
+  rrr::Serialize_::serialize(reply.output_, ar);
+  rrr::Serialize_::serialize(reply.n_try_, ar);
   // start_time_ is intentionally not serialized (legacy comment).
-  ar << reply.time_;
-  ar << reply.txn_type_;
+  rrr::Serialize_::serialize(reply.time_, ar);
+  rrr::Serialize_::serialize(reply.txn_type_, ar);
 
   bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
-  ar << has_view_data;
+  rrr::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
     view_md = reply.sp_view_data_;
-    ar << view_md;
+    rrr::Serialize_::serialize(view_md, ar);
   }
   return ar;
 }
 
 BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
-  ar >> reply.res_;
-  ar >> reply.output_;
-  ar >> reply.n_try_;
+  rrr::Deserialize_::deserialize(reply.res_, ar);
+  rrr::Deserialize_::deserialize(reply.output_, ar);
+  rrr::Deserialize_::deserialize(reply.n_try_, ar);
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  ar >> reply.time_;
-  ar >> reply.txn_type_;
+  rrr::Deserialize_::deserialize(reply.time_, ar);
+  rrr::Deserialize_::deserialize(reply.txn_type_, ar);
 
   bool_t has_view_data;
-  ar >> has_view_data;
+  rrr::Deserialize_::deserialize(has_view_data, ar);
   if (has_view_data) {
     janus::Command view_md;
-    ar >> view_md;
+    rrr::Deserialize_::deserialize(view_md, ar);
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
     reply.sp_view_data_ = nullptr;
