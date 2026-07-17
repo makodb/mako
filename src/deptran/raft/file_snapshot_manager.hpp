@@ -54,14 +54,14 @@ pub fn file_snapshot_temp_path(storage_path: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.paths version=1 rust_sha256=3de54b7f5a6178dee5430ee423f133d5a2bdc7fcc82a29f5aab899834c8c75ae*/
-inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
-inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
+std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
+std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
 
-inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap");
 }
 
-inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap.tmp");
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.paths*/
@@ -133,60 +133,292 @@ pub fn file_snapshot_metadata_from_name_parts(index_part: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.stream_helpers version=1 rust_sha256=2b8291cb63e1f96746a07c22b18c93e1cfb7425b6e4e9e797486be9c3d5f5e3f*/
-inline size_t file_snapshot_advance_offset(size_t offset, size_t size);
-inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
-inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
-inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
-inline bool file_snapshot_has_latest(size_t snapshot_count);
-inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
-inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
+size_t file_snapshot_advance_offset(size_t offset, size_t size);
+size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
+bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
+bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
+bool file_snapshot_has_latest(size_t snapshot_count);
+size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
+bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
 
-inline size_t file_snapshot_advance_offset(size_t offset, size_t size) {
-    return offset + size;
+size_t file_snapshot_advance_offset(size_t offset, size_t size) {
+    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
 }
 
-inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
-    auto remaining = data_size - offset;
-    if (buffer_size < remaining) {
+size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
+    auto remaining = rusty::detail::deref_if_pointer_like(data_size) - rusty::detail::deref_if_pointer_like(offset);
+    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
-    return valid && offset >= data_size;
+bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
+    return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));
 }
 
-inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
-    return snapshot_index < keep_after_index;
+bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
+    return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);
 }
 
-inline bool file_snapshot_has_latest(size_t snapshot_count) {
-    return snapshot_count > 0;
+bool file_snapshot_has_latest(size_t snapshot_count) {
+    return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;
 }
 
-inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
-    if (snapshot_count > max_snapshots) {
+size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
+    if (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) {
         return std::move(max_snapshots);
     } else {
         return std::move(snapshot_count);
     }
 }
 
-inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
-    return snapshot_count > max_snapshots && position >= max_snapshots;
+bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
+    return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));
 }
 
-inline SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
+SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
     return file_snapshot_metadata_from_name_parts_cpp(index_part, term_part, std::move(size_bytes));
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.stream_helpers*/
+
+// @unsafe - best-effort cleanup of an unfinished temp file.
+inline bool file_snapshot_writer_cleanup_cpp(const std::string* temp_path,
+                                             bool finalized,
+                                             bool aborted) {
+  if (!finalized && !aborted) {
+    unlink(temp_path->c_str());
+  }
+  return true;
+}
+
+// @unsafe - raw pointer append into a caller-owned staging buffer.
+inline bool file_snapshot_writer_write_cpp(std::string* buffer,
+                                           size_t* offset,
+                                           bool finalized,
+                                           bool aborted,
+                                           const char* data,
+                                           size_t size) {
+  if (finalized || aborted) {
+    Log_error("[SNAPSHOT-WRITER] Write after finalize/abort");
+    return false;
+  }
+  buffer->append(data, size);
+  *offset = file_snapshot_advance_offset(*offset, size);
+  return true;
+}
+
+// @unsafe - serializes, writes, fsyncs, and atomically renames the snapshot.
+inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
+                                              const std::string* temp_path,
+                                              slotid_t last_index,
+                                              ballot_t last_term,
+                                              std::string* buffer,
+                                              bool* finalized,
+                                              bool aborted) {
+  if (*finalized || aborted) {
+    Log_error("[SNAPSHOT-WRITER] Finalize after finalize/abort");
+    return false;
+  }
+
+  std::string serialized;
+  if (!SnapshotFormat::Serialize(last_index, last_term,
+                                 buffer->data(), buffer->size(),
+                                 &serialized)) {
+    Log_error("[SNAPSHOT-WRITER] Failed to serialize snapshot");
+    return false;
+  }
+
+  int fd = open(temp_path->c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) {
+    Log_error("[SNAPSHOT-WRITER] Failed to open temp file: %s (%s)",
+              temp_path->c_str(), strerror(errno));
+    return false;
+  }
+
+  ssize_t written = write(fd, serialized.data(), serialized.size());
+  if (written != static_cast<ssize_t>(serialized.size())) {
+    Log_error("[SNAPSHOT-WRITER] Failed to write snapshot: wrote %zd of %zu",
+              written, serialized.size());
+    close(fd);
+    unlink(temp_path->c_str());
+    return false;
+  }
+
+  if (fsync(fd) < 0) {
+    Log_error("[SNAPSHOT-WRITER] Failed to fsync: %s", strerror(errno));
+    close(fd);
+    unlink(temp_path->c_str());
+    return false;
+  }
+  close(fd);
+
+  if (rename(temp_path->c_str(), final_path->c_str()) < 0) {
+    Log_error("[SNAPSHOT-WRITER] Failed to rename %s -> %s: %s",
+              temp_path->c_str(), final_path->c_str(), strerror(errno));
+    unlink(temp_path->c_str());
+    return false;
+  }
+
+  *finalized = true;
+  Log_info("[SNAPSHOT-WRITER] Snapshot finalized: %s (%zu bytes data, %zu bytes total)",
+           final_path->c_str(), buffer->size(), serialized.size());
+  return true;
+}
+
+// @unsafe - deletes the temp file if this writer has not finalized.
+inline bool file_snapshot_writer_abort_cpp(const std::string* temp_path,
+                                           bool finalized,
+                                           bool* aborted) {
+  if (finalized || *aborted) {
+    return true;
+  }
+  *aborted = true;
+  unlink(temp_path->c_str());
+  Log_info("[SNAPSHOT-WRITER] Snapshot aborted");
+  return true;
+}
 
 /**
  * File-based snapshot writer.
  * Accumulates data in memory, writes to temp file, renames on finalize.
  */
+// FileSnapshotWriterCore is the DSL-owned writer state and method surface.
+// FileSnapshotWriter remains a tiny C++ hand-bridge for the virtual
+// SnapshotWriter interface and destructor-driven cleanup.
+#if RUSTYCPP_RUST
+pub struct FileSnapshotWriterCore {
+    final_path_: std::string,
+    temp_path_: std::string,
+    last_index_: u64,
+    last_term_: u64,
+    offset_: usize,
+    finalized_: bool,
+    aborted_: bool,
+    buffer_: std::string,
+}
+
+impl FileSnapshotWriterCore {
+    // @unsafe - Records final/temp paths. Finalize owns file I/O; cleanup is
+    // driven by the C++ bridge destructor.
+    #[cpp_ctor]
+    fn new(final_path: std::string,
+           temp_path: std::string,
+           last_index: u64,
+           last_term: u64) -> FileSnapshotWriterCore {
+        FileSnapshotWriterCore {
+            final_path_: final_path,
+            temp_path_: temp_path,
+            last_index_: last_index,
+            last_term_: last_term,
+            offset_: 0usize,
+            finalized_: false,
+            aborted_: false,
+            buffer_: std::string(),
+        }
+    }
+
+    // @unsafe - best-effort cleanup of an unfinished temp file.
+    fn Cleanup(&self) -> bool {
+        file_snapshot_writer_cleanup_cpp(&self.temp_path_,
+                                         self.finalized_,
+                                         self.aborted_)
+    }
+
+    // @unsafe - Reads from raw pointer into the staging buffer.
+    fn Write(&mut self, data: *const c_char, size: usize) -> bool {
+        unsafe {
+            file_snapshot_writer_write_cpp(&mut self.buffer_,
+                                           &mut self.offset_,
+                                           self.finalized_,
+                                           self.aborted_,
+                                           data,
+                                           size)
+        }
+    }
+
+    // @unsafe - serializes, writes, fsyncs, and renames the snapshot.
+    fn Finalize(&mut self) -> bool {
+        file_snapshot_writer_finalize_cpp(&self.final_path_,
+                                          &self.temp_path_,
+                                          self.last_index_,
+                                          self.last_term_,
+                                          &mut self.buffer_,
+                                          &mut self.finalized_,
+                                          self.aborted_)
+    }
+
+    // @unsafe - deletes the temp file if this writer has not finalized.
+    fn Abort(&mut self) -> bool {
+        file_snapshot_writer_abort_cpp(&self.temp_path_,
+                                       self.finalized_,
+                                       &mut self.aborted_)
+    }
+
+    // @safe - Returns current offset.
+    fn GetOffset(&self) -> usize {
+        self.offset_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.writer_core version=1 rust_sha256=1eb1cf455fc0b378947811175d55dc01352ac7436678cf05cdddf62252278c01*/
+struct FileSnapshotWriterCore;
+
+struct FileSnapshotWriterCore {
+    std::string final_path_;
+    std::string temp_path_;
+    uint64_t last_index_;
+    uint64_t last_term_;
+    size_t offset_;
+    bool finalized_;
+    bool aborted_;
+    std::string buffer_;
+
+    FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term);
+    bool Cleanup() const;
+    bool Write(const c_char* data, size_t size);
+    bool Finalize();
+    bool Abort();
+    size_t GetOffset() const;
+};
+
+
+FileSnapshotWriterCore::FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term)
+    : final_path_(final_path)
+    , temp_path_(temp_path)
+    , last_index_(last_index)
+    , last_term_(last_term)
+    , offset_(static_cast<size_t>(0))
+    , finalized_(false)
+    , aborted_(false)
+    , buffer_(std::string())
+{}
+
+bool FileSnapshotWriterCore::Cleanup() const {
+    return file_snapshot_writer_cleanup_cpp(&this->temp_path_, this->finalized_, this->aborted_);
+}
+
+bool FileSnapshotWriterCore::Write(const c_char* data, size_t size) {
+    // @unsafe
+    {
+        return file_snapshot_writer_write_cpp(&this->buffer_, &this->offset_, this->finalized_, this->aborted_, data, std::move(size));
+    }
+}
+
+bool FileSnapshotWriterCore::Finalize() {
+    return file_snapshot_writer_finalize_cpp(&this->final_path_, &this->temp_path_, this->last_index_, this->last_term_, &this->buffer_, &this->finalized_, this->aborted_);
+}
+
+bool FileSnapshotWriterCore::Abort() {
+    return file_snapshot_writer_abort_cpp(&this->temp_path_, this->finalized_, &this->aborted_);
+}
+
+size_t FileSnapshotWriterCore::GetOffset() const {
+    return this->offset_;
+}
+/*RUSTYCPP:GEN-END id=file_snapshot_manager.writer_core*/
+
 class FileSnapshotWriter : public SnapshotWriter {
  public:
   // @unsafe - Records final/temp paths. Finalize owns the temp-file write and
@@ -195,123 +427,36 @@ class FileSnapshotWriter : public SnapshotWriter {
                      const std::string& temp_path,
                      slotid_t last_index,
                      ballot_t last_term)
-      : final_path_(final_path),
-        temp_path_(temp_path),
-        last_index_(last_index),
-        last_term_(last_term) {
+      : core_(final_path, temp_path, last_index, last_term) {
     Log_info("[SNAPSHOT-WRITER] Creating snapshot: index=%lu term=%lu path=%s",
-             last_index_, last_term_, final_path_.c_str());
+             last_index, last_term, final_path.c_str());
   }
 
   // @unsafe - Best-effort cleanup of an unfinished temp file.
   ~FileSnapshotWriter() override {
-    if (!finalized_ && !aborted_) {
-      Abort();
-    }
+    core_.Cleanup();
   }
 
-  /**
-   * Accumulate data for the snapshot.
-   * Data is buffered until Finalize() is called.
-   */
   // @unsafe - Reads from raw pointer
   bool Write(const char* data, size_t size) override {
-    if (finalized_ || aborted_) {
-      Log_error("[SNAPSHOT-WRITER] Write after finalize/abort");
-      return false;
-    }
-    buffer_.append(data, size);
-    offset_ = file_snapshot_advance_offset(offset_, size);
-    return true;
+    return core_.Write(data, size);
   }
 
-  /**
-   * Finalize the snapshot: serialize to format, write to temp, rename.
-   */
-  // @unsafe - File I/O operations. Owns the local fd until close(), then
-  // atomically transfers temp_path_ into final_path_ with rename().
+  // @unsafe - File I/O operations.
   bool Finalize() override {
-    if (finalized_ || aborted_) {
-      Log_error("[SNAPSHOT-WRITER] Finalize after finalize/abort");
-      return false;
-    }
-
-    // Serialize to binary format
-    std::string serialized;
-    if (!SnapshotFormat::Serialize(last_index_, last_term_,
-                                   buffer_.data(), buffer_.size(),
-                                   &serialized)) {
-      Log_error("[SNAPSHOT-WRITER] Failed to serialize snapshot");
-      return false;
-    }
-
-    // Write to temp file
-    int fd = open(temp_path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-      Log_error("[SNAPSHOT-WRITER] Failed to open temp file: %s (%s)",
-                temp_path_.c_str(), strerror(errno));
-      return false;
-    }
-
-    ssize_t written = write(fd, serialized.data(), serialized.size());
-    if (written != static_cast<ssize_t>(serialized.size())) {
-      Log_error("[SNAPSHOT-WRITER] Failed to write snapshot: wrote %zd of %zu",
-                written, serialized.size());
-      close(fd);
-      unlink(temp_path_.c_str());
-      return false;
-    }
-
-    // Sync to disk
-    if (fsync(fd) < 0) {
-      Log_error("[SNAPSHOT-WRITER] Failed to fsync: %s", strerror(errno));
-      close(fd);
-      unlink(temp_path_.c_str());
-      return false;
-    }
-    close(fd);
-
-    // Atomic rename
-    if (rename(temp_path_.c_str(), final_path_.c_str()) < 0) {
-      Log_error("[SNAPSHOT-WRITER] Failed to rename %s -> %s: %s",
-                temp_path_.c_str(), final_path_.c_str(), strerror(errno));
-      unlink(temp_path_.c_str());
-      return false;
-    }
-
-    finalized_ = true;
-    Log_info("[SNAPSHOT-WRITER] Snapshot finalized: %s (%zu bytes data, %zu bytes total)",
-             final_path_.c_str(), buffer_.size(), serialized.size());
-    return true;
+    return core_.Finalize();
   }
 
-  /**
-   * Abort the snapshot, cleaning up any temporary files.
-   */
   // @unsafe - Deletes the temp file if this writer has not finalized.
   bool Abort() override {
-    if (finalized_ || aborted_) {
-      return true;
-    }
-    aborted_ = true;
-    unlink(temp_path_.c_str());
-    Log_info("[SNAPSHOT-WRITER] Snapshot aborted");
-    return true;
+    return core_.Abort();
   }
 
   // @safe - Returns current offset
-  size_t GetOffset() const override { return offset_; }
+  size_t GetOffset() const override { return core_.GetOffset(); }
 
  private:
-  // @unsafe - owned path strings; no file handle is kept between calls.
-  std::string final_path_;
-  std::string temp_path_;
-  slotid_t last_index_;
-  ballot_t last_term_;
-  size_t offset_{0};
-  bool finalized_{false};
-  bool aborted_{false};
-  std::string buffer_;
+  FileSnapshotWriterCore core_;
 };
 
 /**
