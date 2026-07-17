@@ -34,6 +34,7 @@ using slotid_t = uint64_t;
 #ifndef ballot_t
 using ballot_t = uint64_t;
 #endif
+using c_char = char;
 
 /**
  * Metadata about a snapshot.
@@ -102,81 +103,73 @@ inline std::string snapshot_metadata_to_string(const SnapshotMetadata& metadata)
  * Abstract reader for streaming snapshot data.
  * Used for transferring snapshots to followers.
  */
-class SnapshotReader {
- public:
-  virtual ~SnapshotReader() = default;
+#if RUSTYCPP_RUST
+pub trait SnapshotReader {
+    // @unsafe - Writes to raw buffer and out-pointer.
+    fn Read(&mut self, buffer: *mut c_char, buffer_size: usize,
+            bytes_read: *mut usize) -> bool;
+    // @safe
+    fn IsComplete(&self) -> bool;
+    // @lifetime: (&'a) -> &'a
+    fn GetMetadata(&self) -> &SnapshotMetadata;
+    // @safe
+    fn GetOffset(&self) -> usize;
+}
 
-  /**
-   * Read a chunk of snapshot data.
-   * @param buffer Output buffer to write data to
-   * @param buffer_size Size of the buffer
-   * @param bytes_read Output: actual bytes read
-   * @return true if read succeeded, false on error
-   */
-  // @unsafe - Writes to raw buffer
-  virtual bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) = 0;
-
-  /**
-   * Check if all data has been read.
-   * @return true if no more data to read
-   */
-  // @safe
-  virtual bool IsComplete() const = 0;
-
-  /**
-   * Get the metadata for this snapshot.
-   * @return Reference to snapshot metadata
-   */
-  // @lifetime: (&'a) -> &'a
-  virtual const SnapshotMetadata& GetMetadata() const = 0;
-
-  /**
-   * Get current read offset.
-   * @return Bytes read so far
-   */
-  // @safe
-  virtual size_t GetOffset() const = 0;
-};
-
-/**
- * Abstract writer for streaming snapshot data.
- * Used for receiving snapshots from leader.
- */
+pub trait SnapshotWriter {
+    // @unsafe - Reads from raw pointer.
+    fn Write(&mut self, data: *const c_char, size: usize) -> bool;
+    // @unsafe - May have side effects.
+    fn Finalize(&mut self) -> bool;
+    // @unsafe - May have side effects.
+    fn Abort(&mut self) -> bool;
+    // @safe
+    fn GetOffset(&self) -> usize;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_manager.stream_interfaces version=1 rust_sha256=bbb013ac4c2e826ccbb4780c6fc4daaa772f0e4779f40b2d05317c99f86056f3*/
+namespace {
 class SnapshotWriter {
- public:
-  virtual ~SnapshotWriter() = default;
-
-  /**
-   * Write a chunk of snapshot data.
-   * @param data Data to write
-   * @param size Size of data
-   * @return true if write succeeded, false on error
-   */
-  // @unsafe - Reads from raw pointer
-  virtual bool Write(const char* data, size_t size) = 0;
-
-  /**
-   * Finalize the snapshot after all data is written.
-   * Verifies checksum and makes snapshot available.
-   * @return true if snapshot is valid and saved
-   */
-  // @unsafe - May have side effects
-  virtual bool Finalize() = 0;
-
-  /**
-   * Abort the snapshot write, cleaning up partial data.
-   * @return true if cleanup succeeded
-   */
-  // @unsafe - May have side effects
-  virtual bool Abort() = 0;
-
-  /**
-   * Get current write offset.
-   * @return Bytes written so far
-   */
-  // @safe
-  virtual size_t GetOffset() const = 0;
+public:
+    virtual ~SnapshotWriter() noexcept(false) {}
+    virtual bool Write(const c_char* data, size_t size) = 0;
+    virtual bool Finalize() = 0;
+    virtual bool Abort() = 0;
+    virtual size_t GetOffset() const = 0;
+    SnapshotWriter(const SnapshotWriter&) = delete;
+    SnapshotWriter& operator=(const SnapshotWriter&) = delete;
+    SnapshotWriter(SnapshotWriter&&) = delete;
+    SnapshotWriter& operator=(SnapshotWriter&&) = delete;
+protected:
+    SnapshotWriter() = default;
 };
+}
+
+template <class U> class SnapshotWriterAdapter;
+template <class U> class SnapshotWriterAdapterRef;
+template <class U> class SnapshotWriterAdapterRefMut;
+
+namespace {
+class SnapshotReader {
+public:
+    virtual ~SnapshotReader() noexcept(false) {}
+    virtual bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) = 0;
+    virtual bool IsComplete() const = 0;
+    virtual const SnapshotMetadata& GetMetadata() const = 0;
+    virtual size_t GetOffset() const = 0;
+    SnapshotReader(const SnapshotReader&) = delete;
+    SnapshotReader& operator=(const SnapshotReader&) = delete;
+    SnapshotReader(SnapshotReader&&) = delete;
+    SnapshotReader& operator=(SnapshotReader&&) = delete;
+protected:
+    SnapshotReader() = default;
+};
+}
+
+template <class U> class SnapshotReaderAdapter;
+template <class U> class SnapshotReaderAdapterRef;
+template <class U> class SnapshotReaderAdapterRefMut;
+/*RUSTYCPP:GEN-END id=snapshot_manager.stream_interfaces*/
 
 /**
  * Abstract interface for snapshot management.
