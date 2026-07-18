@@ -94,6 +94,24 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **J+K sweep: 3 batches landed (`241e3f67`, `da1eb15a`, `7d94c5b6`)** —
+  inmemory_channel.cpp FULLY converted (switchboard trio + 7 channel methods + 6 listener
+  methods; ~180 LOC of backing free fns deleted; ALL const_casts around interior-mutable state
+  removed — Mutex::lock() is const). Census correction: the K "transpiler-gated" classification
+  was STALE — Option<&V> returns, HashMap::get→Option<const V&>, unwrap-deref, and &str-literal
+  returns (string_view) all lower in the pinned transpiler (verified by compiled probes).
+  SWEEP LESSONS: cross-module DSL enum variants = generated factory calls (ChannelError_None()
+  not ChannelError::None in return position); hand-bridges for C++-ctor-only types
+  (empty_on_*_callback in channel.cpp, empty_listener_weak); prefer &self + interior mutability.
+  GATE UPGRADED: full-target build + full ctest (was dbtest-only — that gap had hidden ~280 raw
+  test streams, 23 umbrella-trim import breaks, and years of never-built-target rot, all now
+  repaired; srpc-book.md snippets updated to the current serde/request/Server API and
+  compile-tested green). REMAINING J+K: client.cpp's 7-fn clientconn_* family (~487 LOC —
+  archetype decode_response_and_notify mixes Option<V&>/lock flow with RAW-POINTER surgery
+  (BufferSource, ptr arithmetic, raw-ptr callbacks); convert one-fn-per-batch with the full
+  gate, hot-path caution), fiber_channel's small J subset (most is @unsafe kernels/F-callbacks),
+  server/tcp (289), *_to_string switches (~150, string_view-vararg care at %s call sites),
+  rpc-mid (93). Then task: Marshal-path deprecation (docs/marshal-serde-split.md).
 - 2026-07-18 — **★ PHASE 8 COMPLETE — operator layer DELETED**: endgame pt1 (Archive decoy-ADL,
   4ce047b2) + pt2a (Marshal scalars into serde + Marshal decoy-ADL, 2fd1d6c7) + 2b-prep (rpcgen
   friend-emission serde, 776→0 raw streams in rcc_rpc.h, ace147ef) + the deletion itself: all 97
