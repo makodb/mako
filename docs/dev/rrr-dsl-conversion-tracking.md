@@ -94,6 +94,16 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **★ J+K SWEEP COMPLETE (task closed, 5 batches)**: sweeps 4-5 (`bf4b6d35` + tcp
+  poll_mode/content_size) finish tcp_channel's J surface — 5 callback setters, 2 errno mappers
+  (DSL if-chains; PollMode namespace-constants lower as plain paths, probe-verified), poll_mode,
+  content_size (RefCell borrow chain lowers byte-equivalently). FINAL TRIAGE VERDICTS closing
+  the census: server.cpp small-fns = atomic/proxy kernels + a template (floor); load_balancer
+  remainder = proxy-iteration kernels; idempotency LRU flows wrap Marshal-copy kernels — DEFER
+  to the Marshal-deprecation task (converting now would be churned by the Request.m/cache
+  retype); request_queue = F-callback state; io_kind mapper = nested-enum lowering untested.
+  Category J+K is now: converted, kernel-classified, or deferred-with-cause — nothing
+  unexamined. Next: Marshal-path deprecation (scoped below).
 - 2026-07-18 — **Marshal-path deprecation SCOPED (census)**: Marshal-typed state = only 3
   holders — server Request.m (DSL struct server.cpp:207; generated handlers + ~30 Phase-7b
   consumer sites), the Future reply buffer, client heartbeat's local body — plus 78 Marshal-sink
