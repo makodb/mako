@@ -94,7 +94,20 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
-- 2026-07-18 — **Phase 8 batch 4 CENSUS (the deletion set, exactly enumerated)**: 64 non-forwarder
+- 2026-07-18 — **Phase 8 batch 4 CONVERSION COMPLETE (6 slices, all landed green)**: the whole
+  census is converted — exemplar Vertex<T>* (26a01363), MultiValue+mdb::Value (f6e3111a),
+  SimpleCommand (fd2a5810), config_schema+rcc/tx (c75fbd6c), TxWorkspace/TxReply/envelope
+  (b463f38e), sharding_policy friend-ops (final slice). Every type that implemented its wire
+  format as an operator now implements it as a serde free function on both sinks; friend-ops
+  became friend serde fns (private access + pure-ADL). Converters in scratchpad: p8_slice.py
+  (generic incl. optional-inline out-of-line), friend variant inline in session. NEW STALENESS
+  VARIANT #3 fixed en route: rsync -a mtime preservation let ninja skip rebuilds of synced files
+  (silent wrong binaries; surfaced as undefined refs one slice later) — build.sh now touches all
+  transferred files; one-time touch-all truth build (371s) re-validated everything. ★ REMAINING
+  to close Phase 8: flip the 2 catch-alls (serializable.cpp Archive + marshal.cpp Marshal) from
+  `sink << v` to unqualified ADL `serialize(v, sink)`, then delete the forwarder operators;
+  clean-dyndep truth build + test_marshal + golden test; expect marshal/serializable BMI shrink.
+- 2026-07-18 — **Phase 8 batch 4 CENSUS (superseded above — the deletion set, exactly enumerated)**: 64 non-forwarder
   operator definitions across 13 files still IMPLEMENT serialization for their types and must
   become ADL serialize()/deserialize() free fns before any forwarder/catch-all can be deleted:
   sharding_policy.h(8, friend ops) procedure.h/.cc(8+8, VecPieceData/TxWorkspace)
