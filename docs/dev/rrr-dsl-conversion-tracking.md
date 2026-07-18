@@ -94,6 +94,20 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Phase 8 batch 4 CENSUS (the deletion set, exactly enumerated)**: 64 non-forwarder
+  operator definitions across 13 files still IMPLEMENT serialization for their types and must
+  become ADL serialize()/deserialize() free fns before any forwarder/catch-all can be deleted:
+  sharding_policy.h(8, friend ops) procedure.h/.cc(8+8, VecPieceData/TxWorkspace)
+  config_schema.h(8) rcc/tx.h(6) command_marshaler.cc/.h(6+4, SimpleCommand)
+  serializable_envelope.cpp(4, janus::Command) marshal-value.h/.cc(4+4, mdb::Value)
+  multi_value.h(2) rcc/graph_marshaler.h(1, Vertex<T>) raft/log_storage.hpp(1).
+  RECIPE per type: rename operator body → ADL serialize(T&, Sink&) in the type's namespace
+  (bodies already call serde per Phase 7b — mostly mechanical rename), keep byte order, leave a
+  forwarder only if hand-written call sites remain (there are none — Phase 7 flipped them all).
+  THEN: flip the two catch-alls (`ar << v` / `m << v`) to unqualified ADL `serialize(v, ar)`,
+  delete the container/scalar/struct forwarders, keep the RefMut reply bridge (deserialize_from
+  folds over it) or re-express it archive-direct. One clean-dyndep build + test_marshal + the
+  golden test validates; expect marshal/serializable BMI shrink (the build-time payoff).
 - 2026-07-18 — **Phase 8 batch 3 LANDED**: generator (lang_cpp.py) emits per-struct ADL
   serialize()/deserialize() free functions + forwarder operators; rcc_rpc.h +
   benchmark_service.h regenerated (network/helloworld have no structs). Golden typed-structs
