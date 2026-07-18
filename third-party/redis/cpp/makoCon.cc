@@ -5931,6 +5931,7 @@ extern "C" {
 
 int main() {
     std::cout << "=== makoCon: Redis-compatible server with mako::DB ===" << std::endl;
+    setenv("MAKO_REDIS_SERVER", "1", 1);
 
     // Configuration parameters. Defaults remain one local shard with no replication.
     int nshards = 1;

@@ -599,6 +599,10 @@ void* heartbeatBackground(void* arg) {
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
 void* heartbeatMonitor2(void* arg) { // happens on the learner
+  const time_t st = time(NULL);
+  const char* redis_server_env = getenv("MAKO_REDIS_SERVER");
+  const bool redis_server = redis_server_env != nullptr
+      && std::string(redis_server_env) == "1";
   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
 
   while (es->running) {
@@ -607,7 +611,14 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
-     Log_info("trigger a new leader after heartbeat timeout: %lf ms", duration2.count()/1000.0/1000.0);
+     const time_t end = time(NULL);
+     if (!redis_server && end - st > 35) {
+       Log_info("Let's stop it automatically without failover!!!");
+       std::quick_exit(EXIT_SUCCESS);
+     }
+
+     Log_info("trigger a new leader after heartbeat timeout: %lf ms, %d sec",
+              duration2.count()/1000.0/1000.0, (int)(end - st));
 
      // collapsed `if (is_fail_new_impl) {...}
      // else {...}` (the constant was hard-coded `true`); the dead else
