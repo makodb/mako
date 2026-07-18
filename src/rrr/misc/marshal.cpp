@@ -494,102 +494,126 @@ inline SourceProxy make_source_proxy(MarshalSource* source) {
 
 // @safe
 // @lifetime: (&'a, const i8&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::i8 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i16&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i16 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::i16 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i16 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i32&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::i32 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i64&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::i64 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe - Writes v32 to marshal
 // @lifetime: (&'a, const v32&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::v32 &v, ::rrr::Marshal &m) {
   // @unsafe
   {
     char buf[5];
     size_t bsize = rrr::sparseint_dump(v.get(), buf);
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
-    return m;
   }
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe - Writes v64 to marshal
 // @lifetime: (&'a, const v64&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
+namespace Serialize_ {
+inline void serialize(const rrr::v64 &v, ::rrr::Marshal &m) {
   // @unsafe
   {
     char buf[9];
     size_t bsize = rrr::sparseint_dump(v.get(), buf);
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(buf), bsize) == bsize);
-    return m;
   }
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint8_t&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint8_t &u) {
+namespace Serialize_ {
+inline void serialize(const uint8_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint8_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint16_t&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint16_t &u) {
+namespace Serialize_ {
+inline void serialize(const uint16_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint16_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint32_t&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) {
+namespace Serialize_ {
+inline void serialize(const uint32_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint64_t&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) {
+namespace Serialize_ {
+inline void serialize(const uint64_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const double&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) {
+namespace Serialize_ {
+inline void serialize(const double &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::string&) -> &'a
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
+namespace Serialize_ {
+inline void serialize(const std::string &v, ::rrr::Marshal &m) {
   v64 v_len{static_cast<rrr::i64>(v.length())};
   m << v_len;
   if (v_len.get() > 0) {
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(v.c_str()), v_len.get()) == (size_t) v_len.get());
   }
 
-  return m;
 }
+}  // namespace Serialize_
+inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const T1&, const T2&) -> &'a
@@ -801,35 +825,44 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::unordered_map<K, V> 
 
 // @safe
 // @lifetime: (&'a, i8&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i8 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::i8 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i8 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i16&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i16 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::i16 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i16 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i32&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::i32 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i64&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::i64 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, v32&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::v32 &v, ::rrr::Marshal &m) {
   char byte0;
   verify(m.peek(byte0) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
@@ -837,12 +870,14 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
   i32 val = rrr::sparseint_load_i32(buf);
   v.set(val);
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, v64&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
+namespace Deserialize_ {
+inline void deserialize(rrr::v64 &v, ::rrr::Marshal &m) {
   char byte0;
   verify(m.peek(byte0) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
@@ -850,55 +885,68 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(buf), bsize) == bsize);
   i64 val = rrr::sparseint_load_i64(buf);
   v.set(val);
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint8_t&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint8_t &u) {
+namespace Deserialize_ {
+inline void deserialize(uint8_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, uint8_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint16_t&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint16_t &u) {
+namespace Deserialize_ {
+inline void deserialize(uint16_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, uint16_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint32_t&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint32_t &u) {
+namespace Deserialize_ {
+inline void deserialize(uint32_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, uint32_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint64_t&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint64_t &u) {
+namespace Deserialize_ {
+inline void deserialize(uint64_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, uint64_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, double&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, double &v) {
+namespace Deserialize_ {
+inline void deserialize(double &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, double &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::string&) -> &'a
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
+namespace Deserialize_ {
+inline void deserialize(std::string &v, ::rrr::Marshal &m) {
   v64 v_len;
   m >> v_len;
   v.resize(v_len.get());
   if (v_len.get() > 0) {
     verify(m.read(reinterpret_cast<std::uint8_t*>(&v[0]), v_len.get()) == (size_t) v_len.get());
   }
-  return m;
 }
+}  // namespace Deserialize_
+inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::pair<T1,T2>&) -> &'a
@@ -1146,15 +1194,34 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, std::unordered_map<K, V> &v) { 
 // `serialize(x, m)` / `deserialize(x, m)` instead of `m << x` / `m >> x`.
 // The operators remain the byte kernels (Phase 8 relocates/deletes them).
 namespace Serialize_ {
+// Phase 8 endgame part 2: ADL dispatch via poisoned decoy — mirrors the
+// Archive-side bridge in serializable.cpp. Scalars/containers hit their
+// specific Serialize_ overloads before this catch-all is considered;
+// everything else must provide an ADL serde function in its own
+// namespace or fail with a hard deleted-function diagnostic.
+namespace adl_detail_m_ {
+void serialize() = delete;  // lookup poison: stops ascent past this scope
+template<typename T>
+inline void dispatch_serialize(const T& v, ::rrr::Marshal& m) {
+  serialize(v, m);  // ADL-only by construction
+}
+}  // namespace adl_detail_m_
 template<typename T>
 inline void serialize(const T& v, ::rrr::Marshal& m) {
-  m << v;  // @unsafe { legacy Marshal operator<< is the byte kernel }
+  adl_detail_m_::dispatch_serialize(v, m);
 }
 }  // namespace Serialize_
 namespace Deserialize_ {
+namespace adl_detail_m_ {
+void deserialize() = delete;
+template<typename T>
+inline void dispatch_deserialize(T& v, ::rrr::Marshal& m) {
+  deserialize(v, m);  // ADL-only by construction
+}
+}  // namespace adl_detail_m_
 template<typename T>
 inline void deserialize(T& v, ::rrr::Marshal& m) {
-  m >> v;  // @unsafe { legacy Marshal operator>> is the byte kernel }
+  adl_detail_m_::dispatch_deserialize(v, m);
 }
 }  // namespace Deserialize_
 
