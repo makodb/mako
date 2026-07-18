@@ -115,21 +115,21 @@ struct LogEntry {
      */
     // @unsafe - delegates to BinaryWriteArchive primitive operators
     void save(BinaryWriteArchive& ar) const {
-        ar << slot_id;
-        ar << term;
-        ar << max_ballot_seen;
-        ar << max_ballot_accepted;
-        ar << static_cast<i8>(committed ? 1 : 0);
-        ar << static_cast<i8>(is_no_op ? 1 : 0);
+        rrr::Serialize_::serialize(slot_id, ar);
+        rrr::Serialize_::serialize(term, ar);
+        rrr::Serialize_::serialize(max_ballot_seen, ar);
+        rrr::Serialize_::serialize(max_ballot_accepted, ar);
+        rrr::Serialize_::serialize(static_cast<i8>(committed ? 1 : 0), ar);
+        rrr::Serialize_::serialize(static_cast<i8>(is_no_op ? 1 : 0), ar);
 
         // drive the polymorphic command through Command's
         // own archive operator instead of wrapping it in a temporary
         // MarshallDeputy.  Wire format is identical (Command emits
         // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
         i8 has_command = command.has_value() ? 1 : 0;
-        ar << has_command;
+        rrr::Serialize_::serialize(has_command, ar);
         if (has_command) {
-            ar << command;
+            rrr::Serialize_::serialize(command, ar);
         }
     }
 
@@ -141,23 +141,23 @@ struct LogEntry {
      */
     // @unsafe - delegates to BinaryReadArchive primitive operators
     void load(BinaryReadArchive& ar) {
-        ar >> slot_id;
-        ar >> term;
-        ar >> max_ballot_seen;
-        ar >> max_ballot_accepted;
+        rrr::Deserialize_::deserialize(slot_id, ar);
+        rrr::Deserialize_::deserialize(term, ar);
+        rrr::Deserialize_::deserialize(max_ballot_seen, ar);
+        rrr::Deserialize_::deserialize(max_ballot_accepted, ar);
 
         i8 committed_byte = 0;
-        ar >> committed_byte;
+        rrr::Deserialize_::deserialize(committed_byte, ar);
         committed = (committed_byte != 0);
 
         i8 is_no_op_byte = 0;
-        ar >> is_no_op_byte;
+        rrr::Deserialize_::deserialize(is_no_op_byte, ar);
         is_no_op = (is_no_op_byte != 0);
 
         i8 has_command = 0;
-        ar >> has_command;
+        rrr::Deserialize_::deserialize(has_command, ar);
         if (has_command) {
-            ar >> command;
+            rrr::Deserialize_::deserialize(command, ar);
         } else {
             command = Command{};
         }

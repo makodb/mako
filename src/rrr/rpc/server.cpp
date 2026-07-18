@@ -1715,7 +1715,7 @@ void sconn_decode_request_and_dispatch(
         return;
     }
     v64 v_xid;
-    req.m >> v_xid;
+    rrr::Deserialize_::deserialize(v_xid, req.m);
     req.xid = v_xid.get();
     req.attach_pending_guard(self.ctx_->pending_requests);
 
@@ -1725,7 +1725,7 @@ void sconn_decode_request_and_dispatch(
     }
 
     i32 rpc_id;
-    req.m >> rpc_id;
+    rrr::Deserialize_::deserialize(rpc_id, req.m);
     if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
         // @unsafe - std::atomic::load
         if (!self.ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {

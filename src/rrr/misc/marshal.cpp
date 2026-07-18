@@ -499,7 +499,6 @@ inline void serialize(const rrr::i8 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i16&) -> &'a
@@ -508,7 +507,6 @@ inline void serialize(const rrr::i16 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i16 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i32&) -> &'a
@@ -517,7 +515,6 @@ inline void serialize(const rrr::i32 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const i64&) -> &'a
@@ -526,7 +523,6 @@ inline void serialize(const rrr::i64 &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe - Writes v32 to marshal
 // @lifetime: (&'a, const v32&) -> &'a
@@ -540,7 +536,6 @@ inline void serialize(const rrr::v32 &v, ::rrr::Marshal &m) {
   }
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe - Writes v64 to marshal
 // @lifetime: (&'a, const v64&) -> &'a
@@ -554,7 +549,6 @@ inline void serialize(const rrr::v64 &v, ::rrr::Marshal &m) {
   }
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint8_t&) -> &'a
@@ -563,7 +557,6 @@ inline void serialize(const uint8_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint8_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint16_t&) -> &'a
@@ -572,7 +565,6 @@ inline void serialize(const uint16_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint16_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint32_t&) -> &'a
@@ -581,7 +573,6 @@ inline void serialize(const uint32_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const uint64_t&) -> &'a
@@ -590,7 +581,6 @@ inline void serialize(const uint64_t &u, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) { Serialize_::serialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const double&) -> &'a
@@ -599,21 +589,19 @@ inline void serialize(const double &v, ::rrr::Marshal &m) {
   verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::string&) -> &'a
 namespace Serialize_ {
 inline void serialize(const std::string &v, ::rrr::Marshal &m) {
   v64 v_len{static_cast<rrr::i64>(v.length())};
-  m << v_len;
+  Serialize_::serialize(v_len, m);
   if (v_len.get() > 0) {
     verify(m.write_bytes(reinterpret_cast<const std::uint8_t*>(v.c_str()), v_len.get()) == (size_t) v_len.get());
   }
 
 }
 }  // namespace Serialize_
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const T1&, const T2&) -> &'a
@@ -765,63 +753,39 @@ inline void serialize(const std::unordered_map<K, V> &v, rrr::Marshal &m) {
 
 }  // namespace Serialize_
 
-template<class T1, class T2>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::pair<T1, T2> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::Vec<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::vector<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::vector<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::list<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::list<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::BTreeSet<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::set<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::set<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::BTreeMap<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::map<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::map<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const rusty::HashSet<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::HashSet<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::unordered_set<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::unordered_set<T> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const rusty::HashMap<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::HashMap<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::unordered_map<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::unordered_map<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i8&) -> &'a
@@ -830,7 +794,6 @@ inline void deserialize(rrr::i8 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i8 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i16&) -> &'a
@@ -839,7 +802,6 @@ inline void deserialize(rrr::i16 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i16 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i32&) -> &'a
@@ -848,7 +810,6 @@ inline void deserialize(rrr::i32 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i64&) -> &'a
@@ -857,7 +818,6 @@ inline void deserialize(rrr::i64 &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, v32&) -> &'a
@@ -872,7 +832,6 @@ inline void deserialize(rrr::v32 &v, ::rrr::Marshal &m) {
   v.set(val);
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, v64&) -> &'a
@@ -887,7 +846,6 @@ inline void deserialize(rrr::v64 &v, ::rrr::Marshal &m) {
   v.set(val);
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint8_t&) -> &'a
@@ -896,7 +854,6 @@ inline void deserialize(uint8_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint8_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint16_t&) -> &'a
@@ -905,7 +862,6 @@ inline void deserialize(uint16_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint16_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint32_t&) -> &'a
@@ -914,7 +870,6 @@ inline void deserialize(uint32_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint32_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, uint64_t&) -> &'a
@@ -923,7 +878,6 @@ inline void deserialize(uint64_t &u, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&u), sizeof(u)) == sizeof(u));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, uint64_t &u) { Deserialize_::deserialize(u, m); return m; }
 
 // @safe
 // @lifetime: (&'a, double&) -> &'a
@@ -932,21 +886,19 @@ inline void deserialize(double &v, ::rrr::Marshal &m) {
   verify(m.read(reinterpret_cast<std::uint8_t*>(&v), sizeof(v)) == sizeof(v));
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, double &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::string&) -> &'a
 namespace Deserialize_ {
 inline void deserialize(std::string &v, ::rrr::Marshal &m) {
   v64 v_len;
-  m >> v_len;
+  Deserialize_::deserialize(v_len, m);
   v.resize(v_len.get());
   if (v_len.get() > 0) {
     verify(m.read(reinterpret_cast<std::uint8_t*>(&v[0]), v_len.get()) == (size_t) v_len.get());
   }
 }
 }  // namespace Deserialize_
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::pair<T1,T2>&) -> &'a
@@ -1119,63 +1071,39 @@ inline void deserialize(std::unordered_map<K, V> &v, rrr::Marshal &m) {
 
 }  // namespace Deserialize_
 
-template<class T1, class T2>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::pair<T1, T2> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::Vec<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::Vec<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::vector<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::vector<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::list<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::list<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::BTreeSet<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::BTreeSet<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::set<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::set<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::BTreeMap<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::BTreeMap<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::map<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::map<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::HashSet<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::HashSet<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::unordered_set<T>&) -> &'a
-template<class T>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::unordered_set<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::HashMap<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::HashMap<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::unordered_map<K,V>&) -> &'a
-template<class K, class V>
-inline rrr::Marshal& operator>>(rrr::Marshal& m, std::unordered_map<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // 2 step 5 (2026-05-05): Marshal& operators for MarshallDeputy
 // retired with the class.  janus::Command (SerializableEnvelope<

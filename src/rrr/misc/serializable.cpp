@@ -1433,15 +1433,6 @@ namespace Serialize_ {
 // uint8_t*>(&v)`; the trait's `const uint8_t*` parameter type
 // makes the byte view explicit (the previous `const void*` form
 // hid it behind implicit conversion).
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int8_t v)   { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int16_t v)  { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int32_t v)  { Serialize_::serialize(v, ar); return ar; }  // forwards to impl Serialize for i32
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, int64_t v)  { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint8_t v)  { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint16_t v) { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint32_t v) { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, uint64_t v) { Serialize_::serialize(v, ar); return ar; }
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, double v)   { Serialize_::serialize(v, ar); return ar; }
 
 // ---- Serde-trait leaf kernels: varints + strings. Hand-written byte
 // kernels (like the containers below) — the DSL's char/int8_t distinction
@@ -1494,16 +1485,12 @@ inline void serialize(const T& v, BinaryWriteArchive& ar) {
 }  // namespace Serialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v32 v) { Serialize_::serialize(v, ar); return ar; }
 
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, rrr::v64 v) { Serialize_::serialize(v, ar); return ar; }
 
 // ---- Variable-length byte sequences. ----------------------------------
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, std::string_view s) { Serialize_::serialize(s, ar); return ar; }
 
 // std::string is a convenience overload — same wire format as
 // string_view (length-prefixed bytes).
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::string& s) { Serialize_::serialize(s, ar); return ar; }
 
 // ---- Composites. ------------------------------------------------------
 // std::pair: write first then second, no length prefix (each side
@@ -1536,21 +1523,21 @@ template<class T>
 inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
   serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
 }
 
 template<class T>
 inline void serialize(const std::vector<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
   serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
 }
 
 template<class T>
 inline void serialize(const std::list<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
   serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
 }
 
 template<class T>
@@ -1567,7 +1554,7 @@ template<class T>
 inline void serialize(const std::set<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
   serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
 }
 
 template<class T>
@@ -1594,7 +1581,7 @@ template<class T>
 inline void serialize(const std::unordered_set<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
   serialize(v_len, ar);
-  for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
+  for (auto it = v.begin(); it != v.end(); ++it) serialize(*it, ar);
 }
 
 template<class K, class V>
@@ -1649,8 +1636,6 @@ inline void serialize(const std::unordered_map<K, V>& v, BinaryWriteArchive& ar)
 
 }  // namespace Serialize_
 
-template<class T1, class T2>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::pair<T1, T2>& v) { Serialize_::serialize(v, ar); return ar; }
 
 // ---- Linear containers (length prefix + sequential elements). --------
 // All linear containers share the wire format: v64 length prefix
@@ -1660,38 +1645,16 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::pair<T1
 // containers (unordered_set/unordered_map/HashSet/HashMap) it's
 // bucket-walk order — same iteration order as the existing
 // `Marshal` operator<<, so byte-for-byte compatibility holds.
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::Vec<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::vector<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::list<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeSet<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::set<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashSet<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_set<T>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeMap<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::map<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashMap<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_map<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
 
 
 // `BinaryReadArchive` — the wire-format decoder over a type-erased
@@ -2535,15 +2498,6 @@ namespace Deserialize_ {
 // truncation it aborts via `verify` (matches the existing
 // `Marshal::read` contract — short reads at the boundary are
 // programming errors at this layer, not recoverable conditions).
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int8_t& v)   { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int16_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int32_t& v)  { Deserialize_::deserialize(v, ar); return ar; }  // forwards to impl Deserialize for i32
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, int64_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint8_t& v)  { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint16_t& v) { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint32_t& v) { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, uint64_t& v) { Deserialize_::deserialize(v, ar); return ar; }
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, double& v)   { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Serde-trait leaf kernels (read side): varints + strings. ----------
 namespace Deserialize_ {
@@ -2594,12 +2548,9 @@ inline void deserialize(T& v, BinaryReadArchive& ar) {
 // ---- Variable-length integer encoding (SparseInt). --------------------
 // SparseInt's first byte determines the total length; we peek it,
 // read the remaining bytes, then decode.
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v32& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Variable-length byte sequences. ----------------------------------
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) { Deserialize_::deserialize(s, ar); return ar; }
 
 // ---- Composites. ------------------------------------------------------
 // Phase 8: container/pair serde overloads (operator bodies moved here;
@@ -2781,45 +2732,21 @@ inline void deserialize(std::unordered_map<K, V>& v, BinaryReadArchive& ar) {
 
 }  // namespace Deserialize_
 
-template<class T1, class T2>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::pair<T1, T2>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Linear containers. -----------------------------------------------
 // Wire format: v64 length prefix + N elements deserialized in order.
 // Containers are cleared first; matches the existing Marshal operator>>
 // semantics.
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::Vec<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::vector<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::list<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeSet<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::set<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashSet<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_set<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeMap<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::map<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashMap<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
-template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_map<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 
 // ---------------------------------------------------------------------------

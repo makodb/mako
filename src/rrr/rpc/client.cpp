@@ -4406,8 +4406,8 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
   // Build the heartbeat frame body and dispatch through the channel proxy.
   Marshal body;
-  body << v64(self.xid_counter_.next(1));
-  body << static_cast<i32>(kInternalHeartbeatRpcId);
+  rrr::Serialize_::serialize(v64(self.xid_counter_.next(1)), body);
+  rrr::Serialize_::serialize(static_cast<i32>(kInternalHeartbeatRpcId), body);
   const std::size_t body_size = body.content_size();
   std::vector<std::uint8_t> body_bytes;
   if (body_size > 0) {
