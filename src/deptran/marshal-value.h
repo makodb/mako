@@ -5,6 +5,14 @@
 
 namespace rrr {
 
+// Phase 8 batch 4: serde free functions own the mdb::Value wire format;
+// the operators below are forwarders kept until the operator layer is
+// deleted.
+void serialize(const mdb::Value &value, Marshal &m);
+void deserialize(mdb::Value &value, Marshal &m);
+void serialize(const mdb::Value &value, BinaryWriteArchive &ar);
+void deserialize(mdb::Value &value, BinaryReadArchive &ar);
+
 Marshal& operator << (Marshal& m, const mdb::Value &value);
 
 Marshal& operator >> (Marshal& m, mdb::Value &value);

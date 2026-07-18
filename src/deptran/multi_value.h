@@ -93,15 +93,18 @@ inline bool operator<(const MultiValue &mv1, const MultiValue &mv2) {
   return mv1.compare(mv2) == -1;
 }
 
-inline Marshal& operator << (Marshal& m, const MultiValue& mv) {
+// Phase 8 batch 4: serde free functions own the wire format; the operators
+// are forwarders kept until the operator layer is deleted.
+inline void serialize(const MultiValue& mv, Marshal& m) {
   rrr::Serialize_::serialize(mv.size(), m);
   for (int i=0; i<mv.size(); i++) {
     rrr::Serialize_::serialize(mv[i], m);
   }
-  return m;
 }
 
-inline Marshal& operator >> (Marshal& m, MultiValue& mv) {
+inline Marshal& operator << (Marshal& m, const MultiValue& mv) { serialize(mv, m); return m; }
+
+inline void deserialize(MultiValue& mv, Marshal& m) {
   int size;
   rrr::Deserialize_::deserialize(size, m);
   MultiValue result(size);
@@ -109,8 +112,9 @@ inline Marshal& operator >> (Marshal& m, MultiValue& mv) {
     rrr::Deserialize_::deserialize(result[i], m);
   }
   mv = result;
-  return m;
 }
+
+inline Marshal& operator >> (Marshal& m, MultiValue& mv) { deserialize(mv, m); return m; }
 
 struct cell_locator {
   std::string tbl_name;

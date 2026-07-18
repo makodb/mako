@@ -3,7 +3,9 @@
 
 namespace rrr {
 
-rrr::Marshal &operator<<(rrr::Marshal &m, const mdb::Value &value) {
+// Phase 8 batch 4: serde free functions own the wire format; operators are
+// forwarders kept until the operator layer is deleted.
+void serialize(const mdb::Value &value, rrr::Marshal &m) {
   rrr::Serialize_::serialize(value.ver_, m);
   switch (value.get_kind()) {
     case Value::I32:
@@ -26,10 +28,11 @@ rrr::Marshal &operator<<(rrr::Marshal &m, const mdb::Value &value) {
       verify(0);
       break;
   }
-  return m;
 }
 
-rrr::Marshal &operator>>(rrr::Marshal &m, mdb::Value &value) {
+rrr::Marshal &operator<<(rrr::Marshal &m, const mdb::Value &value) { serialize(value, m); return m; }
+
+void deserialize(mdb::Value &value, rrr::Marshal &m) {
   rrr::Deserialize_::deserialize(value.ver_, m);
   i32 k;
   rrr::Deserialize_::deserialize(k, m);
@@ -55,14 +58,15 @@ rrr::Marshal &operator>>(rrr::Marshal &m, mdb::Value &value) {
       value.set_str(str);
       break;
   }
-  return m;
 }
+
+rrr::Marshal &operator>>(rrr::Marshal &m, mdb::Value &value) { deserialize(value, m); return m; }
 
 // archive operators for mdb::Value. Wire
 // format is byte-for-byte identical to the Marshal-based operators
 // above: ver_ (i64 typically), then i32 tag (0=I32, 1=I64, 2=DOUBLE,
 // 3=STR), then the payload.
-BinaryWriteArchive &operator<<(BinaryWriteArchive &ar, const mdb::Value &value) {
+void serialize(const mdb::Value &value, BinaryWriteArchive &ar) {
   rrr::Serialize_::serialize(value.ver_, ar);
   switch (value.get_kind()) {
     case mdb::Value::I32:
@@ -85,10 +89,11 @@ BinaryWriteArchive &operator<<(BinaryWriteArchive &ar, const mdb::Value &value) 
       verify(0);
       break;
   }
-  return ar;
 }
 
-BinaryReadArchive &operator>>(BinaryReadArchive &ar, mdb::Value &value) {
+BinaryWriteArchive &operator<<(BinaryWriteArchive &ar, const mdb::Value &value) { serialize(value, ar); return ar; }
+
+void deserialize(mdb::Value &value, BinaryReadArchive &ar) {
   rrr::Deserialize_::deserialize(value.ver_, ar);
   i32 k;
   rrr::Deserialize_::deserialize(k, ar);
@@ -118,8 +123,9 @@ BinaryReadArchive &operator>>(BinaryReadArchive &ar, mdb::Value &value) {
       break;
     }
   }
-  return ar;
 }
+
+BinaryReadArchive &operator>>(BinaryReadArchive &ar, mdb::Value &value) { deserialize(value, ar); return ar; }
 
 } // namespace rrr
 
