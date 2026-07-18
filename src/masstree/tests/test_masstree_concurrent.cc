@@ -181,9 +181,9 @@ TEST(MasstreeConcurrent, StableKeysVisibleUnderChurn) {
         for (uint64_t v = 0; v < kStableCount; ++v) {
           TestTree::value_type out = nullptr;
           if (!tree.search(K(v), out)) {
-            ++missing;
+            missing.fetch_add(1);
           } else if (FromValue(out) != v) {
-            ++mismatches;
+            mismatches.fetch_add(1);
           }
         }
       }
@@ -264,12 +264,12 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
         u64_varkey lo(0);
         tree.search_range_call_unbounded(lo, cb);
         for (size_t i = 1; i < cb.keys_seen.len(); ++i) {
-          if (cb.keys_seen[i] <= cb.keys_seen[i - 1]) ++bad_order;
+          if (cb.keys_seen[i] <= cb.keys_seen[i - 1]) bad_order.fetch_add(1);
         }
         for (size_t i = 0; i < cb.keys_seen.len(); ++i) {
-          if (cb.keys_seen[i] != cb.values_seen[i]) ++bad_value;
+          if (cb.keys_seen[i] != cb.values_seen[i]) bad_value.fetch_add(1);
         }
-        ++scans_run;
+        scans_run.fetch_add(1);
       }
     }));
   }
@@ -316,10 +316,10 @@ TEST(MasstreeConcurrent, LongRunningReadersAcrossEpochs) {
         for (uint64_t v = 0; v < kStableCount; ++v) {
           TestTree::value_type out = nullptr;
           if (!tree.search(K(v), out) || FromValue(out) != v) {
-            ++reader_failures;
+            reader_failures.fetch_add(1);
           }
         }
-        ++reader_iters;
+        reader_iters.fetch_add(1);
       }
     }));
   }

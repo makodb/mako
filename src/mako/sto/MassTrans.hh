@@ -56,6 +56,15 @@ public:
 protected:
 
   typedef Box versioned_value;
+  struct table_params : public Masstree::nodeparams<15,15> {
+    typedef versioned_value* value_type;
+    typedef Masstree::value_print<value_type> value_print_type;
+    typedef threadinfo threadinfo_type;
+  };
+  typedef Masstree::basic_table<table_params> table_type;
+  typedef Masstree::unlocked_tcursor<table_params> unlocked_cursor_type;
+  typedef Masstree::tcursor<table_params> cursor_type;
+  typedef Masstree::leaf<table_params> leaf_type;
   
 public:
     typedef V write_value_type;
@@ -548,7 +557,8 @@ public:
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transRQuery(begin, end, std::move(callback), va, ti);we    Sto::commit();
+    transRQuery(begin, end, std::move(callback), va, ti);
+    Sto::commit();
   }
 
   // implementation of TObject methods
@@ -935,15 +945,6 @@ protected:
     val.assign(val_to_assign.data(), val_to_assign.length());
   }
 
-  struct table_params : public Masstree::nodeparams<15,15> {
-    typedef versioned_value* value_type;
-    typedef Masstree::value_print<value_type> value_print_type;
-    typedef threadinfo threadinfo_type;
-  };
-  typedef Masstree::basic_table<table_params> table_type;
-  typedef Masstree::unlocked_tcursor<table_params> unlocked_cursor_type;
-  typedef Masstree::tcursor<table_params> cursor_type;
-  typedef Masstree::leaf<table_params> leaf_type;
   table_type table_;
   // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
   size_t size_count_{0};

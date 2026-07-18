@@ -485,11 +485,15 @@ inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
+      mbta_table::ValueAllocator value_allocator(
+          [arena]() -> mbta_table::value_type* { return (*arena)(); });
+      mbta_table::ValueAllocator *value_allocator_ptr =
+          arena ? &value_allocator : nullptr;
       t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
-      }, arena);
+      }, value_allocator_ptr);
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
@@ -505,11 +509,15 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
   while (true) {
     try {
+      mbta_table::ValueAllocator value_allocator(
+          [arena]() -> mbta_table::value_type* { return (*arena)(); });
+      mbta_table::ValueAllocator *value_allocator_ptr =
+          arena ? &value_allocator : nullptr;
       t->rscan(start_key, end, [&](mbta_table::Str key, std::string &value) {
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
-      }, arena);
+      }, value_allocator_ptr);
       return;
     } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
   }
