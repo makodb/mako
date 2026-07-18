@@ -593,166 +593,211 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
 
 // @safe
 // @lifetime: (&'a, const T1&, const T2&) -> &'a
+// Phase 8: container/pair serde overloads (operator bodies moved here;
+// the operators are now one-line forwarders). Forward declarations first
+// so nested containers resolve regardless of definition order; element
+// calls are unqualified and fall back to the generic catch-all.
+namespace Serialize_ {
+template<typename CatchAllT> inline void serialize(const CatchAllT& v, ::rrr::Marshal& m);
+template<class T1, class T2> inline void serialize(const std::pair<T1, T2> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const rusty::Vec<T> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const std::vector<T> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const std::list<T> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const rusty::BTreeSet<T> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const std::set<T> &v, rrr::Marshal &m);
+template<class K, class V> inline void serialize(const rusty::BTreeMap<K, V> &v, rrr::Marshal &m);
+template<class K, class V> inline void serialize(const std::map<K, V> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const rusty::HashSet<T> &v, rrr::Marshal &m);
+template<class T> inline void serialize(const std::unordered_set<T> &v, rrr::Marshal &m);
+template<class K, class V> inline void serialize(const rusty::HashMap<K, V> &v, rrr::Marshal &m);
+template<class K, class V> inline void serialize(const std::unordered_map<K, V> &v, rrr::Marshal &m);
+
 template<class T1, class T2>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
-    m << v.first;
-    m << v.second;
-    return m;
+inline void serialize(const std::pair<T1, T2> &v, rrr::Marshal &m) {
+    serialize(v.first, m);
+    serialize(v.second, m);
 }
 
-// @safe
-// @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::Vec<T> &v) {
+inline void serialize(const rusty::Vec<T> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     for (typename rusty::Vec<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
-      m << *it;
+      serialize(*it, m);
     }
-    return m;
 }
 
-// @safe
-// @lifetime: (&'a, const std::vector<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
+inline void serialize(const std::vector<T> &v, rrr::Marshal &m) {
   // Keep std::vector support for non-rrr call sites while rrr internals move to rusty containers.
   v64 v_len{static_cast<rrr::i64>(v.size())};
-  m << v_len;
+  serialize(v_len, m);
   for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
-    m << *it;
+    serialize(*it, m);
   }
-  return m;
 }
 
-// @safe
-// @lifetime: (&'a, const std::list<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
+inline void serialize(const std::list<T> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     for (typename std::list<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
-      m << *it;
+      serialize(*it, m);
     }
-    return m;
 }
 
-// @safe
-// @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeSet<T> &v) {
+inline void serialize(const rusty::BTreeSet<T> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     for (typename rusty::BTreeSet<T>::const_iterator it = v.begin(); it != v.end();
          ++it) {
-      m << *it;
+      serialize(*it, m);
     }
-    return m;
 }
 
-// @safe
-// @lifetime: (&'a, const std::set<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
+inline void serialize(const std::set<T> &v, rrr::Marshal &m) {
   v64 v_len{static_cast<rrr::i64>(v.size())};
-  m << v_len;
+  serialize(v_len, m);
   for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
        ++it) {
-    m << *it;
+    serialize(*it, m);
   }
-  return m;
 }
 
-// @safe
-// @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const rusty::BTreeMap<K, V> &v) {
+inline void serialize(const rusty::BTreeMap<K, V> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     // rusty::BTreeMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::BTreeMap<K, V>::const_iterator it = v.begin(); it != v.end();
          ++it) {
       auto kv = *it;
-      m << std::get<0>(kv) << std::get<1>(kv);
+      serialize(std::get<0>(kv), m);
+      serialize(std::get<1>(kv), m);
     }
-    return m;
 }
 
-// @safe
-// @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
+inline void serialize(const std::map<K, V> &v, rrr::Marshal &m) {
   v64 v_len{static_cast<rrr::i64>(v.size())};
-  m << v_len;
+  serialize(v_len, m);
   for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
        ++it) {
-    m << it->first << it->second;
+    serialize(it->first, m);
+    serialize(it->second, m);
   }
-  return m;
 }
 
-// @safe
-// @lifetime: (&'a, const rusty::HashSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m,
-                                const rusty::HashSet<T> &v) {
+inline void serialize(const rusty::HashSet<T> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     for (typename rusty::HashSet<T>::const_iterator it = v.begin();
          it != v.end(); ++it) {
-      m << *it;
+      serialize(*it, m);
     }
-    return m;
 }
 
-// @safe
-// @lifetime: (&'a, const std::unordered_set<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator<<(rrr::Marshal &m,
-                                const std::unordered_set<T> &v) {
+inline void serialize(const std::unordered_set<T> &v, rrr::Marshal &m) {
   v64 v_len{static_cast<rrr::i64>(v.size())};
-  m << v_len;
+  serialize(v_len, m);
   for (typename std::unordered_set<T>::const_iterator it = v.begin();
        it != v.end(); ++it) {
-    m << *it;
+    serialize(*it, m);
   }
-  return m;
 }
 
-// @safe
-// @lifetime: (&'a, const rusty::HashMap<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator<<(rrr::Marshal &m,
-                                const rusty::HashMap<K, V> &v) {
+inline void serialize(const rusty::HashMap<K, V> &v, rrr::Marshal &m) {
     v64 v_len{static_cast<rrr::i64>(v.size())};
-    m << v_len;
+    serialize(v_len, m);
     // rusty::HashMap iter `operator*()` returns
     // `std::tuple<const K&, const V&>` (post-2026-04 API).
     for (typename rusty::HashMap<K, V>::const_iterator it = v.begin();
          it != v.end(); ++it) {
       auto kv = *it;
-      m << std::get<0>(kv) << std::get<1>(kv);
+      serialize(std::get<0>(kv), m);
+      serialize(std::get<1>(kv), m);
     }
-    return m;
 }
+
+template<class K, class V>
+inline void serialize(const std::unordered_map<K, V> &v, rrr::Marshal &m) {
+  v64 v_len{static_cast<rrr::i64>(v.size())};
+  serialize(v_len, m);
+  for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
+       it != v.end(); ++it) {
+    serialize(it->first, m);
+    serialize(it->second, m);
+  }
+}
+
+}  // namespace Serialize_
+
+template<class T1, class T2>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::pair<T1, T2> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const rusty::Vec<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::Vec<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const std::vector<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::vector<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const std::list<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::list<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const rusty::BTreeSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::BTreeSet<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const std::set<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::set<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const rusty::BTreeMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::BTreeMap<K, V> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const std::map<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::map<K, V> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const rusty::HashSet<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::HashSet<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const std::unordered_set<T>&) -> &'a
+template<class T>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::unordered_set<T> &v) { Serialize_::serialize(v, m); return m; }
+
+// @safe
+// @lifetime: (&'a, const rusty::HashMap<K,V>&) -> &'a
+template<class K, class V>
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rusty::HashMap<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, const std::unordered_map<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator<<(rrr::Marshal &m,
-                                const std::unordered_map<K, V> &v) {
-  v64 v_len{static_cast<rrr::i64>(v.size())};
-  m << v_len;
-  for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
-       it != v.end(); ++it) {
-    m << it->first << it->second;
-  }
-  return m;
-}
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const std::unordered_map<K, V> &v) { Serialize_::serialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, i8&) -> &'a
@@ -857,183 +902,232 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
 
 // @safe
 // @lifetime: (&'a, std::pair<T1,T2>&) -> &'a
+// Phase 8: container/pair serde overloads (operator bodies moved here;
+// the operators are now one-line forwarders). Forward declarations first
+// so nested containers resolve regardless of definition order; element
+// calls are unqualified and fall back to the generic catch-all.
+namespace Deserialize_ {
+template<typename CatchAllT> inline void deserialize(CatchAllT& v, ::rrr::Marshal& m);
+template<class T1, class T2> inline void deserialize(std::pair<T1, T2> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(rusty::Vec<T> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(std::vector<T> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(std::list<T> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(rusty::BTreeSet<T> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(std::set<T> &v, rrr::Marshal &m);
+template<class K, class V> inline void deserialize(rusty::BTreeMap<K, V> &v, rrr::Marshal &m);
+template<class K, class V> inline void deserialize(std::map<K, V> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(rusty::HashSet<T> &v, rrr::Marshal &m);
+template<class T> inline void deserialize(std::unordered_set<T> &v, rrr::Marshal &m);
+template<class K, class V> inline void deserialize(rusty::HashMap<K, V> &v, rrr::Marshal &m);
+template<class K, class V> inline void deserialize(std::unordered_map<K, V> &v, rrr::Marshal &m);
+
 template<class T1, class T2>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::pair<T1, T2> &v) {
-  m >> v.first;
-  m >> v.second;
-  return m;
+inline void deserialize(std::pair<T1, T2> &v, rrr::Marshal &m) {
+  deserialize(v.first, m);
+  deserialize(v.second, m);
 }
+
+template<class T>
+inline void deserialize(rusty::Vec<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  v.reserve(v_len.get());
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.push_back(elem);
+  }
+}
+
+template<class T>
+inline void deserialize(std::vector<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  v.reserve(v_len.get());
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.push_back(elem);
+  }
+}
+
+template<class T>
+inline void deserialize(std::list<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.push_back(elem);
+  }
+}
+
+template<class T>
+inline void deserialize(rusty::BTreeSet<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.insert(elem);
+  }
+}
+
+template<class T>
+inline void deserialize(std::set<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.insert(elem);
+  }
+}
+
+template<class K, class V>
+inline void deserialize(rusty::BTreeMap<K, V> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    deserialize(key, m);
+    deserialize(value, m);
+    insert_into_map(v, key, value);
+  }
+}
+
+template<class K, class V>
+inline void deserialize(std::map<K, V> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    deserialize(key, m);
+    deserialize(value, m);
+    insert_into_map(v, key, value);
+  }
+}
+
+template<class T>
+inline void deserialize(rusty::HashSet<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.insert(elem);
+  }
+}
+
+template<class T>
+inline void deserialize(std::unordered_set<T> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    T elem;
+    deserialize(elem, m);
+    v.insert(elem);
+  }
+}
+
+template<class K, class V>
+inline void deserialize(rusty::HashMap<K, V> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    deserialize(key, m);
+    deserialize(value, m);
+    insert_into_map(v, key, value);
+  }
+}
+
+template<class K, class V>
+inline void deserialize(std::unordered_map<K, V> &v, rrr::Marshal &m) {
+  v64 v_len;
+  deserialize(v_len, m);
+  v.clear();
+  for (int i = 0; i < v_len.get(); i++) {
+    K key;
+    V value;
+    deserialize(key, m);
+    deserialize(value, m);
+    insert_into_map(v, key, value);
+  }
+}
+
+}  // namespace Deserialize_
+
+template<class T1, class T2>
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::pair<T1, T2> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::Vec<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::Vec<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  v.reserve(v_len.get());
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.push_back(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::Vec<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::vector<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::vector<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  v.reserve(v_len.get());
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.push_back(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::vector<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::list<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::list<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.push_back(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::list<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::BTreeSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeSet<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.insert(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::BTreeSet<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::set<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.insert(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::set<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::BTreeMap<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::BTreeMap<K, V> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    K key;
-    V value;
-    m >> key >> value;
-    insert_into_map(v, key, value);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::BTreeMap<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::map<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::map<K, V> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    K key;
-    V value;
-    m >> key >> value;
-    insert_into_map(v, key, value);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::map<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::HashSet<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashSet<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.insert(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::HashSet<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::unordered_set<T>&) -> &'a
 template<class T>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    T elem;
-    m >> elem;
-    v.insert(elem);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::unordered_set<T> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, rusty::HashMap<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, rusty::HashMap<K, V> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    K key;
-    V value;
-    m >> key >> value;
-    insert_into_map(v, key, value);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rusty::HashMap<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // @safe
 // @lifetime: (&'a, std::unordered_map<K,V>&) -> &'a
 template<class K, class V>
-inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
-  v64 v_len;
-  m >> v_len;
-  v.clear();
-  for (int i = 0; i < v_len.get(); i++) {
-    K key;
-    V value;
-    m >> key >> value;
-    insert_into_map(v, key, value);
-  }
-  return m;
-}
+inline rrr::Marshal& operator>>(rrr::Marshal& m, std::unordered_map<K, V> &v) { Deserialize_::deserialize(v, m); return m; }
 
 // 2 step 5 (2026-05-05): Marshal& operators for MarshallDeputy
 // retired with the class.  janus::Command (SerializableEnvelope<
