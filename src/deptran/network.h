@@ -18,149 +18,149 @@ public:
     struct RpcTxnRmwRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnRmwRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnRmwRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnRmwResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnRmwResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnRmwResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnRmwResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnRmwResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnReadRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnReadResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnNewOrderRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnNewOrderRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnNewOrderRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnNewOrderResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnNewOrderResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnNewOrderResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnNewOrderResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnNewOrderResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnPaymentRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnPaymentRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnPaymentRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnPaymentResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnPaymentResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnPaymentResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnPaymentResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnPaymentResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnDeliveryRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnDeliveryRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnDeliveryRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnDeliveryResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnDeliveryResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnDeliveryResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnDeliveryResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnDeliveryResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnOrderStatusRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnOrderStatusRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnOrderStatusRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnOrderStatusResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnOrderStatusResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnOrderStatusResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnOrderStatusResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnOrderStatusResponse& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnStockLevelRequest {
         std::vector<int32_t> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnStockLevelRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnStockLevelRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnStockLevelResponse {
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelResponse& o) {
-        return ar;
+    friend inline void serialize(const RpcTxnStockLevelResponse& o, rrr::BinaryWriteArchive& ar) {
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelResponse& o) {
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnStockLevelResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnStockLevelResponse& o, rrr::BinaryReadArchive& ar) {
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnStockLevelResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
         TXN_RMW = 0x21524de9,

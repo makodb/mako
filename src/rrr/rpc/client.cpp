@@ -71,14 +71,14 @@ export namespace rrr {
 template<typename U>
 rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
     rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
-    ar >> value;
+    rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
     return guard;
 }
 
 template<typename U>
 rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
     rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
-    ar >> value;
+    rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
     return std::move(guard);
 }
 
@@ -4122,8 +4122,8 @@ FutureResult clientconn_request_via_channel(const ClientConnection& self, i32 rp
     BinaryWriteArchive ar(make_sink_proxy(&body_sink));
     static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                   "request write_fn must accept BinaryWriteArchive&");
-    ar << v64(fu->xid_);
-    ar << rpc_id;
+    rrr::Serialize_::serialize(v64(fu->xid_), ar);
+    rrr::Serialize_::serialize(rpc_id, ar);
     write_fn(ar);
 
     const ChannelError ch_err =
@@ -4189,8 +4189,8 @@ rusty::Result<rusty::Unit, i32> clientconn_request_async(
     BinaryWriteArchive ar(make_sink_proxy(&body_sink));
     static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                   "request_async write_fn must accept BinaryWriteArchive&");
-    ar << v64(xid);
-    ar << rpc_id;
+    rrr::Serialize_::serialize(v64(xid), ar);
+    rrr::Serialize_::serialize(rpc_id, ar);
     write_fn(ar);
 
     const ChannelError ch_err =
@@ -4725,7 +4725,9 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
   // flag is consumed by the framing layer.  We assume the server
   // always emits the extended form (matches `server.hpp` today).
   v64 v_server_instance_id;
-  ar >> v_reply_xid >> v_error_code >> v_server_instance_id;
+  rrr::Deserialize_::deserialize(v_reply_xid, ar);
+  rrr::Deserialize_::deserialize(v_error_code, ar);
+  rrr::Deserialize_::deserialize(v_server_instance_id, ar);
   self.check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
 
   size_t parsed_header_size = src.pos();

@@ -18,26 +18,26 @@ public:
     struct RpcTxnReadRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnReadRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadResponse {
         rrr::i32 val;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
-        ar << o.val;
-        return ar;
+    friend inline void serialize(const RpcTxnReadResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.val, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
-        ar >> o.val;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.val, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
         TXN_READ = 0x4e5916a6,

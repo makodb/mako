@@ -1608,9 +1608,9 @@ void sconn_reply(const ServerConnection& self, const Request& req,
                  i32 error_code, ServerReplyFn write_fn) {
     BufferSink body_sink;
     BinaryWriteArchive ar(make_sink_proxy(&body_sink));
-    ar << v64(req.xid);
-    ar << v32(error_code);
-    ar << v64(static_cast<i64>(self.ctx_->server_instance_id));
+    rrr::Serialize_::serialize(v64(req.xid), ar);
+    rrr::Serialize_::serialize(v32(error_code), ar);
+    rrr::Serialize_::serialize(v64(static_cast<i64>(self.ctx_->server_instance_id)), ar);
     if (write_fn) {
         write_fn(ar);
     }

@@ -203,14 +203,14 @@ class SerializableEnvelope {
   void save(BinaryWriteArchive& ar) const {
     verify(has_value() &&
            "SerializableEnvelope::save: empty envelope cannot be encoded.");
-    ar << v32(inner_->kind());
+    rrr::Serialize_::serialize(v32(inner_->kind()), ar);
     inner_->save(ar);
   }
 
   // @unsafe - Marshal `operator>>` chain on the binary archive.
   void load(BinaryReadArchive& ar) {
     v32 kind_v;
-    ar >> kind_v;
+    rrr::Deserialize_::deserialize(kind_v, ar);
     inner_ = SerializableRegistry::create(kind_v.get());
     inner_->load(ar);
     refresh_kind();

@@ -107,18 +107,21 @@ def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
     # callers.  The archive `>>` emission below is the only one
     # rpcgen needs to provide.
     if archive:
-        f.writeln("friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct_name)
+        # Phase 8: friend serde functions own the wire format (fields routed
+        # through the qualified serde namespace); the friend operators are
+        # one-line forwarders kept until the operator layer is deleted.
+        f.writeln("friend inline void serialize(const %s& o, rrr::BinaryWriteArchive& ar) {" % struct_name)
         with f.indent():
             for _, field_name in fields:
-                f.writeln("ar << o.%s;" % field_name)
-            f.writeln("return ar;")
+                f.writeln("rrr::Serialize_::serialize(o.%s, ar);" % field_name)
         f.writeln("}")
-        f.writeln("friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) {" % struct_name)
+        f.writeln("friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) { serialize(o, ar); return ar; }" % struct_name)
+        f.writeln("friend inline void deserialize(%s& o, rrr::BinaryReadArchive& ar) {" % struct_name)
         with f.indent():
             for _, field_name in fields:
-                f.writeln("ar >> o.%s;" % field_name)
-            f.writeln("return ar;")
+                f.writeln("rrr::Deserialize_::deserialize(o.%s, ar);" % field_name)
         f.writeln("}")
+        f.writeln("friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) { deserialize(o, ar); return ar; }" % struct_name)
     f.writeln()
 
 def emit_typed_service_signature(service, func, f):

@@ -314,7 +314,7 @@ namespace rrr {
 // @unsafe - `ar << type_name_` Marshal operator<< chain + raw
 // shared_ptr deref to call payload_->save.
 void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
-  ar << self.type_name_;
+  rrr::Serialize_::serialize(self.type_name_, ar);
   if (self.payload_) {
     self.payload_->save(ar);
   }
@@ -323,7 +323,7 @@ void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
 // @unsafe - `ar >> type_name_` Marshal operator>> chain + raw
 // shared_ptr deref to call payload_->load.
 void anymessage_load(AnyMessage& self, BinaryReadArchive& ar) {
-  ar >> self.type_name_;
+  rrr::Deserialize_::deserialize(self.type_name_, ar);
   self.payload_ = any_message_registry::create(self.type_name_);
   verify(self.payload_ &&
          "AnyMessage::load: unknown type name on wire.  "
