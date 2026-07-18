@@ -121,6 +121,13 @@ using OnClosedCallback = detail::CallbackWrapper<void(ChannelError reason) const
 using OnErrorCallback  = detail::CallbackWrapper<void(ChannelError err,
                                                        std::string_view message) const>;
 
+// Hand-bridge for the DSL (playbook §7.2): CallbackWrapper is a plain
+// C++ template with a default ctor the DSL cannot spell — these
+// factories give DSL bodies an "empty callback" expression.
+inline OnClosedCallback empty_on_closed_callback() { return {}; }
+inline OnFrameCallback  empty_on_frame_callback()  { return {}; }
+inline OnErrorCallback  empty_on_error_callback()  { return {}; }
+
 // `ChannelConnectionBase` — abstract transport-connection interface
 // (TcpConnection, inmemory connection, ...). Authored as inline Rust
 // DSL `pub trait`; the transpiler emits the same shape of C++

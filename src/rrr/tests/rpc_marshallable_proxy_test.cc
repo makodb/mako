@@ -40,10 +40,10 @@ std::shared_ptr<T> RoundTripTypedPayload(const std::shared_ptr<T>& src) {
   // Command's templated non-Marshallable ctor.
   janus::Command outgoing{src};
   Marshal m;
-  m << outgoing;
+  rrr::Serialize_::serialize(outgoing, m);
 
   janus::Command incoming;
-  m >> incoming;
+  rrr::Deserialize_::deserialize(incoming, m);
 
   return marshallable_cast<T>(incoming);
 }
@@ -150,10 +150,10 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
   // path).
   janus::Command outgoing{payload};
   Marshal m;
-  m << outgoing;
+  rrr::Serialize_::serialize(outgoing, m);
 
   janus::Command incoming;
-  m >> incoming;
+  rrr::Deserialize_::deserialize(incoming, m);
   auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
   ASSERT_NE(decoded, nullptr);
 
@@ -261,10 +261,10 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
 
   Marshal m;
-  m << outgoing;
+  rrr::Serialize_::serialize(outgoing, m);
 
   janus::Command incoming;
-  m >> incoming;
+  rrr::Deserialize_::deserialize(incoming, m);
   EXPECT_EQ(incoming.kind_, janus::TpcCommitCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::TpcCommitCommand>(incoming);
@@ -294,10 +294,10 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   janus::Command batch_outgoing{batch};
   EXPECT_EQ(batch_outgoing.kind_, janus::TpcBatchCommand::static_kind());
   Marshal batch_marshaled;
-  batch_marshaled << batch_outgoing;
+  rrr::Serialize_::serialize(batch_outgoing, batch_marshaled);
 
   janus::Command batch_incoming;
-  batch_marshaled >> batch_incoming;
+  rrr::Deserialize_::deserialize(batch_incoming, batch_marshaled);
   auto decoded_batch = marshallable_cast<janus::TpcBatchCommand>(batch_incoming);
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 2u);
@@ -333,10 +333,10 @@ TEST(MarshallableProxyFacadeTest,
   EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
 
   Marshal m;
-  m << outgoing;
+  rrr::Serialize_::serialize(outgoing, m);
 
   janus::Command incoming;
-  m >> incoming;
+  rrr::Deserialize_::deserialize(incoming, m);
   EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::ReplicatedDBCommand>(incoming);
@@ -360,14 +360,14 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << outgoing;
+    rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
     MarshalSource src(&m);
     BinaryReadArchive reader(make_source_proxy(&src));
-    reader >> incoming;
+    rrr::Deserialize_::deserialize(incoming, reader);
   }
   EXPECT_TRUE(incoming.is_a<janus::EmptyGraph>());
   ASSERT_NE(incoming.unpack<janus::EmptyGraph>(), nullptr);
@@ -383,14 +383,14 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << outgoing;
+    rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
     MarshalSource src(&m);
     BinaryReadArchive reader(make_source_proxy(&src));
-    reader >> incoming;
+    rrr::Deserialize_::deserialize(incoming, reader);
   }
 
   EXPECT_TRUE(incoming.is_a<janus::RccGraph>());

@@ -6,6 +6,9 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+
 import std;
 
 using namespace rrr;

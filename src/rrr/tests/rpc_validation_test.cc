@@ -8,6 +8,9 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 
 import std;
@@ -262,7 +265,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     std::string input = "test";
     auto fu_result = client->request(
         benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-        [&](BinaryWriteArchive& m) { m << input; }
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();

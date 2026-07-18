@@ -20,6 +20,10 @@
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+// ReconnectPolicy lives in rrr.reconnect_policy (trimmed from the
+// consumer umbrella in 08b68144) — import directly.
+import rrr.reconnect_policy;
 #include "../rpc/inmemory_channel.hpp"
 
 import std;
@@ -45,7 +49,7 @@ class EchoService {
     void __dispatch__(i32 /*rpc_id*/, rusty::Box<Request> req,
                       WeakServerConnection sconn) {
         std::string echo;
-        req->m >> echo;
+        rrr::Deserialize_::deserialize(echo, req->m);
         {
             std::lock_guard<std::mutex> lk(mu_);
             ++dispatch_count_;
@@ -54,7 +58,7 @@ class EchoService {
         auto sconn_opt = sconn.upgrade();
         if (sconn_opt.is_some()) {
             sconn_opt.unwrap()->reply(*req, /*err=*/0,
-                [&](BinaryWriteArchive& out) { out << echo; });
+                [&](BinaryWriteArchive& out) { rrr::Serialize_::serialize(echo, out); });
         }
     }
 
@@ -132,7 +136,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 
     const std::string input = "hello-inmemory";
     auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
-        [&](BinaryWriteArchive& m) { m << input; });
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();
@@ -172,7 +176,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpcViaBinaryWriteArchive) {
 
     const std::string input = "hello-archive";
     auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
-        [&](BinaryWriteArchive& ar) { ar << input; });
+        [&](BinaryWriteArchive& ar) { rrr::Serialize_::serialize(input, ar); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();
@@ -211,7 +215,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     {
         const std::string input = "via-marshal";
         auto fu = client->request(EchoService::kEchoRpcId, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; }).unwrap();
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }).unwrap();
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
@@ -222,7 +226,7 @@ TEST_F(InMemoryE2ETest, RoundTripBothWriteFnSignatures) {
     {
         const std::string input = "via-archive";
         auto fu = client->request(EchoService::kEchoRpcId, FutureAttr(),
-            [&](BinaryWriteArchive& ar) { ar << input; }).unwrap();
+            [&](BinaryWriteArchive& ar) { rrr::Serialize_::serialize(input, ar); }).unwrap();
         fu->wait();
         ASSERT_EQ(fu->get_error_code(), 0);
         std::string echoed;
@@ -253,7 +257,7 @@ TEST_F(InMemoryE2ETest, MultipleSequentialRequests) {
     for (int i = 0; i < kIterations; ++i) {
         std::string input = "req-" + std::to_string(i);
         auto fu_result = client->request(EchoService::kEchoRpcId, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; });
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); });
         ASSERT_TRUE(fu_result.is_ok()) << "iter=" << i;
         auto fu = fu_result.unwrap();
         fu->wait();

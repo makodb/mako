@@ -127,8 +127,8 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
     // which is done at application startup. Here we just verify serialization works.
     // The basic fields can still be deserialized:
     LogEntry partial;
-    m >> partial.slot_id;
-    m >> partial.term;
+    rrr::Deserialize_::deserialize(partial.slot_id, m);
+    rrr::Deserialize_::deserialize(partial.term, m);
 
     EXPECT_EQ(partial.slot_id, 100u);
     EXPECT_EQ(partial.term, 20u);

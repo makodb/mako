@@ -8,6 +8,9 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.heartbeat;
+
 import std;
 
 using namespace rrr;

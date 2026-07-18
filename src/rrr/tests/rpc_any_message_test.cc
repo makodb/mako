@@ -35,10 +35,12 @@ struct GraphPayload {
 
   // Serializable contract.
   void save(BinaryWriteArchive& ar) const {
-    ar << node_count << label;
+    rrr::Serialize_::serialize(node_count, ar);
+    rrr::Serialize_::serialize(label, ar);
   }
   void load(BinaryReadArchive& ar) {
-    ar >> node_count >> label;
+    rrr::Deserialize_::deserialize(node_count, ar);
+    rrr::Deserialize_::deserialize(label, ar);
   }
   int32_t kind() const { return 0; /* unused for AnyMessage path */ }
 };
@@ -46,8 +48,8 @@ struct GraphPayload {
 struct OtherPayload {
   uint64_t value{0};
 
-  void save(BinaryWriteArchive& ar) const { ar << value; }
-  void load(BinaryReadArchive& ar) { ar >> value; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(value, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(value, ar); }
   int32_t kind() const { return 0; }
 };
 
@@ -128,7 +130,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << outgoing;
+    rrr::Serialize_::serialize(outgoing, writer);
   }
 
   // Receiver side: deserialize, recover typed payload.
@@ -136,7 +138,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   {
     MarshalSource src(&m);
     BinaryReadArchive reader(make_source_proxy(&src));
-    reader >> incoming;
+    rrr::Deserialize_::deserialize(incoming, reader);
   }
 
   EXPECT_EQ(incoming.type_name_, kGraphName);
@@ -173,13 +175,13 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << outgoing;
+    rrr::Serialize_::serialize(outgoing, writer);
   }
   AnyMessage incoming;
   {
     MarshalSource src(&m);
     BinaryReadArchive reader(make_source_proxy(&src));
-    reader >> incoming;
+    rrr::Deserialize_::deserialize(incoming, reader);
   }
   EXPECT_EQ(incoming.type_name_, "graph.alias.v1");
 
@@ -203,14 +205,14 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << outgoing;
+    rrr::Serialize_::serialize(outgoing, writer);
   }
 
   AnyMessage incoming;
   {
     MarshalSource src(&m);
     BinaryReadArchive reader(make_source_proxy(&src));
-    reader >> incoming;
+    rrr::Deserialize_::deserialize(incoming, reader);
   }
   auto recovered = incoming.unpack<OtherPayload>();
   ASSERT_NE(recovered, nullptr);
@@ -238,7 +240,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive ar(make_sink_proxy(&sink));
-    ar << outgoing;
+    rrr::Serialize_::serialize(outgoing, ar);
   }
 
   // Decode through the BinaryReadArchive + MarshalSource path.
@@ -246,7 +248,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   {
     MarshalSource source(&m);
     BinaryReadArchive ar(make_source_proxy(&source));
-    ar >> incoming;
+    rrr::Deserialize_::deserialize(incoming, ar);
   }
 
   EXPECT_EQ(incoming.type_name_, kGraphName);
@@ -274,14 +276,14 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive ar(make_sink_proxy(&sink));
-    ar << outgoing;
+    rrr::Serialize_::serialize(outgoing, ar);
   }
 
   AnyMessage incoming;
   {
     MarshalSource source(&m);
     BinaryReadArchive ar(make_source_proxy(&source));
-    ar >> incoming;
+    rrr::Deserialize_::deserialize(incoming, ar);
   }
 
   EXPECT_TRUE(incoming.is_a<GraphPayload>());

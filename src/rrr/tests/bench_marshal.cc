@@ -84,9 +84,9 @@ int main() {
          for (std::size_t i = 0; i < n; ++i) {
            Marshal m;
            i64 v = static_cast<i64>(i);
-           m << v;
+           rrr::Serialize_::serialize(v, m);
            i64 out;
-           m >> out;
+           rrr::Deserialize_::deserialize(out, m);
            if (out != v) std::abort();
          }
        }});
@@ -100,9 +100,9 @@ int main() {
          Marshal m;
          for (std::size_t i = 0; i < n; ++i) {
            i64 v = static_cast<i64>(i);
-           m << v;
+           rrr::Serialize_::serialize(v, m);
            i64 out;
-           m >> out;
+           rrr::Deserialize_::deserialize(out, m);
            if (out != v) std::abort();
          }
        }});
@@ -117,11 +117,11 @@ int main() {
            Marshal m;
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 v = static_cast<i64>(i);
-             m << v;
+             rrr::Serialize_::serialize(v, m);
            }
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 out;
-             m >> out;
+             rrr::Deserialize_::deserialize(out, m);
              if (out != static_cast<i64>(i)) std::abort();
            }
          }
@@ -135,8 +135,8 @@ int main() {
          std::uint64_t v = 0xDEADBEEFCAFEBABEull;
          std::uint64_t out = 0;
          for (std::size_t i = 0; i < n; ++i) {
-           m.write(&v, sizeof(v));
-           m.read(&out, sizeof(out));
+           m.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v));
+           m.read(reinterpret_cast<std::uint8_t*>(&out), sizeof(out));
            if (out != v) std::abort();
          }
        }});
@@ -149,8 +149,8 @@ int main() {
          std::vector<std::uint8_t> sink(kBlob1k.size());
          for (std::size_t i = 0; i < n; ++i) {
            Marshal m;
-           m.write(kBlob1k.data(), kBlob1k.size());
-           m.read(sink.data(), sink.size());
+           m.write_bytes(reinterpret_cast<const std::uint8_t*>(kBlob1k.data()), kBlob1k.size());
+           m.read(reinterpret_cast<std::uint8_t*>(sink.data()), sink.size());
          }
        }});
 
@@ -162,8 +162,8 @@ int main() {
          std::string out;
          for (std::size_t i = 0; i < n; ++i) {
            Marshal m;
-           m << in;
-           m >> out;
+           rrr::Serialize_::serialize(in, m);
+           rrr::Deserialize_::deserialize(out, m);
            if (out != in) std::abort();
          }
        }});
@@ -176,10 +176,18 @@ int main() {
          for (std::size_t i = 0; i < n; ++i) {
            Marshal m;
            i32 a = 1, b = 2, c = 3, d = 4;
-           m << a << b << c << d << in;
+           rrr::Serialize_::serialize(a, m);
+           rrr::Serialize_::serialize(b, m);
+           rrr::Serialize_::serialize(c, m);
+           rrr::Serialize_::serialize(d, m);
+           rrr::Serialize_::serialize(in, m);
            i32 ao, bo, co, dxo;
            std::string so;
-           m >> ao >> bo >> co >> dxo >> so;
+           rrr::Deserialize_::deserialize(ao, m);
+           rrr::Deserialize_::deserialize(bo, m);
+           rrr::Deserialize_::deserialize(co, m);
+           rrr::Deserialize_::deserialize(dxo, m);
+           rrr::Deserialize_::deserialize(so, m);
            if (so.size() != in.size()) std::abort();
          }
        }});
@@ -194,8 +202,8 @@ int main() {
          std::vector<std::uint8_t> sink(4096);
          for (std::size_t i = 0; i < n; ++i) {
            Marshal m;
-           m.write(blob.data(), blob.size());
-           m.read(sink.data(), sink.size());
+           m.write_bytes(reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size());
+           m.read(reinterpret_cast<std::uint8_t*>(sink.data()), sink.size());
          }
        }});
 
@@ -208,10 +216,10 @@ int main() {
          for (std::size_t k = 0; k < n; ++k) {
            Marshal m;
            for (int i = 0; i < 10; ++i) {
-             m.write(kBlob1k.data(), kBlob1k.size());
+             m.write_bytes(reinterpret_cast<const std::uint8_t*>(kBlob1k.data()), kBlob1k.size());
            }
            for (int i = 0; i < 10; ++i) {
-             m.read(sink.data(), sink.size());
+             m.read(reinterpret_cast<std::uint8_t*>(sink.data()), sink.size());
            }
          }
        }});

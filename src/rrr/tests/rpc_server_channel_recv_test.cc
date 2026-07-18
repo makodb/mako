@@ -94,9 +94,9 @@ inline ChannelConnectionProxy make_stub_proxy(
 inline std::vector<std::uint8_t> build_request_frame(
         i64 xid, i32 rpc_id, const std::string& user = std::string()) {
     Marshal m;
-    m << v64(xid);
-    m << rpc_id;
-    if (!user.empty()) m << user;
+    rrr::Serialize_::serialize(v64(xid), m);
+    rrr::Serialize_::serialize(rpc_id, m);
+    if (!user.empty()) rrr::Serialize_::serialize(user, m);
     std::size_t size = m.content_size();
     std::vector<std::uint8_t> bytes(size);
     if (size > 0) {
@@ -119,14 +119,14 @@ class RecordingService {
         last_rpc_id_ = rpc_id;
         last_xid_    = req->xid;
         std::string echo;
-        req->m >> echo;
+        rrr::Deserialize_::deserialize(echo, req->m);
         last_payload_ = echo;
         ++dispatch_count_;
         // Reply back to the client, echoing the payload.
         auto sconn_opt = sconn.upgrade();
         if (sconn_opt.is_some()) {
             sconn_opt.unwrap()->reply(*req, /*err=*/0,
-                [&](BinaryWriteArchive& out) { out << echo; });
+                [&](BinaryWriteArchive& out) { rrr::Serialize_::serialize(echo, out); });
         }
     }
 
@@ -225,7 +225,9 @@ TEST_F(ServerChannelRecvTest, UnhandledRpcRepliesEnoent) {
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
-    body >> v_xid >> v_err >> v_inst;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
+    rrr::Deserialize_::deserialize(v_inst, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 77);
     EXPECT_EQ(v_err.get(), ENOENT);
     EXPECT_EQ(static_cast<uint64_t>(v_inst.get()), kFakeServerInstanceId);
@@ -250,7 +252,9 @@ TEST_F(ServerChannelRecvTest, HeartbeatRpcRepliesZero) {
     v64 v_xid;
     v32 v_err;
     v64 v_inst;
-    body >> v_xid >> v_err >> v_inst;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
+    rrr::Deserialize_::deserialize(v_inst, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 3);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(static_cast<uint64_t>(v_inst.get()), kFakeServerInstanceId);
@@ -265,7 +269,7 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
     mut_sconn().bind_channel(make_stub_proxy(stub));
 
     Marshal m;
-    m << v64(/*xid=*/55);  // only xid, no rpc_id
+    rrr::Serialize_::serialize(v64(/*xid=*/55), m);  // only xid, no rpc_id
     std::size_t size = m.content_size();
     std::vector<std::uint8_t> bytes(size);
     verify(m.read(bytes.data(), size) == size);
@@ -277,7 +281,8 @@ TEST_F(ServerChannelRecvTest, MalformedFrameRepliesEinval) {
                stub->captured().front().size());
     v64 v_xid;
     v32 v_err;
-    body >> v_xid >> v_err;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 55);
     EXPECT_EQ(v_err.get(), EINVAL);
 }
@@ -341,7 +346,10 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     v32 v_err;
     v64 v_inst;
     std::string echo;
-    body >> v_xid >> v_err >> v_inst >> echo;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
+    rrr::Deserialize_::deserialize(v_inst, body);
+    rrr::Deserialize_::deserialize(echo, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 100);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(echo, "ping");

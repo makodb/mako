@@ -40,6 +40,10 @@
 
 #include "../rrr.hpp"
 
+// PollMode (READ/WRITE) lives in rrr.epoll_wrapper, which the trimmed
+// consumer umbrella no longer re-exports (08b68144) — import directly.
+import rrr.epoll_wrapper;
+
 import std;
 
 namespace rrr {

@@ -32,6 +32,9 @@
 
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
+
 import std;
 
 namespace rrr {
@@ -234,7 +237,7 @@ TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
     // Issue a request — it should land on the stub the factory
     // produced (channel-mode dispatch).
     auto fr = mut_conn().request(0x42, FutureAttr{}, [](BinaryWriteArchive& m) {
-        m << static_cast<i32>(0xABCD);
+        rrr::Serialize_::serialize(static_cast<i32>(0xABCD), m);
     });
     ASSERT_TRUE(fr.is_ok());
     EXPECT_EQ(stub->send_count(), 1u);

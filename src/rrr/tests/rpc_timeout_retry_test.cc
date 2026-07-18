@@ -12,6 +12,9 @@
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.request_options;
 #include "rpc_test_ports.h"
 
 import std;
@@ -40,7 +43,7 @@ public:
         }
 
         v32 payload;
-        req->m >> payload;
+        rrr::Deserialize_::deserialize(payload, req->m);
 
         int call = call_count.fetch_add(1) + 1;
         if (call <= drops_before_reply_) {
@@ -54,7 +57,7 @@ public:
 
         auto sconn = sconn_opt.unwrap();
         const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](BinaryWriteArchive& m) {
-            m << payload;
+            rrr::Serialize_::serialize(payload, m);
         });
     }
 
@@ -448,7 +451,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
         TimeoutRetryService::kRpcId, opts,
         [&](BinaryWriteArchive& m) {
             marshal_calls.fetch_add(1);
-            m << v32(123);
+            rrr::Serialize_::serialize(v32(123), m);
         });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -492,7 +495,7 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(456); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(456), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -529,7 +532,7 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(9); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(9), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -570,7 +573,7 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(3); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(3), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -610,7 +613,7 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(5); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(5), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -647,7 +650,7 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(77); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(77), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 

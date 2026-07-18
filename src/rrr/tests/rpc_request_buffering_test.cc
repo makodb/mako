@@ -119,7 +119,7 @@ TEST_F(RequestBufferingTest, DISABLED_RequestWhenDisconnectedQueues) {
     // Make a request - should be queued since buffering is enabled by default
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     // Should succeed (request queued)
@@ -141,7 +141,7 @@ TEST_F(RequestBufferingTest, RequestWhenDisconnectedFailsFast) {
     // Make a request - should fail immediately
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     // Should fail with ENOTCONN
@@ -158,7 +158,7 @@ TEST_F(RequestBufferingTest, DISABLED_MultipleRequestsQueued) {
     // Make multiple requests
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         EXPECT_TRUE(result.is_ok());
     }
@@ -194,7 +194,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsOldest) {
     // Queue 5 requests
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         EXPECT_TRUE(result.is_ok());
     }
@@ -217,7 +217,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsNewest) {
     int ok_count = 0;
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) ok_count++;
     }
@@ -239,7 +239,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
     int err_count = 0;
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) {
             ok_count++;
@@ -271,7 +271,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayReenqueueRejectDoesNotLeaveFuturePen
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
     ASSERT_TRUE(result.is_ok());
     auto future = result.unwrap();
@@ -309,7 +309,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayExpiredRequestUsesTimeoutErrorCode) 
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 7;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
     ASSERT_TRUE(result.is_ok());
     auto future = result.unwrap();
@@ -346,7 +346,7 @@ TEST_F(RequestBufferingTest, DISABLED_OverflowAndExpiryDoNotLeavePendingFutures)
     int unexpected_err = 0;
     for (int i = 0; i < 128; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) {
             accepted.push_back(result.unwrap());
@@ -415,7 +415,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueuedRequestReturnsFuture) {
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     ASSERT_TRUE(result.is_ok());
@@ -448,7 +448,8 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueing) {
         threads.emplace_back([&conn, &success_count, t, requests_per_thread]() {
             for (int i = 0; i < requests_per_thread; i++) {
                 auto result = conn->request(t * 1000 + i, FutureAttr(), [t, i](BinaryWriteArchive& m) {
-                    m << t << i;
+                    rrr::Serialize_::serialize(t, m);
+                    rrr::Serialize_::serialize(i, m);
                 });
                 if (result.is_ok()) {
                     success_count++;

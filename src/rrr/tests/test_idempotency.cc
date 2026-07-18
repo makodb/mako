@@ -91,11 +91,11 @@ TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {
 
     // Serialize
     Marshal m;
-    m << original;
+    rrr::Serialize_::serialize(original, m);
 
     // Deserialize
     auto restored = IdempotencyKey::empty();
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, m);
 
     EXPECT_EQ(restored, original);
 }
@@ -252,7 +252,7 @@ TEST_F(IdempotencyCacheTest, InitialState) {
 TEST_F(IdempotencyCacheTest, StoreAndLookup) {
     IdempotencyKey key(1, 1);
     Marshal response;
-    response << std::string("test response");
+    rrr::Serialize_::serialize(std::string("test response"), response);
 
     uint64_t now = current_time_ms();
     cache_.store(key, 0, response, now);
@@ -300,7 +300,7 @@ TEST_F(IdempotencyCacheTest, TTLExpiration) {
 
     IdempotencyKey key(1, 1);
     Marshal response;
-    response << std::string("test");
+    rrr::Serialize_::serialize(std::string("test"), response);
 
     uint64_t now = current_time_ms();
     cache_.store(key, 0, response, now);
@@ -326,7 +326,7 @@ TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
     for (int i = 1; i <= 4; i++) {
         IdempotencyKey key(1, i);
         Marshal response;
-        response << i;
+        rrr::Serialize_::serialize(i, response);
         cache_.store(key, 0, response, now);
     }
 
@@ -432,12 +432,12 @@ TEST_F(IdempotencyCacheTest, UpdateExistingEntry) {
 
     // First store
     Marshal response1;
-    response1 << std::string("first");
+    rrr::Serialize_::serialize(std::string("first"), response1);
     cache_.store(key, 0, response1, now);
 
     // Update with new value
     Marshal response2;
-    response2 << std::string("second");
+    rrr::Serialize_::serialize(std::string("second"), response2);
     cache_.store(key, 42, response2, now + 1000);
 
     // Should still have 1 entry
@@ -536,7 +536,7 @@ TEST_F(IdempotencyCacheTest, ThreadSafety) {
             uint64_t now = current_time_ms();
 
             Marshal response;
-            response << i;
+            rrr::Serialize_::serialize(i, response);
             cache_.store(key, i, response, now);
 
             int32_t error_code;

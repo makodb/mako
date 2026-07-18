@@ -11,10 +11,10 @@ void test_basic_integers() {
     Marshal m;
     
     i32 val_in = 42;
-    m << val_in;
+    rrr::Serialize_::serialize(val_in, m);
     
     i32 val_out;
-    m >> val_out;
+    rrr::Deserialize_::deserialize(val_out, m);
     
     TEST_ASSERT_EQ(val_in, val_out);
 }
@@ -27,14 +27,20 @@ void test_multiple_integers() {
     i32 i32_val = -2147483648;
     i64 i64_val = -9223372036854775807LL;
     
-    m << i8_val << i16_val << i32_val << i64_val;
+    rrr::Serialize_::serialize(i8_val, m);
+    rrr::Serialize_::serialize(i16_val, m);
+    rrr::Serialize_::serialize(i32_val, m);
+    rrr::Serialize_::serialize(i64_val, m);
     
     i8 i8_out;
     i16 i16_out;
     i32 i32_out;
     i64 i64_out;
     
-    m >> i8_out >> i16_out >> i32_out >> i64_out;
+    rrr::Deserialize_::deserialize(i8_out, m);
+    rrr::Deserialize_::deserialize(i16_out, m);
+    rrr::Deserialize_::deserialize(i32_out, m);
+    rrr::Deserialize_::deserialize(i64_out, m);
     
     TEST_ASSERT_EQ(i8_val, i8_out);
     TEST_ASSERT_EQ(i16_val, i16_out);
@@ -46,10 +52,10 @@ void test_strings() {
     Marshal m;
     
     std::string str_in = "Hello, Marshal!";
-    m << str_in;
+    rrr::Serialize_::serialize(str_in, m);
     
     std::string str_out;
-    m >> str_out;
+    rrr::Deserialize_::deserialize(str_out, m);
     
     TEST_ASSERT_EQ(str_in, str_out);
 }
@@ -58,10 +64,10 @@ void test_vectors() {
     Marshal m;
     
     std::vector<int> vec_in = {1, 2, 3, 4, 5};
-    m << vec_in;
+    rrr::Serialize_::serialize(vec_in, m);
     
     std::vector<int> vec_out;
-    m >> vec_out;
+    rrr::Deserialize_::deserialize(vec_out, m);
     
     TEST_ASSERT_EQ(vec_in.size(), vec_out.size());
     for (size_t i = 0; i < vec_in.size(); ++i) {
@@ -73,10 +79,10 @@ void test_maps() {
     Marshal m;
     
     std::map<int, std::string> map_in = {{1, "one"}, {2, "two"}, {3, "three"}};
-    m << map_in;
+    rrr::Serialize_::serialize(map_in, m);
     
     std::map<int, std::string> map_out;
-    m >> map_out;
+    rrr::Deserialize_::deserialize(map_out, m);
     
     TEST_ASSERT_EQ(map_in.size(), map_out.size());
     for (const auto& pair : map_in) {
@@ -92,7 +98,7 @@ void test_content_size() {
     TEST_ASSERT_EQ(m.content_size(), 0u);
     
     i32 val = 42;
-    m << val;
+    rrr::Serialize_::serialize(val, m);
     
     TEST_ASSERT_FALSE(m.empty());
     TEST_ASSERT_EQ(m.content_size(), sizeof(i32));
@@ -104,7 +110,8 @@ void test_peek() {
     i32 val1 = 100;
     i32 val2 = 200;
     
-    m << val1 << val2;
+    rrr::Serialize_::serialize(val1, m);
+    rrr::Serialize_::serialize(val2, m);
     
     i32 peeked_val;
     size_t peeked = m.peek(&peeked_val, sizeof(i32));
@@ -112,7 +119,8 @@ void test_peek() {
     TEST_ASSERT_EQ(peeked_val, val1);
     
     i32 read_val1, read_val2;
-    m >> read_val1 >> read_val2;
+    rrr::Deserialize_::deserialize(read_val1, m);
+    rrr::Deserialize_::deserialize(read_val2, m);
     
     TEST_ASSERT_EQ(read_val1, val1);
     TEST_ASSERT_EQ(read_val2, val2);
@@ -127,10 +135,10 @@ void test_large_data() {
         large_vec.push_back(i);
     }
     
-    m << large_vec;
+    rrr::Serialize_::serialize(large_vec, m);
     
     std::vector<i32> large_vec_out;
-    m >> large_vec_out;
+    rrr::Deserialize_::deserialize(large_vec_out, m);
     
     TEST_ASSERT_EQ(large_vec.size(), large_vec_out.size());
     for (size_t i = 0; i < large_size; ++i) {

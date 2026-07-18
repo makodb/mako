@@ -16,8 +16,14 @@ TEST(marshal, value) {
     Marshal m;
 
     Value v5, v6, v7, v8;
-    m << v1 << v2 << v3 << v4;
-    m >> v5 >> v6 >> v7 >> v8;
+    rrr::Serialize_::serialize(v1, m);
+    rrr::Serialize_::serialize(v2, m);
+    rrr::Serialize_::serialize(v3, m);
+    rrr::Serialize_::serialize(v4, m);
+    rrr::Deserialize_::deserialize(v5, m);
+    rrr::Deserialize_::deserialize(v6, m);
+    rrr::Deserialize_::deserialize(v7, m);
+    rrr::Deserialize_::deserialize(v8, m);
 
     EXPECT_EQ(v5.get_i32(), (int32_t)1);
 

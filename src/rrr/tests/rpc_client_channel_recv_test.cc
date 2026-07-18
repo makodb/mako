@@ -129,9 +129,9 @@ std::vector<std::uint8_t> make_response_body(
     i64 server_instance_id,
     const std::vector<std::uint8_t>& reply_payload) {
     Marshal m;
-    m << v64(xid);
-    m << v32(error_code);
-    m << v64(server_instance_id);
+    rrr::Serialize_::serialize(v64(xid), m);
+    rrr::Serialize_::serialize(v32(error_code), m);
+    rrr::Serialize_::serialize(v64(server_instance_id), m);
     if (!reply_payload.empty()) {
         m.write_bytes(reply_payload.data(), reply_payload.size());
     }
@@ -149,7 +149,7 @@ i64 decode_outbound_xid(const std::vector<std::uint8_t>& body) {
     Marshal m;
     m.write_bytes(body.data(), body.size());
     v64 v_xid;
-    m >> v_xid;
+    rrr::Deserialize_::deserialize(v_xid, m);
     return v_xid.get();
 }
 
@@ -227,7 +227,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // response.
     constexpr i32 kRpcId = 0x55;
     auto fr = mut_conn().request(kRpcId, FutureAttr{}, [](BinaryWriteArchive& m) {
-        m << static_cast<i32>(0xCAFEBABE);
+        rrr::Serialize_::serialize(static_cast<i32>(0xCAFEBABE), m);
     });
     ASSERT_TRUE(fr.is_ok());
     auto fu = fr.unwrap();
@@ -239,7 +239,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Synthesize and deliver the response. Reply payload is a single
     // i32 = 0x12345678.
     Marshal payload_marshal;
-    payload_marshal << static_cast<i32>(0x12345678);
+    rrr::Serialize_::serialize(static_cast<i32>(0x12345678), payload_marshal);
     std::vector<std::uint8_t> reply_payload(payload_marshal.content_size());
     if (!reply_payload.empty()) {
         verify(payload_marshal.read(reply_payload.data(), reply_payload.size())
@@ -260,7 +260,7 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
     // Check the reply payload survived.
     auto reply_guard = fu->get_reply();
     i32 got = 0;
-    *reply_guard >> got;
+    rrr::Deserialize_::deserialize(got, *reply_guard);
     EXPECT_EQ(static_cast<std::uint32_t>(got), 0x12345678u);
 }
 
@@ -290,7 +290,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
     futures.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
         auto fr = mut_conn().request(0x80 + i, FutureAttr{}, [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         ASSERT_TRUE(fr.is_ok());
         futures.push_back(fr.unwrap());
@@ -305,7 +305,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
     for (int i = 0; i < kCount; ++i) {
         const i64 xid = decode_outbound_xid(frames[i]);
         Marshal payload_marshal;
-        payload_marshal << static_cast<i32>(0xA000 + i);
+        rrr::Serialize_::serialize(static_cast<i32>(0xA000 + i), payload_marshal);
         std::vector<std::uint8_t> reply_payload(payload_marshal.content_size());
         if (!reply_payload.empty()) {
             verify(payload_marshal.read(reply_payload.data(),
@@ -329,7 +329,7 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
         EXPECT_EQ(futures[i]->get_error_code(), 0);
         auto reply = futures[i]->get_reply();
         i32 got = 0;
-        *reply >> got;
+        rrr::Deserialize_::deserialize(got, *reply);
         EXPECT_EQ(static_cast<std::uint32_t>(got),
                   static_cast<std::uint32_t>(0xA000 + i)) << "future " << i;
     }

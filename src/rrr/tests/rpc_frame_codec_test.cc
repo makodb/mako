@@ -23,6 +23,9 @@
 
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.internal_protocol;
+
 import std;
 
 namespace rrr {

@@ -617,7 +617,7 @@ TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
     inmemory_channel_inject_drop_next_sends(p->mut_a(), 10);
-    inmemory_channel_close(p->mut_a());
+    p->mut_a().close();
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};

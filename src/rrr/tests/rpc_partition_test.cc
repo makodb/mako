@@ -14,6 +14,10 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -208,7 +212,7 @@ protected:
         std::string input = "partition_test";
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; }
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();
@@ -751,7 +755,7 @@ TEST_F(PartitionTest, PartitionWithPendingRequests) {
         std::string input = "req_" + std::to_string(i);
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; }
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_ok()) {
             futures.push_back(fu_result.unwrap());

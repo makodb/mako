@@ -280,17 +280,10 @@ struct InMemoryConnectionState {
 // pattern as InMemoryListener / InMemorySwitchboard.
 struct InMemoryChannel;
 ChannelError inmemory_channel_send_frame(const InMemoryChannel& self, const ChannelFrame& f);
-void         inmemory_channel_flush(const InMemoryChannel& self);
-void         inmemory_channel_close(const InMemoryChannel& self);
-bool         inmemory_channel_is_closed(const InMemoryChannel& self);
-std::string  inmemory_channel_peer_address(const InMemoryChannel& self);
-void         inmemory_channel_set_on_closed(const InMemoryChannel& self, OnClosedCallback cb);
 void         inmemory_channel_inject_drop_next_sends(const InMemoryChannel& self, int count);
 void         inmemory_channel_inject_send_error(const InMemoryChannel& self, ChannelError err, int count);
 void         inmemory_channel_clear_fault_injection(const InMemoryChannel& self);
 
-void         inmemory_channel_set_on_frame (const InMemoryChannel& self, OnFrameCallback  cb);
-void         inmemory_channel_set_on_error (const InMemoryChannel& self, OnErrorCallback  cb);
 
 #if RUSTYCPP_RUST
 struct InMemoryChannel {
@@ -306,30 +299,73 @@ impl InMemoryChannel {
     fn send_frame(&self, f: &ChannelFrame) -> ChannelError {
         inmemory_channel_send_frame(self, f)
     }
+    // No buffered output to drain — peer callbacks fire synchronously
+    // inside send_frame.
     fn flush(&self) {
-        inmemory_channel_flush(self)
     }
+
+    // Idempotent close; notifies the peer's on_closed OUTSIDE the lock.
+    // rusty::Mutex::lock() is const-qualified (interior mutability), so
+    // no const_cast is needed — the old free-fn's cast was vestigial.
     fn close(&self) {
-        inmemory_channel_close(self)
+        let mut peer_on_closed = empty_on_closed_callback();
+        let mut fire_peer_closed = false;
+        {
+            let mut guard = self.state_.inner.lock().unwrap();
+            if self.is_a_side_ {
+                if (*guard).a_closed {
+                    return;
+                }
+                (*guard).a_closed = true;
+                if !(*guard).b_closed {
+                    peer_on_closed = (*guard).b_on_closed;
+                    fire_peer_closed = true;
+                }
+            } else {
+                if (*guard).b_closed {
+                    return;
+                }
+                (*guard).b_closed = true;
+                if !(*guard).a_closed {
+                    peer_on_closed = (*guard).a_on_closed;
+                    fire_peer_closed = true;
+                }
+            }
+        }
+        if fire_peer_closed && peer_on_closed {
+            peer_on_closed(ChannelError::None);
+        }
     }
+
+    // Closed if EITHER side closed — matches the TCP backend contract
+    // ("after is_closed(), send_frame returns a non-None error").
     fn is_closed(&self) -> bool {
-        inmemory_channel_is_closed(self)
+        let guard = self.state_.inner.lock().unwrap();
+        (*guard).a_closed || (*guard).b_closed
     }
+
     fn peer_address(&self) -> std::string {
-        inmemory_channel_peer_address(self)
+        let guard = self.state_.inner.lock().unwrap();
+        if self.is_a_side_ { (*guard).b_peer_address } else { (*guard).a_peer_address }
     }
+
     fn set_on_frame(&self, cb: OnFrameCallback) {
-        inmemory_channel_set_on_frame(self, cb)
+        let mut guard = self.state_.inner.lock().unwrap();
+        if self.is_a_side_ { (*guard).a_on_frame = cb; } else { (*guard).b_on_frame = cb; }
     }
+
     fn set_on_closed(&self, cb: OnClosedCallback) {
-        inmemory_channel_set_on_closed(self, cb)
+        let mut guard = self.state_.inner.lock().unwrap();
+        if self.is_a_side_ { (*guard).a_on_closed = cb; } else { (*guard).b_on_closed = cb; }
     }
+
     fn set_on_error(&self, cb: OnErrorCallback) {
-        inmemory_channel_set_on_error(self, cb)
+        let mut guard = self.state_.inner.lock().unwrap();
+        if self.is_a_side_ { (*guard).a_on_error = cb; } else { (*guard).b_on_error = cb; }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=5b8e4e8896621c28214857fc304f746d169eadf9c66632f0abf39d9097ab71ed*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=1ee505d9094ee40fb84530c86f83b746c8dad4a466a2cb120f739023a1bc14cf*/
 struct InMemoryChannel;
 
 struct InMemoryChannel {
@@ -357,31 +393,77 @@ ChannelError InMemoryChannel::send_frame(const ChannelFrame& f) const {
 }
 
 void InMemoryChannel::flush() const {
-    inmemory_channel_flush((*this));
 }
 
 void InMemoryChannel::close() const {
-    inmemory_channel_close((*this));
+    auto peer_on_closed = empty_on_closed_callback();
+    auto fire_peer_closed = false;
+    {
+        auto guard = (*this->state_).inner.lock().unwrap();
+        if (this->is_a_side_) {
+            if ((rusty::detail::deref_if_pointer_like(guard)).a_closed) {
+                return;
+            }
+            (rusty::detail::deref_if_pointer_like(guard)).a_closed = true;
+            if (!(rusty::detail::deref_if_pointer_like(guard)).b_closed) {
+                peer_on_closed = (rusty::detail::deref_if_pointer_like(guard)).b_on_closed;
+                fire_peer_closed = true;
+            }
+        } else {
+            if ((rusty::detail::deref_if_pointer_like(guard)).b_closed) {
+                return;
+            }
+            (rusty::detail::deref_if_pointer_like(guard)).b_closed = true;
+            if (!(rusty::detail::deref_if_pointer_like(guard)).a_closed) {
+                peer_on_closed = (rusty::detail::deref_if_pointer_like(guard)).a_on_closed;
+                fire_peer_closed = true;
+            }
+        }
+    }
+    if (rusty::detail::deref_if_pointer_like(fire_peer_closed) && rusty::detail::deref_if_pointer_like(peer_on_closed)) {
+        peer_on_closed(ChannelError::None);
+    }
 }
 
 bool InMemoryChannel::is_closed() const {
-    return inmemory_channel_is_closed((*this));
+    const auto guard = (*this->state_).inner.lock().unwrap();
+    return rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).a_closed) || rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).b_closed);
 }
 
 std::string InMemoryChannel::peer_address() const {
-    return inmemory_channel_peer_address((*this));
+    const auto guard = (*this->state_).inner.lock().unwrap();
+    if (this->is_a_side_) {
+        return (rusty::detail::deref_if_pointer_like(guard)).b_peer_address;
+    } else {
+        return (rusty::detail::deref_if_pointer_like(guard)).a_peer_address;
+    }
 }
 
 void InMemoryChannel::set_on_frame(OnFrameCallback cb) const {
-    inmemory_channel_set_on_frame((*this), std::move(cb));
+    auto guard = (*this->state_).inner.lock().unwrap();
+    if (this->is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).a_on_frame = std::move(cb);
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).b_on_frame = std::move(cb);
+    }
 }
 
 void InMemoryChannel::set_on_closed(OnClosedCallback cb) const {
-    inmemory_channel_set_on_closed((*this), std::move(cb));
+    auto guard = (*this->state_).inner.lock().unwrap();
+    if (this->is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).a_on_closed = std::move(cb);
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).b_on_closed = std::move(cb);
+    }
 }
 
 void InMemoryChannel::set_on_error(OnErrorCallback cb) const {
-    inmemory_channel_set_on_error((*this), std::move(cb));
+    auto guard = (*this->state_).inner.lock().unwrap();
+    if (this->is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).a_on_error = std::move(cb);
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).b_on_error = std::move(cb);
+    }
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.channel*/
 
@@ -1027,84 +1109,6 @@ void inmemory_channel_clear_fault_injection(const InMemoryChannel& self) {
 //
 // `send_frame` already returns `ChannelError::ConnectionReset` if
 // either side is closed, so once close() returns the connection is
-// observably dead in both directions (verified by the
-// @safe - in-memory channel has no buffered output to drain (peer
-// callbacks fire synchronously inside send_frame). Stays a free fn
-// just to mirror the trait dispatch shape.
-void inmemory_channel_flush(const InMemoryChannel& self) {
-    (void)self;
-}
-
-// `SendFrameAfterPeerCloseReturnsReset` test).
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_close(const InMemoryChannel& self) {
-    OnClosedCallback peer_on_closed;
-    bool fire_peer_closed = false;
-    {
-        auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-        if (self.is_a_side_) {
-            if ((*guard).a_closed) return;  // idempotent
-            (*guard).a_closed = true;
-            // Notify peer if it's not already closed.
-            if (!(*guard).b_closed) {
-                peer_on_closed = (*guard).b_on_closed;
-                fire_peer_closed = true;
-            }
-        } else {
-            if ((*guard).b_closed) return;
-            (*guard).b_closed = true;
-            if (!(*guard).a_closed) {
-                peer_on_closed = (*guard).a_on_closed;
-                fire_peer_closed = true;
-            }
-        }
-    }
-    if (fire_peer_closed && peer_on_closed) {
-        peer_on_closed(ChannelError::None);
-    }
-}
-
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-bool inmemory_channel_is_closed(const InMemoryChannel& self) {
-    // 6b: report closed if EITHER side has been closed. This matches
-    // the TCP backend's behavior — once the peer disconnects, the
-    // connection is unusable and `send_frame` will return
-    // `ConnectionReset` (verified in `send_frame`'s peer_already_closed
-    // check). The channel-layer contract (`channel.hpp`):
-    //   "After `is_closed()` returns true, `send_frame` must return
-    //    a non-None error..."
-    // Reporting joint state (a_closed || b_closed) ensures the
-    // implication holds in both directions.
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    return (*guard).a_closed || (*guard).b_closed;
-}
-
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-std::string inmemory_channel_peer_address(const InMemoryChannel& self) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    return self.is_a_side_ ? (*guard).b_peer_address : (*guard).a_peer_address;
-}
-
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_set_on_frame(const InMemoryChannel& self, OnFrameCallback cb) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) (*guard).a_on_frame  = std::move(cb);
-    else            (*guard).b_on_frame  = std::move(cb);
-}
-
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_set_on_closed(const InMemoryChannel& self, OnClosedCallback cb) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) (*guard).a_on_closed = std::move(cb);
-    else            (*guard).b_on_closed = std::move(cb);
-}
-
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_set_on_error(const InMemoryChannel& self, OnErrorCallback cb) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) (*guard).a_on_error  = std::move(cb);
-    else            (*guard).b_on_error  = std::move(cb);
-}
 
 // ---------------------------------------------------------------------------
 // InMemoryListener

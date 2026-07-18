@@ -149,18 +149,20 @@ uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
 // Marshal operators for IdempotencyKey
 // @safe - Marshal::operator<< / operator>> overloads are @safe via the
 // rrr namespace + class annotation.
-inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) {
+inline void serialize(const IdempotencyKey& key, Marshal& m) {
     rrr::Serialize_::serialize(key.client_id, m);
     rrr::Serialize_::serialize(key.sequence, m);
-    return m;
 }
 
+inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) { serialize(key, m); return m; }
+
 // @safe - see operator<< above.
-inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
+inline void deserialize(IdempotencyKey& key, Marshal& m) {
     rrr::Deserialize_::deserialize(key.client_id, m);
     rrr::Deserialize_::deserialize(key.sequence, m);
-    return m;
 }
+
+inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) { deserialize(key, m); return m; }
 
 // ===========================================================================
 // IdempotencyConfig

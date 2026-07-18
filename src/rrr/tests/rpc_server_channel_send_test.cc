@@ -150,7 +150,7 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
 
     const std::string user_payload = "hello";
     sconn().reply(req, /*error_code=*/0, [&](BinaryWriteArchive& out) {
-        out << user_payload;
+        rrr::Serialize_::serialize(user_payload, out);
     });
 
     ASSERT_EQ(stub->count(), 1u);
@@ -162,13 +162,15 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    body >> v_xid >> v_err >> v_instance;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
+    rrr::Deserialize_::deserialize(v_instance, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 42);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
 
     std::string decoded;
-    body >> decoded;
+    rrr::Deserialize_::deserialize(decoded, body);
     EXPECT_EQ(decoded, user_payload);
 }
 
@@ -191,7 +193,9 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    body >> v_xid >> v_err >> v_instance;
+    rrr::Deserialize_::deserialize(v_xid, body);
+    rrr::Deserialize_::deserialize(v_err, body);
+    rrr::Deserialize_::deserialize(v_instance, body);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 7);
     EXPECT_EQ(v_err.get(), ENOENT);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
@@ -209,7 +213,7 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
         Request req;
         req.xid = xid;
         sconn().reply(req, 0, [&](BinaryWriteArchive& out) {
-            out << static_cast<i64>(xid * 10);
+            rrr::Serialize_::serialize(static_cast<i64>(xid * 10), out);
         });
     }
     ASSERT_EQ(stub->count(), 5u);
@@ -220,11 +224,13 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
         v64 v_xid;
         v32 v_err;
         v64 v_instance;
-        body >> v_xid >> v_err >> v_instance;
+        rrr::Deserialize_::deserialize(v_xid, body);
+        rrr::Deserialize_::deserialize(v_err, body);
+        rrr::Deserialize_::deserialize(v_instance, body);
         EXPECT_EQ(static_cast<i64>(v_xid.get()), static_cast<i64>(i + 1));
         EXPECT_EQ(v_err.get(), 0);
         i64 user_value;
-        body >> user_value;
+        rrr::Deserialize_::deserialize(user_value, body);
         EXPECT_EQ(user_value, static_cast<i64>((i + 1) * 10));
     }
 }

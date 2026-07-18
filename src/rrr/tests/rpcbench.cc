@@ -259,14 +259,14 @@ static void* client_proc(void* arg_ptr) {
             if (rpc_id == BenchmarkService::FAST_NOP ||
                 rpc_id == BenchmarkService::NOP ||
                 rpc_id == BenchmarkService::ASYNC_NOP) {
-                m << request_str;
+                rrr::Serialize_::serialize(request_str, m);
             } else if (rpc_id == BenchmarkService::FAST_VEC) {
-                m << rpc_bench_vector_size;
+                rrr::Serialize_::serialize(rpc_bench_vector_size, m);
             } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
-                m << static_cast<rrr::i32>(1);
+                rrr::Serialize_::serialize(static_cast<rrr::i32>(1), m);
             }
         };
-        rrr::ClientConnection::AsyncReplyCallback on_reply{
+        rrr::AsyncReplyCallback on_reply{
             [thread_idx, &do_work_holder](rrr::i32 err,
                                           const std::uint8_t*,
                                           std::size_t) {

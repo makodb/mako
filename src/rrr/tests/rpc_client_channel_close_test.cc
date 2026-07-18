@@ -29,6 +29,9 @@
 
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
+
 import std;
 
 namespace rrr {

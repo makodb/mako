@@ -47,7 +47,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         reactor->loop(false);
         
         EXPECT_TRUE(completed);
-        EXPECT_EQ(final_status, EventStatus::DONE);
+        EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::DONE));
     }
     
     // Test case 2: Event times out
@@ -68,7 +68,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         reactor->loop(false);
         
         EXPECT_TRUE(completed);
-        EXPECT_EQ(final_status, EventStatus::TIMEOUT);
+        EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::TIMEOUT));
     }
 }
 

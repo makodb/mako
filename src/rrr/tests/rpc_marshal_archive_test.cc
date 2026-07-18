@@ -59,12 +59,12 @@ std::vector<uint8_t> sink_to_vector(const BufferSink& sink) {
 template <typename T>
 void check_byte_compat_write(const T& value) {
   Marshal old_m;
-  old_m << value;
+  rrr::Serialize_::serialize(value, old_m);
   auto old_bytes = drain_marshal(old_m);
 
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
-  archive << value;
+  rrr::Serialize_::serialize(value, archive);
   auto new_bytes = sink_to_vector(sink);
 
   ASSERT_EQ(old_bytes.size(), new_bytes.size())
@@ -77,13 +77,13 @@ template <typename T>
 void check_round_trip(const T& value) {
   // Encode via the OLD Marshal path.
   Marshal old_m;
-  old_m << value;
+  rrr::Serialize_::serialize(value, old_m);
   auto bytes = drain_marshal(old_m);
 
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   T decoded{};
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
 
   EXPECT_EQ(decoded, value)
       << "round-trip mismatch for type " << typeid(T).name();
@@ -190,12 +190,12 @@ TEST(MarshalArchiveByteCompat, V32Boundary) {
 
     // Byte compatibility on the write side.
     Marshal old_m;
-    old_m << v;
+    rrr::Serialize_::serialize(v, old_m);
     auto old_bytes = drain_marshal(old_m);
 
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
-    archive << v;
+    rrr::Serialize_::serialize(v, archive);
     auto new_bytes = sink_to_vector(sink);
 
     ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v32 raw=" << raw;
@@ -205,7 +205,7 @@ TEST(MarshalArchiveByteCompat, V32Boundary) {
     BufferSource source(old_bytes.data(), old_bytes.size());
     BinaryReadArchive reader(make_source_proxy(&source));
     v32 decoded;
-    reader >> decoded;
+    rrr::Deserialize_::deserialize(decoded, reader);
     EXPECT_EQ(decoded.get(), raw) << "v32 round-trip raw=" << raw;
     EXPECT_TRUE(source.eof());
   }
@@ -221,12 +221,12 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
     v64 v(raw);
 
     Marshal old_m;
-    old_m << v;
+    rrr::Serialize_::serialize(v, old_m);
     auto old_bytes = drain_marshal(old_m);
 
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
-    archive << v;
+    rrr::Serialize_::serialize(v, archive);
     auto new_bytes = sink_to_vector(sink);
 
     ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v64 raw=" << raw;
@@ -235,7 +235,7 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
     BufferSource source(old_bytes.data(), old_bytes.size());
     BinaryReadArchive reader(make_source_proxy(&source));
     v64 decoded;
-    reader >> decoded;
+    rrr::Deserialize_::deserialize(decoded, reader);
     EXPECT_EQ(decoded.get(), raw) << "v64 round-trip raw=" << raw;
     EXPECT_TRUE(source.eof());
   }
@@ -291,7 +291,11 @@ TEST(MarshalArchiveByteCompat, CompositePrimitiveSequence) {
     v64 c(8192);
     std::string d = "hello world";
     double e = 3.14;
-    m << a << b << c << d << e;
+    rrr::Serialize_::serialize(a, m);
+    rrr::Serialize_::serialize(b, m);
+    rrr::Serialize_::serialize(c, m);
+    rrr::Serialize_::serialize(d, m);
+    rrr::Serialize_::serialize(e, m);
   };
   auto encode_new = [&](BinaryWriteArchive& ar) {
     int32_t a = 0x12345678;
@@ -299,7 +303,11 @@ TEST(MarshalArchiveByteCompat, CompositePrimitiveSequence) {
     v64 c(8192);
     std::string d = "hello world";
     double e = 3.14;
-    ar << a << b << c << d << e;
+    rrr::Serialize_::serialize(a, ar);
+    rrr::Serialize_::serialize(b, ar);
+    rrr::Serialize_::serialize(c, ar);
+    rrr::Serialize_::serialize(d, ar);
+    rrr::Serialize_::serialize(e, ar);
   };
 
   Marshal old_m;
@@ -363,12 +371,12 @@ TEST(MarshalArchiveByteCompat, PairOfPrimitives) {
 
   // Round-trip: Marshal-encoded → BinaryReadArchive.
   Marshal m;
-  m << p;
+  rrr::Serialize_::serialize(p, m);
   auto bytes = drain_marshal(m);
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   std::pair<int32_t, std::string> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_EQ(decoded, p);
   EXPECT_TRUE(source.eof());
 }
@@ -379,12 +387,12 @@ TEST(MarshalArchiveByteCompat, PairOfPrimitives) {
 template <typename Container>
 void check_container_compat_write(const Container& c) {
   Marshal old_m;
-  old_m << c;
+  rrr::Serialize_::serialize(c, old_m);
   auto old_bytes = drain_marshal(old_m);
 
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
-  archive << c;
+  rrr::Serialize_::serialize(c, archive);
   auto new_bytes = sink_to_vector(sink);
 
   ASSERT_EQ(old_bytes.size(), new_bytes.size())
@@ -398,12 +406,12 @@ void check_container_compat_write(const Container& c) {
 template <typename Container>
 void check_container_round_trip(const Container& c) {
   Marshal m;
-  m << c;
+  rrr::Serialize_::serialize(c, m);
   auto bytes = drain_marshal(m);
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   Container decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_EQ(decoded, c) << "container round-trip mismatch for "
                        << typeid(Container).name();
   EXPECT_TRUE(source.eof());
@@ -428,7 +436,7 @@ template <typename Container>
 void check_archive_round_trip_only(const Container& c) {
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << c;
+  rrr::Serialize_::serialize(c, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -436,7 +444,7 @@ void check_archive_round_trip_only(const Container& c) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   Container decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_TRUE(source.eof()) << "decoder did not consume all bytes for "
                             << typeid(Container).name();
   // Element-wise comparison via len() + index for rusty types.
@@ -455,7 +463,7 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << v;
+  rrr::Serialize_::serialize(v, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -463,7 +471,7 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::Vec<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.size(), v.size());
   for (size_t i = 0; i < v.size(); ++i) {
     EXPECT_EQ(decoded[i], v[i]);
@@ -540,7 +548,7 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeSetPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << s;
+  rrr::Serialize_::serialize(s, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -548,7 +556,7 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeSetPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   auto decoded = rusty::BTreeSet<int32_t>::new_();
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), s.len());
   EXPECT_TRUE(source.eof());
 }
@@ -566,7 +574,7 @@ TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << s;
+  rrr::Serialize_::serialize(s, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -574,7 +582,7 @@ TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashSet<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), s.size());
   EXPECT_TRUE(source.eof());
 }
@@ -607,7 +615,7 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeMapPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << m;
+  rrr::Serialize_::serialize(m, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -615,7 +623,7 @@ TEST(MarshalArchiveRoundTrip, RustyBTreeMapPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   auto decoded = rusty::BTreeMap<int32_t, int64_t>::new_();
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), m.len());
   EXPECT_TRUE(source.eof());
 }
@@ -630,7 +638,7 @@ TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
 
   BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
-  writer << m;
+  rrr::Serialize_::serialize(m, writer);
 
   std::vector<uint8_t> bytes(sink.bytes.len());
   for (size_t i = 0; i < sink.bytes.len(); ++i) bytes[i] = sink.bytes[i];
@@ -638,7 +646,7 @@ TEST(MarshalArchiveRoundTrip, RustyHashMapPrimitives) {
   BufferSource source(bytes.data(), bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   rusty::HashMap<int32_t, std::string> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   ASSERT_EQ(decoded.len(), m.size());
   EXPECT_TRUE(source.eof());
 }
@@ -747,11 +755,11 @@ TEST(FdSinkArchive, PipeRoundTripPrimitives) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(0x12345678);
-    writer << static_cast<int64_t>(-1);
-    writer << std::string("hello");
-    writer << v32(5);
-    writer << v64(1024);
+    rrr::Serialize_::serialize(static_cast<int32_t>(0x12345678), writer);
+    rrr::Serialize_::serialize(static_cast<int64_t>(-1), writer);
+    rrr::Serialize_::serialize(std::string("hello"), writer);
+    rrr::Serialize_::serialize(v32(5), writer);
+    rrr::Serialize_::serialize(v64(1024), writer);
   }
   p.close_write();
   reader_thread.join();
@@ -762,7 +770,11 @@ TEST(FdSinkArchive, PipeRoundTripPrimitives) {
   BinaryReadArchive reader(make_source_proxy(&source));
 
   int32_t a; int64_t b; std::string c; v32 d{0}; v64 e{0};
-  reader >> a >> b >> c >> d >> e;
+  rrr::Deserialize_::deserialize(a, reader);
+  rrr::Deserialize_::deserialize(b, reader);
+  rrr::Deserialize_::deserialize(c, reader);
+  rrr::Deserialize_::deserialize(d, reader);
+  rrr::Deserialize_::deserialize(e, reader);
   EXPECT_EQ(a, 0x12345678);
   EXPECT_EQ(b, -1);
   EXPECT_EQ(c, "hello");
@@ -789,22 +801,22 @@ TEST(FdSinkArchive, ByteForByteCompatVsBufferSink) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<uint32_t>(42);
-    writer << std::string("the quick brown fox");
-    writer << v64(0x123456789ABCDEFLL);
+    rrr::Serialize_::serialize(static_cast<uint32_t>(42), writer);
+    rrr::Serialize_::serialize(std::string("the quick brown fox"), writer);
+    rrr::Serialize_::serialize(v64(0x123456789ABCDEFLL), writer);
     std::vector<int32_t> vec{1, 2, 3, 4, 5};
-    writer << vec;
+    rrr::Serialize_::serialize(vec, writer);
   }
   p.close_write();
   reader_thread.join();
 
   BufferSink ref_sink;
   BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  ref_writer << static_cast<uint32_t>(42);
-  ref_writer << std::string("the quick brown fox");
-  ref_writer << v64(0x123456789ABCDEFLL);
+  rrr::Serialize_::serialize(static_cast<uint32_t>(42), ref_writer);
+  rrr::Serialize_::serialize(std::string("the quick brown fox"), ref_writer);
+  rrr::Serialize_::serialize(v64(0x123456789ABCDEFLL), ref_writer);
   std::vector<int32_t> vec{1, 2, 3, 4, 5};
-  ref_writer << vec;
+  rrr::Serialize_::serialize(vec, ref_writer);
 
   std::vector<uint8_t> ref_bytes(ref_sink.bytes.len());
   for (size_t i = 0; i < ref_sink.bytes.len(); ++i) ref_bytes[i] = ref_sink.bytes[i];
@@ -819,13 +831,13 @@ TEST(FdSourceArchive, TempFileRoundTripCompositeSequence) {
   {
     FdSink sink(tf.fd);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(7);
-    writer << static_cast<int64_t>(-99);
-    writer << std::string("temp file payload");
+    rrr::Serialize_::serialize(static_cast<int32_t>(7), writer);
+    rrr::Serialize_::serialize(static_cast<int64_t>(-99), writer);
+    rrr::Serialize_::serialize(std::string("temp file payload"), writer);
     std::vector<std::string> strs{"a", "bb", "ccc"};
-    writer << strs;
+    rrr::Serialize_::serialize(strs, writer);
     std::map<int32_t, int64_t> m{{1, 100}, {2, 200}, {3, 300}};
-    writer << m;
+    rrr::Serialize_::serialize(m, writer);
   }
   // Flush by closing — done by ScopedTempFile dtor at scope end. Force
   // it now since we want to reopen for reading.
@@ -839,7 +851,11 @@ TEST(FdSourceArchive, TempFileRoundTripCompositeSequence) {
     int32_t a; int64_t b; std::string c;
     std::vector<std::string> strs;
     std::map<int32_t, int64_t> m;
-    reader >> a >> b >> c >> strs >> m;
+    rrr::Deserialize_::deserialize(a, reader);
+    rrr::Deserialize_::deserialize(b, reader);
+    rrr::Deserialize_::deserialize(c, reader);
+    rrr::Deserialize_::deserialize(strs, reader);
+    rrr::Deserialize_::deserialize(m, reader);
     EXPECT_EQ(a, 7);
     EXPECT_EQ(b, -99);
     EXPECT_EQ(c, "temp file payload");
@@ -879,7 +895,7 @@ TEST(FdSinkArchive, LargePayloadChunkedWrite) {
   {
     FdSink sink(p.fds[1]);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << big;
+    rrr::Serialize_::serialize(big, writer);
   }
   p.close_write();
   reader_thread.join();
@@ -888,7 +904,7 @@ TEST(FdSinkArchive, LargePayloadChunkedWrite) {
   BufferSource source(drained.data(), drained.size());
   BinaryReadArchive reader(make_source_proxy(&source));
   std::vector<int32_t> decoded;
-  reader >> decoded;
+  rrr::Deserialize_::deserialize(decoded, reader);
   EXPECT_EQ(decoded.size(), big.size());
   EXPECT_EQ(decoded, big);
   EXPECT_TRUE(source.eof());
@@ -904,10 +920,10 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   // splatters bytes onto the pipe in 1-byte writes.
   BufferSink prep_sink;
   BinaryWriteArchive prep(make_sink_proxy(&prep_sink));
-  prep << static_cast<int32_t>(0xDEADBEEF);
-  prep << static_cast<int64_t>(0x1122334455667788LL);
-  prep << std::string("chunked across syscalls");
-  prep << v64(987654321LL);
+  rrr::Serialize_::serialize(static_cast<int32_t>(0xDEADBEEF), prep);
+  rrr::Serialize_::serialize(static_cast<int64_t>(0x1122334455667788LL), prep);
+  rrr::Serialize_::serialize(std::string("chunked across syscalls"), prep);
+  rrr::Serialize_::serialize(v64(987654321LL), prep);
 
   std::vector<uint8_t> payload(prep_sink.bytes.len());
   for (size_t i = 0; i < prep_sink.bytes.len(); ++i) payload[i] = prep_sink.bytes[i];
@@ -925,7 +941,10 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
   FdSource src(p.fds[0]);
   BinaryReadArchive reader(make_source_proxy(&src));
   int32_t a; int64_t b; std::string c; v64 d{0};
-  reader >> a >> b >> c >> d;
+  rrr::Deserialize_::deserialize(a, reader);
+  rrr::Deserialize_::deserialize(b, reader);
+  rrr::Deserialize_::deserialize(c, reader);
+  rrr::Deserialize_::deserialize(d, reader);
   EXPECT_EQ(static_cast<uint32_t>(a), 0xDEADBEEFu);
   EXPECT_EQ(b, 0x1122334455667788LL);
   EXPECT_EQ(c, "chunked across syscalls");
@@ -954,21 +973,29 @@ struct CanaryCommand {
   int32_t kind() const { return kKind; }
 
   void save(BinaryWriteArchive& ar) const {
-    ar << id << name << values;
+    rrr::Serialize_::serialize(id, ar);
+    rrr::Serialize_::serialize(name, ar);
+    rrr::Serialize_::serialize(values, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> id >> name >> values;
+    rrr::Deserialize_::deserialize(id, ar);
+    rrr::Deserialize_::deserialize(name, ar);
+    rrr::Deserialize_::deserialize(values, ar);
   }
 
   // ---- Old Marshal-based interface (for byte-compat verification) -
   Marshal& to_marshal(Marshal& m) const {
-    m << id << name << values;
+    rrr::Serialize_::serialize(id, m);
+    rrr::Serialize_::serialize(name, m);
+    rrr::Serialize_::serialize(values, m);
     return m;
   }
 
   Marshal& from_marshal(Marshal& m) {
-    m >> id >> name >> values;
+    rrr::Deserialize_::deserialize(id, m);
+    rrr::Deserialize_::deserialize(name, m);
+    rrr::Deserialize_::deserialize(values, m);
     return m;
   }
 };
@@ -1097,14 +1124,18 @@ TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
   // (a) reference via BufferSink.
   BufferSink ref_sink;
   BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  ref_writer << i << s << v;
+  rrr::Serialize_::serialize(i, ref_writer);
+  rrr::Serialize_::serialize(s, ref_writer);
+  rrr::Serialize_::serialize(v, ref_writer);
   auto ref_bytes = sink_to_vector(ref_sink);
 
   // (b) via MarshalSink.
   Marshal m;
   MarshalSink mark_sink(&m);
   BinaryWriteArchive mark_writer(make_sink_proxy(&mark_sink));
-  mark_writer << i << s << v;
+  rrr::Serialize_::serialize(i, mark_writer);
+  rrr::Serialize_::serialize(s, mark_writer);
+  rrr::Serialize_::serialize(v, mark_writer);
   auto bridge_bytes = drain_marshal(m);
 
   ASSERT_EQ(ref_bytes.size(), bridge_bytes.size());
@@ -1117,21 +1148,21 @@ TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
   // Marshal. The combined byte stream should be the concatenation —
   // proving the bridge is safe to use alongside legacy code.
   Marshal m;
-  m << static_cast<int32_t>(1);
+  rrr::Serialize_::serialize(static_cast<int32_t>(1), m);
 
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(2);
+    rrr::Serialize_::serialize(static_cast<int32_t>(2), writer);
   }
 
-  m << std::string("trailing");
+  rrr::Serialize_::serialize(std::string("trailing"), m);
 
   // Compare against a reference encoded entirely through Marshal.
   Marshal ref;
-  ref << static_cast<int32_t>(1);
-  ref << static_cast<int32_t>(2);
-  ref << std::string("trailing");
+  rrr::Serialize_::serialize(static_cast<int32_t>(1), ref);
+  rrr::Serialize_::serialize(static_cast<int32_t>(2), ref);
+  rrr::Serialize_::serialize(std::string("trailing"), ref);
 
   auto bridge_bytes = drain_marshal(m);
   auto ref_bytes = drain_marshal(ref);
@@ -1147,7 +1178,9 @@ TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
   std::vector<int64_t> v{10, 20, 30};
 
   Marshal m;
-  m << i << s << v;
+  rrr::Serialize_::serialize(i, m);
+  rrr::Serialize_::serialize(s, m);
+  rrr::Serialize_::serialize(v, m);
 
   MarshalSource src(&m);
   BinaryReadArchive reader(make_source_proxy(&src));
@@ -1155,7 +1188,9 @@ TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
   int32_t i2;
   std::string s2;
   std::vector<int64_t> v2;
-  reader >> i2 >> s2 >> v2;
+  rrr::Deserialize_::deserialize(i2, reader);
+  rrr::Deserialize_::deserialize(s2, reader);
+  rrr::Deserialize_::deserialize(v2, reader);
 
   EXPECT_EQ(i2, i);
   EXPECT_EQ(s2, s);
@@ -1171,11 +1206,11 @@ TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
   {
     MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
-    writer << static_cast<int32_t>(7);
-    writer << static_cast<int64_t>(-99);
-    writer << std::string("hello");
+    rrr::Serialize_::serialize(static_cast<int32_t>(7), writer);
+    rrr::Serialize_::serialize(static_cast<int64_t>(-99), writer);
+    rrr::Serialize_::serialize(std::string("hello"), writer);
     std::vector<int32_t> ints{4, 5, 6};
-    writer << ints;
+    rrr::Serialize_::serialize(ints, writer);
   }
 
   MarshalSource src(&m);
@@ -1185,7 +1220,10 @@ TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
   int64_t b;
   std::string c;
   std::vector<int32_t> d;
-  reader >> a >> b >> c >> d;
+  rrr::Deserialize_::deserialize(a, reader);
+  rrr::Deserialize_::deserialize(b, reader);
+  rrr::Deserialize_::deserialize(c, reader);
+  rrr::Deserialize_::deserialize(d, reader);
 
   EXPECT_EQ(a, 7);
   EXPECT_EQ(b, -99);
@@ -1199,12 +1237,12 @@ TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
   // MarshalSource. Should return 0 (not abort), consistent with
   // BufferSource and FdSource EOF semantics.
   Marshal m;
-  m << static_cast<int32_t>(1);
+  rrr::Serialize_::serialize(static_cast<int32_t>(1), m);
 
   MarshalSource src(&m);
   int32_t v;
   BinaryReadArchive reader(make_source_proxy(&src));
-  reader >> v;
+  rrr::Deserialize_::deserialize(v, reader);
   EXPECT_EQ(v, 1);
 
   uint8_t extra[4];
@@ -1285,24 +1323,24 @@ TEST(SerializableRegistry, MultipleKindsCoexist) {
 struct TypeListFactoryAlpha {
   static constexpr int32_t kKind = 60;
   int32_t a{0};
-  void save(BinaryWriteArchive& ar) const { ar << a; }
-  void load(BinaryReadArchive& ar) { ar >> a; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(a, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(a, ar); }
   int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryBeta {
   static constexpr int32_t kKind = 61;
   std::string b;
-  void save(BinaryWriteArchive& ar) const { ar << b; }
-  void load(BinaryReadArchive& ar) { ar >> b; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(b, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(b, ar); }
   int32_t kind() const { return kKind; }
 };
 
 struct TypeListFactoryGamma {
   static constexpr int32_t kKind = 62;
   int64_t c{0};
-  void save(BinaryWriteArchive& ar) const { ar << c; }
-  void load(BinaryReadArchive& ar) { ar >> c; }
+  void save(BinaryWriteArchive& ar) const { rrr::Serialize_::serialize(c, ar); }
+  void load(BinaryReadArchive& ar) { rrr::Deserialize_::deserialize(c, ar); }
   int32_t kind() const { return kKind; }
 };
 

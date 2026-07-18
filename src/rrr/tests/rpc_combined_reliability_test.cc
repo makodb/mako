@@ -6,6 +6,11 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.heartbeat;
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -125,7 +130,7 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
         std::string input = "test";
         auto fu_result = client->request(
             benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; }
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -303,7 +308,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
             std::string input = "test_" + std::to_string(i);
             auto fu_result = client->request(
                 benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-                [&](BinaryWriteArchive& m) { m << input; }
+                [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
             );
             ASSERT_TRUE(fu_result.is_ok());
             auto fu = fu_result.unwrap();
@@ -376,7 +381,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
         std::string input = "recovery_test";
         auto fu_result = new_client->request(
             benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-            [&](BinaryWriteArchive& m) { m << input; }
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -490,7 +495,7 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
             std::string input = "cycle_" + std::to_string(cycle) + "_" + std::to_string(i);
             auto fu_result = client->request(
                 benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-                [&](BinaryWriteArchive& m) { m << input; }
+                [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
             );
             if (fu_result.is_ok()) {
                 auto fu = fu_result.unwrap();

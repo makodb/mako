@@ -62,13 +62,13 @@ private:
     void fast_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         std::string input;
-        req->m >> input;
+        rrr::Deserialize_::deserialize(input, req->m);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << input;
+                rrr::Serialize_::serialize(input, out);
             });
         }
     }
@@ -76,7 +76,7 @@ private:
     void slow_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         std::string input;
-        req->m >> input;
+        rrr::Deserialize_::deserialize(input, req->m);
 
         if (should_delay) {
             std::this_thread::sleep_for(milliseconds(delay_ms.load()));
@@ -86,7 +86,7 @@ private:
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << input;
+                rrr::Serialize_::serialize(input, out);
             });
         }
     }
@@ -94,7 +94,7 @@ private:
     void get_value_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         i32 input;
-        req->m >> input;
+        rrr::Deserialize_::deserialize(input, req->m);
 
         i32 result = input * 2;
 
@@ -102,7 +102,7 @@ private:
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << result;
+                rrr::Serialize_::serialize(result, out);
             });
         }
     }
@@ -169,7 +169,7 @@ TEST_F(FutureTest, BasicFutureCreation) {
     // Create a future through an RPC call
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -193,7 +193,7 @@ TEST_F(FutureTest, FutureReadyCheck) {
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -213,7 +213,7 @@ TEST_F(FutureTest, FutureReadyCheck) {
 TEST_F(FutureTest, FutureWait) {
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -263,7 +263,7 @@ TEST_F(FutureTest, FutureCallback) {
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, attr, [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -282,7 +282,7 @@ TEST_F(FutureTest, FutureCallback) {
 TEST_F(FutureTest, FutureGetReply) {
     i32 n = 17;
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << n;
+        rrr::Serialize_::serialize(n, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -291,7 +291,7 @@ TEST_F(FutureTest, FutureGetReply) {
     auto reply_guard = fu->get_reply();
 
     i32 result;
-    *reply_guard >> result;
+    rrr::Deserialize_::deserialize(result, *reply_guard);
 
     EXPECT_EQ(result, 34);  // 17 * 2
 
@@ -320,7 +320,7 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
     for (int i = 0; i < num_futures; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << input;
+            rrr::Serialize_::serialize(input, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -344,7 +344,7 @@ TEST_F(FutureTest, FutureReleaseWithoutWait) {
     // Create a future but don't wait for it
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     rusty::Option<rusty::Arc<Future>> fu = rusty::Some(fu_result.unwrap());
@@ -364,7 +364,7 @@ TEST_F(FutureTest, StressTestManyFutures) {
     for (int i = 0; i < num_futures; i++) {
         i32 n = i;
         auto fu_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << n;
+            rrr::Serialize_::serialize(n, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -390,7 +390,7 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -424,7 +424,7 @@ TEST_F(FutureTest, TimedWaitWithQuickResponse) {
     // Test timed_wait when response comes quickly
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -442,21 +442,21 @@ TEST_F(FutureTest, MixedSyncAsync) {
     // Create some futures
     std::string input1 = "first";
     auto fu1_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input1;
+        rrr::Serialize_::serialize(input1, m);
     });
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
 
     i32 val = 50;
     auto fu2_result = client.as_ref().unwrap()->request(TestFutureService::GET_VALUE, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
 
     std::string input3 = "third";
     auto fu3_result = client.as_ref().unwrap()->request(TestFutureService::FAST_ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input3;
+        rrr::Serialize_::serialize(input3, m);
     });
     ASSERT_TRUE(fu3_result.is_ok());
     auto fu3 = fu3_result.unwrap();

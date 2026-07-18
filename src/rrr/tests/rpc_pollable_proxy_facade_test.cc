@@ -3,6 +3,10 @@
 
 #include "../rrr.hpp"
 
+// PollMode et al. live in rrr.epoll_wrapper (trimmed from the consumer
+// umbrella in 08b68144) — import directly.
+import rrr.epoll_wrapper;
+
 namespace rrr {
 namespace {
 

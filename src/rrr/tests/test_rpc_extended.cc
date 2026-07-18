@@ -258,7 +258,7 @@ TEST_F(ExtendedRPCTest, MultipleClients) {
     for (int i = 0; i < num_clients; i++) {
         std::string input = "Client_" + std::to_string(i);
         auto fu_result = clients[i]->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << input;
+            rrr::Serialize_::serialize(input, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -288,7 +288,7 @@ TEST_F(ExtendedRPCTest, ClientReconnection) {
     // Make initial request
     std::string input1 = "Request1";
     auto fu1_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input1;
+        rrr::Serialize_::serialize(input1, m);
     });
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
@@ -312,7 +312,7 @@ TEST_F(ExtendedRPCTest, ClientReconnection) {
     // Make another request
     std::string input2 = "Request2";
     auto fu2_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input2;
+        rrr::Serialize_::serialize(input2, m);
     });
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
@@ -338,7 +338,7 @@ TEST_F(ExtendedRPCTest, RequestTimeout) {
     // Make request with timeout
     std::string input = "Timeout test";
     auto fu_result = client->request(benchmark::BenchmarkService::NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-        m << input;
+        rrr::Serialize_::serialize(input, m);
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -369,7 +369,7 @@ TEST_F(ExtendedRPCTest, RapidConnectDisconnect) {
         // Make a quick request
         std::string input = "Cycle_" + std::to_string(i);
         auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << input;
+            rrr::Serialize_::serialize(input, m);
         });
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
@@ -398,7 +398,7 @@ TEST_F(ExtendedRPCTest, MixedPayloadSizes) {
     for (int size : sizes) {
         std::string payload(size, 'A' + (size % 26));
         auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << payload;
+            rrr::Serialize_::serialize(payload, m);
         });
         if (fu_result.is_err()) continue;
         futures.push_back(fu_result.unwrap());
@@ -432,7 +432,7 @@ TEST_F(ExtendedRPCTest, BurstTraffic) {
         for (int i = 0; i < burst_size; i++) {
             std::string input = "Burst_" + std::to_string(burst) + "_" + std::to_string(i);
             auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-                m << input;
+                rrr::Serialize_::serialize(input, m);
             });
             if (fu_result.is_err()) continue;
             futures.push_back(fu_result.unwrap());
@@ -474,7 +474,7 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
             // NOP request
             std::string input = "NOP_" + std::to_string(i);
             auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-                m << input;
+                rrr::Serialize_::serialize(input, m);
             });
             if (fu_result.is_err()) continue;
             futures.push_back(fu_result.unwrap());
@@ -482,7 +482,7 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
             // PRIME request
             i32 n = 7 + i;
             auto fu_result = client->request(benchmark::BenchmarkService::PRIME, FutureAttr(), [&](BinaryWriteArchive& m) {
-                m << n;
+                rrr::Serialize_::serialize(n, m);
             });
             if (fu_result.is_err()) continue;
             futures.push_back(fu_result.unwrap());
@@ -490,7 +490,7 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
             // FAST_VEC request
             i32 n = 10;
             auto fu_result = client->request(benchmark::BenchmarkService::FAST_VEC, FutureAttr(), [&](BinaryWriteArchive& m) {
-                m << n;
+                rrr::Serialize_::serialize(n, m);
             });
             ASSERT_TRUE(fu_result.is_ok());
             futures.push_back(fu_result.unwrap());
@@ -536,7 +536,7 @@ TEST_F(ExtendedRPCTest, PipelinedRequests) {
     for (int i = 0; i < pipeline_depth; i++) {
         std::string input = "Pipelined_" + std::to_string(i);
         auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << input;
+            rrr::Serialize_::serialize(input, m);
         });
         if (fu_result.is_err()) continue;
         futures.push_back(fu_result.unwrap());
