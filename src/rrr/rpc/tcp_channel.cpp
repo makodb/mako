@@ -828,13 +828,16 @@ bool TcpConnection::handle_read() {
         if (n > 0) {
             inbound_.append(scratch, static_cast<std::size_t>(n));
             any_progress = true;
-            // Drain the syscall in a loop so edge-triggered epoll users
-            // don't lose readiness; cap at one iteration when the
-            // syscall returns less than the scratch (level-triggered
-            // would be fine either way).
-            if (static_cast<std::size_t>(n) < sizeof(scratch)) {
-                break;
-            }
+            // EDGE-TRIGGERED epoll (the reactor registers EPOLLET): drain
+            // to EAGAIN, unconditionally. A short read does NOT mean the
+            // socket buffer is empty -- recv can return fewer bytes than
+            // requested with more already queued, and bytes left behind
+            // never fire another edge. In request-response traffic the peer
+            // is waiting on exactly those stranded bytes, so nothing
+            // re-edges the fd and the connection goes deaf while the poll
+            // thread idles. The old code broke out of the recv loop on a
+            // short read, which is correct only for level-triggered epoll.
+            // One extra EAGAIN recv per wakeup is the price.
             continue;
         }
         if (n == 0) {
