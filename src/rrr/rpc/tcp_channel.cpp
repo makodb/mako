@@ -106,8 +106,6 @@ constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4
 ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame);
 void         tcpconn_flush(const TcpConnection& self);
 void         tcpconn_close(const TcpConnection& self);
-int          tcpconn_poll_mode(const TcpConnection& self);
-std::size_t  tcpconn_content_size(const TcpConnection& self);
 bool         tcpconn_handle_read(const TcpConnection& self);
 int          tcpconn_handle_write(const TcpConnection& self);
 void         tcpconn_handle_error(const TcpConnection& self);
@@ -218,12 +216,19 @@ impl TcpConnection {
         self.fd_.as_raw_fd()
     }
 
+    // READ always; WRITE only while the outbound buffer is non-empty.
     fn poll_mode(&self) -> i32 {
-        tcpconn_poll_mode(self)
+        let mut mode: i32 = PollMode::READ;
+        let guard = self.outbound_.lock().unwrap();
+        if !(*guard).empty() {
+            mode |= PollMode::WRITE;
+        }
+        mode
     }
 
     fn content_size(&self) -> usize {
-        tcpconn_content_size(self)
+        let guard = self.outbound_.lock().unwrap();
+        (*guard).size() + self.inbound_.borrow().buffered_bytes()
     }
 
     fn handle_read(&self) -> bool {
@@ -251,7 +256,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=c717741ed145e1ff0ee89215a35a46d872082125f79c1f642942a718fcddc4af*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=4ee531d879e49851da30de1488fbe5a907953e79cf21651a4c352d349627d2ba*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -348,11 +353,17 @@ int32_t TcpConnection::fd() const {
 }
 
 int32_t TcpConnection::poll_mode() const {
-    return tcpconn_poll_mode((*this));
+    int32_t mode = PollMode::READ;
+    auto guard = this->outbound_.lock().unwrap();
+    if (!((*guard)).empty()) {
+        mode |= PollMode::WRITE;
+    }
+    return std::move(mode);
 }
 
 size_t TcpConnection::content_size() const {
-    return tcpconn_content_size((*this));
+    auto guard = this->outbound_.lock().unwrap();
+    return ((*guard)).size() + this->inbound_.borrow()->buffered_bytes();
 }
 
 bool TcpConnection::handle_read() const {
@@ -1361,20 +1372,7 @@ void tcpconn_close(const TcpConnection& self) {
 // ---------------------------------------------------------------------------
 
 // @safe - peeks the outbound queue length under the spinlock.
-int tcpconn_poll_mode(const TcpConnection& self) {
-    int mode = PollMode::READ;
-    auto guard = self.outbound_.lock().unwrap();
-    if (!(*guard).empty()) {
-        mode |= PollMode::WRITE;
-    }
-    return mode;
-}
 
-// @safe - outbound (locked) + inbound buffered byte counts.
-std::size_t tcpconn_content_size(const TcpConnection& self) {
-    auto guard = self.outbound_.lock().unwrap();
-    return (*guard).size() + self.inbound_.borrow()->buffered_bytes();
-}
 
 // @unsafe - recv(2) syscall into a raw `char` scratch buffer +
 // FrameStreamReader::append / next_frame / consume_frame are all
