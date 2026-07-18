@@ -6,6 +6,14 @@ namespace janus {
 
 class SimpleCommand;
 class CmdData;
+// Phase 8 batch 4: serde free functions own the SimpleCommand wire format;
+// the operators below are forwarders kept until the operator layer is
+// deleted.
+void serialize(const SimpleCommand &cmd, rrr::Marshal &m);
+void deserialize(SimpleCommand &cmd, rrr::Marshal &m);
+void serialize(const SimpleCommand &cmd, rrr::BinaryWriteArchive &ar);
+void deserialize(SimpleCommand &cmd, rrr::BinaryReadArchive &ar);
+
 rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd);
 rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd);
 

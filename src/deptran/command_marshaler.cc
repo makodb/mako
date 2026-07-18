@@ -22,7 +22,9 @@ namespace janus {
 // bugs (the legacy `CmdData::to_marshal` only emitted the 8 base
 // fields, dropping any subclass-specific tail) as hard failures.
 
-rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd) {
+// Phase 8 batch 4: serde free functions own the wire format; operators are
+// forwarders kept until the operator layer is deleted.
+void serialize(const SimpleCommand &cmd, rrr::Marshal &m) {
   verify(cmd.input.size() < 10000);
   rrr::Serialize_::serialize(cmd.id_, m);
   rrr::Serialize_::serialize(cmd.type_, m);
@@ -38,10 +40,11 @@ rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd) {
   rrr::Serialize_::serialize(cmd.partition_id_, m);
   rrr::Serialize_::serialize(cmd.timestamp_, m);
   rrr::Serialize_::serialize(cmd.rank_, m);
-  return m;
 }
 
-rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) {
+rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd) { serialize(cmd, m); return m; }
+
+void deserialize(SimpleCommand &cmd, rrr::Marshal &m) {
   rrr::Deserialize_::deserialize(cmd.id_, m);
   rrr::Deserialize_::deserialize(cmd.type_, m);
   rrr::Deserialize_::deserialize(cmd.inn_id_, m);
@@ -56,8 +59,9 @@ rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) {
   rrr::Deserialize_::deserialize(cmd.partition_id_, m);
   rrr::Deserialize_::deserialize(cmd.timestamp_, m);
   rrr::Deserialize_::deserialize(cmd.rank_, m);
-  return m;
 }
+
+rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) { deserialize(cmd, m); return m; }
 
 // archive operators for SimpleCommand.
 // Wire format byte-for-byte identical to the Marshal-based pair
@@ -68,7 +72,7 @@ rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) {
 // elements use the Phase 4d-6 archive operators in marshal-value.cc,
 // and the TxWorkspace input field uses the Phase 4d-6 archive
 // operators in procedure.cc.
-rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCommand &cmd) {
+void serialize(const SimpleCommand &cmd, rrr::BinaryWriteArchive &ar) {
   verify(cmd.input.size() < 10000);
   rrr::Serialize_::serialize(cmd.id_, ar);
   rrr::Serialize_::serialize(cmd.type_, ar);
@@ -84,10 +88,11 @@ rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCom
   rrr::Serialize_::serialize(cmd.partition_id_, ar);
   rrr::Serialize_::serialize(cmd.timestamp_, ar);
   rrr::Serialize_::serialize(cmd.rank_, ar);
-  return ar;
 }
 
-rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, SimpleCommand &cmd) {
+rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCommand &cmd) { serialize(cmd, ar); return ar; }
+
+void deserialize(SimpleCommand &cmd, rrr::BinaryReadArchive &ar) {
   rrr::Deserialize_::deserialize(cmd.id_, ar);
   rrr::Deserialize_::deserialize(cmd.type_, ar);
   rrr::Deserialize_::deserialize(cmd.inn_id_, ar);
@@ -102,8 +107,9 @@ rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, SimpleCommand &cm
   rrr::Deserialize_::deserialize(cmd.partition_id_, ar);
   rrr::Deserialize_::deserialize(cmd.timestamp_, ar);
   rrr::Deserialize_::deserialize(cmd.rank_, ar);
-  return ar;
 }
+
+rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, SimpleCommand &cmd) { deserialize(cmd, ar); return ar; }
 
 
 } // namespace janus
