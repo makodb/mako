@@ -475,12 +475,35 @@ Verified lowerings this bought us (new to the rules list): `Class::static_method
 Net: H logging subgroup 134 → ~15 irreducible kernel lines + DSL core. The va_list capture itself is
 the only thing the DSL can never express (C varargs ABI).
 
-### Remaining Group-4 reshape candidates (in leverage order)
+### Exemplar 2: debugging.cpp (H-category, DONE)
 
-- **debugging.cpp (104)**: backtrace/pipe syscalls — mostly true C floor, low reshape value.
-- **G globals (157)**: reactor thread_local + RPC_STATISTICS Meyers singletons — reshape = wrap in
-  `Cell`/static accessor pairs like `Log::level_now`, then DSL the logic around them.
-- **F callback state (874)**: stored `On*Callback`s already partially converted (tcp_channel sweeps);
-  the Quorum/async engine (596) is the big prize — needs per-file design, not a mechanical recipe.
-- **E metaprogramming (1,812)**: wire operator families are being DELETED by the Marshal-deprecation
-  plan above (better than reshape); reactor event/async templates pending the flattening project.
+Same recipe. Linux `print_stack_trace` (81 LOC of backtrace/popen/fprintf plumbing) shrank to three
+micro-kernels (`bt_capture` backtrace+free, `bt_resolve_at` popen/addr2line — indexes the capture on
+the C++ side so the DSL never borrows a container element, `bt_index_prefix` snprintf) + a one-line
+fputs sink; report assembly (resolution loop, column-width, alignment padding) = DSL `fn bt_render`.
+Output byte-identical; runtime-verified via a gdb-forced call. NEW verified lowerings:
+`Vec::<CxxAggregate>::new()` turbofish, `rusty::len(field)`, `lines[k].name.size()` index chains,
+early `return` of an owned std::string local. Move-hazard design rule: read `.size()` into a local
+BEFORE any append of that element (the transpiler inserts `std::move` on whole-local last uses).
+
+### Group-4 disposition after the exemplars (H is CLOSED)
+
+- **H logging (134)** → DONE (exemplar 1). **H debugging (104)** → DONE (exemplar 2).
+- **H reactor (103)** → NO-WIN, closed: those lines are atomic `.load()`s + per-site printf-style
+  `Log_info` calls. The varargs render is already centralized in the reshaped Log facade; per-call-site
+  format strings are the irreducible C varargs surface (same class as the `*_to_string` varargs-UB
+  defer). Also inside the Event-flattening blast radius.
+- **G globals (157)**: RPC_STATISTICS block is `#ifdef`-DEAD in all default builds — reshape would be
+  unverifiable by the gate (flag never defined; candidate for deletion or a flag-enabled CI lane
+  first). Reactor thread_locals are Event-flattening territory. Closed pending those two.
+- **F callback state (874)**: tcp `On*Callback` residue already converted in the J+K sweeps; the
+  Quorum/async engine (596) belongs to the Event-flattening project (staged plan exists) — do NOT
+  reshape it here.
+- **E metaprogramming (1,812)**: wire operator families (1,028) get DELETED by the Marshal-deprecation
+  plan (task #4) — deletion beats reshape; reactor event/async templates (377) = flattening project.
+- **I glue (1,291)**: module scaffolding / imports / aliases / fwd-decls — structural by design; no
+  DSL spelling exists or is desirable. Closed.
+
+**Net: the Group-4 reshape campaign is complete as a standalone effort.** Everything not converted by
+the two exemplars routes to task #4 (Marshal deprecation), the Event-flattening project, or the
+documented varargs/glue floor.
