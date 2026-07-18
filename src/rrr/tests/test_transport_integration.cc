@@ -242,10 +242,10 @@ protected:
         auto sconn = sconn_opt.unwrap();
 
         // Read request data
-        size_t req_size = req->m.content_size();
+        size_t req_size = req->src.remaining();
         std::vector<char> req_data(req_size);
         if (req_size > 0) {
-            req->m.read(reinterpret_cast<uint8_t*>(req_data.data()), req_size);
+            req->src.read_bytes(reinterpret_cast<uint8_t*>(req_data.data()), req_size);
         }
 
         // Prepare response: echo back request type and size

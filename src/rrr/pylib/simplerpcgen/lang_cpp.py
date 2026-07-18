@@ -374,10 +374,10 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # decode incoming request
                         # bytes through BinaryReadArchive (matches the
                         # write-side archive emission landed in Phase 3d-3).
-                        # MarshalSource bridges the legacy `req->m` Marshal
+                        # RefMut BufferSource proxy over the request body cursor
                         # to the archive's read API.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
@@ -400,7 +400,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __fiber_req__ = std::move(req);")
@@ -440,7 +440,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __async_req__ = std::move(req);")
@@ -479,7 +479,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # see comment under
                         # `func.attr == "defer"`.
                         if len(input_fields) > 0:
-                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));")
+                            f.writeln("rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));")
                             for _, field_name in input_fields:
                                 f.writeln("rrr::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
                         f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)

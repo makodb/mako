@@ -62,7 +62,8 @@ private:
     void fast_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         std::string input;
-        rrr::Deserialize_::deserialize(input, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(input, __req_ar__);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
@@ -76,7 +77,8 @@ private:
     void slow_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         std::string input;
-        rrr::Deserialize_::deserialize(input, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(input, __req_ar__);
 
         if (should_delay) {
             std::this_thread::sleep_for(milliseconds(delay_ms.load()));
@@ -94,7 +96,8 @@ private:
     void get_value_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         i32 input;
-        rrr::Deserialize_::deserialize(input, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(input, __req_ar__);
 
         i32 result = input * 2;
 

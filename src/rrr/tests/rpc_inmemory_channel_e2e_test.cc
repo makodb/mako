@@ -49,7 +49,8 @@ class EchoService {
     void __dispatch__(i32 /*rpc_id*/, rusty::Box<Request> req,
                       WeakServerConnection sconn) {
         std::string echo;
-        rrr::Deserialize_::deserialize(echo, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(echo, __req_ar__);
         {
             std::lock_guard<std::mutex> lk(mu_);
             ++dispatch_count_;
@@ -156,7 +157,7 @@ TEST_F(InMemoryE2ETest, RoundTripFastRpc) {
 // via `if constexpr (std::is_invocable_v<F&, BinaryWriteArchive&>)`,
 // wrapping the same `Marshal body` through a `MarshalSink`. Bytes on
 // the wire stay identical to the legacy path; the server-side decode
-// (which still goes through `req->m >> echo`) consumes them with no
+// (which reads through the req->src cursor) consumes them with no
 // changes.
 // ---------------------------------------------------------------------------
 

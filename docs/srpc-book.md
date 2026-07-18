@@ -831,7 +831,8 @@ public:
             return;
         }
         int arg;
-        rrr::Deserialize_::deserialize(arg, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(arg, __req_ar__);
         int result = compute(arg);
 
         auto sconn_opt = weak_sconn.upgrade();

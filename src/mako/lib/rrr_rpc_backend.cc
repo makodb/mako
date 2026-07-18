@@ -719,7 +719,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
         // Read request
         basic_request_t basic_req;
-        req->m.read_obj(basic_req);
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&basic_req), sizeof(basic_req));
 
         // Prepare response
         get_int_response_t resp;
@@ -742,7 +742,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         Debug("Received warmupReqType");
 
         warmup_request_t warmup_req;
-        req->m.read_obj(warmup_req);
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&warmup_req), sizeof(warmup_req));
 
         get_int_response_t resp;
         resp.result = 1;
@@ -761,7 +761,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     if (req_type == controlReqType) {
         control_request_t ctrl_req;
-        req->m.read_obj(ctrl_req);
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&ctrl_req), sizeof(ctrl_req));
 
         Warning("Received controlReqType, control: %d, shardIndex: %lld, target_server_id: %llu",
                 ctrl_req.control, ctrl_req.value, ctrl_req.targert_server_id);
@@ -793,7 +793,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     // Normal requests: enqueue to helper queue
     // Extract request size first to determine server ID before creating RrrRequestHandle
-    size_t req_size = req->m.content_size();
+    size_t req_size = req->src.remaining();
     if (req_size < sizeof(TargetServerIDReader)) {
         Warning("Request too small to contain server ID: %zu < %zu", req_size, sizeof(TargetServerIDReader));
         return;
@@ -801,7 +801,7 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
 
     // Peek at request data to extract server ID
     std::vector<char> temp_buffer(req_size);
-    req->m.read(reinterpret_cast<std::uint8_t*>(temp_buffer.data()), req_size);
+    req->src.read_bytes(reinterpret_cast<std::uint8_t*>(temp_buffer.data()), req_size);
     auto* target_server_id_reader = (TargetServerIDReader*)temp_buffer.data();
     uint16_t target_server_id = target_server_id_reader->targert_server_id;
 

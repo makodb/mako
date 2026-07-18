@@ -72,7 +72,7 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->m));
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
             rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
             auto __defer__ = rrr::DeferredReply::new_(

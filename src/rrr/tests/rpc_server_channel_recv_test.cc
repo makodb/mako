@@ -119,7 +119,8 @@ class RecordingService {
         last_rpc_id_ = rpc_id;
         last_xid_    = req->xid;
         std::string echo;
-        rrr::Deserialize_::deserialize(echo, req->m);
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(echo, __req_ar__);
         last_payload_ = echo;
         ++dispatch_count_;
         // Reply back to the client, echoing the payload.

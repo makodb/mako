@@ -198,13 +198,23 @@ PendingRequestGuard::~PendingRequestGuard() noexcept(false) {
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `RUSTYCPP:GEN-BEGIN ... END` block. The `{rusty::None}` field default
-// on `pending_guard` drops away — `Option<T>::Option()` already
-// default-constructs to `None`, so `make_box<Request>()` zero-init
-// callers keep observing the same initial state.
+// `RUSTYCPP:GEN-BEGIN ... END` block. `make_box<Request>()` zero-init
+// callers observe: empty body, null/0 src cursor, None pending_guard.
+//
+// Marshal-deprecation step 1: the request no longer carries a Marshal.
+// `body` owns the frame bytes; `src` is the serde-shaped read cursor
+// (BufferSource) over them. The cursor state persists from the server
+// header parse (xid, rpc_id) into the generated handler's argument
+// reads — consumers build a `BinaryReadArchive` over
+// `make_source_proxy(&req->src)` (RefMut adapter, cursor advances in
+// place). INVARIANT: `src` borrows `body`'s heap buffer, so `body` is
+// filled exactly once (request_fill_body) before `src` is pointed at
+// it, and Request always lives behind a Box (Vec's heap data is stable
+// under Box moves).
 #if RUSTYCPP_RUST
 struct Request {
-    m: Marshal,
+    body: Vec<u8>,
+    src: BufferSource,
     xid: i64,
     pending_guard: rusty::Option<rusty::Box<PendingRequestGuard>>,
 }
@@ -218,11 +228,12 @@ impl Request {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=c680f7c2330b1e791d35146744eb5499bbca4f7e5e33f01840602b96a89f6649*/
+/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=3e5493db42aff1286a5353efb3b1d0ccbba2e92b342d6e6695a2c669199e3636*/
 struct Request;
 
 struct Request {
-    Marshal m;
+    rusty::Vec<uint8_t> body;
+    BufferSource src;
     int64_t xid;
     rusty::Option<rusty::Box<PendingRequestGuard>> pending_guard;
 
@@ -1687,6 +1698,18 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
 // @unsafe - 5c: decode one channel-mode request frame and dispatch.
 //
 // Mirrors the per-packet body of `handle_read` minus the size-framed
+// @unsafe - reserve + raw memcpy + set_len into the request's body
+// Vec (same bulk-fill kernel shape as buffer_sink_write), then point
+// the read cursor at the filled buffer. Must be called at most once
+// per Request, before any read.
+void request_fill_body(Request& req, const std::uint8_t* bytes,
+                       std::size_t size) {
+    req.body.reserve(size);
+    std::memcpy(req.body.data(), bytes, size);
+    req.body.set_len(size);
+    req.src = BufferSource::new_(req.body.data(), req.body.len());
+}
+
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
 void sconn_decode_request_and_dispatch(
@@ -1695,37 +1718,39 @@ void sconn_decode_request_and_dispatch(
         return;
     }
 
-    // Build a Request and copy the frame's bytes into its Marshal.
+    // Build a Request and copy the frame's bytes into its body.
     // The channel-layer contract makes `bytes` valid only for the
     // duration of this callback, so we must copy before any code path
     // that may yield (e.g. `Fiber::create_run`).
     auto req_box = rusty::make_box<Request>();
     Request& req = *req_box;
     if (size > 0) {
-        req.m.write_bytes(bytes, size);
+        request_fill_body(req, bytes, size);
     }
 
     // Header parse: xid + rpc_id. If the frame is malformed (less
     // than enough bytes for xid), drop it (no valid xid to reply
-    // against). v64 is variable-length 1-8 bytes; an empty Marshal
-    // means there's no xid.
-    if (req.m.content_size() == 0) {
+    // against). v64 is variable-length 1-8 bytes; an empty body
+    // means there's no xid. The archive is a view; the cursor
+    // advances in req.src and persists into the handler's reads.
+    if (req.src.remaining() == 0) {
         Log_warn("rrr::ServerConnection: empty channel-mode request frame, "
                  "dropping");
         return;
     }
+    BinaryReadArchive header_ar(make_source_proxy(&req.src));
     v64 v_xid;
-    rrr::Deserialize_::deserialize(v_xid, req.m);
+    rrr::Deserialize_::deserialize(v_xid, header_ar);
     req.xid = v_xid.get();
     req.attach_pending_guard(self.ctx_->pending_requests);
 
-    if (req.m.content_size() < sizeof(i32)) {
+    if (req.src.remaining() < sizeof(i32)) {
         sconn_reply(self, req, EINVAL, ServerReplyFn{});
         return;
     }
 
     i32 rpc_id;
-    rrr::Deserialize_::deserialize(rpc_id, req.m);
+    rrr::Deserialize_::deserialize(rpc_id, header_ar);
     if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
         // @unsafe - std::atomic::load
         if (!self.ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
