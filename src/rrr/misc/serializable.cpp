@@ -1474,8 +1474,23 @@ inline void serialize(const std::string& self_, BinaryWriteArchive& ar) {
 // during the operator->trait coexistence — the enabler for the generator flip.
 // (At Phase 8, when operators are deleted, every type has a specific overload,
 // so this bridge is dropped.)
+// Phase 8 endgame: the generic bridge dispatches via ADL instead of the
+// operator layer. The deleted decoy in adl_detail_ poisons unqualified
+// lookup so the dispatcher can ONLY resolve through ADL (the type's own
+// namespace) — the catch-all cannot self-select, and a type with neither a
+// specific overload above nor an ADL serialize() fails with a hard
+// "deleted function" diagnostic naming the type.
+namespace adl_detail_ {
+void serialize() = delete;  // lookup poison: stops ascent past this scope
 template<typename T>
-inline void serialize(const T& v, BinaryWriteArchive& ar) { ar << v; }
+inline void dispatch_serialize(const T& v, BinaryWriteArchive& ar) {
+  serialize(v, ar);  // ADL-only by construction
+}
+}  // namespace adl_detail_
+template<typename T>
+inline void serialize(const T& v, BinaryWriteArchive& ar) {
+  adl_detail_::dispatch_serialize(v, ar);
+}
 }  // namespace Serialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------
@@ -2561,8 +2576,19 @@ inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
   }
 }
 // Generic bridge (read side): mirror of the serialize catch-all.
+// Phase 8 endgame: ADL dispatch via poisoned decoy (see the serialize
+// catch-all for the full rationale).
+namespace adl_detail_ {
+void deserialize() = delete;
 template<typename T>
-inline void deserialize(T& v, BinaryReadArchive& ar) { ar >> v; }
+inline void dispatch_deserialize(T& v, BinaryReadArchive& ar) {
+  deserialize(v, ar);  // ADL-only by construction
+}
+}  // namespace adl_detail_
+template<typename T>
+inline void deserialize(T& v, BinaryReadArchive& ar) {
+  adl_detail_::dispatch_deserialize(v, ar);
+}
 }  // namespace Deserialize_
 
 // ---- Variable-length integer encoding (SparseInt). --------------------

@@ -271,19 +271,30 @@ inline AnyMessageSp anymessage_pack(std::shared_ptr<T> val) {
 
 // ---- Free archive operators -----------------------------------------
 
+// Phase 8 batch 4 (endgame straggler): serde free functions own the
+// AnyMessage wire format; the operators are forwarders kept until the
+// operator layer is deleted.
 // @unsafe - forwards to `am.save(ar)` which drives a Marshal
 // operator<< chain.
+inline void serialize(const AnyMessage& am, BinaryWriteArchive& ar) {
+  am.save(ar);
+}
+
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const AnyMessage& am) {
-  am.save(ar);
+  serialize(am, ar);
   return ar;
 }
 
 // @unsafe - forwards to `am.load(ar)` which drives a Marshal
 // operator>> chain.
+inline void deserialize(AnyMessage& am, BinaryReadArchive& ar) {
+  am.load(ar);
+}
+
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
                                      AnyMessage& am) {
-  am.load(ar);
+  deserialize(am, ar);
   return ar;
 }
 
