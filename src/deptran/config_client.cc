@@ -155,7 +155,7 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
 
     PersistentConfig config;
     // @unsafe { Marshal read not borrow-checked }
-    m >> config;
+    rrr::Deserialize_::deserialize(config, m);
 
     // @unsafe { logging I/O }
     Log_info("ConfigClient: Fetched configuration version %lu with %zu sites",
@@ -258,7 +258,7 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
 
     ShardingPolicySet policy;
     // @unsafe { Marshal read not borrow-checked }
-    m >> policy;
+    rrr::Deserialize_::deserialize(policy, m);
 
     // @unsafe { logging I/O }
     Log_info("ConfigClient: Fetched sharding policy version %lu with %zu tables",
@@ -326,7 +326,7 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
     // Serialize policy to string
     rrr::Marshal m;
     // @unsafe { Marshal write not borrow-checked }
-    m << policy;
+    rrr::Serialize_::serialize(policy, m);
 
     std::string policy_data;
     policy_data.resize(m.content_size());

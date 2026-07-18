@@ -23,7 +23,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         int res;
         TxnOutput output;
         rrr::AnyMessage am;
-        fu->get_reply() >> res >> output >> am;
+        rrr::deserialize_from(fu->get_reply(), res, output, am);
         // graph field rides directly as AnyMessage.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
@@ -67,7 +67,7 @@ void RccCommo::SendFinish(parid_t pid,
       return;
     }
     map<innid_t, map<int32_t, Value>> outputs;
-    fu->get_reply() >> outputs;
+    rrr::deserialize_from(fu->get_reply(), outputs);
     callback(outputs);
   };
   fuattr.callback = cb;
@@ -93,7 +93,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
       return;
     }
 //    janus::Command md;
-    fu->get_reply() >> *ret;
+    rrr::deserialize_from(fu->get_reply(), *ret);
     ev->set(1);
   };
   fuattr.callback = cb;
@@ -120,7 +120,7 @@ void RccCommo::SendInquire(parid_t pid,
       return;
     }
     rrr::AnyMessage am;
-    fu->get_reply() >> am;
+    rrr::deserialize_from(fu->get_reply(), am);
     auto sp_graph = am.unpack<RccGraph>();
     verify(sp_graph);
     callback(*sp_graph);
@@ -154,7 +154,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
                         }
                         int32_t res;
                         TxnOutput output;
-                        fu->get_reply() >> res >> output;
+                        rrr::deserialize_from(fu->get_reply(), res, output);
                         callback(res, output);
                       };
     verify(cmd_id > 0);

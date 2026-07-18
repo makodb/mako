@@ -8,7 +8,7 @@ template<typename T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const Vertex<T> *&v) {
   verify(0);
   int64_t u = std::uintptr_t(v);
-  m << u;
+  rrr::Serialize_::serialize(u, m);
   return m;
 }
 

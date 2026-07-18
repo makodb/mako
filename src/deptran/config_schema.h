@@ -88,15 +88,31 @@ struct PersistentSiteInfo {
 
 // @unsafe - Marshal operators for PersistentSiteInfo
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentSiteInfo& s) {
-    m << s.id << s.locale_id << s.name << s.proc_name << s.role
-      << s.host << s.port << s.n_thread << s.type << s.partition_id;
+    rrr::Serialize_::serialize(s.id, m);
+    rrr::Serialize_::serialize(s.locale_id, m);
+    rrr::Serialize_::serialize(s.name, m);
+    rrr::Serialize_::serialize(s.proc_name, m);
+    rrr::Serialize_::serialize(s.role, m);
+    rrr::Serialize_::serialize(s.host, m);
+    rrr::Serialize_::serialize(s.port, m);
+    rrr::Serialize_::serialize(s.n_thread, m);
+    rrr::Serialize_::serialize(s.type, m);
+    rrr::Serialize_::serialize(s.partition_id, m);
     return m;
 }
 
 // @unsafe
 inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentSiteInfo& s) {
-    m >> s.id >> s.locale_id >> s.name >> s.proc_name >> s.role
-      >> s.host >> s.port >> s.n_thread >> s.type >> s.partition_id;
+    rrr::Deserialize_::deserialize(s.id, m);
+    rrr::Deserialize_::deserialize(s.locale_id, m);
+    rrr::Deserialize_::deserialize(s.name, m);
+    rrr::Deserialize_::deserialize(s.proc_name, m);
+    rrr::Deserialize_::deserialize(s.role, m);
+    rrr::Deserialize_::deserialize(s.host, m);
+    rrr::Deserialize_::deserialize(s.port, m);
+    rrr::Deserialize_::deserialize(s.n_thread, m);
+    rrr::Deserialize_::deserialize(s.type, m);
+    rrr::Deserialize_::deserialize(s.partition_id, m);
     return m;
 }
 
@@ -123,22 +139,22 @@ struct PersistentReplicaGroup {
 
 // @unsafe - Marshal operators for PersistentReplicaGroup
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentReplicaGroup& g) {
-    m << g.partition_id;
-    m << static_cast<uint32_t>(g.replica_ids.size());
+    rrr::Serialize_::serialize(g.partition_id, m);
+    rrr::Serialize_::serialize(static_cast<uint32_t>(g.replica_ids.size()), m);
     for (const auto& id : g.replica_ids) {
-        m << id;
+        rrr::Serialize_::serialize(id, m);
     }
     return m;
 }
 
 // @unsafe
 inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentReplicaGroup& g) {
-    m >> g.partition_id;
+    rrr::Deserialize_::deserialize(g.partition_id, m);
     uint32_t size;
-    m >> size;
+    rrr::Deserialize_::deserialize(size, m);
     g.replica_ids.resize(size);
     for (uint32_t i = 0; i < size; ++i) {
-        m >> g.replica_ids[i];
+        rrr::Deserialize_::deserialize(g.replica_ids[i], m);
     }
     return m;
 }
@@ -171,15 +187,21 @@ struct PersistentProtocolSettings {
 
 // @unsafe - Marshal operators for PersistentProtocolSettings
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentProtocolSettings& s) {
-    m << s.tx_proto << s.replica_proto << s.benchmark
-      << s.txn_timeout_us << s.scale_factor;
+    rrr::Serialize_::serialize(s.tx_proto, m);
+    rrr::Serialize_::serialize(s.replica_proto, m);
+    rrr::Serialize_::serialize(s.benchmark, m);
+    rrr::Serialize_::serialize(s.txn_timeout_us, m);
+    rrr::Serialize_::serialize(s.scale_factor, m);
     return m;
 }
 
 // @unsafe
 inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentProtocolSettings& s) {
-    m >> s.tx_proto >> s.replica_proto >> s.benchmark
-      >> s.txn_timeout_us >> s.scale_factor;
+    rrr::Deserialize_::deserialize(s.tx_proto, m);
+    rrr::Deserialize_::deserialize(s.replica_proto, m);
+    rrr::Deserialize_::deserialize(s.benchmark, m);
+    rrr::Deserialize_::deserialize(s.txn_timeout_us, m);
+    rrr::Deserialize_::deserialize(s.scale_factor, m);
     return m;
 }
 
@@ -211,48 +233,48 @@ struct PersistentConfig {
 
 // @unsafe - Marshal operators for PersistentConfig
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentConfig& c) {
-    m << c.version;
+    rrr::Serialize_::serialize(c.version, m);
 
     // Serialize sites
-    m << static_cast<uint32_t>(c.sites.size());
+    rrr::Serialize_::serialize(static_cast<uint32_t>(c.sites.size()), m);
     for (const auto& site : c.sites) {
-        m << site;
+        rrr::Serialize_::serialize(site, m);
     }
 
     // Serialize replica groups
-    m << static_cast<uint32_t>(c.replica_groups.size());
+    rrr::Serialize_::serialize(static_cast<uint32_t>(c.replica_groups.size()), m);
     for (const auto& group : c.replica_groups) {
-        m << group;
+        rrr::Serialize_::serialize(group, m);
     }
 
     // Serialize settings
-    m << c.settings;
+    rrr::Serialize_::serialize(c.settings, m);
 
     return m;
 }
 
 // @unsafe
 inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentConfig& c) {
-    m >> c.version;
+    rrr::Deserialize_::deserialize(c.version, m);
 
     // Deserialize sites
     uint32_t sites_size;
-    m >> sites_size;
+    rrr::Deserialize_::deserialize(sites_size, m);
     c.sites.resize(sites_size);
     for (uint32_t i = 0; i < sites_size; ++i) {
-        m >> c.sites[i];
+        rrr::Deserialize_::deserialize(c.sites[i], m);
     }
 
     // Deserialize replica groups
     uint32_t groups_size;
-    m >> groups_size;
+    rrr::Deserialize_::deserialize(groups_size, m);
     c.replica_groups.resize(groups_size);
     for (uint32_t i = 0; i < groups_size; ++i) {
-        m >> c.replica_groups[i];
+        rrr::Deserialize_::deserialize(c.replica_groups[i], m);
     }
 
     // Deserialize settings
-    m >> c.settings;
+    rrr::Deserialize_::deserialize(c.settings, m);
 
     return m;
 }

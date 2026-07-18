@@ -37,7 +37,7 @@ void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
       }
       uint64_t index = 0;
 			
-      fu->get_reply() >> index;
+      rrr::deserialize_from(fu->get_reply(), index);
 			this->matchedIndex[follower_id] = index;
 			
 			//Log_info("follower_index for %d: %d and leader_index: %d", follower_id, index, logIndex);
@@ -194,9 +194,9 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
       uint64_t term = 0;
       uint64_t index = 0;
 			
-			fu->get_reply() >> accept;
-      fu->get_reply() >> term;
-      fu->get_reply() >> index;
+			rrr::deserialize_from(fu->get_reply(), accept);
+      rrr::deserialize_from(fu->get_reply(), term);
+      rrr::deserialize_from(fu->get_reply(), index);
 			
 			struct timespec end;
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
@@ -287,8 +287,8 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      fu->get_reply() >> term;
-      fu->get_reply() >> vote ;
+      rrr::deserialize_from(fu->get_reply(), term);
+      rrr::deserialize_from(fu->get_reply(), vote);
       e->FeedResponse(vote, term);
       // TODO add max accepted value.
     };
@@ -331,8 +331,8 @@ FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      fu->get_reply() >> term;
-      fu->get_reply() >> vote ;
+      rrr::deserialize_from(fu->get_reply(), term);
+      rrr::deserialize_from(fu->get_reply(), vote);
       e->FeedResponse(vote, term);
     };
     FpgaRaftProxy::RpcVoteRequest req{};

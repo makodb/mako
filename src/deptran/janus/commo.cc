@@ -22,7 +22,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
         int res;
         TxnOutput output;
         rrr::AnyMessage am;
-        fu->get_reply() >> res >> output >> am;
+        rrr::deserialize_from(fu->get_reply(), res, output, am);
         // graph reply rides directly as
         // an `AnyMessage`, no `janus::Command` wrapper.
         if (am.is_a<EmptyGraph>()) {
@@ -68,7 +68,7 @@ void JanusCommo::SendInquire(parid_t pid,
       return;
     }
     rrr::AnyMessage am;
-    fu->get_reply() >> am;
+    rrr::deserialize_from(fu->get_reply(), am);
     auto sp_graph = am.unpack<RccGraph>();
     verify(sp_graph);
     callback(*sp_graph);
@@ -106,7 +106,7 @@ void JanusCommo::BroadcastPreAccept(
       }
       int32_t res;
       rrr::AnyMessage am;
-      fu->get_reply() >> res >> am;
+      rrr::deserialize_from(fu->get_reply(), res, am);
       auto sp_graph = am.unpack<RccGraph>();
       verify(sp_graph);
       callback(res, std::make_shared<RccGraph>(*sp_graph));
@@ -151,7 +151,7 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
         return;
       }
       int32_t res;
-      fu->get_reply() >> res;
+      rrr::deserialize_from(fu->get_reply(), res);
       callback(res);
     };
     verify(cmd_id > 0);
@@ -189,7 +189,7 @@ void JanusCommo::BroadcastCommit(
       }
       int32_t res;
       TxnOutput output;
-      fu->get_reply() >> res >> output;
+      rrr::deserialize_from(fu->get_reply(), res, output);
       callback(res, output);
     };
     verify(cmd_id > 0);
@@ -225,7 +225,7 @@ shared_ptr<QuorumEvent> JanusCommo::BroadcastInquireValidation(set<parid_t>& par
         return;
       }
       int32_t res;
-      fu->get_reply() >> res;
+      rrr::deserialize_from(fu->get_reply(), res);
       if (res == 1) {
         e->vote_yes();
       } else if (res == -1) {

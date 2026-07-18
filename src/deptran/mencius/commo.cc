@@ -123,7 +123,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
       }
       ballot_t b = 0;
       uint64_t coro_id = 0;
-      fu->get_reply() >> b >> coro_id;
+      rrr::deserialize_from(fu->get_reply(), b, coro_id);
       e->FeedResponse(b==ballot);
       // auto end = chrono::system_clock::now();
       // auto duration = chrono::duration_cast<chrono::microseconds>(end-start2).count();

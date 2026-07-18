@@ -72,19 +72,19 @@ struct KeyExtractor {
 
     // @unsafe - Serialization via Marshal (I/O)
     friend rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e) {
-        m << static_cast<int32_t>(e.type);
-        m << e.field_index;
-        m << e.prefix_length;
+        rrr::Serialize_::serialize(static_cast<int32_t>(e.type), m);
+        rrr::Serialize_::serialize(e.field_index, m);
+        rrr::Serialize_::serialize(e.prefix_length, m);
         return m;
     }
 
     // @unsafe - Deserialization via Marshal (I/O)
     friend rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e) {
         int32_t type_val;
-        m >> type_val;
+        rrr::Deserialize_::deserialize(type_val, m);
         e.type = static_cast<KeyExtractorType>(type_val);
-        m >> e.field_index;
-        m >> e.prefix_length;
+        rrr::Deserialize_::deserialize(e.field_index, m);
+        rrr::Deserialize_::deserialize(e.prefix_length, m);
         return m;
     }
 };
@@ -111,17 +111,17 @@ struct RangeMapping {
 
     // @unsafe - Serialization via Marshal (I/O)
     friend rrr::Marshal& operator<<(rrr::Marshal& m, const RangeMapping& r) {
-        m << r.start_key;
-        m << r.end_key;
-        m << r.shard_id;
+        rrr::Serialize_::serialize(r.start_key, m);
+        rrr::Serialize_::serialize(r.end_key, m);
+        rrr::Serialize_::serialize(r.shard_id, m);
         return m;
     }
 
     // @unsafe - Deserialization via Marshal (I/O)
     friend rrr::Marshal& operator>>(rrr::Marshal& m, RangeMapping& r) {
-        m >> r.start_key;
-        m >> r.end_key;
-        m >> r.shard_id;
+        rrr::Deserialize_::deserialize(r.start_key, m);
+        rrr::Deserialize_::deserialize(r.end_key, m);
+        rrr::Deserialize_::deserialize(r.shard_id, m);
         return m;
     }
 };
@@ -189,30 +189,30 @@ struct TableShardingPolicy {
 
     // @unsafe - Serialization via Marshal (I/O)
     friend rrr::Marshal& operator<<(rrr::Marshal& m, const TableShardingPolicy& p) {
-        m << p.table_name;
-        m << p.key_extractor;
-        m << static_cast<int32_t>(p.ranges.size());
+        rrr::Serialize_::serialize(p.table_name, m);
+        rrr::Serialize_::serialize(p.key_extractor, m);
+        rrr::Serialize_::serialize(static_cast<int32_t>(p.ranges.size()), m);
         for (const auto& range : p.ranges) {
-            m << range;
+            rrr::Serialize_::serialize(range, m);
         }
-        m << p.default_shard;
+        rrr::Serialize_::serialize(p.default_shard, m);
         return m;
     }
 
     // @unsafe - Deserialization via Marshal (I/O)
     friend rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p) {
-        m >> p.table_name;
-        m >> p.key_extractor;
+        rrr::Deserialize_::deserialize(p.table_name, m);
+        rrr::Deserialize_::deserialize(p.key_extractor, m);
         int32_t num_ranges;
-        m >> num_ranges;
+        rrr::Deserialize_::deserialize(num_ranges, m);
         p.ranges.clear();
         p.ranges.reserve(num_ranges);
         for (int32_t i = 0; i < num_ranges; ++i) {
             RangeMapping range;
-            m >> range;
+            rrr::Deserialize_::deserialize(range, m);
             p.ranges.push_back(range);
         }
-        m >> p.default_shard;
+        rrr::Deserialize_::deserialize(p.default_shard, m);
         return m;
     }
 };
@@ -285,25 +285,25 @@ struct ShardingPolicySet {
 
     // @unsafe - Serialization via Marshal (I/O)
     friend rrr::Marshal& operator<<(rrr::Marshal& m, const ShardingPolicySet& s) {
-        m << s.version;
-        m << s.num_shards;
-        m << static_cast<int32_t>(s.policies.size());
+        rrr::Serialize_::serialize(s.version, m);
+        rrr::Serialize_::serialize(s.num_shards, m);
+        rrr::Serialize_::serialize(static_cast<int32_t>(s.policies.size()), m);
         for (const auto& [name, policy] : s.policies) {
-            m << policy;
+            rrr::Serialize_::serialize(policy, m);
         }
         return m;
     }
 
     // @unsafe - Deserialization via Marshal (I/O)
     friend rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s) {
-        m >> s.version;
-        m >> s.num_shards;
+        rrr::Deserialize_::deserialize(s.version, m);
+        rrr::Deserialize_::deserialize(s.num_shards, m);
         int32_t num_policies;
-        m >> num_policies;
+        rrr::Deserialize_::deserialize(num_policies, m);
         s.policies.clear();
         for (int32_t i = 0; i < num_policies; ++i) {
             TableShardingPolicy policy;
-            m >> policy;
+            rrr::Deserialize_::deserialize(policy, m);
             s.policies[policy.table_name] = policy;
         }
         return m;

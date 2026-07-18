@@ -42,7 +42,7 @@ void TapirCommo::BroadcastFastAccept(parid_t par_id,
     FutureAttr fuattr;
     fuattr.callback = [cb] (rusty::Arc<Future> fu) {
       int32_t res;
-      fu->get_reply() >> res;
+      rrr::deserialize_from(fu->get_reply(), res);
       cb(res);
     };
     ClassicProxy::RpcTapirFastAcceptRequest req;

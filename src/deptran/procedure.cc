@@ -66,27 +66,28 @@ TxData::TxData() {
 }
 
 Marshal& operator << (Marshal& m, const TxWorkspace &ws) {
-  m << (ws.keys_);
+  rrr::Serialize_::serialize((ws.keys_), m);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
     auto it = input_vars.find(k);
     // allow some input vars not ready.
     if (it != input_vars.end()) {
-      m << k << it->second;
+      rrr::Serialize_::serialize(k, m);
+      rrr::Serialize_::serialize(it->second, m);
     }
   }
-  m << -1;
+  rrr::Serialize_::serialize(-1, m);
   return m;
 }
 
 Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
-  m >> ws.keys_;
+  rrr::Deserialize_::deserialize(ws.keys_, m);
   while (true) {
     int32_t k;
-    m >> k;
+    rrr::Deserialize_::deserialize(k, m);
     if (k >= 0) {
       Value v;
-      m >> v;
+      rrr::Deserialize_::deserialize(v, m);
       (*ws.values_)[k] = v;
     } else {
       break;
@@ -130,43 +131,43 @@ BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
 }
 
 Marshal& operator << (Marshal& m, const TxReply& reply) {
-  m << reply.res_;
-  m << reply.output_;
-  m << reply.n_try_;
+  rrr::Serialize_::serialize(reply.res_, m);
+  rrr::Serialize_::serialize(reply.output_, m);
+  rrr::Serialize_::serialize(reply.n_try_, m);
   // TODO -- currently this is only used when marshalling
   // replies from forwarded requests so the source
   // (non-leader) site correctly populates this field when
   // reporting.
   // m << reply.start_time_;
-  m << reply.time_;
-  m << reply.txn_type_;
+  rrr::Serialize_::serialize(reply.time_, m);
+  rrr::Serialize_::serialize(reply.txn_type_, m);
   
   // Marshal view data if present
   bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
-  m << has_view_data;
+  rrr::Serialize_::serialize(has_view_data, m);
   if (has_view_data) {
     janus::Command view_md;
     view_md = reply.sp_view_data_;
-    m << view_md;
+    rrr::Serialize_::serialize(view_md, m);
   }
 
   return m;
 }
 
 Marshal& operator >> (Marshal& m, TxReply& reply) {
-  m >> reply.res_;
-  m >> reply.output_;
-  m >> reply.n_try_;
+  rrr::Deserialize_::deserialize(reply.res_, m);
+  rrr::Deserialize_::deserialize(reply.output_, m);
+  rrr::Deserialize_::deserialize(reply.n_try_, m);
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  m >> reply.time_;
-  m >> reply.txn_type_;
+  rrr::Deserialize_::deserialize(reply.time_, m);
+  rrr::Deserialize_::deserialize(reply.txn_type_, m);
 
   // Unmarshal view data if present
   bool_t has_view_data;
-  m >> has_view_data;
+  rrr::Deserialize_::deserialize(has_view_data, m);
   if (has_view_data) {
     janus::Command view_md;
-    m >> view_md;
+    rrr::Deserialize_::deserialize(view_md, m);
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
     reply.sp_view_data_ = nullptr;

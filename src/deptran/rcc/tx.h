@@ -341,12 +341,12 @@ typedef vector<pair<txid_t, ParentEdge<RccTx>>> parent_set_t;
 
 
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const ParentEdge<RccTx> &e) {
-  m << e.partitions_;
+  rrr::Serialize_::serialize(e.partitions_, m);
   return m;
 }
 
 inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
-  m >> e.partitions_;
+  rrr::Deserialize_::deserialize(e.partitions_, m);
   return m;
 }
 

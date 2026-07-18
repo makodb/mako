@@ -97,7 +97,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
       ballot_t b;
       uint64_t dep;
       status_t status;
-      fu->get_reply() >> md >> b >> dep >> status;
+      rrr::deserialize_from(fu->get_reply(), md, b, dep, status);
       bool ok = (ballot == b);
 
       if (ok) {
@@ -167,7 +167,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         ballot_t b;
         slotid_t sgst_dep;
 
-        fu->get_reply() >> b >> sgst_dep;
+        rrr::deserialize_from(fu->get_reply(), b, sgst_dep);
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
   Log_info("cmd<%d, %d> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
@@ -238,7 +238,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
           return;
         }
         ballot_t b;
-        fu->get_reply() >> b;
+        rrr::deserialize_from(fu->get_reply(), b);
         e->FeedResponse(ballot == b);
 
         e->remove_xid(site);

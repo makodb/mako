@@ -1040,6 +1040,38 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
 // MakoCommands>) has its own Marshal& archive operators in
 // serializable_envelope.hpp.
 
+// ---------------------------------------------------------------------------
+// Serde bridge over the legacy Marshal byte-buffer sink.
+//
+// Mirrors the BinaryWriteArchive/BinaryReadArchive catch-all in
+// serializable.cpp (rrr::Serialize_::serialize / rrr::Deserialize_::deserialize)
+// but for the `Marshal&` sink. rrr.marshal imports rrr.serializable, so those
+// namespaces are visible here and we reopen them to add the Marshal overload.
+// Every type routes to the Marshal `operator<<` / `operator>>` above via
+// unqualified lookup + ADL, so call sites can uniformly say
+// `serialize(x, m)` / `deserialize(x, m)` instead of `m << x` / `m >> x`.
+// The operators remain the byte kernels (Phase 8 relocates/deletes them).
+namespace Serialize_ {
+template<typename T>
+inline void serialize(const T& v, ::rrr::Marshal& m) {
+  m << v;  // @unsafe { legacy Marshal operator<< is the byte kernel }
+}
+}  // namespace Serialize_
+namespace Deserialize_ {
+template<typename T>
+inline void deserialize(T& v, ::rrr::Marshal& m) {
+  m >> v;  // @unsafe { legacy Marshal operator>> is the byte kernel }
+}
+}  // namespace Deserialize_
+
+// NOTE: the variadic `deserialize_from(RefMut<Marshal>&&, ...)` reply-read
+// helper lives in rpc/client.cpp alongside the RefMut<Marshal> `operator>>`
+// bridge it reuses — NOT here. Reply structs carry Archive operators (not
+// Marshal ones), so the helper must read through a BinaryReadArchive; keeping
+// it next to the bridge also avoids baking a RefMut<Marshal> specialization
+// into this (already huge) marshal BMI, which tripped a clang-22 ASTReader
+// crash when heavy consumers (communicator.cc) imported it.
+
 
 }  // export namespace rrr
 

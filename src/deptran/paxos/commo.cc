@@ -100,7 +100,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         ballot_t ballot;
         // if the learner is killed at this moment, throw an error
         // in datacenter failover, keep learners are alive
-        fu->get_reply() >> slot >> ballot;
+        rrr::deserialize_from(fu->get_reply(), slot, ballot);
         cb(slot, ballot);
         //e->FeedResponse(1);
 	      };
@@ -191,7 +191,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       i32 valid;
       i32 ballot;
       janus::Command response_val;
-      fu->get_reply() >> ballot >> valid >> response_val;
+      rrr::deserialize_from(fu->get_reply(), ballot, valid, response_val);
       auto sp_md = make_shared<janus::Command>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
@@ -271,7 +271,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      fu->get_reply() >> ballot >> valid;
+      rrr::deserialize_from(fu->get_reply(), ballot, valid);
        // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
         Log_debug("Accept invalid response received from %d site", st);
@@ -314,7 +314,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       }
       i32 valid;
       i32 ballot;
-      fu->get_reply() >> ballot >> valid;
+      rrr::deserialize_from(fu->get_reply(), ballot, valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };

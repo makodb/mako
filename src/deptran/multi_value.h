@@ -94,19 +94,19 @@ inline bool operator<(const MultiValue &mv1, const MultiValue &mv2) {
 }
 
 inline Marshal& operator << (Marshal& m, const MultiValue& mv) {
-  m << mv.size();
+  rrr::Serialize_::serialize(mv.size(), m);
   for (int i=0; i<mv.size(); i++) {
-    m << mv[i];
+    rrr::Serialize_::serialize(mv[i], m);
   }
   return m;
 }
 
 inline Marshal& operator >> (Marshal& m, MultiValue& mv) {
   int size;
-  m >> size;
+  rrr::Deserialize_::deserialize(size, m);
   MultiValue result(size);
   for (int i=0; i<size; i++) {
-    m >> result[i];
+    rrr::Deserialize_::deserialize(result[i], m);
   }
   mv = result;
   return m;

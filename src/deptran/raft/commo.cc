@@ -69,7 +69,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
-      fu->get_reply() >> response->status >> response->term >> response->last_log_index >> response->ack_type;
+      rrr::deserialize_from(fu->get_reply(), response->status, response->term, response->last_log_index, response->ack_type);
       Log_debug("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
                site_id, response->status, response->term, response->last_log_index, response->ack_type);
       response->event->set(1);
@@ -154,10 +154,10 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
         return;
       }
       // std::lock_guard<std::recursive_mutex> lk(res->mtx);
-      fu->get_reply() >> res->ok;
-      fu->get_reply() >> res->followerTerm;
-      fu->get_reply() >> res->followerLastLogIndex;
-      fu->get_reply() >> res->followerAckType;
+      rrr::deserialize_from(fu->get_reply(), res->ok);
+      rrr::deserialize_from(fu->get_reply(), res->followerTerm);
+      rrr::deserialize_from(fu->get_reply(), res->followerLastLogIndex);
+      rrr::deserialize_from(fu->get_reply(), res->followerAckType);
       res->empty = !cmd.has_value();
       // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
       // only set res->done if it's not a lost RPC
@@ -241,8 +241,8 @@ RaftCommo::BroadcastVote(parid_t par_id,
       }
       ballot_t term = 0;
       bool_t vote = false ;
-      fu->get_reply() >> term;
-      fu->get_reply() >> vote ;
+      rrr::deserialize_from(fu->get_reply(), term);
+      rrr::deserialize_from(fu->get_reply(), vote);
       // SPECULATIVE VOTING: Track which site voted yes
       e->FeedResponse(vote, term, site_id);
     };
@@ -309,8 +309,8 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
       uint64_t follower_term = 0;
       bool_t success = false;
 
-      fu->get_reply() >> follower_term;
-      fu->get_reply() >> success;
+      rrr::deserialize_from(fu->get_reply(), follower_term);
+      rrr::deserialize_from(fu->get_reply(), success);
 
       Log_info("[TIMEOUT-NOW-RPC] TimeoutNow RPC completed: success=%d, follower_term=%lu",
                (int)success, follower_term);
@@ -387,7 +387,7 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
       return;
     }
     bool_t ack = false;
-    fu->get_reply() >> ack;
+    rrr::deserialize_from(fu->get_reply(), ack);
     Log_debug("[SPEC-RAFT] VoteDurable RPC to %d completed, ack=%d", candidate_id, ack);
   };
 
@@ -445,7 +445,7 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
       return;
     }
     bool_t ack = false;
-    fu->get_reply() >> ack;
+    rrr::deserialize_from(fu->get_reply(), ack);
     Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d completed, ack=%d", leader_id, ack);
   };
 
@@ -522,7 +522,7 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
       }
 
       bool_t acknowledged = false;
-      fu->get_reply() >> acknowledged;
+      rrr::deserialize_from(fu->get_reply(), acknowledged);
 
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
@@ -598,7 +598,7 @@ void RaftCommo::RetryPendingNotifyRestart() {
       }
 
       bool_t acknowledged = false;
-      fu->get_reply() >> acknowledged;
+      rrr::deserialize_from(fu->get_reply(), acknowledged);
 
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
@@ -691,7 +691,7 @@ void RaftCommo::SendInstallSnapshot(siteid_t site_id,
       }
 
       uint64_t follower_term = 0;
-      fu->get_reply() >> follower_term;
+      rrr::deserialize_from(fu->get_reply(), follower_term);
 
       Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site %d: term=%lu",
                site_id, follower_term);
@@ -765,10 +765,10 @@ void RaftCommo::SendAppendEntriesCb(
         return;
       }
       raft::AppendEntriesReply r{};
-      fu->get_reply() >> r.follower_append_ok;
-      fu->get_reply() >> r.follower_current_term;
-      fu->get_reply() >> r.follower_last_log_index;
-      fu->get_reply() >> r.follower_ack_type;
+      rrr::deserialize_from(fu->get_reply(), r.follower_append_ok);
+      rrr::deserialize_from(fu->get_reply(), r.follower_current_term);
+      rrr::deserialize_from(fu->get_reply(), r.follower_last_log_index);
+      rrr::deserialize_from(fu->get_reply(), r.follower_ack_type);
       on_reply(follower_id, r);
     };
 
@@ -835,8 +835,8 @@ void RaftCommo::BroadcastVoteCb(
       raft::VoteReply r{};
       ballot_t term = 0;
       bool_t vote = false;
-      fu->get_reply() >> term;
-      fu->get_reply() >> vote;
+      rrr::deserialize_from(fu->get_reply(), term);
+      rrr::deserialize_from(fu->get_reply(), vote);
       r.max_ballot = term;
       r.vote_granted = vote;
       on_reply(site_id, r);

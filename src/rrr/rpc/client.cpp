@@ -82,6 +82,18 @@ rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
     return std::move(guard);
 }
 
+// Read several values in sequence from a reply guard, replacing the legacy
+// chain `fu->get_reply() >> a >> b >> c`. get_reply() returns a fresh
+// RefMut<Marshal> BY VALUE, so the reads must share ONE guard (a per-value
+// re-call would re-read from the reply start). We bind the guard once
+// (rvalue-ref param; the temporary lives across the whole call) and fold over
+// the SAME `operator>>` bridge above, so each arg decodes through a
+// BinaryReadArchive in order — byte-identical to the operator chain.
+template<typename... Ts>
+inline void deserialize_from(rusty::RefMut<Marshal>&& src, Ts&... args) {
+    ( (void)(src >> args), ... );
+}
+
 }  // export namespace rrr
 
 // ===========================================================================

@@ -94,6 +94,44 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-17 — **Phase 7b — get_reply landmines (RESOLVED in code, build validating)**: two real bugs
+  surfaced building the folded batch-2. (1) `deserialize_from` first deref'd the guard to `Marshal&`
+  and called `m >> x` — but reply structs (generated rcc_rpc types like `Profiling`, `Command`) carry
+  ONLY Archive operators, no Marshal ones; the real reply path is the `operator>>(RefMut<Marshal>&, U&)`
+  bridge in rpc/client.cpp that wraps the guard's Marshal in a `BinaryReadArchive`. Marshal `m << x`/
+  `serialize(x,m)` flips (207 sites) are FINE — their operators live in `namespace janus` beside the
+  types, so ADL reaches them (build confirmed clean through [188/335]). (2) Rewriting `deserialize_from`
+  to build a `BinaryReadArchive` INSIDE marshal.cpp baked a `RefMut<Marshal>` specialization into the
+  (33 MB) marshal BMI and tripped a **clang-22 ASTReader SIGSEGV** (`finishPendingActions →
+  loadPendingDeclChain → readTemplateArgument → getCanonicalTagType`) when heavy consumers
+  (communicator.cc) imported it. FIX: `deserialize_from` moved to rpc/client.cpp next to the bridge it
+  reuses (`( (void)(src >> args), ... )`) — no archive re-instantiation, no new BMI entity in marshal;
+  marshal BMI reverts to catch-all-only (the [188/335]-clean state). LESSON: keep RefMut/archive
+  machinery out of the giant marshal BMI; the reply-read helper belongs with the client bridge.
+- 2026-07-17 — **Phase 7b IN PROGRESS**: chose Path A (add serialize-over-Marshal, flip call sites;
+  reversible — Phase 8 can still deprecate the Marshal path). Added a Marshal serde catch-all in
+  marshal.cpp (`rrr::Serialize_::serialize(const T&, Marshal&){ m << t; }` + Deserialize_ mirror;
+  marshal imports serializable so the namespaces reopen cleanly; bridges every type to the Marshal
+  operators via unqualified lookup + ADL — same mechanism as the Archive catch-all). Flipped 207
+  hand-written `m`/`req->m` Marshal sites (call sites + operator bodies) across 15 deptran/mako files
+  (chain-aware: config_schema.h multi-line chains expanded per-field; `(i32)`-cast operands + `req->m`
+  member sinks preserved). paxos_worker.h (comment refs) + txn_btree.cc (ostream `w0.m`) correctly
+  skipped. STAGED next (sub-batch 2c): `fu->get_reply() >> a >> b` (~94 sites, 14 commo/coord files) →
+  `rrr::deserialize_from(fu->get_reply(), a, b)` — a variadic helper that binds the RefMut<Marshal>
+  guard ONCE (get_reply returns a fresh guard by value; per-operand re-calls would re-read from reply
+  start = silent corruption). Build validating.
+- 2026-07-17 — **Phase 7a DONE (`fcf3b2ae`)**: flipped all 201 hand-written ARCHIVE call sites
+  (`ar << x`/`ar >> x` → `serialize`/`deserialize`) across 11 deptran files (incl. 5 chain splits).
+  Full deptran/dbtest build green. ★ ARCHIVE serde call-site sweep COMPLETE.
+  ★ REMAINING = the legacy MARSHAL layer (`m << x` ~170 sites + `get_reply() >>` ~94 across 10 commo.cc).
+  ANALYSIS: the trait is Archive-only; Marshal (module rrr.marshal) imports serializable (not vice
+  versa), so a Marshal catch-all `serialize(const T&, Marshal&){ m << t; }` must live in marshal.cpp
+  (reopening rrr::Serialize_ — visible at m-sites since they include marshal). The m-sites HAVE chains
+  (`m << a << b`) → need sequence-split; `get_reply() >>` needs rvalue-guard binding (`auto g =
+  fu->get_reply(); deserialize(x, *g);`). ★ ARCHITECTURAL FORK (user call): (A) add serialize-over-Marshal
+  + flip m-sites — makes ALL call sites use serialize (fast, but grows the legacy layer, wrong direction);
+  (B) deprecate the Marshal path, route through Archives (the clean end-state per marshal-serde-split,
+  larger). PR-CI-gated for runtime either way.
 - 2026-07-17 — **Phase 6 DONE (`14a3ca4b`)**: generator (`lang_cpp.py`) flipped — all 12 call-site emits
   now emit `serialize()`/`deserialize()`; regenerated all 4 stubs (rcc_rpc.h/network.h/helloworld.h/
   benchmark_service.h). Compiles+links through full deptran/dbtest build; marshal tests + rpcgen self-test

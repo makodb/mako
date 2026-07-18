@@ -967,14 +967,14 @@ class Graph {
     verify(managing_memory_);
     uint64_t n = size();
     verify(n >= 0 && n < 10000);
-    m << n;
+    rrr::Serialize_::serialize(n, m);
     int i = 0;
     for (auto &pair : const_cast<Graph *>(this)->vertex_index()) {
       auto &v = pair.second;
       i++;
 //      int32_t n_out_edge = v->outgoing_.size();
-      m << v->id();
-      m << *v;
+      rrr::Serialize_::serialize(v->id(), m);
+      rrr::Serialize_::serialize(*v, m);
 //      m << n_out_edge;
 //      for (auto &it : v->outgoing_) {
 //        V* vv = static_cast<V*>(it.first);
@@ -992,7 +992,7 @@ class Graph {
     verify(managing_memory_);
     verify(size() == 0);
     uint64_t n;
-    m >> n;
+    rrr::Deserialize_::deserialize(n, m);
     verify(n >= 0 && n < 10000);
     map<uint64_t, shared_ptr<V>> ref;
 //    map<uint64_t, map<int64_t, int8_t> > v_to;
@@ -1003,9 +1003,9 @@ class Graph {
 
     while (nn-- > 0) {
       uint64_t v_id;
-      m >> v_id;
+      rrr::Deserialize_::deserialize(v_id, m);
       ref[v_id].reset(new V(v_id)); // TODO? can new RccDTxn?
-      m >> *(ref[v_id]);
+      rrr::Deserialize_::deserialize(*(ref[v_id]), m);
 //      int32_t n_out_edge;
 //      m >> n_out_edge;
 //

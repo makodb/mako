@@ -47,7 +47,7 @@ void ConfigServiceImpl::ensure_cache_valid() {
 // @unsafe - Uses Marshal I/O
 std::string ConfigServiceImpl::serialize_config(const PersistentConfig& config) {
     rrr::Marshal m;
-    m << config;
+    rrr::Serialize_::serialize(config, m);
 
     // Extract data from Marshal to string
     std::string result;
@@ -150,7 +150,7 @@ void ConfigServiceImpl::ensure_sharding_cache_valid() {
 // @unsafe - Uses Marshal I/O
 std::string ConfigServiceImpl::serialize_sharding_policy(const ShardingPolicySet& policy) {
     rrr::Marshal m;
-    m << policy;
+    rrr::Serialize_::serialize(policy, m);
 
     // Extract data from Marshal to string
     std::string result;
@@ -169,7 +169,7 @@ void ConfigServiceImpl::SetShardingPolicy(
     m.write_bytes(reinterpret_cast<const std::uint8_t*>(rpc_req.policy_data.data()), rpc_req.policy_data.size());
 
     ShardingPolicySet policy;
-    m >> policy;
+    rrr::Deserialize_::deserialize(policy, m);
 
     // Save to store
     if (store_.save_sharding_policy(policy)) {

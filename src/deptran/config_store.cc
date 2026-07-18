@@ -183,9 +183,9 @@ bool ConfigStore::save(const PersistentConfig& config) {
         rrr::Marshal m;
         uint32_t size = static_cast<uint32_t>(config.sites.size());
         // @unsafe { Marshal write not borrow-checked }
-        m << size;
+        rrr::Serialize_::serialize(size, m);
         for (const auto& site : config.sites) {
-            m << site;
+            rrr::Serialize_::serialize(site, m);
         }
         std::string sites_str;
         serialize_to_string(m, &sites_str);
@@ -199,9 +199,9 @@ bool ConfigStore::save(const PersistentConfig& config) {
         rrr::Marshal m;
         uint32_t size = static_cast<uint32_t>(config.replica_groups.size());
         // @unsafe { Marshal write not borrow-checked }
-        m << size;
+        rrr::Serialize_::serialize(size, m);
         for (const auto& group : config.replica_groups) {
-            m << group;
+            rrr::Serialize_::serialize(group, m);
         }
         std::string replicas_str;
         serialize_to_string(m, &replicas_str);
@@ -214,7 +214,7 @@ bool ConfigStore::save(const PersistentConfig& config) {
     {
         rrr::Marshal m;
         // @unsafe { Marshal write not borrow-checked }
-        m << config.settings;
+        rrr::Serialize_::serialize(config.settings, m);
         std::string settings_str;
         serialize_to_string(m, &settings_str);
         rocksdb_writebatch_put(batch,
@@ -304,10 +304,10 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         deserialize_from_string(value, &m);
         uint32_t size;
         // @unsafe { Marshal read not borrow-checked }
-        m >> size;
+        rrr::Deserialize_::deserialize(size, m);
         config.sites.resize(size);
         for (uint32_t i = 0; i < size; ++i) {
-            m >> config.sites[i];
+            rrr::Deserialize_::deserialize(config.sites[i], m);
         }
     }
 
@@ -335,10 +335,10 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         deserialize_from_string(value, &m);
         uint32_t size;
         // @unsafe { Marshal read not borrow-checked }
-        m >> size;
+        rrr::Deserialize_::deserialize(size, m);
         config.replica_groups.resize(size);
         for (uint32_t i = 0; i < size; ++i) {
-            m >> config.replica_groups[i];
+            rrr::Deserialize_::deserialize(config.replica_groups[i], m);
         }
     }
 
@@ -365,7 +365,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         // @unsafe { Marshal read not borrow-checked }
-        m >> config.settings;
+        rrr::Deserialize_::deserialize(config.settings, m);
     }
 
     // @unsafe { logging I/O }
@@ -463,7 +463,7 @@ bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
     {
         rrr::Marshal m;
         // @unsafe { Marshal write not borrow-checked }
-        m << policy;
+        rrr::Serialize_::serialize(policy, m);
         std::string policy_str;
         serialize_to_string(m, &policy_str);
         rocksdb_writebatch_put(batch,
@@ -523,7 +523,7 @@ rusty::Option<ShardingPolicySet> ConfigStore::load_sharding_policy() {
     deserialize_from_string(value, &m);
     ShardingPolicySet policy;
     // @unsafe { Marshal read not borrow-checked }
-    m >> policy;
+    rrr::Deserialize_::deserialize(policy, m);
 
     // @unsafe { logging I/O }
     Log_info("ConfigStore: Loaded sharding policy version %lu with %zu tables",
