@@ -1493,68 +1493,72 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::string&
 // ---- Composites. ------------------------------------------------------
 // std::pair: write first then second, no length prefix (each side
 // already knows the type and consumes its own bytes).
+// Phase 8: container/pair serde overloads (operator bodies moved here;
+// the operators are now one-line forwarders). Forward declarations first
+// so nested containers resolve regardless of definition order; element
+// calls are unqualified and fall back to the generic catch-all.
+namespace Serialize_ {
+template<class T1, class T2> inline void serialize(const std::pair<T1, T2>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const std::vector<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const std::list<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const rusty::BTreeSet<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const std::set<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const rusty::HashSet<T>& v, BinaryWriteArchive& ar);
+template<class T> inline void serialize(const std::unordered_set<T>& v, BinaryWriteArchive& ar);
+template<class K, class V> inline void serialize(const rusty::BTreeMap<K, V>& v, BinaryWriteArchive& ar);
+template<class K, class V> inline void serialize(const std::map<K, V>& v, BinaryWriteArchive& ar);
+template<class K, class V> inline void serialize(const rusty::HashMap<K, V>& v, BinaryWriteArchive& ar);
+template<class K, class V> inline void serialize(const std::unordered_map<K, V>& v, BinaryWriteArchive& ar);
+
 template<class T1, class T2>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::pair<T1, T2>& v) {
-  ar << v.first;
-  ar << v.second;
-  return ar;
+inline void serialize(const std::pair<T1, T2>& v, BinaryWriteArchive& ar) {
+  serialize(v.first, ar);
+  serialize(v.second, ar);
 }
 
-// ---- Linear containers (length prefix + sequential elements). --------
-// All linear containers share the wire format: v64 length prefix
-// followed by each element serialized via operator<<. Iteration
-// order matches the container's begin()/end(). For ordered containers
-// (set/map/BTreeSet/BTreeMap) this is sorted-key order. For unordered
-// containers (unordered_set/unordered_map/HashSet/HashMap) it's
-// bucket-walk order — same iteration order as the existing
-// `Marshal` operator<<, so byte-for-byte compatibility holds.
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::Vec<T>& v) {
+inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
-  return ar;
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::vector<T>& v) {
+inline void serialize(const std::vector<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
-  return ar;
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::list<T>& v) {
+inline void serialize(const std::list<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
-  return ar;
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeSet<T>& v) {
+inline void serialize(const rusty::BTreeSet<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  ar << v_len;
+  serialize(v_len, ar);
   // rusty BTreeSet has no begin()/end(); iterate the Rust-style iterator.
   auto __it = v.iter();
   for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-    ar << std::move(__e).unwrap();
-  return ar;
+    serialize(std::move(__e).unwrap(), ar);
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::set<T>& v) {
+inline void serialize(const std::set<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
-  return ar;
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashSet<T>& v) {
+inline void serialize(const rusty::HashSet<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  ar << v_len;
+  serialize(v_len, ar);
   // HashSet wraps a HashMap<T, monostate>; walk the underlying map's const
   // Rust iterator (HashSet's own begin()/end() is non-const). next() yields
   // Option<tuple<const T&, ...>>.
@@ -1568,46 +1572,44 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashS
   // RustyHashSetPrimitives test for the decoder-only workaround.
   auto __it = v.map.iter();
   for (auto __e = __it.next(); __e.is_some(); __e = __it.next())
-    ar << std::get<0>(std::move(__e).unwrap());
-  return ar;
+    serialize(std::get<0>(std::move(__e).unwrap()), ar);
 }
 
 template<class T>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_set<T>& v) {
+inline void serialize(const std::unordered_set<T>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) ar << *it;
-  return ar;
 }
 
 template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeMap<K, V>& v) {
+inline void serialize(const rusty::BTreeMap<K, V>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  ar << v_len;
+  serialize(v_len, ar);
   // rusty BTreeMap has no begin()/end(); iterate the Rust-style iterator.
   // iter().next() yields Option<std::tuple<const K&, V&>>.
   auto __it = v.iter();
   for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
     auto kv = std::move(__e).unwrap();
-    ar << std::get<0>(kv) << std::get<1>(kv);
+    serialize(std::get<0>(kv), ar);
+    serialize(std::get<1>(kv), ar);
   }
-  return ar;
 }
 
 template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::map<K, V>& v) {
+inline void serialize(const std::map<K, V>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) {
-    ar << it->first << it->second;
+    serialize(it->first, ar);
+    serialize(it->second, ar);
   }
-  return ar;
 }
 
 template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashMap<K, V>& v) {
+inline void serialize(const rusty::HashMap<K, V>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.len())};
-  ar << v_len;
+  serialize(v_len, ar);
   // rusty HashMap has no const begin()/end(); iterate via the Rust iterator.
   // iter().next() yields Option<std::tuple<const K&, const V&>>.
   // WARNING: like rusty::HashSet above, hashbrown enumeration crashes
@@ -1615,20 +1617,66 @@ inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashM
   auto __it = v.iter();
   for (auto __e = __it.next(); __e.is_some(); __e = __it.next()) {
     auto kv = std::move(__e).unwrap();
-    ar << std::get<0>(kv) << std::get<1>(kv);
+    serialize(std::get<0>(kv), ar);
+    serialize(std::get<1>(kv), ar);
   }
-  return ar;
 }
 
 template<class K, class V>
-inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_map<K, V>& v) {
+inline void serialize(const std::unordered_map<K, V>& v, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(v.size())};
-  ar << v_len;
+  serialize(v_len, ar);
   for (auto it = v.begin(); it != v.end(); ++it) {
-    ar << it->first << it->second;
+    serialize(it->first, ar);
+    serialize(it->second, ar);
   }
-  return ar;
 }
+
+}  // namespace Serialize_
+
+template<class T1, class T2>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::pair<T1, T2>& v) { Serialize_::serialize(v, ar); return ar; }
+
+// ---- Linear containers (length prefix + sequential elements). --------
+// All linear containers share the wire format: v64 length prefix
+// followed by each element serialized via operator<<. Iteration
+// order matches the container's begin()/end(). For ordered containers
+// (set/map/BTreeSet/BTreeMap) this is sorted-key order. For unordered
+// containers (unordered_set/unordered_map/HashSet/HashMap) it's
+// bucket-walk order — same iteration order as the existing
+// `Marshal` operator<<, so byte-for-byte compatibility holds.
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::Vec<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::vector<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::list<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeSet<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::set<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashSet<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class T>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_set<T>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::BTreeMap<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::map<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const rusty::HashMap<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
+
+template<class K, class V>
+inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const std::unordered_map<K, V>& v) { Serialize_::serialize(v, ar); return ar; }
 
 
 // `BinaryReadArchive` — the wire-format decoder over a type-erased
@@ -2528,176 +2576,224 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rrr::v64& v) { Deser
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::string& s) { Deserialize_::deserialize(s, ar); return ar; }
 
 // ---- Composites. ------------------------------------------------------
+// Phase 8: container/pair serde overloads (operator bodies moved here;
+// the operators are now one-line forwarders). Forward declarations first
+// so nested containers resolve regardless of definition order; element
+// calls are unqualified and fall back to the generic catch-all.
+namespace Deserialize_ {
+template<class T1, class T2> inline void deserialize(std::pair<T1, T2>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(rusty::Vec<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(std::vector<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(std::list<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(rusty::BTreeSet<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(std::set<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(rusty::HashSet<T>& v, BinaryReadArchive& ar);
+template<class T> inline void deserialize(std::unordered_set<T>& v, BinaryReadArchive& ar);
+template<class K, class V> inline void deserialize(rusty::BTreeMap<K, V>& v, BinaryReadArchive& ar);
+template<class K, class V> inline void deserialize(std::map<K, V>& v, BinaryReadArchive& ar);
+template<class K, class V> inline void deserialize(rusty::HashMap<K, V>& v, BinaryReadArchive& ar);
+template<class K, class V> inline void deserialize(std::unordered_map<K, V>& v, BinaryReadArchive& ar);
+
 template<class T1, class T2>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::pair<T1, T2>& v) {
-  ar >> v.first;
-  ar >> v.second;
-  return ar;
+inline void deserialize(std::pair<T1, T2>& v, BinaryReadArchive& ar) {
+  deserialize(v.first, ar);
+  deserialize(v.second, ar);
 }
+
+template<class T>
+inline void deserialize(rusty::Vec<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  v.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.push(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(std::vector<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  v.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.push_back(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(std::list<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.push_back(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(rusty::BTreeSet<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.insert(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(std::set<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.insert(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(rusty::HashSet<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.insert(std::move(elem));
+  }
+}
+
+template<class T>
+inline void deserialize(std::unordered_set<T>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    T elem{};
+    deserialize(elem, ar);
+    v.insert(std::move(elem));
+  }
+}
+
+template<class K, class V>
+inline void deserialize(rusty::BTreeMap<K, V>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    deserialize(key, ar);
+    deserialize(value, ar);
+    v.insert(std::move(key), std::move(value));
+  }
+}
+
+template<class K, class V>
+inline void deserialize(std::map<K, V>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    deserialize(key, ar);
+    deserialize(value, ar);
+    v.emplace(std::move(key), std::move(value));
+  }
+}
+
+template<class K, class V>
+inline void deserialize(rusty::HashMap<K, V>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    deserialize(key, ar);
+    deserialize(value, ar);
+    v.insert(std::move(key), std::move(value));
+  }
+}
+
+template<class K, class V>
+inline void deserialize(std::unordered_map<K, V>& v, BinaryReadArchive& ar) {
+  rrr::v64 v_len{0};
+  deserialize(v_len, ar);
+  v.clear();
+  auto n = static_cast<size_t>(v_len.get());
+  for (size_t i = 0; i < n; ++i) {
+    K key{};
+    V value{};
+    deserialize(key, ar);
+    deserialize(value, ar);
+    v.emplace(std::move(key), std::move(value));
+  }
+}
+
+}  // namespace Deserialize_
+
+template<class T1, class T2>
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::pair<T1, T2>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 // ---- Linear containers. -----------------------------------------------
 // Wire format: v64 length prefix + N elements deserialized in order.
 // Containers are cleared first; matches the existing Marshal operator>>
 // semantics.
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::Vec<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  v.reserve(n);
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.push(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::Vec<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::vector<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  v.reserve(n);
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.push_back(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::vector<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::list<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.push_back(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::list<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeSet<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.insert(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeSet<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::set<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.insert(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::set<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashSet<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.insert(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashSet<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class T>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_set<T>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    T elem{};
-    ar >> elem;
-    v.insert(std::move(elem));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_set<T>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeMap<K, V>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    ar >> key >> value;
-    v.insert(std::move(key), std::move(value));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::BTreeMap<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::map<K, V>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    ar >> key >> value;
-    v.emplace(std::move(key), std::move(value));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::map<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashMap<K, V>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    ar >> key >> value;
-    v.insert(std::move(key), std::move(value));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, rusty::HashMap<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 template<class K, class V>
-inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_map<K, V>& v) {
-  rrr::v64 v_len{0};
-  ar >> v_len;
-  v.clear();
-  auto n = static_cast<size_t>(v_len.get());
-  for (size_t i = 0; i < n; ++i) {
-    K key{};
-    V value{};
-    ar >> key >> value;
-    v.emplace(std::move(key), std::move(value));
-  }
-  return ar;
-}
+inline BinaryReadArchive& operator>>(BinaryReadArchive& ar, std::unordered_map<K, V>& v) { Deserialize_::deserialize(v, ar); return ar; }
 
 
 // ---------------------------------------------------------------------------
