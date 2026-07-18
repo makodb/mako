@@ -256,21 +256,35 @@ inline std::shared_ptr<T> marshallable_cast(
 // Free archive operators — let SerializableEnvelope ride directly in
 // rpcgen-emitted RPC struct fields the same way any other Serializable
 // type does.
+// Phase 8 batch 4: serde free functions own the envelope wire format; the
+// operators below are forwarders kept until the operator layer is deleted.
 // @unsafe - forwards to `env.save(ar)` which drives a Marshal
 // operator<< chain.
 template<typename TypeList>
+inline void serialize(const SerializableEnvelope<TypeList>& env,
+                      BinaryWriteArchive& ar) {
+  env.save(ar);
+}
+
+template<typename TypeList>
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const SerializableEnvelope<TypeList>& env) {
-  env.save(ar);
+  serialize(env, ar);
   return ar;
 }
 
 // @unsafe - forwards to `env.load(ar)` which drives a Marshal
 // operator>> chain.
 template<typename TypeList>
+inline void deserialize(SerializableEnvelope<TypeList>& env,
+                        BinaryReadArchive& ar) {
+  env.load(ar);
+}
+
+template<typename TypeList>
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
                                      SerializableEnvelope<TypeList>& env) {
-  env.load(ar);
+  deserialize(env, ar);
   return ar;
 }
 
@@ -281,21 +295,31 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
 // @unsafe - constructs MarshalSink + BinaryWriteArchive and drives a
 // Marshal operator<< chain via `env.save(ar)`.
 template<typename TypeList>
-inline Marshal& operator<<(Marshal& m,
-                           const SerializableEnvelope<TypeList>& env) {
+inline void serialize(const SerializableEnvelope<TypeList>& env, Marshal& m) {
   verify(env.has_value());
   BinaryWriteArchive ar(make_sink_proxy(&m));
   env.save(ar);
+}
+
+template<typename TypeList>
+inline Marshal& operator<<(Marshal& m,
+                           const SerializableEnvelope<TypeList>& env) {
+  serialize(env, m);
   return m;
 }
 
 // @unsafe - constructs BinaryReadArchive and drives a Marshal
 // operator>> chain via `env.load(ar)`.
 template<typename TypeList>
-inline Marshal& operator>>(Marshal& m,
-                           SerializableEnvelope<TypeList>& env) {
+inline void deserialize(SerializableEnvelope<TypeList>& env, Marshal& m) {
   BinaryReadArchive ar(make_source_proxy(&m));
   env.load(ar);
+}
+
+template<typename TypeList>
+inline Marshal& operator>>(Marshal& m,
+                           SerializableEnvelope<TypeList>& env) {
+  deserialize(env, m);
   return m;
 }
 

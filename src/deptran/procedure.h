@@ -117,6 +117,18 @@ class TxRequest {
   // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
 };
 
+// Phase 8 batch 4: serde free functions own the TxWorkspace/TxReply wire
+// formats; the operators below are forwarders kept until the operator
+// layer is deleted.
+void serialize(const TxWorkspace &ws, Marshal &m);
+void deserialize(TxWorkspace &ws, Marshal &m);
+void serialize(const TxWorkspace &ws, BinaryWriteArchive &ar);
+void deserialize(TxWorkspace &ws, BinaryReadArchive &ar);
+void serialize(const TxReply &reply, Marshal &m);
+void deserialize(TxReply &reply, Marshal &m);
+void serialize(const TxReply &reply, BinaryWriteArchive &ar);
+void deserialize(TxReply &reply, BinaryReadArchive &ar);
+
 Marshal& operator << (Marshal& m, const TxWorkspace &ws);
 
 Marshal& operator >> (Marshal& m, TxWorkspace& ws);

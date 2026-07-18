@@ -65,7 +65,7 @@ TxData::TxData() {
   early_return_ = Config::GetConfig()->do_early_return();
 }
 
-Marshal& operator << (Marshal& m, const TxWorkspace &ws) {
+void serialize(const TxWorkspace &ws, Marshal& m) {
   rrr::Serialize_::serialize((ws.keys_), m);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
@@ -77,10 +77,11 @@ Marshal& operator << (Marshal& m, const TxWorkspace &ws) {
     }
   }
   rrr::Serialize_::serialize(-1, m);
-  return m;
 }
 
-Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
+Marshal& operator<<(Marshal& m, const TxWorkspace &ws) { serialize(ws, m); return m; }
+
+void deserialize(TxWorkspace &ws, Marshal& m) {
   rrr::Deserialize_::deserialize(ws.keys_, m);
   while (true) {
     int32_t k;
@@ -93,14 +94,15 @@ Marshal& operator >> (Marshal& m, TxWorkspace &ws) {
       break;
     }
   }
-  return m;
 }
+
+Marshal& operator>>(Marshal& m, TxWorkspace &ws) { deserialize(ws, m); return m; }
 
 // archive operators for TxWorkspace.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
 // terminated by k=-1.
-BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws) {
+void serialize(const TxWorkspace &ws, BinaryWriteArchive& ar) {
   rrr::Serialize_::serialize(ws.keys_, ar);
   auto& input_vars = *ws.values_;
   for (int32_t k : ws.keys_) {
@@ -111,10 +113,11 @@ BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws) 
     }
   }
   rrr::Serialize_::serialize(static_cast<int32_t>(-1), ar);
-  return ar;
 }
 
-BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
+BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxWorkspace &ws) { serialize(ws, ar); return ar; }
+
+void deserialize(TxWorkspace &ws, BinaryReadArchive& ar) {
   rrr::Deserialize_::deserialize(ws.keys_, ar);
   while (true) {
     int32_t k;
@@ -127,10 +130,11 @@ BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace &ws) {
       break;
     }
   }
-  return ar;
 }
 
-Marshal& operator << (Marshal& m, const TxReply& reply) {
+BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxWorkspace &ws) { deserialize(ws, ar); return ar; }
+
+void serialize(const TxReply& reply, Marshal& m) {
   rrr::Serialize_::serialize(reply.res_, m);
   rrr::Serialize_::serialize(reply.output_, m);
   rrr::Serialize_::serialize(reply.n_try_, m);
@@ -151,10 +155,11 @@ Marshal& operator << (Marshal& m, const TxReply& reply) {
     rrr::Serialize_::serialize(view_md, m);
   }
 
-  return m;
 }
 
-Marshal& operator >> (Marshal& m, TxReply& reply) {
+Marshal& operator<<(Marshal& m, const TxReply& reply) { serialize(reply, m); return m; }
+
+void deserialize(TxReply& reply, Marshal& m) {
   rrr::Deserialize_::deserialize(reply.res_, m);
   rrr::Deserialize_::deserialize(reply.output_, m);
   rrr::Deserialize_::deserialize(reply.n_try_, m);
@@ -173,15 +178,16 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
     reply.sp_view_data_ = nullptr;
   }
 
-  return m;
 }
+
+Marshal& operator>>(Marshal& m, TxReply& reply) { deserialize(reply, m); return m; }
 
 // archive operators for TxReply. Wire format
 // byte-for-byte identical to the Marshal-based pair above:
 //   res_ (i32) | output_ (map<int32_t, Value>) | n_try_ (i32) |
 //   time_ (double) | txn_type_ (i32) |
 //   has_view_data (bool_t) | optional MarshallDeputy view_md
-BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
+void serialize(const TxReply& reply, BinaryWriteArchive& ar) {
   rrr::Serialize_::serialize(reply.res_, ar);
   rrr::Serialize_::serialize(reply.output_, ar);
   rrr::Serialize_::serialize(reply.n_try_, ar);
@@ -196,10 +202,11 @@ BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply) {
     view_md = reply.sp_view_data_;
     rrr::Serialize_::serialize(view_md, ar);
   }
-  return ar;
 }
 
-BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
+BinaryWriteArchive& operator<<(BinaryWriteArchive& ar, const TxReply& reply) { serialize(reply, ar); return ar; }
+
+void deserialize(TxReply& reply, BinaryReadArchive& ar) {
   rrr::Deserialize_::deserialize(reply.res_, ar);
   rrr::Deserialize_::deserialize(reply.output_, ar);
   rrr::Deserialize_::deserialize(reply.n_try_, ar);
@@ -216,8 +223,9 @@ BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxReply& reply) {
   } else {
     reply.sp_view_data_ = nullptr;
   }
-  return ar;
 }
+
+BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxReply& reply) { deserialize(reply, ar); return ar; }
 
 set<parid_t>& TxData::GetPartitionIds() {
   return partition_ids_;
