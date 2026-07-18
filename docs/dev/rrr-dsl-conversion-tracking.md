@@ -94,6 +94,40 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Phase 8 batch 1 attempted + reverted (lesson recorded)**: converting the 26
+  Archive container/pair operators in serializable.cpp to Serialize_/Deserialize_ templates.
+  DESIGN validated: (a) specific container overloads beat the catch-all in partial ordering, so
+  flipping is transparent; (b) fwd-declare ALL container overloads before definitions so nested
+  containers (vector<map<...>>) resolve regardless of order; (c) inside bodies use UNQUALIFIED
+  serialize(elem, ar) — definition-context lookup falls back to the catch-all for user types;
+  (d) operators stay as one-line forwarders until final deletion. EXECUTION failed: a regex
+  extractor tolerating only one brace-nesting level mangled read-side bodies (mismatched braces
+  near TypeList) → reverted to pre-batch state, build re-greened. NEXT ATTEMPT: brace-counting
+  parser (or hand-edit the 26 with the design above). Then: generator struct-operator emission
+  → serde overloads (lang_cpp.py lines ~36-46/101-110), THEN operator deletion — which is also
+  the remaining build-time lever (shrinks marshal/serializable BMIs → shorter cascade chain).
+- 2026-07-18 — **Build-time campaign CLOSED (all levers measured)**: local mirror infra landed
+  (configure 31s, full ~7.5min, cascade 273s @-j24, leaf 20s; recipe in memory
+  local-disk-build-recipe + /var/tmp/mako-srpc/build.sh). Umbrella trim committed (`08b68144`,
+  rrr.hpp 30→22). Every remaining lever measured DEAD: reduced-BMI (pcm literally identical —
+  all-inline-exported shape), restat pruning (SourceLocations shift on any edit), GMF hygiene
+  (probe: umbrella costs 3MB of client's 57MB), lld (link is 1.5s), AND the impl-unit split —
+  mechanical chain PROVEN via rrr.utils probe (auto-glob, scanner, dyndep, 3s no-cascade leaf)
+  but the CEILING (client.cpp, all 201 non-template bodies stripped, pcm-only): 41.5s/44.7MB vs
+  60s/57MB → ~18s of 273s (7%) for a transpiler feature + inlining tradeoff. NOT WORTH IT.
+  BMI bulk = type graph + templates, not bodies. Forward path: the migration itself (Phase 8
+  deletes ~40 Marshal operators + relocates container ops → smaller marshal/serializable BMIs =
+  shorter chain), i.e. migration work and build-time work have converged.
+- 2026-07-18 — **Phase 7b DONE (`52845523`)**: Marshal-layer sweep landed — Marshal-sink serde
+  catch-alls in marshal.cpp, 207 `m <<`/`req->m >>` flips (15 files), variadic `deserialize_from`
+  in rpc/client.cpp + 88 `get_reply() >>` chain flips (12 commo/coord files). Validated on the NEW
+  local-disk build (full dbtest link green, test_marshal 22/22). ★ ALL hand-written serialization
+  call sites in deptran/mako are now serde-style; Phase 8 (delete/relocate the operators) is next.
+  ★ BUILD-SPEED sidebar: NFS is fatal for the modules build (D-state scanners at 1 step/3min);
+  fixed with a full local mirror at /var/tmp/mako-srpc (tree + llvm keg + cmake + ninja) — configure
+  1688s→31s, full dbtest build ~9 min, incremental test_marshal 20s. Keg copy needs
+  -DCMAKE_EXE_LINKER_FLAGS=-L<keg>/lib + rpath or the SYSTEM libc++ (no __hash_memory) shadows the
+  keg's at link. Recipe in memory local-disk-build-recipe.
 - 2026-07-17 — **Phase 7b — get_reply landmines (RESOLVED in code, build validating)**: two real bugs
   surfaced building the folded batch-2. (1) `deserialize_from` first deref'd the guard to `Marshal&`
   and called `m >> x` — but reply structs (generated rcc_rpc types like `Profiling`, `Command`) carry
