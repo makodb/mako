@@ -1849,6 +1849,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_extended ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_extended COMMAND test_rpc_extended)
 
+    # Head-of-line blocking repro (single-threaded server; see
+    # src/rrr/rpc/SINGLE_THREAD_HEAD_OF_LINE.md)
+    add_executable(test_rpc_hol src/rrr/tests/rpc_head_of_line_blocking_test.cc src/rrr/tests/benchmark_service.cc)
+    target_include_directories(test_rpc_hol PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_hol PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_hol ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_hol COMMAND test_rpc_hol)
+
     # Extended Reactor Tests
     add_executable(test_reactor_extended src/rrr/tests/test_reactor_extended.cc)
     target_include_directories(test_reactor_extended PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
