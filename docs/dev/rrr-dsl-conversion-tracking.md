@@ -94,6 +94,16 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **★ PHASE 8 COMPLETE — operator layer DELETED**: endgame pt1 (Archive decoy-ADL,
+  4ce047b2) + pt2a (Marshal scalars into serde + Marshal decoy-ADL, 2fd1d6c7) + 2b-prep (rpcgen
+  friend-emission serde, 776→0 raw streams in rcc_rpc.h, ace147ef) + the deletion itself: all 97
+  forwarders dropped from rrr.serializable/rrr.marshal; final stragglers (log_storage save/load
+  bodies, idempotency, client heartbeat, server header reads, test_marshal's 130 stream exprs)
+  named by the deletion diagnostic and converted. BMI measured: serializable 32.6MB, marshal
+  31.7MB (~1-2MB shrink; bulk = type graph per the ceiling probe — Phase 8's payoff is
+  STRUCTURAL: one serialization surface, compiler-enforced coverage). Wire format byte-identical
+  end-to-end (test_marshal 22/22 across every batch). Textual-header forwarders (generated stubs,
+  per-type files) remain as harmless compat shims — removable as hygiene whenever.
 - 2026-07-18 — **Phase 8 batch 4 CONVERSION COMPLETE (6 slices, all landed green)**: the whole
   census is converted — exemplar Vertex<T>* (26a01363), MultiValue+mdb::Value (f6e3111a),
   SimpleCommand (fd2a5810), config_schema+rcc/tx (c75fbd6c), TxWorkspace/TxReply/envelope
