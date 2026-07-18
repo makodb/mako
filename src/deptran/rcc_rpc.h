@@ -19,34 +19,38 @@ struct ValueTimesPair {
     rrr::i64 times;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ValueTimesPair& o) {
-    ar << o.value;
-    ar << o.times;
-    return ar;
+inline void serialize(const ValueTimesPair& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.value, ar);
+    rrr::Serialize_::serialize(o.times, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ValueTimesPair& o) {
-    ar >> o.value;
-    ar >> o.times;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ValueTimesPair& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(ValueTimesPair& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.value, ar);
+    rrr::Deserialize_::deserialize(o.times, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ValueTimesPair& o) { deserialize(o, ar); return ar; }
 
 struct DepId {
     std::string str;
     rrr::i64 id;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const DepId& o) {
-    ar << o.str;
-    ar << o.id;
-    return ar;
+inline void serialize(const DepId& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.str, ar);
+    rrr::Serialize_::serialize(o.id, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, DepId& o) {
-    ar >> o.str;
-    ar >> o.id;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const DepId& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(DepId& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.str, ar);
+    rrr::Deserialize_::deserialize(o.id, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, DepId& o) { deserialize(o, ar); return ar; }
 
 struct TxnInfoRes {
     rrr::i32 start_txn;
@@ -62,35 +66,37 @@ struct TxnInfoRes {
     std::vector<rrr::i32> num_try;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnInfoRes& o) {
-    ar << o.start_txn;
-    ar << o.total_txn;
-    ar << o.total_try;
-    ar << o.commit_txn;
-    ar << o.num_exhausted;
-    ar << o.this_latency;
-    ar << o.last_latency;
-    ar << o.attempt_latency;
-    ar << o.interval_latency;
-    ar << o.all_interval_latency;
-    ar << o.num_try;
-    return ar;
+inline void serialize(const TxnInfoRes& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.start_txn, ar);
+    rrr::Serialize_::serialize(o.total_txn, ar);
+    rrr::Serialize_::serialize(o.total_try, ar);
+    rrr::Serialize_::serialize(o.commit_txn, ar);
+    rrr::Serialize_::serialize(o.num_exhausted, ar);
+    rrr::Serialize_::serialize(o.this_latency, ar);
+    rrr::Serialize_::serialize(o.last_latency, ar);
+    rrr::Serialize_::serialize(o.attempt_latency, ar);
+    rrr::Serialize_::serialize(o.interval_latency, ar);
+    rrr::Serialize_::serialize(o.all_interval_latency, ar);
+    rrr::Serialize_::serialize(o.num_try, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnInfoRes& o) {
-    ar >> o.start_txn;
-    ar >> o.total_txn;
-    ar >> o.total_try;
-    ar >> o.commit_txn;
-    ar >> o.num_exhausted;
-    ar >> o.this_latency;
-    ar >> o.last_latency;
-    ar >> o.attempt_latency;
-    ar >> o.interval_latency;
-    ar >> o.all_interval_latency;
-    ar >> o.num_try;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnInfoRes& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(TxnInfoRes& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.start_txn, ar);
+    rrr::Deserialize_::deserialize(o.total_txn, ar);
+    rrr::Deserialize_::deserialize(o.total_try, ar);
+    rrr::Deserialize_::deserialize(o.commit_txn, ar);
+    rrr::Deserialize_::deserialize(o.num_exhausted, ar);
+    rrr::Deserialize_::deserialize(o.this_latency, ar);
+    rrr::Deserialize_::deserialize(o.last_latency, ar);
+    rrr::Deserialize_::deserialize(o.attempt_latency, ar);
+    rrr::Deserialize_::deserialize(o.interval_latency, ar);
+    rrr::Deserialize_::deserialize(o.all_interval_latency, ar);
+    rrr::Deserialize_::deserialize(o.num_try, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnInfoRes& o) { deserialize(o, ar); return ar; }
 
 struct ServerResponse {
     std::map<std::string, ValueTimesPair> statistics;
@@ -101,25 +107,27 @@ struct ServerResponse {
     rrr::i64 r_sz_num;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ServerResponse& o) {
-    ar << o.statistics;
-    ar << o.cpu_util;
-    ar << o.r_cnt_sum;
-    ar << o.r_cnt_num;
-    ar << o.r_sz_sum;
-    ar << o.r_sz_num;
-    return ar;
+inline void serialize(const ServerResponse& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.statistics, ar);
+    rrr::Serialize_::serialize(o.cpu_util, ar);
+    rrr::Serialize_::serialize(o.r_cnt_sum, ar);
+    rrr::Serialize_::serialize(o.r_cnt_num, ar);
+    rrr::Serialize_::serialize(o.r_sz_sum, ar);
+    rrr::Serialize_::serialize(o.r_sz_num, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ServerResponse& o) {
-    ar >> o.statistics;
-    ar >> o.cpu_util;
-    ar >> o.r_cnt_sum;
-    ar >> o.r_cnt_num;
-    ar >> o.r_sz_sum;
-    ar >> o.r_sz_num;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ServerResponse& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(ServerResponse& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.statistics, ar);
+    rrr::Deserialize_::deserialize(o.cpu_util, ar);
+    rrr::Deserialize_::deserialize(o.r_cnt_sum, ar);
+    rrr::Deserialize_::deserialize(o.r_cnt_num, ar);
+    rrr::Deserialize_::deserialize(o.r_sz_sum, ar);
+    rrr::Deserialize_::deserialize(o.r_sz_num, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ServerResponse& o) { deserialize(o, ar); return ar; }
 
 struct ClientResponse {
     std::map<rrr::i32, TxnInfoRes> txn_info;
@@ -131,27 +139,29 @@ struct ClientResponse {
     rrr::i64 n_asking;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ClientResponse& o) {
-    ar << o.txn_info;
-    ar << o.run_sec;
-    ar << o.run_nsec;
-    ar << o.period_sec;
-    ar << o.period_nsec;
-    ar << o.is_finish;
-    ar << o.n_asking;
-    return ar;
+inline void serialize(const ClientResponse& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.txn_info, ar);
+    rrr::Serialize_::serialize(o.run_sec, ar);
+    rrr::Serialize_::serialize(o.run_nsec, ar);
+    rrr::Serialize_::serialize(o.period_sec, ar);
+    rrr::Serialize_::serialize(o.period_nsec, ar);
+    rrr::Serialize_::serialize(o.is_finish, ar);
+    rrr::Serialize_::serialize(o.n_asking, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ClientResponse& o) {
-    ar >> o.txn_info;
-    ar >> o.run_sec;
-    ar >> o.run_nsec;
-    ar >> o.period_sec;
-    ar >> o.period_nsec;
-    ar >> o.is_finish;
-    ar >> o.n_asking;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const ClientResponse& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(ClientResponse& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.txn_info, ar);
+    rrr::Deserialize_::deserialize(o.run_sec, ar);
+    rrr::Deserialize_::deserialize(o.run_nsec, ar);
+    rrr::Deserialize_::deserialize(o.period_sec, ar);
+    rrr::Deserialize_::deserialize(o.period_nsec, ar);
+    rrr::Deserialize_::deserialize(o.is_finish, ar);
+    rrr::Deserialize_::deserialize(o.n_asking, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, ClientResponse& o) { deserialize(o, ar); return ar; }
 
 struct Profiling {
     double cpu_util;
@@ -160,21 +170,23 @@ struct Profiling {
     double mem_util;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const Profiling& o) {
-    ar << o.cpu_util;
-    ar << o.tx_util;
-    ar << o.rx_util;
-    ar << o.mem_util;
-    return ar;
+inline void serialize(const Profiling& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.cpu_util, ar);
+    rrr::Serialize_::serialize(o.tx_util, ar);
+    rrr::Serialize_::serialize(o.rx_util, ar);
+    rrr::Serialize_::serialize(o.mem_util, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, Profiling& o) {
-    ar >> o.cpu_util;
-    ar >> o.tx_util;
-    ar >> o.rx_util;
-    ar >> o.mem_util;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const Profiling& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(Profiling& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.cpu_util, ar);
+    rrr::Deserialize_::deserialize(o.tx_util, ar);
+    rrr::Deserialize_::deserialize(o.rx_util, ar);
+    rrr::Deserialize_::deserialize(o.mem_util, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, Profiling& o) { deserialize(o, ar); return ar; }
 
 struct TxDispatchRequest {
     rrr::i32 id;
@@ -182,30 +194,34 @@ struct TxDispatchRequest {
     std::vector<Value> input;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxDispatchRequest& o) {
-    ar << o.id;
-    ar << o.tx_type;
-    ar << o.input;
-    return ar;
+inline void serialize(const TxDispatchRequest& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.id, ar);
+    rrr::Serialize_::serialize(o.tx_type, ar);
+    rrr::Serialize_::serialize(o.input, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxDispatchRequest& o) {
-    ar >> o.id;
-    ar >> o.tx_type;
-    ar >> o.input;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxDispatchRequest& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(TxDispatchRequest& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.id, ar);
+    rrr::Deserialize_::deserialize(o.tx_type, ar);
+    rrr::Deserialize_::deserialize(o.input, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxDispatchRequest& o) { deserialize(o, ar); return ar; }
 
 struct TxnDispatchResponse {
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnDispatchResponse& o) {
-    return ar;
+inline void serialize(const TxnDispatchResponse& o, rrr::BinaryWriteArchive& ar) {
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnDispatchResponse& o) {
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const TxnDispatchResponse& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(TxnDispatchResponse& o, rrr::BinaryReadArchive& ar) {
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, TxnDispatchResponse& o) { deserialize(o, ar); return ar; }
 
 class MultiPaxosService {
 public:

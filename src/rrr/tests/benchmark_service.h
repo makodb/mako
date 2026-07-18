@@ -20,19 +20,21 @@ struct point3 {
     double z;
 };
 
-inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const point3& o) {
-    ar << o.x;
-    ar << o.y;
-    ar << o.z;
-    return ar;
+inline void serialize(const point3& o, rrr::BinaryWriteArchive& ar) {
+    rrr::Serialize_::serialize(o.x, ar);
+    rrr::Serialize_::serialize(o.y, ar);
+    rrr::Serialize_::serialize(o.z, ar);
 }
 
-inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, point3& o) {
-    ar >> o.x;
-    ar >> o.y;
-    ar >> o.z;
-    return ar;
+inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const point3& o) { serialize(o, ar); return ar; }
+
+inline void deserialize(point3& o, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(o.x, ar);
+    rrr::Deserialize_::deserialize(o.y, ar);
+    rrr::Deserialize_::deserialize(o.z, ar);
 }
+
+inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, point3& o) { deserialize(o, ar); return ar; }
 
 class BenchmarkService {
 public:

@@ -33,19 +33,28 @@ def emit_struct(struct, f, archive=False):
     # version on a user/typed struct.  Pairs with Phase 3e-2's
     # earlier removal of the `Marshal& operator<<` emission.
     if archive:
-        f.writeln("inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) {" % struct.name)
+        # Phase 8: the serde free functions own the wire format; the
+        # operators are one-line forwarders kept only until the operator
+        # layer is deleted. serialize/deserialize live in the struct's own
+        # namespace so ADL finds them; fields route through the qualified
+        # serde namespace (specific overload when one exists, generic
+        # catch-all otherwise). Byte layout identical to the old inline
+        # field-by-field operators.
+        f.writeln("inline void serialize(const %s& o, rrr::BinaryWriteArchive& ar) {" % struct.name)
         with f.indent():
             for field in struct.fields:
-                f.writeln("ar << o.%s;" % field.name)
-            f.writeln("return ar;")
+                f.writeln("rrr::Serialize_::serialize(o.%s, ar);" % field.name)
         f.writeln("}")
         f.writeln()
-        f.writeln("inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) {" % struct.name)
+        f.writeln("inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const %s& o) { serialize(o, ar); return ar; }" % struct.name)
+        f.writeln()
+        f.writeln("inline void deserialize(%s& o, rrr::BinaryReadArchive& ar) {" % struct.name)
         with f.indent():
             for field in struct.fields:
-                f.writeln("ar >> o.%s;" % field.name)
-            f.writeln("return ar;")
+                f.writeln("rrr::Deserialize_::deserialize(o.%s, ar);" % field.name)
         f.writeln("}")
+        f.writeln()
+        f.writeln("inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, %s& o) { deserialize(o, ar); return ar; }" % struct.name)
         f.writeln()
 
 def typed_struct_name(func_name, suffix):

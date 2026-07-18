@@ -94,6 +94,15 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Phase 8 batch 3 LANDED**: generator (lang_cpp.py) emits per-struct ADL
+  serialize()/deserialize() free functions + forwarder operators; rcc_rpc.h +
+  benchmark_service.h regenerated (network/helloworld have no structs). Golden typed-structs
+  test passes UNMODIFIED (its operator assertions were all assert_not_contains on the old
+  Marshal friend forms). ★ STATE: every producer (scalars, containers, generated structs; both
+  Archive and Marshal sinks) implements the wire format in the serde namespaces; the operator
+  layer is 100% one-line forwarders. FINAL STEP (next session): delete the forwarders + the
+  RefMut bridge chain-form, catch-alls become ADL dispatch — grep-driven, mechanical; expect
+  BMI shrink in marshal/serializable (build-time convergence payoff).
 - 2026-07-18 — **Phase 8 batch 2 LANDED — the "visibility puzzle" was PURE DYNDEP STALENESS**:
   the identical v3 transform that failed 3× builds GREEN after clearing *.ddi + CXX.dd +
   *.modmap (clean-slate 452s, test_marshal 22/22). The misleading symptoms (candidates only
