@@ -87,7 +87,7 @@ struct PersistentSiteInfo {
 };
 
 // @unsafe - Marshal operators for PersistentSiteInfo
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentSiteInfo& s) {
+inline void serialize(const PersistentSiteInfo& s, rrr::Marshal& m) {
     rrr::Serialize_::serialize(s.id, m);
     rrr::Serialize_::serialize(s.locale_id, m);
     rrr::Serialize_::serialize(s.name, m);
@@ -98,11 +98,12 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentSiteInfo& s) {
     rrr::Serialize_::serialize(s.n_thread, m);
     rrr::Serialize_::serialize(s.type, m);
     rrr::Serialize_::serialize(s.partition_id, m);
-    return m;
 }
 
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentSiteInfo& s) { serialize(s, m); return m; }
+
 // @unsafe
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentSiteInfo& s) {
+inline void deserialize(PersistentSiteInfo& s, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(s.id, m);
     rrr::Deserialize_::deserialize(s.locale_id, m);
     rrr::Deserialize_::deserialize(s.name, m);
@@ -113,8 +114,9 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentSiteInfo& s) {
     rrr::Deserialize_::deserialize(s.n_thread, m);
     rrr::Deserialize_::deserialize(s.type, m);
     rrr::Deserialize_::deserialize(s.partition_id, m);
-    return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentSiteInfo& s) { deserialize(s, m); return m; }
 
 /**
  * @brief Serializable replica group for persistence.
@@ -138,17 +140,18 @@ struct PersistentReplicaGroup {
 };
 
 // @unsafe - Marshal operators for PersistentReplicaGroup
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentReplicaGroup& g) {
+inline void serialize(const PersistentReplicaGroup& g, rrr::Marshal& m) {
     rrr::Serialize_::serialize(g.partition_id, m);
     rrr::Serialize_::serialize(static_cast<uint32_t>(g.replica_ids.size()), m);
     for (const auto& id : g.replica_ids) {
         rrr::Serialize_::serialize(id, m);
     }
-    return m;
 }
 
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentReplicaGroup& g) { serialize(g, m); return m; }
+
 // @unsafe
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentReplicaGroup& g) {
+inline void deserialize(PersistentReplicaGroup& g, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(g.partition_id, m);
     uint32_t size;
     rrr::Deserialize_::deserialize(size, m);
@@ -156,8 +159,9 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentReplicaGroup& g) {
     for (uint32_t i = 0; i < size; ++i) {
         rrr::Deserialize_::deserialize(g.replica_ids[i], m);
     }
-    return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentReplicaGroup& g) { deserialize(g, m); return m; }
 
 /**
  * @brief Serializable protocol and workload settings.
@@ -186,24 +190,26 @@ struct PersistentProtocolSettings {
 };
 
 // @unsafe - Marshal operators for PersistentProtocolSettings
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentProtocolSettings& s) {
+inline void serialize(const PersistentProtocolSettings& s, rrr::Marshal& m) {
     rrr::Serialize_::serialize(s.tx_proto, m);
     rrr::Serialize_::serialize(s.replica_proto, m);
     rrr::Serialize_::serialize(s.benchmark, m);
     rrr::Serialize_::serialize(s.txn_timeout_us, m);
     rrr::Serialize_::serialize(s.scale_factor, m);
-    return m;
 }
 
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentProtocolSettings& s) { serialize(s, m); return m; }
+
 // @unsafe
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentProtocolSettings& s) {
+inline void deserialize(PersistentProtocolSettings& s, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(s.tx_proto, m);
     rrr::Deserialize_::deserialize(s.replica_proto, m);
     rrr::Deserialize_::deserialize(s.benchmark, m);
     rrr::Deserialize_::deserialize(s.txn_timeout_us, m);
     rrr::Deserialize_::deserialize(s.scale_factor, m);
-    return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentProtocolSettings& s) { deserialize(s, m); return m; }
 
 /**
  * @brief Top-level configuration container for serialization.
@@ -232,7 +238,7 @@ struct PersistentConfig {
 };
 
 // @unsafe - Marshal operators for PersistentConfig
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentConfig& c) {
+inline void serialize(const PersistentConfig& c, rrr::Marshal& m) {
     rrr::Serialize_::serialize(c.version, m);
 
     // Serialize sites
@@ -250,11 +256,12 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentConfig& c) {
     // Serialize settings
     rrr::Serialize_::serialize(c.settings, m);
 
-    return m;
 }
 
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentConfig& c) { serialize(c, m); return m; }
+
 // @unsafe
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentConfig& c) {
+inline void deserialize(PersistentConfig& c, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(c.version, m);
 
     // Deserialize sites
@@ -276,7 +283,8 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentConfig& c) {
     // Deserialize settings
     rrr::Deserialize_::deserialize(c.settings, m);
 
-    return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentConfig& c) { deserialize(c, m); return m; }
 
 }  // namespace janus

@@ -340,42 +340,48 @@ class RccTx: public Tx, public Vertex<RccTx> {
 typedef vector<pair<txid_t, ParentEdge<RccTx>>> parent_set_t;
 
 
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const ParentEdge<RccTx> &e) {
+inline void serialize(const ParentEdge<RccTx> &e, rrr::Marshal& m) {
   rrr::Serialize_::serialize(e.partitions_, m);
-  return m;
 }
 
-inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const ParentEdge<RccTx> &e) { serialize(e, m); return m; }
+
+inline void deserialize(ParentEdge<RccTx> &e, rrr::Marshal& m) {
   rrr::Deserialize_::deserialize(e.partitions_, m);
-  return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, ParentEdge<RccTx> &e) { deserialize(e, m); return m; }
 
 // archive operators for ParentEdge<RccTx>
 // (mirrors the Marshal-based pair byte-for-byte). Used by rcc_rpc.h's
 // archive emission to serialize parent_set_t fields (a typedef for
 // vector<pair<txid_t, ParentEdge<RccTx>>>).
-inline rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const ParentEdge<RccTx> &e) {
+inline void serialize(const ParentEdge<RccTx> &e, rrr::BinaryWriteArchive& ar) {
   rrr::Serialize_::serialize(e.partitions_, ar);
-  return ar;
 }
 
-inline rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, ParentEdge<RccTx> &e) {
+inline rrr::BinaryWriteArchive& operator<<(rrr::BinaryWriteArchive& ar, const ParentEdge<RccTx> &e) { serialize(e, ar); return ar; }
+
+inline void deserialize(ParentEdge<RccTx> &e, rrr::BinaryReadArchive& ar) {
   rrr::Deserialize_::deserialize(e.partitions_, ar);
-  return ar;
 }
 
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const RccTx &ti) {
+inline rrr::BinaryReadArchive& operator>>(rrr::BinaryReadArchive& ar, ParentEdge<RccTx> &e) { deserialize(e, ar); return ar; }
+
+inline void serialize(const RccTx &ti, rrr::Marshal& m) {
 //  m << ti.tid_ << ti.status() << ti.partition_ << ti.parents_;
   verify(0);
-  return m;
 }
 
-inline rrr::Marshal &operator>>(rrr::Marshal &m, RccTx &ti) {
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const RccTx &ti) { serialize(ti, m); return m; }
+
+inline void deserialize(RccTx &ti, rrr::Marshal& m) {
   int8_t status;
   verify(0);
 //  m >> ti.tid_ >> status >> ti.partition_ >> ti.parents_;
 //  ti.union_status(status);
-  return m;
 }
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, RccTx &ti) { deserialize(ti, m); return m; }
 
 } // namespace janus
