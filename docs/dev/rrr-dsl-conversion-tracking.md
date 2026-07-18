@@ -443,3 +443,44 @@ byte-identical.
 **Top risks:** chaining sequence-split; `get_reply()>>` rvalue-guard temporary; two write paths (Marshal write vs
 archive read); Deserialize `&mut` direction; generated-regen fan-out (~1760 stmts + 2 exact-text self-tests); clang-22
 hashbrown mangler on HashSet/HashMap; ordering (user types before generator); PR-CI-only for generated + reply-reads.
+
+## Group-4 reshape campaign (machinery E–I → DSL by restructuring the C++)
+
+User directive (2026-07): instead of accepting E–I as "C++ machinery floor", REWRITE the original C++
+so it becomes DSL-friendly — shrink each subsystem to irreducible micro-kernels and author the logic
+as DSL. The floor table above shrinks as this lands.
+
+### Exemplar 1: logging.cpp (H-category, DONE)
+
+Pre-reshape: 134 LOC of pure C++ — 10 variadic entry points each doing va_start/`log_v`/va_end, with
+`log_v` doing UNBOUNDED sprintf/vsprintf into a raw `char[1000]`, a basename pointer-scan returning a
+pointer into the input, ostream `<<` chains.
+
+Reshape recipe (reusable for other H/G files):
+1. **Identify the irreducible C surface** → became 4 micro-kernels, each a few lines, each `@unsafe`:
+   `log_render_v` (va_list + **bounded** vsnprintf — fixed a real pre-existing overflow hazard),
+   `log_basename` (strrchr scan, now returns an OWNED string — no borrowed pointer escapes),
+   `log_time_now` (char-buffer wrap), `log_level_tag` (table lookup).
+2. **Expose class statics the DSL needs** as tiny static accessors (`Log::level_now()`,
+   `Log::sink_write()`) — the DSL calls static methods through `Class::method()` paths (verified lowering).
+3. **Author the core in DSL**: `fn log_line(level: i32, line: i32, file: *const i8, msg: &std::string)`
+   — level filter, decoration via `std::string.append()` chains + `std::to_string`, sink routing.
+4. **Keep the facade byte-identical**: variadic `Log::*` entry points become render-once-then-dispatch
+   shims; `Log_*` variadic-template call-site shims untouched; zero call-site churn.
+
+Verified lowerings this bought us (new to the rules list): `Class::static_method()` calls from DSL;
+`out.append("literal")` / `.append(fn_call())` chains on `std::string`; `std::to_string(i32)`;
+`*const i8` param → `const int8_t*` (callers pass `reinterpret_cast<const int8_t*>(file)`).
+
+Net: H logging subgroup 134 → ~15 irreducible kernel lines + DSL core. The va_list capture itself is
+the only thing the DSL can never express (C varargs ABI).
+
+### Remaining Group-4 reshape candidates (in leverage order)
+
+- **debugging.cpp (104)**: backtrace/pipe syscalls — mostly true C floor, low reshape value.
+- **G globals (157)**: reactor thread_local + RPC_STATISTICS Meyers singletons — reshape = wrap in
+  `Cell`/static accessor pairs like `Log::level_now`, then DSL the logic around them.
+- **F callback state (874)**: stored `On*Callback`s already partially converted (tcp_channel sweeps);
+  the Quorum/async engine (596) is the big prize — needs per-file design, not a mechanical recipe.
+- **E metaprogramming (1,812)**: wire operator families are being DELETED by the Marshal-deprecation
+  plan above (better than reshape); reactor event/async templates pending the flattening project.
