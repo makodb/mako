@@ -106,9 +106,6 @@ constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4
 ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame);
 void         tcpconn_flush(const TcpConnection& self);
 void         tcpconn_close(const TcpConnection& self);
-void         tcpconn_set_on_frame(const TcpConnection& self, OnFrameCallback cb);
-void         tcpconn_set_on_closed(const TcpConnection& self, OnClosedCallback cb);
-void         tcpconn_set_on_error(const TcpConnection& self, OnErrorCallback cb);
 int          tcpconn_poll_mode(const TcpConnection& self);
 std::size_t  tcpconn_content_size(const TcpConnection& self);
 bool         tcpconn_handle_read(const TcpConnection& self);
@@ -203,15 +200,18 @@ impl TcpConnection {
     }
 
     fn set_on_frame(&self, cb: OnFrameCallback) {
-        tcpconn_set_on_frame(self, cb)
+        let mut guard = self.on_frame_.lock().unwrap();
+        *guard = cb;
     }
 
     fn set_on_closed(&self, cb: OnClosedCallback) {
-        tcpconn_set_on_closed(self, cb)
+        let mut guard = self.on_closed_.lock().unwrap();
+        *guard = cb;
     }
 
     fn set_on_error(&self, cb: OnErrorCallback) {
-        tcpconn_set_on_error(self, cb)
+        let mut guard = self.on_error_.lock().unwrap();
+        *guard = cb;
     }
 
     fn fd(&self) -> i32 {
@@ -251,7 +251,7 @@ impl TcpConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=bb4aa785595908af02a97c5991716d3dec5f61a732bbf2af8a04541466b46990*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn version=1 rust_sha256=c717741ed145e1ff0ee89215a35a46d872082125f79c1f642942a718fcddc4af*/
 struct TcpConnection;
 
 struct TcpConnection {
@@ -329,15 +329,18 @@ std::string TcpConnection::peer_address() const {
 }
 
 void TcpConnection::set_on_frame(OnFrameCallback cb) const {
-    tcpconn_set_on_frame((*this), std::move(cb));
+    auto guard = this->on_frame_.lock().unwrap();
+    *guard = std::move(cb);
 }
 
 void TcpConnection::set_on_closed(OnClosedCallback cb) const {
-    tcpconn_set_on_closed((*this), std::move(cb));
+    auto guard = this->on_closed_.lock().unwrap();
+    *guard = std::move(cb);
 }
 
 void TcpConnection::set_on_error(OnErrorCallback cb) const {
-    tcpconn_set_on_error((*this), std::move(cb));
+    auto guard = this->on_error_.lock().unwrap();
+    *guard = std::move(cb);
 }
 
 int32_t TcpConnection::fd() const {
@@ -619,8 +622,6 @@ inline PollableProxy make_tcp_connection_pollable_proxy(
 struct TcpListener;  // defined by the GEN block below
 ChannelError tcplistener_listen(const TcpListener& self, std::string_view addr);
 void         tcplistener_close(const TcpListener& self);
-void         tcplistener_set_on_accept(const TcpListener& self, OnAcceptCallback cb);
-void         tcplistener_set_on_error(const TcpListener& self, OnErrorCallback cb);
 bool         tcplistener_handle_read(const TcpListener& self);
 void         tcplistener_handle_error(const TcpListener& self);
 
@@ -686,11 +687,13 @@ impl TcpListener {
     }
 
     fn set_on_accept(&self, cb: OnAcceptCallback) {
-        tcplistener_set_on_accept(self, cb)
+        let mut guard = self.on_accept_.lock().unwrap();
+        *guard = cb;
     }
 
     fn set_on_error(&self, cb: OnErrorCallback) {
-        tcplistener_set_on_error(self, cb)
+        let mut guard = self.on_error_.lock().unwrap();
+        *guard = cb;
     }
 
     fn fd(&self) -> i32 {
@@ -730,7 +733,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=a71e3290b1b4c4470cb41408fe7d7f415355401418f7ce3f7dcb0f1372ceee9f*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=497562e866cf8f75eece0f1f42de1261749087d90d1e51a4b09e34485aa6239e*/
 struct TcpListener;
 
 struct TcpListener {
@@ -790,11 +793,13 @@ std::string TcpListener::local_address() const {
 }
 
 void TcpListener::set_on_accept(OnAcceptCallback cb) const {
-    tcplistener_set_on_accept((*this), std::move(cb));
+    auto guard = this->on_accept_.lock().unwrap();
+    *guard = std::move(cb);
 }
 
 void TcpListener::set_on_error(OnErrorCallback cb) const {
-    tcplistener_set_on_error((*this), std::move(cb));
+    auto guard = this->on_error_.lock().unwrap();
+    *guard = std::move(cb);
 }
 
 int32_t TcpListener::fd() const {
@@ -1348,20 +1353,8 @@ void tcpconn_close(const TcpConnection& self) {
 }
 
 // @unsafe - last-writer-wins callback store under the spinlock.
-void tcpconn_set_on_frame(const TcpConnection& self, OnFrameCallback cb) {
-    auto guard = self.on_frame_.lock().unwrap();
-    *guard = std::move(cb);
-}
 
-void tcpconn_set_on_closed(const TcpConnection& self, OnClosedCallback cb) {
-    auto guard = self.on_closed_.lock().unwrap();
-    *guard = std::move(cb);
-}
 
-void tcpconn_set_on_error(const TcpConnection& self, OnErrorCallback cb) {
-    auto guard = self.on_error_.lock().unwrap();
-    *guard = std::move(cb);
-}
 
 // ---------------------------------------------------------------------------
 // Pollable methods
@@ -1604,22 +1597,47 @@ void tcpconn_deliver_on_closed_locked(const TcpConnection& self, ChannelError re
 }
 
 // @safe - pure errno -> ChannelError mapping.
-ChannelError tcpconn_errno_to_channel_error(int err) {
-    switch (err) {
-        case ECONNREFUSED:                 return ChannelError::ConnectionRefused;
-        case ECONNRESET:
-        case EPIPE:
-        case ENOTCONN:                     return ChannelError::ConnectionReset;
-        case ETIMEDOUT:                    return ChannelError::Timeout;
-        case EADDRINUSE:                   return ChannelError::AddressInUse;
-        case EADDRNOTAVAIL:                return ChannelError::AddressInvalid;
-        case EACCES:
-        case EPERM:                        return ChannelError::PermissionDenied;
-        case EMFILE:
-        case ENFILE:                       return ChannelError::TooManyOpenFiles;
-        default:                           return ChannelError::Internal;
-    }
+// Authored as inline Rust DSL (if-chain per the clientconn_map_system_error
+// precedent — errno macros compare fine; cross-module enum variants use the
+// generated factories).
+#if RUSTYCPP_RUST
+fn tcpconn_errno_to_channel_error(err: i32) -> ChannelError {
+    if err == ECONNREFUSED { return ChannelError_ConnectionRefused(); }
+    if err == ECONNRESET || err == EPIPE || err == ENOTCONN { return ChannelError_ConnectionReset(); }
+    if err == ETIMEDOUT { return ChannelError_Timeout(); }
+    if err == EADDRINUSE { return ChannelError_AddressInUse(); }
+    if err == EADDRNOTAVAIL { return ChannelError_AddressInvalid(); }
+    if err == EACCES || err == EPERM { return ChannelError_PermissionDenied(); }
+    if err == EMFILE || err == ENFILE { return ChannelError_TooManyOpenFiles(); }
+    ChannelError_Internal()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.10 version=1 rust_sha256=14460363b2f881fc0edbc724c1f4a60394bfa3fca2c987f95bc437933c5616b7*/
+ChannelError tcpconn_errno_to_channel_error(int32_t err) {
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNREFUSED)) {
+        return ChannelError_ConnectionRefused();
+    }
+    if (((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNRESET)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPIPE))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENOTCONN))) {
+        return ChannelError_ConnectionReset();
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ETIMEDOUT)) {
+        return ChannelError_Timeout();
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EADDRINUSE)) {
+        return ChannelError_AddressInUse();
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EADDRNOTAVAIL)) {
+        return ChannelError_AddressInvalid();
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EACCES)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPERM))) {
+        return ChannelError_PermissionDenied();
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EMFILE)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENFILE))) {
+        return ChannelError_TooManyOpenFiles();
+    }
+    return ChannelError_Internal();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.10*/
 
 // ===========================================================================
 // TcpListener
@@ -1736,16 +1754,8 @@ void tcplistener_close(const TcpListener& self) {
 }
 
 // @unsafe - last-writer-wins callback store under the spinlock.
-void tcplistener_set_on_accept(const TcpListener& self, OnAcceptCallback cb) {
-    auto guard = self.on_accept_.lock().unwrap();
-    *guard = std::move(cb);
-}
 
 // @unsafe - same shape as set_on_accept.
-void tcplistener_set_on_error(const TcpListener& self, OnErrorCallback cb) {
-    auto guard = self.on_error_.lock().unwrap();
-    *guard = std::move(cb);
-}
 
 // @safe - accept loop now delegates to `rusty::net::TcpListener::accept`
 // (which encapsulates the ::accept syscall + peer-address marshalling).
@@ -1885,22 +1895,41 @@ void tcplistener_handle_error(const TcpListener& self) {
 // `TcpFactory::connect_errno_to_channel_error` static method. Plain
 // errno → ChannelError mapping; no state.
 namespace {
-ChannelError connect_errno_to_channel_error(int err) {
-    switch (err) {
-        case ECONNREFUSED:                 return ChannelError::ConnectionRefused;
-        case ECONNRESET:
-        case EPIPE:                        return ChannelError::ConnectionReset;
-        case ETIMEDOUT:                    return ChannelError::Timeout;
-        case EHOSTUNREACH:
-        case ENETUNREACH:
-        case EADDRNOTAVAIL:                return ChannelError::AddressInvalid;
-        case EACCES:
-        case EPERM:                        return ChannelError::PermissionDenied;
-        case EMFILE:
-        case ENFILE:                       return ChannelError::TooManyOpenFiles;
-        default:                           return ChannelError::Internal;
-    }
+// Authored as inline Rust DSL (see tcpconn_errno_to_channel_error).
+#if RUSTYCPP_RUST
+fn connect_errno_to_channel_error(err: i32) -> ChannelError {
+    if err == ECONNREFUSED { return ChannelError_ConnectionRefused(); }
+    if err == ECONNRESET || err == EPIPE { return ChannelError_ConnectionReset(); }
+    if err == ETIMEDOUT { return ChannelError_Timeout(); }
+    if err == EHOSTUNREACH || err == ENETUNREACH || err == EADDRNOTAVAIL { return ChannelError_AddressInvalid(); }
+    if err == EACCES || err == EPERM { return ChannelError_PermissionDenied(); }
+    if err == EMFILE || err == ENFILE { return ChannelError_TooManyOpenFiles(); }
+    ChannelError_Internal()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.11 version=1 rust_sha256=e5b31bbc4e56598bc47f47580ebea04da74387f91c0ec281f8b4070be4021a16*/
+ChannelError connect_errno_to_channel_error(int32_t err) {
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNREFUSED)) {
+        return ChannelError_ConnectionRefused();
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ECONNRESET)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPIPE))) {
+        return ChannelError_ConnectionReset();
+    }
+    if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ETIMEDOUT)) {
+        return ChannelError_Timeout();
+    }
+    if (((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EHOSTUNREACH)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENETUNREACH))) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EADDRNOTAVAIL))) {
+        return ChannelError_AddressInvalid();
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EACCES)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EPERM))) {
+        return ChannelError_PermissionDenied();
+    }
+    if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EMFILE)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENFILE))) {
+        return ChannelError_TooManyOpenFiles();
+    }
+    return ChannelError_Internal();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.11*/
 }  // namespace
 
 // @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
