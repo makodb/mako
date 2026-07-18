@@ -94,7 +94,26 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
-- 2026-07-18 — **Phase 8 batch 1 attempted + reverted (lesson recorded)**: converting the 26
+- 2026-07-18 — **Phase 8 batch 1 LANDED on retry (`0b407a14`)**: brace-counting transformer
+  converted all 24 Archive container/pair operators to serde templates + forwarders; dbtest +
+  test_marshal 22/22 green. **Batch 2 (Marshal-layer containers in marshal.cpp) attempted 3× and
+  REVERTED — hand off to a fresh session.** What's known: (v1) forwarder emitted param `ar` but
+  body used `m` — fixed; (v2) emit_block's insertion anchor mismatched the emitted forwarder
+  spacing and SILENTLY skipped inserting the overload blocks (assert insertion! the sanity greps
+  printed empty and I missed it); (v3) blocks inserted correctly (write@596, read@905,
+  12+12+balance verified in-file) yet consumers still failed "no matching serialize" with
+  candidate lists containing ONLY rrr.serializable's Serialize_ members — NONE from marshal.cpp —
+  and error line numbers pointing at COMMENT lines (stale-BMI locations). Unresolved: whether
+  it's a real modules-visibility issue (qualified Serialize_::serialize from consumer context not
+  seeing rrr.marshal's namespace additions?) or dyndep/BMI staleness confusing the diagnosis
+  (the CXX.dd gotcha from the umbrella trim). NEXT SESSION: apply the v3 transform, then FULLY
+  clean dyndep state (delete *.ddi/CXX.dd/*.modmap) before the first build so diagnosis is
+  staleness-free; if the visibility failure is real, check whether consumers see reopened
+  namespaces across module boundaries (marshal.hpp is just `import rrr.marshal;`) — fallback
+  design: put the Marshal container overloads in rrr.serializable (where the trait lives) with
+  Marshal fwd-declared, or export them via a dedicated partition. Scripts in scratchpad:
+  phase8_v2.py (Archive, proven), phase8_marshal.py (v3 state), marshal.cpp.bak.
+- 2026-07-18 — **Phase 8 batch 1 attempted + reverted (lesson recorded, superseded above)**: converting the 26
   Archive container/pair operators in serializable.cpp to Serialize_/Deserialize_ templates.
   DESIGN validated: (a) specific container overloads beat the catch-all in partial ordering, so
   flipping is transparent; (b) fwd-declare ALL container overloads before definitions so nested
