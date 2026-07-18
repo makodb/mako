@@ -114,8 +114,13 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   kernels. The census conflated "uses Option<V&>" with "gated on Option<V&>" — do NOT
   force-convert; fragmentation would trade coherent wire-path fns for no safety gain.
   TRUE remaining J: fiber_channel's small subset (most is kernels/F-callbacks),
-  server/tcp (289), *_to_string switches (~150, string_view-vararg care at %s call sites),
-  rpc-mid (93). Then task: Marshal-path deprecation (docs/marshal-serde-split.md).
+  server/tcp (289) and rpc-mid (93) — each needs
+  clientconn-style per-fn triage before converting. *_to_string (~150) DEFERRED WITH CAUSE:
+  the DSL lowers &str returns to std::string_view, but the 11 switches have ~105 call sites
+  including continuation-line Log_* VARARGS (%s + string_view = UB that is SILENT under this
+  build's -w) and std::string+ concatenations (no operator+ with string_view before C++26).
+  Convert only when the transpiler can return *const c_char from literals, or after varargs
+  logging is replaced — otherwise the conversion trades boilerplate for latent runtime UB. Then task: Marshal-path deprecation (docs/marshal-serde-split.md).
 - 2026-07-18 — **★ PHASE 8 COMPLETE — operator layer DELETED**: endgame pt1 (Archive decoy-ADL,
   4ce047b2) + pt2a (Marshal scalars into serde + Marshal decoy-ADL, 2fd1d6c7) + 2b-prep (rpcgen
   friend-emission serde, 776→0 raw streams in rcc_rpc.h, ace147ef) + the deletion itself: all 97
