@@ -158,6 +158,15 @@ def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
 #include <time.h>
 #include "rrr/rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — snippets exercising
+// reliability/metrics APIs import the modules directly.
+import rrr.circuit_breaker;
+import rrr.connection_metrics;
+import rrr.heartbeat;
+import rrr.load_balancer;
+import rrr.reconnect_policy;
+import rrr.request_options;
+
 using namespace rrr;
 
 void snippet_{idx}() {{
@@ -173,6 +182,15 @@ int main() {{
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
 #include "rrr/rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — snippets exercising
+// reliability/metrics APIs import the modules directly.
+import rrr.circuit_breaker;
+import rrr.connection_metrics;
+import rrr.heartbeat;
+import rrr.load_balancer;
+import rrr.reconnect_policy;
+import rrr.request_options;
 
 using namespace rrr;
 
@@ -218,6 +236,15 @@ int main() {{
 #include <time.h>
 #include "rrr/rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — snippets exercising
+// reliability/metrics APIs import the modules directly.
+import rrr.circuit_breaker;
+import rrr.connection_metrics;
+import rrr.heartbeat;
+import rrr.load_balancer;
+import rrr.reconnect_policy;
+import rrr.request_options;
+
 using namespace rrr;
 
 inline int compute(int v) {{ return v; }}
@@ -250,6 +277,15 @@ int main() {{
         return f"""{COMMON_SNIPPET_PREAMBLE}
 #include <time.h>
 #include "rrr/rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — snippets exercising
+// reliability/metrics APIs import the modules directly.
+import rrr.circuit_breaker;
+import rrr.connection_metrics;
+import rrr.heartbeat;
+import rrr.load_balancer;
+import rrr.reconnect_policy;
+import rrr.request_options;
 
 using namespace rrr;
 

@@ -733,23 +733,24 @@ if (rc != 0) {
 }
 
 // Synchronous-style call using FutureResult
-auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
-    m << arg1 << arg2;
+auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(arg1, m);
+    rrr::Serialize_::serialize(arg2, m);
 });
 
 if (fu_result.is_ok()) {
     auto fu = fu_result.unwrap();
     fu->wait();
     int result = 0;
-    fu->get_reply() >> result;
+    rrr::deserialize_from(fu->get_reply(), result);
 }
 ```
 
 ### Async RPC
 
 ```cpp srpc-compile-client
-auto fu_result = client->request(RPC_METHOD_ID, [&](BinaryWriteArchive& m) {
-    m << arg1;
+auto fu_result = client->request(RPC_METHOD_ID, FutureAttr{}, [&](BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(arg1, m);
 });
 // ... do other work ...
 if (fu_result.is_ok()) {
@@ -830,14 +831,14 @@ public:
             return;
         }
         int arg;
-        req->m >> arg;
+        rrr::Deserialize_::deserialize(arg, req->m);
         int result = compute(arg);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << result;
+                rrr::Serialize_::serialize(result, out);
             });
         }
     }
@@ -857,7 +858,7 @@ public:
     void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn);
 };
 
-Server server(rusty::None);
+auto server = Server::new_(rusty::None);
 server.reg_service(rusty::make_box<MyTypedService>());
 ```
 
@@ -865,11 +866,11 @@ server.reg_service(rusty::make_box<MyTypedService>());
 
 ```cpp srpc-compile-server
 auto poll_thread = PollThread::create();
-Server server(rusty::Some(poll_thread.clone()));
+auto server = Server::new_(rusty::Some(poll_thread.clone()));
 server.reg_service(rusty::make_box<MyService>());
 
 // Start listening
-int rc = server.start("0.0.0.0:8100");
+int rc = server.start(reinterpret_cast<const int8_t*>("0.0.0.0:8100"));
 
 // ... server runs ...
 
@@ -924,14 +925,17 @@ The `Marshal` class provides binary serialization/deserialization:
 Marshal m;
 
 // Serialize
-m << (i32)42;
-m << (i64)1234567890LL;
-m << std::string("hello");
-m << (double)3.14;
+rrr::Serialize_::serialize((i32)42, m);
+rrr::Serialize_::serialize((i64)1234567890LL, m);
+rrr::Serialize_::serialize(std::string("hello"), m);
+rrr::Serialize_::serialize((double)3.14, m);
 
 // Deserialize
 i32 x; i64 y; std::string s; double d;
-m >> x >> y >> s >> d;
+rrr::Deserialize_::deserialize(x, m);
+rrr::Deserialize_::deserialize(y, m);
+rrr::Deserialize_::deserialize(s, m);
+rrr::Deserialize_::deserialize(d, m);
 ```
 
 ### Supported Types
@@ -975,11 +979,13 @@ struct MyTypedData {
     int32_t kind() const { return kMarshallKind; }
 
     void save(rrr::BinaryWriteArchive& ar) const {
-        ar << id << name;
+        rrr::Serialize_::serialize(id, ar);
+        rrr::Serialize_::serialize(name, ar);
     }
 
     void load(rrr::BinaryReadArchive& ar) {
-        ar >> id >> name;
+        rrr::Deserialize_::deserialize(id, ar);
+        rrr::Deserialize_::deserialize(name, ar);
     }
 };
 
@@ -1023,7 +1029,7 @@ into the envelope's storage so the receiver can pin lifetime):
 
 ```cpp srpc-no-compile
 janus::Command cmd;
-m >> cmd;  // wire decode populates kind + payload via factory + load
+rrr::Deserialize_::deserialize(cmd, m);  // wire decode populates kind + payload via factory + load
 
 if (auto* view = cmd.unpack<ViewData>()) {
     // use view
@@ -1044,7 +1050,9 @@ For recording sizes without seeking:
 ```cpp srpc-no-compile
 Marshal m;
 auto bookmark = m.set_bookmark(sizeof(i32));  // Reserve space
-m << data1 << data2 << data3;
+rrr::Serialize_::serialize(data1, m);
+rrr::Serialize_::serialize(data2, m);
+rrr::Serialize_::serialize(data3, m);
 i32 payload_size = m.get_and_reset_write_cnt();
 m.write_bookmark(bookmark, &payload_size);  // Fill in size
 ```
@@ -1065,7 +1073,8 @@ rrr::BufferSink sink;
 
 // Archive: knows the wire format (Layer 3)
 rrr::BinaryWriteArchive writer(&sink);
-writer << (rrr::i32)42 << std::string("hello");
+rrr::Serialize_::serialize((rrr::i32)42, writer);
+rrr::Serialize_::serialize(std::string("hello"), writer);
 
 // Source: drains from a byte view
 rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
@@ -1247,7 +1256,7 @@ that legacy code is also writing to:
 
 ```cpp srpc-no-compile
 rrr::Marshal m;
-m << static_cast<rrr::i32>(1);   // legacy
+rrr::Serialize_::serialize(static_cast<rrr::i32>(1), m);   // legacy
 
 {
   rrr::MarshalSink sink(&m);
@@ -1255,7 +1264,7 @@ m << static_cast<rrr::i32>(1);   // legacy
   writer << static_cast<rrr::i32>(2);  // new code, same buffer
 }
 
-m << std::string("trailing");  // legacy
+rrr::Serialize_::serialize(std::string("trailing"), m);  // legacy
 ```
 
 `MarshalSource` is the dual: a `BinaryReadArchive` over a
