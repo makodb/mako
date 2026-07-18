@@ -94,6 +94,13 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Marshal-path deprecation SCOPED (census)**: Marshal-typed state = only 3
+  holders — server Request.m (DSL struct server.cpp:207; generated handlers + ~30 Phase-7b
+  consumer sites), the Future reply buffer, client heartbeat's local body — plus 78 Marshal-sink
+  serde overloads in marshal.cpp deletable at the end. Plan: retype Request.m (byte buffer +
+  archive view; regen stubs + flip consumers) → Future buffer archive-native (RefMut bridge +
+  deserialize_from collapse) → heartbeat local → delete the 78 overloads → retire Marshal.
+  Design doc exists (docs/marshal-serde-split.md); full gate per slice; wire unchanged.
 - 2026-07-18 — **J+K sweep: 3 batches landed (`241e3f67`, `da1eb15a`, `7d94c5b6`)** —
   inmemory_channel.cpp FULLY converted (switchboard trio + 7 channel methods + 6 listener
   methods; ~180 LOC of backing free fns deleted; ALL const_casts around interior-mutable state
