@@ -94,6 +94,16 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Phase 8 batch 2 LANDED — the "visibility puzzle" was PURE DYNDEP STALENESS**:
+  the identical v3 transform that failed 3× builds GREEN after clearing *.ddi + CXX.dd +
+  *.modmap (clean-slate 452s, test_marshal 22/22). The misleading symptoms (candidates only
+  from rrr.serializable, error lines on comment lines) were stale-BMI artifacts from earlier
+  partial-fail builds. ★ RULE (now bit us twice — umbrella trim + batch 2): after restructuring
+  module sources through a FAILED build, clear dyndep state before trusting any diagnostic;
+  a mixed-staleness tree produces coherent-looking but fictitious resolution errors. Both
+  serialization layers' container wire formats now live in the serde namespaces; operators are
+  pure forwarders. REMAINING for Phase 8: generator struct-operator emission → serde overloads
+  (lang_cpp.py), then delete the operator layer.
 - 2026-07-18 — **Phase 8 batch 1 LANDED on retry (`0b407a14`)**: brace-counting transformer
   converted all 24 Archive container/pair operators to serde templates + forwarders; dbtest +
   test_marshal 22/22 green. **Batch 2 (Marshal-layer containers in marshal.cpp) attempted 3× and
