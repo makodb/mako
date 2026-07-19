@@ -19,7 +19,7 @@ import rrr.basetypes;
 
 // @safe - mostly templated helpers (clamp, insert_into_map, erase) +
 // Job/OneTimeJob/FrequentJob value classes. The syscall-touching
-// functions (`rdtsc`, `time_now_str`, `get_ncpu`, `get_exec_path`,
+// functions (`rdtsc`, `time_now_str`, `get_ncpu`, 
 // `getline`, the static `make_int` byte-writer) and
 // `FrequentJob::Ready` (calls rrr::Time::now(false)) carry per-method
 // `// @unsafe` overrides.
@@ -54,7 +54,6 @@ inline T clamp(const T &v, const T1 &lower, const T2 &upper) {
 // YYYY-MM-DD HH:MM:SS.mmm; caller-supplied buffer must be at least 24 bytes.
 void time_now_str(char *now);
 int get_ncpu();
-const char *get_exec_path();
 
 // NOTE: \n is stripped from input
 std::string getline(FILE *fp, char delim = '\n');
@@ -250,27 +249,6 @@ int32_t get_ncpu() {
 }
 /*RUSTYCPP:GEN-END id=misc.get_ncpu*/
 
-// @unsafe - static `char[PATH_MAX]` buffer, snprintf, readlink syscall,
-// returns raw `const char*` into static storage. (getpid is now @safe
-// via rusty::sys::process::getpid, but the buffer/readlink plumbing
-// keeps the function as a whole @unsafe.)
-const char* get_exec_path() {
-    static char path[PATH_MAX];
-    static bool ready = false;
-    if (!ready) {
-        char link[PATH_MAX];
-        snprintf(link, sizeof(link), "/proc/%d/exe",
-                 rusty::sys::process::getpid());
-        int ret = readlink(link, path, sizeof(path));
-        if (ret != -1) {
-            path[ret] = '\0';
-            ready = true;
-        } else {
-            return nullptr;
-        }
-    }
-    return path;
-}
 
 // @unsafe - getdelim allocates the `char* buf` via malloc, hand-managed
 // by `free(buf)` at the end. Raw `char*` plumbing throughout.
