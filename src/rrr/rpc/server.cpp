@@ -1194,7 +1194,15 @@ void ServerConnection::dispatch_response_frame_via_channel(
     }
     ChannelFrame frame{bytes, size};
     // @unsafe - virtual method dispatch through ChannelConnectionBase*
-    (void)conn->send_frame(frame);
+    const ChannelError se = conn->send_frame(frame);
+    if (se != ChannelError::None) {
+        // A dropped reply is invisible to the peer: its request just times
+        // out and (if idempotent) retries — under congestion the retries
+        // re-do the work and stack MORE replies. Name every drop.
+        Log_warn("rrr::ServerConnection: reply send_frame failed err=%d "
+                 "size=%zu peer=%s — REPLY DROPPED",
+                 static_cast<int>(se), size, conn->peer_address().c_str());
+    }
 }
 
 // @unsafe - Executes callback inline for API compatibility.

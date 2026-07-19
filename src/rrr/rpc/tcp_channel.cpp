@@ -644,6 +644,21 @@ void TcpConnection::set_outbound_high_water(std::size_t bytes) {
 
 ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     if (closed_.get()) {
+        // Rate-limited (1/s): callers that discard this error make the
+        // connection LOOK mute — every frame silently vanishes here.
+        // @unsafe { gettimeofday + stderr diagnostic }
+        {
+            static std::atomic<long> s_last{0};
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            long prev = s_last.load(std::memory_order_relaxed);
+            if (tv.tv_sec != prev &&
+                s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                               std::memory_order_relaxed)) {
+                fprintf(stderr, "tcpch: send_frame on CLOSED conn peer=%s size=%zu — dropped\n",
+                        peer_address_.c_str(), frame.size);
+            }
+        }
         return ChannelError::ConnectionReset;
     }
     if (frame.size > 0 && frame.payload == nullptr) {
@@ -675,6 +690,22 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     // append to a buffer that's already over budget so backpressure is
     // strictly bounded.
     if (buf.size() >= outbound_high_water_) {
+        // Rate-limited (1/s): a reply path that discards this error DROPS
+        // the reply — the peer's request times out and retries, and under
+        // retry-stacking the queue only grows. Make the drop visible.
+        // @unsafe { gettimeofday + stderr diagnostic }
+        {
+            static std::atomic<long> s_last{0};
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            long prev = s_last.load(std::memory_order_relaxed);
+            if (tv.tv_sec != prev &&
+                s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                               std::memory_order_relaxed)) {
+                fprintf(stderr, "tcpch: send_frame HIGH-WATER reject fd=%d peer=%s queued=%zu frame=%zu\n",
+                        fd_.as_raw_fd(), peer_address_.c_str(), buf.size(), frame.size);
+            }
+        }
         return ChannelError::WouldBlock;
     }
 
@@ -739,18 +770,27 @@ void TcpConnection::flush() {
         // thread itself, fire immediately.
         // For sub-leaf 3a we don't have an independent poll-thread
         // hand-off; tests drive Pollable methods directly. Mark closed
-        // and let the next poll cycle observe it.
+        // and let the next poll cycle observe it. (The reactor sweep's
+        // close() releases the fd even though we latched here — see
+        // TcpConnection::close.)
+        // @unsafe { stderr latch-cause diagnostic }
+        fprintf(stderr, "tcpch: flush hard error=%d fd=%d peer=%s — latched closed\n",
+                static_cast<int>(result), fd_.as_raw_fd(), peer_address_.c_str());
         closed_.set(true);
     }
 }
 
 void TcpConnection::close() {
-    // Latch on first call. Idempotent for concurrent callers because
-    // `Cell<bool>::set(true)` is a release-store; the first to set
-    // wins, the rest observe `closed_.get() == true` here.
-    if (closed_.get()) {
-        return;
-    }
+    // Latch, then ALWAYS release the socket if this object still holds it —
+    // even when the latch was already set. The deferred-error paths (flush)
+    // latch `closed_` WITHOUT releasing the fd or firing callbacks, and the
+    // reactor's loop-tail sweep then reaps the connection through this
+    // close(). The old early-return-on-latch left that socket OPEN and
+    // unmonitored forever: the peer sees ESTABLISHED and every request it
+    // sends times out (observed live as a migration data-plane connection
+    // going permanently mute mid-run). Callback delivery stays exactly-once
+    // via deliver_on_closed_locked's own `on_closed_fired_` latch, so the
+    // recursive close-from-on_closed pattern remains safe.
     closed_.set(true);
 
     // Shutdown the write side to flush kernel buffers and signal the
@@ -762,7 +802,6 @@ void TcpConnection::close() {
         fd_ = rusty::os::fd::OwnedFd{};
     }
 
-    // Deliver `on_closed(ChannelError::None)` exactly once.
     deliver_on_closed_locked(ChannelError::None);
 }
 
@@ -843,6 +882,9 @@ bool TcpConnection::handle_read() {
         if (n == 0) {
             // Peer closed cleanly. Signal the listener; do not fire
             // on_error — this isn't a fault, it's a graceful close.
+            // @unsafe { stderr latch-cause diagnostic }
+            fprintf(stderr, "tcpch: read EOF fd=%d peer=%s — closed\n",
+                    fd_.as_raw_fd(), peer_address_.c_str());
             closed_.set(true);
             fd_ = rusty::os::fd::OwnedFd{};  // RAII close
             deliver_on_closed_locked(ChannelError::None);
@@ -858,6 +900,9 @@ bool TcpConnection::handle_read() {
         }
         // Hard transport error.
         const ChannelError ch = errno_to_channel_error(err);
+        // @unsafe { stderr latch-cause diagnostic }
+        fprintf(stderr, "tcpch: read hard error errno=%d (%s) fd=%d peer=%s — closed\n",
+                err, std::strerror(err), fd_.as_raw_fd(), peer_address_.c_str());
         {
             auto guard = on_error_.lock().unwrap();
             if (*guard) {
@@ -929,6 +974,9 @@ int TcpConnection::handle_write() {
         return PollMode::NO_CHANGE;
     }
     // Hard transport error.
+    // @unsafe { stderr latch-cause diagnostic }
+    fprintf(stderr, "tcpch: write hard error=%d fd=%d peer=%s — closed\n",
+            static_cast<int>(result), fd_.as_raw_fd(), peer_address_.c_str());
     {
         auto err_guard = on_error_.lock().unwrap();
         if (*err_guard) {

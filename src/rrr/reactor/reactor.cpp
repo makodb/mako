@@ -2514,9 +2514,41 @@ void PollThreadWorker::do_add_pollable(PollableProxy poll) {
     poll_mode = poll->poll_mode();
   }
 
-  // Check if already exists
+  // An entry can already exist for this fd when the PREVIOUS connection
+  // on the same fd number closed earlier in this very iteration: close(2)
+  // frees the number immediately (and the kernel auto-deregisters it from
+  // epoll), so the next accept/connect reuses it before the loop-tail
+  // sweep erases the stale map entry. Dropping the ADD here silently
+  // orphans the NEW connection -- established at the TCP level, absent
+  // from epoll, its peer's requests timing out forever (observed live:
+  // migration data-plane connections went permanently mute after any
+  // close/reconnect churn, and every eviction-and-reconnect retry
+  // re-collided on the same freshly-freed fd number). Evict the stale
+  // corpse and register the newcomer; only a genuine double-add of a
+  // still-live fd keeps first-registration-wins.
   if (fd_to_pollable_.contains_key(fd)) {
-    return;
+    bool stale_closed;
+    // @unsafe { PollableProxy::is_closed is not borrow-checked }
+    { stale_closed = fd_to_pollable_.get(fd).unwrap()->is_closed(); }
+    if (!stale_closed) {
+      // A still-live occupant: genuine double-add, first registration wins.
+      // If this ever fires at a mute, the "stale" entry was NOT closed and
+      // the newcomer is being orphaned — the smoking gun to look for.
+      // @unsafe { stderr diagnostic }
+      fprintf(stderr, "reactor: AddPollable fd=%d collides with LIVE entry — newcomer DROPPED\n", fd);
+      return;
+    }
+    // @unsafe { stderr diagnostic }
+    fprintf(stderr, "reactor: AddPollable fd=%d evicting stale closed entry\n", fd);
+    if (mode_.contains_key(fd)) {
+      // Usually a no-op: the kernel dropped the old registration when the
+      // old socket closed. Kept for the explicit-Remove bookkeeping path.
+      poll_.Remove(fd);
+    }
+    // @unsafe { close callback dispatch on the stale proxy }
+    { fd_to_pollable_.get(fd).unwrap()->close(); }
+    fd_to_pollable_.remove(fd);
+    mode_.remove(fd);
   }
 
   // Store in maps
