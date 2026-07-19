@@ -288,40 +288,8 @@ inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
   return ar;
 }
 
-// Legacy `Marshal&` archive operators.  Wire format identical to the
-// archive path: `[v32 kind] [payload bytes]`.  Used by procedure.cc
-// TxReply / classic/tpc_command.cc TpcCommitCommand archive operators
-// in the legacy RPC reply path that still drives `Marshal&`.
-// @unsafe - constructs MarshalSink + BinaryWriteArchive and drives a
-// Marshal operator<< chain via `env.save(ar)`.
-template<typename TypeList>
-inline void serialize(const SerializableEnvelope<TypeList>& env, Marshal& m) {
-  verify(env.has_value());
-  BinaryWriteArchive ar(make_sink_proxy(&m));
-  env.save(ar);
-}
-
-template<typename TypeList>
-inline Marshal& operator<<(Marshal& m,
-                           const SerializableEnvelope<TypeList>& env) {
-  serialize(env, m);
-  return m;
-}
-
-// @unsafe - constructs BinaryReadArchive and drives a Marshal
-// operator>> chain via `env.load(ar)`.
-template<typename TypeList>
-inline void deserialize(SerializableEnvelope<TypeList>& env, Marshal& m) {
-  BinaryReadArchive ar(make_source_proxy(&m));
-  env.load(ar);
-}
-
-template<typename TypeList>
-inline Marshal& operator>>(Marshal& m,
-                           SerializableEnvelope<TypeList>& env) {
-  deserialize(env, m);
-  return m;
-}
+// Marshal-deprecation slice C: the legacy `Marshal&` envelope operators
+// are deleted — the archive save/load path above is the only surface.
 
 
 }  // export namespace rrr
