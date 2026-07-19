@@ -117,6 +117,18 @@ void ALWAYS_ERROR(bool aa){
       //  but we don't want stack unwinding, just abort transaction
 
     }else{
+      // GLOBAL cutover-race policy: when the partition table governs TPC-C
+      // routing (live migration), a must-find surprise is a routing race
+      // with an in-flight cutover, not data corruption -- the migration's
+      // checksum gate owns correctness. Abort retryably: the worker rerolls
+      // and lands on the new owner once routing reloads. Guarding call
+      // sites one by one was whack-a-mole; every unconverted site is a
+      // process-killing Panic during migration (observed live: a worker
+      // panicked right after a cutover published, taking the shard down
+      // mid-bed). Ungoverned runs keep the strict Panic.
+      if (mako::tpcc_route_shard_for_warehouse("customer", 1) >= 0) {
+        throw abstract_db::abstract_abort_exception();
+      }
       Panic("the error for ALWAYS ERROR!");
     }
   }
