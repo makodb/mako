@@ -161,10 +161,7 @@ AnyMessageSp AnyMessage::pack(std::shared_ptr<T> val) {
 // std::type_index → registered name. Stored behind a rusty::Mutex
 // (registrations run at static init time, lookups are concurrent
 // across reactor threads during RPC dispatch).
-// @safe - see file header. `name_for_type` returns a raw
-// `const std::string*` into the rusty::Mutex-owned HashMap; that
-// method and its caller `AnyMessage::is_a<T>` / `AnyMessage::pack<T>`
-// carry per-method `// @unsafe`.
+// @safe - see file header.
 // `any_message_registry` was a class with only static methods + a
 // public Factory typedef and no fields. Converted to a namespace so
 // the inventory reflects what it actually is — a namespace-scoped
@@ -188,9 +185,10 @@ int register_type(std::string name,
 // empty proxy if the name is not registered.
 SerializableProxy create(const std::string& name);
 
-// Look up the registered name for type `ti`. Returns nullptr if
-// the type was not registered.
-const std::string* name_for_type(std::type_index ti);
+// Look up the registered name for type `ti`. Returns "" if the
+// type was not registered (owned copy — no borrow escapes the
+// registry mutex; Marshal-era pointer-return reshaped away).
+std::string name_for_type_owned(std::type_index ti);
 
 bool is_registered_name(const std::string& name);
 bool is_registered_type(std::type_index ti);
@@ -228,10 +226,10 @@ inline int reg_any_message_as(std::string name) {
 // any_message_registry::name_for_type.
 template <typename T>
 inline bool anymessage_is_a(const AnyMessage& self) {
-  const std::string* name = any_message_registry::name_for_type(
+  const std::string name = any_message_registry::name_for_type_owned(
       std::type_index(typeid(T)));
-  if (name == nullptr) return false;
-  return self.type_name_ == *name;
+  if (name.empty()) return false;
+  return self.type_name_ == name;
 }
 
 // @unsafe - dynamic_cast through `payload_.get()` returning raw `T*`.
@@ -261,12 +259,12 @@ inline AnyMessageSp anymessage_pack_as(std::string name,
 // and forwards to the @unsafe anymessage_pack_as.
 template <typename T>
 inline AnyMessageSp anymessage_pack(std::shared_ptr<T> val) {
-  const std::string* name = any_message_registry::name_for_type(
+  const std::string name = any_message_registry::name_for_type_owned(
       std::type_index(typeid(T)));
-  verify(name != nullptr &&
+  verify(!name.empty() &&
          "AnyMessage::pack<T>: T not registered. "
          "Call reg_any_message_as<T>(\"name\") at static init.");
-  return anymessage_pack_as<T>(*name, std::move(val));
+  return anymessage_pack_as<T>(name, std::move(val));
 }
 
 // ---- Free archive operators -----------------------------------------
@@ -380,43 +378,92 @@ int any_message_registry::register_type(std::string name,
   return 0;
 }
 
-// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get + invocation
-// through `*entry.unwrap()` (Option-of-pointer deref).
-SerializableProxy any_message_registry::create(const std::string& name) {
-  auto guard = registry().lock().unwrap();
-  auto entry = (*guard).by_name.get(name);
-  if (entry.is_none()) return SerializableProxy{};
-  return entry.unwrap()();
+// @unsafe - trivial factories the DSL cannot spell (braced init /
+// default construction of foreign types).
+SerializableProxy anymessage_empty_proxy() { return SerializableProxy{}; }
+std::string anymessage_empty_string() { return std::string(); }
+
+// Registry queries, authored as inline Rust DSL (register_type stays a
+// hand-written kernel above: its body must use the `name` parameter
+// twice across two map inserts, which Rust move semantics reject).
+// Reopened namespace: the DSL emits unqualified definitions, which
+// must land inside any_message_registry to define the declared API.
+namespace any_message_registry {
+#if RUSTYCPP_RUST
+fn create(name: &std::string) -> SerializableProxy {
+    let mut guard = registry().lock().unwrap();
+    let entry = (*guard).by_name.get(name);
+    if entry.is_none() {
+        return anymessage_empty_proxy();
+    }
+    entry.unwrap()()
 }
 
-// @unsafe - returns a raw `const std::string*` into the rusty::Mutex-
-// owned HashMap. Callers must not outlive the guard's borrow window;
-// in practice each caller dereferences immediately and discards.
-const std::string* any_message_registry::name_for_type(std::type_index ti) {
-  auto guard = registry().lock().unwrap();
-  size_t hash = ti.hash_code();
-  auto entry = (*guard).name_by_type_hash.get(hash);
-  if (entry.is_none()) return nullptr;
-  return &entry.unwrap();
+fn name_for_type_owned(ti: std::type_index) -> std::string {
+    let guard = registry().lock().unwrap();
+    let entry = (*guard).name_by_type_hash.get(ti.hash_code());
+    if entry.is_none() {
+        return anymessage_empty_string();
+    }
+    entry.unwrap()
 }
 
-// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::get + Option::is_some.
-bool any_message_registry::is_registered_name(const std::string& name) {
-  auto guard = registry().lock().unwrap();
-  return (*guard).by_name.get(name).is_some();
+fn is_registered_name(name: &std::string) -> bool {
+    let guard = registry().lock().unwrap();
+    (*guard).by_name.get(name).is_some()
 }
 
-// @unsafe - same pattern as is_registered_name.
-bool any_message_registry::is_registered_type(std::type_index ti) {
-  auto guard = registry().lock().unwrap();
-  return (*guard).name_by_type_hash.get(ti.hash_code()).is_some();
+fn is_registered_type(ti: std::type_index) -> bool {
+    let guard = registry().lock().unwrap();
+    (*guard).name_by_type_hash.get(ti.hash_code()).is_some()
 }
 
-// @unsafe - rusty::Mutex::lock().unwrap() + HashMap::clear().
-void any_message_registry::clear_for_testing() {
-  auto guard = registry().lock().unwrap();
-  (*guard).by_name.clear();
-  (*guard).name_by_type_hash.clear();
+fn clear_for_testing() {
+    let mut guard = registry().lock().unwrap();
+    (*guard).by_name.clear();
+    (*guard).name_by_type_hash.clear();
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=2af83284f7abe0f6bf2258b7e6fcfaa48386de36fc33a47bb7df25200502dd52*/
+std::string name_for_type_owned(std::type_index ti);
+bool is_registered_name(const std::string& name);
+bool is_registered_type(std::type_index ti);
+void clear_for_testing();
+
+SerializableProxy create(const std::string& name) {
+    auto guard = registry().lock().unwrap();
+    auto entry = (rusty::detail::deref_if_pointer_like(guard)).by_name.get(name);
+    if (entry.is_none()) {
+        return anymessage_empty_proxy();
+    }
+    return entry.unwrap()();
+}
+
+std::string name_for_type_owned(std::type_index ti) {
+    const auto guard = registry().lock().unwrap();
+    auto entry = (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(ti.hash_code());
+    if (entry.is_none()) {
+        return anymessage_empty_string();
+    }
+    return entry.unwrap();
+}
+
+bool is_registered_name(const std::string& name) {
+    const auto guard = registry().lock().unwrap();
+    return (rusty::detail::deref_if_pointer_like(guard)).by_name.get(name).is_some();
+}
+
+bool is_registered_type(std::type_index ti) {
+    const auto guard = registry().lock().unwrap();
+    return (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(ti.hash_code()).is_some();
+}
+
+void clear_for_testing() {
+    auto guard = registry().lock().unwrap();
+    (rusty::detail::deref_if_pointer_like(guard)).by_name.clear();
+    (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.clear();
+}
+/*RUSTYCPP:GEN-END id=any_message.registry_queries*/
+}  // namespace any_message_registry
 
 }  // namespace rrr
