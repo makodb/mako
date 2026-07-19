@@ -14,7 +14,6 @@
 #include "rpc/frame_codec.hpp"
 #include "rpc/fiber_channel.hpp"
 #include "base/all.hpp"
-#include "misc/marshal.hpp"
 #include "misc/serializable.hpp"
 // removed `#include "misc/recorder.hpp"`
 // — `Recorder` class deleted; was unused after Phase 4e-35.

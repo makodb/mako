@@ -7,7 +7,6 @@ export module rrr.serializable_envelope;
 import std;
 import rrr.basetypes;
 import rrr.debugging;
-import rrr.marshal;
 import rrr.serializable;
 
 // @safe - SerializableEnvelope: shared_ptr-backed sum type carried

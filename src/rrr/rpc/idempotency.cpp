@@ -14,7 +14,6 @@ import std;
 import rusty;
 import rrr.basetypes;
 import rrr.debugging;
-import rrr.marshal;
 import rrr.serializable;
 import rrr.threading;
 

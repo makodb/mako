@@ -30,7 +30,6 @@ import rrr.debugging;
 import rrr.epoll_wrapper;
 import rrr.internal_protocol;
 import rrr.logging;
-import rrr.marshal;
 import rrr.misc;
 import rrr.reactor;
 import rrr.serializable;

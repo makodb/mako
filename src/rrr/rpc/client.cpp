@@ -36,7 +36,6 @@ import rrr.heartbeat;
 import rrr.internal_protocol;
 import rrr.load_balancer;
 import rrr.logging;
-import rrr.marshal;
 import rrr.misc;
 import rrr.reactor;
 import rrr.reconnect_policy;
