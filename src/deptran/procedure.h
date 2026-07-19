@@ -117,36 +117,22 @@ class TxRequest {
   // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
 };
 
-// Phase 8 batch 4: serde free functions own the TxWorkspace/TxReply wire
-// formats; the operators below are forwarders kept until the operator
-// layer is deleted.
-void serialize(const TxWorkspace &ws, Marshal &m);
-void deserialize(TxWorkspace &ws, Marshal &m);
+// Phase 8 batch 4 / Marshal-deprecation slice A: the archive serde free
+// functions own the TxWorkspace/TxReply wire formats (the Marshal-form
+// mirrors are deleted — zero callers).
 void serialize(const TxWorkspace &ws, BinaryWriteArchive &ar);
 void deserialize(TxWorkspace &ws, BinaryReadArchive &ar);
-void serialize(const TxReply &reply, Marshal &m);
-void deserialize(TxReply &reply, Marshal &m);
 void serialize(const TxReply &reply, BinaryWriteArchive &ar);
 void deserialize(TxReply &reply, BinaryReadArchive &ar);
 
-Marshal& operator << (Marshal& m, const TxWorkspace &ws);
-
-Marshal& operator >> (Marshal& m, TxWorkspace& ws);
-
-// archive operators for TxWorkspace
-// (mirrors the Marshal-based pair byte-for-byte). Used by the
+// archive operators for TxWorkspace. Used by the
 // 6 SimpleCommand archive operators which feed VecPieceData's
 // Serializable save/load.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws);
 
 BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace& ws);
 
-Marshal& operator << (Marshal& m, const TxReply& reply);
-
-Marshal& operator >> (Marshal& m, TxReply& reply);
-
-// archive operators for TxReply (mirrors the
-// Marshal-based pair byte-for-byte). Used by the rcc_rpc.h archive
+// archive operators for TxReply. Used by the rcc_rpc.h archive
 // emission now that rpcgen defaults to --archive.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply);
 

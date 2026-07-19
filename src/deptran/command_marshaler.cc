@@ -22,47 +22,8 @@ namespace janus {
 // bugs (the legacy `CmdData::to_marshal` only emitted the 8 base
 // fields, dropping any subclass-specific tail) as hard failures.
 
-// Phase 8 batch 4: serde free functions own the wire format; operators are
-// forwarders kept until the operator layer is deleted.
-void serialize(const SimpleCommand &cmd, rrr::Marshal &m) {
-  verify(cmd.input.size() < 10000);
-  rrr::Serialize_::serialize(cmd.id_, m);
-  rrr::Serialize_::serialize(cmd.type_, m);
-  rrr::Serialize_::serialize(cmd.inn_id_, m);
-  rrr::Serialize_::serialize(cmd.root_id_, m);
-  rrr::Serialize_::serialize(cmd.root_type_, m);
-  rrr::Serialize_::serialize(cmd.client_id_, m);
-  rrr::Serialize_::serialize(cmd.cmd_id_in_client_, m);
-  rrr::Serialize_::serialize(cmd.rule_mode_on_and_is_original_path_only_command_, m);
-  rrr::Serialize_::serialize(cmd.input, m);
-  rrr::Serialize_::serialize(cmd.output, m);
-  rrr::Serialize_::serialize(cmd.output_size, m);
-  rrr::Serialize_::serialize(cmd.partition_id_, m);
-  rrr::Serialize_::serialize(cmd.timestamp_, m);
-  rrr::Serialize_::serialize(cmd.rank_, m);
-}
-
-rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd) { serialize(cmd, m); return m; }
-
-void deserialize(SimpleCommand &cmd, rrr::Marshal &m) {
-  rrr::Deserialize_::deserialize(cmd.id_, m);
-  rrr::Deserialize_::deserialize(cmd.type_, m);
-  rrr::Deserialize_::deserialize(cmd.inn_id_, m);
-  rrr::Deserialize_::deserialize(cmd.root_id_, m);
-  rrr::Deserialize_::deserialize(cmd.root_type_, m);
-  rrr::Deserialize_::deserialize(cmd.client_id_, m);
-  rrr::Deserialize_::deserialize(cmd.cmd_id_in_client_, m);
-  rrr::Deserialize_::deserialize(cmd.rule_mode_on_and_is_original_path_only_command_, m);
-  rrr::Deserialize_::deserialize(cmd.input, m);
-  rrr::Deserialize_::deserialize(cmd.output, m);
-  rrr::Deserialize_::deserialize(cmd.output_size, m);
-  rrr::Deserialize_::deserialize(cmd.partition_id_, m);
-  rrr::Deserialize_::deserialize(cmd.timestamp_, m);
-  rrr::Deserialize_::deserialize(cmd.rank_, m);
-}
-
-rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd) { deserialize(cmd, m); return m; }
-
+// Marshal-deprecation slice A: the Marshal-form SimpleCommand serde is
+// deleted (zero callers — every wire path is archive-form below).
 // archive operators for SimpleCommand.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: the 8 inherited CmdData fields (id, type, inn_id, root_id,

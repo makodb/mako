@@ -65,39 +65,6 @@ TxData::TxData() {
   early_return_ = Config::GetConfig()->do_early_return();
 }
 
-void serialize(const TxWorkspace &ws, Marshal& m) {
-  rrr::Serialize_::serialize((ws.keys_), m);
-  auto& input_vars = *ws.values_;
-  for (int32_t k : ws.keys_) {
-    auto it = input_vars.find(k);
-    // allow some input vars not ready.
-    if (it != input_vars.end()) {
-      rrr::Serialize_::serialize(k, m);
-      rrr::Serialize_::serialize(it->second, m);
-    }
-  }
-  rrr::Serialize_::serialize(-1, m);
-}
-
-Marshal& operator<<(Marshal& m, const TxWorkspace &ws) { serialize(ws, m); return m; }
-
-void deserialize(TxWorkspace &ws, Marshal& m) {
-  rrr::Deserialize_::deserialize(ws.keys_, m);
-  while (true) {
-    int32_t k;
-    rrr::Deserialize_::deserialize(k, m);
-    if (k >= 0) {
-      Value v;
-      rrr::Deserialize_::deserialize(v, m);
-      (*ws.values_)[k] = v;
-    } else {
-      break;
-    }
-  }
-}
-
-Marshal& operator>>(Marshal& m, TxWorkspace &ws) { deserialize(ws, m); return m; }
-
 // archive operators for TxWorkspace.
 // Wire format byte-for-byte identical to the Marshal-based pair
 // above: keys_ (set<int32_t>), then per-present-key (k, value) pairs,
@@ -133,54 +100,6 @@ void deserialize(TxWorkspace &ws, BinaryReadArchive& ar) {
 }
 
 BinaryReadArchive& operator>>(BinaryReadArchive& ar, TxWorkspace &ws) { deserialize(ws, ar); return ar; }
-
-void serialize(const TxReply& reply, Marshal& m) {
-  rrr::Serialize_::serialize(reply.res_, m);
-  rrr::Serialize_::serialize(reply.output_, m);
-  rrr::Serialize_::serialize(reply.n_try_, m);
-  // TODO -- currently this is only used when marshalling
-  // replies from forwarded requests so the source
-  // (non-leader) site correctly populates this field when
-  // reporting.
-  // m << reply.start_time_;
-  rrr::Serialize_::serialize(reply.time_, m);
-  rrr::Serialize_::serialize(reply.txn_type_, m);
-  
-  // Marshal view data if present
-  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
-  rrr::Serialize_::serialize(has_view_data, m);
-  if (has_view_data) {
-    janus::Command view_md;
-    view_md = reply.sp_view_data_;
-    rrr::Serialize_::serialize(view_md, m);
-  }
-
-}
-
-Marshal& operator<<(Marshal& m, const TxReply& reply) { serialize(reply, m); return m; }
-
-void deserialize(TxReply& reply, Marshal& m) {
-  rrr::Deserialize_::deserialize(reply.res_, m);
-  rrr::Deserialize_::deserialize(reply.output_, m);
-  rrr::Deserialize_::deserialize(reply.n_try_, m);
-  memset(&reply.start_time_, 0, sizeof(reply.start_time_));
-  rrr::Deserialize_::deserialize(reply.time_, m);
-  rrr::Deserialize_::deserialize(reply.txn_type_, m);
-
-  // Unmarshal view data if present
-  bool_t has_view_data;
-  rrr::Deserialize_::deserialize(has_view_data, m);
-  if (has_view_data) {
-    janus::Command view_md;
-    rrr::Deserialize_::deserialize(view_md, m);
-    reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
-  } else {
-    reply.sp_view_data_ = nullptr;
-  }
-
-}
-
-Marshal& operator>>(Marshal& m, TxReply& reply) { deserialize(reply, m); return m; }
 
 // archive operators for TxReply. Wire format
 // byte-for-byte identical to the Marshal-based pair above:
