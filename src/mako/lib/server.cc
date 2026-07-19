@@ -1,6 +1,9 @@
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/server.h"
+#include <atomic>     // duplicate-decision counter (NoteDuplicateDecision)
+#include <stdio.h>    // fprintf diagnostics
+#include <sys/time.h> // gettimeofday rate limiter
 #include "lib/common.h"
 #include "lib/table_registry.h"   // resolve an op's table NAME for the per-table freeze
 #include "lib/migration_fence.h"  // migration_owner_shard (routing-ownership recheck)
@@ -64,6 +67,27 @@ namespace mako
         if (table_id <= 0 || !table)
             return;
         open_tables_table_id[table_id] = table;
+    }
+
+    // Rate-limited observability for the duplicate-decision acks in
+    // HandleAbortRequest / HandleInstallRequest: proves at-least-once
+    // decision delivery is actually exercised (the MAKO_FI_DUP_DECISIONS
+    // injector in shardClient.cc manufactures genuine wire duplicates) and
+    // that already-resolved transactions ack cleanly instead of erroring.
+    // @unsafe { gettimeofday + stderr diagnostics }
+    static void NoteDuplicateDecision(const char *kind) {
+        static std::atomic<long> s_count{0};
+        static std::atomic<long> s_last{0};
+        const long n = s_count.fetch_add(1, std::memory_order_relaxed) + 1;
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        long prev = s_last.load(std::memory_order_relaxed);
+        if (tv.tv_sec != prev &&
+            s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                           std::memory_order_relaxed)) {
+            fprintf(stderr, "2pc-dup-decision acked kind=%s total=%ld\n",
+                    kind, n);
+        }
     }
 
     // Message handlers.
@@ -139,14 +163,25 @@ namespace mako
     {
         int status = ErrorCode::SUCCESS;
         auto *req = reinterpret_cast<basic_request_t *>(reqBuf);
-        db->shard_abort_txn(nullptr);
+        // Duplicate/late-decision tolerance: the coordinator retries a
+        // timed-out abort (a lost one leaks this participant's row locks
+        // forever -- see Transaction.cc), so a resend whose original DID
+        // arrive lands here with nothing staged. That is a resolved
+        // transaction, not an error: acknowledge SUCCESS and touch nothing,
+        // so the sender's retry loop terminates. The idle predicate is the
+        // same one RunNontxnOp uses (helper threads park their participant
+        // txn as in_progress-but-EMPTY between transactions).
+        if (TThread::txn != nullptr && TThread::txn->has_staged_items()) {
+            db->shard_abort_txn(nullptr);
+            db->shard_reset();
+        } else {
+            NoteDuplicateDecision("abort");
+        }
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
-        db->shard_reset();
-
     }
 
     void ShardReceiver::HandleUnLockRequest(char *reqBuf, char *respBuf, size_t &respLen)
@@ -173,6 +208,17 @@ namespace mako
     {
         int status = ErrorCode::SUCCESS;
         auto *req = reinterpret_cast<vector_int_request_t *>(reqBuf);
+        // Duplicate/late-decision tolerance (see HandleAbortRequest): a
+        // retried install whose original already applied lands here with
+        // nothing staged. Ack SUCCESS and do NOTHING -- re-running the
+        // install path on an empty participant would at best no-op and at
+        // worst emit an empty replication record via shard_serialize_util;
+        // skipping is the only provably side-effect-free answer. The sender
+        // cannot distinguish lost-request from lost-reply, so this positive
+        // ack is what lets its retry loop terminate in the lost-reply case.
+        if (TThread::txn == nullptr || !TThread::txn->has_staged_items()) {
+            NoteDuplicateDecision("install");
+        } else {
         try {
             // Single timestamp system: decode single timestamp directly
             uint32_t timestamp = decode_single_timestamp(req->value);
@@ -184,12 +230,13 @@ namespace mako
             status = ErrorCode::ABORT;
             Warning("HandleInstallRequest error");
         }
+        db->shard_reset();
+        }
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
-        db->shard_reset();
     }
 
     void ShardReceiver::HandleValidateRequest(char *reqBuf, char *respBuf, size_t &respLen)

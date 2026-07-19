@@ -437,23 +437,48 @@ namespace mako
         return is_all_response_ok();
     }
 
-    int ShardClient::remoteInstall(uint32_t timestamp) {
-        // Single timestamp encoding - no vector needed
-        char *cc = encode_single_timestamp(timestamp);
-        int shards_to_send_bits = TThread::writeset_shard_bits;
-        if (!shards_to_send_bits) return ErrorCode::SUCCESS;
-        calculate_num_response_waiting(shards_to_send_bits);
-        uint16_t server_id = shardIndex * config.warehouses + par_id;
+    // MAKO_FI_DUP_DECISIONS=K (fault injection, off by default): after every
+    // Kth SUCCESSFUL 2PC decision RPC (install/abort), send the identical
+    // message again so participants receive a genuine wire duplicate. Live
+    // validation for the duplicate-decision acks in server.cc -- the
+    // at-least-once delivery the coordinator's retry loops rely on is only
+    // safe if an already-resolved participant acks a resend instead of
+    // erroring.
+    static bool fi_duplicate_decision_due() {
+        static const int k = []() {
+            // @unsafe { getenv/atoi are libc }
+            const char *e = getenv("MAKO_FI_DUP_DECISIONS");
+            return e != nullptr ? atoi(e) : 0;
+        }();
+        if (k <= 0) return false;
+        static thread_local int n = 0;
+        return (++n % k) == 0;
+    }
 
-        client->InvokeInstall(++tid,  // txn_nr
-                            shards_to_send_bits,
-                            server_id,
-                            cc,
-                            bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
-                            bind(&ShardClient::SendToAllGiveUpTimeout, this),
-                            BASIC_TIMEOUT);
-        free(cc);
-        return is_all_response_ok();
+    int ShardClient::remoteInstall(uint32_t timestamp) {
+        auto send_once = [&]() -> int {
+            // Single timestamp encoding - no vector needed
+            char *cc = encode_single_timestamp(timestamp);
+            int shards_to_send_bits = TThread::writeset_shard_bits;
+            if (!shards_to_send_bits) { free(cc); return ErrorCode::SUCCESS; }
+            calculate_num_response_waiting(shards_to_send_bits);
+            uint16_t server_id = shardIndex * config.warehouses + par_id;
+
+            client->InvokeInstall(++tid,  // txn_nr
+                                shards_to_send_bits,
+                                server_id,
+                                cc,
+                                bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
+                                bind(&ShardClient::SendToAllGiveUpTimeout, this),
+                                BASIC_TIMEOUT);
+            free(cc);
+            return is_all_response_ok();
+        };
+        int ret = send_once();
+        if (ret == ErrorCode::SUCCESS && fi_duplicate_decision_due()) {
+            (void)send_once();   // duplicate on the wire; result irrelevant
+        }
+        return ret;
     }
 
     int ShardClient::warmupRequest(uint32_t req_val, uint8_t centerId, uint32_t &ret_value, uint64_t set_bits) {
@@ -608,20 +633,27 @@ namespace mako
     }
 
     int ShardClient::remoteAbort() {
-        int shards_to_send_bits = TThread::writeset_shard_bits | TThread::readset_shard_bits;
-        if (TThread::trans_nosend_abort > 0){
-            shards_to_send_bits = shards_to_send_bits ^ TThread::trans_nosend_abort;
-        }
-        if (!shards_to_send_bits) return ErrorCode::SUCCESS;
-        calculate_num_response_waiting(shards_to_send_bits);
-        uint16_t server_id = shardIndex * config.warehouses + par_id;
+        auto send_once = [&]() -> int {
+            int shards_to_send_bits = TThread::writeset_shard_bits | TThread::readset_shard_bits;
+            if (TThread::trans_nosend_abort > 0){
+                shards_to_send_bits = shards_to_send_bits ^ TThread::trans_nosend_abort;
+            }
+            if (!shards_to_send_bits) return ErrorCode::SUCCESS;
+            calculate_num_response_waiting(shards_to_send_bits);
+            uint16_t server_id = shardIndex * config.warehouses + par_id;
 
-        client->InvokeAbort(++tid,  // txn_nr
-                            shards_to_send_bits,
-                            server_id,
-                            bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
-                            bind(&ShardClient::SendToAllGiveUpTimeout, this),
-                            ABORT_TIMEOUT);
-        return is_all_response_ok();
+            client->InvokeAbort(++tid,  // txn_nr
+                                shards_to_send_bits,
+                                server_id,
+                                bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
+                                bind(&ShardClient::SendToAllGiveUpTimeout, this),
+                                ABORT_TIMEOUT);
+            return is_all_response_ok();
+        };
+        int ret = send_once();
+        if (ret == ErrorCode::SUCCESS && fi_duplicate_decision_due()) {
+            (void)send_once();   // duplicate on the wire; result irrelevant
+        }
+        return ret;
     }
 }
