@@ -94,6 +94,34 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-19 — **★ 10-HOUR FINAL-CONVERSION ARC COMPLETE** (user directive: only asm + raw
+  syscalls stay C). TEN gated cycles landed: rand (range/scale/nu/weighted logic → DSL over a
+  rand_r kernel), cpuinfo (ring-buffer delta FSM → DSL &mut method), sparseint length queries →
+  DSL, ★ sparseint dump/load WIRE CODEC → DSL (shift-based, differential canary over 56 boundary
+  values passed first try, permanent golden test; faithful preservation of the pre-existing
+  case-8 9-bytes/8-reported quirk — documented, unhit for |v|<2^55), fiber_channel (recv loop +
+  inbound handlers + is_closed → DSL; kernels = try_pop/make-event/wait/arrow one-liners),
+  frame_codec (verdict: already end-state — span/pointer kernels under DSL shapes), any_message
+  (registry queries → DSL; name_for_type borrow-escape FIXED via owned return), serializable
+  (v32/v64 leaves → trait impls via C-array-decay scratch POD; registry quartet → DSL), server
+  (drain phase-FSM → DSL), tcp_channel (handle_error/deliver_closed/flush → DSL), client
+  (prefilled-slots + dead current_time_ms; clientconn family re-verified end-state).
+  CENSUS DELTA (manual lines): rand 132→~35, cpuinfo 240→~185, basetypes 202→~90, fiber_channel
+  238→213, any_message 226→198, serializable 922→884, server 632→602, tcp_channel 1046→1008,
+  client 1129→1116. NEW LOWERING RULES (full list in the porting memory): u8-only for masked
+  byte params (i8 literal-cast trap CORRUPTS decode); let mut for move-only locals AND
+  non-const-op guards; C-array fields decay at DSL call sites (scratch PODs); DSL enum
+  comparisons work (clone-lowering); variadic Log_* with INT args works; Function truthiness
+  through guards works; ★ WALL: FOREIGN nested enum paths (rusty::io::Error::Kind::X,
+  sync::atomic::Ordering::X) in comparison OR argument position get variant-call mangling —
+  io_kind mapper + all atomic-Ordering bodies (clientconn_reconnect) stay kernels until the
+  transpiler learns foreign-enum-path lowering (top feature request from this arc).
+  HONEST REMAINING FLOOR: reactor 2871 (asm fiber-switch + Event-flattening project territory —
+  untouched by design), the syscall/span/memcpy/proxy-arrow/lambda-install/template kernels
+  throughout (~2600 across the big four + epoll/misc/debugging), the /proc string parsers +
+  misc.cpp getline (await a substr/find lowering probe), envelope templates (294), varargs
+  logging shims. Everything else IS the DSL.
+
 - 2026-07-18 — **Marshal-deprecation steps 1-3 LANDED** (3 commits): Request retyped to
   { body: Vec<u8>, src: BufferSource } (request_fill_body kernel; rpcgen emits
   make_source_proxy(&req->src); 4 headers regenerated; ~30 consumer sites flipped);
