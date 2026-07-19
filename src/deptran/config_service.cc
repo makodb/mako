@@ -44,15 +44,14 @@ void ConfigServiceImpl::ensure_cache_valid() {
     cache_valid_.set(true);
 }
 
-// @unsafe - Uses Marshal I/O
+// @unsafe - archive I/O over raw string bytes
 std::string ConfigServiceImpl::serialize_config(const PersistentConfig& config) {
-    rrr::Marshal m;
-    rrr::Serialize_::serialize(config, m);
+    rrr::BufferSink __sink__;
+    rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+    rrr::Serialize_::serialize(config, __war__);
 
-    // Extract data from Marshal to string
-    std::string result;
-    result.resize(m.content_size());
-    m.read(reinterpret_cast<std::uint8_t*>(result.data()), m.content_size());
+    std::string result(reinterpret_cast<const char*>(__sink__.bytes.data()),
+                       __sink__.bytes.len());
     return result;
 }
 
@@ -147,15 +146,14 @@ void ConfigServiceImpl::ensure_sharding_cache_valid() {
     sharding_cache_valid_.set(true);
 }
 
-// @unsafe - Uses Marshal I/O
+// @unsafe - archive I/O over raw string bytes
 std::string ConfigServiceImpl::serialize_sharding_policy(const ShardingPolicySet& policy) {
-    rrr::Marshal m;
-    rrr::Serialize_::serialize(policy, m);
+    rrr::BufferSink __sink__;
+    rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+    rrr::Serialize_::serialize(policy, __war__);
 
-    // Extract data from Marshal to string
-    std::string result;
-    result.resize(m.content_size());
-    m.read(reinterpret_cast<std::uint8_t*>(result.data()), m.content_size());
+    std::string result(reinterpret_cast<const char*>(__sink__.bytes.data()),
+                       __sink__.bytes.len());
     return result;
 }
 
@@ -165,11 +163,12 @@ void ConfigServiceImpl::SetShardingPolicy(
     ConfigServiceService::RpcSetShardingPolicyResponse& resp,
     rrr::DeferredReply defer) {
     // Deserialize the policy
-    rrr::Marshal m;
-    m.write_bytes(reinterpret_cast<const std::uint8_t*>(rpc_req.policy_data.data()), rpc_req.policy_data.size());
+    rrr::BufferSource __src__(reinterpret_cast<const std::uint8_t*>(rpc_req.policy_data.data()),
+                              rpc_req.policy_data.size());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     ShardingPolicySet policy;
-    rrr::Deserialize_::deserialize(policy, m);
+    rrr::Deserialize_::deserialize(policy, __rar__);
 
     // Save to store
     if (store_.save_sharding_policy(policy)) {

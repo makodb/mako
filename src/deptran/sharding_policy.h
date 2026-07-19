@@ -70,17 +70,16 @@ struct KeyExtractor {
         return KeyExtractor(KeyExtractorType::HASH_MOD, 0, 0);
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend void serialize(const KeyExtractor& e, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void serialize(const KeyExtractor& e, rrr::BinaryWriteArchive& m) {
         rrr::Serialize_::serialize(static_cast<int32_t>(e.type), m);
         rrr::Serialize_::serialize(e.field_index, m);
         rrr::Serialize_::serialize(e.prefix_length, m);
     }
 
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const KeyExtractor& e) { serialize(e, m); return m; }
 
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend void deserialize(KeyExtractor& e, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void deserialize(KeyExtractor& e, rrr::BinaryReadArchive& m) {
         int32_t type_val;
         rrr::Deserialize_::deserialize(type_val, m);
         e.type = static_cast<KeyExtractorType>(type_val);
@@ -88,7 +87,6 @@ struct KeyExtractor {
         rrr::Deserialize_::deserialize(e.prefix_length, m);
     }
 
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, KeyExtractor& e) { deserialize(e, m); return m; }
 };
 
 /**
@@ -111,23 +109,21 @@ struct RangeMapping {
         return key >= start_key && key < end_key;
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend void serialize(const RangeMapping& r, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void serialize(const RangeMapping& r, rrr::BinaryWriteArchive& m) {
         rrr::Serialize_::serialize(r.start_key, m);
         rrr::Serialize_::serialize(r.end_key, m);
         rrr::Serialize_::serialize(r.shard_id, m);
     }
 
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const RangeMapping& r) { serialize(r, m); return m; }
 
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend void deserialize(RangeMapping& r, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void deserialize(RangeMapping& r, rrr::BinaryReadArchive& m) {
         rrr::Deserialize_::deserialize(r.start_key, m);
         rrr::Deserialize_::deserialize(r.end_key, m);
         rrr::Deserialize_::deserialize(r.shard_id, m);
     }
 
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, RangeMapping& r) { deserialize(r, m); return m; }
 };
 
 /**
@@ -191,8 +187,8 @@ struct TableShardingPolicy {
         ranges.insert(it, mapping);
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend void serialize(const TableShardingPolicy& p, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void serialize(const TableShardingPolicy& p, rrr::BinaryWriteArchive& m) {
         rrr::Serialize_::serialize(p.table_name, m);
         rrr::Serialize_::serialize(p.key_extractor, m);
         rrr::Serialize_::serialize(static_cast<int32_t>(p.ranges.size()), m);
@@ -202,10 +198,9 @@ struct TableShardingPolicy {
         rrr::Serialize_::serialize(p.default_shard, m);
     }
 
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const TableShardingPolicy& p) { serialize(p, m); return m; }
 
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend void deserialize(TableShardingPolicy& p, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void deserialize(TableShardingPolicy& p, rrr::BinaryReadArchive& m) {
         rrr::Deserialize_::deserialize(p.table_name, m);
         rrr::Deserialize_::deserialize(p.key_extractor, m);
         int32_t num_ranges;
@@ -220,7 +215,6 @@ struct TableShardingPolicy {
         rrr::Deserialize_::deserialize(p.default_shard, m);
     }
 
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, TableShardingPolicy& p) { deserialize(p, m); return m; }
 };
 
 /**
@@ -289,8 +283,8 @@ struct ShardingPolicySet {
         return policies.size();
     }
 
-    // @unsafe - Serialization via Marshal (I/O)
-    friend void serialize(const ShardingPolicySet& s, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void serialize(const ShardingPolicySet& s, rrr::BinaryWriteArchive& m) {
         rrr::Serialize_::serialize(s.version, m);
         rrr::Serialize_::serialize(s.num_shards, m);
         rrr::Serialize_::serialize(static_cast<int32_t>(s.policies.size()), m);
@@ -299,10 +293,9 @@ struct ShardingPolicySet {
         }
     }
 
-    friend rrr::Marshal& operator<<(rrr::Marshal& m, const ShardingPolicySet& s) { serialize(s, m); return m; }
 
-    // @unsafe - Deserialization via Marshal (I/O)
-    friend void deserialize(ShardingPolicySet& s, rrr::Marshal& m) {
+    // @safe - archive serde
+    friend void deserialize(ShardingPolicySet& s, rrr::BinaryReadArchive& m) {
         rrr::Deserialize_::deserialize(s.version, m);
         rrr::Deserialize_::deserialize(s.num_shards, m);
         int32_t num_policies;
@@ -315,7 +308,6 @@ struct ShardingPolicySet {
         }
     }
 
-    friend rrr::Marshal& operator>>(rrr::Marshal& m, ShardingPolicySet& s) { deserialize(s, m); return m; }
 };
 
 }  // namespace janus

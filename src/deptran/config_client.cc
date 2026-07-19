@@ -149,13 +149,11 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
     }
 
     // Deserialize config_data to PersistentConfig
-    rrr::Marshal m;
-    // @unsafe { Marshal write not borrow-checked }
-    m.write_bytes(reinterpret_cast<const std::uint8_t*>(config_data.data()), config_data.size());
+    rrr::BufferSource __src__(reinterpret_cast<const std::uint8_t*>(config_data.data()), config_data.size());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     PersistentConfig config;
-    // @unsafe { Marshal read not borrow-checked }
-    rrr::Deserialize_::deserialize(config, m);
+    rrr::Deserialize_::deserialize(config, __rar__);
 
     // @unsafe { logging I/O }
     Log_info("ConfigClient: Fetched configuration version %lu with %zu sites",
@@ -252,13 +250,11 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
     }
 
     // Deserialize policy_data to ShardingPolicySet
-    rrr::Marshal m;
-    // @unsafe { Marshal write not borrow-checked }
-    m.write_bytes(reinterpret_cast<const std::uint8_t*>(policy_data.data()), policy_data.size());
+    rrr::BufferSource __src__(reinterpret_cast<const std::uint8_t*>(policy_data.data()), policy_data.size());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     ShardingPolicySet policy;
-    // @unsafe { Marshal read not borrow-checked }
-    rrr::Deserialize_::deserialize(policy, m);
+    rrr::Deserialize_::deserialize(policy, __rar__);
 
     // @unsafe { logging I/O }
     Log_info("ConfigClient: Fetched sharding policy version %lu with %zu tables",
@@ -324,14 +320,12 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
     }
 
     // Serialize policy to string
-    rrr::Marshal m;
-    // @unsafe { Marshal write not borrow-checked }
-    rrr::Serialize_::serialize(policy, m);
+    rrr::BufferSink __sink__;
+    rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+    rrr::Serialize_::serialize(policy, __war__);
 
-    std::string policy_data;
-    policy_data.resize(m.content_size());
-    // @unsafe { Marshal read not borrow-checked }
-    m.read(reinterpret_cast<std::uint8_t*>(policy_data.data()), m.content_size());
+    std::string policy_data(reinterpret_cast<const char*>(__sink__.bytes.data()),
+                            __sink__.bytes.len());
 
     rrr::i32 success = 0;
     auto proxy = proxy_.as_ref().unwrap();

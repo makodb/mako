@@ -46,12 +46,6 @@ private:
     // State
     rusty::Cell<bool> is_open_{false};
 
-    // @unsafe - Serialize data using Marshal
-    bool serialize_to_string(const rrr::Marshal& m, std::string* out) const;
-
-    // @unsafe - Deserialize data from string using Marshal
-    bool deserialize_from_string(const std::string& data, rrr::Marshal* m) const;
-
 public:
     /**
      * Construct a ConfigStore with the specified database path.

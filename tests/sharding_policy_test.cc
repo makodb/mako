@@ -47,12 +47,17 @@ TEST_F(ShardingPolicyTest, KeyExtractorSerialization) {
     KeyExtractor original(KeyExtractorType::PREFIX_BYTES, 5, 16);
 
     // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     KeyExtractor restored;
-    marshal >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     EXPECT_EQ(restored.type, original.type);
     EXPECT_EQ(restored.field_index, original.field_index);
@@ -81,12 +86,17 @@ TEST_F(ShardingPolicyTest, RangeMappingSerialization) {
     RangeMapping original(100, 200, 5);
 
     // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     RangeMapping restored;
-    marshal >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     EXPECT_EQ(restored.start_key, original.start_key);
     EXPECT_EQ(restored.end_key, original.end_key);
@@ -141,12 +151,17 @@ TEST_F(ShardingPolicyTest, TableShardingPolicySerialization) {
     original.default_shard = 0;
 
     // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     TableShardingPolicy restored;
-    marshal >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     EXPECT_EQ(restored.table_name, original.table_name);
     EXPECT_EQ(restored.key_extractor.type, original.key_extractor.type);
@@ -227,12 +242,17 @@ TEST_F(ShardingPolicyTest, ShardingPolicySetSerialization) {
     original.set_policy("TABLE_B", p2);
 
     // Serialize
-    rrr::Marshal marshal;
-    marshal << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     ShardingPolicySet restored;
-    marshal >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     EXPECT_EQ(restored.version, original.version);
     EXPECT_EQ(restored.num_shards, original.num_shards);

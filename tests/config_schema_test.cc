@@ -10,7 +10,7 @@ namespace janus {
 namespace test {
 
 // Test PersistentSiteInfo serialization roundtrip
-// @unsafe - Uses Marshal I/O
+// @safe - archive serde roundtrip
 TEST(ConfigSchemaTest, SiteInfoSerializationRoundtrip) {
     PersistentSiteInfo original;
     original.id = 1;
@@ -25,12 +25,17 @@ TEST(ConfigSchemaTest, SiteInfoSerializationRoundtrip) {
     original.partition_id = 0;
 
     // Serialize
-    rrr::Marshal m;
-    m << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     PersistentSiteInfo restored;
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     // Verify
     EXPECT_EQ(original.id, restored.id);
@@ -46,19 +51,24 @@ TEST(ConfigSchemaTest, SiteInfoSerializationRoundtrip) {
 }
 
 // Test PersistentReplicaGroup serialization roundtrip
-// @unsafe - Uses Marshal I/O
+// @safe - archive serde roundtrip
 TEST(ConfigSchemaTest, ReplicaGroupSerializationRoundtrip) {
     PersistentReplicaGroup original;
     original.partition_id = 5;
     original.replica_ids = {1, 2, 3};
 
     // Serialize
-    rrr::Marshal m;
-    m << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     PersistentReplicaGroup restored;
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     // Verify
     EXPECT_EQ(original.partition_id, restored.partition_id);
@@ -69,7 +79,7 @@ TEST(ConfigSchemaTest, ReplicaGroupSerializationRoundtrip) {
 }
 
 // Test PersistentProtocolSettings serialization roundtrip
-// @unsafe - Uses Marshal I/O
+// @safe - archive serde roundtrip
 TEST(ConfigSchemaTest, ProtocolSettingsSerializationRoundtrip) {
     PersistentProtocolSettings original;
     original.tx_proto = 3;
@@ -79,12 +89,17 @@ TEST(ConfigSchemaTest, ProtocolSettingsSerializationRoundtrip) {
     original.scale_factor = 4;
 
     // Serialize
-    rrr::Marshal m;
-    m << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     PersistentProtocolSettings restored;
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     // Verify
     EXPECT_EQ(original.tx_proto, restored.tx_proto);
@@ -95,7 +110,7 @@ TEST(ConfigSchemaTest, ProtocolSettingsSerializationRoundtrip) {
 }
 
 // Test PersistentConfig serialization roundtrip
-// @unsafe - Uses Marshal I/O
+// @safe - archive serde roundtrip
 TEST(ConfigSchemaTest, FullConfigSerializationRoundtrip) {
     PersistentConfig original;
     original.version = 42;
@@ -146,12 +161,17 @@ TEST(ConfigSchemaTest, FullConfigSerializationRoundtrip) {
     original.settings.scale_factor = 2;
 
     // Serialize
-    rrr::Marshal m;
-    m << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     PersistentConfig restored;
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     // Verify version
     EXPECT_EQ(original.version, restored.version);
@@ -188,19 +208,24 @@ TEST(ConfigSchemaTest, FullConfigSerializationRoundtrip) {
 }
 
 // Test empty config serialization
-// @unsafe - Uses Marshal I/O
+// @safe - archive serde roundtrip
 TEST(ConfigSchemaTest, EmptyConfigSerialization) {
     PersistentConfig original;
     original.version = 1;
     // Leave sites and replica_groups empty
 
     // Serialize
-    rrr::Marshal m;
-    m << original;
+    rrr::BufferSink __sink__;
+    {
+        rrr::BinaryWriteArchive __war__(rrr::make_sink_proxy(&__sink__));
+        rrr::Serialize_::serialize(original, __war__);
+    }
+    rrr::BufferSource __src__(__sink__.bytes.data(), __sink__.bytes.len());
+    rrr::BinaryReadArchive __rar__(rrr::make_source_proxy(&__src__));
 
     // Deserialize
     PersistentConfig restored;
-    m >> restored;
+    rrr::Deserialize_::deserialize(restored, __rar__);
 
     // Verify
     EXPECT_EQ(original.version, restored.version);

@@ -5,7 +5,7 @@
  * @brief Serializable configuration data structures for persistent storage.
  *
  * This file defines the schema for storing cluster configuration in RocksDB.
- * The structures are designed to be serialized using Marshal for persistence
+ * The structures are designed to be serialized via the serde archives for persistence
  * and deserialized to reconstruct the Config singleton on node recovery.
  */
 
@@ -86,8 +86,8 @@ struct PersistentSiteInfo {
           type(type), partition_id(partition_id) {}
 };
 
-// @unsafe - Marshal operators for PersistentSiteInfo
-inline void serialize(const PersistentSiteInfo& s, rrr::Marshal& m) {
+// @safe - archive serde for PersistentSiteInfo
+inline void serialize(const PersistentSiteInfo& s, rrr::BinaryWriteArchive& m) {
     rrr::Serialize_::serialize(s.id, m);
     rrr::Serialize_::serialize(s.locale_id, m);
     rrr::Serialize_::serialize(s.name, m);
@@ -100,10 +100,9 @@ inline void serialize(const PersistentSiteInfo& s, rrr::Marshal& m) {
     rrr::Serialize_::serialize(s.partition_id, m);
 }
 
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentSiteInfo& s) { serialize(s, m); return m; }
 
 // @unsafe
-inline void deserialize(PersistentSiteInfo& s, rrr::Marshal& m) {
+inline void deserialize(PersistentSiteInfo& s, rrr::BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(s.id, m);
     rrr::Deserialize_::deserialize(s.locale_id, m);
     rrr::Deserialize_::deserialize(s.name, m);
@@ -116,7 +115,6 @@ inline void deserialize(PersistentSiteInfo& s, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(s.partition_id, m);
 }
 
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentSiteInfo& s) { deserialize(s, m); return m; }
 
 /**
  * @brief Serializable replica group for persistence.
@@ -139,8 +137,8 @@ struct PersistentReplicaGroup {
         : partition_id(partition_id), replica_ids(replica_ids) {}
 };
 
-// @unsafe - Marshal operators for PersistentReplicaGroup
-inline void serialize(const PersistentReplicaGroup& g, rrr::Marshal& m) {
+// @safe - archive serde for PersistentReplicaGroup
+inline void serialize(const PersistentReplicaGroup& g, rrr::BinaryWriteArchive& m) {
     rrr::Serialize_::serialize(g.partition_id, m);
     rrr::Serialize_::serialize(static_cast<uint32_t>(g.replica_ids.size()), m);
     for (const auto& id : g.replica_ids) {
@@ -148,10 +146,9 @@ inline void serialize(const PersistentReplicaGroup& g, rrr::Marshal& m) {
     }
 }
 
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentReplicaGroup& g) { serialize(g, m); return m; }
 
 // @unsafe
-inline void deserialize(PersistentReplicaGroup& g, rrr::Marshal& m) {
+inline void deserialize(PersistentReplicaGroup& g, rrr::BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(g.partition_id, m);
     uint32_t size;
     rrr::Deserialize_::deserialize(size, m);
@@ -161,7 +158,6 @@ inline void deserialize(PersistentReplicaGroup& g, rrr::Marshal& m) {
     }
 }
 
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentReplicaGroup& g) { deserialize(g, m); return m; }
 
 /**
  * @brief Serializable protocol and workload settings.
@@ -189,8 +185,8 @@ struct PersistentProtocolSettings {
           txn_timeout_us(txn_timeout_us), scale_factor(scale_factor) {}
 };
 
-// @unsafe - Marshal operators for PersistentProtocolSettings
-inline void serialize(const PersistentProtocolSettings& s, rrr::Marshal& m) {
+// @safe - archive serde for PersistentProtocolSettings
+inline void serialize(const PersistentProtocolSettings& s, rrr::BinaryWriteArchive& m) {
     rrr::Serialize_::serialize(s.tx_proto, m);
     rrr::Serialize_::serialize(s.replica_proto, m);
     rrr::Serialize_::serialize(s.benchmark, m);
@@ -198,10 +194,9 @@ inline void serialize(const PersistentProtocolSettings& s, rrr::Marshal& m) {
     rrr::Serialize_::serialize(s.scale_factor, m);
 }
 
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentProtocolSettings& s) { serialize(s, m); return m; }
 
 // @unsafe
-inline void deserialize(PersistentProtocolSettings& s, rrr::Marshal& m) {
+inline void deserialize(PersistentProtocolSettings& s, rrr::BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(s.tx_proto, m);
     rrr::Deserialize_::deserialize(s.replica_proto, m);
     rrr::Deserialize_::deserialize(s.benchmark, m);
@@ -209,7 +204,6 @@ inline void deserialize(PersistentProtocolSettings& s, rrr::Marshal& m) {
     rrr::Deserialize_::deserialize(s.scale_factor, m);
 }
 
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentProtocolSettings& s) { deserialize(s, m); return m; }
 
 /**
  * @brief Top-level configuration container for serialization.
@@ -237,8 +231,8 @@ struct PersistentConfig {
           settings(settings) {}
 };
 
-// @unsafe - Marshal operators for PersistentConfig
-inline void serialize(const PersistentConfig& c, rrr::Marshal& m) {
+// @safe - archive serde for PersistentConfig
+inline void serialize(const PersistentConfig& c, rrr::BinaryWriteArchive& m) {
     rrr::Serialize_::serialize(c.version, m);
 
     // Serialize sites
@@ -258,10 +252,9 @@ inline void serialize(const PersistentConfig& c, rrr::Marshal& m) {
 
 }
 
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const PersistentConfig& c) { serialize(c, m); return m; }
 
 // @unsafe
-inline void deserialize(PersistentConfig& c, rrr::Marshal& m) {
+inline void deserialize(PersistentConfig& c, rrr::BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(c.version, m);
 
     // Deserialize sites
@@ -285,6 +278,5 @@ inline void deserialize(PersistentConfig& c, rrr::Marshal& m) {
 
 }
 
-inline rrr::Marshal& operator>>(rrr::Marshal& m, PersistentConfig& c) { deserialize(c, m); return m; }
 
 }  // namespace janus
