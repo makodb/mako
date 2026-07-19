@@ -26,7 +26,6 @@ namespace janus {
 namespace raft {
 
 // Bring rrr:: marshalling types into janus::raft:: scope (they live in rrr::).
-using ::rrr::Marshal;
 using ::rrr::BinaryWriteArchive;
 using ::rrr::BinaryReadArchive;
 using ::rrr::i8;

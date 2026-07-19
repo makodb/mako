@@ -17,8 +17,7 @@ using namespace janus;
 // TypedMarshallableAdapter to Serializable. Registration switched
 // to `rrr::reg_serializable_in_deputy<T>` (replaces
 // `MarshallDeputy::reg_initializer<T>`). Wire format byte-for-byte
-// identical: the Marshal-based to_marshal/from_marshal wrappers below
-// delegate to save/load via a MarshalSink/MarshalSource bridge, and
+// identical, and
 // bridge-dispatched `wrap_typed_marshallable` / `marshallable_cast<T>`
 // keep the legacy call sites working unchanged.
 // registration switched to no-arg form — kind
@@ -60,7 +59,7 @@ shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
 }
 
 // Serializable save/load — moved here from
-// to_marshal/from_marshal. Wire format is byte-for-byte identical;
+// the legacy Marshal wire. Wire format is byte-for-byte identical;
 // the BinaryWriteArchive/BinaryReadArchive `<<`/`>>` overloads for
 // uint8_t / uint32_t / std::string match the legacy Marshal encoding.
 void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
@@ -98,25 +97,9 @@ void ReplicatedDBCommand::load(BinaryReadArchive& ar) {
   }
 }
 
-// 1 legacy wrappers: keep the existing test.cc call sites
-// (cmd->to_marshal(m) / cmd2->from_marshal(m)) compiling. Each wrapper
-// builds a single-use BinaryWriteArchive/BinaryReadArchive on top of a
-// MarshalSink/MarshalSource adapter and delegates to save/load.
-// @unsafe - Marshal I/O is not borrow-checked
-Marshal& ReplicatedDBCommand::to_marshal(Marshal& m) const {
-  rrr::MarshalSink sink(&m);
-  rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
-  save(ar);
-  return m;
-}
-
-// @unsafe - Marshal I/O is not borrow-checked
-Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
-  rrr::MarshalSource source(&m);
-  rrr::BinaryReadArchive ar(rrr::make_source_proxy(&source));
-  load(ar);
-  return m;
-}
+// Marshal-deprecation slice C2: the legacy to_marshal/from_marshal
+// bridge wrappers are deleted; save/load over the archives is the only
+// serialization surface (test.cc call sites flipped to save/load).
 
 // ===========================================================================
 // ReplicatedDB implementation

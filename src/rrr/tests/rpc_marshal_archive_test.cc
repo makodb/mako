@@ -1,6 +1,6 @@
 // Round-trip tests for BinaryWriteArchive / BinaryReadArchive over
 // BufferSink / BufferSource / FdSink / FdSource, plus the
-// Marshal <-> archive bridges (MarshalSink / MarshalSource).
+// (the former Marshal bridge layer is deleted with Marshal itself).
 //
 // Historically this suite byte-compared the archive encoders against
 // the old `Marshal` operator<< / operator>> serde surface. That
@@ -34,16 +34,7 @@ import rrr.basetypes;
 namespace rrr {
 namespace {
 
-// Drain a Marshal into a contiguous byte vector for comparison.
-std::vector<uint8_t> drain_marshal(Marshal& m) {
-  std::vector<uint8_t> out;
-  out.resize(m.content_size());
-  if (!out.empty()) {
-    auto got = m.read(out.data(), out.size());
-    EXPECT_EQ(got, out.size());
-  }
-  return out;
-}
+
 
 std::vector<uint8_t> sink_to_vector(const BufferSink& sink) {
   std::vector<uint8_t> out;
@@ -993,162 +984,6 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
 }
 
 // ---- Marshal ↔ Archive bridges ----------------------------
-
-TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
-  // Encode a payload via:
-  //   (a) BinaryWriteArchive over BufferSink (reference)
-  //   (b) BinaryWriteArchive over MarshalSink wrapping a Marshal
-  // and verify the two byte streams are identical. Confirms
-  // MarshalSink does not introduce any framing or transformation.
-  const int32_t i = 0xDEADBEEFu;
-  const std::string s = "bridge to marshal";
-  std::vector<int64_t> v{1, -2, 3, -4, 5};
-
-  // (a) reference via BufferSink.
-  BufferSink ref_sink;
-  BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  rrr::Serialize_::serialize(i, ref_writer);
-  rrr::Serialize_::serialize(s, ref_writer);
-  rrr::Serialize_::serialize(v, ref_writer);
-  auto ref_bytes = sink_to_vector(ref_sink);
-
-  // (b) via MarshalSink.
-  Marshal m;
-  MarshalSink mark_sink(&m);
-  BinaryWriteArchive mark_writer(make_sink_proxy(&mark_sink));
-  rrr::Serialize_::serialize(i, mark_writer);
-  rrr::Serialize_::serialize(s, mark_writer);
-  rrr::Serialize_::serialize(v, mark_writer);
-  auto bridge_bytes = drain_marshal(m);
-
-  ASSERT_EQ(ref_bytes.size(), bridge_bytes.size());
-  EXPECT_EQ(ref_bytes, bridge_bytes);
-}
-
-TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
-  // Write to the same Marshal through several successive MarshalSink
-  // scopes. The combined byte stream should be the concatenation —
-  // proving the bridge is safe to reopen over a partially-filled
-  // Marshal.
-  Marshal m;
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(static_cast<int32_t>(1), writer);
-  }
-
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(static_cast<int32_t>(2), writer);
-  }
-
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(std::string("trailing"), writer);
-  }
-
-  // Compare against a reference encoded in a single archive pass.
-  BufferSink ref_sink;
-  BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
-  rrr::Serialize_::serialize(static_cast<int32_t>(1), ref_writer);
-  rrr::Serialize_::serialize(static_cast<int32_t>(2), ref_writer);
-  rrr::Serialize_::serialize(std::string("trailing"), ref_writer);
-
-  auto bridge_bytes = drain_marshal(m);
-  auto ref_bytes = sink_to_vector(ref_sink);
-  EXPECT_EQ(bridge_bytes, ref_bytes);
-}
-
-TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
-  // Encode a payload into a Marshal via MarshalSink, then decode it
-  // through a `BinaryReadArchive` over `MarshalSource`.
-  // Expected: identical decoded values, source drained at the end.
-  const int32_t i = 42;
-  const std::string s = "marshal-encoded";
-  std::vector<int64_t> v{10, 20, 30};
-
-  Marshal m;
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(i, writer);
-    rrr::Serialize_::serialize(s, writer);
-    rrr::Serialize_::serialize(v, writer);
-  }
-
-  MarshalSource src(&m);
-  BinaryReadArchive reader(make_source_proxy(&src));
-
-  int32_t i2;
-  std::string s2;
-  std::vector<int64_t> v2;
-  rrr::Deserialize_::deserialize(i2, reader);
-  rrr::Deserialize_::deserialize(s2, reader);
-  rrr::Deserialize_::deserialize(v2, reader);
-
-  EXPECT_EQ(i2, i);
-  EXPECT_EQ(s2, s);
-  EXPECT_EQ(v2, v);
-  EXPECT_EQ(m.content_size(), 0u);  // Marshal drained.
-}
-
-TEST(MarshalBridges, RoundTripThroughMarshalSinkAndSource) {
-  // Write via BinaryWriteArchive(MarshalSink) -> Marshal ->
-  // BinaryReadArchive(MarshalSource). Should round-trip cleanly.
-  Marshal m;
-
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(static_cast<int32_t>(7), writer);
-    rrr::Serialize_::serialize(static_cast<int64_t>(-99), writer);
-    rrr::Serialize_::serialize(std::string("hello"), writer);
-    std::vector<int32_t> ints{4, 5, 6};
-    rrr::Serialize_::serialize(ints, writer);
-  }
-
-  MarshalSource src(&m);
-  BinaryReadArchive reader(make_source_proxy(&src));
-
-  int32_t a;
-  int64_t b;
-  std::string c;
-  std::vector<int32_t> d;
-  rrr::Deserialize_::deserialize(a, reader);
-  rrr::Deserialize_::deserialize(b, reader);
-  rrr::Deserialize_::deserialize(c, reader);
-  rrr::Deserialize_::deserialize(d, reader);
-
-  EXPECT_EQ(a, 7);
-  EXPECT_EQ(b, -99);
-  EXPECT_EQ(c, "hello");
-  EXPECT_EQ(d, (std::vector<int32_t>{4, 5, 6}));
-  EXPECT_EQ(m.content_size(), 0u);
-}
-
-TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
-  // Drain a Marshal, then attempt to read past its end via
-  // MarshalSource. Should return 0 (not abort), consistent with
-  // BufferSource and FdSource EOF semantics.
-  Marshal m;
-  {
-    MarshalSink sink(&m);
-    BinaryWriteArchive writer(make_sink_proxy(&sink));
-    rrr::Serialize_::serialize(static_cast<int32_t>(1), writer);
-  }
-
-  MarshalSource src(&m);
-  int32_t v;
-  BinaryReadArchive reader(make_source_proxy(&src));
-  rrr::Deserialize_::deserialize(v, reader);
-  EXPECT_EQ(v, 1);
-
-  uint8_t extra[4];
-  size_t got = src.read_bytes(extra, sizeof(extra));
-  EXPECT_EQ(got, 0u);
-}
 
 TEST(SerializableRegistry, MultipleKindsCoexist) {
   // Two different kinds should be retrievable independently.

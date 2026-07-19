@@ -35,9 +35,9 @@ struct KVOperation {
 // Construction sites use `wrap_typed_marshallable` (still works through
 // the Phase 4d-prep bridge dispatch) and `marshallable_cast<T>` (also
 // dispatched through the bridge for any non-Marshallable T). The
-// legacy `to_marshal` / `from_marshal` member functions are kept as
+// legacy `to_marshal` / `from_marshal` member functions are gone as
 // thin wrappers that build a BinaryWriteArchive/BinaryReadArchive on
-// top of a MarshalSink/MarshalSource and delegate to save/load — this
+// top of the archive serde surface via save/load — this
 // keeps the existing test.cc round-trip sites compiling unchanged.
 class ReplicatedDBCommand : public rrr::Serializable<ReplicatedDBCommand,
                                                      MakoCommands> {
@@ -60,12 +60,6 @@ public:
     void save(BinaryWriteArchive& ar) const;
     void load(BinaryReadArchive& ar);
 
-    // Legacy Marshal-based round-trip wrappers — kept for
-    // test sites that exercise the on-wire encoding directly. They
-    // delegate to save/load via MarshalSink/MarshalSource so the bytes
-    // are byte-for-byte identical to the pre-migration encoding.
-    Marshal& to_marshal(Marshal& m) const;
-    Marshal& from_marshal(Marshal& m);
 };
 
 /**

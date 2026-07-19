@@ -108,7 +108,7 @@ uint64_t queued_request_time_us() {
  *     `auto req = QueuedRequest::new_();` explicitly. The factory
  *     does the same field-init work the original ctor did
  *     (`timestamp_us = queued_request_time_us()`,
- *     `payload = Arc::<Marshal>::make()`, `ttl_ms = 30000`).
+ *     `ttl_ms = 30000`).
  *   * Fields no longer marked private (the DSL emits all fields
  *     public); no callers reach into them through anything other
  *     than the public field names that were already public-by-
@@ -120,7 +120,6 @@ struct QueuedRequest {
     rpc_id: i32,
     timestamp_us: u64,
     retry_count: u32,
-    payload: Arc<Marshal>,
     callback: QueuedRequestCallback,
     ttl_ms: u32,
 }
@@ -132,7 +131,6 @@ impl QueuedRequest {
             rpc_id: 0i32,
             timestamp_us: queued_request_time_us(),
             retry_count: 0u32,
-            payload: Arc::<Marshal>::make(),
             callback: QueuedRequestCallback {},
             ttl_ms: 30000u32,
         }
@@ -150,7 +148,7 @@ impl QueuedRequest {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.2 version=1 rust_sha256=e1030e3c7232098b7e5960fca2e18aac19e4cdf30c22f01e504c54a63b9feb1b*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.2 version=1 rust_sha256=7c5fc9b4686d94756ad85ce30fcf1ae36d88a924d7b1e36ea8c202985ae25bcd*/
 struct QueuedRequest;
 
 struct QueuedRequest {
@@ -158,7 +156,6 @@ struct QueuedRequest {
     int32_t rpc_id;
     uint64_t timestamp_us;
     uint32_t retry_count;
-    rusty::Arc<Marshal> payload;
     QueuedRequestCallback callback;
     uint32_t ttl_ms;
 
@@ -169,7 +166,7 @@ struct QueuedRequest {
 
 
 QueuedRequest QueuedRequest::new_() {
-    return QueuedRequest{.xid = static_cast<int64_t>(0), .rpc_id = static_cast<int32_t>(0), .timestamp_us = queued_request_time_us(), .retry_count = static_cast<uint32_t>(0), .payload = rusty::Arc<Marshal>::make(), .callback = QueuedRequestCallback{}, .ttl_ms = static_cast<uint32_t>(30000)};
+    return QueuedRequest{.xid = static_cast<int64_t>(0), .rpc_id = static_cast<int32_t>(0), .timestamp_us = queued_request_time_us(), .retry_count = static_cast<uint32_t>(0), .callback = QueuedRequestCallback{}, .ttl_ms = static_cast<uint32_t>(30000)};
 }
 
 bool QueuedRequest::is_expired() const {

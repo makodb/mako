@@ -82,7 +82,6 @@ using rrr::RandomGenerator;
 // removed `using rrr::Recorder;` — class deleted.
 using rrr::AvgStat;
 using rrr::PollThread;
-using rrr::Marshal;
 // retired
 // `using rrr::Marshallable` and `using rrr::MarshallDeputy` —
 // the underlying classes are gone in this same release.

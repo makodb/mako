@@ -7571,11 +7571,14 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
   janus::Command md;
   md = cmd3;
-  rrr::Marshal m2;
-  m2 << md;
+  rrr::BufferSink sink2;
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  rrr::Serialize_::serialize(md, war2);
 
   janus::Command md2;
-  m2 >> md2;
+  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  rrr::Deserialize_::deserialize(md2, rar2);
   Assert2(md2.has_value(), "janus::Command should have deserialized data");
   auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
   Assert2(cmd4 != nullptr, "Should dynamic_cast to ReplicatedDBCommand");

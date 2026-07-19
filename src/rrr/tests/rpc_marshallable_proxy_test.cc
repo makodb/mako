@@ -207,13 +207,12 @@ TEST(MarshallableProxyFacadeTest, DeptranViewDataMarshalRoundTrip) {
   // ViewData migrated to Serializable. Use Archive
   // round-trip — the Marshal-based to_marshal/from_marshal methods
   // are gone.
-  Marshal m;
-  MarshalSink sink(&m);
+  BufferSink sink;
   BinaryWriteArchive writer(make_sink_proxy(&sink));
   src.save(writer);
 
   janus::ViewData dst;
-  MarshalSource source(&m);
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
   dst.load(reader);
 
@@ -372,16 +371,15 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   // directly in RPC fields without a surrounding MarshallDeputy.
   rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
 
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
-    MarshalSource src(&m);
+    BufferSource src(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
@@ -395,16 +393,15 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
 
   rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
 
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   rrr::AnyMessage incoming;
   {
-    MarshalSource src(&m);
+    BufferSource src(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
