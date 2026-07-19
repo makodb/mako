@@ -3,6 +3,7 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
+#include <rusty/slice.hpp>
 
 #include <unistd.h>
 #include <strings.h>
@@ -117,12 +118,27 @@ inline int32_t epoll_open() {
     return fd;
 }
 
-// @unsafe - ::close syscall on the owned poll fd (the Drop body).
-inline void epoll_close(int32_t poll_fd) {
-    if (poll_fd != -1) {
-        ::close(poll_fd);
+// The close(2) syscall on the owned poll fd (the Drop body), authored
+// in the DSL as an expression-shaped unsafe{} libc call.
+#if RUSTYCPP_RUST
+fn epoll_close(poll_fd: i32) {
+    if poll_fd != -1 {
+        unsafe { close(poll_fd); }
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll.close version=1 rust_sha256=9ee8fdfa7e86efa065119d03db0e329f96c1891948c12d880931baaf07f58f93*/
+void epoll_close(int32_t poll_fd);
+
+void epoll_close(int32_t poll_fd) {
+    if (rusty::detail::deref_if_pointer_like(poll_fd) != -1) {
+        // @unsafe
+        {
+            close(std::move(poll_fd));
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=epoll.close*/
 
 // @unsafe - kevent / epoll_ctl(ADD) plumbing with bzero/memset and EEXIST retry.
 inline int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode) {

@@ -1712,12 +1712,38 @@ ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
 }
 
 // Set the FD non-blocking. Returns 0 on success, errno on failure.
-int set_nonblocking_fd(int fd) {
-    const int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0) return errno;
-    if (::fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return errno;
-    return 0;
+// Authored in the DSL via expression-shaped unsafe{} libc calls (the
+// threading.cpp pthread pattern): fcntl is variadic C but the call
+// lowers textually; F_GETFL/O_NONBLOCK/errno are macros that survive
+// the lowering as identifiers.
+#if RUSTYCPP_RUST
+fn set_nonblocking_fd(fd: i32) -> i32 {
+    let flags = unsafe { fcntl(fd, F_GETFL, 0) };
+    if flags < 0 {
+        return errno;
+    }
+    let rc = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+    if rc < 0 {
+        return errno;
+    }
+    0
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.set_nonblocking version=1 rust_sha256=d1f83d8b9266d28be729f9b54a4b1548e5c26dfdb102d561918a172f999fbbf7*/
+int32_t set_nonblocking_fd(int32_t fd);
+
+int32_t set_nonblocking_fd(int32_t fd) {
+    const auto flags = fcntl(std::move(fd), F_GETFL, 0);
+    if (rusty::detail::deref_if_pointer_like(flags) < 0) {
+        return errno;
+    }
+    const auto rc = fcntl(std::move(fd), F_SETFL, rusty::detail::deref_if_pointer_like(flags) | rusty::detail::deref_if_pointer_like(O_NONBLOCK));
+    if (rusty::detail::deref_if_pointer_like(rc) < 0) {
+        return errno;
+    }
+    return static_cast<int32_t>(0);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.set_nonblocking*/
 
 // Note: `sockaddr_to_string` lived here before the Phase C migration —
 // every caller now uses `rusty::net::socket_addr_v4_to_string` directly.
