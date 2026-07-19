@@ -94,6 +94,24 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-18 — **Marshal-deprecation steps 1-3 LANDED** (3 commits): Request retyped to
+  { body: Vec<u8>, src: BufferSource } (request_fill_body kernel; rpcgen emits
+  make_source_proxy(&req->src); 4 headers regenerated; ~30 consumer sites flipped);
+  Future.reply_ retyped to RefCell<ReplyBuffer> (same owned-bytes + in-place-cursor design;
+  operator>>/deserialize_from bridge retargeted transparently; retry splice = byte-range copy);
+  client scratch writers (serialize-once-for-retry, heartbeat probe) → BufferSink. No rrr/rpc
+  runtime state or scratch path holds a Marshal. Wire unchanged; full gate green each step.
+  **Step-4 census (the remaining Marshal surface, ~30 files)**: two tiers —
+  (a) MECHANICAL archive flips: deptran config_store/client/service (~39 locals),
+  idempotency.cpp internals (31 — the deferred LRU flows), raft rocksdb_log_storage +
+  replicated_db (13), sharding_policy.h + config_schema.h serde-overload users (45),
+  test files (~190 incl. rpc_marshal_archive_test which IS the Marshal test);
+  (b) ARCHITECTURAL: the deptran Marshallable/MarshalDeputy virtual layer (procedure,
+  rcc/tx, command_marshaler — virtual ToMarshal/FromMarshal signatures) — retiring Marshal
+  outright requires re-signaturing that polymorphic layer; sequence the mechanical tier
+  first, then decide (a) keep Marshal as the Marshallable wire type only, or (b) re-signature
+  to archives. The 78 Marshal-sink serde overloads delete only after BOTH tiers.
+
 - 2026-07-18 — **★ J+K SWEEP COMPLETE (task closed, 5 batches)**: sweeps 4-5 (`bf4b6d35` + tcp
   poll_mode/content_size) finish tcp_channel's J surface — 5 callback setters, 2 errno mappers
   (DSL if-chains; PollMode namespace-constants lower as plain paths, probe-verified), poll_mode,
