@@ -2498,6 +2498,17 @@ tpcc_worker::txn_new_order()
         // if (is_sampling_remote_calls && rand() % sampling_number == 0)
         //   sampling_remote_calls.push_back(tmp);
         ALWAYS_ERROR(ret);
+        // Standard retryable-abort handling (same cutover-race family as the
+        // payment remote reads): during a back-leg stock migration this read
+        // can race the per-table route flip -- miss/busy must retry, and
+        // Decode of an empty buffer is a varint abort.
+        if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if (obj_v.empty() &&
+            mako::tpcc_route_shard_for_warehouse("customer", ol_supply_w_id) >= 0) {
+          db->abort_txn_local(txn);
+          return txn_result(false, isRemote ? 1 : 0);
+        }
       }
       stock::value v_s_temp;
       const stock::value *v_s = Decode(obj_v, v_s_temp);
@@ -3049,6 +3060,22 @@ if (TThread::get_is_micro()) {
       auto* name_idx_h = tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID));
       if (!name_idx_h->get_is_remote()) {
         name_idx_h->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
+        // Under partition-governed routing, an EMPTY by-name scan is a
+        // migration race, not an integrity violation: the per-table route
+        // flips one table at a time during a warehouse ping-pong, and a
+        // lookup that lands between the copy and the settle can resolve
+        // LOCAL yet see a not-yet-visible / already-tombstoned index (the
+        // moved-fence covers the settled states; the flip instant is not
+        // atomic with routing). The customer exists on SOME shard the whole
+        // time -- abort retryably and let the retry re-resolve (observed
+        // live: shard1 panicked here mid back-leg right as customer_name_idx
+        // cut over, killing the migration destination). Ungoverned (legacy)
+        // beds keep the hard must-find Panic.
+        if (c.size() == 0 &&
+            mako::tpcc_route_shard_for_warehouse("customer", customerWarehouseID) >= 0) {
+          db->abort_txn_local(txn);
+          return txn_result(false, isRemote ? 1 : 0);
+        }
         ALWAYS_ERROR(c.size() > 0);
         INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
         int index = c.size() / 2;
@@ -3059,6 +3086,14 @@ if (TThread::get_is_micro()) {
         k_c.c_id = v_c_idx->c_id;
       } else {
         remote_tbl_customer_name_idx(customerWarehouseID)->tx_scan_remote_one(txn, Encode(obj_key0, k_c_idx_0), Encode(obj_key1, k_c_idx_1), obj_v);
+        // Same migration race, remote flavor: an empty one-pick result would
+        // run Decode off the end of an empty buffer (varint abort). Abort
+        // retryably under governed routing instead.
+        if (obj_v.empty() &&
+            mako::tpcc_route_shard_for_warehouse("customer", customerWarehouseID) >= 0) {
+          db->abort_txn_local(txn);
+          return txn_result(false, isRemote ? 1 : 0);
+        }
         customer_name_idx::value v_c_idx_temp;
         const customer_name_idx::value *v_c_idx = Decode(obj_v, v_c_idx_temp);
         k_c.c_id = v_c_idx->c_id;
@@ -3073,6 +3108,17 @@ if (TThread::get_is_micro()) {
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
         ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
+        // Standard retryable-abort handling (present on every other tx_get in
+        // this file, was missing on the remote branches): a migration-window
+        // miss/busy must retry, and Decode of an empty buffer is a varint
+        // abort.
+        if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if (obj_v.empty() &&
+            mako::tpcc_route_shard_for_warehouse("customer", customerWarehouseID) >= 0) {
+          db->abort_txn_local(txn);
+          return txn_result(false, isRemote ? 1 : 0);
+        }
       }
 
       Decode(obj_v, v_c);
@@ -3128,6 +3174,16 @@ if (TThread::get_is_micro()) {
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
         ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
+        // Standard retryable-abort handling (was missing on this remote
+        // branch; the BC-credit customer_data read panicked the migration
+        // destination when it raced a cutover).
+        if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
+        if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
+        if (obj_v.empty() &&
+            mako::tpcc_route_shard_for_warehouse("customer", customerWarehouseID) >= 0) {
+          db->abort_txn_local(txn);
+          return txn_result(false, isRemote ? 1 : 0);
+        }
       }
       Decode(obj_v, v_c_data);
       customer_data::value v_c_data_new(v_c_data);
