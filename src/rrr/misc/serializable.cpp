@@ -649,6 +649,15 @@ void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
 }
 /*RUSTYCPP:GEN-END id=serializable.write_archive*/
 
+// Varint scratch for the v32/v64 leaf impls: the DSL has no local
+// arrays, so the stack buffer lives in a plain C++ POD whose C-array
+// field decays to uint8_t* at the DSL call sites.
+struct VarintBuf { uint8_t arr[9]; };
+inline VarintBuf varint_buf_new() { return VarintBuf{}; }
+// @unsafe - pointer offset into the scratch (the tail read lands after
+// the already-consumed first byte).
+inline uint8_t* varint_tail(VarintBuf* b) { return b->arr + 1; }
+
 // ---- Serde-style Serialize trait (wire migration). --------------------
 // Value-side serialization: each type implements how to write itself into
 // a BinaryWriteArchive. Lowers to a UFCS free fn
@@ -659,6 +668,20 @@ void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n) {
 #if RUSTYCPP_RUST
 pub trait Serialize {
     fn serialize(&self, ar: &mut BinaryWriteArchive);
+}
+impl Serialize for v32 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let mut b = varint_buf_new();
+        let bsize = SparseInt::dump32(self.get(), b.arr);
+        ar.write_bytes(b.arr, bsize);
+    }
+}
+impl Serialize for v64 {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        let mut b = varint_buf_new();
+        let bsize = SparseInt::dump64(self.get(), b.arr);
+        ar.write_bytes(b.arr, bsize);
+    }
 }
 impl Serialize for i32 {
     fn serialize(&self, ar: &mut BinaryWriteArchive) {
@@ -733,9 +756,13 @@ impl Serialize for f64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=13a3341df2ed41e945eb4ff0af97671579193fc4e3a74fd543778951ea8aa197*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=1c03eccea53c5ff40cee1e490f75758d22ba3957d5cb346765e81d3914dcbc13*/
 // Extension trait free-function forward declarations
 namespace rusty_ext {
+    void serialize(const v32& self_, BinaryWriteArchive& ar);
+
+    void serialize(const v64& self_, BinaryWriteArchive& ar);
+
     void serialize(const int32_t& self_, BinaryWriteArchive& ar);
 
     void serialize(const int8_t& self_, BinaryWriteArchive& ar);
@@ -757,6 +784,14 @@ namespace rusty_ext {
 }
 
 
+namespace Serialize_ {
+    void serialize(const v32& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
+namespace Serialize_ {
+    void serialize(const v64& self_, BinaryWriteArchive& ar);
+}
+using namespace Serialize_;
 namespace Serialize_ {
     void serialize(const int32_t& self_, BinaryWriteArchive& ar);
 }
@@ -808,6 +843,36 @@ protected:
 template <class U> class SerializeAdapter;
 template <class U> class SerializeAdapterRef;
 template <class U> class SerializeAdapterRefMut;
+
+// TODO orphan impl: methods for `v32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for v32
+void serialize(BinaryWriteArchive& ar) const {
+    auto b = varint_buf_new();
+    const auto bsize = SparseInt::dump32(this->get(), std::move(b.arr));
+    ar.write_bytes(std::move(b.arr), std::move(bsize));
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `v64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for v64
+void serialize(BinaryWriteArchive& ar) const {
+    auto b = varint_buf_new();
+    const auto bsize = SparseInt::dump64(this->get(), std::move(b.arr));
+    ar.write_bytes(std::move(b.arr), std::move(bsize));
+}
+#endif  // patcher: end orphan-impl stub
 
 // TODO orphan impl: methods for `i32` were declared in this file but the
 // host type lives in another module / TU. These methods are emitted as
@@ -964,6 +1029,20 @@ void serialize(BinaryWriteArchive& ar) const {
 
 // Extension trait Serialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
+    void serialize(const v32& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        const auto bsize = SparseInt::dump32(self_.get(), std::move(b.arr));
+        ar.write_bytes(std::move(b.arr), std::move(bsize));
+    }
+
+    void serialize(const v64& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        const auto bsize = SparseInt::dump64(self_.get(), std::move(b.arr));
+        ar.write_bytes(std::move(b.arr), std::move(bsize));
+    }
+
     void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
@@ -1046,6 +1125,66 @@ namespace rusty_ext {
     }
 
 }
+
+template <>
+class SerializeAdapter<v32> final : public Serialize {
+    v32 value_;
+public:
+    explicit SerializeAdapter(v32 v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<v32> final : public Serialize {
+    const v32& value_;
+public:
+    explicit SerializeAdapterRef(const v32& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<v32> final : public Serialize {
+    v32& value_;
+public:
+    explicit SerializeAdapterRefMut(v32& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapter<v64> final : public Serialize {
+    v64 value_;
+public:
+    explicit SerializeAdapter(v64 v) : value_(std::move(v)) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRef<v64> final : public Serialize {
+    const v64& value_;
+public:
+    explicit SerializeAdapterRef(const v64& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
+
+template <>
+class SerializeAdapterRefMut<v64> final : public Serialize {
+    v64& value_;
+public:
+    explicit SerializeAdapterRefMut(v64& u) : value_(u) {}
+    void serialize(BinaryWriteArchive& ar) const override {
+        rusty_ext::serialize(value_, ar);
+    }
+};
 
 template <>
 class SerializeAdapter<int32_t> final : public Serialize {
@@ -1320,6 +1459,26 @@ public:
 
 // UFCS trait migration: free functions for `impl Serialize for ...`
 namespace Serialize_ {
+    void serialize(const v32& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        const auto bsize = SparseInt::dump32(self_.get(), std::move(b.arr));
+        ar.write_bytes(std::move(b.arr), std::move(bsize));
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
+    void serialize(const v64& self_, BinaryWriteArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        const auto bsize = SparseInt::dump64(self_.get(), std::move(b.arr));
+        ar.write_bytes(std::move(b.arr), std::move(bsize));
+    }
+
+}
+// UFCS trait migration: free functions for `impl Serialize for ...`
+namespace Serialize_ {
     void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
@@ -1438,16 +1597,6 @@ namespace Serialize_ {
 // kernels (like the containers below); encode goes through the DSL
 // SparseInt::dump statics (u8 buffers).
 namespace Serialize_ {
-inline void serialize(const rrr::v32& self_, BinaryWriteArchive& ar) {
-  uint8_t buf[5];
-  size_t bsize = rrr::SparseInt::dump32(self_.get(), buf);
-  ar.write_bytes(buf, bsize);
-}
-inline void serialize(const rrr::v64& self_, BinaryWriteArchive& ar) {
-  uint8_t buf[9];
-  size_t bsize = rrr::SparseInt::dump64(self_.get(), buf);
-  ar.write_bytes(buf, bsize);
-}
 inline void serialize(std::string_view self_, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(self_.size())};
   serialize(v_len, ar);
@@ -1725,6 +1874,28 @@ inline bool bra_read_exact(BinaryReadArchive& self, std::uint8_t* p,
 pub trait Deserialize {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive);
 }
+impl Deserialize for v32 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut b = varint_buf_new();
+        verify(ar.read_exact(b.arr, 1));
+        let total = SparseInt::buf_size(b.arr[0]);
+        if total > 1 {
+            verify(ar.read_exact(varint_tail(&mut b), total - 1));
+        }
+        self.set(SparseInt::load32(b.arr));
+    }
+}
+impl Deserialize for v64 {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        let mut b = varint_buf_new();
+        verify(ar.read_exact(b.arr, 1));
+        let total = SparseInt::buf_size(b.arr[0]);
+        if total > 1 {
+            verify(ar.read_exact(varint_tail(&mut b), total - 1));
+        }
+        self.set(SparseInt::load64(b.arr));
+    }
+}
 impl Deserialize for i32 {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
         unsafe {
@@ -1798,9 +1969,13 @@ impl Deserialize for f64 {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=c6ac757c5ad16cf6e179f391583e30ecf04552bcf551e369f5a73be178a98eac*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=981d4817ed90246efe31c93a081d3d38c9d8d0763d5f62db55542165d70e90d9*/
 // Extension trait free-function forward declarations
 namespace rusty_ext {
+    void deserialize(v32& self_, BinaryReadArchive& ar);
+
+    void deserialize(v64& self_, BinaryReadArchive& ar);
+
     void deserialize(int32_t& self_, BinaryReadArchive& ar);
 
     void deserialize(int8_t& self_, BinaryReadArchive& ar);
@@ -1822,6 +1997,14 @@ namespace rusty_ext {
 }
 
 
+namespace Deserialize_ {
+    void deserialize(v32& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
+namespace Deserialize_ {
+    void deserialize(v64& self_, BinaryReadArchive& ar);
+}
+using namespace Deserialize_;
 namespace Deserialize_ {
     void deserialize(int32_t& self_, BinaryReadArchive& ar);
 }
@@ -1873,6 +2056,44 @@ protected:
 template <class U> class DeserializeAdapter;
 template <class U> class DeserializeAdapterRef;
 template <class U> class DeserializeAdapterRefMut;
+
+// TODO orphan impl: methods for `v32` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for v32
+void deserialize(BinaryReadArchive& ar) {
+    auto b = varint_buf_new();
+    verify(ar.read_exact(std::move(b.arr), 1));
+    const auto total = SparseInt::buf_size(b.arr[0]);
+    if (rusty::detail::deref_if_pointer_like(total) > 1) {
+        verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+    }
+    this->set(SparseInt::load32(std::move(b.arr)));
+}
+#endif  // patcher: end orphan-impl stub
+
+// TODO orphan impl: methods for `v64` were declared in this file but the
+// host type lives in another module / TU. These methods are emitted as
+// free-standing template functions that reference `this`/`(*this)`,
+// which is not valid C++ outside a member function. Move them into the
+// host type's struct body, or rewrite `this`/`(*this)` to an explicit
+// `self_` parameter and qualify all call sites accordingly.
+#if 0  // patcher: orphan-impl block stubbed
+// Methods for v64
+void deserialize(BinaryReadArchive& ar) {
+    auto b = varint_buf_new();
+    verify(ar.read_exact(std::move(b.arr), 1));
+    const auto total = SparseInt::buf_size(b.arr[0]);
+    if (rusty::detail::deref_if_pointer_like(total) > 1) {
+        verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+    }
+    this->set(SparseInt::load64(std::move(b.arr)));
+}
+#endif  // patcher: end orphan-impl stub
 
 // TODO orphan impl: methods for `i32` were declared in this file but the
 // host type lives in another module / TU. These methods are emitted as
@@ -2029,6 +2250,28 @@ void deserialize(BinaryReadArchive& ar) {
 
 // Extension trait Deserialize lowered to rusty_ext:: free functions
 namespace rusty_ext {
+    void deserialize(v32& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        verify(ar.read_exact(std::move(b.arr), 1));
+        const auto total = SparseInt::buf_size(b.arr[0]);
+        if (rusty::detail::deref_if_pointer_like(total) > 1) {
+            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+        }
+        self_.set(SparseInt::load32(std::move(b.arr)));
+    }
+
+    void deserialize(v64& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        verify(ar.read_exact(std::move(b.arr), 1));
+        const auto total = SparseInt::buf_size(b.arr[0]);
+        if (rusty::detail::deref_if_pointer_like(total) > 1) {
+            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+        }
+        self_.set(SparseInt::load64(std::move(b.arr)));
+    }
+
     void deserialize(int32_t& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
@@ -2111,6 +2354,66 @@ namespace rusty_ext {
     }
 
 }
+
+template <>
+class DeserializeAdapter<v32> final : public Deserialize {
+    v32 value_;
+public:
+    explicit DeserializeAdapter(v32 v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<v32> final : public Deserialize {
+    const v32& value_;
+public:
+    explicit DeserializeAdapterRef(const v32& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<v32> final : public Deserialize {
+    v32& value_;
+public:
+    explicit DeserializeAdapterRefMut(v32& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapter<v64> final : public Deserialize {
+    v64 value_;
+public:
+    explicit DeserializeAdapter(v64 v) : value_(std::move(v)) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
+
+template <>
+class DeserializeAdapterRef<v64> final : public Deserialize {
+    const v64& value_;
+public:
+    explicit DeserializeAdapterRef(const v64& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        std::abort();  // unreachable through &dyn T
+    }
+};
+
+template <>
+class DeserializeAdapterRefMut<v64> final : public Deserialize {
+    v64& value_;
+public:
+    explicit DeserializeAdapterRefMut(v64& u) : value_(u) {}
+    void deserialize(BinaryReadArchive& ar) override {
+        rusty_ext::deserialize(value_, ar);
+    }
+};
 
 template <>
 class DeserializeAdapter<int32_t> final : public Deserialize {
@@ -2385,6 +2688,34 @@ public:
 
 // UFCS trait migration: free functions for `impl Deserialize for ...`
 namespace Deserialize_ {
+    void deserialize(v32& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        verify(ar.read_exact(std::move(b.arr), 1));
+        const auto total = SparseInt::buf_size(b.arr[0]);
+        if (rusty::detail::deref_if_pointer_like(total) > 1) {
+            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+        }
+        self_.set(SparseInt::load32(std::move(b.arr)));
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
+    void deserialize(v64& self_, BinaryReadArchive& ar) {
+        using Self = std::remove_reference_t<decltype(self_)>;
+        auto b = varint_buf_new();
+        verify(ar.read_exact(std::move(b.arr), 1));
+        const auto total = SparseInt::buf_size(b.arr[0]);
+        if (rusty::detail::deref_if_pointer_like(total) > 1) {
+            verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
+        }
+        self_.set(SparseInt::load64(std::move(b.arr)));
+    }
+
+}
+// UFCS trait migration: free functions for `impl Deserialize for ...`
+namespace Deserialize_ {
     void deserialize(int32_t& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
@@ -2501,24 +2832,6 @@ namespace Deserialize_ {
 
 // ---- Serde-trait leaf kernels (read side): varints + strings. ----------
 namespace Deserialize_ {
-inline void deserialize(rrr::v32& self_, BinaryReadArchive& ar) {
-  uint8_t buf[5];
-  verify(ar.read_exact(buf, 1));
-  size_t total = rrr::SparseInt::buf_size(buf[0]);
-  if (total > 1) {
-    verify(ar.read_exact(buf + 1, total - 1));
-  }
-  self_.set(rrr::SparseInt::load32(buf));
-}
-inline void deserialize(rrr::v64& self_, BinaryReadArchive& ar) {
-  uint8_t buf[9];
-  verify(ar.read_exact(buf, 1));
-  size_t total = rrr::SparseInt::buf_size(buf[0]);
-  if (total > 1) {
-    verify(ar.read_exact(buf + 1, total - 1));
-  }
-  self_.set(rrr::SparseInt::load64(buf));
-}
 inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
   rrr::v64 v_len{0};
   deserialize(v_len, ar);
@@ -3196,26 +3509,56 @@ rusty::Mutex<SerializableRegistryMap>& registry() {
 
 }  // namespace
 
+// Registry impls, authored as inline Rust DSL over the anon-namespace
+// registry() singleton (same shape as any_message's registry queries).
+#if RUSTYCPP_RUST
+fn serializable_registry_register_factory(kind: i32, factory: SerializableRegistryFactory) {
+    let mut guard = registry().lock().unwrap();
+    (*guard).map.insert(kind, factory);
+}
+
+fn serializable_registry_create_impl(kind: i32) -> SerializableProxy {
+    let mut guard = registry().lock().unwrap();
+    let entry = (*guard).map.get(kind);
+    verify(entry.is_some());
+    entry.unwrap()()
+}
+
+fn serializable_registry_is_registered_impl(kind: i32) -> bool {
+    let guard = registry().lock().unwrap();
+    (*guard).map.get(kind).is_some()
+}
+
+fn serializable_registry_clear_impl() {
+    let mut guard = registry().lock().unwrap();
+    (*guard).map.clear();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=serializable.registry_impls version=1 rust_sha256=bfb02e6edc144116e0b940d4d17814b3bdc58228c17da55929ce3e441e26ecbf*/
+bool serializable_registry_is_registered_impl(int32_t kind);
+void serializable_registry_clear_impl();
+
 void serializable_registry_register_factory(int32_t kind, SerializableRegistryFactory factory) {
-  auto guard = registry().lock().unwrap();
-  (*guard).map.insert(kind, std::move(factory));
+    auto guard = registry().lock().unwrap();
+    (rusty::detail::deref_if_pointer_like(guard)).map.insert(std::move(kind), std::move(factory));
 }
 
 SerializableProxy serializable_registry_create_impl(int32_t kind) {
-  auto guard = registry().lock().unwrap();
-  auto entry = (*guard).map.get(kind);
-  verify(entry.is_some());
-  return entry.unwrap()();
+    auto guard = registry().lock().unwrap();
+    auto entry = (rusty::detail::deref_if_pointer_like(guard)).map.get(std::move(kind));
+    verify(entry.is_some());
+    return entry.unwrap()();
 }
 
 bool serializable_registry_is_registered_impl(int32_t kind) {
-  auto guard = registry().lock().unwrap();
-  return (*guard).map.get(kind).is_some();
+    const auto guard = registry().lock().unwrap();
+    return (rusty::detail::deref_if_pointer_like(guard)).map.get(std::move(kind)).is_some();
 }
 
 void serializable_registry_clear_impl() {
-  auto guard = registry().lock().unwrap();
-  (*guard).map.clear();
+    auto guard = registry().lock().unwrap();
+    (rusty::detail::deref_if_pointer_like(guard)).map.clear();
 }
+/*RUSTYCPP:GEN-END id=serializable.registry_impls*/
 
 }  // namespace rrr
