@@ -32,6 +32,8 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 #include <sys/time.h> // gettimeofday (rate-limited mute-forensics logs)
 #include <unistd.h>   // usleep (drain poll pacing)
 
+#include "storage/oi_scan_wedged.h"  // scan-deadline throwable (micro-header)
+
 #include <condition_variable>   // fold worker handoff (see FoldJobStep)
 #include <cstdint>
 #include <map>
@@ -42,6 +44,16 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 #include <vector>
 
 namespace janus {
+
+// In-band scan-failure sentinel: when the engine scan gives up on a chunk
+// whose window holds a LEAKED row lock (see the scan deadline in
+// ordered_index_shard_data.h), DoScanRange replies with exactly this one
+// row instead of blocking its poll thread forever. The wire schema has no
+// status field, and an EMPTY reply already means "range end" to the copy
+// (which would silently truncate and mirror-delete); a reserved key is the
+// only unambiguous in-band signal. The 0x00-prefixed shape cannot collide
+// with the workload's fixed-width encoded keys.
+inline const char kScanWedgedKey[] = "\x00\x00__mako_scan_wedged__";
 
 // @safe - thin handler over an injected catalog (the shard's data planes).
 class ShardDataServiceImpl : public ShardDataServiceService {
@@ -104,8 +116,20 @@ public:
         std::map<std::string, std::string> rows;
         ShardData* shard = resolve(table);
         if (shard == nullptr) return rows;
-        for (auto& kv : shard->scan_range_limited(lo, hi, static_cast<size_t>(limit)))
-            rows.emplace(std::move(kv.first), std::move(kv.second));
+        try {
+            for (auto& kv : shard->scan_range_limited(lo, hi, static_cast<size_t>(limit)))
+                rows.emplace(std::move(kv.first), std::move(kv.second));
+        } catch (mako::oi_scan_wedged&) {
+            // Engine scan deadline: the window holds a leaked row lock (see
+            // ordered_index_shard_data.h). Reply the sentinel so the client
+            // fails THIS chunk cleanly instead of reading a truncated range,
+            // and this poll thread stays live for other tables' requests.
+            rows.clear();
+            rows.emplace(std::string(kScanWedgedKey), std::string());
+            // @unsafe { stderr diagnostics }
+            fprintf(stderr, "DoScanRange WEDGED '%s' (leaked-lock deadline)\n",
+                    table.c_str());
+        }
         if (logit)
             fprintf(stderr, "DoScanRange EXIT '%s' rows=%zu\n", table.c_str(), rows.size());
         return rows;
@@ -222,7 +246,16 @@ public:
                         const int id = ck_pending_id_;
                         const std::string t = ck_t_, l = ck_lo_, h = ck_hi_;
                         lk.unlock();
-                        const uint64_t v = DoChecksum(t, l, h);
+                        uint64_t v = 0;
+                        try {
+                            v = DoChecksum(t, l, h);
+                        } catch (mako::oi_scan_wedged&) {
+                            // Scan deadline inside the fold (leaked row
+                            // lock): a table that cannot be read honestly
+                            // cannot checksum -- 0 fails the vote and the
+                            // migration aborts cleanly. Letting it escape
+                            // would terminate() this worker thread.
+                        }
                         lk.lock();
                         if (id == ck_id_) {
                             ck_value_ = v; ck_has_ = true; ck_running_ = false;
@@ -582,16 +615,31 @@ public:
                                            const std::string& hi,
                                            size_t limit) override {
         // Idempotent read; retried on timeout like checksum/verify above (a
-        // dropped chunk would otherwise silently truncate a copy).
+        // dropped chunk would otherwise silently truncate a copy). 16
+        // attempts (~21s): a chunk whose window holds a row locked by
+        // cross-shard 2PC can legitimately wait out multi-second lock
+        // pulses server-side (participant holds row locks while the
+        // coordinator's phases ride ~1s degraded-RPC timeouts); 8 attempts
+        // gave up just short of a two-pulse train and faulted a healthy
+        // participant (observed live, run 86: stock chunk pinned ~10.6s,
+        // client budget was 10.4s).
         std::vector<KvPair> out;
-        for (int attempt = 0; attempt < 8; attempt++) {
+        for (int attempt = 0; attempt < 16; attempt++) {
             ShardDataServiceProxy::RpcScanRangeRequest req;
             req.table_name = table_;
             req.lo = lo; req.hi = hi; req.limit = static_cast<rrr::i32>(limit);
             auto r = proxy_->ScanRange(req);
             if (!r.is_err()) {
-                for (auto& kv : r.unwrap().rows) out.emplace_back(kv.first, kv.second);
-                return out;   // rows arrive sorted (a std::map) -> ascending vector
+                auto resp = r.unwrap();
+                if (resp.rows.size() == 1 &&
+                    resp.rows.begin()->first == kScanWedgedKey) {
+                    // Server gave up on a leaked-lock window (in-band
+                    // sentinel; see kScanWedgedKey): a failed attempt, NOT
+                    // a range end -- fall through to the retry/fault path.
+                } else {
+                    for (auto& kv : resp.rows) out.emplace_back(kv.first, kv.second);
+                    return out;   // rows arrive sorted (a std::map) -> ascending vector
+                }
             }
             usleep(300 * 1000);   // congested: back off, retry
         }
@@ -806,7 +854,17 @@ inline long ShardDataServiceImpl::DoPullRange(const std::string& table,
     // read nothing) and mirrors (put + delete-extras) rather than just puts.
     // dest is local to this process, so the base mirror runs right here with
     // local puts/removes and chunked RPC scans of the source.
-    const size_t copied = dest->copy_range_from(&src, lo, hi);
+    size_t copied = 0;
+    try {
+        copied = dest->copy_range_from(&src, lo, hi);
+    } catch (mako::oi_scan_wedged&) {
+        // Scan deadline in the LOCAL mirror pass (a leaked row lock in the
+        // destination index): fail this pull cleanly; letting it escape
+        // would terminate() the pull worker thread.
+        Log_warn("ShardDataPlane: pull of '%s' WEDGED on a leaked-lock scan "
+                 "deadline; failing the pull", table.c_str());
+        return -1;
+    }
     if (src.faulted()) {
         // Dead source: report failure, not a short copy -- and evict the
         // cached connection so the coordinator's retry pulls over a fresh

@@ -44,6 +44,9 @@ inline thread_local size_t g_oi_scan_abort_progress = 0;
 // cannot close.
 inline thread_local int g_oi_oneop_attempt_cap = 0;
 }  // namespace mako
+// mako::oi_scan_wedged, the scan-deadline throwable (micro-header so the
+// data-plane service can catch it without this header's weight).
+#include "oi_scan_wedged.h"
 
 /**
  * The storage-table interface, authored as rusty-cpp inline-Rust

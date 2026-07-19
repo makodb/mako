@@ -82,6 +82,16 @@ public:
         std::string cur = lo;
         size_t sub = 64;
         int conflicted_rounds = 0;
+        // Deadline for the whole chunk: a row whose lock LEAKED (a lost 2PC
+        // install/abort leaves participant row locks with no releasing
+        // message -- observed live: one stock row locked 24+ minutes) would
+        // otherwise pin this loop, and with it the caller's service thread,
+        // forever. On expiry throw the retryable abort; the data-plane
+        // handler converts it to an explicit wedged reply and the thread
+        // moves on to the next request.
+        struct timespec dl_ts;
+        clock_gettime(CLOCK_MONOTONIC, &dl_ts);
+        const long dl_start_ms = dl_ts.tv_sec * 1000L + dl_ts.tv_nsec / 1000000L;
         while (out.size() < limit) {
             const size_t left = limit - out.size();
             const size_t want = sub < left ? sub : left;
@@ -137,6 +147,44 @@ public:
                                 mako::g_oi_scan_abort_progress, cur.size(),
                                 curhex);
                     }
+                }
+                struct timespec now_ts;
+                clock_gettime(CLOCK_MONOTONIC, &now_ts);
+                const long now_ms =
+                    now_ts.tv_sec * 1000L + now_ts.tv_nsec / 1000000L;
+                if (now_ms - dl_start_ms > 8000) {
+                    // 8s of conflicted rounds at one position is beyond any
+                    // legitimate 2PC lock pulse: the blocking lock LEAKED.
+                    // Name the poison before giving up: the rows BEFORE it
+                    // are readable, so a capped probe of exactly `got` rows
+                    // yields the last good key -- the poison is its
+                    // successor. (Leak forensics: decode the key to find
+                    // the holder.)
+                    const size_t got_rows = mako::g_oi_scan_abort_progress;
+                    if (got_rows > 0) {
+                        LimitedCollector probe(got_rows);
+                        mako::g_oi_scan_attempt_cap = 3;
+                        mako::g_oi_scan_conflicted = false;
+                        index_->scan(cur, &hi, probe, nullptr);
+                        mako::g_oi_scan_attempt_cap = 0;
+                        if (!mako::g_oi_scan_conflicted &&
+                            !probe.pairs.empty()) {
+                            const std::string& k = probe.pairs.back().first;
+                            char kh[49];
+                            size_t n = k.size() < 24 ? k.size() : 24;
+                            for (size_t i = 0; i < n; i++)
+                                snprintf(kh + 2 * i, 3, "%02x",
+                                         (unsigned char)k[i]);
+                            kh[2 * n] = '\0';
+                            // @unsafe { stderr diagnostics }
+                            fprintf(stderr,
+                                    "scan-wedged poison: last_good klen=%zu "
+                                    "k=%s (poison is its successor)\n",
+                                    k.size(), kh);
+                        }
+                        mako::g_oi_scan_conflicted = false;
+                    }
+                    throw mako::oi_scan_wedged{};
                 }
                 const int shift = conflicted_rounds < 5 ? conflicted_rounds : 5;
                 unsigned pace_us = 500u << shift;

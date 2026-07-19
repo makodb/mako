@@ -322,6 +322,12 @@ private:
                                      static_cast<uint32_t>(req.dst),
                                      publish_table, publish_lo, publish_hi))
             return "begin_migration rejected";
+        // Everything from here to commit can run LOCAL engine scans on this
+        // handler thread (local-participant copies, folds, diagnostics), and
+        // those now carry a leaked-lock deadline that throws the retryable
+        // abort (see ordered_index_shard_data.h) -- catch it at the bottom
+        // so the migration aborts cleanly instead of unwinding the handler.
+        try {
         master->background_copy();     // Phase 1: copy, source still serving
         Log_info("MigrationAdmin: '%s' %d->%d phase copy1 took %ld ms",
                  req.table_name.c_str(), req.src, req.dst, phase_ms());
@@ -454,6 +460,13 @@ private:
                      src_left, publish_lo.c_str(), publish_hi.c_str());
         }
         return std::string();
+        } catch (mako::oi_scan_wedged&) {
+            master->abort_migration();
+            return "copy scan wedged on a leaked row lock -> aborted (fences rolled back)";
+        } catch (abstract_db::abstract_abort_exception&) {
+            master->abort_migration();
+            return "copy hit a migration fence -> aborted (fences rolled back)";
+        }
     }
 
     // Attach shard `sid`'s data plane FOR `table` to the master (participants
