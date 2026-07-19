@@ -111,6 +111,17 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   outright requires re-signaturing that polymorphic layer; sequence the mechanical tier
   first, then decide (a) keep Marshal as the Marshallable wire type only, or (b) re-signature
   to archives. The 78 Marshal-sink serde overloads delete only after BOTH tiers.
+  **4a-4c LANDED (config subsystem, idempotency cache, raft log storage — all scratch-Marshal
+  and Marshal-form-serde uses outside the Marshallable cluster are gone).** What remains is ONE
+  interconnected cluster + tests: SerializableEnvelope's legacy Marshal& operators
+  (serializable_envelope.cpp:291-320, kept for "the legacy RPC reply path" which steps 1-3 have
+  since retired — caller audit needed), SimpleCommand's Marshal-form serde
+  (command_marshaler.cc), the Marshallable/MarshalDeputy virtual ToMarshal/FromMarshal layer
+  (procedure, rcc/tx, replicated_db), Marshal's own test/bench files, THEN the 78-overload
+  deletion and Marshal retirement. This cluster is the ARCHITECTURAL decision point flagged
+  above — resolve the (a)/(b) fork before proceeding.
+  ★ Teardown-race abort family FIXED en route (pollworker fd<0 guard + EBADF-tolerant
+  epoll_add_impl) — the intermittent "Subprocess aborted" ctest flakes.
 
 - 2026-07-18 — **★ J+K SWEEP COMPLETE (task closed, 5 batches)**: sweeps 4-5 (`bf4b6d35` + tcp
   poll_mode/content_size) finish tcp_channel's J surface — 5 callback setters, 2 errno mappers
