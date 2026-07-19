@@ -259,6 +259,19 @@ private:
         err = EnsureParticipant(master, static_cast<uint32_t>(req.dst), req.table_name);
         if (!err.empty()) return err;
 
+        // Un-latch stale faults from a PRIOR attempt on these cached
+        // participants: the latch is per-(shard, table) and sticky, so one
+        // congested chunk in attempt N would insta-abort attempt N+1 against
+        // a perfectly healthy shard.
+        {
+            ShardData* s = ParticipantFor(static_cast<uint32_t>(req.src),
+                                          req.table_name);
+            ShardData* d = ParticipantFor(static_cast<uint32_t>(req.dst),
+                                          req.table_name);
+            if (s != nullptr) s->clear_faulted();
+            if (d != nullptr) d->clear_faulted();
+        }
+
         // Warehouse spec ("wh:<gwid>:<logical>"): the participants above bind
         // the physical per-warehouse WORKLOAD index on each side (whole-index
         // migration unit; the catalog resolves it through the warehouse
@@ -312,6 +325,15 @@ private:
         master->background_copy();     // Phase 1: copy, source still serving
         Log_info("MigrationAdmin: '%s' %d->%d phase copy1 took %ld ms",
                  req.table_name.c_str(), req.src, req.dst, phase_ms());
+        if (master->participants_faulted()) {
+            // A participant's RPC path failed during the copy (e.g. one
+            // congested chunk scan exhausting its client retries). Marching
+            // on would burn the whole lock+drain deadline against a
+            // participant that cannot answer; abort NOW, before the range is
+            // ever fenced, so the admin gets a fast clean verdict to retry.
+            master->abort_migration();
+            return "participant faulted during copy1 -> aborted (source intact, never fenced)";
+        }
         master->lock_range();          // Phase 2: master freezes the source's range
         if (!master->drain_source()) { // wait out writes that began pre-fence
             master->abort_migration();
