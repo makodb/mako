@@ -105,7 +105,8 @@ constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4
 // pointers, callback invocation).
 ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& frame);
 void         tcpconn_flush(const TcpConnection& self);
-void         tcpconn_close(const TcpConnection& self);
+void         tcpconn_close(const TcpConnection& conn);
+void         tcpconn_reset_fd(const TcpConnection& conn);
 bool         tcpconn_handle_read(const TcpConnection& self);
 int          tcpconn_handle_write(const TcpConnection& self);
 void         tcpconn_handle_error(const TcpConnection& self);
@@ -1349,29 +1350,44 @@ void tcpconn_flush(const TcpConnection& conn) {
 /*RUSTYCPP:GEN-END id=tcp_channel.flush*/
 
 // @unsafe - ::shutdown libc syscall + OwnedFd RAII close + callback fire.
-void tcpconn_close(const TcpConnection& self) {
-    // Latch on first call. Idempotent for concurrent callers because
-    // `Cell<bool>::set(true)` is a release-store; the first to set
-    // wins, the rest observe `closed_.get() == true` here.
-    if (self.closed_.get()) {
+// Latch + orderly shutdown + RAII fd drop, authored in the DSL; the
+// libc shutdown(2) is an expression-shaped unsafe{} call (SHUT_RDWR
+// lowers as an identifier) and the const-facade fd reset stays a
+// 1-line const_cast kernel.
+#if RUSTYCPP_RUST
+fn tcpconn_close(conn: &TcpConnection) {
+    if conn.closed_.get() {
         return;
     }
-    self.closed_.set(true);
-
-    // Shutdown the write side to flush kernel buffers and signal the
-    // peer; then drop the OwnedFd to RAII-close. `::shutdown` may fail
-    // if the socket is already half-closed — we ignore that.
-    if (self.fd_.is_valid()) {
-        // @unsafe { ::shutdown is libc — initiates orderly TCP close. }
-        { ::shutdown(self.fd_.as_raw_fd(), SHUT_RDWR); }
-        // Irreducible plain-field assignment on the const facade
-        // (fd teardown at close) — the documented localized-const_cast
-        // pattern; every other mutation here is interior-mutable.
-        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};
+    conn.closed_.set(true);
+    if conn.fd_.is_valid() {
+        unsafe { shutdown(conn.fd_.as_raw_fd(), SHUT_RDWR); }
+        tcpconn_reset_fd(conn);
     }
+    tcpconn_deliver_on_closed_locked(conn, ChannelError_None());
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.conn_close version=1 rust_sha256=6dfb9284005dada621038e02ddbb3d7b8b17798ff8e0553556a7487183faeb9c*/
+void tcpconn_close(const TcpConnection& conn) {
+    if (conn.closed_.get()) {
+        return;
+    }
+    conn.closed_.set(true);
+    if (conn.fd_.is_valid()) {
+        // @unsafe
+        {
+            shutdown(conn.fd_.as_raw_fd(), SHUT_RDWR);
+        }
+        tcpconn_reset_fd(conn);
+    }
+    tcpconn_deliver_on_closed_locked(conn, ChannelError_None());
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.conn_close*/
 
-    // Deliver `on_closed(ChannelError::None)` exactly once.
-    tcpconn_deliver_on_closed_locked(self, ChannelError::None);
+// @unsafe - the documented localized-const_cast fd teardown (plain
+// field assignment on the const facade; RAII-closes via OwnedFd).
+void tcpconn_reset_fd(const TcpConnection& conn) {
+    const_cast<TcpConnection&>(conn).fd_ = rusty::os::fd::OwnedFd{};
 }
 
 // @unsafe - last-writer-wins callback store under the spinlock.

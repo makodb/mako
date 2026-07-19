@@ -168,7 +168,39 @@ inline int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode) {
     return 0;
 }
 
-// @unsafe - kevent / epoll_ctl(DEL) syscall + bzero/memset.
+#ifndef USE_KQUEUE
+// @unsafe - zeroed epoll_event factory for the DSL (struct-fill /
+// memset has no DSL spelling; the DEL event payload is ignored by the
+// kernel and only needs pre-2.6.9 non-null semantics).
+inline struct epoll_event epoll_event_zeroed() {
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    return ev;
+}
+
+// The Linux epoll_ctl(DEL) body, authored in the DSL as a route-2
+// unsafe{} libc call over the zeroed-event factory.
+#if RUSTYCPP_RUST
+fn epoll_remove_linux(poll_fd: i32, fd: i32) {
+    let mut ev = epoll_event_zeroed();
+    unsafe { epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &mut ev); }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=epoll.remove_linux version=1 rust_sha256=b0231425e841a7b396a95f59f58cdf7311444763356df535dcd68edf0ca02f53*/
+void epoll_remove_linux(int32_t poll_fd, int32_t fd);
+
+void epoll_remove_linux(int32_t poll_fd, int32_t fd) {
+    auto ev = epoll_event_zeroed();
+    // @unsafe
+    {
+        epoll_ctl(std::move(poll_fd), EPOLL_CTL_DEL, std::move(fd), &ev);
+    }
+}
+/*RUSTYCPP:GEN-END id=epoll.remove_linux*/
+#endif  // !USE_KQUEUE
+
+// @unsafe - platform dispatcher (kqueue body is kevent struct-fill;
+// the Linux body is the DSL fn above).
 inline int epoll_remove_impl(int32_t poll_fd, int fd) {
     epoll_remove_count++;
 #ifdef USE_KQUEUE
@@ -184,11 +216,8 @@ inline int epoll_remove_impl(int32_t poll_fd, int fd) {
     ev.flags = EV_DELETE;
     ev.filter = EVFILT_WRITE;
     kevent(poll_fd, &ev, 1, nullptr, 0, nullptr);
-
 #else
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(ev));
-    epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &ev);
+    epoll_remove_linux(poll_fd, fd);
 #endif
     return 0;
 }
