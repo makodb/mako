@@ -4257,17 +4257,13 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
                                              const RequestOptions& options,
                                              const FutureAttr& attr, F&& write_fn) {
     // Serialize args once so retries can replay identical payload safely.
-    Marshal serialized_args;
+    BufferSink args_sink;
     static_assert(std::is_invocable_v<F&, BinaryWriteArchive&>,
                   "request_with_options write_fn must accept BinaryWriteArchive&");
-    BinaryWriteArchive ar(make_sink_proxy(&serialized_args));
+    BinaryWriteArchive ar(make_sink_proxy(&args_sink));
     write_fn(ar);
-    std::string args_bytes;
-    size_t args_size = serialized_args.content_size();
-    if (args_size > 0) {
-        args_bytes.resize(args_size);
-        verify(serialized_args.read(reinterpret_cast<std::uint8_t*>(args_bytes.data()), args_size) == args_size);
-    }
+    std::string args_bytes(reinterpret_cast<const char*>(args_sink.bytes.data()),
+                           args_sink.bytes.len());
 
     // Non-idempotent operations must never be retried even if max_retries is set.
     RequestOptions effective_options = options;
@@ -4449,17 +4445,13 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
 // always have a bound channel by construction.
 void clientconn_enqueue_heartbeat_probe(const ClientConnection& self) {
   // Build the heartbeat frame body and dispatch through the channel proxy.
-  Marshal body;
-  rrr::Serialize_::serialize(v64(self.xid_counter_.next(1)), body);
-  rrr::Serialize_::serialize(static_cast<i32>(kInternalHeartbeatRpcId), body);
-  const std::size_t body_size = body.content_size();
-  std::vector<std::uint8_t> body_bytes;
-  if (body_size > 0) {
-    body_bytes.resize(body_size);
-    verify(body.read(body_bytes.data(), body_size) == body_size);
-  }
+  BufferSink body_sink;
+  BinaryWriteArchive ar(make_sink_proxy(&body_sink));
+  rrr::Serialize_::serialize(v64(self.xid_counter_.next(1)), ar);
+  rrr::Serialize_::serialize(static_cast<i32>(kInternalHeartbeatRpcId), ar);
   // Send-side errors are ignored here (same as the legacy fd path).
-  (void)self.dispatch_frame_via_channel(body_bytes.data(), body_size);
+  (void)self.dispatch_frame_via_channel(body_sink.bytes.data(),
+                                        body_sink.bytes.len());
 }
 
 
