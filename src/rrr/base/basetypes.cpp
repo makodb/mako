@@ -54,14 +54,6 @@ typedef int64_t i64;
 
 struct SparseInt;
 
-// Pointer-taking varint kernels (raw char* byte surgery) — plain free
-// fns; a Rust impl can't hold the dump overload pair or char* params.
-// Call sites (all in the marshal/serializable wire layer) use these
-// names directly.
-size_t sparseint_dump(i32 val, char* buf);
-size_t sparseint_dump(i64 val, char* buf);
-i32 sparseint_load_i32(const char* buf);
-i64 sparseint_load_i64(const char* buf);
 
 // `SparseInt` — the wire varint format's pointer-free queries, as DSL
 // statics (the v32/v64 DSL blocks above call SparseInt::val_size).
@@ -94,6 +86,160 @@ impl SparseInt {
         9
     }
 
+    // Wire varint encode (shift-based; byte-identical to the legacy
+    // little-endian reinterpret_cast copies, including the legacy
+    // 8-length/9-byte quirk in the i64 case-8 encoding). All byte
+    // values are u8 (see the signedness trap in the porting notes).
+    fn dump32(val: i32, buf: *mut u8) -> usize {
+        let u = val as u32;
+        if -64 <= val && val <= 63 {
+            buf[0] = (u & 0xFF) as u8;
+            buf[0] &= 0x7F;
+            return 1;
+        } else if -8192 <= val && val <= 8191 {
+            buf[0] = ((u >> 8) & 0xFF) as u8;
+            buf[1] = (u & 0xFF) as u8;
+            buf[0] &= 0x3F;
+            buf[0] |= 0x80;
+            return 2;
+        } else if -1048576 <= val && val <= 1048575 {
+            buf[0] = ((u >> 16) & 0xFF) as u8;
+            buf[1] = ((u >> 8) & 0xFF) as u8;
+            buf[2] = (u & 0xFF) as u8;
+            buf[0] &= 0x1F;
+            buf[0] |= 0xC0;
+            return 3;
+        } else if -134217728 <= val && val <= 134217727 {
+            buf[0] = ((u >> 24) & 0xFF) as u8;
+            buf[1] = ((u >> 16) & 0xFF) as u8;
+            buf[2] = ((u >> 8) & 0xFF) as u8;
+            buf[3] = (u & 0xFF) as u8;
+            buf[0] &= 0x0F;
+            buf[0] |= 0xE0;
+            return 4;
+        }
+        buf[1] = ((u >> 24) & 0xFF) as u8;
+        buf[2] = ((u >> 16) & 0xFF) as u8;
+        buf[3] = ((u >> 8) & 0xFF) as u8;
+        buf[4] = (u & 0xFF) as u8;
+        if val < 0 {
+            buf[0] = 0xF7;
+        } else {
+            buf[0] = 0xF0;
+        }
+        5
+    }
+
+    fn dump64(val: i64, buf: *mut u8) -> usize {
+        let u = val as u64;
+        let n = SparseInt::val_size(val) as i32;
+        if n <= 7 {
+            // bytes big-endian: buf[j] = byte (n-1-j) of u, then mask/tag.
+            let mut j: i32 = 0;
+            while j < n {
+                buf[j] = ((u >> (8 * ((n - 1) - j))) & 0xFF) as u8;
+                j += 1;
+            }
+            if n == 1 {
+                buf[0] &= 0x7F;
+            } else if n == 2 {
+                buf[0] &= 0x3F;
+                buf[0] |= 0x80;
+            } else if n == 3 {
+                buf[0] &= 0x1F;
+                buf[0] |= 0xC0;
+            } else if n == 4 {
+                buf[0] &= 0x0F;
+                buf[0] |= 0xE0;
+            } else if n == 5 {
+                buf[0] &= 0x07;
+                buf[0] |= 0xF0;
+            } else if n == 6 {
+                buf[0] &= 0x03;
+                buf[0] |= 0xF8;
+            } else {
+                buf[0] &= 0x01;
+                buf[0] |= 0xFC;
+            }
+            return n as usize;
+        }
+        // n == 8 or 9: marker byte + all eight payload bytes at buf[1..8]
+        // (legacy quirk: n == 8 also writes nine bytes but reports 8).
+        let mut j: i32 = 0;
+        while j < 8 {
+            buf[1 + j] = ((u >> (8 * (7 - j))) & 0xFF) as u8;
+            j += 1;
+        }
+        if n == 8 {
+            buf[0] = 0xFE;
+            return 8;
+        }
+        buf[0] = 0xFF;
+        9
+    }
+
+    // Wire varint decode (shift-based; matches the legacy byte copies
+    // exactly, including sign extension via the top-byte bit surgery).
+    fn load32(buf: *const u8) -> i32 {
+        let bsize = SparseInt::buf_size(buf[0]) as i32;
+        let mut u: u32 = 0;
+        if bsize < 5 {
+            let mut i: i32 = 0;
+            while i < bsize - 1 {
+                u |= (buf[(bsize - 1) - i] as u32) << (8 * i);
+                i += 1;
+            }
+            let mut top = buf[0];
+            top &= (0xFF >> bsize) as u8;
+            if ((top >> (7 - bsize)) & 0x1) == 1 {
+                top |= ((0xFF << (7 - bsize)) & 0xFF) as u8;
+                let mut k = bsize;
+                while k < 4 {
+                    u |= 0xFFu32 << (8 * k);
+                    k += 1;
+                }
+            }
+            u |= (top as u32) << (8 * (bsize - 1));
+            return u as i32;
+        }
+        let mut i: i32 = 0;
+        while i < 4 {
+            u |= (buf[4 - i] as u32) << (8 * i);
+            i += 1;
+        }
+        u as i32
+    }
+
+    fn load64(buf: *const u8) -> i64 {
+        let bsize = SparseInt::buf_size(buf[0]) as i32;
+        let mut u: u64 = 0;
+        if bsize < 8 {
+            let mut i: i32 = 0;
+            while i < bsize - 1 {
+                u |= (buf[(bsize - 1) - i] as u64) << (8 * i);
+                i += 1;
+            }
+            let mut top = buf[0];
+            top &= (0xFF >> bsize) as u8;
+            if ((top >> (7 - bsize)) & 0x1) == 1 {
+                top |= ((0xFF << (7 - bsize)) & 0xFF) as u8;
+                let mut k = bsize;
+                while k < 8 {
+                    u |= 0xFFu64 << (8 * k);
+                    k += 1;
+                }
+            }
+            u |= (top as u64) << (8 * (bsize - 1));
+            return u as i64;
+        }
+        let mut i: i32 = 0;
+        while i < 8 {
+            u |= (buf[8 - i] as u64) << (8 * i);
+            i += 1;
+        }
+        u as i64
+    }
+
     // Encoded length required for the value.
     fn val_size(val: i64) -> usize {
         if -64 <= val && val <= 63 {
@@ -117,12 +263,16 @@ impl SparseInt {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=basetypes.sparseint version=1 rust_sha256=ea3b3f7dca3224f3b3200db1e713c49ebf0d2683d1b44513298afe1d655e6436*/
+/*RUSTYCPP:GEN-BEGIN id=basetypes.sparseint version=1 rust_sha256=a76c04001fb5c161217cb2aa2dba74d9ded042f93483750462d69ab8beba9867*/
 struct SparseInt;
 
 struct SparseInt {
 
     static size_t buf_size(uint8_t byte0);
+    static size_t dump32(int32_t val, uint8_t* buf);
+    static size_t dump64(int64_t val, uint8_t* buf);
+    static int32_t load32(const uint8_t* buf);
+    static int64_t load64(const uint8_t* buf);
     static size_t val_size(int64_t val);
 };
 
@@ -146,6 +296,151 @@ size_t SparseInt::buf_size(uint8_t byte0) {
         return static_cast<size_t>(8);
     }
     return static_cast<size_t>(9);
+}
+
+size_t SparseInt::dump32(int32_t val, uint8_t* buf) {
+    const auto u = static_cast<uint32_t>(val);
+    if ((-64 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 63)) {
+        buf[0] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[0] &= 127;
+        return static_cast<size_t>(1);
+    } else if ((-8192 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 8191)) {
+        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[1] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[0] &= 63;
+        buf[0] |= 128;
+        return static_cast<size_t>(2);
+    } else if ((-1048576 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 1048575)) {
+        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+        buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[2] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[0] &= 31;
+        buf[0] |= 192;
+        return static_cast<size_t>(3);
+    } else if ((-134217728 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 134217727)) {
+        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
+        buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+        buf[2] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[3] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[0] &= 15;
+        buf[0] |= 224;
+        return static_cast<size_t>(4);
+    }
+    buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
+    buf[2] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+    buf[3] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+    buf[4] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+    if (rusty::detail::deref_if_pointer_like(val) < 0) {
+        buf[0] = 247;
+    } else {
+        buf[0] = 240;
+    }
+    return static_cast<size_t>(5);
+}
+
+size_t SparseInt::dump64(int64_t val, uint8_t* buf) {
+    const auto u = static_cast<uint64_t>(val);
+    const auto n = static_cast<int32_t>(SparseInt::val_size(std::move(val)));
+    if (rusty::detail::deref_if_pointer_like(n) <= 7) {
+        int32_t j = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(j) < rusty::detail::deref_if_pointer_like(n)) {
+            buf[j] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> ((8 * ((((rusty::detail::deref_if_pointer_like(n) - 1)) - rusty::detail::deref_if_pointer_like(j))))))) & 255));
+            j += 1;
+        }
+        if (rusty::detail::deref_if_pointer_like(n) == 1) {
+            buf[0] &= 127;
+        } else if (rusty::detail::deref_if_pointer_like(n) == 2) {
+            buf[0] &= 63;
+            buf[0] |= 128;
+        } else if (rusty::detail::deref_if_pointer_like(n) == 3) {
+            buf[0] &= 31;
+            buf[0] |= 192;
+        } else if (rusty::detail::deref_if_pointer_like(n) == 4) {
+            buf[0] &= 15;
+            buf[0] |= 224;
+        } else if (rusty::detail::deref_if_pointer_like(n) == 5) {
+            buf[0] &= 7;
+            buf[0] |= 240;
+        } else if (rusty::detail::deref_if_pointer_like(n) == 6) {
+            buf[0] &= 3;
+            buf[0] |= 248;
+        } else {
+            buf[0] &= 1;
+            buf[0] |= 252;
+        }
+        return static_cast<size_t>(n);
+    }
+    int32_t j = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(j) < 8) {
+        buf[1 + rusty::detail::deref_if_pointer_like(j)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> ((8 * ((7 - rusty::detail::deref_if_pointer_like(j))))))) & 255));
+        j += 1;
+    }
+    if (rusty::detail::deref_if_pointer_like(n) == 8) {
+        buf[0] = 254;
+        return static_cast<size_t>(8);
+    }
+    buf[0] = 255;
+    return static_cast<size_t>(9);
+}
+
+int32_t SparseInt::load32(const uint8_t* buf) {
+    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[0]));
+    uint32_t u = static_cast<uint32_t>(0);
+    if (rusty::detail::deref_if_pointer_like(bsize) < 5) {
+        int32_t i = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < (rusty::detail::deref_if_pointer_like(bsize) - 1)) {
+            u |= ((static_cast<uint32_t>(buf[((rusty::detail::deref_if_pointer_like(bsize) - 1)) - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
+            i += 1;
+        }
+        auto top = buf[0];
+        rusty::detail::deref_if_pointer_like(top) &= static_cast<uint8_t>((255 >> rusty::detail::deref_if_pointer_like(bsize)));
+        if (((((rusty::detail::deref_if_pointer_like(top) >> ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & static_cast<int32_t>(1))) == static_cast<int32_t>(1)) {
+            rusty::detail::deref_if_pointer_like(top) |= static_cast<uint8_t>((((255 << ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & 255));
+            auto k = std::move(bsize);
+            while (rusty::detail::deref_if_pointer_like(k) < 4) {
+                u |= static_cast<uint32_t>(255) << ((8 * rusty::detail::deref_if_pointer_like(k)));
+                rusty::detail::deref_if_pointer_like(k) += 1;
+            }
+        }
+        u |= ((static_cast<uint32_t>(top))) << ((8 * ((rusty::detail::deref_if_pointer_like(bsize) - 1))));
+        return static_cast<int32_t>(u);
+    }
+    int32_t i = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < 4) {
+        u |= ((static_cast<uint32_t>(buf[4 - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
+        i += 1;
+    }
+    return static_cast<int32_t>(u);
+}
+
+int64_t SparseInt::load64(const uint8_t* buf) {
+    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[0]));
+    uint64_t u = static_cast<uint64_t>(0);
+    if (rusty::detail::deref_if_pointer_like(bsize) < 8) {
+        int32_t i = static_cast<int32_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < (rusty::detail::deref_if_pointer_like(bsize) - 1)) {
+            u |= ((static_cast<uint64_t>(buf[((rusty::detail::deref_if_pointer_like(bsize) - 1)) - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
+            i += 1;
+        }
+        auto top = buf[0];
+        rusty::detail::deref_if_pointer_like(top) &= static_cast<uint8_t>((255 >> rusty::detail::deref_if_pointer_like(bsize)));
+        if (((((rusty::detail::deref_if_pointer_like(top) >> ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & static_cast<int32_t>(1))) == static_cast<int32_t>(1)) {
+            rusty::detail::deref_if_pointer_like(top) |= static_cast<uint8_t>((((255 << ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & 255));
+            auto k = std::move(bsize);
+            while (rusty::detail::deref_if_pointer_like(k) < 8) {
+                u |= static_cast<uint64_t>(255) << ((8 * rusty::detail::deref_if_pointer_like(k)));
+                rusty::detail::deref_if_pointer_like(k) += 1;
+            }
+        }
+        u |= ((static_cast<uint64_t>(top))) << ((8 * ((rusty::detail::deref_if_pointer_like(bsize) - 1))));
+        return static_cast<int64_t>(u);
+    }
+    int32_t i = static_cast<int32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < 8) {
+        u |= ((static_cast<uint64_t>(buf[8 - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
+        i += 1;
+    }
+    return static_cast<int64_t>(u);
 }
 
 size_t SparseInt::val_size(int64_t val) {
@@ -532,177 +827,8 @@ double Timer::elapsed() const {
 namespace rrr {
 
 
-// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-size_t sparseint_dump(i32 val, char* buf) {
-    char* pv = reinterpret_cast<char*>(&val);
-    if (-64 <= val && val <= 63) {
-        buf[0] = pv[0];
-        buf[0] &= 0x7F;
-        return 1;
-    } else if (-8192 <= val && val <= 8191) {
-        buf[0] = pv[1];
-        buf[1] = pv[0];
-        buf[0] &= 0x3F;
-        buf[0] |= 0x80;
-        return 2;
-    } else if (-1048576 <= val && val <= 1048575) {
-        buf[0] = pv[2];
-        buf[1] = pv[1];
-        buf[2] = pv[0];
-        buf[0] &= 0x1F;
-        buf[0] |= 0xC0;
-        return 3;
-    } else if (-134217728 <= val && val <= 134217727) {
-        buf[0] = pv[3];
-        buf[1] = pv[2];
-        buf[2] = pv[1];
-        buf[3] = pv[0];
-        buf[0] &= 0x0F;
-        buf[0] |= 0xE0;
-        return 4;
-    } else {
-        buf[1] = pv[3];
-        buf[2] = pv[2];
-        buf[3] = pv[1];
-        buf[4] = pv[0];
-        if (val < 0) {
-            buf[0] = 0xF7;
-        } else {
-            buf[0] = 0xF0;
-        }
-        return 5;
-    }
-}
 
-// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-size_t sparseint_dump(i64 val, char* buf) {
-    char* pv = reinterpret_cast<char*>(&val);
-    if (-64 <= val && val <= 63) {
-        buf[0] = pv[0];
-        buf[0] &= 0x7F;
-        return 1;
-    } else if (-8192 <= val && val <= 8191) {
-        buf[0] = pv[1];
-        buf[1] = pv[0];
-        buf[0] &= 0x3F;
-        buf[0] |= 0x80;
-        return 2;
-    } else if (-1048576 <= val && val <= 1048575) {
-        buf[0] = pv[2];
-        buf[1] = pv[1];
-        buf[2] = pv[0];
-        buf[0] &= 0x1F;
-        buf[0] |= 0xC0;
-        return 3;
-    } else if (-134217728 <= val && val <= 134217727) {
-        buf[0] = pv[3];
-        buf[1] = pv[2];
-        buf[2] = pv[1];
-        buf[3] = pv[0];
-        buf[0] &= 0x0F;
-        buf[0] |= 0xE0;
-        return 4;
-    } else if (-17179869184LL <= val && val <= 17179869183LL) {
-        buf[0] = pv[4];
-        buf[1] = pv[3];
-        buf[2] = pv[2];
-        buf[3] = pv[1];
-        buf[4] = pv[0];
-        buf[0] &= 0x07;
-        buf[0] |= 0xF0;
-        return 5;
-    } else if (-2199023255552LL <= val && val <= 2199023255551LL) {
-        buf[0] = pv[5];
-        buf[1] = pv[4];
-        buf[2] = pv[3];
-        buf[3] = pv[2];
-        buf[4] = pv[1];
-        buf[5] = pv[0];
-        buf[0] &= 0x03;
-        buf[0] |= 0xF8;
-        return 6;
-    } else if (-281474976710656LL <= val && val <= 281474976710655LL) {
-        buf[0] = pv[6];
-        buf[1] = pv[5];
-        buf[2] = pv[4];
-        buf[3] = pv[3];
-        buf[4] = pv[2];
-        buf[5] = pv[1];
-        buf[6] = pv[0];
-        buf[0] &= 0x01;
-        buf[0] |= 0xFC;
-        return 7;
-    } else if (-36028797018963968LL <= val && val <= 36028797018963967LL) {
-        buf[1] = pv[7];
-        buf[2] = pv[6];
-        buf[3] = pv[5];
-        buf[4] = pv[4];
-        buf[5] = pv[3];
-        buf[6] = pv[2];
-        buf[7] = pv[1];
-        buf[8] = pv[0];
-        buf[0] = 0xFE;
-        return 8;
-    } else {
-        buf[1] = pv[7];
-        buf[2] = pv[6];
-        buf[3] = pv[5];
-        buf[4] = pv[4];
-        buf[5] = pv[3];
-        buf[6] = pv[2];
-        buf[7] = pv[1];
-        buf[8] = pv[0];
-        buf[0] = 0xFF;
-        return 9;
-    }
-}
 
-// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-i32 sparseint_load_i32(const char* buf) {
-    i32 val = 0;
-    char* pv = reinterpret_cast<char*>(&val);
-    int bsize = SparseInt::buf_size(buf[0]);
-    if (bsize < 5) {
-        for (int i = 0; i < bsize; i++) {
-            pv[i] = buf[bsize - i - 1];
-        }
-        pv[bsize - 1] &= 0xFF >> bsize;
-        if ((pv[bsize - 1] >> (7 - bsize)) & 0x1) {
-            pv[bsize - 1] |= 0xFF << (7 - bsize);
-            for (int i = bsize; i < 4; i++) {
-                pv[i] = 0xFF;
-            }
-        }
-    } else {
-        for (int i = 0; i < 4; i++) {
-            pv[i] = buf[4 - i];
-        }
-    }
-    return val;
-}
 
-// @unsafe - reinterpret_cast<char*> + raw `char*` byte indexing.
-i64 sparseint_load_i64(const char* buf) {
-    i64 val = 0;
-    char* pv = reinterpret_cast<char*>(&val);
-    int bsize = SparseInt::buf_size(buf[0]);
-    if (bsize < 8) {
-        for (int i = 0; i < bsize; i++) {
-            pv[i] = buf[bsize - i - 1];
-        }
-        pv[bsize - 1] &= 0xFF >> bsize;
-        if ((pv[bsize - 1] >> (7 - bsize)) & 0x1) {
-            pv[bsize - 1] |= 0xFF << (7 - bsize);
-            for (int i = bsize; i < 8; i++) {
-                pv[i] = 0xFF;
-            }
-        }
-    } else {
-        for (int i = 0; i < 8; i++) {
-            pv[i] = buf[8 - i];
-        }
-    }
-    return val;
-}
 
 } // namespace rrr

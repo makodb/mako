@@ -597,3 +597,55 @@ int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+
+// Roundtrip + golden-bytes regression for the DSL SparseInt varint
+// codec (the legacy reinterpret_cast kernels are deleted; a
+// differential test against them passed at conversion time across all
+// of these boundaries, including i64 min/max and the legacy case-8
+// 9-bytes-written/8-reported quirk).
+TEST(SparseIntCodec, RoundTripAtAllBoundariesWithGoldens) {
+    const int64_t vals64[] = {
+        0, 1, -1, 63, -64, 64, -65,
+        8191, -8192, 8192, -8193,
+        1048575, -1048576, 1048576, -1048577,
+        134217727, -134217728, 134217728LL, -134217729LL,
+        17179869183LL, -17179869184LL, 17179869184LL, -17179869185LL,
+        2199023255551LL, -2199023255552LL, 2199023255552LL, -2199023255553LL,
+        281474976710655LL, -281474976710656LL, 281474976710656LL, -281474976710657LL,
+        36028797018963967LL, -36028797018963968LL,
+        std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min(),
+    };
+    for (int64_t v : vals64) {
+        uint8_t buf[16];
+        memset(buf, 0, sizeof(buf));
+        size_t n = rrr::SparseInt::dump64(v, buf);
+        EXPECT_EQ(n, rrr::SparseInt::val_size(v)) << "size for " << v;
+        EXPECT_EQ(rrr::SparseInt::load64(buf), v) << "roundtrip for " << v;
+    }
+    const int32_t vals32[] = {
+        0, 1, -1, 63, -64, 64, -65, 8191, -8192, 8192, -8193,
+        1048575, -1048576, 1048576, -1048577, 134217727, -134217728,
+        std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min(),
+    };
+    for (int32_t v : vals32) {
+        uint8_t buf[16];
+        memset(buf, 0, sizeof(buf));
+        size_t n = rrr::SparseInt::dump32(v, buf);
+        (void)n;
+        EXPECT_EQ(rrr::SparseInt::load32(buf), v) << "roundtrip for " << v;
+    }
+    // Golden wire bytes (hand-derived; guard against silent format drift).
+    struct Golden { int64_t v; size_t n; uint8_t bytes[3]; };
+    const Golden goldens[] = {
+        {0,    1, {0x00}}, {1, 1, {0x01}}, {-1, 1, {0x7F}},
+        {63,   1, {0x3F}}, {-64, 1, {0x40}},
+        {64,   2, {0x80, 0x40}}, {-65, 2, {0xBF, 0xBF}},
+    };
+    for (const auto& g : goldens) {
+        uint8_t buf[16];
+        memset(buf, 0, sizeof(buf));
+        size_t n = rrr::SparseInt::dump64(g.v, buf);
+        EXPECT_EQ(n, g.n) << "golden size for " << g.v;
+        EXPECT_EQ(0, memcmp(buf, g.bytes, g.n)) << "golden bytes for " << g.v;
+    }
+}

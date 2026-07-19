@@ -1435,18 +1435,18 @@ namespace Serialize_ {
 // hid it behind implicit conversion).
 
 // ---- Serde-trait leaf kernels: varints + strings. Hand-written byte
-// kernels (like the containers below) — the DSL's char/int8_t distinction
-// makes sparseint_dump/char[] awkward as DSL bodies. operator<< forwards here.
+// kernels (like the containers below); encode goes through the DSL
+// SparseInt::dump statics (u8 buffers).
 namespace Serialize_ {
 inline void serialize(const rrr::v32& self_, BinaryWriteArchive& ar) {
-  char buf[5];
-  size_t bsize = rrr::sparseint_dump(self_.get(), buf);
-  ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
+  uint8_t buf[5];
+  size_t bsize = rrr::SparseInt::dump32(self_.get(), buf);
+  ar.write_bytes(buf, bsize);
 }
 inline void serialize(const rrr::v64& self_, BinaryWriteArchive& ar) {
-  char buf[9];
-  size_t bsize = rrr::sparseint_dump(self_.get(), buf);
-  ar.write_bytes(reinterpret_cast<const uint8_t*>(buf), bsize);
+  uint8_t buf[9];
+  size_t bsize = rrr::SparseInt::dump64(self_.get(), buf);
+  ar.write_bytes(buf, bsize);
 }
 inline void serialize(std::string_view self_, BinaryWriteArchive& ar) {
   rrr::v64 v_len{static_cast<rrr::i64>(self_.size())};
@@ -2502,22 +2502,22 @@ namespace Deserialize_ {
 // ---- Serde-trait leaf kernels (read side): varints + strings. ----------
 namespace Deserialize_ {
 inline void deserialize(rrr::v32& self_, BinaryReadArchive& ar) {
-  char buf[5];
-  verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
+  uint8_t buf[5];
+  verify(ar.read_exact(buf, 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
-    verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
+    verify(ar.read_exact(buf + 1, total - 1));
   }
-  self_.set(rrr::sparseint_load_i32(buf));
+  self_.set(rrr::SparseInt::load32(buf));
 }
 inline void deserialize(rrr::v64& self_, BinaryReadArchive& ar) {
-  char buf[9];
-  verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf), 1));
+  uint8_t buf[9];
+  verify(ar.read_exact(buf, 1));
   size_t total = rrr::SparseInt::buf_size(buf[0]);
   if (total > 1) {
-    verify(ar.read_exact(reinterpret_cast<uint8_t*>(buf + 1), total - 1));
+    verify(ar.read_exact(buf + 1, total - 1));
   }
-  self_.set(rrr::sparseint_load_i64(buf));
+  self_.set(rrr::SparseInt::load64(buf));
 }
 inline void deserialize(std::string& self_, BinaryReadArchive& ar) {
   rrr::v64 v_len{0};
