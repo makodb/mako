@@ -695,3 +695,35 @@ After §7.1–7.4, the genuine, by-design floor is small and falls into three ki
 - **Third-party and generated wire types** (`extern "C"`, rpcgen output) — convert *at the edge* (§5's FFI note), never across the boundary.
 
 Everything else is done, convertible today, or gated on one identifiable transpiler feature. Treat that last set as the work queue — **not** the floor.
+
+### 7.7 Syscall policy: std-faithfulness + two sanctioned routes (July 2026)
+
+The runtime shipped with the transpiler (`rusty::…`) is a **translation of Rust's std** — treat that
+as a hard design constraint, not a convenience library:
+
+- **Route 1 — call an existing std-faithful wrapper from the DSL.** If the runtime already has the
+  API because *Rust std has it* (`OwnedFd`, `TcpStream::shutdown/set_nonblocking`,
+  `thread::spawn`/`JoinHandle`, `env::current_exe`, `sys::fs::read_to_string`,
+  `sys::time`/`sys::process`), the DSL calls it as a plain path. Proven repeatedly.
+- **Route 2 — author the syscall in a DSL `unsafe {}` block calling libc directly.** This is how
+  Rust code *outside* std does FFI, and the lowering supports it for expression-shaped calls:
+  bare `errno` reads work (the macro applies on the C++ side), `F_GETFL`/`O_NONBLOCK`-style macros
+  pass through as identifiers, unqualified libc calls resolve via the TU's headers — no
+  `extern "C"` ceremony. Landed examples: `set_nonblocking_fd` (variadic `fcntl` pair),
+  `epoll_close`. Remember the GMF reachability rule (`rusty/slice.hpp` for
+  `deref_if_pointer_like`).
+- **Never route 3.** Do **not** add custom wrapper APIs to the runtime for things Rust std does not
+  have (no `rusty::sys::poll`, no `read_nb`/`write_nb`, no mmap RAII type — epoll and friends live
+  in crates like mio/rustix, *not* std). Inventing them breaks the runtime's std-faithfulness and
+  forks it from upstream. If neither route fits (platform `#ifdef` splits, `va_list`, struct-fill
+  the grammar rejects, asm), the fn stays an `@unsafe` C++ kernel — which is precisely Rust std's
+  own per-platform `sys`-module pattern.
+
+### 7.8 No external binaries for results
+
+Never compute results by executing external binaries (`popen`/`fork`+`exec`). The canonical
+offender was the stack-trace printer shelling out to `addr2line`/`c++filt` — a fork inside an
+abort path, dependent on binutils being installed and on `PATH` trust. Resolve in-process (libc
+`backtrace_symbols`) and accept the plainer output; addresses remain resolvable offline against
+the binary. When you delete such a path, delete its support machinery too (the pipe readers,
+command builders, and any helper — e.g. a `get_exec_path` — that existed only to feed it).
