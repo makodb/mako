@@ -51,12 +51,42 @@ drain activity logged on the participant (its handler never ran) — the
 fingerprint of a control RPC that was never serviced — which is what pointed
 the investigation here.
 
-Status (2026-07): this HOL blocking is confirmed **in the abstract** by the
-reproduction below; whether it is the *sole* cause of the live big-table drain
-timeouts is **not yet confirmed**. A first attempt at the fix (a dedicated bulk
-server, patch kept out-of-tree) hit an unrelated wiring bug before it could be
-measured end to end, so the recommended fix below is validated in miniature by
-the test but not yet landed in the migration data plane.
+Status (2026-07, resolved): the live mute was ultimately a **distributed
+variant** of this same single-thread hazard, core-proven and fixed. The
+poll-thread capture was not a long scan but an **unbounded handler retry**:
+the backend service that executes remote non-txn writes shares its one poll
+thread with `GetTimestamp`, and the one-op OCC kernels retried aborts forever
+with zero backoff. A remote write landing on a row whose local writer was
+parked in its cross-shard commit (holding row locks while waiting for the
+peer's timestamp) captured the poll thread, muting this shard's timestamp
+service — and two shards doing that to each other latch a self-sustaining
+livelock ring:
+
+```
+shard0 worker: holds locks, waits shard1 GetTimestamp
+  -> shard1 backend poll thread: spins forever on a locked row
+shard1 worker: holds locks, waits shard0 GetTimestamp
+  -> shard0 backend poll thread: spins forever on a locked row
+```
+
+Fingerprints in the cores: workers on both shards inside
+`commit_txn -> updateSingleTimestamp -> remoteGetTimestamp` timed waits, one
+customer row locked for minutes, and the migration data plane's scan dying at
+exactly that row thousands of times (scan-conflict forensics pinned at a
+constant cursor). The fix bounds the kernels when invoked from the handler
+(16 attempts with micro-backoff, then SERVER_BUSY so the remote caller backs
+off and retries): the poll thread can then never be captured, and the ring
+cannot close. The migration bulk path additionally chunks its scans (512
+rows) and adapts sub-window size under conflict, keeping every handler
+invocation bounded. With both in place the full 2-shard TPC-C warehouse
+ping-pong (22 live migrations) runs green.
+
+The lesson generalizes the abstract HOL below: on a single-threaded server it
+is not enough for handlers to be *short on average* — every handler must have
+a **bounded worst case**, because anything unbounded (a retry loop, a lock
+wait, a stream) captures the only thread, and if the blocked traffic includes
+something another node needs to release the very resource being waited on,
+local head-of-line blocking escalates into a distributed livelock.
 
 ## Minimal reproduction
 
