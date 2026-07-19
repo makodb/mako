@@ -16,9 +16,20 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;
+
+// Serialize a value into an owned byte vector (the cache API's payload
+// type since the Marshal-deprecation retype).
+template <typename T>
+static rusty::Vec<std::uint8_t> to_bytes(const T& v) {
+    rrr::BufferSink sink;
+    rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(v, ar);
+    return std::move(sink.bytes);
+}
 
 // ===========================================================================
 // IdempotencyKey Tests
@@ -90,12 +101,17 @@ TEST_F(IdempotencyKeyTest, MarshalRoundTrip) {
     IdempotencyKey original(12345, 67890);
 
     // Serialize
-    Marshal m;
-    rrr::Serialize_::serialize(original, m);
+    rrr::BufferSink sink;
+    {
+        rrr::BinaryWriteArchive ar(rrr::make_sink_proxy(&sink));
+        rrr::Serialize_::serialize(original, ar);
+    }
 
     // Deserialize
+    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     auto restored = IdempotencyKey::empty();
-    rrr::Deserialize_::deserialize(restored, m);
+    rrr::Deserialize_::deserialize(restored, rar);
 
     EXPECT_EQ(restored, original);
 }
@@ -251,8 +267,7 @@ TEST_F(IdempotencyCacheTest, InitialState) {
 
 TEST_F(IdempotencyCacheTest, StoreAndLookup) {
     IdempotencyKey key(1, 1);
-    Marshal response;
-    rrr::Serialize_::serialize(std::string("test response"), response);
+    auto response = to_bytes(std::string("test response"));
 
     uint64_t now = current_time_ms();
     cache_.store(key, 0, response, now);
@@ -261,7 +276,7 @@ TEST_F(IdempotencyCacheTest, StoreAndLookup) {
 
     // Lookup
     int32_t error_code = -1;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_TRUE(found);
@@ -274,7 +289,7 @@ TEST_F(IdempotencyCacheTest, LookupMiss) {
     uint64_t now = current_time_ms();
 
     int32_t error_code = -1;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_FALSE(found);
@@ -286,7 +301,7 @@ TEST_F(IdempotencyCacheTest, LookupInvalidKey) {
     uint64_t now = current_time_ms();
 
     int32_t error_code = -1;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     bool found = cache_.lookup(key, now, error_code, out_response);
 
     EXPECT_FALSE(found);
@@ -299,15 +314,14 @@ TEST_F(IdempotencyCacheTest, TTLExpiration) {
     cache_.set_config(cfg);
 
     IdempotencyKey key(1, 1);
-    Marshal response;
-    rrr::Serialize_::serialize(std::string("test"), response);
+    auto response = to_bytes(std::string("test"));
 
     uint64_t now = current_time_ms();
     cache_.store(key, 0, response, now);
 
     // Should find immediately
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     EXPECT_TRUE(cache_.lookup(key, now, error_code, out_response));
 
     // Should not find after TTL
@@ -325,8 +339,7 @@ TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
     // Add 4 entries (max is 3)
     for (int i = 1; i <= 4; i++) {
         IdempotencyKey key(1, i);
-        Marshal response;
-        rrr::Serialize_::serialize(i, response);
+        auto response = to_bytes(i);
         cache_.store(key, 0, response, now);
     }
 
@@ -336,7 +349,7 @@ TEST_F(IdempotencyCacheTest, EvictionOnCapacity) {
 
     // Key 1 should be evicted
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     EXPECT_FALSE(cache_.lookup(IdempotencyKey(1, 1), now, error_code, out_response));
 
     // Keys 2, 3, 4 should exist
@@ -356,18 +369,18 @@ TEST_F(IdempotencyCacheTest, LRUOrdering) {
     // Add 3 entries
     for (int i = 1; i <= 3; i++) {
         IdempotencyKey key(1, i);
-        Marshal response;
+        rusty::Vec<std::uint8_t> response;
         cache_.store(key, 0, response, now);
     }
 
     // Access key 1 to make it most recently used
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     cache_.lookup(IdempotencyKey(1, 1), now, error_code, out_response);
 
     // Add key 4 - should evict key 2 (least recently used after accessing key 1)
     IdempotencyKey key4(1, 4);
-    Marshal response4;
+    rusty::Vec<std::uint8_t> response4;
     cache_.store(key4, 0, response4, now);
 
     // Key 2 should be evicted
@@ -381,7 +394,7 @@ TEST_F(IdempotencyCacheTest, LRUOrdering) {
 
 TEST_F(IdempotencyCacheTest, Remove) {
     IdempotencyKey key(1, 1);
-    Marshal response;
+    rusty::Vec<std::uint8_t> response;
     uint64_t now = current_time_ms();
 
     cache_.store(key, 0, response, now);
@@ -401,7 +414,7 @@ TEST_F(IdempotencyCacheTest, Clear) {
 
     for (int i = 1; i <= 5; i++) {
         IdempotencyKey key(1, i);
-        Marshal response;
+        rusty::Vec<std::uint8_t> response;
         cache_.store(key, 0, response, now);
     }
 
@@ -415,14 +428,14 @@ TEST_F(IdempotencyCacheTest, DisabledCacheDoesNotStore) {
     cache_.set_config(IdempotencyConfig::disabled());
 
     IdempotencyKey key(1, 1);
-    Marshal response;
+    rusty::Vec<std::uint8_t> response;
     uint64_t now = current_time_ms();
 
     cache_.store(key, 0, response, now);
     EXPECT_EQ(cache_.size(), 0);
 
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     EXPECT_FALSE(cache_.lookup(key, now, error_code, out_response));
 }
 
@@ -431,13 +444,11 @@ TEST_F(IdempotencyCacheTest, UpdateExistingEntry) {
     uint64_t now = current_time_ms();
 
     // First store
-    Marshal response1;
-    rrr::Serialize_::serialize(std::string("first"), response1);
+    auto response1 = to_bytes(std::string("first"));
     cache_.store(key, 0, response1, now);
 
     // Update with new value
-    Marshal response2;
-    rrr::Serialize_::serialize(std::string("second"), response2);
+    auto response2 = to_bytes(std::string("second"));
     cache_.store(key, 42, response2, now + 1000);
 
     // Should still have 1 entry
@@ -445,20 +456,20 @@ TEST_F(IdempotencyCacheTest, UpdateExistingEntry) {
 
     // Should get updated values
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     EXPECT_TRUE(cache_.lookup(key, now + 1000, error_code, out_response));
     EXPECT_EQ(error_code, 42);
 }
 
 TEST_F(IdempotencyCacheTest, HitRateCalculation) {
     IdempotencyKey key(1, 1);
-    Marshal response;
+    rusty::Vec<std::uint8_t> response;
     uint64_t now = current_time_ms();
 
     cache_.store(key, 0, response, now);
 
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
 
     // 2 hits
     cache_.lookup(key, now, error_code, out_response);
@@ -474,13 +485,13 @@ TEST_F(IdempotencyCacheTest, HitRateCalculation) {
 
 TEST_F(IdempotencyCacheTest, ResetStats) {
     IdempotencyKey key(1, 1);
-    Marshal response;
+    rusty::Vec<std::uint8_t> response;
     uint64_t now = current_time_ms();
 
     cache_.store(key, 0, response, now);
 
     int32_t error_code;
-    Marshal out_response;
+    rusty::Vec<std::uint8_t> out_response;
     cache_.lookup(key, now, error_code, out_response);
     cache_.lookup(IdempotencyKey(1, 99), now, error_code, out_response);
 
@@ -504,7 +515,7 @@ TEST_F(IdempotencyCacheTest, EvictExpired) {
     // Add entries at different times
     for (int i = 1; i <= 5; i++) {
         IdempotencyKey key(1, i);
-        Marshal response;
+        rusty::Vec<std::uint8_t> response;
         cache_.store(key, 0, response, base_time + i * 50);  // 50ms apart
     }
 
@@ -535,12 +546,11 @@ TEST_F(IdempotencyCacheTest, ThreadSafety) {
             auto key = gen.next();
             uint64_t now = current_time_ms();
 
-            Marshal response;
-            rrr::Serialize_::serialize(i, response);
+            auto response = to_bytes(i);
             cache_.store(key, i, response, now);
 
             int32_t error_code;
-            Marshal out_response;
+            rusty::Vec<std::uint8_t> out_response;
             cache_.lookup(key, now, error_code, out_response);
         }
 

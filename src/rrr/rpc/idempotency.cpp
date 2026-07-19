@@ -45,7 +45,7 @@ export namespace rrr {
  * (`IdempotencyKey{.client_id = cid, .sequence = seq}`); the last
  * form is what `IdempotencyKeyGenerator::next()` (DSL-emitted) uses.
  *
- * `operator==`, `operator!=`, `IdempotencyKeyHash`, and the Marshal
+ * `operator==`, `operator!=`, `IdempotencyKeyHash`, and the archive
  * `operator<<` / `operator>>` overloads stay outside the DSL block
  * (the DSL grammar does not model operator overloading).
  */
@@ -146,23 +146,18 @@ uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
 }
 /*RUSTYCPP:GEN-END id=idempotency.key_hash*/
 
-// Marshal operators for IdempotencyKey
-// @safe - Marshal::operator<< / operator>> overloads are @safe via the
-// rrr namespace + class annotation.
-inline void serialize(const IdempotencyKey& key, Marshal& m) {
+// Archive serde for IdempotencyKey.
+// @safe - field-by-field dispatch to the archive leaf impls.
+inline void serialize(const IdempotencyKey& key, BinaryWriteArchive& m) {
     rrr::Serialize_::serialize(key.client_id, m);
     rrr::Serialize_::serialize(key.sequence, m);
 }
 
-inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) { serialize(key, m); return m; }
-
-// @safe - see operator<< above.
-inline void deserialize(IdempotencyKey& key, Marshal& m) {
+// @safe - see serialize above.
+inline void deserialize(IdempotencyKey& key, BinaryReadArchive& m) {
     rrr::Deserialize_::deserialize(key.client_id, m);
     rrr::Deserialize_::deserialize(key.sequence, m);
 }
-
-inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) { deserialize(key, m); return m; }
 
 // ===========================================================================
 // IdempotencyConfig
@@ -252,14 +247,8 @@ IdempotencyConfig IdempotencyConfig::disabled() {
 /**
  * @safe - Cached response entry for idempotency cache
  *
- * Uses rusty::Vec<char> for response data since Marshal is non-copyable.
+ * Holds the reply payload as raw bytes (Vec<u8>).
  */
-// The DSL lowers `char` to Rust's `char32_t` (Unicode codepoint); for
-// the C++ byte-buffer use here we want plain C++ `char` (signed
-// byte). The typedef hides the distinction from the DSL grammar — the
-// transpiler emits `Vec<CachedResponseByte>` verbatim, matching the
-// previous `Vec<char>` layout exactly.
-using CachedResponseByte = char;
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -273,18 +262,13 @@ using CachedResponseByte = char;
 // implicit on the aggregate.
 //
 // `is_expired` lives in the DSL impl (pure arithmetic + short-circuit
-// on `ttl_ms == 0`). The two Marshal-touching methods
-// (`set_response_data` / `get_response_data`) live OUTSIDE the DSL
-// block as free functions (`cached_response_set` /
-// `cached_response_get`) because their bodies use Marshal's
-// `peek`/`write` API + a `const_cast<Marshal&>`, which the rusty-cpp
-// transpiler doesn't yet translate; that was the previous
-// "trivial-blocked (needs Phase 4 reshape)" classification.
+// on `ttl_ms == 0`). The byte-copy helpers (`cached_response_set` /
+// `cached_response_get`) stay free functions: raw memcpy kernels.
 #if RUSTYCPP_RUST
 struct CachedResponse {
     key: IdempotencyKey,
     error_code: i32,
-    response_data: Vec<CachedResponseByte>,
+    response_data: Vec<u8>,
     timestamp_ms: u64,
 }
 
@@ -297,13 +281,13 @@ impl CachedResponse {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.cached_response version=1 rust_sha256=729aa0ac0438f31ca571d7f4da5296043e1a6cea4bcc0d145e8b3e0c8843c507*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cached_response version=1 rust_sha256=cba09e91267728fbbff1ea9e791bd32e89404c66570982534db40cb8c2a0e7b8*/
 struct CachedResponse;
 
 struct CachedResponse {
     IdempotencyKey key;
     int32_t error_code;
-    rusty::Vec<CachedResponseByte> response_data;
+    rusty::Vec<uint8_t> response_data;
     uint64_t timestamp_ms;
 
     bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
@@ -318,27 +302,30 @@ bool CachedResponse::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
 }
 /*RUSTYCPP:GEN-END id=idempotency.cached_response*/
 
-// @unsafe - Copy response data from Marshal. Free function — kept
-// outside the DSL block because the body's `m.peek` + `const_cast`
-// dance isn't expressible in inline-Rust today.
-inline void cached_response_set(CachedResponse& self, const Marshal& m) {
-    const size_t size = m.content_size();
+// @unsafe - raw byte copy (reserve + memcpy + set_len) into the entry.
+inline void cached_response_set(CachedResponse& self,
+                                const rusty::Vec<std::uint8_t>& bytes) {
+    const size_t size = bytes.len();
     self.response_data.clear();
     self.response_data.reserve(size);
     if (size > 0) {
         self.response_data.set_len(size);
-        // Use Marshal's peek method to copy data without consuming;
-        // Raw bulk peek straight into the byte vector — const-clean
-        // (peek_bytes is a const method; the old T&-peek needed a
-        // const_cast).
-        m.peek_bytes(reinterpret_cast<std::uint8_t*>(&self.response_data[0]), size);
+        std::memcpy(&self.response_data[0], bytes.data(), size);
     }
 }
 
-// @unsafe - Copy response data to Marshal. Same rationale as above.
-inline void cached_response_get(const CachedResponse& self, Marshal* out) {
-    if (out && !self.response_data.is_empty()) {
-        out->write_bytes(reinterpret_cast<const std::uint8_t*>(self.response_data.data()), self.response_data.len());
+// @unsafe - raw byte copy out of the entry (replaces `out` contents).
+inline void cached_response_get(const CachedResponse& self,
+                                rusty::Vec<std::uint8_t>* out) {
+    if (out == nullptr) {
+        return;
+    }
+    out->clear();
+    const size_t size = self.response_data.len();
+    out->reserve(size);
+    if (size > 0) {
+        out->set_len(size);
+        std::memcpy(&(*out)[0], self.response_data.data(), size);
     }
 }
 
@@ -460,19 +447,17 @@ uint64_t IdempotencyKeyGenerator::current_sequence() const {
  *   5. Return response
  */
 // @safe - LRU cache backed by rusty::Mutex<State> with rusty::Cell for
-// config. The Marshal-bearing cached response is moved through @unsafe
-// blocks at the boundary; the rest of the class is @safe.
-// Free-fn implementations of the Marshal-copy / reference-out-param
+// config. Cached responses are raw byte vectors.
+// Free-fn implementations of the byte-copy / reference-out-param
 // methods; the DSL methods below delegate to these. Defined after the GEN
-// block. (lookup writes through `int32_t&`/`Marshal&` out-params + copies
-// via cached_response_get; store copies via cached_response_set — neither
-// is cleanly DSL-expressible, so they stay hand-written.)
+// block. (lookup writes through `int32_t&`/`Vec<u8>&` out-params + copies
+// via cached_response_get; store copies via cached_response_set.)
 struct IdempotencyCache;  // defined by the GEN block below
 bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
                  uint64_t current_time_ms, int32_t& out_error_code,
-                 Marshal& out_response);
+                 rusty::Vec<std::uint8_t>& out_response);
 void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
-                int32_t error_code, const Marshal& response,
+                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
                 uint64_t current_time_ms);
 
 // LRU idempotency cache. Reshaped away from `std::list<CachedResponse>` +
@@ -485,7 +470,7 @@ void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
 // pattern mirrors CompletionTracker).
 //
 // @safe - all state is rusty interior-mutability (Cell / Mutex); the
-// Marshal-copy bodies live in the `idem_*` free fns the methods delegate to.
+// byte-copy bodies live in the `idem_*` free fns the methods delegate to.
 #if RUSTYCPP_RUST
 struct IdempotencyCache {
     config_: Cell<IdempotencyConfig>,
@@ -529,12 +514,12 @@ impl IdempotencyCache {
     }
 
     fn lookup(&self, key: &IdempotencyKey, current_time_ms: u64,
-              out_error_code: &mut i32, out_response: &mut Marshal) -> bool {
+              out_error_code: &mut i32, out_response: &mut Vec<u8>) -> bool {
         idem_lookup(self, key, current_time_ms, out_error_code, out_response)
     }
 
     fn store(&self, key: &IdempotencyKey, error_code: i32,
-             response: &Marshal, current_time_ms: u64) {
+             response: &Vec<u8>, current_time_ms: u64) {
         idem_store(self, key, error_code, response, current_time_ms)
     }
 
@@ -611,7 +596,7 @@ impl IdempotencyCache {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=bb1cc0f843a224a8039b16c9c6accde1f36bc373cde2717effc9b91afcce0d49*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=e4ee22bc6d5a77c26f7bc14cb52b5b6742c3a9ef62e440d5d25a8f7e52162a43*/
 struct IdempotencyCache;
 
 struct IdempotencyCache {
@@ -626,8 +611,8 @@ struct IdempotencyCache {
     bool enabled() const;
     IdempotencyConfig config() const;
     void set_config(const IdempotencyConfig& config) const;
-    bool lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, Marshal& out_response) const;
-    void store(const IdempotencyKey& key, int32_t error_code, const Marshal& response, uint64_t current_time_ms) const;
+    bool lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const;
+    void store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const;
     bool remove(const IdempotencyKey& key) const;
     void clear() const;
     size_t size() const;
@@ -668,11 +653,11 @@ void IdempotencyCache::set_config(const IdempotencyConfig& config) const {
     this->config_.set(std::move(config));
 }
 
-bool IdempotencyCache::lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, Marshal& out_response) const {
+bool IdempotencyCache::lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const {
     return idem_lookup((*this), key, std::move(current_time_ms), out_error_code, out_response);
 }
 
-void IdempotencyCache::store(const IdempotencyKey& key, int32_t error_code, const Marshal& response, uint64_t current_time_ms) const {
+void IdempotencyCache::store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const {
     idem_store((*this), key, std::move(error_code), response, std::move(current_time_ms));
 }
 
@@ -750,10 +735,10 @@ size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
 /*RUSTYCPP:GEN-END id=idempotency.cache*/
 
 // @unsafe - linear scan of the LRU VecDeque + TTL check + move-to-front +
-// Marshal copy through the `Marshal&` out-param.
+// byte copy through the `Vec<u8>&` out-param.
 bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
                  uint64_t current_time_ms, int32_t& out_error_code,
-                 Marshal& out_response) {
+                 rusty::Vec<std::uint8_t>& out_response) {
     auto cfg = self.config_.get();
     if (!cfg.enabled || !key.is_valid()) {
         self.misses_.set(self.misses_.get() + 1);
@@ -781,9 +766,9 @@ bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
 }
 
 // @unsafe - scan for an existing entry (update + move-to-front) else evict
-// LRU at capacity and push the new entry; Marshal copy via cached_response_set.
+// LRU at capacity and push the new entry; byte copy via cached_response_set.
 void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
-                int32_t error_code, const Marshal& response,
+                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
                 uint64_t current_time_ms) {
     auto cfg = self.config_.get();
     if (!cfg.enabled || !key.is_valid()) {
