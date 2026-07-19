@@ -58,6 +58,11 @@ set(RRR_MODULE_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc/utils.cpp
 )
 list(REMOVE_ITEM RRR_BENCH_SRC ${RRR_MODULE_SRC})
+# Platform implementation units for rrr.epoll_wrapper (Rust std's
+# sys-module pattern): exactly one is compiled, selected below.
+list(REMOVE_ITEM RRR_BENCH_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_kqueue.cc)
 
 set(RRR_CXXFLAGS ${BENCH_CXXFLAGS})
 
@@ -122,6 +127,11 @@ if(NOT TARGET rrr)
     )
     target_compile_options(rrr PUBLIC ${RRR_CXXFLAGS})
     target_link_libraries(rrr pthread rusty)
+    if(APPLE)
+        target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_kqueue.cc)
+    else()
+        target_sources(rrr PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+    endif()
 
     # RRR files for borrow checking — every non-test C++ module unit in rrr
     # except for the two genuine exclusions called out at the bottom.

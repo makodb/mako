@@ -30,11 +30,11 @@ import rrr.debugging;
 // kqueue/epoll poll fd. Epoll is authored as an inline-rust DSL struct
 // (impl Drop closes the fd; a `rusty::Cell<bool>` field makes it
 // move-only so the fd is never double-closed). Every kqueue/epoll
-// syscall (kevent, epoll_create/ctl/wait) carries a `#ifdef
-// USE_KQUEUE` platform split that the DSL can't express inline, so the
-// syscall bodies live in `// @unsafe` free functions (epoll_open /
-// epoll_*_impl) that the DSL methods delegate to; the close is the
-// OwnedFd member's RAII drop.
+// syscall body lives in the per-platform module implementation unit
+// (epoll_platform_linux.cc, all-DSL / epoll_platform_kqueue.cc, C++),
+// selected by CMake — Rust std's sys-module pattern. Only the Wait<F>
+// template below keeps an in-interface #ifdef (templates cannot move
+// to an implementation unit). The close is the OwnedFd RAII drop.
 export namespace rrr {
 using std::shared_ptr;
 
@@ -103,240 +103,37 @@ template <class U> class PollableAdapterRefMut;
 // Reactor::get_remove_count().
 inline std::atomic<int> epoll_remove_count{0};
 
-// === @unsafe kqueue/epoll syscall bodies (free functions) ===
-// Each carries the `#ifdef USE_KQUEUE` platform split — which the Rust DSL
-// cannot express inline — so the syscall bodies live here and the DSL Epoll
-// methods below delegate to them (the AddrInfo free-function pattern).
+// === platform syscall entry points ===
+// Declarations only — the bodies live in the CMake-selected platform
+// implementation unit (see the file-header note).
 
-// @unsafe - kqueue() / epoll_create syscall to allocate the poll fd.
-inline int32_t epoll_open() {
-    int32_t fd;
-#ifdef USE_KQUEUE
-    fd = kqueue();
-#else
-    fd = epoll_create(10);
-#endif
-    verify(fd != -1);
-    return fd;
-}
+// Platform syscall bodies live in the per-platform module
+// implementation units (epoll_platform_linux.cc — DSL — or
+// epoll_platform_kqueue.cc), selected by CMake. This is Rust std's
+// sys-module pattern: no preprocessor split in the shared interface.
+int32_t epoll_open();
+int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode);
+int epoll_remove_impl(int32_t poll_fd, int fd);
+int epoll_update_impl(int32_t poll_fd, int fd, int new_mode, int old_mode);
+
+// @unsafe - shared remove-counter bump (test instrumentation), callable
+// from the DSL bodies in the implementation units.
+inline void epoll_bump_remove_count() { epoll_remove_count++; }
 
 
-#ifndef USE_KQUEUE
-// @unsafe - zeroed epoll_event factory for the DSL bodies below
-// (struct-fill / memset has no DSL spelling).
-inline struct epoll_event epoll_event_zeroed() {
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(ev));
-    return ev;
-}
 
-// The Linux epoll_ctl(ADD) body — registration flags, EEXIST
-// del-then-re-add retry, and the EBADF teardown-race tolerance — as
-// DSL over the zeroed-event factory. The DEL retry passes &ev instead
-// of the legacy nullptr (the kernel ignores the payload for DEL;
-// the DSL has no null-pointer spelling).
-#if RUSTYCPP_RUST
-fn epoll_add_linux(poll_fd: i32, fd: i32, poll_mode: i32) -> i32 {
-    let mut ev = epoll_event_zeroed();
-    ev.data.fd = fd;
-    ev.events = EPOLLET | EPOLLIN | EPOLLRDHUP;
-    if (poll_mode & PollMode::WRITE) != 0 {
-        ev.events |= EPOLLOUT;
-    }
-    let mut result = unsafe { epoll_ctl(poll_fd, EPOLL_CTL_ADD, fd, &mut ev) };
-    if result != 0 && errno == EEXIST {
-        unsafe { epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &mut ev); }
-        result = unsafe { epoll_ctl(poll_fd, EPOLL_CTL_ADD, fd, &mut ev) };
-    }
-    if result != 0 && errno == EBADF {
-        // The fd closed between the registration request and this
-        // epoll_ctl (teardown racing an accept/connect registration) —
-        // report failure so the caller drops the pollable.
-        return -1;
-    }
-    verify(result == 0);
-    0
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.add_linux version=1 rust_sha256=7f8b55a7aece4e69dfcc79c48acd86958dfbc0955c2fe0d0119a613b70adb1ed*/
-int32_t epoll_add_linux(int32_t poll_fd, int32_t fd, int32_t poll_mode);
 
-int32_t epoll_add_linux(int32_t poll_fd, int32_t fd, int32_t poll_mode) {
-    auto ev = epoll_event_zeroed();
-    ev.data.fd = std::move(fd);
-    ev.events = (rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLIN)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
-    if (((rusty::detail::deref_if_pointer_like(poll_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLOUT;
-    }
-    auto result = epoll_ctl(std::move(poll_fd), EPOLL_CTL_ADD, std::move(fd), &ev);
-    if ((rusty::detail::deref_if_pointer_like(result) != 0) && (rusty::detail::deref_if_pointer_like(errno) == rusty::detail::deref_if_pointer_like(EEXIST))) {
-        // @unsafe
-        {
-            epoll_ctl(std::move(poll_fd), EPOLL_CTL_DEL, std::move(fd), &ev);
-        }
-        result = epoll_ctl(std::move(poll_fd), EPOLL_CTL_ADD, std::move(fd), &ev);
-    }
-    if ((rusty::detail::deref_if_pointer_like(result) != 0) && (rusty::detail::deref_if_pointer_like(errno) == rusty::detail::deref_if_pointer_like(EBADF))) {
-        return -1;
-    }
-    verify(rusty::detail::deref_if_pointer_like(result) == 0);
-    return static_cast<int32_t>(0);
-}
-/*RUSTYCPP:GEN-END id=epoll.add_linux*/
-#endif  // !USE_KQUEUE
 
-// @unsafe - platform dispatcher (kqueue kevent struct-fill stays C).
-inline int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode) {
-#ifdef USE_KQUEUE
-    struct kevent ev;
-    if (poll_mode & PollMode::READ) {
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = EV_ADD;
-      ev.filter = EVFILT_READ;
-      verify(kevent(poll_fd, &ev, 1, nullptr, 0, nullptr) == 0);
-    }
-    if (poll_mode & PollMode::WRITE) {
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = EV_ADD;
-      ev.filter = EVFILT_WRITE;
-      verify(kevent(poll_fd, &ev, 1, nullptr, 0, nullptr) == 0);
-    }
-
-#else
-    return epoll_add_linux(poll_fd, fd, poll_mode);
-#endif
-}
-
-#ifndef USE_KQUEUE
-// The Linux epoll_ctl(DEL) body, authored in the DSL as a route-2
-// unsafe{} libc call over the zeroed-event factory.
-#if RUSTYCPP_RUST
-fn epoll_remove_linux(poll_fd: i32, fd: i32) {
-    let mut ev = epoll_event_zeroed();
-    unsafe { epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, &mut ev); }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.remove_linux version=1 rust_sha256=b0231425e841a7b396a95f59f58cdf7311444763356df535dcd68edf0ca02f53*/
-void epoll_remove_linux(int32_t poll_fd, int32_t fd);
-
-void epoll_remove_linux(int32_t poll_fd, int32_t fd) {
-    auto ev = epoll_event_zeroed();
-    // @unsafe
-    {
-        epoll_ctl(std::move(poll_fd), EPOLL_CTL_DEL, std::move(fd), &ev);
-    }
-}
-/*RUSTYCPP:GEN-END id=epoll.remove_linux*/
-#endif  // !USE_KQUEUE
-
-// @unsafe - platform dispatcher (kqueue body is kevent struct-fill;
-// the Linux body is the DSL fn above).
-inline int epoll_remove_impl(int32_t poll_fd, int fd) {
-    epoll_remove_count++;
-#ifdef USE_KQUEUE
-    struct kevent ev;
-
-    bzero(&ev, sizeof(ev));
-    ev.ident = fd;
-    ev.flags = EV_DELETE;
-    ev.filter = EVFILT_READ;
-    kevent(poll_fd, &ev, 1, nullptr, 0, nullptr);
-    bzero(&ev, sizeof(ev));
-    ev.ident = fd;
-    ev.flags = EV_DELETE;
-    ev.filter = EVFILT_WRITE;
-    kevent(poll_fd, &ev, 1, nullptr, 0, nullptr);
-#else
-    epoll_remove_linux(poll_fd, fd);
-#endif
-    return 0;
-}
-
-#ifndef USE_KQUEUE
-// The Linux epoll_ctl(MOD) body — interest recompute + ENOENT/EBADF
-// tolerance (racing close/remove) — as DSL over the zeroed factory.
-#if RUSTYCPP_RUST
-fn epoll_update_linux(poll_fd: i32, fd: i32, new_mode: i32) -> i32 {
-    let mut ev = epoll_event_zeroed();
-    ev.data.fd = fd;
-    ev.events = EPOLLET | EPOLLRDHUP;
-    if (new_mode & PollMode::READ) != 0 {
-        ev.events |= EPOLLIN;
-    }
-    if (new_mode & PollMode::WRITE) != 0 {
-        ev.events |= EPOLLOUT;
-    }
-    let rc = unsafe { epoll_ctl(poll_fd, EPOLL_CTL_MOD, fd, &mut ev) };
-    if rc != 0 {
-        let err: i32 = errno;
-        if err == ENOENT || err == EBADF {
-            return 0;
-        }
-        verify(rc == 0);
-    }
-    0
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.update_linux version=1 rust_sha256=4adae32ad6bd89cb39b68097d9daa652f59de957fdfca1dc2a6f38ec3f74bb75*/
-int32_t epoll_update_linux(int32_t poll_fd, int32_t fd, int32_t new_mode);
-
-int32_t epoll_update_linux(int32_t poll_fd, int32_t fd, int32_t new_mode) {
-    auto ev = epoll_event_zeroed();
-    ev.data.fd = std::move(fd);
-    ev.events = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
-    if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::READ)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLIN;
-    }
-    if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLOUT;
-    }
-    const auto rc = epoll_ctl(std::move(poll_fd), EPOLL_CTL_MOD, std::move(fd), &ev);
-    if (rusty::detail::deref_if_pointer_like(rc) != 0) {
-        const int32_t err = errno;
-        if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(ENOENT)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EBADF))) {
-            return static_cast<int32_t>(0);
-        }
-        verify(rusty::detail::deref_if_pointer_like(rc) == 0);
-    }
-    return static_cast<int32_t>(0);
-}
-/*RUSTYCPP:GEN-END id=epoll.update_linux*/
-#endif  // !USE_KQUEUE
-
-// @unsafe - kevent / epoll_ctl(MOD) syscall, bzero/memset, EBADF/ENOENT tolerance.
-inline int epoll_update_impl(int32_t poll_fd, int fd, int new_mode, int old_mode) {
-#ifdef USE_KQUEUE
-    struct kevent ev;
-    auto kqueue_update = [&](int flags, int filter) -> bool {
-      bzero(&ev, sizeof(ev));
-      ev.ident = fd;
-      ev.flags = flags;
-      ev.filter = filter;
-      if (kevent(poll_fd, &ev, 1, nullptr, 0, nullptr) == 0) return true;
-      int err = errno;
-      return (err == EBADF || err == ENOENT);
-    };
-    if ((new_mode & PollMode::READ) && !(old_mode & PollMode::READ)) {
-      verify(kqueue_update(EV_ADD, EVFILT_READ));
-    }
-    if (!(new_mode & PollMode::READ) && (old_mode & PollMode::READ)) {
-      verify(kqueue_update(EV_DELETE, EVFILT_READ));
-    }
-    if ((new_mode & PollMode::WRITE) && !(old_mode & PollMode::WRITE)) {
-      verify(kqueue_update(EV_ADD, EVFILT_WRITE));
-    }
-    if (!(new_mode & PollMode::WRITE) && (old_mode & PollMode::WRITE)) {
-      verify(kqueue_update(EV_DELETE, EVFILT_WRITE));
-    }
-#else
-    (void)old_mode;
-    return epoll_update_linux(poll_fd, fd, new_mode);
-#endif
-    return 0;
-}
-
+// `Epoll` — owns the kqueue/epoll poll fd. Authored as inline-rust DSL: the
+// `#if RUSTYCPP_RUST` block is the source of truth; the transpiler regenerates
+// the `RUSTYCPP:GEN-BEGIN ... END` C++ below it. The poll fd is a
+// std-faithful rusty::os::fd::OwnedFd — RAII close on drop, move-only —
+// which subsumes the former impl Drop and Cell<bool> copy marker. The
+// methods delegate to the `@unsafe` syscall free functions above (their
+// `#ifdef USE_KQUEUE` bodies aren't DSL-expressible). `Wait<F>` regenerates as
+// a real C++ template member. (Dropped vs the old class: the unused
+// `volatile bool* pause/stop` back-pointers, the six dead stat counters, and
+// the never-called nullary `Wait()` overload.)
 // @unsafe - kevent / epoll_wait blocking syscall + raw `evlist[max_nev]`
 // stack buffer + dispatch into the caller-supplied handler.
 template<typename ReadyHandler>
@@ -388,16 +185,6 @@ inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
 #endif
 }
 
-// `Epoll` — owns the kqueue/epoll poll fd. Authored as inline-rust DSL: the
-// `#if RUSTYCPP_RUST` block is the source of truth; the transpiler regenerates
-// the `RUSTYCPP:GEN-BEGIN ... END` C++ below it. The poll fd is a
-// std-faithful rusty::os::fd::OwnedFd — RAII close on drop, move-only —
-// which subsumes the former impl Drop and Cell<bool> copy marker. The
-// methods delegate to the `@unsafe` syscall free functions above (their
-// `#ifdef USE_KQUEUE` bodies aren't DSL-expressible). `Wait<F>` regenerates as
-// a real C++ template member. (Dropped vs the old class: the unused
-// `volatile bool* pause/stop` back-pointers, the six dead stat counters, and
-// the never-called nullary `Wait()` overload.)
 //
 // @safe - see comment above.
 #if RUSTYCPP_RUST
