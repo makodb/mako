@@ -40,6 +40,12 @@ struct CPUInfo;
 // #ifdef-split by platform, not DSL-expressible). Definitions in the
 // impl namespace at the bottom of this file.
 rusty::Vec<double> cpuinfo_cpu_stat();
+struct CPUInfo;
+void cpuinfo_get_network(CPUInfo& self, const std::string& pid,
+                         rusty::Vec<double>* result, clock_t ticks);
+void cpuinfo_get_memory(CPUInfo& self, const std::string& pid,
+                        rusty::Vec<double>* result, clock_t ticks);
+void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks);
 
 // `CPUInfo` — process-level cpu/network/memory sampling history.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -73,7 +79,7 @@ struct CPUInfo {
     index: i32,
     pid_: CpuPid,
     // Mutex protecting the sample-history fields above (payload bool is
-    // an unused placeholder; see cpuinfo_get_cpu_stat).
+    // an unused placeholder; see get_cpu_stat below).
     mtx_: Mutex<bool>,
 }
 
@@ -82,9 +88,82 @@ impl CPUInfo {
     fn cpu_stat() -> Vec<f64> {
         cpuinfo_cpu_stat()
     }
+
+    // Ring-buffer delta computation over the sample history. The
+    // syscall sampling (process_times) and the /proc parsers stay in
+    // kernels; everything else is plain control flow.
+    fn get_cpu_stat(&mut self) -> Vec<f64> {
+        let _guard = self.mtx_.lock().unwrap();
+
+        let mut result = Vec::<f64>::new();
+        let sample = rusty::sys::process::process_times();
+        let ticks = sample.wall_ticks;
+        let stime = sample.system_ticks;
+        let utime = sample.user_ticks;
+
+        let mut last_ticks: i64 = 0;
+        if self.index < 10 {
+            last_ticks = self.last_ticks_[self.index - 1];
+        } else {
+            last_ticks = self.last_ticks_[9];
+        }
+
+        cpuinfo_log_ticks(last_ticks, ticks);
+        if ticks <= last_ticks + 60 {
+            if self.index < 10 {
+                result.push(-1.0);
+                result.push(-1.0);
+                result.push(-1.0);
+                result.push(-1.0);
+            } else {
+                result.push(self.last_cpu);
+                result.push(self.last_txed);
+                result.push(self.last_rxed);
+                result.push(self.last_mem);
+            }
+            return result;
+        }
+
+        if self.index < 10 {
+            self.last_kernel_ticks_[self.index] = stime;
+            self.last_user_ticks_[self.index] = utime;
+            self.last_ticks_[self.index] = ticks;
+            self.index += 1;
+        } else {
+            let mut i = 0;
+            while i < 9 {
+                self.last_kernel_ticks_[i] = self.last_kernel_ticks_[i + 1];
+                self.last_user_ticks_[i] = self.last_user_ticks_[i + 1];
+                self.last_ticks_[i] = self.last_ticks_[i + 1];
+                i += 1;
+            }
+            self.last_kernel_ticks_[9] = stime;
+            self.last_user_ticks_[9] = utime;
+            self.last_ticks_[9] = ticks;
+        }
+
+        let mut cpu_total = 0.0;
+        if self.index < 10 {
+            cpu_total = -1.0;
+        } else {
+            let busy = (stime - self.last_kernel_ticks_[8]) + (utime - self.last_user_ticks_[8]);
+            cpu_total = (busy as f64) / ((ticks - self.last_ticks_[8]) as f64);
+        }
+        self.last_cpu = cpu_total;
+
+        if self.index < 10 {
+            result.push(-1.0);
+        } else {
+            result.push(cpu_total);
+        }
+
+        cpuinfo_get_network(self, std::to_string(self.pid_), &mut result, ticks);
+        cpuinfo_get_memory(self, std::to_string(self.pid_), &mut result, ticks);
+        result
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cpuinfo.info version=1 rust_sha256=f04f3965392b5ccefc5e08243653390d41170dfe70ae6ee0ae300105f4468fc6*/
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.info version=1 rust_sha256=d1fd3c4b352819ceb8684ad0e6ac6e58fb48f856778ea91f2e10884158565d2b*/
 struct CPUInfo;
 
 struct CPUInfo {
@@ -105,11 +184,75 @@ struct CPUInfo {
     rusty::Mutex<bool> mtx_;
 
     static rusty::Vec<double> cpu_stat();
+    rusty::Vec<double> get_cpu_stat();
 };
 
 
 rusty::Vec<double> CPUInfo::cpu_stat() {
     return cpuinfo_cpu_stat();
+}
+
+rusty::Vec<double> CPUInfo::get_cpu_stat() {
+    auto _guard = this->mtx_.lock().unwrap();
+    auto result = rusty::Vec<double>::new_();
+    const auto sample = rusty::sys::process::process_times();
+    const auto ticks = std::move(sample.wall_ticks);
+    const auto stime = std::move(sample.system_ticks);
+    const auto utime = std::move(sample.user_ticks);
+    int64_t last_ticks = static_cast<int64_t>(0);
+    if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
+        last_ticks = this->last_ticks_[rusty::detail::deref_if_pointer_like(this->index) - 1];
+    } else {
+        last_ticks = this->last_ticks_[9];
+    }
+    cpuinfo_log_ticks(std::move(last_ticks), std::move(ticks));
+    if (rusty::detail::deref_if_pointer_like(ticks) <= (rusty::detail::deref_if_pointer_like(last_ticks) + 60)) {
+        if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
+            result.push(-1.0);
+            result.push(-1.0);
+            result.push(-1.0);
+            result.push(-1.0);
+        } else {
+            result.push(this->last_cpu);
+            result.push(this->last_txed);
+            result.push(this->last_rxed);
+            result.push(this->last_mem);
+        }
+        return std::move(result);
+    }
+    if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
+        this->last_kernel_ticks_[this->index] = std::move(stime);
+        this->last_user_ticks_[this->index] = std::move(utime);
+        this->last_ticks_[this->index] = std::move(ticks);
+        this->index += 1;
+    } else {
+        auto i = 0;
+        while (rusty::detail::deref_if_pointer_like(i) < 9) {
+            this->last_kernel_ticks_[i] = this->last_kernel_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
+            this->last_user_ticks_[i] = this->last_user_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
+            this->last_ticks_[i] = this->last_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
+            rusty::detail::deref_if_pointer_like(i) += 1;
+        }
+        this->last_kernel_ticks_[9] = std::move(stime);
+        this->last_user_ticks_[9] = std::move(utime);
+        this->last_ticks_[9] = std::move(ticks);
+    }
+    auto cpu_total = 0.0;
+    if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
+        cpu_total = -1.0;
+    } else {
+        const auto busy = ((rusty::detail::deref_if_pointer_like(stime) - this->last_kernel_ticks_[8])) + ((rusty::detail::deref_if_pointer_like(utime) - this->last_user_ticks_[8]));
+        cpu_total = ((static_cast<double>(busy))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - this->last_ticks_[8]))));
+    }
+    this->last_cpu = std::move(cpu_total);
+    if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
+        result.push(-1.0);
+    } else {
+        result.push(std::move(cpu_total));
+    }
+    cpuinfo_get_network((*this), std::to_string(this->pid_), &result, std::move(ticks));
+    cpuinfo_get_memory((*this), std::to_string(this->pid_), &result, std::move(ticks));
+    return std::move(result);
 }
 /*RUSTYCPP:GEN-END id=cpuinfo.info*/
 
@@ -122,12 +265,14 @@ rusty::Vec<double> CPUInfo::cpu_stat() {
 // target for the two parsers.
 namespace rrr {
 
-namespace {
+// (anonymous namespace dissolved: the kernels need module linkage so the
+// exported declarations above unify with these definitions)
 
 // @unsafe - std::ifstream + getline + strtok with raw `char*` and
 // strtoul on raw `char*` tokens.
 void cpuinfo_get_network(CPUInfo& self, const std::string& pid,
-                         rusty::Vec<double>& result, clock_t ticks) {
+                         rusty::Vec<double>* result_ptr, clock_t ticks) {
+    rusty::Vec<double>& result = *result_ptr;
 #ifndef __linux__
     (void) self;
     (void) pid;
@@ -192,7 +337,8 @@ void cpuinfo_get_network(CPUInfo& self, const std::string& pid,
 // @unsafe - std::ifstream + a 24-step `operator>>` chain parsing
 // /proc/{pid}/stat into a `long rss` field.
 void cpuinfo_get_memory(CPUInfo& self, const std::string& pid,
-                        rusty::Vec<double>& result, clock_t ticks) {
+                        rusty::Vec<double>* result_ptr, clock_t ticks) {
+    rusty::Vec<double>& result = *result_ptr;
 #ifndef __linux__
     (void) self;
     (void) pid;
@@ -257,8 +403,8 @@ CPUInfo cpuinfo_new() {
     info.last_user_ticks_[info.index]   = static_cast<clock_t>(ticks.user_ticks);
 
     info.pid_ = rusty::sys::process::getpid();
-    cpuinfo_get_network(info, std::to_string(info.pid_), result, info.last_ticks_[info.index]);
-    cpuinfo_get_memory(info, std::to_string(info.pid_), result, info.last_ticks_[info.index]);
+    cpuinfo_get_network(info, std::to_string(info.pid_), &result, info.last_ticks_[info.index]);
+    cpuinfo_get_memory(info, std::to_string(info.pid_), &result, info.last_ticks_[info.index]);
 
     info.index++;
 #else
@@ -271,68 +417,10 @@ CPUInfo cpuinfo_new() {
     return info;
 }
 
-// @unsafe - mutex lock + dispatch into the @unsafe parsers. times()
-// flows through @safe rusty::sys::process::process_times.
-rusty::Vec<double> cpuinfo_get_cpu_stat(CPUInfo& self) {
-    // Lock the placeholder mutex for mutual exclusion across the
-    // sample-history reads / writes below.
-    auto _guard = self.mtx_.lock().unwrap();
-    (void)_guard;
-
-    rusty::Vec<double> result;
-    double cpu_total;
-    clock_t last_ticks;
-
-    const auto sample = rusty::sys::process::process_times();
-    const clock_t ticks  = static_cast<clock_t>(sample.wall_ticks);
-    const clock_t stime  = static_cast<clock_t>(sample.system_ticks);
-    const clock_t utime  = static_cast<clock_t>(sample.user_ticks);
-    if(self.index < 10) last_ticks = self.last_ticks_[self.index-1];
-    else last_ticks = self.last_ticks_[9];
-
+// @unsafe - Log_debug varargs shim for the DSL delta method.
+void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
     Log_debug("ticks: %d -> %d", last_ticks, ticks);
-    if (ticks <= last_ticks + 60){
-        if(self.index < 10){
-            return {-1.0, -1.0, -1.0, -1.0};
-        } else{
-            return {self.last_cpu, self.last_txed, self.last_rxed, self.last_mem};
-        }
-    }
-
-    if(self.index < 10){
-        self.last_kernel_ticks_[self.index] = stime;
-        self.last_user_ticks_[self.index] = utime;
-        self.last_ticks_[self.index] = ticks;
-        self.index++;
-    } else{
-        for(int i = 0; i < 9; i++){
-            self.last_kernel_ticks_[i] = self.last_kernel_ticks_[i+1];
-            self.last_user_ticks_[i] = self.last_user_ticks_[i+1];
-            self.last_ticks_[i] = self.last_ticks_[i+1];
-        }
-        self.last_kernel_ticks_[9] = stime;
-        self.last_user_ticks_[9] = utime;
-        self.last_ticks_[9] = ticks;
-    }
-
-    if(self.index < 10){
-        cpu_total = -1.0;
-    } else{
-        cpu_total = (stime - self.last_kernel_ticks_[8]) +
-            (utime - self.last_user_ticks_[8]);
-        cpu_total /= (ticks - self.last_ticks_[8]);
-    }
-    self.last_cpu = cpu_total;
-
-    if(self.index < 10) result.push(-1.0);
-    else result.push(cpu_total);
-
-    cpuinfo_get_network(self, std::to_string(self.pid_), result, ticks);
-    cpuinfo_get_memory(self, std::to_string(self.pid_), result, ticks);
-    return result;
 }
-
-}  // namespace
 
 // @safe - Rust-idiomatic singleton accessor.
 //
@@ -344,7 +432,7 @@ rusty::Vec<double> cpuinfo_get_cpu_stat(CPUInfo& self) {
 rusty::Vec<double> cpuinfo_cpu_stat() {
     static rusty::OnceCell<CPUInfo> inst;
     inst.get_or_init([]() -> CPUInfo { return cpuinfo_new(); });
-    return cpuinfo_get_cpu_stat(*inst.get_mut());
+    return inst.get_mut()->get_cpu_stat();
 }
 
 }  // namespace rrr
