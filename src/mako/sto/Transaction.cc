@@ -610,28 +610,23 @@ bool Transaction::try_commit(bool no_paxos) {
                     goto abort;
                 }
             } else {
-#if defined(FAIL_NEW_VERSION)
-            int retry_c = 0;
-            while (1) {
-                try {
-                    retry_c += 1;
-                    TThread::sclient->remoteInstall(tid_unique_);
-                    break;
-                } catch (int n) {
-			break;
-                    if (n==1002) { 
-                        // There is a timeout on partial INSTALL, we retry instead of abort for correctness.
-                        // Mako can't solve "blocking" issue in 2PC.
-                        //std::cout<<"timeout in remoteInstall; retry attempts: " << retry_c <<std::endl;
-                        if (!TThread::sclient->isBlocking) {
-                            break;
-                        }
-                    }
-                }
+            // remoteInstall never throws; it returns is_all_response_ok
+            // (the old catch(int 1002) retry here was dead code from a
+            // throwing client that no longer exists, and the result was
+            // dropped on the floor). A timed-out partial INSTALL leaves the
+            // participants that missed it holding this txn's row locks with
+            // NO later message that would release them -- walking away leaks
+            // those locks FOREVER (observed live: one stock row stayed
+            // locked 24+ minutes and pinned the migration data plane).
+            // Mako accepts 2PC's blocking window, so retry within a bound:
+            // install is idempotent for participants that already applied
+            // it, and each retry is another chance to release the rest.
+            for (int retry_c = 0; ; ++retry_c) {
+                if (TThread::sclient->remoteInstall(tid_unique_) <= 0) break;
+                if (retry_c >= 4) break;   // 5 tries total
+                // @unsafe { usleep is libc }
+                usleep(50 * 1000);
             }
-#else
-            TThread::sclient->remoteInstall(tid_unique_);
-#endif
             }
         }
     }
@@ -670,7 +665,16 @@ abort:
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
     if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
-        TThread::sclient->remoteAbort();
+        // The abort is the ONLY message that releases the locks this txn's
+        // BatchLock took on remote participants; a single lost/timed-out
+        // send leaks them forever (same forever-locked-row pathology as the
+        // install path above). Retry within a bound -- abort is idempotent.
+        for (int retry_c = 0; ; ++retry_c) {
+            if (TThread::sclient->remoteAbort() <= 0) break;
+            if (retry_c >= 2) break;   // 3 tries total
+            // @unsafe { usleep is libc }
+            usleep(50 * 1000);
+        }
     }
     return false;
 }
