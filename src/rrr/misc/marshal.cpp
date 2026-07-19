@@ -1153,11 +1153,11 @@ inline void deserialize(T& v, ::rrr::Marshal& m) {
 }
 }  // namespace Deserialize_
 
-// NOTE: the variadic `deserialize_from(RefMut<Marshal>&&, ...)` reply-read
-// helper lives in rpc/client.cpp alongside the RefMut<Marshal> `operator>>`
+// NOTE: the variadic `deserialize_from(RefMut<ReplyBuffer>&&, ...)` reply-read
+// helper lives in rpc/client.cpp alongside the RefMut<ReplyBuffer> `operator>>`
 // bridge it reuses — NOT here. Reply structs carry Archive operators (not
 // Marshal ones), so the helper must read through a BinaryReadArchive; keeping
-// it next to the bridge also avoids baking a RefMut<Marshal> specialization
+// it next to the bridge also avoids baking a RefMut<ReplyBuffer> specialization
 // into this (already huge) marshal BMI, which tripped a clang-22 ASTReader
 // crash when heavy consumers (communicator.cc) imported it.
 

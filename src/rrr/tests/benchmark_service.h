@@ -773,7 +773,7 @@ public:
             }
             RpcFastPrimeResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcFastPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -824,7 +824,7 @@ public:
             }
             RpcFastDotProdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -876,7 +876,7 @@ public:
             }
             RpcFastAddResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcFastAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -976,7 +976,7 @@ public:
             }
             RpcFastVecResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcFastVecResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -1027,7 +1027,7 @@ public:
             }
             RpcPrimeResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.flag, __reply_ar__);
             return rusty::Result<RpcPrimeResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -1078,7 +1078,7 @@ public:
             }
             RpcDotProdResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.v, __reply_ar__);
             return rusty::Result<RpcDotProdResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -1130,7 +1130,7 @@ public:
             }
             RpcAddResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.a_add_b, __reply_ar__);
             return rusty::Result<RpcAddResponse, rrr::i32>::Ok(__typed_resp__);
         }
@@ -1326,7 +1326,7 @@ public:
             }
             RpcDeferredEchoResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
             rrr::Deserialize_::deserialize(__typed_resp__.result, __reply_ar__);
             return rusty::Result<RpcDeferredEchoResponse, rrr::i32>::Ok(__typed_resp__);
         }

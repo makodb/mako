@@ -294,7 +294,7 @@ TEST_F(FutureTest, FutureGetReply) {
     auto reply_guard = fu->get_reply();
 
     i32 result;
-    rrr::Deserialize_::deserialize(result, *reply_guard);
+    reply_guard >> result;
 
     EXPECT_EQ(result, 34);  // 17 * 2
 

@@ -2153,7 +2153,7 @@ class Future {
     static Arc<Future> create();
     void wait();                    // Block fiber
     void timed_wait(double sec);    // With timeout
-    Marshal& get_reply();           // Access reply data
+    rusty::RefMut<ReplyBuffer> get_reply();  // Access reply data (cursor)
     int get_error_code();           // 0 = success
     bool timed_out();               // Did it timeout?
     static void safe_release(...);  // Compatibility no-op (Arc handles lifetime)

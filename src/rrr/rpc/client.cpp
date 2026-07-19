@@ -58,39 +58,81 @@ import rrr.threading;
 // per-method `// @unsafe` annotations.
 export namespace rrr {
 
-// Stream operator for RefMut<Marshal> — supports the
+// `ReplyBuffer` — the Future's reply payload, serde-shaped (Marshal-
+// deprecation step 2, same design as the server-side Request): `body`
+// owns the reply bytes (bulk-filled once by `reply_buffer_fill` when
+// the response frame resolves the future), `src` is the read cursor
+// over them. The cursor advances in place across `get_reply()` reads,
+// exactly as the old reply Marshal's read_pos_ did. INVARIANT: `src`
+// borrows `body`'s heap buffer; the buffer is filled at most once and
+// the ReplyBuffer never moves after fill (it lives inside the Future's
+// RefCell).
+#if RUSTYCPP_RUST
+struct ReplyBuffer {
+    body: Vec<u8>,
+    src: BufferSource,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.reply_buffer version=1 rust_sha256=0be1bfd55252f8ae9f86d9849c56febc9efa018454c7dd2f1595e275bcee451d*/
+struct ReplyBuffer;
+
+struct ReplyBuffer {
+    rusty::Vec<uint8_t> body;
+    BufferSource src;
+};
+/*RUSTYCPP:GEN-END id=client.reply_buffer*/
+
+// @safe - value-init factory (empty body, null/0 cursor); the DSL has
+// no spelling for a null-pointer BufferSource literal.
+inline ReplyBuffer reply_buffer_empty() {
+    return ReplyBuffer{};
+}
+
+// @unsafe - reserve + raw memcpy + set_len into the reply body (same
+// bulk-fill kernel shape as request_fill_body / buffer_sink_write),
+// then point the read cursor at the filled buffer. Call at most once
+// per ReplyBuffer, before any read.
+inline void reply_buffer_fill(ReplyBuffer& rb, const std::uint8_t* bytes,
+                              std::size_t n) {
+    rb.body.reserve(n);
+    std::memcpy(rb.body.data(), bytes, n);
+    rb.body.set_len(n);
+    rb.src = BufferSource::new_(rb.body.data(), rb.body.len());
+}
+
+// Stream operator for RefMut<ReplyBuffer> — supports the
 // `fu->get_reply() >> x` pattern.  Each read dispatches through
-// a `BinaryReadArchive` over a fresh `MarshalSource` so the
-// format-decode contract matches the rpcgen-emitted dispatchers.
-// The archive is a thin format wrapper — its read
-// state lives on the underlying `Marshal`'s read cursor, so
-// constructing a new archive per `>>` call produces the same byte
-// stream as a single chained reader.  We return the guard
-// reference for chaining; subsequent `>>` calls in a chain
-// (`fu->get_reply() >> a >> b >> c`) all hit this same overload.
+// a `BinaryReadArchive` over a RefMut proxy of the reply's
+// BufferSource cursor, so the format-decode contract matches the
+// rpcgen-emitted dispatchers. The archive is a thin format wrapper —
+// its read state lives on `src`, so constructing a new archive per
+// `>>` call produces the same byte stream as a single chained
+// reader.  We return the guard reference for chaining; subsequent
+// `>>` calls in a chain (`fu->get_reply() >> a >> b >> c`) all hit
+// this same overload.
 template<typename U>
-rusty::RefMut<Marshal>& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
+rusty::RefMut<ReplyBuffer>& operator>>(rusty::RefMut<ReplyBuffer>& guard, U& value) {
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&(*guard).src));
     rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
     return guard;
 }
 
 template<typename U>
-rusty::RefMut<Marshal>&& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
-    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&*guard));
+rusty::RefMut<ReplyBuffer>&& operator>>(rusty::RefMut<ReplyBuffer>&& guard, U& value) {
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&(*guard).src));
     rrr::Deserialize_::deserialize(value, ar);  // Phase 8 2b: serde, not operator
     return std::move(guard);
 }
 
 // Read several values in sequence from a reply guard, replacing the legacy
 // chain `fu->get_reply() >> a >> b >> c`. get_reply() returns a fresh
-// RefMut<Marshal> BY VALUE, so the reads must share ONE guard (a per-value
+// RefMut<ReplyBuffer> BY VALUE, so the reads must share ONE guard (a per-value
 // re-call would re-read from the reply start). We bind the guard once
 // (rvalue-ref param; the temporary lives across the whole call) and fold over
 // the SAME `operator>>` bridge above, so each arg decodes through a
 // BinaryReadArchive in order — byte-identical to the operator chain.
 template<typename... Ts>
-inline void deserialize_from(rusty::RefMut<Marshal>&& src, Ts&... args) {
+inline void deserialize_from(rusty::RefMut<ReplyBuffer>&& src, Ts&... args) {
     ( (void)(src >> args), ... );
 }
 
@@ -523,7 +565,7 @@ struct Future {
     xid_: i64,
     error_code_: Cell<i32>,
     attr_: FutureAttr,
-    reply_: RefCell<Marshal>,
+    reply_: RefCell<ReplyBuffer>,
     timeout_: u64,
     state_: Mutex<FutureState>,
     ready_cond_: Condvar,
@@ -538,7 +580,7 @@ impl Future {
             xid_: xid,
             error_code_: Cell::new(0i32),
             attr_: attr,
-            reply_: RefCell::<Marshal>::new(Marshal::new()),
+            reply_: RefCell::<ReplyBuffer>::new(reply_buffer_empty()),
             timeout_: 1000000u64,
             state_: Mutex::<FutureState>::new(FutureState::new()),
             ready_cond_: rusty::Condvar::new(),
@@ -606,7 +648,7 @@ impl Future {
         true
     }
 
-    fn get_reply(&self) -> rusty::RefMut<Marshal> {
+    fn get_reply(&self) -> rusty::RefMut<ReplyBuffer> {
         self.wait();
         self.reply_.borrow_mut()
     }
@@ -684,7 +726,7 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=d3ae9b85dd745fd3e9f6edb25af9c90457d47bff297d361bd3f0c6da57227b04*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=a081451731b70148e14b85193b215034096a96241f90b5284118f2dc78e66813*/
 struct FutureState;
 struct Future;
 
@@ -700,7 +742,7 @@ struct Future {
     int64_t xid_;
     rusty::Cell<int32_t> error_code_;
     FutureAttr attr_;
-    rusty::RefCell<Marshal> reply_;
+    rusty::RefCell<ReplyBuffer> reply_;
     uint64_t timeout_;
     rusty::Mutex<FutureState> state_;
     rusty::Condvar ready_cond_;
@@ -716,7 +758,7 @@ struct Future {
     bool wait_with_options() const;
     bool timed_out() const;
     bool add_completion_callback(CompletionFn callback) const;
-    rusty::RefMut<Marshal> get_reply() const;
+    rusty::RefMut<ReplyBuffer> get_reply() const;
     int32_t get_error_code() const;
     int64_t get_xid() const;
     RequestOptions get_options() const;
@@ -739,7 +781,7 @@ Future::Future(int64_t xid, FutureAttr attr)
     : xid_(std::move(xid))
     , error_code_(rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)))
     , attr_(std::move(attr))
-    , reply_(rusty::RefCell<Marshal>::new_(Marshal::new_()))
+    , reply_(rusty::RefCell<ReplyBuffer>::new_(reply_buffer_empty()))
     , timeout_(static_cast<uint64_t>(1000000))
     , state_(rusty::Mutex<FutureState>::new_(FutureState::new_()))
     , ready_cond_(rusty::Condvar::new_())
@@ -805,7 +847,7 @@ bool Future::add_completion_callback(CompletionFn callback) const {
     return true;
 }
 
-rusty::RefMut<Marshal> Future::get_reply() const {
+rusty::RefMut<ReplyBuffer> Future::get_reply() const {
     this->wait();
     return this->reply_.borrow_mut();
 }
@@ -4332,9 +4374,11 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
                 final_fu->retry_count_.set(retry_count);
                 if (attempt_fu->error_code_.get() == 0) {
                     auto attempt_reply = attempt_fu->reply_.borrow_mut();
-                    size_t reply_size = attempt_reply->content_size();
+                    size_t reply_size = attempt_reply->src.remaining();
                     if (reply_size > 0) {
-                        final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
+                        reply_buffer_fill(*final_fu->reply_.borrow_mut(),
+                                          attempt_reply->body.data() + attempt_reply->src.pos(),
+                                          reply_size);
                     }
                 }
                 final_fu->notify_ready(final_fu);
@@ -4777,8 +4821,8 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
     verify(fu->xid_ == v_reply_xid.get());
     fu->error_code_.set(v_error_code.get());
     if (response_payload_bytes > 0) {
-      fu->reply_.borrow_mut()->write_bytes(bytes + parsed_header_size,
-                                           response_payload_bytes);
+      reply_buffer_fill(*fu->reply_.borrow_mut(), bytes + parsed_header_size,
+                        response_payload_bytes);
     }
 
     if (v_error_code.get() == 0) {

@@ -322,7 +322,7 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     // Read response (guard ensures lifetime safety)
     auto resp_guard = fu->get_reply();
     std::vector<char> resp_buffer(tls_buffers.response_len);
-    resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), tls_buffers.response_len);
+    resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), tls_buffers.response_len);
 
     // Deliver response to receiver (only if not stopping)
     if (!stop_ && src) {
@@ -417,7 +417,7 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -495,7 +495,7 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         // Read response (guard ensures lifetime safety)
         auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_guard->read(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {

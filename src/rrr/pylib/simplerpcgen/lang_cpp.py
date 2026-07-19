@@ -244,7 +244,7 @@ def emit_typed_proxy_future_wrapper(func, f):
             # — `__reply_src__` and `__reply_ar__` reference into it.
             if len(output_fields) > 0:
                 f.writeln("auto __reply_guard__ = __fu__->get_reply();")
-                f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));")
+                f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));")
                 for _, field_name in output_fields:
                     f.writeln("rrr::Deserialize_::deserialize(__typed_resp__.%s, __reply_ar__);" % field_name)
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
@@ -583,7 +583,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                             # through BinaryReadArchive — see the matching
                             # comment in `emit_typed_proxy_future_wrapper`.
                             f.writeln("auto __reply_guard__ = __fu__->get_reply();")
-                            f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&*__reply_guard__));")
+                            f.writeln("rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));")
                             for param in sync_out_params:
                                 f.writeln("rrr::Deserialize_::deserialize(*%s, __reply_ar__);" % param)
                         f.writeln("}")
