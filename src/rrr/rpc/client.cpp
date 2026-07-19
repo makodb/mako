@@ -1126,14 +1126,30 @@ inline void log_connect_no_factory() {
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
 // no loop-capable body — it field-inits pending_cb_slots_ via
 // `rusty::Mutex::new(make_prefilled_cb_slots())`.
-inline rusty::Vec<rusty::Option<AsyncReplyCallback>> make_prefilled_cb_slots() {
-  rusty::Vec<rusty::Option<AsyncReplyCallback>> slots;
-  slots.reserve(kAsyncSlotCount);
-  for (size_t i = 0; i < kAsyncSlotCount; ++i) {
-    slots.push(rusty::None);
-  }
-  return slots;
+#if RUSTYCPP_RUST
+fn make_prefilled_cb_slots() -> Vec<rusty::Option<AsyncReplyCallback>> {
+    let mut slots = Vec::<rusty::Option<AsyncReplyCallback>>::new();
+    slots.reserve(kAsyncSlotCount);
+    let mut i: usize = 0;
+    while i < kAsyncSlotCount {
+        slots.push(rusty::None);
+        i += 1;
+    }
+    slots
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.prefilled_slots version=1 rust_sha256=f2c0805e924e4128ef618283f6b299d82ba01abc2b45e8aaa010cd9a0457be60*/
+rusty::Vec<rusty::Option<AsyncReplyCallback>> make_prefilled_cb_slots() {
+    auto slots = rusty::Vec<rusty::Option<AsyncReplyCallback>>::new_();
+    slots.reserve(std::move(kAsyncSlotCount));
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(kAsyncSlotCount)) {
+        slots.push(rusty::None);
+        i += 1;
+    }
+    return std::move(slots);
+}
+/*RUSTYCPP:GEN-END id=client.prefilled_slots*/
 
 // Hoisted above the ClientConnection DSL struct (Phase 5 flip): the DSL
 // parser rejects a `rusty::Function<void(...)>` field/param type.
@@ -3825,11 +3841,6 @@ using namespace std;
 // existing per-method `// @safe` / `// @unsafe` annotations from the
 // matching declarations in the export blocks above.
 namespace rrr {
-// Helper function to get current time in milliseconds
-// @safe - delegates to rusty::sys::time::clock_monotonic_us, itself @safe.
-static uint64_t current_time_ms() {
-    return rusty::sys::time::clock_monotonic_us() / 1000;
-}
 
 // 4g4: the migration switch (`srpc_use_channel()` and the test-only
 // `srpc_set_use_channel_for_testing` / `srpc_reset_use_channel_for_testing`
@@ -4540,7 +4551,7 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
   // tests assert `> 0`; the absolute value (steady-clock-relative)
   // is informational.
   {
-    uint64_t now = current_time_ms();
+    uint64_t now = clientconn_monotonic_ms_now();
     self.metrics_.record_connect(now);
     // Seed `last_activity_time_` so `is_idle()` measures time since
     // connect (or since the most recent send/recv) rather than
