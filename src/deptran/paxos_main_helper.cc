@@ -1,4 +1,5 @@
 
+#include <rusty/thread.hpp>
 #include "__dep__.h"
 #include "frame.h"
 #include "paxos_worker.h"
@@ -648,11 +649,10 @@ int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 
   // hard-coded `false`).  The dead if-branch launched
   // `heartbeatBackground2` / `heartbeatMonitor3`, both removed above.
   if (Config::GetConfig()->proc_name_.compare("learner")==0) {
-    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
-    pthread_detach(es->heartbeat_th_);
+    // Rust-idiomatic: the dropped JoinHandle detaches (std-faithful).
+    (void)rusty::thread::spawn([]() { heartbeatBackground(nullptr); });
 
-    Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
-    pthread_detach(es->heartbeat_th_checking_);
+    (void)rusty::thread::spawn([]() { heartbeatMonitor2(nullptr); });
   }
   // 20 / 4e-19 / 4e-16: cleared a stale
   // commented-out block that referenced now-deleted thread entry

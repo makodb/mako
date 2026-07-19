@@ -33,12 +33,13 @@ void FpgaRaftServer::Setup() {
 	if (heartbeat_ && !FpgaRaftServer::looping && IsLeader()) {
 		Log_info("starting loop at server");
 		FpgaRaftServer::looping = true;
-		memset(&loop_th_, 0, sizeof(loop_th_));
 		hb_loop_args_type* hb_loop_args = new hb_loop_args_type();
 		hb_loop_args->commo = (FpgaRaftCommo*) commo();
 		hb_loop_args->sch = this;
 		verify(hb_loop_args->commo && hb_loop_args->sch);
-		Pthread_create(&loop_th_, nullptr, FpgaRaftServer::HeartbeatLoop, hb_loop_args);
+		loop_th_ = rusty::Some(rusty::thread::spawn([hb_loop_args]() {
+			FpgaRaftServer::HeartbeatLoop(hb_loop_args);
+		}));
 	}
 }
 
@@ -88,7 +89,9 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 FpgaRaftServer::~FpgaRaftServer() {
 		if (heartbeat_ && FpgaRaftServer::looping) {
 			FpgaRaftServer::looping = false;
-			Pthread_join(loop_th_, nullptr);
+			if (loop_th_.is_some()) {
+				loop_th_.take().unwrap().join().unwrap();
+			}
 		}
     
 		stop_ = true ;

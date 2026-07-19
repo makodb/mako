@@ -1,5 +1,8 @@
 #pragma once
 
+#include <rusty/option.hpp>
+#include <rusty/thread.hpp>
+
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../scheduler.h"
@@ -61,7 +64,7 @@ class FpgaRaftServer : public TxLogServer {
 	static bool looping;
 	bool heartbeat_ = false;
 	enum { STOPPED, RUNNING } status_;
-	pthread_t loop_th_;
+	rusty::Option<rusty::thread::JoinHandle<void>> loop_th_;
 
   // Distribution client2follower_;
   

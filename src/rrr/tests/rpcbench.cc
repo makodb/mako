@@ -1,3 +1,4 @@
+#include <rusty/thread.hpp>
 #include <stddef.h>
 
 
@@ -435,23 +436,23 @@ int main(int argc, char **argv) {
             g_client_req_counters[i].store(0, std::memory_order_relaxed);
         }
 
-        pthread_t* client_th = new pthread_t[client_threads];
+        std::vector<rusty::thread::JoinHandle<void>> client_th;
+        client_th.reserve(client_threads);
         ClientThreadArg* client_args = new ClientThreadArg[client_threads];
         for (int i = 0; i < client_threads; i++) {
             client_args[i].thread_idx = i;
-            Pthread_create(&client_th[i], nullptr, client_proc, &client_args[i]);
+            ClientThreadArg* arg = &client_args[i];
+            client_th.push_back(rusty::thread::spawn([arg]() { client_proc(arg); }));
         }
-        pthread_t stat_th;
-        Pthread_create(&stat_th, nullptr, stat_proc, nullptr);
-        Pthread_join(stat_th, nullptr);
-        for (int i = 0; i < client_threads; i++) {
-            Pthread_join(client_th[i], nullptr);
+        auto stat_th = rusty::thread::spawn([]() { stat_proc(nullptr); });
+        stat_th.join().unwrap();
+        for (auto& th : client_th) {
+            th.join().unwrap();
         }
         delete[] g_client_req_counters;
         g_client_req_counters = nullptr;
         g_client_req_counter_count = 0;
         delete[] client_args;
-        delete[] client_th;
     }
 
     return 0;

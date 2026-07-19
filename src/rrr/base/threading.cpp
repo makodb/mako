@@ -202,23 +202,10 @@ void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
 }
 /*RUSTYCPP:GEN-END id=threading.pthread_mutex_cond*/
 
-// @safe
-inline void Pthread_create(pthread_t* thread,
-                           const pthread_attr_t* attr,
-                           void* (*func)(void*),
-                           void* arg) {
-    // @unsafe { libc pthread_create + raw function pointer }
-    { verify(pthread_create(thread, attr, func, arg) == 0); }
-}
-
-// @safe — Pthread_join stays outside the DSL because libc spells the
-// out-parameter as `void**`, and the DSL has no syntax for `void` /
-// `*mut c_void` (using `*mut *mut u8` emits `uint8_t**`, which libc
-// rejects).
-inline void Pthread_join(pthread_t thread, void** value_ptr) {
-    // @unsafe { libc pthread_join + void** out-parameter }
-    { verify(pthread_join(thread, value_ptr) == 0); }
-}
+// Pthread_create/Pthread_join shims deleted (syscall plan item 3):
+// every call site now uses the std-faithful rusty::thread::spawn /
+// JoinHandle (which detaches on drop, join().unwrap() aborts on
+// error — matching the old verify()==0 contract).
 
 // Bring `Ordering` and `AtomicBool` into the `rrr` namespace so DSL
 // bodies can write `Ordering::Acquire` / `AtomicBool::new(...)` (Rust

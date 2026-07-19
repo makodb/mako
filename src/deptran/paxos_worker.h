@@ -450,8 +450,6 @@ class ElectionState {
 public: 
   std::recursive_mutex election_mutex{};
   pthread_t election_th_;
-  pthread_t heartbeat_th_;
-  pthread_t heartbeat_th_checking_;
   bool running = true;
   int timeout = 1; // in seconds
   int heartbeat_timeout = 300; // in milliseconds
