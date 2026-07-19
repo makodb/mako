@@ -954,33 +954,53 @@ inline bool server_atomic_load_bool(
     return a->load(std::memory_order_acquire);
 }
 
-// @unsafe - Atomic loop + sleep. The DSL can't easily express the
-// busy-wait loop so the body is moved here verbatim from the legacy
-// `Server::drain` out-of-line.
-inline bool server_drain_impl(
-        const rusty::Cell<ShutdownPhase>& phase,
-        const rusty::Arc<ServerPendingRequestsAtomic>& pending,
-        uint64_t timeout_ms) {
-    auto current_phase = phase.get();
-    if (current_phase != ShutdownPhase::RUNNING &&
-        current_phase != ShutdownPhase::STOP_ACCEPTING) {
-        Log_debug("Server::drain: already in phase %s",
-                  shutdown_phase_to_string(current_phase));
-        return pending->load(std::memory_order_relaxed) == 0;
+// Drain phase-FSM + timed busy-wait, authored as inline Rust DSL (the
+// atomic loads route through the server_atomic_load_int kernel; the
+// phase-name %s in the already-in-phase debug line is dropped — the
+// DSL cannot drive the *_to_string varargs safely).
+#if RUSTYCPP_RUST
+fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
+                     pending: &rusty::Arc<ServerPendingRequestsAtomic>,
+                     timeout_ms: u64) -> bool {
+    let current_phase = phase.get();
+    if current_phase != ShutdownPhase::RUNNING
+        && current_phase != ShutdownPhase::STOP_ACCEPTING {
+        Log_debug("Server::drain: already past the draining phases");
+        return server_atomic_load_int(pending) == 0;
     }
     Log_info("Server::drain: transitioning to DRAINING, pending=%d",
-             pending->load(std::memory_order_relaxed));
+             server_atomic_load_int(pending));
     phase.set(ShutdownPhase::DRAINING);
-    const std::uint64_t start_us =
-        rusty::sys::time::clock_monotonic_us();
-    const std::uint64_t timeout_us = timeout_ms * 1000;
-    while (pending->load(std::memory_order_relaxed) > 0) {
-        const std::uint64_t elapsed_us =
-            rusty::sys::time::clock_monotonic_us() - start_us;
-        if (elapsed_us >= timeout_us) {
+    let start_us = rusty::sys::time::clock_monotonic_us();
+    let timeout_us = timeout_ms * 1000;
+    while server_atomic_load_int(pending) > 0 {
+        let elapsed_us = rusty::sys::time::clock_monotonic_us() - start_us;
+        if elapsed_us >= timeout_us {
             Log_warn("Server::drain: timeout after %lu ms, pending=%d",
-                     timeout_ms,
-                     pending->load(std::memory_order_relaxed));
+                     timeout_ms, server_atomic_load_int(pending));
+            return false;
+        }
+        rusty::sys::time::sleep_us(1000);
+    }
+    Log_info("Server::drain: completed, all requests drained");
+    true
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=0181760d6f5b09b090a3d2f1a836487608e70139a49d03bc06f8e9f852572dd4*/
+bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
+    const auto current_phase = phase.get();
+    if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::RUNNING)) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::STOP_ACCEPTING))) {
+        Log_debug("Server::drain: already past the draining phases");
+        return server_atomic_load_int(pending) == 0;
+    }
+    Log_info("Server::drain: transitioning to DRAINING, pending=%d", server_atomic_load_int(pending));
+    phase.set(rusty::clone(rusty::clone(ShutdownPhase::DRAINING)));
+    const auto start_us = rusty::sys::time::clock_monotonic_us();
+    const auto timeout_us = rusty::detail::deref_if_pointer_like(timeout_ms) * 1000;
+    while (server_atomic_load_int(pending) > 0) {
+        const auto elapsed_us = rusty::sys::time::clock_monotonic_us() - rusty::detail::deref_if_pointer_like(start_us);
+        if (rusty::detail::deref_if_pointer_like(elapsed_us) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
+            Log_warn("Server::drain: timeout after %lu ms, pending=%d", std::move(timeout_ms), server_atomic_load_int(pending));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
@@ -988,6 +1008,7 @@ inline bool server_drain_impl(
     Log_info("Server::drain: completed, all requests drained");
     return true;
 }
+/*RUSTYCPP:GEN-END id=server.drain_impl*/
 
 // @unsafe - try/catch + callback execution.
 inline void server_run_shutdown_hooks(
