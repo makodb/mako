@@ -26,11 +26,10 @@ struct RandomGenerator;
 // pthread-keyed / thread_local seed, pthread teardown, foreign
 // std::string / std::vector surgery). Definitions in the impl
 // namespace; the seed plumbing lives in an anonymous namespace there.
-int randgen_rand(int min, int max);
-double randgen_rand_double(double min, double max);
-std::string randgen_int2str_n(int i, int length);
-int randgen_nu_rand(int a, int x, int y);
-unsigned int randgen_weighted_select(const std::vector<double>& weight_vector);
+int randgen_rand_raw();
+double randgen_rand_max();
+int randgen_nu_constant_now();
+std::string randgen_zero_pad(const std::string& s, int length);
 void randgen_destroy();
 
 // std::vector<double> spelled via an alias for the DSL param grammar.
@@ -56,15 +55,23 @@ struct RandomGenerator {}
 
 impl RandomGenerator {
     fn rand(min: i32, max: i32) -> i32 {
-        randgen_rand(min, max)
+        verify(max >= min);
+        let r = randgen_rand_raw();
+        (r % ((max - min) + 1)) + min
     }
 
     fn rand_double(min: f64, max: f64) -> f64 {
-        randgen_rand_double(min, max)
+        if max == min {
+            return min;
+        }
+        verify(max > min);
+        let r = randgen_rand_raw();
+        ((r as f64) / (randgen_rand_max() / (max - min))) + min
     }
 
     fn int2str_n(i: i32, length: i32) -> std::string {
-        randgen_int2str_n(i, length)
+        let s = std::to_string(i);
+        randgen_zero_pad(s, length)
     }
 
     fn percentage_true(p: i32) -> bool {
@@ -72,11 +79,29 @@ impl RandomGenerator {
     }
 
     fn nu_rand(a: i32, x: i32, y: i32) -> i32 {
-        randgen_nu_rand(a, x, y)
+        let r1 = RandomGenerator::rand(0, a);
+        let r2 = RandomGenerator::rand(x, y);
+        (((r1 | r2) + randgen_nu_constant_now()) % ((y - x) + 1)) + x
     }
 
     fn weighted_select(weight_vector: &RandWeightVec) -> u32 {
-        randgen_weighted_select(weight_vector)
+        let mut sum: f64 = 0.0;
+        let mut i: u32 = 0;
+        while i < weight_vector.size() {
+            sum += weight_vector[i];
+            i += 1;
+        }
+        let r = RandomGenerator::rand_double(0.0, sum);
+        let mut stage_sum: f64 = 0.0;
+        let mut k: u32 = 0;
+        while k < weight_vector.size() {
+            stage_sum += weight_vector[k];
+            if r <= stage_sum {
+                return k;
+            }
+            k += 1;
+        }
+        k - 1
     }
 
     fn destroy() {
@@ -84,7 +109,7 @@ impl RandomGenerator {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rand.generator version=1 rust_sha256=cd5d0e84be69529f8548c14b965f184e3a0d45ef91d76da380dfcafdc9e117c6*/
+/*RUSTYCPP:GEN-BEGIN id=rand.generator version=1 rust_sha256=4603415f808960c109d21fa5e77e27254cbf95f5a76de89d5f2e818abff9a430*/
 struct RandomGenerator;
 
 struct RandomGenerator {
@@ -100,15 +125,23 @@ struct RandomGenerator {
 
 
 int32_t RandomGenerator::rand(int32_t min, int32_t max) {
-    return randgen_rand(std::move(min), std::move(max));
+    verify(rusty::detail::deref_if_pointer_like(max) >= rusty::detail::deref_if_pointer_like(min));
+    const auto r = randgen_rand_raw();
+    return ((rusty::detail::deref_if_pointer_like(r) % ((((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min))) + static_cast<int32_t>(1))))) + rusty::detail::deref_if_pointer_like(min);
 }
 
 double RandomGenerator::rand_double(double min, double max) {
-    return randgen_rand_double(std::move(min), std::move(max));
+    if (rusty::detail::deref_if_pointer_like(max) == rusty::detail::deref_if_pointer_like(min)) {
+        return std::move(min);
+    }
+    verify(rusty::detail::deref_if_pointer_like(max) > rusty::detail::deref_if_pointer_like(min));
+    const auto r = randgen_rand_raw();
+    return ((((static_cast<double>(r))) / ((randgen_rand_max() / ((rusty::detail::deref_if_pointer_like(max) - rusty::detail::deref_if_pointer_like(min))))))) + rusty::detail::deref_if_pointer_like(min);
 }
 
 std::string RandomGenerator::int2str_n(int32_t i, int32_t length) {
-    return randgen_int2str_n(std::move(i), std::move(length));
+    const auto s = std::to_string(std::move(i));
+    return randgen_zero_pad(std::move(s), std::move(length));
 }
 
 bool RandomGenerator::percentage_true(int32_t p) {
@@ -116,11 +149,29 @@ bool RandomGenerator::percentage_true(int32_t p) {
 }
 
 int32_t RandomGenerator::nu_rand(int32_t a, int32_t x, int32_t y) {
-    return randgen_nu_rand(std::move(a), std::move(x), std::move(y));
+    const auto r1 = RandomGenerator::rand(static_cast<int32_t>(0), std::move(a));
+    const auto r2 = RandomGenerator::rand(std::move(x), std::move(y));
+    return ((((((rusty::detail::deref_if_pointer_like(r1) | rusty::detail::deref_if_pointer_like(r2))) + randgen_nu_constant_now())) % ((((rusty::detail::deref_if_pointer_like(y) - rusty::detail::deref_if_pointer_like(x))) + static_cast<int32_t>(1))))) + rusty::detail::deref_if_pointer_like(x);
 }
 
 uint32_t RandomGenerator::weighted_select(const RandWeightVec& weight_vector) {
-    return randgen_weighted_select(weight_vector);
+    double sum = 0.0;
+    uint32_t i = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < weight_vector.size()) {
+        sum += weight_vector[i];
+        i += 1;
+    }
+    const auto r = RandomGenerator::rand_double(0.0, std::move(sum));
+    double stage_sum = 0.0;
+    uint32_t k = static_cast<uint32_t>(0);
+    while (rusty::detail::deref_if_pointer_like(k) < weight_vector.size()) {
+        stage_sum += weight_vector[k];
+        if (rusty::detail::deref_if_pointer_like(r) <= rusty::detail::deref_if_pointer_like(stage_sum)) {
+            return std::move(k);
+        }
+        k += 1;
+    }
+    return rusty::detail::deref_if_pointer_like(k) - static_cast<uint32_t>(1);
 }
 
 void RandomGenerator::destroy() {
@@ -189,8 +240,9 @@ thread_local unsigned int randgen_seed = randgen_rdtsc();
 
 }  // namespace
 
-int randgen_rand(int min, int max) {
-    verify(max >= min);
+// @unsafe - the irreducible C surface: rand_r over the pthread-keyed /
+// thread-local seed. All range/scale logic lives in the DSL statics.
+int randgen_rand_raw() {
     int r = 0;
     // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
     {
@@ -201,28 +253,24 @@ int randgen_rand(int min, int max) {
         r = rand_r(&randgen_seed);
 #endif
     }
-    return (r % (max - min + 1)) + min;
+    return r;
 }
 
-double randgen_rand_double(double min, double max) {
-    if (max == min)
-        return min;
-    verify(max > min);
-    int r = 0;
-    // @unsafe { get_seed returns raw unsigned int*; rand_r dereferences it }
-    {
-#if defined(__APPLE__) || defined(__clang__)
-        unsigned int *seed = randgen_get_seed();
-        r = rand_r(seed);
-#else
-        r = rand_r(&randgen_seed);
-#endif
-    }
-    return (static_cast<double>(r)) / (static_cast<double>(RAND_MAX) / (max - min)) + min;
+// @safe - RAND_MAX as a double for the DSL's scale math (the macro has
+// no DSL spelling).
+double randgen_rand_max() {
+    return static_cast<double>(RAND_MAX);
 }
 
-std::string randgen_int2str_n(int i, int length) {
-    std::string ret = std::to_string(i);
+// @safe - accessor over the impl-namespace nu_rand constant.
+int randgen_nu_constant_now() {
+    return randgen_nu_constant;
+}
+
+// @unsafe - std::string surgery (substr/prepend) for int2str_n's
+// fixed-width formatting; kept as a kernel for the substr call.
+std::string randgen_zero_pad(const std::string& s, int length) {
+    std::string ret = s;
     if (static_cast<int>(ret.length()) < length) {
         while (static_cast<int>(ret.length()) < length) {
             ret = std::string("0").append(ret);
@@ -233,27 +281,6 @@ std::string randgen_int2str_n(int i, int length) {
         ret = ret.substr(ret.length() - length, length);
     }
     return ret;
-}
-
-int randgen_nu_rand(int a, int x, int y) {
-    int r1 = randgen_rand(0, a);
-    int r2 = randgen_rand(x, y);
-    return ((r1 | r2) + randgen_nu_constant) % (y - x + 1) + x;
-}
-
-unsigned int randgen_weighted_select(const std::vector<double> &weight_vector) {
-    double sum = 0, stage_sum = 0;
-    unsigned int i = 0;
-    while (i < weight_vector.size())
-        sum += weight_vector[i++];
-    double r = randgen_rand_double(0, sum);
-    i = 0;
-    while (i < weight_vector.size())
-        if (r <= (stage_sum += weight_vector[i]))
-            return i;
-        else
-            i++;
-    return --i;
 }
 
 // @unsafe - pthread_once + raw pthread key teardown.
