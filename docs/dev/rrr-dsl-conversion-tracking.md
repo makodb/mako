@@ -94,6 +94,27 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-19 — **★ SYSCALL PLAN DELIVERED (task #7, 5 items + 2 policy commits)** under the two
+  user rules now codified in the porting guide §7.7-7.8: the runtime stays a FAITHFUL Rust-std
+  translation (no invented APIs — std has no epoll/poll/mmap surface), syscalls without a std
+  equivalent are authored as DSL unsafe{} libc calls, and NO external binaries are ever executed
+  for results. Items: (probe pair) set_nonblocking_fd fcntl pair + epoll_close as DSL unsafe{}
+  (bare errno reads, F_*/O_* macros, unqualified libc calls all lower); (1) Epoll's fd →
+  rusty::os::fd::OwnedFd (RAII subsumes impl Drop + the Cell copy marker — epoll_close deleted
+  one commit after its own conversion); (2) cpuinfo /proc parsers → DSL over
+  rusty::sys::fs::read_to_string + find/substr walking (ifstream/getline/strtok/operator>> chains
+  deleted; live-verified against real /proc under gdb); (3) Pthread_create/join shims deleted —
+  fpga_raft loop thread is Option<JoinHandle<void>>, paxos heartbeats are detach-on-drop spawns,
+  rpcbench migrated blind; (4) tcpconn_close DSL (unsafe{} shutdown(2) + 1-line const-facade fd
+  reset kernel); (5) struct-fill wall PARTIALLY dodged: Linux epoll_ctl(DEL) is DSL via a
+  zeroed-epoll_event factory + &mut ev → epoll_event*; add/update stay kernels (errno-policy
+  chains + union writes = the remaining hard half). ALSO: stack traces are in-process only
+  (popen addr2line/c++filt deleted; get_exec_path deleted). New lowering rules of this task:
+  same-block DSL calls ::-qualify (split helper blocks); &local args ::-qualify (pass bare);
+  by-value locals move-insert even mid-use → Vec out-params are *mut + &mut/& at call sites;
+  string find/find_first_not_of/substr/npos all lower; JoinHandle detaches on drop
+  (std-faithful) so create+detach pairs collapse to bare spawns.
+
 - 2026-07-19 — **★ 10-HOUR FINAL-CONVERSION ARC COMPLETE** (user directive: only asm + raw
   syscalls stay C). TEN gated cycles landed: rand (range/scale/nu/weighted logic → DSL over a
   rand_r kernel), cpuinfo (ring-buffer delta FSM → DSL &mut method), sparseint length queries →
