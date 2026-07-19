@@ -21,6 +21,10 @@ import cluster;   // ShardData participant port (janus::ShardData; was #include 
 #include <string>
 #include <utility>
 #include <vector>
+#include <atomic>
+#include <stdio.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 namespace janus {
 
@@ -56,12 +60,100 @@ public:
     // a concurrent-write OCC conflict only re-scans one small window, not the
     // whole range (avoids the hot-range scan-retry starvation; still a
     // memory-safe OCC read). Returns fewer than `limit` iff the range ended.
+    //
+    // Internally the window is scanned in SMALL ADAPTIVE SUB-SCANS and
+    // stitched. A single limit-sized (4096-row) one-op scan of a HOT index
+    // can lose the OCC race forever: any concurrent write to a visited row
+    // aborts the attempt, and when the writer stream's inter-write gap is
+    // shorter than the scan itself, no amount of retrying (even backed off)
+    // wins -- observed live and core-proven: the migration data plane's
+    // stock-chunk scan pinned its single poll thread through hundreds of
+    // backed-off retries while the peer shard's remote new_order writes
+    // kept invalidating it, muting the whole data-plane service. A 64-row
+    // sub-scan finishes inside the write gap easily; each success doubles
+    // the sub-size back toward the chunk. The contract is unchanged:
+    // fewer than `limit` pairs are returned ONLY when the range ended (a
+    // sub-scan shorter than its own sub-limit is the range-end signal).
     std::vector<KvPair> scan_range_limited(const std::string& lo,
                                            const std::string& hi,
                                            size_t limit) override {
-        LimitedCollector cb(limit);
-        index_->scan(lo, &hi, cb, nullptr);
-        return std::move(cb.pairs);
+        std::vector<KvPair> out;
+        out.reserve(limit);
+        std::string cur = lo;
+        size_t sub = 64;
+        int conflicted_rounds = 0;
+        while (out.size() < limit) {
+            const size_t left = limit - out.size();
+            const size_t want = sub < left ? sub : left;
+            LimitedCollector cb(want);
+            // Bounded-attempt scan through the thread-local seam: the engine
+            // gives up after a few OCC-aborted attempts and raises the flag
+            // (discarding partial rows) instead of retrying a hopeless
+            // window forever -- grow-only adaptivity re-wedged live at 1024
+            // (core-proven), so the control loop must SHRINK on conflict.
+            mako::g_oi_scan_attempt_cap = 4;
+            mako::g_oi_scan_conflicted = false;
+            index_->scan(cur, &hi, cb, nullptr);
+            const bool conflicted = mako::g_oi_scan_conflicted;
+            mako::g_oi_scan_attempt_cap = 0;
+            mako::g_oi_scan_conflicted = false;
+            if (conflicted) {
+                // Window longer than the writers' inter-write gap: shrink
+                // hard (floor 16 -- a ~30us scan always slips into a gap)
+                // and retry the SAME position -- but PACED. Each aborted
+                // attempt is a thrown Transaction::Abort, and C++ unwinding
+                // serializes on a process-global unwinder lock: an unpaced
+                // conflicted loop threw thousands of exceptions per second,
+                // convoying every OTHER thread's normal abort/retry path in
+                // this process (commits stalled holding row locks, which
+                // aborted the next scan attempt -- a self-sustaining wedge,
+                // core-proven live: workers stuck in commit_txn while this
+                // loop spun). Escalating to 10ms caps the storm at ~400
+                // throws/s and lets stalled writers drain, after which a
+                // small window wins.
+                sub = sub > 128 ? sub / 8 : 16;
+                ++conflicted_rounds;
+                // Rate-limited abort forensics (see g_oi_scan_abort_progress
+                // in abstract_ordered_index.h for how to read `got`).
+                // @unsafe { gettimeofday + stderr diagnostics }
+                {
+                    static std::atomic<long> s_last{0};
+                    struct timeval tv;
+                    gettimeofday(&tv, nullptr);
+                    long prev = s_last.load(std::memory_order_relaxed);
+                    if (tv.tv_sec != prev &&
+                        s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                                       std::memory_order_relaxed)) {
+                        char curhex[17];
+                        size_t n = cur.size() < 8 ? cur.size() : 8;
+                        for (size_t i = 0; i < n; i++)
+                            snprintf(curhex + 2 * i, 3, "%02x",
+                                     (unsigned char)cur[i]);
+                        curhex[2 * n] = '\0';
+                        fprintf(stderr,
+                                "scan-conflict round=%d sub=%zu got=%zu "
+                                "curlen=%zu cur=%s\n",
+                                conflicted_rounds, sub,
+                                mako::g_oi_scan_abort_progress, cur.size(),
+                                curhex);
+                    }
+                }
+                const int shift = conflicted_rounds < 5 ? conflicted_rounds : 5;
+                unsigned pace_us = 500u << shift;
+                if (pace_us > 10000u) pace_us = 10000u;
+                // @unsafe { usleep is libc }
+                usleep(pace_us);
+                continue;
+            }
+            conflicted_rounds = 0;
+            const size_t got = cb.pairs.size();
+            for (auto& kv : cb.pairs) out.push_back(std::move(kv));
+            if (got < want) break;          // range exhausted
+            cur = out.back().first;
+            cur.push_back('\0');            // resume strictly after the last key
+            if (sub < 512) sub *= 2;        // winning the race: widen the window
+        }
+        return out;
     }
 
     // Write drain on the LOCAL engine: wait until no staged-write txn that

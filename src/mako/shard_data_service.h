@@ -29,6 +29,7 @@ import cluster;             // ShardData + ShardDataCatalog ports + MigrationGua
 
 #include <rusty/mutex.hpp>  // guards the pull-source connection cache
 
+#include <sys/time.h> // gettimeofday (rate-limited mute-forensics logs)
 #include <unistd.h>   // usleep (drain poll pacing)
 
 #include <condition_variable>   // fold worker handoff (see FoldJobStep)
@@ -81,11 +82,32 @@ public:
     std::map<std::string, std::string>
     DoScanRange(const std::string& table, const std::string& lo,
                 const std::string& hi, int limit) {
+        // Rate-limited ENTER/EXIT bracket (mute forensics): an ENTER with no
+        // EXIT pins a wedge INSIDE the engine scan — which, running on this
+        // server's single poll thread, mutes the entire data plane (observed
+        // live as every later RPC of any table timing out from the first
+        // wh-spec chunk on, per-run coin flip). No bracket = request never
+        // arrived; ENTER+EXIT with the reply missing = send path.
+        // @unsafe { gettimeofday + stderr diagnostics }
+        bool logit = false;
+        {
+            static std::atomic<long> s_last{0};
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            long prev = s_last.load(std::memory_order_relaxed);
+            logit = (tv.tv_sec != prev &&
+                     s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                                    std::memory_order_relaxed));
+        }
+        if (logit)
+            fprintf(stderr, "DoScanRange ENTER '%s' limit=%d\n", table.c_str(), limit);
         std::map<std::string, std::string> rows;
         ShardData* shard = resolve(table);
         if (shard == nullptr) return rows;
         for (auto& kv : shard->scan_range_limited(lo, hi, static_cast<size_t>(limit)))
             rows.emplace(std::move(kv.first), std::move(kv.second));
+        if (logit)
+            fprintf(stderr, "DoScanRange EXIT '%s' rows=%zu\n", table.c_str(), rows.size());
         return rows;
     }
     uint64_t DoChecksum(const std::string& table, const std::string& lo,
@@ -328,6 +350,21 @@ public:
                      rrr::DeferredReply defer) override {
         // BEGIN/POLL protocol (see rcc_rpc.rpc): the server never blocks a
         // call on the full wait -- rrr requests carry a ~1s client timeout.
+        // Rate-limited entry log (mute forensics for the control path; pairs
+        // with DoScanRange's ENTER/EXIT bracket).
+        // @unsafe { gettimeofday + stderr diagnostics }
+        {
+            static std::atomic<long> s_last{0};
+            struct timeval tv;
+            gettimeofday(&tv, nullptr);
+            long prev = s_last.load(std::memory_order_relaxed);
+            if (tv.tv_sec != prev &&
+                s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                               std::memory_order_relaxed)) {
+                fprintf(stderr, "DrainWrites ENTER '%s' phase=%d\n",
+                        req.table_name.c_str(), static_cast<int>(req.phase));
+            }
+        }
         ShardData* shard = resolve(req.table_name);
         if (shard == nullptr) {
             resp.ok = 0; resp.parity = -1; defer.reply(); return;
@@ -563,12 +600,13 @@ public:
     }
     std::vector<KvPair> scan_range(const std::string& lo,
                                    const std::string& hi) override {
-        // A full scan = repeated bounded remote scans (each response ~1MB max;
-        // sized with copy_range_from's kCopyChunk for big workload tables).
+        // A full scan = repeated bounded remote scans, chunk-sized with
+        // copy_range_from's kCopyChunk (bounds per-RPC server-side latency
+        // under write conflict, not just response bytes).
         std::vector<KvPair> out;
         std::string cur = lo;
         while (cur < hi) {
-            std::vector<KvPair> batch = scan_range_limited(cur, hi, 4096);
+            std::vector<KvPair> batch = scan_range_limited(cur, hi, 512);
             if (batch.empty()) break;
             std::string last = batch.back().first;
             for (auto& kv : batch) out.push_back(std::move(kv));
@@ -735,6 +773,7 @@ public:
     // fault bit; the coordinator refuses to vote prepared over a faulted
     // participant (see ShardData::faulted).
     bool faulted() override { return faulted_; }
+    void clear_faulted() override { faulted_ = false; }
 
 private:
     ShardDataServiceProxy* proxy_;   // non-owning; connected to the remote shard.

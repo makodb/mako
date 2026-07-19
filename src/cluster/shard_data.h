@@ -90,11 +90,16 @@ public:
     // Returns the number of pairs written.
     virtual size_t copy_range_from(ShardData* source, const std::string& lo,
                                    const std::string& hi) {
-        // Sized for big workload tables: a 100k-row stock warehouse at 512
-        // rows/chunk is ~200 scan round-trips; 4096 cuts that to ~25 while a
-        // chunk response (rows ~300B) stays around a megabyte -- well inside
-        // rrr frame limits and the ~1s request budget.
-        static const size_t kCopyChunk = 4096;
+        // Chunk size bounds the SERVER-SIDE LATENCY of one remote scan, not
+        // just the response bytes: under live write conflict the engine scans
+        // the chunk in small adaptive sub-windows with bounded-attempt retry,
+        // and a 4096-row chunk of a write-hot index summed past the rrr ~1s
+        // request budget (observed live: a 10s stock chunk = 8 client
+        // timeouts, retries queueing behind the still-running scan on the
+        // single poll thread). 512 keeps the worst case comfortably inside
+        // the budget; a 100k-row table is ~200 round-trips, fine off the
+        // critical path.
+        static const size_t kCopyChunk = 512;
         size_t copied = 0;
         std::string src_cur = lo;
         std::string dst_cur = lo;
@@ -187,6 +192,12 @@ public:
     // routing while the rows sit on the (dead) source. Local/in-memory
     // participants never fault.
     virtual bool faulted() { return false; }
+
+    // Un-latch a prior fault before a NEW migration attempt: the latch is
+    // per-participant and participants are cached per (shard, table), so a
+    // transient (e.g. one congested copy chunk exhausting its RPC retries)
+    // would otherwise poison every later attempt against a healthy shard.
+    virtual void clear_faulted() {}
 
     // ---- migration freeze (write fence) on THIS participant ----
     // The coordinator (ShardMaster) freezes the SOURCE's [lo,hi) at lock_range so
