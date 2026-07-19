@@ -714,6 +714,19 @@ namespace mako
         TThread::set_mode(0);
         TThread::readset_shard_bits = 0;
         TThread::writeset_shard_bits = 0;
+        // Bound the one-op kernels' OCC retry on THIS thread: it is the RPC
+        // backend's poll thread, which also serves GetTimestamp. An unbounded
+        // zero-backoff spin on a row held by a writer parked in its
+        // cross-shard commit mutes this shard's timestamp service -- and two
+        // shards doing that to each other latch a distributed livelock ring
+        // (core-proven live: both shards' workers stuck in commit_txn on
+        // cross-shard GetTimestamp, one customer row locked for minutes, the
+        // migration scan dying at that row thousands of times). On exhaustion
+        // the kernel throws; the catch below maps it to SERVER_BUSY and the
+        // remote caller backs off and retries -- this thread stays live and
+        // the ring cannot close.
+        const int saved_oneop_cap = mako::g_oi_oneop_attempt_cap;
+        mako::g_oi_oneop_attempt_cap = 16;
 
         // Close out the idle participant txn (in_progress but empty —
         // guaranteed by the busy guard above) so the op's
@@ -756,6 +769,7 @@ namespace mako
             status = ErrorCode::ERROR;
         }
 
+        mako::g_oi_oneop_attempt_cap = saved_oneop_cap;
         TThread::set_mode(saved_mode);
         TThread::readset_shard_bits = saved_read_bits;
         TThread::writeset_shard_bits = saved_write_bits;

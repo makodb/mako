@@ -472,6 +472,7 @@ inline bool oi_mbta_get_remote(mbta_table *t, lcdf::Str key,
 // @unsafe - one-op OCC txn with retry around Sto thread-local state
 inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key,
                               std::string &value) {
+  int aborted = 0;
   while (true) {
     try {
       bool ret = t->get(key, value);
@@ -485,7 +486,18 @@ inline bool oi_mbta_get_local(mbta_table *t, lcdf::Str key,
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
       }
       return ret;
-    } catch (Transaction::Abort &) { /* conflict — retry */ }
+    } catch (Transaction::Abort &) {
+      // Conflict — retry, BOUNDED when a server caller opted in (see
+      // g_oi_oneop_attempt_cap): a row held across a parked writer's
+      // cross-shard commit spins this loop forever otherwise.
+      ++aborted;
+      if (mako::g_oi_oneop_attempt_cap > 0) {
+        if (aborted >= mako::g_oi_oneop_attempt_cap)
+          throw abstract_db::abstract_abort_exception();
+        // @unsafe { usleep is libc }
+        usleep(50u << ((aborted - 1) < 4 ? (aborted - 1) : 4));
+      }
+    }
   }
 }
 
@@ -519,6 +531,7 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
   // writer test). The RAII holds the drain until the final attempt lands;
   // register-then-check keeps the proof shape.
   mako::MigrationStagedWriter staged_writer;
+  int aborted = 0;
   while (true) {
     // Fence check per attempt: a post-fence attempt must abort out of the
     // loop, not spin on it.
@@ -526,7 +539,18 @@ inline bool oi_mbta_put_local(mbta_table *t, lcdf::Str key,
       throw abstract_db::abstract_abort_exception();
     try {
       return t->put(key, StringWrapper(enc));
-    } catch (Transaction::Abort &) { /* conflict — retry */ }
+    } catch (Transaction::Abort &) {
+      // Conflict — retry, BOUNDED when a server caller opted in (see
+      // g_oi_oneop_attempt_cap; the unbounded spin on the backend poll
+      // thread was one arc of a core-proven cross-shard livelock ring).
+      ++aborted;
+      if (mako::g_oi_oneop_attempt_cap > 0) {
+        if (aborted >= mako::g_oi_oneop_attempt_cap)
+          throw abstract_db::abstract_abort_exception();
+        // @unsafe { usleep is libc }
+        usleep(50u << ((aborted - 1) < 4 ? (aborted - 1) : 4));
+      }
+    }
   }
 }
 
@@ -547,12 +571,22 @@ inline bool oi_mbta_insert_local(mbta_table *t, lcdf::Str key,
   // Registration spans the whole logical insert; fence per attempt (see put
   // above for why per-txn registration loses internally-retried commits).
   mako::MigrationStagedWriter staged_writer;
+  int aborted = 0;
   while (true) {
     if (mako::migration_write_fenced(t->get_table_name(), key.data(), key.length()))
       throw abstract_db::abstract_abort_exception();
     try {
       return t->insert(key, StringWrapper(enc));
-    } catch (Transaction::Abort &) { /* conflict — retry */ }
+    } catch (Transaction::Abort &) {
+      // Bounded like put above when the server caller opted in.
+      ++aborted;
+      if (mako::g_oi_oneop_attempt_cap > 0) {
+        if (aborted >= mako::g_oi_oneop_attempt_cap)
+          throw abstract_db::abstract_abort_exception();
+        // @unsafe { usleep is libc }
+        usleep(50u << ((aborted - 1) < 4 ? (aborted - 1) : 4));
+      }
+    }
   }
 }
 
@@ -580,27 +614,72 @@ inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
 inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
                                 const std::string *end_key,
                                 oi_scan_callback &callback,
-                                str_arena *arena) {
+                                str_arena *arena,
+                                int max_attempts = 0,
+                                bool *conflicted = nullptr) {
   // Remote tables: fail loudly. The only scan RPC (remoteScan /
   // HandleScanRequest) returns a single first-match value, not a
   // stream — full remote scan needs new protocol (plan non-goal; see
   // docs/storage-interface.md). Note the txn'd scan on a remote table
   // silently scans the empty local tree; asserting here is
   // deliberately stricter.
+  //
+  // max_attempts == 0 keeps the historical retry-until-success contract.
+  // A positive cap makes the conflict VISIBLE instead of hiding it: after
+  // that many aborted attempts the scan gives up, clears the callback's
+  // partial rows, and sets *conflicted — so an adaptive caller (the
+  // migration data plane's sub-chunking scan) can SHRINK its window and
+  // win the OCC race instead of retrying a too-big window forever.
   ALWAYS_ASSERT(!t->get_is_remote());
+  if (conflicted) *conflicted = false;
+  // Callers reaching this through the FullOrderedIndex interface (which
+  // cannot carry these args) opt in via the thread-local seam in
+  // abstract_ordered_index.h instead.
+  if (max_attempts == 0) max_attempts = mako::g_oi_scan_attempt_cap;
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  int aborted = 0;
+  size_t calls = 0;   // rows seen by the CURRENT attempt (abort forensics)
   while (true) {
     // Discard any prior attempt's rows: an aborted OCC attempt's reads are
     // the ones that failed validation (torn values, and dupes on retry).
     callback.restart();
+    calls = 0;
     try {
       t->scan(start_key, end, [&](mbta_table::Str key, std::string &value) {
+        ++calls;
         if (value.length() >= mako::EXTRA_BITS_FOR_VALUE)
           value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
         return callback.invoke(key.data(), key.length(), value);
       }, arena);
       return;
-    } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
+    } catch (Transaction::Abort &) {
+      mako::g_oi_scan_abort_progress = calls;
+      // Conflict — back off before the retry. A zero-backoff whole-scan spin
+      // against a steady stream of conflicting writers can lose the OCC race
+      // FOREVER (observed live: the migration data plane's 4096-row chunk
+      // scan of a stock index being peppered by the peer shard's remote
+      // new_order writes pinned its single poll thread for 20+ seconds,
+      // muting the entire data-plane service -- every later RPC of any table
+      // timed out until the run died). Sleeping slips the retry into a write
+      // gap; when even that cannot win (window longer than the writers'
+      // inter-arrival gap), the attempt cap hands control back to the
+      // adaptive caller.
+      ++aborted;
+      if (max_attempts > 0 && aborted >= max_attempts) {
+        callback.restart();   // discard the aborted attempt's partial rows
+        if (conflicted) *conflicted = true;
+        mako::g_oi_scan_conflicted = true;
+        return;
+      }
+      if (aborted >= 2) {
+        // Micro-backoff: the conflicting writers' inter-write gap is ~ms,
+        // so sub-millisecond sleeps suffice to slip into a gap -- larger
+        // sleeps just inflate the per-chunk latency past the RPC deadline
+        // (observed live: ms-scale backoff summed to a 10s chunk).
+        // @unsafe { usleep is libc }
+        usleep(50u << ((aborted - 2) < 4 ? (aborted - 2) : 4));
+      }
+    }
   }
 }
 
@@ -612,6 +691,7 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
   // Remote tables: fail loudly (same rationale as scan above).
   ALWAYS_ASSERT(!t->get_is_remote());
   mbta_table::Str end = end_key ? mbta_table::Str(*end_key) : mbta_table::Str();
+  int aborted = 0;
   while (true) {
     callback.restart();   // see scan above: discard the aborted attempt's rows
     try {
@@ -621,7 +701,15 @@ inline void oi_mbta_nontxn_rscan(mbta_table *t, const std::string &start_key,
         return callback.invoke(key.data(), key.length(), value);
       }, arena);
       return;
-    } catch (Transaction::Abort &) { /* conflict — retry whole scan */ }
+    } catch (Transaction::Abort &) {
+      // Backoff on conflict -- see oi_mbta_nontxn_scan for the livelock this
+      // prevents.
+      ++aborted;
+      if (aborted >= 3) {
+        // @unsafe { usleep is libc }
+        usleep(100u << ((aborted - 3) < 7 ? (aborted - 3) : 7));
+      }
+    }
   }
 }
 

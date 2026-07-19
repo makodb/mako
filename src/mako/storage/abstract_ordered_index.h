@@ -10,6 +10,41 @@
 #include "../macros.h"
 #include "../str_arena.h"
 
+namespace mako {
+// Scan conflict-adaptivity seam between the engine's non-txn scan (the
+// retry-until-success one-op scan in mbta_wrapper.hh) and callers that can
+// SHRINK their window: a caller sets the cap around a scan; the engine scan
+// gives up after that many OCC-aborted attempts, discards the partial rows,
+// and raises the flag instead of retrying a hopeless window forever. A
+// window whose scan takes longer than the conflicting writers' inter-write
+// gap NEVER wins no matter how it retries (core-proven live: a 4096-row
+// migration chunk scan of a hot stock index pinned its service thread
+// indefinitely); the adaptive caller halves the window until it fits the
+// gap. Thread-local: scans are single-threaded per call site; 0 = retry
+// forever (the historical contract, every caller that does not opt in).
+inline thread_local int g_oi_scan_attempt_cap = 0;
+inline thread_local bool g_oi_scan_conflicted = false;
+// Forensics: rows the LAST aborted scan attempt had collected when it threw.
+// Discriminates abort causes: a constant K < window means every attempt dies
+// at the SAME row (one poisoned/locked row); K == window means the scan body
+// finished and commit-time validation failed (read-set contention); K == 0
+// means it died before reading anything (thread/txn state).
+inline thread_local size_t g_oi_scan_abort_progress = 0;
+// Bounded-attempt seam for the ONE-OP get/put/insert kernels (same opt-in
+// shape as the scan cap above; 0 = retry forever, the historical contract).
+// The RPC backend's poll thread serves remote non-txn ops INLINE, and an
+// unbounded zero-backoff retry on a row held by a parked writer wedges that
+// thread -- which also serves GetTimestamp, the very RPC the parked writer's
+// commit is waiting on. Two shards doing this to each other latch a
+// distributed livelock ring (core-proven live: both shards' workers stuck in
+// commit_txn waiting cross-shard timestamps, one customer row locked for
+// minutes, the migration scan dying at that row thousands of times). A capped
+// kernel throws instead; the server maps it to SERVER_BUSY and the remote
+// caller backs off and retries -- the poll thread stays live and the ring
+// cannot close.
+inline thread_local int g_oi_oneop_attempt_cap = 0;
+}  // namespace mako
+
 /**
  * The storage-table interface, authored as rusty-cpp inline-Rust
  * traits (docs/storage-interface.md). The `#if RUSTYCPP_RUST`
