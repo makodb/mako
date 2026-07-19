@@ -1,15 +1,13 @@
-// byte-for-byte compatibility tests for the
-// new BinaryWriteArchive / BinaryReadArchive against the existing
-// `Marshal` operator<< / operator>> wire format.
+// Round-trip tests for BinaryWriteArchive / BinaryReadArchive over
+// BufferSink / BufferSource / FdSink / FdSource, plus the
+// Marshal <-> archive bridges (MarshalSink / MarshalSource).
 //
-// Strategy: encode each primitive (and std::string) via BOTH the old
-// `Marshal` path AND the new `BinaryWriteArchive` + `BufferSink` path,
-// then assert the two byte buffers are identical.
-//
-// Read side: encode via Marshal, then decode via BinaryReadArchive +
-// BufferSource, and verify the value round-trips. (The reverse —
-// encode via Archive, decode via Marshal — is implicitly verified by
-// the byte-equality test plus Marshal's existing tests.)
+// Historically this suite byte-compared the archive encoders against
+// the old `Marshal` operator<< / operator>> serde surface. That
+// Marshal-direct serde surface has been deleted; each case now
+// asserts an archive encode -> decode round-trip over the same wire
+// format (byte-level expectations that survive are asserted against
+// the archive bytes directly).
 
 #include <stdint.h>
 #include <stddef.h>
@@ -57,30 +55,13 @@ std::vector<uint8_t> sink_to_vector(const BufferSink& sink) {
 }
 
 template <typename T>
-void check_byte_compat_write(const T& value) {
-  Marshal old_m;
-  rrr::Serialize_::serialize(value, old_m);
-  auto old_bytes = drain_marshal(old_m);
-
+void check_round_trip(const T& value) {
+  // Encode via the archive path.
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
   rrr::Serialize_::serialize(value, archive);
-  auto new_bytes = sink_to_vector(sink);
 
-  ASSERT_EQ(old_bytes.size(), new_bytes.size())
-      << "byte-length mismatch for type " << typeid(T).name();
-  EXPECT_EQ(old_bytes, new_bytes)
-      << "byte content mismatch for type " << typeid(T).name();
-}
-
-template <typename T>
-void check_round_trip(const T& value) {
-  // Encode via the OLD Marshal path.
-  Marshal old_m;
-  rrr::Serialize_::serialize(value, old_m);
-  auto bytes = drain_marshal(old_m);
-
-  BufferSource source(bytes.data(), bytes.size());
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
   T decoded{};
   rrr::Deserialize_::deserialize(decoded, reader);
@@ -98,7 +79,6 @@ TEST(MarshalArchiveByteCompat, Int8Boundary) {
   for (int8_t v : {std::numeric_limits<int8_t>::min(),
                    int8_t{-1}, int8_t{0}, int8_t{1},
                    std::numeric_limits<int8_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -107,7 +87,6 @@ TEST(MarshalArchiveByteCompat, Int16Boundary) {
   for (int16_t v : {std::numeric_limits<int16_t>::min(),
                     int16_t{-1}, int16_t{0}, int16_t{1},
                     std::numeric_limits<int16_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -116,7 +95,6 @@ TEST(MarshalArchiveByteCompat, Int32Boundary) {
   for (int32_t v : {std::numeric_limits<int32_t>::min(),
                     int32_t{-1}, int32_t{0}, int32_t{1}, int32_t{12345},
                     std::numeric_limits<int32_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -126,7 +104,6 @@ TEST(MarshalArchiveByteCompat, Int64Boundary) {
                     int64_t{-1}, int64_t{0}, int64_t{1},
                     int64_t{0x1234'5678'9ABC'DEF0LL},
                     std::numeric_limits<int64_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -134,7 +111,6 @@ TEST(MarshalArchiveByteCompat, Int64Boundary) {
 TEST(MarshalArchiveByteCompat, Uint8Boundary) {
   for (uint8_t v : {uint8_t{0}, uint8_t{1}, uint8_t{0x7F}, uint8_t{0x80},
                     std::numeric_limits<uint8_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -142,7 +118,6 @@ TEST(MarshalArchiveByteCompat, Uint8Boundary) {
 TEST(MarshalArchiveByteCompat, Uint16Boundary) {
   for (uint16_t v : {uint16_t{0}, uint16_t{1},
                      std::numeric_limits<uint16_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -150,7 +125,6 @@ TEST(MarshalArchiveByteCompat, Uint16Boundary) {
 TEST(MarshalArchiveByteCompat, Uint32Boundary) {
   for (uint32_t v : {uint32_t{0}, uint32_t{1}, uint32_t{0xDEADBEEF},
                      std::numeric_limits<uint32_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -159,7 +133,6 @@ TEST(MarshalArchiveByteCompat, Uint64Boundary) {
   for (uint64_t v : {uint64_t{0}, uint64_t{1},
                      uint64_t{0xCAFEBABE'DEADBEEF},
                      std::numeric_limits<uint64_t>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -170,7 +143,6 @@ TEST(MarshalArchiveByteCompat, DoubleBoundary) {
   for (double v : {0.0, 1.0, -1.0, 3.14159265358979,
                    std::numeric_limits<double>::min(),
                    std::numeric_limits<double>::max()}) {
-    check_byte_compat_write(v);
     check_round_trip(v);
   }
 }
@@ -188,21 +160,12 @@ TEST(MarshalArchiveByteCompat, V32Boundary) {
                   std::numeric_limits<i32>::min()}) {
     v32 v(raw);
 
-    // Byte compatibility on the write side.
-    Marshal old_m;
-    rrr::Serialize_::serialize(v, old_m);
-    auto old_bytes = drain_marshal(old_m);
-
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(v, archive);
-    auto new_bytes = sink_to_vector(sink);
-
-    ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v32 raw=" << raw;
-    EXPECT_EQ(old_bytes, new_bytes) << "v32 raw=" << raw;
 
     // Round-trip read.
-    BufferSource source(old_bytes.data(), old_bytes.size());
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&source));
     v32 decoded;
     rrr::Deserialize_::deserialize(decoded, reader);
@@ -220,19 +183,11 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
                   std::numeric_limits<int64_t>::min()}) {
     v64 v(raw);
 
-    Marshal old_m;
-    rrr::Serialize_::serialize(v, old_m);
-    auto old_bytes = drain_marshal(old_m);
-
     BufferSink sink;
     BinaryWriteArchive archive(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(v, archive);
-    auto new_bytes = sink_to_vector(sink);
 
-    ASSERT_EQ(old_bytes.size(), new_bytes.size()) << "v64 raw=" << raw;
-    EXPECT_EQ(old_bytes, new_bytes) << "v64 raw=" << raw;
-
-    BufferSource source(old_bytes.data(), old_bytes.size());
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&source));
     v64 decoded;
     rrr::Deserialize_::deserialize(decoded, reader);
@@ -247,13 +202,11 @@ TEST(MarshalArchiveByteCompat, V64Boundary) {
 
 TEST(MarshalArchiveByteCompat, StringEmpty) {
   std::string s = "";
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringShort) {
   std::string s = "hello";
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
@@ -261,66 +214,54 @@ TEST(MarshalArchiveByteCompat, StringWithEmbeddedNul) {
   // 5-byte string with a NUL in the middle. The wire format MUST
   // preserve it byte-for-byte (length-prefixed; no C-string treatment).
   std::string s("ab\0cd", 5);
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringMedium) {
   std::string s(200, 'x');
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StringLongerThanV64Boundary) {
   // 100 KB string — exercises the multi-byte v64 length prefix path.
   std::string s(100 * 1024, 'a');
-  check_byte_compat_write(s);
   check_round_trip(s);
 }
 
 // ---------------------------------------------------------------------------
-// Composite write — multiple primitives in a row, byte-for-byte against
-// Marshal's accumulated buffer.
+// Composite write — multiple primitives in a row, decoded back in order.
 // ---------------------------------------------------------------------------
 
 TEST(MarshalArchiveByteCompat, CompositePrimitiveSequence) {
-  // Encode a heterogenous sequence via both paths.
-  auto encode_old = [&](Marshal& m) {
-    int32_t a = 0x12345678;
-    int64_t b = 0x1122334455667788LL;
-    v64 c(8192);
-    std::string d = "hello world";
-    double e = 3.14;
-    rrr::Serialize_::serialize(a, m);
-    rrr::Serialize_::serialize(b, m);
-    rrr::Serialize_::serialize(c, m);
-    rrr::Serialize_::serialize(d, m);
-    rrr::Serialize_::serialize(e, m);
-  };
-  auto encode_new = [&](BinaryWriteArchive& ar) {
-    int32_t a = 0x12345678;
-    int64_t b = 0x1122334455667788LL;
-    v64 c(8192);
-    std::string d = "hello world";
-    double e = 3.14;
-    rrr::Serialize_::serialize(a, ar);
-    rrr::Serialize_::serialize(b, ar);
-    rrr::Serialize_::serialize(c, ar);
-    rrr::Serialize_::serialize(d, ar);
-    rrr::Serialize_::serialize(e, ar);
-  };
-
-  Marshal old_m;
-  encode_old(old_m);
-  auto old_bytes = drain_marshal(old_m);
+  // Encode a heterogenous sequence, then decode it back in order.
+  int32_t a = 0x12345678;
+  int64_t b = 0x1122334455667788LL;
+  v64 c(8192);
+  std::string d = "hello world";
+  double e = 3.14;
 
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
-  encode_new(archive);
-  auto new_bytes = sink_to_vector(sink);
+  rrr::Serialize_::serialize(a, archive);
+  rrr::Serialize_::serialize(b, archive);
+  rrr::Serialize_::serialize(c, archive);
+  rrr::Serialize_::serialize(d, archive);
+  rrr::Serialize_::serialize(e, archive);
 
-  ASSERT_EQ(old_bytes.size(), new_bytes.size());
-  EXPECT_EQ(old_bytes, new_bytes);
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
+  BinaryReadArchive reader(make_source_proxy(&source));
+  int32_t a2; int64_t b2; v64 c2{0}; std::string d2; double e2;
+  rrr::Deserialize_::deserialize(a2, reader);
+  rrr::Deserialize_::deserialize(b2, reader);
+  rrr::Deserialize_::deserialize(c2, reader);
+  rrr::Deserialize_::deserialize(d2, reader);
+  rrr::Deserialize_::deserialize(e2, reader);
+  EXPECT_EQ(a2, a);
+  EXPECT_EQ(b2, b);
+  EXPECT_EQ(c2.get(), c.get());
+  EXPECT_EQ(d2, d);
+  EXPECT_EQ(e2, e);
+  EXPECT_TRUE(source.eof());
 }
 
 // ---------------------------------------------------------------------------
@@ -360,55 +301,24 @@ TEST(BufferSinkSemantics, AccumulatesBytes) {
 // each element serialized via its element-type operator<<. Iteration
 // order matches the container's begin()/end() — for ordered containers
 // (set/map/BTreeSet/BTreeMap) sorted-key order; for unordered containers
-// (unordered_set/HashSet/unordered_map/HashMap) the same bucket-walk
-// order Marshal uses, so byte-for-byte compatibility holds.
+// (unordered_set/HashSet/unordered_map/HashMap) the container's
+// bucket-walk order.
 // ---------------------------------------------------------------------------
 
 // Pair — no length prefix, just first followed by second.
 TEST(MarshalArchiveByteCompat, PairOfPrimitives) {
   std::pair<int32_t, std::string> p{42, "hello"};
-  check_byte_compat_write(p);
-
-  // Round-trip: Marshal-encoded → BinaryReadArchive.
-  Marshal m;
-  rrr::Serialize_::serialize(p, m);
-  auto bytes = drain_marshal(m);
-  BufferSource source(bytes.data(), bytes.size());
-  BinaryReadArchive reader(make_source_proxy(&source));
-  std::pair<int32_t, std::string> decoded;
-  rrr::Deserialize_::deserialize(decoded, reader);
-  EXPECT_EQ(decoded, p);
-  EXPECT_TRUE(source.eof());
+  check_round_trip(p);
 }
 
-// Helper that drives the standard container test pattern: encode via
-// both paths, byte-compat assert, round-trip from Marshal-bytes back
-// through BinaryReadArchive.
+// Helper for round-trip: encode + decode via the archive, assert
+// equality.
 template <typename Container>
-void check_container_compat_write(const Container& c) {
-  Marshal old_m;
-  rrr::Serialize_::serialize(c, old_m);
-  auto old_bytes = drain_marshal(old_m);
-
+void check_container_round_trip(const Container& c) {
   BufferSink sink;
   BinaryWriteArchive archive(make_sink_proxy(&sink));
   rrr::Serialize_::serialize(c, archive);
-  auto new_bytes = sink_to_vector(sink);
-
-  ASSERT_EQ(old_bytes.size(), new_bytes.size())
-      << "container byte-length mismatch for " << typeid(Container).name();
-  EXPECT_EQ(old_bytes, new_bytes)
-      << "container byte content mismatch for " << typeid(Container).name();
-}
-
-// Helper for round-trip: encode via Marshal, decode via BinaryReadArchive,
-// assert equality.
-template <typename Container>
-void check_container_round_trip(const Container& c) {
-  Marshal m;
-  rrr::Serialize_::serialize(c, m);
-  auto bytes = drain_marshal(m);
-  BufferSource source(bytes.data(), bytes.size());
+  BufferSource source(sink.bytes.data(), sink.bytes.len());
   BinaryReadArchive reader(make_source_proxy(&source));
   Container decoded;
   rrr::Deserialize_::deserialize(decoded, reader);
@@ -421,16 +331,9 @@ void check_container_round_trip(const Container& c) {
 
 // rusty containers (Vec/BTreeSet/HashSet/BTreeMap/HashMap):
 //
-// Note: the existing `Marshal::operator<<` templates for `rusty::Vec<T>`
-// etc. (in marshal.hpp lines 1110+) reference `typename
-// rusty::Vec<T>::const_iterator` — a typedef that rusty types do not
-// expose. Those templates are dead code in the existing Marshal — they
-// would fail to compile if any real call site instantiated them, but
-// in practice rrr only marshals std:: containers. So byte-for-byte
-// compatibility is not testable for rusty containers (no working
-// reference). Instead we verify the new Archive round-trips correctly
-// through itself (encode + decode via Archive), which is the actual
-// guarantee the new code provides.
+// Verified by round-tripping through the archive (encode + decode);
+// equality is checked via len() + element access since rusty types
+// lack a deep operator== usable here.
 
 template <typename Container>
 void check_archive_round_trip_only(const Container& c) {
@@ -481,38 +384,32 @@ TEST(MarshalArchiveRoundTrip, RustyVecPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdVectorEmpty) {
   std::vector<int32_t> v;
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorPrimitives) {
   std::vector<int64_t> v{1, 2, 3, -1, 0x7FFFFFFFFFFFFFFFLL};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorOfStrings) {
   std::vector<std::string> v{"a", "bb", "", "ccc", "dddd"};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdVectorOfPairs) {
   std::vector<std::pair<int32_t, std::string>> v{
       {1, "one"}, {2, "two"}, {3, "three"}};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, NestedVectors) {
   std::vector<std::vector<int32_t>> v{{1, 2}, {}, {3, 4, 5}};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
 TEST(MarshalArchiveByteCompat, StdListPrimitives) {
   std::list<int32_t> v{10, 20, 30};
-  check_container_compat_write(v);
   check_container_round_trip(v);
 }
 
@@ -520,25 +417,19 @@ TEST(MarshalArchiveByteCompat, StdListPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdSetEmpty) {
   std::set<int32_t> s;
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StdSetPrimitives) {
-  // std::set is sorted by key — both Marshal and BinaryWriteArchive
-  // iterate in the same sorted order, so bytes match.
+  // std::set is sorted by key — encoded in sorted order.
   std::set<int32_t> s{5, 1, 3, 2, 4};
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
 TEST(MarshalArchiveByteCompat, StdUnorderedSetPrimitives) {
-  // For unordered_set, both Marshal and BinaryWriteArchive iterate via
-  // the same begin()/end() — same hash table iteration order, so the
-  // bytes match (even though the order is not deterministic across
-  // runs/sets, within a single set both encoders produce the same).
+  // For unordered_set the encoder iterates begin()/end() — the hash
+  // table's own order. Round-trip equality is order-insensitive.
   std::unordered_set<int32_t> s{1, 2, 3, 4, 5};
-  check_container_compat_write(s);
   check_container_round_trip(s);
 }
 
@@ -591,21 +482,18 @@ TEST(MarshalArchiveRoundTrip, RustyHashSetPrimitives) {
 
 TEST(MarshalArchiveByteCompat, StdMapEmpty) {
   std::map<int32_t, std::string> m;
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
 TEST(MarshalArchiveByteCompat, StdMapPrimitives) {
   std::map<int32_t, std::string> m{
       {3, "three"}, {1, "one"}, {2, "two"}};
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
 TEST(MarshalArchiveByteCompat, StdUnorderedMapPrimitives) {
   std::unordered_map<int32_t, std::string> m{
       {1, "a"}, {2, "b"}, {3, "c"}};
-  check_container_compat_write(m);
   check_container_round_trip(m);
 }
 
@@ -955,10 +843,8 @@ TEST(FdSourceArchive, ChunkedReadAcrossPipeBoundaries) {
 
 // ---- SerializableProxy / SerializableRegistry --------------
 
-// Canary command for Phase 2: implements BOTH the new Serializable
-// interface (`save` / `load` / `kind`) AND the old Marshal-based
-// interface (`to_marshal` / `from_marshal`) so we can byte-compare
-// the two paths.
+// Canary command for Phase 2: implements the Serializable interface
+// (`save` / `load` / `kind`).
 //
 // This type is intentionally test-local — Phase 2 only validates the
 // new infrastructure. Per-command-type production migrations land in
@@ -983,37 +869,24 @@ struct CanaryCommand {
     rrr::Deserialize_::deserialize(name, ar);
     rrr::Deserialize_::deserialize(values, ar);
   }
-
-  // ---- Old Marshal-based interface (for byte-compat verification) -
-  Marshal& to_marshal(Marshal& m) const {
-    rrr::Serialize_::serialize(id, m);
-    rrr::Serialize_::serialize(name, m);
-    rrr::Serialize_::serialize(values, m);
-    return m;
-  }
-
-  Marshal& from_marshal(Marshal& m) {
-    rrr::Deserialize_::deserialize(id, m);
-    rrr::Deserialize_::deserialize(name, m);
-    rrr::Deserialize_::deserialize(values, m);
-    return m;
-  }
 };
 
 TEST(SerializableProxy, ByteCompatVsMarshalDirect) {
   // Encode the same payload via:
-  //   (a) the old Marshal path: canary.to_marshal(m)
-  //   (b) the new SerializableProxy path: proxy->save(writer)
-  // and assert the two byte streams are identical.
+  //   (a) the archive-native path: canary.save(writer)
+  //   (b) the SerializableProxy path: proxy->save(writer)
+  // assert the two byte streams are identical, then load the bytes
+  // back into a fresh command and verify the fields.
   CanaryCommand canary;
   canary.id = 42;
   canary.name = "hello, world";
   canary.values = {1, 2, 3, 4, 5};
 
-  // Path (a): old Marshal.
-  Marshal old_m;
-  canary.to_marshal(old_m);
-  auto old_bytes = drain_marshal(old_m);
+  // Path (a): direct save.
+  BufferSink direct_sink;
+  BinaryWriteArchive direct_writer(make_sink_proxy(&direct_sink));
+  canary.save(direct_writer);
+  auto old_bytes = sink_to_vector(direct_sink);
 
   // Path (b): SerializableProxy.
   SerializableProxy proxy = make_serializable_proxy<CanaryCommand>(canary);
@@ -1024,6 +897,16 @@ TEST(SerializableProxy, ByteCompatVsMarshalDirect) {
 
   ASSERT_EQ(old_bytes.size(), new_bytes.size());
   EXPECT_EQ(old_bytes, new_bytes);
+
+  // Round-trip: load the bytes back into a fresh command.
+  BufferSource source(direct_sink.bytes.data(), direct_sink.bytes.len());
+  BinaryReadArchive reader(make_source_proxy(&source));
+  CanaryCommand canary2;
+  canary2.load(reader);
+  EXPECT_EQ(canary2.id, canary.id);
+  EXPECT_EQ(canary2.name, canary.name);
+  EXPECT_EQ(canary2.values, canary.values);
+  EXPECT_TRUE(source.eof());
 }
 
 TEST(SerializableProxy, KindIsExposedThroughProxy) {
@@ -1143,12 +1026,16 @@ TEST(MarshalSinkBridge, WriteIntoMarshalProducesIdenticalBytes) {
 }
 
 TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
-  // Interleave old-style `Marshal::operator<<` writes with new-style
-  // BinaryWriteArchive writes through a MarshalSink wrapping the same
-  // Marshal. The combined byte stream should be the concatenation —
-  // proving the bridge is safe to use alongside legacy code.
+  // Write to the same Marshal through several successive MarshalSink
+  // scopes. The combined byte stream should be the concatenation —
+  // proving the bridge is safe to reopen over a partially-filled
+  // Marshal.
   Marshal m;
-  rrr::Serialize_::serialize(static_cast<int32_t>(1), m);
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(static_cast<int32_t>(1), writer);
+  }
 
   {
     MarshalSink sink(&m);
@@ -1156,31 +1043,40 @@ TEST(MarshalSinkBridge, MixedMarshalAndArchiveWrites) {
     rrr::Serialize_::serialize(static_cast<int32_t>(2), writer);
   }
 
-  rrr::Serialize_::serialize(std::string("trailing"), m);
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(std::string("trailing"), writer);
+  }
 
-  // Compare against a reference encoded entirely through Marshal.
-  Marshal ref;
-  rrr::Serialize_::serialize(static_cast<int32_t>(1), ref);
-  rrr::Serialize_::serialize(static_cast<int32_t>(2), ref);
-  rrr::Serialize_::serialize(std::string("trailing"), ref);
+  // Compare against a reference encoded in a single archive pass.
+  BufferSink ref_sink;
+  BinaryWriteArchive ref_writer(make_sink_proxy(&ref_sink));
+  rrr::Serialize_::serialize(static_cast<int32_t>(1), ref_writer);
+  rrr::Serialize_::serialize(static_cast<int32_t>(2), ref_writer);
+  rrr::Serialize_::serialize(std::string("trailing"), ref_writer);
 
   auto bridge_bytes = drain_marshal(m);
-  auto ref_bytes = drain_marshal(ref);
+  auto ref_bytes = sink_to_vector(ref_sink);
   EXPECT_EQ(bridge_bytes, ref_bytes);
 }
 
 TEST(MarshalSourceBridge, ReadOldMarshalBytesViaArchive) {
-  // Encode a payload via the OLD `Marshal::operator<<` path, then
-  // decode it through a `BinaryReadArchive` over `MarshalSource`.
+  // Encode a payload into a Marshal via MarshalSink, then decode it
+  // through a `BinaryReadArchive` over `MarshalSource`.
   // Expected: identical decoded values, source drained at the end.
   const int32_t i = 42;
   const std::string s = "marshal-encoded";
   std::vector<int64_t> v{10, 20, 30};
 
   Marshal m;
-  rrr::Serialize_::serialize(i, m);
-  rrr::Serialize_::serialize(s, m);
-  rrr::Serialize_::serialize(v, m);
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(i, writer);
+    rrr::Serialize_::serialize(s, writer);
+    rrr::Serialize_::serialize(v, writer);
+  }
 
   MarshalSource src(&m);
   BinaryReadArchive reader(make_source_proxy(&src));
@@ -1237,7 +1133,11 @@ TEST(MarshalSourceBridge, ShortReadAtEofMatchesBufferSourceSemantics) {
   // MarshalSource. Should return 0 (not abort), consistent with
   // BufferSource and FdSource EOF semantics.
   Marshal m;
-  rrr::Serialize_::serialize(static_cast<int32_t>(1), m);
+  {
+    MarshalSink sink(&m);
+    BinaryWriteArchive writer(make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(static_cast<int32_t>(1), writer);
+  }
 
   MarshalSource src(&m);
   int32_t v;

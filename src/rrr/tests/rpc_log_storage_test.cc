@@ -14,6 +14,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace janus::raft;
@@ -81,19 +82,18 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 
     // LogEntry's `to_marshal`/`from_marshal`
     // were replaced with `save(BinaryWriteArchive&)` /
-    // `load(BinaryReadArchive&)`. Drive bytes through the same backing
-    // Marshal via MarshalSink/MarshalSource so this test continues to
+    // `load(BinaryReadArchive&)`. Drive bytes through a
+    // BufferSink/BufferSource pair so this test continues to
     // exercise an on-wire round-trip.
-    Marshal m;
+    rrr::BufferSink sink;
     {
-        rrr::MarshalSink sink(&m);
         rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 
     LogEntry restored;
     {
-        rrr::MarshalSource src(&m);
+        rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
         rrr::BinaryReadArchive reader(make_source_proxy(&src));
         restored.load(reader);
     }
@@ -113,22 +113,23 @@ TEST_F(LogEntryTest, SerializationWithCommand) {
 
     // see SerializationWithoutCommand for
     // the to_marshal → save migration rationale.
-    Marshal m;
+    rrr::BufferSink sink;
     {
-        rrr::MarshalSink sink(&m);
         rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 
     // Verify serialization produced data
-    EXPECT_GT(m.content_size(), 0u);
+    EXPECT_GT(sink.bytes.len(), 0u);
 
     // Note: Full deserialization of custom commands requires MarshallDeputy registration
     // which is done at application startup. Here we just verify serialization works.
     // The basic fields can still be deserialized:
     LogEntry partial;
-    rrr::Deserialize_::deserialize(partial.slot_id, m);
-    rrr::Deserialize_::deserialize(partial.term, m);
+    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+    rrr::BinaryReadArchive rar(make_source_proxy(&src));
+    rrr::Deserialize_::deserialize(partial.slot_id, rar);
+    rrr::Deserialize_::deserialize(partial.term, rar);
 
     EXPECT_EQ(partial.slot_id, 100u);
     EXPECT_EQ(partial.term, 20u);

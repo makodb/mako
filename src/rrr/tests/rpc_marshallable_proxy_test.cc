@@ -11,6 +11,7 @@
 #include "deptran/paxos_worker.h"
 
 import std;
+import rusty;
 
 using namespace rrr;
 
@@ -39,11 +40,14 @@ std::shared_ptr<T> RoundTripTypedPayload(const std::shared_ptr<T>& src) {
   // bytes as the legacy MarshallDeputy path).  T is auto-wrapped by
   // Command's templated non-Marshallable ctor.
   janus::Command outgoing{src};
-  Marshal m;
-  rrr::Serialize_::serialize(outgoing, m);
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
-  rrr::Deserialize_::deserialize(incoming, m);
+  rrr::BufferSource source(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&source));
+  rrr::Deserialize_::deserialize(incoming, rar);
 
   return marshallable_cast<T>(incoming);
 }
@@ -149,11 +153,14 @@ TEST(MarshallableProxyFacadeTest, DeptranVecPieceDataNonEmptyRoundTrip) {
   // 2 step 2; same wire bytes as the legacy MarshallDeputy
   // path).
   janus::Command outgoing{payload};
-  Marshal m;
-  rrr::Serialize_::serialize(outgoing, m);
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
-  rrr::Deserialize_::deserialize(incoming, m);
+  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::Deserialize_::deserialize(incoming, rar);
   auto decoded = marshallable_cast<janus::VecPieceData>(incoming);
   ASSERT_NE(decoded, nullptr);
 
@@ -260,11 +267,14 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcCommitRoundTripUsesTypedAdapter) {
   janus::Command outgoing{src};
   EXPECT_EQ(outgoing.kind_, janus::TpcCommitCommand::static_kind());
 
-  Marshal m;
-  rrr::Serialize_::serialize(outgoing, m);
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
-  rrr::Deserialize_::deserialize(incoming, m);
+  rrr::BufferSource byte_src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&byte_src));
+  rrr::Deserialize_::deserialize(incoming, rar);
   EXPECT_EQ(incoming.kind_, janus::TpcCommitCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::TpcCommitCommand>(incoming);
@@ -293,11 +303,14 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
 
   janus::Command batch_outgoing{batch};
   EXPECT_EQ(batch_outgoing.kind_, janus::TpcBatchCommand::static_kind());
-  Marshal batch_marshaled;
-  rrr::Serialize_::serialize(batch_outgoing, batch_marshaled);
+  rrr::BufferSink batch_sink;
+  rrr::BinaryWriteArchive batch_war(rrr::make_sink_proxy(&batch_sink));
+  rrr::Serialize_::serialize(batch_outgoing, batch_war);
 
   janus::Command batch_incoming;
-  rrr::Deserialize_::deserialize(batch_incoming, batch_marshaled);
+  rrr::BufferSource batch_src(batch_sink.bytes.data(), batch_sink.bytes.len());
+  rrr::BinaryReadArchive batch_rar(rrr::make_source_proxy(&batch_src));
+  rrr::Deserialize_::deserialize(batch_incoming, batch_rar);
   auto decoded_batch = marshallable_cast<janus::TpcBatchCommand>(batch_incoming);
   ASSERT_NE(decoded_batch, nullptr);
   ASSERT_EQ(decoded_batch->Size(), 2u);
@@ -332,11 +345,14 @@ TEST(MarshallableProxyFacadeTest,
   janus::Command outgoing{put_cmd};
   EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
 
-  Marshal m;
-  rrr::Serialize_::serialize(outgoing, m);
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  rrr::Serialize_::serialize(outgoing, war);
 
   janus::Command incoming;
-  rrr::Deserialize_::deserialize(incoming, m);
+  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  rrr::Deserialize_::deserialize(incoming, rar);
   EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
 
   auto decoded = marshallable_cast<janus::ReplicatedDBCommand>(incoming);

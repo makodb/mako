@@ -156,21 +156,21 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
     ASSERT_EQ(stub->count(), 1u);
     const auto& bytes = stub->captured().front();
 
-    Marshal body;
-    body.write_bytes(bytes.data(), bytes.size());
+    rrr::BufferSource src(bytes.data(), bytes.size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
 
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    rrr::Deserialize_::deserialize(v_xid, body);
-    rrr::Deserialize_::deserialize(v_err, body);
-    rrr::Deserialize_::deserialize(v_instance, body);
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_instance, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 42);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
 
     std::string decoded;
-    rrr::Deserialize_::deserialize(decoded, body);
+    rrr::Deserialize_::deserialize(decoded, rar);
     EXPECT_EQ(decoded, user_payload);
 }
 
@@ -187,15 +187,15 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
     sconn().reply(req, /*error_code=*/ENOENT, [](BinaryWriteArchive&) {});
 
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write_bytes(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    rrr::Deserialize_::deserialize(v_xid, body);
-    rrr::Deserialize_::deserialize(v_err, body);
-    rrr::Deserialize_::deserialize(v_instance, body);
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_instance, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 7);
     EXPECT_EQ(v_err.get(), ENOENT);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
@@ -218,19 +218,19 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
     }
     ASSERT_EQ(stub->count(), 5u);
     for (std::size_t i = 0; i < 5u; ++i) {
-        Marshal body;
-        body.write_bytes(stub->captured()[i].data(),
+        rrr::BufferSource src(stub->captured()[i].data(),
                    stub->captured()[i].size());
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
         v64 v_xid;
         v32 v_err;
         v64 v_instance;
-        rrr::Deserialize_::deserialize(v_xid, body);
-        rrr::Deserialize_::deserialize(v_err, body);
-        rrr::Deserialize_::deserialize(v_instance, body);
+        rrr::Deserialize_::deserialize(v_xid, rar);
+        rrr::Deserialize_::deserialize(v_err, rar);
+        rrr::Deserialize_::deserialize(v_instance, rar);
         EXPECT_EQ(static_cast<i64>(v_xid.get()), static_cast<i64>(i + 1));
         EXPECT_EQ(v_err.get(), 0);
         i64 user_value;
-        rrr::Deserialize_::deserialize(user_value, body);
+        rrr::Deserialize_::deserialize(user_value, rar);
         EXPECT_EQ(user_value, static_cast<i64>((i + 1) * 10));
     }
 }

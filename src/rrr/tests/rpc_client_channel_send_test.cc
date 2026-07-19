@@ -156,15 +156,15 @@ TEST_F(ClientChannelSendTest, RequestRoutesFrameThroughChannel) {
     ASSERT_EQ(frames.size(), 1u);
 
     // Decode the captured body: [v64 xid][i32 rpc_id][i32 0xDEADBEEF].
-    Marshal m;
-    m.write_bytes(frames[0].data(), frames[0].size());
+    rrr::BufferSource src(frames[0].data(), frames[0].size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
 
     v64 v_xid;
     i32 rpc_id;
     i32 user_arg;
-    rrr::Deserialize_::deserialize(v_xid, m);
-    rrr::Deserialize_::deserialize(rpc_id, m);
-    rrr::Deserialize_::deserialize(user_arg, m);
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(rpc_id, rar);
+    rrr::Deserialize_::deserialize(user_arg, rar);
 
     EXPECT_EQ(rpc_id, kRpcId);
     EXPECT_EQ(static_cast<std::uint32_t>(user_arg), 0xDEADBEEFu);
@@ -207,14 +207,14 @@ TEST_F(ClientChannelSendTest, MultipleRequestsCaptureInOrder) {
     ASSERT_EQ(stub_->capture_count(), static_cast<std::size_t>(kCount));
     auto frames = stub_->captured();
     for (int i = 0; i < kCount; ++i) {
-        Marshal m;
-        m.write_bytes(frames[i].data(), frames[i].size());
+        rrr::BufferSource src(frames[i].data(), frames[i].size());
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
         v64 v_xid;
         i32 rpc_id;
         i32 user_arg;
-        rrr::Deserialize_::deserialize(v_xid, m);
-        rrr::Deserialize_::deserialize(rpc_id, m);
-        rrr::Deserialize_::deserialize(user_arg, m);
+        rrr::Deserialize_::deserialize(v_xid, rar);
+        rrr::Deserialize_::deserialize(rpc_id, rar);
+        rrr::Deserialize_::deserialize(user_arg, rar);
         EXPECT_EQ(rpc_id, 0x100 + i) << "iteration " << i;
         EXPECT_EQ(user_arg, i)       << "iteration " << i;
     }

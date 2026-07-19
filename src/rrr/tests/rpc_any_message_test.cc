@@ -21,6 +21,7 @@
 #include "../misc/serializable.hpp"
 
 import std;
+import rusty;
 
 namespace rrr {
 namespace {
@@ -126,9 +127,8 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   // Sender side: pack into AnyMessage, serialize via the archive.
   AnyMessage outgoing = *AnyMessage::pack(val);
 
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
@@ -136,7 +136,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   // Receiver side: deserialize, recover typed payload.
   AnyMessage incoming;
   {
-    MarshalSource src(&m);
+    BufferSource src(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
@@ -171,15 +171,14 @@ TEST(AnyMessageTest, PackAsAdHocName) {
 
   // Wire roundtrip under the alias name.
   AnyMessage outgoing = *am;
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
   AnyMessage incoming;
   {
-    MarshalSource src(&m);
+    BufferSource src(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
@@ -201,16 +200,15 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   val->value = 0xDEADBEEFCAFEBABEull;
 
   AnyMessage outgoing = *AnyMessage::pack(val);
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive writer(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, writer);
   }
 
   AnyMessage incoming;
   {
-    MarshalSource src(&m);
+    BufferSource src(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
@@ -233,20 +231,19 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   val->label = "save/load roundtrip";
 
   // Build an AnyMessage and save through the BinaryWriteArchive +
-  // MarshalSink path (the path rpcgen-generated code uses for fields
+  // BufferSink path (the path rpcgen-generated code uses for fields
   // typed as `AnyMessage` directly).
   AnyMessage outgoing(*AnyMessage::pack(val));
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive ar(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, ar);
   }
 
-  // Decode through the BinaryReadArchive + MarshalSource path.
+  // Decode through the BinaryReadArchive + BufferSource path.
   AnyMessage incoming;
   {
-    MarshalSource source(&m);
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive ar(make_source_proxy(&source));
     rrr::Deserialize_::deserialize(incoming, ar);
   }
@@ -272,16 +269,15 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   val->node_count = 1;
 
   AnyMessage outgoing(*AnyMessage::pack(val));
-  Marshal m;
+  BufferSink sink;
   {
-    MarshalSink sink(&m);
     BinaryWriteArchive ar(make_sink_proxy(&sink));
     rrr::Serialize_::serialize(outgoing, ar);
   }
 
   AnyMessage incoming;
   {
-    MarshalSource source(&m);
+    BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive ar(make_source_proxy(&source));
     rrr::Deserialize_::deserialize(incoming, ar);
   }

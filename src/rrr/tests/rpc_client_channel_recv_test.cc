@@ -35,6 +35,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 namespace rrr {
 namespace {
@@ -128,28 +129,26 @@ std::vector<std::uint8_t> make_response_body(
     i32 error_code,
     i64 server_instance_id,
     const std::vector<std::uint8_t>& reply_payload) {
-    Marshal m;
-    rrr::Serialize_::serialize(v64(xid), m);
-    rrr::Serialize_::serialize(v32(error_code), m);
-    rrr::Serialize_::serialize(v64(server_instance_id), m);
+    rrr::BufferSink sink;
+    rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+    rrr::Serialize_::serialize(v64(xid), war);
+    rrr::Serialize_::serialize(v32(error_code), war);
+    rrr::Serialize_::serialize(v64(server_instance_id), war);
     if (!reply_payload.empty()) {
-        m.write_bytes(reply_payload.data(), reply_payload.size());
+        sink.write_bytes(reply_payload.data(), reply_payload.size());
     }
-    std::vector<std::uint8_t> bytes(m.content_size());
-    if (!bytes.empty()) {
-        verify(m.read(bytes.data(), bytes.size()) == bytes.size());
-    }
-    return bytes;
+    return std::vector<std::uint8_t>(
+        sink.bytes.data(), sink.bytes.data() + sink.bytes.len());
 }
 
 // Decode the xid from a captured outbound frame body laid out as
 // `[v64 xid][i32 rpc_id][user-marshaled args]`. Returns the xid;
 // asserts on failure.
 i64 decode_outbound_xid(const std::vector<std::uint8_t>& body) {
-    Marshal m;
-    m.write_bytes(body.data(), body.size());
+    rrr::BufferSource src(body.data(), body.size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
-    rrr::Deserialize_::deserialize(v_xid, m);
+    rrr::Deserialize_::deserialize(v_xid, rar);
     return v_xid.get();
 }
 
@@ -238,13 +237,12 @@ TEST_F(ClientChannelRecvTest, ResponseFrameResolvesPendingFuture) {
 
     // Synthesize and deliver the response. Reply payload is a single
     // i32 = 0x12345678.
-    Marshal payload_marshal;
-    rrr::Serialize_::serialize(static_cast<i32>(0x12345678), payload_marshal);
-    std::vector<std::uint8_t> reply_payload(payload_marshal.content_size());
-    if (!reply_payload.empty()) {
-        verify(payload_marshal.read(reply_payload.data(), reply_payload.size())
-                   == reply_payload.size());
-    }
+    rrr::BufferSink payload_sink;
+    rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy(&payload_sink));
+    rrr::Serialize_::serialize(static_cast<i32>(0x12345678), payload_war);
+    std::vector<std::uint8_t> reply_payload(
+        payload_sink.bytes.data(),
+        payload_sink.bytes.data() + payload_sink.bytes.len());
     auto body = make_response_body(xid,
                                    /*error_code=*/0,
                                    /*server_instance_id=*/42,
@@ -304,14 +302,12 @@ TEST_F(ClientChannelRecvTest, MultipleResponsesResolveFuturesInOrder) {
     // recv-loop fiber drains as we pump.
     for (int i = 0; i < kCount; ++i) {
         const i64 xid = decode_outbound_xid(frames[i]);
-        Marshal payload_marshal;
-        rrr::Serialize_::serialize(static_cast<i32>(0xA000 + i), payload_marshal);
-        std::vector<std::uint8_t> reply_payload(payload_marshal.content_size());
-        if (!reply_payload.empty()) {
-            verify(payload_marshal.read(reply_payload.data(),
-                                        reply_payload.size())
-                   == reply_payload.size());
-        }
+        rrr::BufferSink payload_sink;
+        rrr::BinaryWriteArchive payload_war(rrr::make_sink_proxy(&payload_sink));
+        rrr::Serialize_::serialize(static_cast<i32>(0xA000 + i), payload_war);
+        std::vector<std::uint8_t> reply_payload(
+            payload_sink.bytes.data(),
+            payload_sink.bytes.data() + payload_sink.bytes.len());
         auto body = make_response_body(xid, 0, 1, reply_payload);
         stub_->deliver(body);
     }

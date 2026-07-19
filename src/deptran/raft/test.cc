@@ -13,6 +13,7 @@
 #include "config_watcher.h"
 
 import std;
+import rusty;
 
 namespace janus {
 
@@ -7473,14 +7474,17 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   Assert2(cmd->value_ == "test_value", "Value should be test_value");
 
   // Marshal
-  // @unsafe { Marshal I/O }
-  rrr::Marshal m;
-  cmd->to_marshal(m);
+  // @unsafe { Archive I/O }
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  cmd->save(war);
 
   // Unmarshal into a new command
-  // @unsafe { Marshal I/O }
+  // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  cmd2->from_marshal(m);
+  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::PUT,
           "Unmarshalled op should be PUT");
@@ -7494,10 +7498,13 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // Test with empty key and value
   // @unsafe { Factory creates shared_ptr }
   auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
-  rrr::Marshal m2;
-  cmd_empty->to_marshal(m2);
+  rrr::BufferSink sink2;
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  cmd_empty2->from_marshal(m2);
+  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::PUT, "Empty PUT op should be PUT");
   Assert2(cmd_empty2->key_.empty(), "Empty PUT key should be empty");
   Assert2(cmd_empty2->value_.empty(), "Empty PUT value should be empty");
@@ -7507,10 +7514,13 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   std::string large_value(4096, 'V');
   // @unsafe { Factory creates shared_ptr }
   auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
-  rrr::Marshal m3;
-  cmd_large->to_marshal(m3);
+  rrr::BufferSink sink3;
+  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));
+  cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  cmd_large2->from_marshal(m3);
+  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
+  rrr::BinaryReadArchive rar3(rrr::make_source_proxy(&src3));
+  cmd_large2->load(rar3);
   Assert2(cmd_large2->key_ == large_key,
           "Large key should survive round-trip");
   Assert2(cmd_large2->value_ == large_value,
@@ -7535,14 +7545,17 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   Assert2(cmd->value_.empty(), "Value should be empty for DELETE");
 
   // Marshal
-  // @unsafe { Marshal I/O }
-  rrr::Marshal m;
-  cmd->to_marshal(m);
+  // @unsafe { Archive I/O }
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  cmd->save(war);
 
   // Unmarshal into a new command
-  // @unsafe { Marshal I/O }
+  // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  cmd2->from_marshal(m);
+  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::DELETE,
           "Unmarshalled op should be DELETE");
@@ -7595,14 +7608,17 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   Assert2(cmd->batch_ops_.size() == 3, "Should have 3 batch ops");
 
   // Marshal
-  // @unsafe { Marshal I/O }
-  rrr::Marshal m;
-  cmd->to_marshal(m);
+  // @unsafe { Archive I/O }
+  rrr::BufferSink sink;
+  rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+  cmd->save(war);
 
   // Unmarshal into a new command
-  // @unsafe { Marshal I/O }
+  // @unsafe { Archive I/O }
   auto cmd2 = std::make_shared<ReplicatedDBCommand>();
-  cmd2->from_marshal(m);
+  rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+  rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+  cmd2->load(rar);
 
   Assert2(cmd2->op_ == ReplicatedDBOp::BATCH,
           "Unmarshalled op should be BATCH");
@@ -7635,10 +7651,13 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   std::vector<KVOperation> empty_ops;
   // @unsafe { Factory creates shared_ptr }
   auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
-  rrr::Marshal m2;
-  cmd_empty->to_marshal(m2);
+  rrr::BufferSink sink2;
+  rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
+  cmd_empty->save(war2);
   auto cmd_empty2 = std::make_shared<ReplicatedDBCommand>();
-  cmd_empty2->from_marshal(m2);
+  rrr::BufferSource src2(sink2.bytes.data(), sink2.bytes.len());
+  rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
+  cmd_empty2->load(rar2);
   Assert2(cmd_empty2->op_ == ReplicatedDBOp::BATCH,
           "Empty batch op should be BATCH");
   Assert2(cmd_empty2->batch_ops_.empty(),
@@ -7652,10 +7671,13 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   }
   // @unsafe { Factory creates shared_ptr }
   auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
-  rrr::Marshal m3;
-  cmd_large->to_marshal(m3);
+  rrr::BufferSink sink3;
+  rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));
+  cmd_large->save(war3);
   auto cmd_large2 = std::make_shared<ReplicatedDBCommand>();
-  cmd_large2->from_marshal(m3);
+  rrr::BufferSource src3(sink3.bytes.data(), sink3.bytes.len());
+  rrr::BinaryReadArchive rar3(rrr::make_source_proxy(&src3));
+  cmd_large2->load(rar3);
   Assert2(cmd_large2->batch_ops_.size() == 100,
           "Large batch should have 100 ops, got %zu", cmd_large2->batch_ops_.size());
   for (int i = 0; i < 100; i++) {
