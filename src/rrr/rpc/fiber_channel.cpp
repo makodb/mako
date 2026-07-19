@@ -111,10 +111,14 @@ struct OwnedFrame {
 // teardown) maps to `impl Drop`. Defined in the impl namespace below.
 struct FiberChannel;  // defined by the GEN block below
 void                      fiberchannel_bind_callbacks(FiberChannel& self);
-rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self);
+rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self);
+std::shared_ptr<IntEvent> fiberchannel_make_event();
+void                      fiberchannel_wait_event(FiberChannel& self);
+OwnedFrame                fiberchannel_owned_copy(const ChannelFrame& f);
+bool                      fiberchannel_ch_is_closed(const FiberChannel& self);
+void                      fiberchannel_signal_pending_recv(FiberChannel& self);
 ChannelError              fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f);
 void                      fiberchannel_close(FiberChannel& self);
-bool                      fiberchannel_is_closed(const FiberChannel& self);
 void                      fiberchannel_drop(FiberChannel& self);
 
 // Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
@@ -156,8 +160,51 @@ impl FiberChannel {
         fiberchannel_bind_callbacks(self)
     }
 
+    // Fiber-blocking receive: drain the queue, else arm the pending
+    // event and suspend until the inbound callback signals. The
+    // move-out-of-deque pop, event construction, and fiber-suspending
+    // wait are kernels; the loop/arming logic lives here.
     fn recv_frame(&mut self) -> rusty::Option<OwnedFrame> {
-        fiberchannel_recv_frame(self)
+        while true {
+            let popped = fiberchannel_try_pop(self);
+            if popped.is_some() {
+                return popped;
+            }
+            if self.closed_.get() {
+                return rusty::None;
+            }
+
+            self.pending_recv_event_ = fiberchannel_make_event();
+
+            let mut armed = true;
+            {
+                let guard = self.queue_.lock().unwrap();
+                if !(*guard).empty() || self.closed_.get() {
+                    armed = false;
+                }
+            }
+            if armed {
+                fiberchannel_wait_event(self);
+            }
+            self.pending_recv_event_.reset();
+        }
+        rusty::None
+    }
+
+    // Inbound-callback targets (invoked from the bind_callbacks
+    // lambdas): copy the frame (byte kernel), enqueue, signal.
+    fn on_inbound_frame(&mut self, f: &ChannelFrame) {
+        let mut copy = fiberchannel_owned_copy(f);
+        {
+            let mut guard = self.queue_.lock().unwrap();
+            (*guard).push_back(copy);
+        }
+        fiberchannel_signal_pending_recv(self);
+    }
+
+    fn on_inbound_closed(&mut self) {
+        self.closed_.set(true);
+        fiberchannel_signal_pending_recv(self);
     }
 
     fn send_frame(&mut self, f: &ChannelFrame) -> ChannelError {
@@ -169,7 +216,10 @@ impl FiberChannel {
     }
 
     fn is_closed(&self) -> bool {
-        fiberchannel_is_closed(self)
+        if self.closed_.get() {
+            return true;
+        }
+        fiberchannel_ch_is_closed(self)
     }
 
     fn channel_for_test(&mut self) -> &mut ChannelConnectionProxy {
@@ -183,7 +233,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=cbb1c5675c4fec6fc947672d7956a885457ec7a86b9982f8b529e96f07f3c14e*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=1ca55009dcc9aa6dbb0ffec1ab4dbc22cecd95cd377a73f7b69debb3adf4ce77*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -213,6 +263,8 @@ struct FiberChannel {
     FiberChannel(ChannelConnectionProxy ch);
     void bind_callbacks();
     rusty::Option<OwnedFrame> recv_frame();
+    void on_inbound_frame(const ChannelFrame& f);
+    void on_inbound_closed();
     ChannelError send_frame(const ChannelFrame& f);
     void close();
     bool is_closed() const;
@@ -233,7 +285,42 @@ void FiberChannel::bind_callbacks() {
 }
 
 rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
-    return fiberchannel_recv_frame((*this));
+    while (true) {
+        auto popped = fiberchannel_try_pop((*this));
+        if (popped.is_some()) {
+            return std::move(popped);
+        }
+        if (this->closed_.get()) {
+            return rusty::None;
+        }
+        this->pending_recv_event_ = fiberchannel_make_event();
+        auto armed = true;
+        {
+            auto guard = this->queue_.lock().unwrap();
+            if (!((*guard)).empty() || this->closed_.get()) {
+                armed = false;
+            }
+        }
+        if (armed) {
+            fiberchannel_wait_event((*this));
+        }
+        this->pending_recv_event_.reset();
+    }
+    return rusty::None;
+}
+
+void FiberChannel::on_inbound_frame(const ChannelFrame& f) {
+    auto copy = fiberchannel_owned_copy(f);
+    {
+        auto guard = this->queue_.lock().unwrap();
+        ((*guard)).push_back(std::move(copy));
+    }
+    fiberchannel_signal_pending_recv((*this));
+}
+
+void FiberChannel::on_inbound_closed() {
+    this->closed_.set(true);
+    fiberchannel_signal_pending_recv((*this));
 }
 
 ChannelError FiberChannel::send_frame(const ChannelFrame& f) {
@@ -245,7 +332,10 @@ void FiberChannel::close() {
 }
 
 bool FiberChannel::is_closed() const {
-    return fiberchannel_is_closed((*this));
+    if (this->closed_.get()) {
+        return true;
+    }
+    return fiberchannel_ch_is_closed((*this));
 }
 
 ChannelConnectionProxy& FiberChannel::channel_for_test() {
@@ -265,11 +355,8 @@ FiberChannel::~FiberChannel() noexcept(false) {
 // in the export namespace above.
 namespace rrr {
 
-// Forward decls for the private inbound helpers (called from the
-// bind_callbacks lambdas + the signal path).
-void fiberchannel_on_inbound_frame(FiberChannel& self, const ChannelFrame& f);
-void fiberchannel_on_inbound_closed(FiberChannel& self, ChannelError reason);
-void fiberchannel_on_inbound_error(FiberChannel& self, ChannelError err, std::string_view msg);
+// Forward decl for the signal path (shared_ptr copy + IntEvent::set
+// arrow-deref; called from the DSL on_inbound_* methods).
 void fiberchannel_signal_pending_recv(FiberChannel& self);
 
 // @unsafe - `ch_->set_on_*` driven through the proxy deref + rusty::Function
@@ -279,13 +366,14 @@ void fiberchannel_signal_pending_recv(FiberChannel& self);
 void fiberchannel_bind_callbacks(FiberChannel& self) {
     FiberChannel* self_ptr = &self;
     self.ch_->set_on_frame([self_ptr](const ChannelFrame& f) {
-        fiberchannel_on_inbound_frame(*self_ptr, f);
+        self_ptr->on_inbound_frame(f);
     });
-    self.ch_->set_on_closed([self_ptr](ChannelError reason) {
-        fiberchannel_on_inbound_closed(*self_ptr, reason);
+    self.ch_->set_on_closed([self_ptr](ChannelError /*reason*/) {
+        self_ptr->on_inbound_closed();
     });
-    self.ch_->set_on_error([self_ptr](ChannelError err, std::string_view msg) {
-        fiberchannel_on_inbound_error(*self_ptr, err, msg);
+    self.ch_->set_on_error([](ChannelError /*err*/, std::string_view /*msg*/) {
+        // Fatal errors are followed by on_closed; non-fatal errors are
+        // silently ignored at this layer.
     });
 }
 
@@ -302,33 +390,14 @@ void fiberchannel_drop(FiberChannel& self) {
 // @unsafe - raw `const uint8_t*` + `memcpy` + `set_len` byte-copy
 // (rusty::Vec has no `.assign(iter, iter)` so we reserve, memcpy, then
 // commit the new length).
-void fiberchannel_on_inbound_frame(FiberChannel& self, const ChannelFrame& f) {
+OwnedFrame fiberchannel_owned_copy(const ChannelFrame& f) {
     OwnedFrame copy;
     if (f.size > 0) {
-        // @unsafe { rusty::Vec::reserve + memcpy + set_len fill the
-        // buffer in place without per-element init }
-        {
-            copy.bytes.reserve(f.size);
-            std::memcpy(copy.bytes.data(), f.payload, f.size);
-            copy.bytes.set_len(f.size);
-        }
+        copy.bytes.reserve(f.size);
+        std::memcpy(copy.bytes.data(), f.payload, f.size);
+        copy.bytes.set_len(f.size);
     }
-    {
-        auto guard = self.queue_.lock().unwrap();
-        (*guard).push_back(std::move(copy));
-    }
-    fiberchannel_signal_pending_recv(self);
-}
-
-void fiberchannel_on_inbound_closed(FiberChannel& self, ChannelError /*reason*/) {
-    self.closed_.set(true);
-    fiberchannel_signal_pending_recv(self);
-}
-
-void fiberchannel_on_inbound_error(FiberChannel& /*self*/, ChannelError /*err*/,
-                                   std::string_view /*msg*/) {
-    // Fatal errors are followed by on_closed; non-fatal errors are
-    // silently ignored at this layer.
+    return copy;
 }
 
 void fiberchannel_signal_pending_recv(FiberChannel& self) {
@@ -346,9 +415,9 @@ ChannelError fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f) 
     return self.ch_->send_frame(f);
 }
 
-// @unsafe - const_cast through the ChannelConnectionProxy reference + proxy deref.
-bool fiberchannel_is_closed(const FiberChannel& self) {
-    if (self.closed_.get()) return true;
+// @unsafe - const_cast through the ChannelConnectionProxy reference +
+// proxy deref (the Cell-flag half of is_closed lives in the DSL).
+bool fiberchannel_ch_is_closed(const FiberChannel& self) {
     auto& mut_ch = const_cast<ChannelConnectionProxy&>(self.ch_);
     return mut_ch->is_closed();
 }
@@ -358,38 +427,30 @@ void fiberchannel_close(FiberChannel& self) {
     self.ch_->close();
 }
 
-rusty::Option<OwnedFrame> fiberchannel_recv_frame(FiberChannel& self) {
-    while (true) {
-        {
-            auto guard = self.queue_.lock().unwrap();
-            if (!(*guard).empty()) {
-                OwnedFrame f = std::move((*guard).front());
-                (*guard).pop_front();
-                return rusty::Some(std::move(f));
-            }
-        }
+// @unsafe - Mutex lock + move-out-of-deque (the DSL cannot spell a
+// container front()-move); one lock covers test+move+pop.
+rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self) {
+    auto guard = self.queue_.lock().unwrap();
+    if ((*guard).empty()) {
+        return rusty::None;
+    }
+    OwnedFrame f = std::move((*guard).front());
+    (*guard).pop_front();
+    return rusty::Some(std::move(f));
+}
 
-        if (self.closed_.get()) {
-            return rusty::None;
-        }
+// @unsafe - Reactor template factory + shared_ptr hand-off.
+std::shared_ptr<IntEvent> fiberchannel_make_event() {
+    return Reactor::create_sp_event<IntEvent>();
+}
 
-        auto event = Reactor::create_sp_event<IntEvent>();
-        self.pending_recv_event_ = event;
-
-        {
-            auto guard = self.queue_.lock().unwrap();
-            if (!(*guard).empty() || self.closed_.get()) {
-                self.pending_recv_event_.reset();
-                continue;
-            }
-        }
-
-        // @unsafe { Event::wait is the fiber-suspending primitive,
-        //           not annotated @safe yet. }
-        {
-            event->wait();
-        }
-        self.pending_recv_event_.reset();
+// @unsafe - fiber-suspending Event::wait through the shared_ptr (a
+// defensive local copy keeps the event alive across the suspend even
+// if the field is reset concurrently).
+void fiberchannel_wait_event(FiberChannel& self) {
+    auto event = self.pending_recv_event_;
+    if (event) {
+        event->wait();
     }
 }
 
