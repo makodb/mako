@@ -1314,28 +1314,39 @@ ChannelError tcpconn_send_frame(const TcpConnection& self, const ChannelFrame& f
 
 // @unsafe - drives tcpconn_drain_outbound_locked (which is @unsafe for
 // raw `uint8_t*` arithmetic + send syscall).
-void tcpconn_flush(const TcpConnection& self) {
-    if (self.closed_.get()) return;
-
-    auto guard = self.outbound_.lock().unwrap();
-    if ((*guard).empty()) return;
-
-    // Best-effort: try to drain immediately. Errors here are reported
-    // via the callbacks set on this connection; the caller of `flush`
-    // does not get a return code (matching the channel facade).
-    ChannelError result = tcpconn_drain_outbound_locked(self, *guard);
-    if (result != ChannelError::None && result != ChannelError::WouldBlock) {
-        // Defer error/close delivery to the poll thread to keep the
-        // callback contract (poll-thread-only) honest. We just mark the
-        // closed flag; the next `handle_read` / `handle_write` will fire
-        // the callbacks. If `flush` is being called from the poll
-        // thread itself, fire immediately.
-        // For sub-leaf 3a we don't have an independent poll-thread
-        // hand-off; tests drive Pollable methods directly. Mark closed
-        // and let the next poll cycle observe it.
-        self.closed_.set(true);
+#if RUSTYCPP_RUST
+fn tcpconn_flush(conn: &TcpConnection) {
+    if conn.closed_.get() {
+        return;
+    }
+    let mut guard = conn.outbound_.lock().unwrap();
+    if (*guard).empty() {
+        return;
+    }
+    // Best-effort immediate drain; errors are reported via the
+    // connection callbacks on the next poll cycle (see the pre-DSL
+    // comment history for the poll-thread hand-off rationale).
+    let result = tcpconn_drain_outbound_locked(conn, &mut *guard);
+    if result != ChannelError::None && result != ChannelError::WouldBlock {
+        conn.closed_.set(true);
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.flush version=1 rust_sha256=ad19717ea74e4f070efb18e5e74333e65729f3ce9aa8692a3b1a821bd779901e*/
+void tcpconn_flush(const TcpConnection& conn) {
+    if (conn.closed_.get()) {
+        return;
+    }
+    auto guard = conn.outbound_.lock().unwrap();
+    if (((rusty::detail::deref_if_pointer_like(guard))).empty()) {
+        return;
+    }
+    const auto result = tcpconn_drain_outbound_locked(conn, rusty::detail::deref_if_pointer_like(guard));
+    if ((rusty::detail::deref_if_pointer_like(result) != rusty::detail::deref_if_pointer_like(ChannelError::None)) && (rusty::detail::deref_if_pointer_like(result) != rusty::detail::deref_if_pointer_like(ChannelError::WouldBlock))) {
+        conn.closed_.set(true);
+    }
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.flush*/
 
 // @unsafe - ::shutdown libc syscall + OwnedFd RAII close + callback fire.
 void tcpconn_close(const TcpConnection& self) {
@@ -1512,16 +1523,34 @@ int tcpconn_handle_write(const TcpConnection& self) {
 }
 
 // @unsafe - fires on_error callback + drives tcpconn_close (::shutdown).
-void tcpconn_handle_error(const TcpConnection& self) {
-    if (self.closed_.get()) return;
+#if RUSTYCPP_RUST
+fn tcpconn_handle_error(conn: &TcpConnection) {
+    if conn.closed_.get() {
+        return;
+    }
     {
-        auto guard = self.on_error_.lock().unwrap();
-        if (*guard) {
-            (*guard)(ChannelError::Internal, "epoll/poll signaled error");
+        let mut guard = conn.on_error_.lock().unwrap();
+        if *guard {
+            (*guard)(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
-    tcpconn_close(self);  // Idempotent; fires on_closed.
+    tcpconn_close(conn);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_error version=1 rust_sha256=5df98346f620c114fb5dbdaca8d90b11ce46b3e4b9772d4c81efc9f5017faa3b*/
+void tcpconn_handle_error(const TcpConnection& conn) {
+    if (conn.closed_.get()) {
+        return;
+    }
+    {
+        auto guard = conn.on_error_.lock().unwrap();
+        if (rusty::detail::deref_if_pointer_like(guard)) {
+            (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "epoll/poll signaled error");
+        }
+    }
+    tcpconn_close(conn);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.handle_error*/
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1583,16 +1612,30 @@ ChannelError tcpconn_drain_outbound_locked(
 }
 
 // @unsafe - fires the on_closed callback (once) under the spinlock.
-void tcpconn_deliver_on_closed_locked(const TcpConnection& self, ChannelError reason) {
-    if (self.on_closed_fired_.get()) {
+#if RUSTYCPP_RUST
+fn tcpconn_deliver_on_closed_locked(conn: &TcpConnection, reason: ChannelError) {
+    if conn.on_closed_fired_.get() {
         return;
     }
-    self.on_closed_fired_.set(true);
-    auto guard = self.on_closed_.lock().unwrap();
-    if (*guard) {
+    conn.on_closed_fired_.set(true);
+    let mut guard = conn.on_closed_.lock().unwrap();
+    if *guard {
         (*guard)(reason);
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.deliver_closed version=1 rust_sha256=2699de9cf591b5f113430eedd6805fb1b46f7d89bfa480ad8e10eaab84216aee*/
+void tcpconn_deliver_on_closed_locked(const TcpConnection& conn, ChannelError reason) {
+    if (conn.on_closed_fired_.get()) {
+        return;
+    }
+    conn.on_closed_fired_.set(true);
+    auto guard = conn.on_closed_.lock().unwrap();
+    if (rusty::detail::deref_if_pointer_like(guard)) {
+        (rusty::detail::deref_if_pointer_like(guard))(std::move(reason));
+    }
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.deliver_closed*/
 
 // @safe - pure errno -> ChannelError mapping.
 // Authored as inline Rust DSL (if-chain per the clientconn_map_system_error
@@ -1647,6 +1690,10 @@ namespace {
 // boundary where `rusty::net::*` operations return Result<T,io::Error>
 // and we need to surface the failure as a ChannelError on the
 // listener / connection API.
+// KERNEL by probe (arc cycle 9): foreign NESTED enum paths
+// (rusty::io::Error::Kind::X) in DSL comparison position get the
+// variant-call lowering (X() — invalid); only same-file DSL enums
+// compare cleanly. This mapper therefore stays hand-written C++.
 ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
     switch (kind) {
         case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
