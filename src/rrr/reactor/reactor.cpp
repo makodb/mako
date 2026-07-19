@@ -3597,6 +3597,14 @@ void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll) {
     poll_mode = poll->poll_mode();
   }
 
+  // The pollable can close between CmdAddPollable being enqueued and
+  // processed (teardown racing an accept/connect registration). Its fd
+  // is then -1 and registering would abort inside Epoll::Add (EBADF
+  // verify). A closed pollable can never produce events — drop it.
+  if (fd < 0) {
+    return;
+  }
+
   // Check if already exists
   if (self.fd_to_pollable_.contains_key(fd)) {
     return;
@@ -3607,7 +3615,14 @@ void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll) {
   self.mode_.insert(fd, poll_mode);
 
   // @unsafe { Epoll::Add is not borrow-checked }
-  { self.poll_.Add(fd, poll_mode); }
+  // Add fails (-1) when the fd closed between the registration request
+  // and here (EBADF teardown race) — drop the dead pollable again.
+  {
+    if (self.poll_.Add(fd, poll_mode) != 0) {
+      self.fd_to_pollable_.remove(fd);
+      self.mode_.remove(fd);
+    }
+  }
 }
 
 // @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.

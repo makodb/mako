@@ -159,6 +159,13 @@ inline int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode) {
         (void)epoll_ctl(poll_fd, EPOLL_CTL_DEL, fd, nullptr);
         result = epoll_ctl(poll_fd, EPOLL_CTL_ADD, fd, &ev);
     }
+    if (result != 0 && errno == EBADF) {
+        // The fd was closed between the registration request and this
+        // epoll_ctl (teardown racing an accept/connect registration).
+        // A closed fd can never produce events — report failure so the
+        // caller can drop the pollable instead of aborting the process.
+        return -1;
+    }
     verify(result == 0);
 #endif
     return 0;
