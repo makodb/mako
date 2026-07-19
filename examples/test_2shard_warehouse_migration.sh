@@ -196,6 +196,12 @@ declare -A MIG_EXPECT=([customer]=30000 [warehouse]=1 [district]=10
 # retry while a structural one repeats.
 run_migration() {
     local t="$1" src="$2" dst="$3" key="$4"
+    # Optional 5th arg: minimum rows the bulk copy must report. Defaults to
+    # the table's forward expectation (dst starts EMPTY, rows must move).
+    # The RETURN leg passes 0: the destination retained its rows behind the
+    # moved-fence, so the mirror legitimately writes ~0 diffs -- there the
+    # checksum-gated commit (ok=1) is the correctness signal, not the count.
+    local min="${5:-${MIG_EXPECT[$t]}}"
     local spec="wh:${MIG_WH}:${t}"
     mig_ok[$key]=0
     local attempt out rc moved
@@ -208,7 +214,7 @@ run_migration() {
         # moved is a MINIMUM: loaders add secondary rows (e.g. customer
         # keeps balance/data keys in the same index), so >= base count.
         moved=$(echo "$out" | sed -n 's/.*ok=1 moved=\([0-9]*\).*/\1/p')
-        if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "${MIG_EXPECT[$t]}" ]; then
+        if [ "$rc" -eq 0 ] && [ -n "$moved" ] && [ "$moved" -ge "$min" ]; then
             mig_ok[$key]=1
             mig_out[$key]="moved=${moved} (attempt ${attempt})"
             return 0
@@ -275,7 +281,7 @@ else
         echo "Return leg: migrating warehouse ${MIG_WH} back 0 -> 1"
         sleep 2   # let post-cutover traffic settle on the new owner first
         for t in "${MIG_TABLES_BACK[@]}"; do
-            run_migration "$t" 0 1 "back:${t}"
+            run_migration "$t" 0 1 "back:${t}" 0
         done
     fi
 fi
@@ -379,7 +385,7 @@ done
 for t in "${MIG_TABLES_BACK[@]}"; do
     k="back:${t}"
     if [ "${mig_ok[$k]:-0}" -eq 1 ]; then
-        echo "  ✓ ${k}: committed (${mig_out[$k]}, expected >= ${MIG_EXPECT[$t]})"
+        echo "  ✓ ${k}: committed (${mig_out[$k]}, checksum-gated; count not required on return)"
     else
         echo "  ✗ ${k}: failed: ${mig_out[$k]:-not fired}"
         failed=1
