@@ -4,6 +4,7 @@ module;
 #include <rusty/cell.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/slice.hpp>
+#include <rusty/os/fd.hpp>
 
 #include <unistd.h>
 #include <strings.h>
@@ -29,10 +30,11 @@ import rrr.debugging;
 // kqueue/epoll poll fd. Epoll is authored as an inline-rust DSL struct
 // (impl Drop closes the fd; a `rusty::Cell<bool>` field makes it
 // move-only so the fd is never double-closed). Every kqueue/epoll
-// syscall (kevent, epoll_create/ctl/wait, ::close) carries a `#ifdef
+// syscall (kevent, epoll_create/ctl/wait) carries a `#ifdef
 // USE_KQUEUE` platform split that the DSL can't express inline, so the
 // syscall bodies live in `// @unsafe` free functions (epoll_open /
-// epoll_close / epoll_*_impl) that the DSL methods delegate to.
+// epoll_*_impl) that the DSL methods delegate to; the close is the
+// OwnedFd member's RAII drop.
 export namespace rrr {
 using std::shared_ptr;
 
@@ -118,27 +120,6 @@ inline int32_t epoll_open() {
     return fd;
 }
 
-// The close(2) syscall on the owned poll fd (the Drop body), authored
-// in the DSL as an expression-shaped unsafe{} libc call.
-#if RUSTYCPP_RUST
-fn epoll_close(poll_fd: i32) {
-    if poll_fd != -1 {
-        unsafe { close(poll_fd); }
-    }
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=epoll.close version=1 rust_sha256=9ee8fdfa7e86efa065119d03db0e329f96c1891948c12d880931baaf07f58f93*/
-void epoll_close(int32_t poll_fd);
-
-void epoll_close(int32_t poll_fd) {
-    if (rusty::detail::deref_if_pointer_like(poll_fd) != -1) {
-        // @unsafe
-        {
-            close(std::move(poll_fd));
-        }
-    }
-}
-/*RUSTYCPP:GEN-END id=epoll.close*/
 
 // @unsafe - kevent / epoll_ctl(ADD) plumbing with bzero/memset and EEXIST retry.
 inline int epoll_add_impl(int32_t poll_fd, int fd, int poll_mode) {
@@ -314,10 +295,9 @@ inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
 
 // `Epoll` — owns the kqueue/epoll poll fd. Authored as inline-rust DSL: the
 // `#if RUSTYCPP_RUST` block is the source of truth; the transpiler regenerates
-// the `RUSTYCPP:GEN-BEGIN ... END` C++ below it. `impl Drop` closes the fd; the
-// move ctor's `_rusty_forgotten` flag subsumes the old `-1` sentinel and
-// prevents a double close. A `rusty::Cell<bool>` field (`owned_`) forces
-// copy-`=delete` — load-bearing, since copying the fd would double-close. The
+// the `RUSTYCPP:GEN-BEGIN ... END` C++ below it. The poll fd is a
+// std-faithful rusty::os::fd::OwnedFd — RAII close on drop, move-only —
+// which subsumes the former impl Drop and Cell<bool> copy marker. The
 // methods delegate to the `@unsafe` syscall free functions above (their
 // `#ifdef USE_KQUEUE` bodies aren't DSL-expressible). `Wait<F>` regenerates as
 // a real C++ template member. (Dropped vs the old class: the unused
@@ -327,63 +307,41 @@ inline void epoll_wait_impl(int32_t poll_fd, ReadyHandler on_ready) {
 // @safe - see comment above.
 #if RUSTYCPP_RUST
 struct Epoll {
-    poll_fd_: i32,
-    owned_: rusty::Cell<bool>,
+    // std-faithful RAII fd (rusty::os::fd::OwnedFd, mirroring Rust's
+    // std::os::fd::OwnedFd): closes on drop, move-only — this subsumes
+    // both the old impl Drop (epoll_close) and the Cell<bool> copy
+    // marker.
+    poll_fd_: rusty::os::fd::OwnedFd,
 }
 
 impl Epoll {
     // Allocates the poll fd up front (matches the old default ctor).
     #[cpp_ctor]
     fn new() -> Epoll {
-        Epoll { poll_fd_: epoll_open(), owned_: rusty::Cell::new(true) }
+        Epoll { poll_fd_: rusty::os::fd::OwnedFd::from_raw_fd(epoll_open()) }
     }
     fn fd(&self) -> i32 {
-        self.poll_fd_
+        self.poll_fd_.as_raw_fd()
     }
     fn Add(&mut self, fd: i32, poll_mode: i32) -> i32 {
-        epoll_add_impl(self.poll_fd_, fd, poll_mode)
+        epoll_add_impl(self.poll_fd_.as_raw_fd(), fd, poll_mode)
     }
     fn Remove(&mut self, fd: i32) -> i32 {
-        epoll_remove_impl(self.poll_fd_, fd)
+        epoll_remove_impl(self.poll_fd_.as_raw_fd(), fd)
     }
     fn Update(&mut self, fd: i32, new_mode: i32, old_mode: i32) -> i32 {
-        epoll_update_impl(self.poll_fd_, fd, new_mode, old_mode)
+        epoll_update_impl(self.poll_fd_.as_raw_fd(), fd, new_mode, old_mode)
     }
     fn Wait<F>(&mut self, on_ready: F) {
-        epoll_wait_impl(self.poll_fd_, on_ready);
-    }
-}
-
-impl Drop for Epoll {
-    fn drop(&mut self) {
-        epoll_close(self.poll_fd_);
+        epoll_wait_impl(self.poll_fd_.as_raw_fd(), on_ready);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.epoll version=1 rust_sha256=4786d660ca962a0de6163657556db003ddc3702a7aaf0b96a09aba905dc01ec4*/
+/*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.epoll version=1 rust_sha256=f4b6bc3a41813a441bf1df8473e6f1e0303aad2ac21c123b2caf993014ad61ac*/
 struct Epoll;
 
 struct Epoll {
-    int32_t poll_fd_;
-    rusty::Cell<bool> owned_;
-    mutable bool _rusty_forgotten = false;
-    Epoll(int32_t poll_fd__init, rusty::Cell<bool> owned__init) : poll_fd_(std::move(poll_fd__init)), owned_(std::move(owned__init)) {}
-    Epoll(const Epoll&) = delete;
-    Epoll(Epoll&& other) noexcept : poll_fd_(std::move(other.poll_fd_)), owned_(std::move(other.owned_)) {
-        this->_rusty_forgotten = other._rusty_forgotten;
-        other._rusty_forgotten = true;
-    }
-    Epoll& operator=(const Epoll&) = delete;
-    Epoll& operator=(Epoll&& other) noexcept {
-        if (this == &other) {
-            return *this;
-        }
-        this->~Epoll();
-        new (this) Epoll(std::move(other));
-        return *this;
-    }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
-
+    rusty::os::fd::OwnedFd poll_fd_;
 
     Epoll();
     int32_t fd() const;
@@ -392,39 +350,32 @@ struct Epoll {
     int32_t Update(int32_t fd, int32_t new_mode, int32_t old_mode);
     template<typename F>
     void Wait(F on_ready);
-    ~Epoll() noexcept(false);
 };
 
 
 Epoll::Epoll()
-    : poll_fd_(epoll_open())
-    , owned_(rusty::Cell<bool>::new_(true))
+    : poll_fd_(rusty::os::fd::OwnedFd::from_raw_fd(epoll_open()))
 {}
 
 int32_t Epoll::fd() const {
-    return this->poll_fd_;
+    return this->poll_fd_.as_raw_fd();
 }
 
 int32_t Epoll::Add(int32_t fd, int32_t poll_mode) {
-    return epoll_add_impl(this->poll_fd_, std::move(fd), std::move(poll_mode));
+    return epoll_add_impl(this->poll_fd_.as_raw_fd(), std::move(fd), std::move(poll_mode));
 }
 
 int32_t Epoll::Remove(int32_t fd) {
-    return epoll_remove_impl(this->poll_fd_, std::move(fd));
+    return epoll_remove_impl(this->poll_fd_.as_raw_fd(), std::move(fd));
 }
 
 int32_t Epoll::Update(int32_t fd, int32_t new_mode, int32_t old_mode) {
-    return epoll_update_impl(this->poll_fd_, std::move(fd), std::move(new_mode), std::move(old_mode));
+    return epoll_update_impl(this->poll_fd_.as_raw_fd(), std::move(fd), std::move(new_mode), std::move(old_mode));
 }
 
 template<typename F>
 void Epoll::Wait(F on_ready) {
-    epoll_wait_impl(this->poll_fd_, std::move(on_ready));
-}
-
-Epoll::~Epoll() noexcept(false) {
-    if (_rusty_forgotten) { return; }
-    epoll_close(this->poll_fd_);
+    epoll_wait_impl(this->poll_fd_.as_raw_fd(), std::move(on_ready));
 }
 /*RUSTYCPP:GEN-END id=epoll_wrapper.epoll*/
 
