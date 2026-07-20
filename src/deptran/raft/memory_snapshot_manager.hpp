@@ -456,6 +456,279 @@ class MemorySnapshotReader : public SnapshotReader {
   MemorySnapshotReaderCore core_;
 };
 
+// @unsafe - returns a writer borrowing manager-owned state.
+inline std::unique_ptr<SnapshotWriter> memory_snapshot_manager_begin_snapshot_cpp(
+    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    std::mutex* mtx, slotid_t last_index, ballot_t last_term) {
+  return std::make_unique<MemorySnapshotWriter>(
+      payload, meta, has_snapshot, mtx, last_index, last_term);
+}
+
+// @unsafe - copies caller-owned bytes into manager state.
+inline bool memory_snapshot_manager_take_snapshot_cpp(
+    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    slotid_t last_index, ballot_t last_term, const char* data, size_t size) {
+  payload->assign(data, size);
+  *meta = memory_snapshot_metadata(last_index, last_term, size);
+  *has_snapshot = true;
+  return true;
+}
+
+// @safe - returns a reader owning copies of the in-memory snapshot state.
+inline std::unique_ptr<SnapshotReader> memory_snapshot_manager_begin_load_cpp(
+    const std::string* payload, const SnapshotMetadata* meta,
+    bool has_snapshot) {
+  if (!has_snapshot) return nullptr;
+  return std::make_unique<MemorySnapshotReader>(*payload, *meta);
+}
+
+// @unsafe - writes latest snapshot into caller-owned output pointers.
+inline bool memory_snapshot_manager_load_latest_cpp(
+    const std::string* payload, const SnapshotMetadata* meta, bool has_snapshot,
+    SnapshotMetadata* metadata_out, std::string* data_out) {
+  if (!has_snapshot) return false;
+  if (metadata_out) *metadata_out = *meta;
+  if (data_out) *data_out = *payload;
+  return true;
+}
+
+// @safe
+inline rusty::Option<SnapshotMetadata> memory_snapshot_manager_latest_cpp(
+    const SnapshotMetadata* meta, bool has_snapshot) {
+  if (!has_snapshot) return rusty::None;
+  return rusty::Some(*meta);
+}
+
+// @safe
+inline std::vector<SnapshotMetadata> memory_snapshot_manager_list_cpp(
+    const SnapshotMetadata* meta, bool has_snapshot) {
+  if (!has_snapshot) return {};
+  return {*meta};
+}
+
+// @safe
+inline bool memory_snapshot_manager_has_at_or_after_cpp(
+    const SnapshotMetadata* meta, bool has_snapshot, slotid_t min_index) {
+  return has_snapshot && meta->last_included_index >= min_index;
+}
+
+// @safe - single-snapshot manager prunes the current snapshot if it is old.
+inline size_t memory_snapshot_manager_prune_cpp(
+    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot,
+    slotid_t keep_after_index) {
+  if (*has_snapshot && meta->last_included_index < keep_after_index) {
+    *has_snapshot = false;
+    payload->clear();
+    *meta = SnapshotMetadata{};
+    return 1;
+  }
+  return 0;
+}
+
+// @safe
+inline size_t memory_snapshot_manager_delete_all_cpp(
+    std::string* payload, SnapshotMetadata* meta, bool* has_snapshot) {
+  size_t n = *has_snapshot ? 1 : 0;
+  *has_snapshot = false;
+  payload->clear();
+  *meta = SnapshotMetadata{};
+  return n;
+}
+
+// @lifetime: (&'a) -> &'a
+inline const std::string& memory_snapshot_manager_storage_path_cpp(
+    const std::string* storage_path) {
+  return *storage_path;
+}
+
+#if RUSTYCPP_RUST
+pub struct MemorySnapshotManagerCore {
+    has_snapshot_: bool,
+    meta_: SnapshotMetadata,
+    payload_: std::string,
+    storage_path_: std::string,
+}
+
+impl MemorySnapshotManagerCore {
+    // @safe
+    #[cpp_ctor]
+    fn new() -> MemorySnapshotManagerCore {
+        MemorySnapshotManagerCore {
+            has_snapshot_: false,
+            meta_: SnapshotMetadata {},
+            payload_: std::string(),
+            storage_path_: std::string("<memory>"),
+        }
+    }
+
+    // @unsafe - returns a writer borrowing manager-owned state.
+    fn BeginSnapshot(&mut self, mtx: *mut std::mutex, last_index: u64,
+                     last_term: i64) -> std::unique_ptr<SnapshotWriter> {
+        unsafe {
+            memory_snapshot_manager_begin_snapshot_cpp(&mut self.payload_,
+                                                       &mut self.meta_,
+                                                       &mut self.has_snapshot_,
+                                                       mtx,
+                                                       last_index,
+                                                       last_term)
+        }
+    }
+
+    // @unsafe - reads from raw pointer.
+    fn TakeSnapshot(&mut self, last_index: u64, last_term: i64,
+                    data: *const c_char, size: usize) -> bool {
+        unsafe {
+            memory_snapshot_manager_take_snapshot_cpp(&mut self.payload_,
+                                                     &mut self.meta_,
+                                                     &mut self.has_snapshot_,
+                                                     last_index,
+                                                     last_term,
+                                                     data,
+                                                     size)
+        }
+    }
+
+    // @safe - reader owns copied state.
+    fn BeginLoad(&self, _metadata: &SnapshotMetadata)
+        -> std::unique_ptr<SnapshotReader> {
+        memory_snapshot_manager_begin_load_cpp(&self.payload_,
+                                               &self.meta_,
+                                               self.has_snapshot_)
+    }
+
+    // @unsafe - writes to caller-owned output pointers.
+    fn LoadLatestSnapshot(&self, metadata_out: *mut SnapshotMetadata,
+                          data_out: *mut std::string) -> bool {
+        unsafe {
+            memory_snapshot_manager_load_latest_cpp(&self.payload_,
+                                                   &self.meta_,
+                                                   self.has_snapshot_,
+                                                   metadata_out,
+                                                   data_out)
+        }
+    }
+
+    // @safe
+    fn GetLatestSnapshot(&self) -> rusty::Option<SnapshotMetadata> {
+        memory_snapshot_manager_latest_cpp(&self.meta_, self.has_snapshot_)
+    }
+
+    // @safe
+    fn ListSnapshots(&self) -> std::vector<SnapshotMetadata> {
+        memory_snapshot_manager_list_cpp(&self.meta_, self.has_snapshot_)
+    }
+
+    // @safe
+    fn HasSnapshotAtOrAfter(&self, min_index: u64) -> bool {
+        memory_snapshot_manager_has_at_or_after_cpp(&self.meta_,
+                                                   self.has_snapshot_,
+                                                   min_index)
+    }
+
+    // @safe
+    fn PruneSnapshots(&mut self, keep_after_index: u64) -> usize {
+        memory_snapshot_manager_prune_cpp(&mut self.payload_,
+                                          &mut self.meta_,
+                                          &mut self.has_snapshot_,
+                                          keep_after_index)
+    }
+
+    // @safe
+    fn DeleteAllSnapshots(&mut self) -> usize {
+        memory_snapshot_manager_delete_all_cpp(&mut self.payload_,
+                                               &mut self.meta_,
+                                               &mut self.has_snapshot_)
+    }
+
+    // @lifetime: (&'a) -> &'a
+    fn GetStoragePath(&self) -> &std::string {
+        unsafe { memory_snapshot_manager_storage_path_cpp(&self.storage_path_) }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.manager_core version=1 rust_sha256=db0be90af9fdaf81d0c08596db920809063328070fac3781b9a33bbc1e410b24*/
+struct MemorySnapshotManagerCore;
+
+struct MemorySnapshotManagerCore {
+    bool has_snapshot_;
+    SnapshotMetadata meta_;
+    std::string payload_;
+    std::string storage_path_;
+
+    MemorySnapshotManagerCore();
+    std::unique_ptr<SnapshotWriter> BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term);
+    bool TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size);
+    std::unique_ptr<SnapshotReader> BeginLoad(const SnapshotMetadata& _metadata) const;
+    bool LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const;
+    rusty::Option<SnapshotMetadata> GetLatestSnapshot() const;
+    std::vector<SnapshotMetadata> ListSnapshots() const;
+    bool HasSnapshotAtOrAfter(uint64_t min_index) const;
+    size_t PruneSnapshots(uint64_t keep_after_index);
+    size_t DeleteAllSnapshots();
+    const std::string& GetStoragePath() const;
+};
+
+
+inline MemorySnapshotManagerCore::MemorySnapshotManagerCore()
+    : has_snapshot_(false)
+    , meta_(SnapshotMetadata{})
+    , payload_(std::string())
+    , storage_path_(std::string("<memory>"))
+{}
+
+inline std::unique_ptr<SnapshotWriter> MemorySnapshotManagerCore::BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term) {
+    // @unsafe
+    {
+        return memory_snapshot_manager_begin_snapshot_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, mtx, std::move(last_index), std::move(last_term));
+    }
+}
+
+inline bool MemorySnapshotManagerCore::TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) {
+    // @unsafe
+    {
+        return memory_snapshot_manager_take_snapshot_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, std::move(last_index), std::move(last_term), data, std::move(size));
+    }
+}
+
+inline std::unique_ptr<SnapshotReader> MemorySnapshotManagerCore::BeginLoad(const SnapshotMetadata& _metadata) const {
+    return memory_snapshot_manager_begin_load_cpp(&this->payload_, &this->meta_, this->has_snapshot_);
+}
+
+inline bool MemorySnapshotManagerCore::LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const {
+    // @unsafe
+    {
+        return memory_snapshot_manager_load_latest_cpp(&this->payload_, &this->meta_, this->has_snapshot_, metadata_out, data_out);
+    }
+}
+
+inline rusty::Option<SnapshotMetadata> MemorySnapshotManagerCore::GetLatestSnapshot() const {
+    return memory_snapshot_manager_latest_cpp(&this->meta_, this->has_snapshot_);
+}
+
+inline std::vector<SnapshotMetadata> MemorySnapshotManagerCore::ListSnapshots() const {
+    return memory_snapshot_manager_list_cpp(&this->meta_, this->has_snapshot_);
+}
+
+inline bool MemorySnapshotManagerCore::HasSnapshotAtOrAfter(uint64_t min_index) const {
+    return memory_snapshot_manager_has_at_or_after_cpp(&this->meta_, this->has_snapshot_, std::move(min_index));
+}
+
+inline size_t MemorySnapshotManagerCore::PruneSnapshots(uint64_t keep_after_index) {
+    return memory_snapshot_manager_prune_cpp(&this->payload_, &this->meta_, &this->has_snapshot_, std::move(keep_after_index));
+}
+
+inline size_t MemorySnapshotManagerCore::DeleteAllSnapshots() {
+    return memory_snapshot_manager_delete_all_cpp(&this->payload_, &this->meta_, &this->has_snapshot_);
+}
+
+inline const std::string& MemorySnapshotManagerCore::GetStoragePath() const {
+    // @unsafe
+    {
+        return memory_snapshot_manager_storage_path_cpp(&this->storage_path_);
+    }
+}
+/*RUSTYCPP:GEN-END id=memory_snapshot_manager.manager_core*/
+
 class MemorySnapshotManager : public SnapshotManager {
  public:
   // @safe
@@ -465,91 +738,68 @@ class MemorySnapshotManager : public SnapshotManager {
   // metadata, flag, and mutex. Do not let the writer outlive the manager.
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
       slotid_t last_index, ballot_t last_term) override {
-    return std::make_unique<MemorySnapshotWriter>(
-        &payload_, &meta_, &has_snapshot_, &mtx_, last_index, last_term);
+    return core_.BeginSnapshot(&mtx_, last_index, last_term);
   }
 
   // @unsafe - memcpy into internal buffer under mutex
   bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
                     const char* data, size_t size) override {
     std::lock_guard<std::mutex> lk(mtx_);
-    payload_.assign(data, size);
-    meta_ = memory_snapshot_metadata(last_index, last_term, size);
-    has_snapshot_             = true;
-    return true;
+    return core_.TakeSnapshot(last_index, last_term, data, size);
   }
 
   // @safe - returned reader owns a copy of the in-memory snapshot payload.
   std::unique_ptr<SnapshotReader> BeginLoad(
-      const SnapshotMetadata& /*metadata*/) override {
+      const SnapshotMetadata& metadata) override {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (!has_snapshot_) return nullptr;
-    return std::make_unique<MemorySnapshotReader>(payload_, meta_);
+    return core_.BeginLoad(metadata);
   }
 
   // @unsafe - writes to caller-owned pointers under mutex
   bool LoadLatestSnapshot(SnapshotMetadata* metadata_out,
                           std::string* data_out) override {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (!has_snapshot_) return false;
-    if (metadata_out) *metadata_out = meta_;
-    if (data_out)     *data_out     = payload_;
-    return true;
+    return core_.LoadLatestSnapshot(metadata_out, data_out);
   }
 
   // @safe
   rusty::Option<SnapshotMetadata> GetLatestSnapshot() const override {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (!has_snapshot_) return rusty::None;
-    return rusty::Some(meta_);
+    return core_.GetLatestSnapshot();
   }
 
   // @safe
   std::vector<SnapshotMetadata> ListSnapshots() const override {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (!has_snapshot_) return {};
-    return {meta_};
+    return core_.ListSnapshots();
   }
 
   // @safe
   bool HasSnapshotAtOrAfter(slotid_t min_index) const override {
     std::lock_guard<std::mutex> lk(mtx_);
-    return has_snapshot_ && meta_.last_included_index >= min_index;
+    return core_.HasSnapshotAtOrAfter(min_index);
   }
 
   // @safe - single-snapshot manager never prunes below current
   size_t PruneSnapshots(slotid_t keep_after_index) override {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (has_snapshot_ && meta_.last_included_index < keep_after_index) {
-      has_snapshot_ = false;
-      payload_.clear();
-      meta_ = SnapshotMetadata{};
-      return 1;
-    }
-    return 0;
+    return core_.PruneSnapshots(keep_after_index);
   }
 
   // @safe
   size_t DeleteAllSnapshots() override {
     std::lock_guard<std::mutex> lk(mtx_);
-    size_t n = has_snapshot_ ? 1 : 0;
-    has_snapshot_ = false;
-    payload_.clear();
-    meta_ = SnapshotMetadata{};
-    return n;
+    return core_.DeleteAllSnapshots();
   }
 
   // @lifetime: (&'a) -> &'a
   const std::string& GetStoragePath() const override {
-    return storage_path_;
+    return core_.GetStoragePath();
   }
 
  private:
-  mutable std::mutex     mtx_;
-  bool                   has_snapshot_{false};
-  SnapshotMetadata       meta_{};
-  std::string            payload_{};
-  std::string            storage_path_{"<memory>"};
+  mutable std::mutex mtx_;
+  MemorySnapshotManagerCore core_;
 };
 
 }  // namespace raft
