@@ -1233,9 +1233,13 @@ constexpr size_t kRecvScratchBytes = static_cast<size_t>(64) * static_cast<size_
 
 // Internal helpers, forward-declared so the public free fns below can
 // call them before their definitions (mutual recursion across the set).
-ChannelError tcpconn_drain_outbound_locked(const TcpConnection& self,
-                                           std::vector<std::uint8_t>& buf);
-void         tcpconn_deliver_on_closed_locked(const TcpConnection& self, ChannelError reason);
+// Outbound byte buffer alias so the DSL can spell the parameter type.
+using TcpOutBuf = std::vector<std::uint8_t>;
+ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf);
+int64_t      tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t offset);
+void         tcpconn_trim_sent(TcpOutBuf& buf, size_t offset);
+void         tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset);
+void         tcpconn_deliver_on_closed_locked(const TcpConnection& conn, ChannelError reason);
 ChannelError tcpconn_errno_to_channel_error(int err);
 
 // @unsafe - encodes into the outbound buffer (raw payload pointer) and
@@ -1502,41 +1506,71 @@ bool tcpconn_handle_read(const TcpConnection& self) {
     return any_progress;
 }
 
-// @unsafe - drives tcpconn_drain_outbound_locked (which is @unsafe for
-// raw `uint8_t*` arithmetic + send syscall).
-int tcpconn_handle_write(const TcpConnection& self) {
-    if (self.closed_.get()) return PollMode::NO_CHANGE;
-
-    auto guard = self.outbound_.lock().unwrap();
-    auto& buf = *guard;
-    if (buf.empty()) {
+// Write-readiness: drain what the kernel will take, keep or drop the
+// WRITE interest, and run the hard-error teardown — all DSL; the send
+// syscall and the erase surgery live in the kernels below.
+#if RUSTYCPP_RUST
+fn tcpconn_handle_write(conn: &TcpConnection) -> i32 {
+    if conn.closed_.get() {
+        return PollMode::NO_CHANGE;
+    }
+    let mut guard = conn.outbound_.lock().unwrap();
+    if (*guard).empty() {
         return PollMode::READ;
     }
-
-    const ChannelError result = tcpconn_drain_outbound_locked(self, buf);
-
-    if (result == ChannelError::None) {
-        if (buf.empty()) {
+    let result = tcpconn_drain_outbound_locked(conn, &mut *guard);
+    if result == ChannelError::None {
+        if (*guard).empty() {
             return PollMode::READ;
         }
         return PollMode::NO_CHANGE;
     }
-    if (result == ChannelError::WouldBlock) {
+    if result == ChannelError::WouldBlock {
         return PollMode::NO_CHANGE;
     }
-    // Hard transport error.
     {
-        auto err_guard = self.on_error_.lock().unwrap();
-        if (*err_guard) {
-            (*err_guard)(result, "outbound write failed");
+        let mut eg = conn.on_error_.lock().unwrap();
+        if *eg {
+            (*eg)(result, "outbound write failed");
         }
     }
-    self.closed_.set(true);
-    // Same documented localized const_cast as tcpconn_close's teardown.
-    const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
-    tcpconn_deliver_on_closed_locked(self, result);
-    return PollMode::READ;  // Stop watching writes; closed.
+    conn.closed_.set(true);
+    tcpconn_reset_fd(conn);
+    tcpconn_deliver_on_closed_locked(conn, result);
+    PollMode::READ
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_write version=1 rust_sha256=d62ba418ca1472463bd8865b4c52d0479af7c5bb6213342601067267ca6672a4*/
+int32_t tcpconn_handle_write(const TcpConnection& conn) {
+    if (conn.closed_.get()) {
+        return PollMode::NO_CHANGE;
+    }
+    auto guard = conn.outbound_.lock().unwrap();
+    if (((rusty::detail::deref_if_pointer_like(guard))).empty()) {
+        return PollMode::READ;
+    }
+    const auto result = tcpconn_drain_outbound_locked(conn, rusty::detail::deref_if_pointer_like(guard));
+    if (rusty::detail::deref_if_pointer_like(result) == rusty::detail::deref_if_pointer_like(ChannelError::None)) {
+        if (((rusty::detail::deref_if_pointer_like(guard))).empty()) {
+            return PollMode::READ;
+        }
+        return PollMode::NO_CHANGE;
+    }
+    if (rusty::detail::deref_if_pointer_like(result) == rusty::detail::deref_if_pointer_like(ChannelError::WouldBlock)) {
+        return PollMode::NO_CHANGE;
+    }
+    {
+        auto eg = conn.on_error_.lock().unwrap();
+        if (rusty::detail::deref_if_pointer_like(eg)) {
+            (rusty::detail::deref_if_pointer_like(eg))(std::move(result), "outbound write failed");
+        }
+    }
+    conn.closed_.set(true);
+    tcpconn_reset_fd(conn);
+    tcpconn_deliver_on_closed_locked(conn, std::move(result));
+    return PollMode::READ;
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.handle_write*/
 
 // @unsafe - fires on_error callback + drives tcpconn_close (::shutdown).
 #if RUSTYCPP_RUST
@@ -1572,59 +1606,95 @@ void tcpconn_handle_error(const TcpConnection& conn) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// @unsafe - raw `uint8_t*` pointer arithmetic + send(2) syscall +
-// pointer dereference on the outbound buffer.
-ChannelError tcpconn_drain_outbound_locked(
-    const TcpConnection& self, std::vector<std::uint8_t>& buf) {
-
-    std::size_t offset = 0;
-    while (offset < buf.size()) {
-        const std::size_t remaining = buf.size() - offset;
-        // @unsafe — system call
-        ssize_t n = ::send(self.fd_.as_raw_fd(), buf.data() + offset, remaining, MSG_NOSIGNAL);
-        if (n > 0) {
-            offset += static_cast<std::size_t>(n);
-            if (static_cast<std::size_t>(n) < remaining) {
-                // Partial write — keep trying.
-                continue;
+// The outbound drain loop — partial-write accounting, EINTR retry
+// (flag-restructured: the DSL has no continue), EAGAIN backpressure,
+// hard-error cleanup — as DSL. Kernels: one send(2) with the raw
+// pointer arithmetic, two erase-surgery helpers.
+#if RUSTYCPP_RUST
+fn tcpconn_drain_outbound_locked(conn: &TcpConnection, buf: &mut TcpOutBuf) -> ChannelError {
+    let mut offset: usize = 0;
+    let mut blocked = false;
+    while !blocked && offset < buf.size() {
+        let n = tcpconn_send_bytes(conn, buf, offset);
+        if n > 0 {
+            offset += n as usize;
+        } else if n == 0 {
+            // send returning 0 with bytes remaining = transport reset.
+            return ChannelError_ConnectionReset();
+        } else {
+            let err: i32 = errno;
+            if err == EAGAIN || err == EWOULDBLOCK {
+                blocked = true;
+            } else if err == EINTR {
+                // retry — loop continues
+            } else {
+                // Hard error: drop what we couldn't send (dead anyway).
+                tcpconn_drop_after_error(buf, offset);
+                return tcpconn_errno_to_channel_error(err);
             }
-            continue;
         }
-        if (n == 0) {
-            // send returning 0 with non-zero `remaining` is treated as
-            // a transport reset.
-            return ChannelError::ConnectionReset;
-        }
-        const int err = errno;
-        if (err == EAGAIN || err == EWOULDBLOCK) {
-            break;  // Caller will retry on next handle_write.
-        }
-        if (err == EINTR) {
-            continue;
-        }
-        // Hard error. Drop the bytes we couldn't send (the connection
-        // is dead anyway).
-        if (offset > 0) {
-            buf.erase(buf.begin(),
-                      buf.begin() + static_cast<std::ptrdiff_t>(offset));
-        } else {
-            buf.clear();
-        }
-        return tcpconn_errno_to_channel_error(err);
     }
+    tcpconn_trim_sent(buf, offset);
+    if offset == 0 && !buf.empty() {
+        return ChannelError_WouldBlock();
+    }
+    ChannelError_None()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.drain version=1 rust_sha256=cae449183bab01ee3657973d3d74b941d0c81318c72ddd69ae75f1b2100ce612*/
+ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf) {
+    size_t offset = static_cast<size_t>(0);
+    auto blocked = false;
+    while (!blocked && (rusty::detail::deref_if_pointer_like(offset) < buf.size())) {
+        const auto n_self_ref_tmp = tcpconn_send_bytes(conn, buf, std::move(offset));
+        const auto n = std::move(n_self_ref_tmp);
+        if (rusty::detail::deref_if_pointer_like(n) > 0) {
+            offset += static_cast<size_t>(n);
+        } else if (rusty::detail::deref_if_pointer_like(n) == 0) {
+            return ChannelError_ConnectionReset();
+        } else {
+            const int32_t err = errno;
+            if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EAGAIN)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EWOULDBLOCK))) {
+                blocked = true;
+            } else if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EINTR)) {
+            } else {
+                tcpconn_drop_after_error(buf, std::move(offset));
+                return tcpconn_errno_to_channel_error(std::move(err));
+            }
+        }
+    }
+    tcpconn_trim_sent(buf, std::move(offset));
+    if ((rusty::detail::deref_if_pointer_like(offset) == static_cast<size_t>(0)) && !buf.empty()) {
+        return ChannelError_WouldBlock();
+    }
+    return ChannelError_None();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.drain*/
 
+// @unsafe - send(2) with raw pointer arithmetic into the buffer.
+int64_t tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t offset) {
+    return ::send(conn.fd_.as_raw_fd(), buf.data() + offset,
+                  buf.size() - offset, MSG_NOSIGNAL);
+}
+
+// @unsafe - iterator surgery: drop the sent prefix.
+void tcpconn_trim_sent(TcpOutBuf& buf, size_t offset) {
+    if (offset == 0) return;
+    if (offset == buf.size()) {
+        buf.clear();
+    } else {
+        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(offset));
+    }
+}
+
+// @unsafe - hard-error cleanup: drop the sent prefix, or everything
+// when nothing was sent (the connection is dead).
+void tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset) {
     if (offset > 0) {
-        if (offset == buf.size()) {
-            buf.clear();
-        } else {
-            buf.erase(buf.begin(),
-                      buf.begin() + static_cast<std::ptrdiff_t>(offset));
-        }
+        buf.erase(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(offset));
+    } else {
+        buf.clear();
     }
-    if (offset == 0 && !buf.empty()) {
-        return ChannelError::WouldBlock;
-    }
-    return ChannelError::None;
 }
 
 // @unsafe - fires the on_closed callback (once) under the spinlock.
