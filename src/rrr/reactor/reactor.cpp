@@ -3130,6 +3130,12 @@ bool Reactor::process_stackless_tasks() const {
  */
 // @safe - Creates and runs a fiber using safe helper functions
 rusty::Rc<Fiber>
+// KERNEL by verdict (reactor slice 2b): orchestration dominated by
+// Rc<Fiber> arrow-method calls (run/continue_/finished/status) where
+// the DSL's last-use move-insertion mis-handles the repeatedly-passed
+// Rc, plus Reactor being a hand-written class (a DSL `self` param
+// emits `this->` with no receiver). Converting would need per-call
+// clone-guards + a member-shim dance for zero borrow-check gain.
 Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
   // Step 1: Get or create a fiber
   auto fiber = get_or_create_fiber(std::move(func), file, line);
@@ -3176,6 +3182,10 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 }
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
+// KERNEL by verdict: first pass derefs shared_ptr<EventPollable> to
+// virtual-dispatch status()/wakeup_time()/is_ready() (arrow wall), and
+// extract_if/retain take rusty::Function predicates that themselves
+// cross the sp-> arrow — all-kernel body, no separable DSL policy.
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& ready_events) const {
   // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
   int64_t time_now = Time::now(true);
@@ -3362,6 +3372,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
 // uncounted alias that double-decrements the strong count on destruction and
 // frees a still-referenced fiber. We clone() internally where ownership is
 // actually needed.
+// KERNEL by verdict: dense RefCell borrow guards (named-guard binding
+// emits address-of-temporary) around Rc<Fiber> arrow calls; same walls
+// as create_run_fiber.
 void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
   // Save current running fiber for nesting support
   rusty::Option<rusty::Rc<Fiber>> old_fiber;
@@ -3943,12 +3956,27 @@ rusty::Arc<PollThread> pollthread_create() {
   return arc;
 }
 
-void pollthread_drop(const PollThread& self) {
-  pid_t tid = syscall(SYS_gettid);
-  Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", (int)tid);
-  self.shutdown();
-  Log_debug("[PollThread::~PollThread] Destructor complete");
+// The PollThread drop body, authored as inline Rust DSL: gettid via a
+// route-2 unsafe{} syscall (SYS_gettid is a macro identifier that
+// lowers as-is), int-arg Log_debug, and the shutdown() method call on
+// the by-ref PollThread (non-`self` param name so it emits pt.method,
+// not this->).
+#if RUSTYCPP_RUST
+fn pollthread_drop(pt: &PollThread) {
+    let tid: i64 = unsafe { syscall(SYS_gettid) };
+    Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", tid as i32);
+    pt.shutdown();
+    Log_debug("[PollThread::~PollThread] Destructor complete");
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=a3cda4e8dffa04471eb9883286fa2ee278bbe61448ff515b7e719f0ab6d9fbf1*/
+void pollthread_drop(const PollThread& pt) {
+    const int64_t tid = syscall(SYS_gettid);
+    Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", static_cast<int32_t>(tid));
+    pt.shutdown();
+    Log_debug("[PollThread::~PollThread] Destructor complete");
+}
+/*RUSTYCPP:GEN-END id=reactor.pollthread_drop*/
 
 void pollthread_shutdown(const PollThread& self) {
   pid_t main_tid = syscall(SYS_gettid);
