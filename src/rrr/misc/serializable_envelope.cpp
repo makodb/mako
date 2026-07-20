@@ -89,6 +89,11 @@ class SerializableEnvelope {
   }
 
   // -- Typed accessors ---------------------------------------------------
+  // INVARIANT: `inner_` is always holder-shaped — every construction
+  // path above and every SerializableRegistry factory wraps the payload
+  // in a SerializableSharedPtrHolder<T>; no proxy IS its payload
+  // directly. The accessors below rely on this: one holder downcast,
+  // no direct-SerializableBase fallback.
   // Recover the carried payload as a `T*`, or nullptr if the carried
   // type is not T (or the envelope is empty). Aliases the envelope-
   // owned T.
@@ -100,9 +105,6 @@ class SerializableEnvelope {
     if (!inner_) return nullptr;
     if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr.get();
-    }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<T*>(inner_.get())) return p;
     }
     return nullptr;
   }
@@ -116,19 +118,15 @@ class SerializableEnvelope {
     if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr.get();
     }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<const T*>(inner_.get())) return p;
-    }
     return nullptr;
   }
 
-  // Recover the carried payload as `shared_ptr<T>`.
-  //   * For `pack_aliased`-constructed envelopes: returns the original
-  //     shared_ptr<T> (refcount-shared with the caller's pointer).
-  //   * For `pack`-constructed envelopes: returns a `shared_ptr<T>`
-  //     with a no-op deleter — the pointer aliases the envelope-owned
-  //     T and the caller is responsible for keeping the envelope alive.
-  // @unsafe - dynamic_cast + raw `T*` lambda-deleter shared_ptr build.
+  // Recover the carried payload as `shared_ptr<T>` — the holder's
+  // refcount-shared pointer (for `pack_aliased` envelopes this is the
+  // caller's original shared_ptr<T>; for `pack` envelopes the
+  // envelope-owned copy). Always properly refcounted: the returned
+  // handle keeps the payload alive independent of the envelope.
+  // @unsafe - dynamic_cast through `inner_.get()`.
   template<typename T>
   std::shared_ptr<T> unpack_shared() {
     static_assert(TypeList::template contains<T>(),
@@ -137,16 +135,10 @@ class SerializableEnvelope {
     if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return h->ptr;
     }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<T*>(inner_.get())) {
-        // No-op deleter: caller responsibility for envelope lifetime.
-        return std::shared_ptr<T>(p, [](T*){});
-      }
-    }
     return nullptr;
   }
 
-  // @unsafe - dynamic_cast + raw `const T*` lambda-deleter shared_ptr build.
+  // @unsafe - dynamic_cast through `inner_.get()`.
   template<typename T>
   std::shared_ptr<const T> unpack_shared() const {
     static_assert(TypeList::template contains<T>(),
@@ -154,11 +146,6 @@ class SerializableEnvelope {
     if (!inner_) return nullptr;
     if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
       return std::const_pointer_cast<const T>(h->ptr);
-    }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<const T*>(inner_.get())) {
-        return std::shared_ptr<const T>(p, [](const T*){});
-      }
     }
     return nullptr;
   }

@@ -36,7 +36,6 @@ import rrr.debugging;
 // template below keeps an in-interface #ifdef (templates cannot move
 // to an implementation unit). The close is the OwnedFd RAII drop.
 export namespace rrr {
-using std::shared_ptr;
 
 namespace PollMode {
     inline constexpr int READ = 0x1;
