@@ -605,7 +605,7 @@ void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
   RccServer* sched = (RccServer*) dtxn_sched_;
   auto p = std::make_shared<RccGraph>();
   // graph reply rides directly as `AnyMessage`.
-  *p_md_graph = *rrr::AnyMessage::pack(p);
+  *p_md_graph = rrr::AnyMessage::pack(p);
   *res = sched->OnDispatch(cmd, output, p);
   defer.reply();
 }
@@ -682,9 +682,9 @@ void ClassicServiceImpl::JanusDispatch(const vector<SimpleCommand>& cmd,
     if (sp_graph->size() <= 1) {
       // graph reply rides directly as AnyMessage.
       *p_md_res_graph =
-          *rrr::AnyMessage::pack(std::make_shared<EmptyGraph>());
+          rrr::AnyMessage::pack(std::make_shared<EmptyGraph>());
     } else {
-      *p_md_res_graph = *rrr::AnyMessage::pack(sp_graph);
+      *p_md_res_graph = rrr::AnyMessage::pack(sp_graph);
     }
     verify(!p_md_res_graph->type_name_.empty());
     defer.reply();
@@ -766,7 +766,7 @@ void ClassicServiceImpl::JanusPreAccept(const cmdid_t& txnid,
                                         rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   auto ret_sp_graph = std::make_shared<RccGraph>();
-  *p_md_res_graph = *rrr::AnyMessage::pack(ret_sp_graph);
+  *p_md_res_graph = rrr::AnyMessage::pack(ret_sp_graph);
   auto sp_graph = md_graph.unpack<RccGraph>();
   verify(sp_graph);
   verify(ret_sp_graph);
@@ -783,7 +783,7 @@ void ClassicServiceImpl::JanusPreAcceptWoGraph(const cmdid_t& txnid,
                                                rrr::DeferredReply defer) {
 //  std::lock_guard<std::mutex> guard(mtx_);
   auto sp_ret_graph = std::make_shared<RccGraph>();
-  *res_graph = *rrr::AnyMessage::pack(sp_ret_graph);
+  *res_graph = rrr::AnyMessage::pack(sp_ret_graph);
   auto* p_sched = (SchedulerJanus*) dtxn_sched_;
   *res = p_sched->OnPreAccept(txnid, rank, cmds, nullptr, sp_ret_graph);
   defer.reply();

@@ -28,7 +28,6 @@ export namespace rrr {
 
 
 struct AnyMessage;
-using AnyMessageSp = std::shared_ptr<AnyMessage>;
 
 // Hand-written backing free fns for the DSL save/load below (Marshal
 // operator chains + shared_ptr deref). Defined in the impl namespace.
@@ -44,8 +43,8 @@ void anymessage_load(AnyMessage& self, BinaryReadArchive& ar);
 // (inline) follow the registry declarations below.
 template <typename T> bool anymessage_is_a(const AnyMessage& self);
 template <typename T> std::shared_ptr<T> anymessage_unpack(const AnyMessage& self);
-template <typename T> AnyMessageSp anymessage_pack_as(std::string name, std::shared_ptr<T> val);
-template <typename T> AnyMessageSp anymessage_pack(std::shared_ptr<T> val);
+template <typename T> AnyMessage anymessage_pack_as(std::string name, std::shared_ptr<T> val);
+template <typename T> AnyMessage anymessage_pack(std::shared_ptr<T> val);
 
 // `AnyMessage` — typed wire payload `[v64 type_name] [payload bytes]`.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -62,8 +61,10 @@ template <typename T> AnyMessageSp anymessage_pack(std::shared_ptr<T> val);
 //     the aggregate directly.
 //   * The generic methods delegate to anymessage_* template free fns
 //     (found by ADL at instantiation, the clientconn_request_*
-//     precedent); pack/pack_as spell the return as the AnyMessageSp
-//     alias (same type as before).
+//     precedent); pack/pack_as return AnyMessage BY VALUE — rcc_rpc.h
+//     stores AnyMessage by value and every caller stored the result
+//     into such a field, so the former shared_ptr return was one heap
+//     allocation + immediate deref-copy per pack.
 #if RUSTYCPP_RUST
 struct AnyMessage {
     type_name_: std::string,
@@ -97,18 +98,18 @@ impl AnyMessage {
     // name does NOT need to have been pre-registered — pack_as is the
     // escape hatch for ad-hoc names. The receiver still needs a
     // factory registered under the same name to deserialize.
-    fn pack_as<T>(name: std::string, val: std::shared_ptr<T>) -> AnyMessageSp {
+    fn pack_as<T>(name: std::string, val: std::shared_ptr<T>) -> AnyMessage {
         anymessage_pack_as(name, val)
     }
 
     // Build an AnyMessage using T's registered name. Aborts via
     // verify() if T was not registered with `reg_any_message_as<T>(...)`.
-    fn pack<T>(val: std::shared_ptr<T>) -> AnyMessageSp {
+    fn pack<T>(val: std::shared_ptr<T>) -> AnyMessage {
         anymessage_pack(val)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=0c7fa9020ff38127267d6cd2f38983829a15a401deeb803c274c7374497667c6*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=025e661bad324115ebd231a5a28259d673203cf01e43bf90346bd2680125fca5*/
 struct AnyMessage;
 
 struct AnyMessage {
@@ -122,9 +123,9 @@ struct AnyMessage {
     template<typename T>
     std::shared_ptr<T> unpack() const;
     template<typename T>
-    static AnyMessageSp pack_as(std::string name, std::shared_ptr<T> val);
+    static AnyMessage pack_as(std::string name, std::shared_ptr<T> val);
     template<typename T>
-    static AnyMessageSp pack(std::shared_ptr<T> val);
+    static AnyMessage pack(std::shared_ptr<T> val);
 };
 
 
@@ -147,12 +148,12 @@ std::shared_ptr<T> AnyMessage::unpack() const {
 }
 
 template<typename T>
-AnyMessageSp AnyMessage::pack_as(std::string name, std::shared_ptr<T> val) {
+AnyMessage AnyMessage::pack_as(std::string name, std::shared_ptr<T> val) {
     return anymessage_pack_as(std::move(name), std::move(val));
 }
 
 template<typename T>
-AnyMessageSp AnyMessage::pack(std::shared_ptr<T> val) {
+AnyMessage AnyMessage::pack(std::shared_ptr<T> val) {
     return anymessage_pack(std::move(val));
 }
 /*RUSTYCPP:GEN-END id=any_message.message*/
@@ -244,21 +245,21 @@ inline std::shared_ptr<T> anymessage_unpack(const AnyMessage& self) {
   return nullptr;
 }
 
-// @unsafe - aggregate-constructs the AnyMessage into a shared_ptr.
+// @unsafe - aggregate-constructs the AnyMessage (returned by value;
+// callers store it directly in rcc_rpc.h fields).
 template <typename T>
-inline AnyMessageSp anymessage_pack_as(std::string name,
-                                       std::shared_ptr<T> val) {
+inline AnyMessage anymessage_pack_as(std::string name,
+                                     std::shared_ptr<T> val) {
   verify(val != nullptr);
   auto payload = std::make_shared<details::SerializableSharedPtrHolder<T>>(
       std::move(val));
-  return std::make_shared<AnyMessage>(
-      AnyMessage{std::move(name), std::move(payload)});
+  return AnyMessage{std::move(name), std::move(payload)};
 }
 
 // @unsafe - dereferences raw `const std::string*` from name_for_type
 // and forwards to the @unsafe anymessage_pack_as.
 template <typename T>
-inline AnyMessageSp anymessage_pack(std::shared_ptr<T> val) {
+inline AnyMessage anymessage_pack(std::shared_ptr<T> val) {
   const std::string name = any_message_registry::name_for_type_owned(
       std::type_index(typeid(T)));
   verify(!name.empty() &&

@@ -127,7 +127,7 @@ void JanusCommo::BroadcastPreAccept(
       req.txn_id = txn_id;
       req.rank = RANK_UNDEFINED;
       req.cmd = cmds;
-      req.graph = *rrr::AnyMessage::pack(sp_graph_copy);
+      req.graph = rrr::AnyMessage::pack(sp_graph_copy);
       auto fu_result = proxy->async_JanusPreAccept(req, fuattr);
       // Arc auto-released
     }
@@ -162,7 +162,7 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
     req.txn_id = cmd_id;
     req.rank = rank;
     req.ballot = ballot;
-    req.graph = *rrr::AnyMessage::pack(sp_graph);
+    req.graph = rrr::AnyMessage::pack(sp_graph);
     auto fu_result = proxy->async_JanusAccept(req, fuattr);
     // Arc auto-released
   }
@@ -207,7 +207,7 @@ void JanusCommo::BroadcastCommit(
       req.id = cmd_id;
       req.rank = 0;
       req.need_validation = need_validation;
-      req.graph = *rrr::AnyMessage::pack(sp_graph);
+      req.graph = rrr::AnyMessage::pack(sp_graph);
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

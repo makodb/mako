@@ -76,7 +76,7 @@ void RccCommo::SendFinish(parid_t pid,
   auto sp_graph = std::make_shared<RccGraph>(*graph);
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
-  req.md_graph = *rrr::AnyMessage::pack(sp_graph);
+  req.md_graph = rrr::AnyMessage::pack(sp_graph);
   auto fu_result = proxy->async_RccFinish(req, fuattr);
   // Arc auto-released
 }
@@ -172,7 +172,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
       req.id = cmd_id;
       req.rank = RANK_UNDEFINED;
       req.need_validation = need_validation;
-      req.graph = *rrr::AnyMessage::pack(sp_graph);
+      req.graph = rrr::AnyMessage::pack(sp_graph);
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

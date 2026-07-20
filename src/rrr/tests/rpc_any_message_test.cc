@@ -79,14 +79,13 @@ TEST(AnyMessageTest, PackUnpackRoundTripPreservesValue) {
   val->label = "hello";
 
   auto am = AnyMessage::pack(val);
-  ASSERT_NE(am, nullptr);
-  EXPECT_EQ(am->type_name_, kGraphName);
-  EXPECT_TRUE(am->is_a<GraphPayload>());
-  EXPECT_FALSE(am->is_a<OtherPayload>());
+  EXPECT_EQ(am.type_name_, kGraphName);
+  EXPECT_TRUE(am.is_a<GraphPayload>());
+  EXPECT_FALSE(am.is_a<OtherPayload>());
 
   // Aliased pack: mutations on `val` reflect in the unpacked view.
   val->node_count = 99;
-  auto recovered = am->unpack<GraphPayload>();
+  auto recovered = am.unpack<GraphPayload>();
   ASSERT_NE(recovered, nullptr);
   EXPECT_EQ(recovered->node_count, 99);
   EXPECT_EQ(recovered->label, "hello");
@@ -100,10 +99,9 @@ TEST(AnyMessageTest, UnpackWrongTypeReturnsNullptr) {
   val->label = "x";
 
   auto am = AnyMessage::pack(val);
-  ASSERT_NE(am, nullptr);
 
   // Mismatched type — must return nullptr, not abort.
-  auto wrong = am->unpack<OtherPayload>();
+  auto wrong = am.unpack<OtherPayload>();
   EXPECT_EQ(wrong, nullptr);
 }
 
@@ -113,8 +111,8 @@ TEST(AnyMessageTest, IsAByName) {
   auto val = std::make_shared<GraphPayload>();
   auto am = AnyMessage::pack(val);
 
-  EXPECT_TRUE(am->type_name_ == kGraphName);
-  EXPECT_FALSE(am->type_name_ == "nonexistent.Type");
+  EXPECT_TRUE(am.type_name_ == kGraphName);
+  EXPECT_FALSE(am.type_name_ == "nonexistent.Type");
 }
 
 TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
@@ -125,7 +123,7 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   val->label = "wire-trip";
 
   // Sender side: pack into AnyMessage, serialize via the archive.
-  AnyMessage outgoing = *AnyMessage::pack(val);
+  AnyMessage outgoing = AnyMessage::pack(val);
 
   BufferSink sink;
   {
@@ -166,11 +164,10 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   val->label = "alias";
 
   auto am = AnyMessage::pack_as<GraphPayload>("graph.alias.v1", val);
-  ASSERT_NE(am, nullptr);
-  EXPECT_EQ(am->type_name_, "graph.alias.v1");
+  EXPECT_EQ(am.type_name_, "graph.alias.v1");
 
   // Wire roundtrip under the alias name.
-  AnyMessage outgoing = *am;
+  AnyMessage outgoing = am;
   BufferSink sink;
   {
     BinaryWriteArchive writer(make_sink_proxy(&sink));
@@ -199,7 +196,7 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   auto val = std::make_shared<OtherPayload>();
   val->value = 0xDEADBEEFCAFEBABEull;
 
-  AnyMessage outgoing = *AnyMessage::pack(val);
+  AnyMessage outgoing = AnyMessage::pack(val);
   BufferSink sink;
   {
     BinaryWriteArchive writer(make_sink_proxy(&sink));
@@ -233,7 +230,7 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   // Build an AnyMessage and save through the BinaryWriteArchive +
   // BufferSink path (the path rpcgen-generated code uses for fields
   // typed as `AnyMessage` directly).
-  AnyMessage outgoing(*AnyMessage::pack(val));
+  AnyMessage outgoing(AnyMessage::pack(val));
   BufferSink sink;
   {
     BinaryWriteArchive ar(make_sink_proxy(&sink));
@@ -268,7 +265,7 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   auto val = std::make_shared<GraphPayload>();
   val->node_count = 1;
 
-  AnyMessage outgoing(*AnyMessage::pack(val));
+  AnyMessage outgoing(AnyMessage::pack(val));
   BufferSink sink;
   {
     BinaryWriteArchive ar(make_sink_proxy(&sink));

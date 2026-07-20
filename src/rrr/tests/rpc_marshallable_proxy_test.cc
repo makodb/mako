@@ -369,7 +369,7 @@ TEST(MarshallableProxyFacadeTest, EmptyGraphRoundTripUsesAnyMessageEnvelope) {
   // to the open-set `AnyMessage` envelope.  L10f-2 step 5 (2026-05-05):
   // AnyMessage no longer inherits Marshallable; the envelope rides
   // directly in RPC fields without a surrounding MarshallDeputy.
-  rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
+  rrr::AnyMessage outgoing = rrr::AnyMessage::pack(payload);
 
   BufferSink sink;
   {
@@ -391,7 +391,7 @@ TEST(MarshallableProxyFacadeTest, RccGraphRoundTripUsesAnyMessageEnvelope) {
   auto payload = std::make_shared<janus::RccGraph>();
   ASSERT_NE(payload, nullptr);
 
-  rrr::AnyMessage outgoing = *rrr::AnyMessage::pack(payload);
+  rrr::AnyMessage outgoing = rrr::AnyMessage::pack(payload);
 
   BufferSink sink;
   {
