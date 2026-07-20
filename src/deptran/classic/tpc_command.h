@@ -59,8 +59,13 @@ class TpcEmptyCommand : public rrr::Serializable<TpcEmptyCommand,
  public:
   void save(BinaryWriteArchive&) const {}
   void load(BinaryReadArchive&) {}
-  void Wait() { event->wait(); };
-  void Done() { event->set(1); };
+  // const: the sender parks and the apply path wakes it through
+  // SHARED handles (pack_aliased sender side / serializable_cast apply
+  // side). Mutation is confined to the BoxEvent behind the member
+  // handle, so both are const-callable — required once payload
+  // handles become const-view rusty::Arc.
+  void Wait() const { event->wait(); };
+  void Done() const { event->set(1); };
 };
 
 // TypeList-derived kind. Stateless tag command — no

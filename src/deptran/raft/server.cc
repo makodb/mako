@@ -722,7 +722,7 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    epoch_t* reply_oepoch,
                                    janus::Command* reply_old_view,
                                    janus::Command* reply_new_view,
-                                   shared_ptr<KeyCmdBatchData>& batch) {
+                                   KeyCmdBatchData& batch) {
   TxLogServer::OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch,
                                 reply_old_view, reply_new_view, batch);
   if (!IsLeader()) {
@@ -1652,8 +1652,11 @@ void RaftServer::HeartbeatLoop() {
                 batch_buffer_.push_back(curCmd);
               }
               if (batch_buffer_.size() > 0) {
-                shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
-                batch_cmd->AddCmds(batch_buffer_);
+                // Fill-then-wrap: assemble locally, wrap once complete.
+                TpcBatchCommand batch_local;
+                batch_local.AddCmds(batch_buffer_);
+                auto batch_cmd =
+                    std::make_shared<TpcBatchCommand>(std::move(batch_local));
                 cmd = batch_cmd;
                 const uint64_t batch_end_idx = batch_start_idx + batch_buffer_.size() - 1;
                 const bool truncated = batch_end_idx < lastLogIndex;

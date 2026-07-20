@@ -1197,7 +1197,7 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
                                      epoch_t* reply_oepoch,
                                      janus::Command* reply_old_view,
                                      janus::Command* reply_new_view,
-                                     shared_ptr<VecRecData> id_set) {
+                                     VecRecData& id_set) {
   
   
   // Debug print witness candidates
@@ -1233,14 +1233,14 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
     *reply_oepoch = rep_sched_->oepoch_;
     // Copy data from witness id_set to the response parameter
     auto witness_id_set = rep_sched_->witness_.id_set();
-    id_set->key_data_ = witness_id_set->key_data_;
+    id_set.key_data_ = witness_id_set->key_data_;
     
   } else {
     *ok = 0;
     *reply_jepoch = rep_sched_->jepoch_;
     *reply_oepoch = rep_sched_->oepoch_;
     // Initialize empty key_data_ for failed case
-    id_set->key_data_ = std::make_shared<vector<key_t>>();
+    id_set.key_data_ = std::make_shared<vector<key_t>>();
   }
 }
 
@@ -1252,9 +1252,9 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    epoch_t* reply_oepoch,
                                    janus::Command* reply_old_view,
                                    janus::Command* reply_new_view,
-                                   shared_ptr<KeyCmdBatchData>& batch) {
+                                   KeyCmdBatchData& batch) {
   
-  if (!rep_sched_ || !batch) {
+  if (!rep_sched_) {
     return;
   }
   
@@ -1282,7 +1282,7 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
       if (rep_sched_->witness_.has_cmd_to_recover(key)) {
         auto cmd = rep_sched_->witness_.cmd_to_recover(key);
         if (cmd.has_value()) {
-          batch->AddEntry(key, cmd);
+          batch.AddEntry(key, cmd);
         }
       }
     }
@@ -1298,13 +1298,13 @@ void TxLogServer::OnJetpackRecordCmd(const epoch_t& jepoch,
                                      const epoch_t& oepoch, 
                                      const int32_t& sid, 
                                      const int32_t& rid, 
-                                     shared_ptr<KeyCmdBatchData>& batch) {
-  if (!rep_sched_ || !batch) {
+                                     const KeyCmdBatchData& batch) {
+  if (!rep_sched_) {
     return;
   }
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
-    for (size_t idx = 0; idx < batch->Size(); idx++) {
-      rep_sched_->rec_set_.insert(sid, rid + idx, batch->GetCommand(idx));
+    for (size_t idx = 0; idx < batch.Size(); idx++) {
+      rep_sched_->rec_set_.insert(sid, rid + idx, batch.GetCommand(idx));
     }
   }
 }

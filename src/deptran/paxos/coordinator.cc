@@ -250,10 +250,12 @@ void BulkCoordinatorMultiPaxos::Commit() {
     // overload handles the cast.
     auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
     verify(cmd_temp1 != nullptr);
-    auto commit_cmd = make_shared<PaxosPrepCmd>();
-    commit_cmd->slots = cmd_temp1->slots;
-    commit_cmd->ballots = cmd_temp1->ballots;
-    commit_cmd->leader_id = cmd_temp1->leader_id;
+    // Fill-then-wrap: build the payload as a local, wrap once complete.
+    PaxosPrepCmd prep_cmd;
+    prep_cmd.slots = cmd_temp1->slots;
+    prep_cmd.ballots = cmd_temp1->ballots;
+    prep_cmd.leader_id = cmd_temp1->leader_id;
+    auto commit_cmd = make_shared<PaxosPrepCmd>(std::move(prep_cmd));
 
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");

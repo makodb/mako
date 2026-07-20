@@ -191,11 +191,14 @@ class PaxosServer : public TxLogServer {
   // only caller was the now-deleted
   // `MultiPaxosServiceImpl::BulkPrepare2` handler.
 
+  // Fill-then-wrap: fills the caller-owned response; the caller packs
+  // it after this returns. (The old Function<void()> cb param was dead
+  // ceremony — never invoked; it only carried the DeferredReply to its
+  // destructor.)
   void OnSyncLog(const janus::Command& cmd,
                       i32* ballot,
                       i32 *valid,
-                      shared_ptr<SyncLogResponse> ret_cmd,
-                      rusty::Function<void()> cb);
+                      SyncLogResponse& ret_cmd);
 
   void OnSyncCommit(const janus::Command& cmd,
                       i32* ballot,

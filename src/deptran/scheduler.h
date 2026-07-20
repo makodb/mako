@@ -666,7 +666,7 @@ class TxLogServer {
                           epoch_t* reply_oepoch,
                           janus::Command* reply_old_view,
                           janus::Command* reply_new_view,
-                          shared_ptr<VecRecData> id_set);
+                          VecRecData& id_set);
   
   // @unsafe
   virtual void OnJetpackPullCmd(const epoch_t& jepoch,
@@ -677,13 +677,13 @@ class TxLogServer {
                         epoch_t* reply_oepoch,
                         janus::Command* reply_old_view,
                         janus::Command* reply_new_view,
-                        shared_ptr<KeyCmdBatchData>& batch);
+                        KeyCmdBatchData& batch);
   
   void OnJetpackRecordCmd(const epoch_t& jepoch, 
                           const epoch_t& oepoch, 
                           const int32_t& sid, 
                           const int32_t& rid, 
-                          shared_ptr<KeyCmdBatchData>& batch);
+                          const KeyCmdBatchData& batch);
   
   void OnJetpackPrepare(const epoch_t& jepoch, 
                         const epoch_t& oepoch, 

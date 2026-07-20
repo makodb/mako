@@ -169,26 +169,22 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
                                      janus::Command* ret,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
+  // Default reply payload (the OnSyncLog early-return path keeps it) —
+  // byte-identical to the pre-reshape empty pack.
   *ret = std::make_shared<SyncLogResponse>();
-  auto response = marshallable_cast<SyncLogResponse>(ret);
-  Fiber::create_run([&] () {
-    sched_->OnSyncLog(md_cmd,
-                      ballot,
-                      valid,
-                      response,
-                      [defer = std::move(defer)]() mutable { defer.reply(); });
-  //  auto rpx = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
-  //   auto xx = (int32_t)rpx->missing_slots.size();
-  //   Log_info("received a OnSyncLog2,xxx: %d",xx);
-  //   for(int i = 0; i < rpx->missing_slots.size(); i++){
-  //      Log_info("yy2: %d", (int32_t)rpx->missing_slots[i].size());
-  //      for(int j = 0; j < rpx->missing_slots[i].size(); j++){
-  //         Log_info("yy2 a OnSyncLog2,xxx: %d",j);
-  //      }
-  //   }
+  Fiber::create_run([&, defer = std::move(defer)] () mutable {
+    // Fill-then-wrap: the response lives on the fiber stack and is
+    // packed into *ret only after OnSyncLog completes; the reply then
+    // fires explicitly. (Previously the response was packed EMPTY up
+    // front and filled through the packed handle, and the reply fired
+    // from the dead cb-lambda's DeferredReply destructor.)
+    SyncLogResponse response;
+    sched_->OnSyncLog(md_cmd, ballot, valid, response);
+    if (*valid == 1) {
+      *ret = std::make_shared<SyncLogResponse>(std::move(response));
+    }
     defer.reply();
   });
-
 }
 
 void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,

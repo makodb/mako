@@ -474,7 +474,7 @@ class RaftServer : public TxLogServer {
                         epoch_t* reply_oepoch,
                         janus::Command* reply_old_view,
                         janus::Command* reply_new_view,
-                        shared_ptr<KeyCmdBatchData>& batch) override;
+                        KeyCmdBatchData& batch) override;
 
   // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {

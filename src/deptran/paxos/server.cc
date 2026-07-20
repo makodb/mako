@@ -130,8 +130,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
                                i32* ballot,
                                i32* valid,
-                               shared_ptr<SyncLogResponse> ret_cmd,
-                               rusty::Function<void()> cb){
+                               SyncLogResponse& ret_cmd){
   // marshallable_cast works on Command directly via
   // Envelope overload — drop the boundary lift.
   auto bcmd = marshallable_cast<SyncLogRequest>(cmd_env);
@@ -148,9 +147,9 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
   es->state_unlock();
   *valid = 1;
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    ret_cmd->missing_slots.push_back(vector<slotid_t>{});
+    ret_cmd.missing_slots.push_back(vector<slotid_t>{});
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    auto bp_cmd = make_shared<BulkPaxosCmd>();
+    BulkPaxosCmd bp_cmd;
     ps->mtx_.lock();
 
     for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
@@ -159,26 +158,26 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
       // copy + janus::Command(Command) wrapping below relies on
       // Command's copy ctor.
       if(inst->committed_cmd_.has_value()){
-        bp_cmd->slots.push_back(j);
-        bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
+        bp_cmd.slots.push_back(j);
+        bp_cmd.ballots.push_back(inst->max_ballot_accepted_);
         auto temp_cmd = inst->committed_cmd_;
       	janus::Command md(temp_cmd);
       	auto shrd_ptr = make_shared<janus::Command>(md);
-        bp_cmd->cmds.push_back(shrd_ptr);
+        bp_cmd.cmds.push_back(shrd_ptr);
       }
     }
     //Log_info("The partition %d, sync commit is %d; max executed-committed slot is [%d-%d] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
       if(!inst->committed_cmd_.has_value()){
-        ret_cmd->missing_slots[i].push_back(j);
+        ret_cmd.missing_slots[i].push_back(j);
       }
     }
     //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
-    ret_cmd->sync_data.push_back(make_shared<janus::Command>(bp_cmd));
+    ret_cmd.sync_data.push_back(
+        make_shared<janus::Command>(make_shared<BulkPaxosCmd>(std::move(bp_cmd))));
     ps->mtx_.unlock();
   }
-  //cb();
 }
 
 void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,

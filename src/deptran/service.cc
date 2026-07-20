@@ -831,9 +831,11 @@ void ClassicServiceImpl::JetpackPullIdSet(const epoch_t& jepoch,
                                           janus::Command* reply_new_view,
                                           janus::Command* id_set, 
                                           rrr::DeferredReply defer) {
-  *id_set = std::make_shared<VecRecData>();
-  shared_ptr<VecRecData> sp_ret_id_set = marshallable_cast<VecRecData>(id_set);
-  dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, sp_ret_id_set);
+  // Fill-then-wrap: the handler populates a local, which is packed
+  // once complete — no mutation through a packed handle.
+  VecRecData ret_id_set;
+  dtxn_sched()->OnJetpackPullIdSet(jepoch, oepoch, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, ret_id_set);
+  *id_set = std::make_shared<VecRecData>(std::move(ret_id_set));
   defer.reply();
 }
 
@@ -852,9 +854,10 @@ void ClassicServiceImpl::JetpackPullCmd(const epoch_t& jepoch,
   if (vec_keys && vec_keys->key_data_) {
     keys.assign(vec_keys->key_data_->begin(), vec_keys->key_data_->end());
   }
-  auto batch_result = std::make_shared<KeyCmdBatchData>();
+  // Fill-then-wrap: handler fills a local, packed after completion.
+  KeyCmdBatchData batch_result;
   dtxn_sched()->OnJetpackPullCmd(jepoch, oepoch, keys, ok, reply_jepoch, reply_oepoch, reply_old_view, reply_new_view, batch_result);
-  *cmd_batch = batch_result;
+  *cmd_batch = std::make_shared<KeyCmdBatchData>(std::move(batch_result));
   defer.reply();
 
 }
@@ -866,10 +869,9 @@ void ClassicServiceImpl::JetpackRecordCmd(const epoch_t& jepoch,
                                           const janus::Command& md, 
                                           rrr::DeferredReply defer) {
   auto batch = marshallable_cast<KeyCmdBatchData>(md);
-  if (!batch) {
-    batch = std::make_shared<KeyCmdBatchData>();
-  }
-  dtxn_sched()->OnJetpackRecordCmd(jepoch, oepoch, sid, rid, batch);
+  const KeyCmdBatchData empty_batch;
+  dtxn_sched()->OnJetpackRecordCmd(jepoch, oepoch, sid, rid,
+                                   batch ? *batch : empty_batch);
   defer.reply();
 }
 
