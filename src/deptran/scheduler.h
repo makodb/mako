@@ -252,7 +252,7 @@ class Witness {
   janus::Command cmd_to_recover(key_t key) {
     return candidates_[key].cmd_to_recover();
   }
-  shared_ptr<VecRecData> id_set();
+  rusty::Arc<VecRecData> id_set();
   void reset();
   /* Recover related end */
 #ifdef WITNESS_LOG_DEBUG

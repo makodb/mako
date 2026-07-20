@@ -1,5 +1,6 @@
 
 #pragma once
+#include <rusty/arc.hpp>
 #include "../rcc/server.h"
 
 namespace janus {
@@ -15,13 +16,13 @@ class SchedulerJanus : public RccServer {
   virtual int OnPreAccept(txnid_t txnid,
                           rank_t rank,
                           const vector<SimpleCommand> &cmds,
-                          shared_ptr<RccGraph> sp_graph,
-                          shared_ptr<RccGraph> res_graph);
+                          rusty::Arc<RccGraph> sp_graph,
+                          rusty::Arc<RccGraph> res_graph);
 
   void OnAccept(txnid_t txn_id,
                 int rank,
                 const ballot_t& ballot,
-                shared_ptr<RccGraph> graph,
+                rusty::Arc<RccGraph> graph,
                 int32_t* res);
 
 //  int OnCommit(txnid_t txn_id,

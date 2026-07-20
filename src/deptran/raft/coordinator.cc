@@ -68,10 +68,11 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
 
     // Handle WRONG_LEADER case
     if (cmd_env.kind_ == TpcCommitCommand::static_kind()) {
-      auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd_env);
-      if (tpc_cmd) {
+      const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd_env);
+      if (tpc_cmd.is_some()) {
         // Set WRONG_LEADER error code
-        tpc_cmd->ret_ = WRONG_LEADER;
+        // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+        { auto& mut_cmd = *const_cast<TpcCommitCommand*>(tpc_cmd.unwrap().get()); mut_cmd.ret_ = WRONG_LEADER; }
 
         // Get current view from TxLogServer (parent class)
         // The new_view_ contains the most recent view information
@@ -100,9 +101,14 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
         }
 
         // Attach view data to the command for propagation back to client
-        tpc_cmd->sp_view_data_ = std::make_shared<ViewData>(current_view, par_id_);
+        // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+        {
+          auto& mut_cmd = *const_cast<TpcCommitCommand*>(tpc_cmd.unwrap().get());
+          mut_cmd.sp_view_data_ = rusty::Option<rusty::Arc<ViewData>>(
+              rusty::Arc<ViewData>::make(current_view, par_id_));
+        }
         Log_info("[WRONG_LEADER] Attached view data to response for partition %d: %s",
-                 par_id_, tpc_cmd->sp_view_data_->ToString().c_str());
+                 par_id_, tpc_cmd.unwrap()->sp_view_data_.unwrap()->ToString().c_str());
       }
     }
 

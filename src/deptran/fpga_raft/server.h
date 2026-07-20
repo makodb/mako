@@ -194,10 +194,10 @@ class FpgaRaftServer : public TxLogServer {
     maxIndex = std::max(maxIndex, slot_id);
 
     if (cmd.kind_ == TpcCommitCommand::static_kind()){
-      auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-      auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-      verify(vec_piece_data != nullptr);
-      auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+      const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+      const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+      verify(vec_piece_data.is_some());
+      auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
 			vector<struct KeyValue> kv_vector;
 			int index = 0;
 			for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){

@@ -7467,7 +7467,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
 int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   Init2(82, "ReplicatedDBCommand PUT marshal round-trip");
 
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd = ReplicatedDBCommand::CreatePut("test_key", "test_value");
   Assert2(cmd->op_ == ReplicatedDBOp::PUT, "Op should be PUT");
   Assert2(cmd->key_ == "test_key", "Key should be test_key");
@@ -7496,7 +7496,7 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
           "Unmarshalled batch_ops should be empty for PUT");
 
   // Test with empty key and value
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreatePut("", "");
   rrr::BufferSink sink2;
   rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
@@ -7512,7 +7512,7 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
   // Test with large key/value
   std::string large_key(1024, 'K');
   std::string large_value(4096, 'V');
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreatePut(large_key, large_value);
   rrr::BufferSink sink3;
   rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));
@@ -7538,7 +7538,7 @@ int RaftLabTest::testReplicatedDBCommandPutMarshal(void) {
 int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   Init2(83, "ReplicatedDBCommand DELETE marshal round-trip");
 
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd = ReplicatedDBCommand::CreateDelete("delete_key");
   Assert2(cmd->op_ == ReplicatedDBOp::DELETE, "Op should be DELETE");
   Assert2(cmd->key_ == "delete_key", "Key should be delete_key");
@@ -7570,7 +7570,7 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   // @unsafe { janus::Command uses non-borrow-checked factory }
   auto cmd3 = ReplicatedDBCommand::CreateDelete("deputy_test_key");
   janus::Command md;
-  md = cmd3;
+  md = std::move(cmd3);
   rrr::BufferSink sink2;
   rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
   rrr::Serialize_::serialize(md, war2);
@@ -7580,11 +7580,11 @@ int RaftLabTest::testReplicatedDBCommandDeleteMarshal(void) {
   rrr::BinaryReadArchive rar2(rrr::make_source_proxy(&src2));
   rrr::Deserialize_::deserialize(md2, rar2);
   Assert2(md2.has_value(), "janus::Command should have deserialized data");
-  auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
-  Assert2(cmd4 != nullptr, "Should dynamic_cast to ReplicatedDBCommand");
-  Assert2(cmd4->op_ == ReplicatedDBOp::DELETE,
+  const auto cmd4 = marshallable_cast<ReplicatedDBCommand>(md2);
+  Assert2(cmd4.is_some(), "Should dynamic_cast to ReplicatedDBCommand");
+  Assert2(cmd4.unwrap()->op_ == ReplicatedDBOp::DELETE,
           "Deputy round-trip op should be DELETE");
-  Assert2(cmd4->key_ == "deputy_test_key",
+  Assert2(cmd4.unwrap()->key_ == "deputy_test_key",
           "Deputy round-trip key should match");
 
   Log_info("TEST 83: ReplicatedDBCommand DELETE marshal round-trip PASSED!");
@@ -7605,7 +7605,7 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   ops.push_back({ReplicatedDBOp::DELETE, "key2", ""});
   ops.push_back({ReplicatedDBOp::PUT, "key3", "value3"});
 
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
   Assert2(cmd->op_ == ReplicatedDBOp::BATCH, "Op should be BATCH");
   Assert2(cmd->batch_ops_.size() == 3, "Should have 3 batch ops");
@@ -7652,7 +7652,7 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
 
   // Test empty batch
   std::vector<KVOperation> empty_ops;
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd_empty = ReplicatedDBCommand::CreateBatch(empty_ops);
   rrr::BufferSink sink2;
   rrr::BinaryWriteArchive war2(rrr::make_sink_proxy(&sink2));
@@ -7672,7 +7672,7 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
     ReplicatedDBOp op = (i % 2 == 0) ? ReplicatedDBOp::PUT : ReplicatedDBOp::DELETE;
     large_ops.push_back({op, "key_" + std::to_string(i), "val_" + std::to_string(i)});
   }
-  // @unsafe { Factory creates shared_ptr }
+  // @unsafe { Factory creates rusty::Arc }
   auto cmd_large = ReplicatedDBCommand::CreateBatch(large_ops);
   rrr::BufferSink sink3;
   rrr::BinaryWriteArchive war3(rrr::make_sink_proxy(&sink3));

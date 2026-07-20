@@ -20,7 +20,10 @@ int32_t SchedulerNone::Dispatch(cmdid_t cmd_id, const janus::Command& cmd,
 	// if (ret == WRONG_LEADER) {
 	// 	Log_info("[DISPATCH_FLOW] SchedulerNone::Dispatch got WRONG_LEADER for cmd_id: 0x%lx", cmd_id);
 	// }
-	view_data = sp_tx->sp_view_data_;
+	// boundary: base Dispatch out-param stays std::shared_ptr<ViewData>.
+	view_data = sp_tx->sp_view_data_.is_some()
+	    ? std::make_shared<ViewData>(*sp_tx->sp_view_data_.as_ref().unwrap())
+	    : nullptr;
 
 	return ret;
 }

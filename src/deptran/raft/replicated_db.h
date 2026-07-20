@@ -1,4 +1,6 @@
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
@@ -50,11 +52,11 @@ public:
     ReplicatedDBCommand() = default;
 
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
+    static rusty::Arc<ReplicatedDBCommand> CreatePut(const std::string& key, const std::string& value);
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreateDelete(const std::string& key);
+    static rusty::Arc<ReplicatedDBCommand> CreateDelete(const std::string& key);
     // @unsafe - Factory: creates shared_ptr (non-borrow-checked ownership)
-    static shared_ptr<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
+    static rusty::Arc<ReplicatedDBCommand> CreateBatch(const std::vector<KVOperation>& ops);
 
     // Serializable interface.
     void save(BinaryWriteArchive& ar) const;

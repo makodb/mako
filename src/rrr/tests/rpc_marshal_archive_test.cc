@@ -20,6 +20,8 @@
 
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 
 #include "../rrr.hpp"
@@ -924,7 +926,9 @@ TEST(SerializableProxy, RoundTripSaveLoadViaProxy) {
   SerializableProxy load_proxy = make_serializable_proxy<CanaryCommand>();
   BufferSource source(orig_bytes.data(), orig_bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  load_proxy->load(reader);
+  // @unsafe - unique-owner mutation window: load_proxy is factory-fresh
+  // (strong_count 1), so get_mut() is Some.
+  load_proxy.get_mut().unwrap().load(reader);
   EXPECT_TRUE(source.eof());
 
   // Re-save via the loaded proxy. Bytes must match exactly.
@@ -964,7 +968,9 @@ TEST(SerializableRegistry, RegisterCreateAndRoundTrip) {
 
   BufferSource source(src_bytes.data(), src_bytes.size());
   BinaryReadArchive reader(make_source_proxy(&source));
-  proxy->load(reader);
+  // @unsafe - unique-owner mutation window: proxy is factory-fresh
+  // (strong_count 1), so get_mut() is Some.
+  proxy.get_mut().unwrap().load(reader);
   EXPECT_TRUE(source.eof());
 
   // Save via the loaded proxy; compare bytes.
@@ -1111,9 +1117,12 @@ TEST(TypeListFactory, ContainsTracksIndexOf) {
 }
 
 namespace {
+// The proxy is a const-view rusty::Arc<SerializableBase>; downcast the
+// holder and return a const view of the carried payload.
 template<typename T>
-T* serializable_proxy_cast(SerializableProxy& proxy) {
-  if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(proxy.get())) {
+const T* serializable_proxy_cast(const SerializableProxy& proxy) {
+  if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
+          proxy.get())) {
     return h->ptr.get();
   }
   return nullptr;
@@ -1189,8 +1198,9 @@ TEST(SerializableEnvelope, PackValueSemanticHoldsCopy) {
 }
 
 TEST(SerializableEnvelope, PackAliasedSharesPayload) {
-  auto sp = std::make_shared<TypeListFactoryAlpha>();
-  sp->a = 7;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
+  sp.get_mut().unwrap().a = 7;
 
   auto env = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
   EXPECT_TRUE(env.has_value());
@@ -1198,11 +1208,14 @@ TEST(SerializableEnvelope, PackAliasedSharesPayload) {
 
   auto* recovered = env.unpack<TypeListFactoryAlpha>();
   ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered, sp.get());  // aliased — same object
+  EXPECT_EQ(static_cast<const TypeListFactoryAlpha*>(recovered),
+            sp.get());  // aliased — same object
   EXPECT_EQ(recovered->a, 7);
 
   // Mutating through the original IS visible.
-  sp->a = 99;
+  // @unsafe { aliasing canary: proves pack_aliased shares (not copies)
+  // the payload }
+  const_cast<TypeListFactoryAlpha*>(sp.get())->a = 99;
   EXPECT_EQ(recovered->a, 99);
 }
 
@@ -1238,8 +1251,9 @@ TEST(SerializableEnvelope, RoundTripValueSemanticViaArchive) {
 }
 
 TEST(SerializableEnvelope, RoundTripAliasedViaArchive) {
-  auto sp = std::make_shared<TypeListFactoryGamma>();
-  sp->c = 0xDEADBEEFCAFEBABEll;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryGamma>::make();
+  sp.get_mut().unwrap().c = 0xDEADBEEFCAFEBABEll;
 
   // Encode aliased pack.
   BufferSink sink;
@@ -1280,8 +1294,9 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
   // copies share the underlying proxy (and payload). This matches
   // the existing `req.cmd = some_md;` pattern where two MarshallDeputy
   // instances refer to the same payload.
-  auto sp = std::make_shared<TypeListFactoryAlpha>();
-  sp->a = 100;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto sp = rusty::Arc<TypeListFactoryAlpha>::make();
+  sp.get_mut().unwrap().a = 100;
   auto env_a = SerializableEnvelope<EnvelopeTestList>::pack_aliased(sp);
 
   // Copy.
@@ -1292,8 +1307,10 @@ TEST(SerializableEnvelope, IsCopyableAndCopiesShareProxy) {
             env_b.unpack<TypeListFactoryAlpha>());
 
   // Mutation through one envelope is visible to the other (because
-  // both share the same shared_ptr<SerializableProxy> internally).
-  sp->a = 200;
+  // both share the same Arc-backed proxy internally).
+  // @unsafe { aliasing canary: proves pack_aliased shares (not copies)
+  // the payload }
+  const_cast<TypeListFactoryAlpha*>(sp.get())->a = 200;
   EXPECT_EQ(env_a.unpack<TypeListFactoryAlpha>()->a, 200);
   EXPECT_EQ(env_b.unpack<TypeListFactoryAlpha>()->a, 200);
 }
@@ -1303,7 +1320,8 @@ TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
   // the value survives. Demonstrates the L10b read-path shape:
   //   1) Read v32 kind from wire.
   //   2) create_at(kind) → fresh SerializableProxy for that type.
-  //   3) proxy->load(reader) — populates the typed value.
+  //   3) proxy.get_mut().unwrap().load(reader) — populates the typed
+  //      value through the factory-fresh Arc's unique-owner window.
   //   4) Caller dispatches via dynamic_cast on the SerializableBase holder.
   {
     BufferSink sink;
@@ -1315,7 +1333,9 @@ TEST(TypeListFactory, CreateAtRoundTripsViaProxySaveLoad) {
     BufferSource source(sink.bytes.data(), sink.bytes.len());
     BinaryReadArchive reader(make_source_proxy(&source));
     auto proxy = TypeListFactoryList::create_at(2);
-    proxy->load(reader);
+    // @unsafe - unique-owner mutation window: proxy is factory-fresh
+    // (strong_count 1), so get_mut() is Some.
+    proxy.get_mut().unwrap().load(reader);
 
     auto* recovered = serializable_proxy_cast<TypeListFactoryBeta>(proxy);
     ASSERT_NE(recovered, nullptr);

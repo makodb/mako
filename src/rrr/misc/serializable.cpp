@@ -3134,74 +3134,69 @@ template <class U> class SerializableBaseAdapterRef;
 template <class U> class SerializableBaseAdapterRefMut;
 /*RUSTYCPP:GEN-END id=serializable.1*/
 
-using SerializableProxy = std::shared_ptr<SerializableBase>;
+using SerializableProxy = rusty::Arc<SerializableBase>;
 
 namespace details {
 
-// Wrapper used to put a `shared_ptr<T>` inside a SerializableProxy.
+// Wrapper used to put an `Arc<T>` inside a SerializableProxy.
 // Authored as generic inline Rust DSL with #[cpp_inherit]
 // (SerializableBase is a DSL interface trait). Behavioral diffs:
-//   * The unused default ctor (make_shared<T>() eager-construct) is
-//     dropped — every construction site adopts an existing
-//     shared_ptr<T> via the synthesized fieldwise ctor.
-//   * std::shared_ptr is not in the transpiler's auto-deref set, so
-//     the trait methods delegate to holder_* template free fns (found
-//     by ADL at instantiation) that do the -> dispatch.
+//   * The unused default ctor (eager-construct) is dropped — every
+//     construction site adopts an existing Arc<T> via the synthesized
+//     fieldwise ctor.
+//   * rusty::Arc IS in the transpiler's auto-deref set, so save/kind
+//     dispatch directly through the field; only load keeps a kernel
+//     (Arc grants const-only access — T::load needs the unique-owner
+//     get_mut() escape, which has no DSL spelling).
 #if RUSTYCPP_RUST
 struct SerializableSharedPtrHolder<T> {
-    ptr: std::shared_ptr<T>,
+    ptr: Arc<T>,
 }
 
 #[cpp_inherit]
 impl<T> SerializableBase for SerializableSharedPtrHolder<T> {
     fn save(&self, ar: &mut BinaryWriteArchive) {
-        holder_save(self, ar)
+        self.ptr.save(ar)
     }
     fn load(&mut self, ar: &mut BinaryReadArchive) {
         holder_load(self, ar)
     }
     fn kind(&self) -> i32 {
-        holder_kind(self)
+        self.ptr.kind()
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=be05fc063a8b3a66c7cda47018d08a37c2b929303cb86219404a2979b6cce2b8*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.shared_ptr_holder version=1 rust_sha256=352273da3183f75aa659c5868747306f95efc1770fdfa66b4c32f8843fac426b*/
 template<typename T>
 struct SerializableSharedPtrHolder;
 
 template<typename T>
 struct SerializableSharedPtrHolder : public SerializableBase {
-    std::shared_ptr<T> ptr;
-    SerializableSharedPtrHolder(std::shared_ptr<T> ptr_init) : SerializableBase(), ptr(std::move(ptr_init)) {}
+    rusty::Arc<T> ptr;
+    SerializableSharedPtrHolder(rusty::Arc<T> ptr_init) : SerializableBase(), ptr(std::move(ptr_init)) {}
     SerializableSharedPtrHolder(SerializableSharedPtrHolder&& other) noexcept : SerializableBase(), ptr(std::move(other.ptr)) {}
 
 
     void save(BinaryWriteArchive& ar) const {
-        holder_save((*this), ar);
+        this->ptr->save(ar);
     }
     void load(BinaryReadArchive& ar) {
         holder_load((*this), ar);
     }
     int32_t kind() const {
-        return holder_kind((*this));
+        return this->ptr->kind();
     }
 };
 /*RUSTYCPP:GEN-END id=serializable.shared_ptr_holder*/
 
-// @unsafe - shared_ptr arrow dispatch onto the held T.
-template<typename T>
-inline void holder_save(const SerializableSharedPtrHolder<T>& self,
-                        BinaryWriteArchive& ar) {
-  self.ptr->save(ar);
-}
+// @unsafe - unique-owner mutation window: load always runs on a
+// factory-fresh proxy (registry create -> strong_count 1), so
+// get_mut() is Some; a shared proxy here would be a bug and panics
+// loudly instead of silently mutating shared state.
 template<typename T>
 inline void holder_load(SerializableSharedPtrHolder<T>& self,
                         BinaryReadArchive& ar) {
-  self.ptr->load(ar);
-}
-template<typename T>
-inline int32_t holder_kind(const SerializableSharedPtrHolder<T>& self) {
-  return self.ptr->kind();
+  self.ptr.get_mut().unwrap().load(ar);
 }
 
 }  // namespace details
@@ -3250,8 +3245,8 @@ struct Serializable {
 // (or via the envelope's unpack<T>() / unpack_shared<T>()).
 template<class T, class... Args>
 inline SerializableProxy make_serializable_proxy(Args&&... args) {
-  auto sp = std::make_shared<T>(std::forward<Args>(args)...);
-  return std::make_shared<details::SerializableSharedPtrHolder<T>>(std::move(sp));
+  auto sp = rusty::Arc<T>::make(std::forward<Args>(args)...);
+  return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(std::move(sp));
 }
 
 // Factory registry: maps int32_t kind tags to factories that produce
@@ -3332,9 +3327,9 @@ template<class T>
 inline int serializable_registry_reg(int32_t kind) {
   serializable_registry_register_factory(kind, []() -> SerializableProxy {
     // Holder-shaped proxy so SerializableEnvelope::load gives
-    // unpack_shared<T> a refcount-shared shared_ptr<T>.
-    auto sp = std::make_shared<T>();
-    return std::make_shared<details::SerializableSharedPtrHolder<T>>(
+    // unpack_shared<T> a refcount-shared Arc<T>.
+    auto sp = rusty::Arc<T>::make();
+    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
         std::move(sp));
   });
   return 0;

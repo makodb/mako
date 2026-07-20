@@ -61,12 +61,12 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.has_value()) {
-      auto sp_view_data = marshallable_cast<ViewData>(view_md);
-      if (sp_view_data) {
-        UpdatePartitionView(par_id, sp_view_data);
+      const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+      if (sp_view_data.is_some()) {
+        UpdatePartitionView(par_id, *sp_view_data.unwrap());
       }
     }
-    
+
     callback(ret, outputs);
   };
   // auto pair_leader_proxy = LeaderProxyForPartition(par_id);
@@ -77,9 +77,9 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   verify(pair_proxies.size() == 2);
   Log_debug("send dispatch to site %d, %d", pair_proxies[0].first,
             pair_proxies[1].first);
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-  janus::Command md(sp_vpd);
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = sp_vec_piece;
+  janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd)));
 
   struct DepId di;
   di.id = cmd_id;
@@ -121,12 +121,12 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.has_value()) {
-      auto sp_view_data = marshallable_cast<ViewData>(view_md);
-      if (sp_view_data) {
-        UpdatePartitionView(par_id, sp_view_data);
+      const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+      if (sp_view_data.is_some()) {
+        UpdatePartitionView(par_id, *sp_view_data.unwrap());
       }
     }
-    
+
     callback(ret, outputs);
   };
 

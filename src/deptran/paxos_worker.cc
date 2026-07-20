@@ -77,9 +77,9 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
   // if (site_info_->proc_name.compare("learner")==0){
   //   Log_info("receive a slot_id:%d",slot_id);
   // }
-  auto sp_log_entry = marshallable_cast<LogEntry>(md);
-  verify(sp_log_entry != nullptr);
-  int len = sp_log_entry->length;
+  const auto sp_log_entry = marshallable_cast<LogEntry>(md);
+  verify(sp_log_entry.is_some());
+  int len = sp_log_entry.unwrap()->length;
 
   //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
   if (md.kind_ == LogEntry::static_kind()) {
@@ -102,16 +102,16 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
         }
       }
 
-      auto sp_log_entry = marshallable_cast<LogEntry>(md);
-      verify(sp_log_entry != nullptr);
-      int len = sp_log_entry->length;
-      if(sp_log_entry->length == 0){
+      const auto sp_log_entry = marshallable_cast<LogEntry>(md);
+      verify(sp_log_entry.is_some());
+      int len = sp_log_entry.unwrap()->length;
+      if(sp_log_entry.unwrap()->length == 0){
 	      Log_info("Recieved a zero length log");
       }
       //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
       //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
-         const char *log = sp_log_entry->log_entry.c_str() ;
+         const char *log = sp_log_entry.unwrap()->log_entry.c_str() ;
          
          // Single timestamp system: get encoded value (timestamp * 10 + status)
          int encoded_value = callback_par_id_return_(log, 
@@ -139,7 +139,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
          }
       } else {
         // the ending signal
-        const char *log = sp_log_entry->log_entry.c_str() ;
+        const char *log = sp_log_entry.unwrap()->log_entry.c_str() ;
         int ending_status = callback_par_id_return_(log, len, site_info_->partition_id_, slot_id, un_replay_logs_) ;
       }
     } else {
@@ -265,23 +265,22 @@ void PaxosWorker::IncSubmit(){
 }
 
 void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
-    auto sp_cmd = make_shared<BulkPaxosCmd>();
+    // Fill-then-wrap: build the batch locally, wrap once complete.
+    BulkPaxosCmd bulk_cmd;
     election_state_lock.lock();
     ballot_t send_epoch = this->cur_epoch;
     election_state_lock.unlock();
-    sp_cmd->leader_id = es_pw->machine_id;
+    bulk_cmd.leader_id = es_pw->machine_id;
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
-        sp_cmd->slots.push_back(mpc.get()->slot_id_);
-        sp_cmd->ballots.push_back(send_epoch);
+        bulk_cmd.slots.push_back(mpc.get()->slot_id_);
+        bulk_cmd.ballots.push_back(send_epoch);
         // CoordinatorMultiPaxos::cmd_ is now Command;
         // null check via has_value, copy via Command's copy ctor.
         verify(mpc->cmd_.has_value());
-        janus::Command* md =  new janus::Command(mpc.get()->cmd_);
-        sp_cmd->cmds.push_back(shared_ptr<janus::Command>(md));
+        bulk_cmd.cmds.push_back(rusty::Arc<janus::Command>::make(mpc.get()->cmd_));
     }
-    _BulkSubmit(sp_cmd, entries.size());
-    //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
+    _BulkSubmit(rusty::Arc<BulkPaxosCmd>::make(std::move(bulk_cmd)), entries.size());
 }
 
 inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
@@ -310,18 +309,20 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   coord->loc_id_ = site_info_->locale_id;
   bool done = false;
   auto es_pww = es_pw;
-  vector<shared_ptr<SyncLogResponse>> responses;
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
   auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_,
-                                                   sync_log_req,
-                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md, 
-                                                                                    ballot_t ballot, 
+                                                   rusty::Arc<SyncLogRequest>::make(*sync_log_req),
+                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<janus::Command> md,
+                                                                                    ballot_t ballot,
                                                                                     int resp_type) {
     if(!resp_type)
       es_pww->step_down(ballot);
     else{
       if(!done){
         auto x = marshallable_cast<SyncLogResponse>(md.get());
-        responses.emplace_back(x);
+        // last use — unwrap() intentionally moves the Arc out.
+        responses.emplace_back(x.unwrap());
       } else{
         return;
       }
@@ -330,13 +331,15 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   sp_quorum->wait();
   done = true;
   if (sp_quorum->yes()) {
-    map<pair<int,slotid_t>, shared_ptr<janus::Command>> commited_slots;
+    map<pair<int,slotid_t>, rusty::Arc<janus::Command>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->sync_data.size(); j++){
-        auto bp_cmd =
-            marshallable_cast<BulkPaxosCmd>(responses[i]->sync_data[j].get());
-        for(int k = 0; k < bp_cmd->slots.size(); k++){
-          commited_slots[make_pair(j, bp_cmd->slots[k])] = bp_cmd->cmds[k];
+        const auto bp_cmd =
+            marshallable_cast<BulkPaxosCmd>(*responses[i]->sync_data[j]);
+        for(int k = 0; k < bp_cmd.unwrap()->slots.size(); k++){
+          commited_slots.insert_or_assign(
+              make_pair(j, bp_cmd.unwrap()->slots[k]),
+              bp_cmd.unwrap()->cmds[k].clone());
         }
       }
     }
@@ -350,26 +353,28 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
           // direct copy via Command's copy ctor.
           if(inst->committed_cmd_.has_value()){
 	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
-            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<janus::Command>(inst->committed_cmd_);
+            commited_slots.insert_or_assign(make_pair(j, responses[i]->missing_slots[j][k]), rusty::Arc<janus::Command>::make(inst->committed_cmd_));
           }
         }
       }
     }
 
-    vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
+    // Fill-then-wrap: build the batches locally, wrap each once
+    // complete at the BroadcastSyncCommit call below.
+    vector<BulkPaxosCmd> sync_cmds;
+    sync_cmds.reserve(pxs_workers_g.size());
     for(int i = 0; i < pxs_workers_g.size(); i++){
-      auto bp_cmd = make_shared<BulkPaxosCmd>();
-      bp_cmd->leader_id = es_pw->machine_id;
-      sync_cmds.push_back(bp_cmd);
+      sync_cmds.emplace_back();
+      sync_cmds.back().leader_id = es_pw->machine_id;
     }
     for(auto const& x : commited_slots){
-      sync_cmds[x.first.first]->slots.push_back(x.first.second);
-      sync_cmds[x.first.first]->cmds.push_back(x.second);
-      sync_cmds[x.first.first]->ballots.push_back(sync_log_req->epoch);
+      sync_cmds[x.first.first].slots.push_back(x.first.second);
+      sync_cmds[x.first.first].cmds.push_back(x.second.clone());
+      sync_cmds[x.first.first].ballots.push_back(sync_log_req->epoch);
     }
     vector<shared_ptr<PaxosAcceptQuorumEvent>> events;
     for(int i = 0; i < pxs_workers_g.size(); i++){
-      if(sync_cmds[i]->ballots.size() == 0)
+      if(sync_cmds[i].ballots.size() == 0)
         continue;
       //Log_info("Should receive some uncommitted slots here %d", i);
       //for(int kk = 0; kk < sync_cmds[i]->slots.size(); kk++)
@@ -377,7 +382,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i,
-                                                           sync_cmds[i],
+                                                           rusty::Arc<BulkPaxosCmd>::make(std::move(sync_cmds[i])),
                                                            [es_pww](ballot_t ballot, int valid){
           if(!valid){
             es_pww->step_down(ballot);
@@ -509,11 +514,12 @@ PaxosWorker::~PaxosWorker() {
 }
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
-  auto sp_cmd = make_shared<LogEntry>();
+  // Fill-then-wrap: build the entry locally, wrap once complete.
+  LogEntry cmd;
   // Use std::string for payload to avoid mismatched allocation/deallocation
-  sp_cmd->log_entry = std::string(log_entry, length);
-  sp_cmd->length = length;
-  _Submit(sp_cmd);
+  cmd.log_entry = std::string(log_entry, length);
+  cmd.length = length;
+  _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)));
 }
 
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {

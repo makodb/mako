@@ -253,13 +253,13 @@ bool FpgaRaftServer::RequestVote() {
     this->rep_frame_ = this->frame_ ;
 
     auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
-    auto empty_cmd = std::make_shared<TpcEmptyCommand>();
+    auto empty_cmd = rusty::Arc<TpcEmptyCommand>::make();
     // dropped tautological `kMarshallKind == static_kind()` verify
     // (the kMarshallKind constant retired with the L8 TypeList migration).
     // aliased wrap via Command::pack_aliased preserves
-    // shared_ptr identity through the proxy.
+    // Arc identity through the proxy.
     ((CoordinatorFpgaRaft*)co)->Submit(
-        janus::Command::pack_aliased<TpcEmptyCommand>(empty_cmd));
+        janus::Command::pack_aliased<TpcEmptyCommand>(std::move(empty_cmd)));
     
     //RequestVote2FPGA() ;
     if(IsLeader())
@@ -449,10 +449,10 @@ void FpgaRaftServer::StartTimer()
             *followerLastLogIndex = this->lastLogIndex;
             
 						if (cmd.kind_ == TpcCommitCommand::static_kind()){
-              auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-              auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-              verify(vec_piece_data != nullptr);
-              auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+              const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+              const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+              verify(vec_piece_data.is_some());
+              auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
               
 							vector<struct KeyValue> kv_vector;
 							int index = 0;
@@ -567,10 +567,10 @@ void FpgaRaftServer::StartTimer()
   }
 
   void FpgaRaftServer::removeCmd(slotid_t slot) {
-    auto cmd = marshallable_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
-    if (!cmd)
+    const auto cmd = marshallable_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
+    if (cmd.is_none())
       return;
-    tx_sched_->DestroyTx(cmd->tx_id_);
+    tx_sched_->DestroyTx(cmd.unwrap()->tx_id_);
     raft_logs_.erase(slot);
   }
 

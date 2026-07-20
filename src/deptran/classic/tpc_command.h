@@ -1,4 +1,6 @@
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include "../__dep__.h"
 #include "../command.h"
 #include "../mako_commands.h"
@@ -38,7 +40,7 @@ class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
   Command cmd_{};
   ballot_t term;
   // Optional view data for WRONG_LEADER responses
-  std::shared_ptr<ViewData> sp_view_data_ = nullptr;
+  rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
 
   void save(BinaryWriteArchive& ar) const;
   void load(BinaryReadArchive& ar);
@@ -84,11 +86,11 @@ class TpcBatchCommand : public rrr::Serializable<TpcBatchCommand,
                                                  MakoCommands> {
   uint32_t size_ = 0;
 public:
-  vector<shared_ptr<TpcCommitCommand> > cmds_;
+  vector<rusty::Arc<TpcCommitCommand>> cmds_;
 
-  void AddCmd(shared_ptr<TpcCommitCommand> cmd);
+  void AddCmd(rusty::Arc<TpcCommitCommand> cmd);
   // @safe
-  void AddCmds(vector<shared_ptr<TpcCommitCommand> >& cmds);
+  void AddCmds(vector<rusty::Arc<TpcCommitCommand>>& cmds);
   void ClearCmd();
   inline size_t Size() const { return cmds_.size(); }
 

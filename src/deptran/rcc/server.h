@@ -1,5 +1,6 @@
 
 #pragma once
+#include <rusty/arc.hpp>
 
 #include "../__dep__.h"
 #include "../scheduler.h"
@@ -66,7 +67,7 @@ class RccServer : public TxLogServer, public RccGraph {
 
   int OnDispatch(const vector<SimpleCommand> &cmd,
                  TxnOutput *output,
-                 shared_ptr<RccGraph> graph);
+                 rusty::Arc<RccGraph> graph);
 
   virtual void OnInquire(txnid_t cmd_id, int rank, map<txid_t, parent_set_t>*);
 
@@ -97,7 +98,7 @@ class RccServer : public TxLogServer, public RccGraph {
   virtual int OnCommit(txnid_t txn_id,
                        rank_t rank,
                        bool need_validation,
-                       shared_ptr<RccGraph> sp_graph,
+                       rusty::Arc<RccGraph> sp_graph,
                        TxnOutput *output);
   /**
    *

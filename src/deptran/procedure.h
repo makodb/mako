@@ -1,3 +1,5 @@
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include <memory>
 
 #pragma once
@@ -28,7 +30,7 @@ class TxReply {
   int32_t txn_type_;
   txnid_t tx_id_;
   // Optional view data for client view updates (e.g., when WRONG_LEADER error occurs)
-  std::shared_ptr<ViewData> sp_view_data_ = nullptr;
+  rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
   // Timeout flag - set when transaction timed out waiting for shard responses
   bool timed_out_ = false;
 };

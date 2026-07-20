@@ -3,7 +3,7 @@
 // Validates the open-set polymorphic envelope from `any_message.hpp`:
 //   1. Pack + unpack roundtrip preserves typed payload values.
 //   2. `is_a<T>()` / the public `type_name_` discriminator work.
-//   3. Wrong-type unpack returns nullptr (not abort).
+//   3. Wrong-type unpack returns None (not abort).
 //   4. Direct archive roundtrip produces an AnyMessage that decodes
 //      to the same typed value.
 //   5. `pack_as` with explicit name overrides the registered name.
@@ -14,6 +14,8 @@
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 
 #include "../rrr.hpp"
@@ -74,9 +76,10 @@ void EnsureRegistered() {
 TEST(AnyMessageTest, PackUnpackRoundTripPreservesValue) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 42;
-  val->label = "hello";
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 42;
+  val.get_mut().unwrap().label = "hello";
 
   auto am = AnyMessage::pack(val);
   EXPECT_EQ(am.type_name_, kGraphName);
@@ -84,31 +87,33 @@ TEST(AnyMessageTest, PackUnpackRoundTripPreservesValue) {
   EXPECT_FALSE(am.is_a<OtherPayload>());
 
   // Aliased pack: mutations on `val` reflect in the unpacked view.
-  val->node_count = 99;
-  auto recovered = am.unpack<GraphPayload>();
-  ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered->node_count, 99);
-  EXPECT_EQ(recovered->label, "hello");
+  // @unsafe { aliasing canary: proves pack shares (not copies) the payload }
+  const_cast<GraphPayload*>(val.get())->node_count = 99;
+  const auto recovered = am.unpack<GraphPayload>();
+  ASSERT_TRUE(recovered.is_some());
+  EXPECT_EQ(recovered.unwrap()->node_count, 99);
+  EXPECT_EQ(recovered.unwrap()->label, "hello");
 }
 
 TEST(AnyMessageTest, UnpackWrongTypeReturnsNullptr) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 7;
-  val->label = "x";
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 7;
+  val.get_mut().unwrap().label = "x";
 
   auto am = AnyMessage::pack(val);
 
-  // Mismatched type — must return nullptr, not abort.
-  auto wrong = am.unpack<OtherPayload>();
-  EXPECT_EQ(wrong, nullptr);
+  // Mismatched type — must return None, not abort.
+  const auto wrong = am.unpack<OtherPayload>();
+  EXPECT_TRUE(wrong.is_none());
 }
 
 TEST(AnyMessageTest, IsAByName) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
+  auto val = rusty::Arc<GraphPayload>::make();
   auto am = AnyMessage::pack(val);
 
   EXPECT_TRUE(am.type_name_ == kGraphName);
@@ -118,9 +123,10 @@ TEST(AnyMessageTest, IsAByName) {
 TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 1234;
-  val->label = "wire-trip";
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 1234;
+  val.get_mut().unwrap().label = "wire-trip";
 
   // Sender side: pack into AnyMessage, serialize via the archive.
   AnyMessage outgoing = AnyMessage::pack(val);
@@ -142,10 +148,10 @@ TEST(AnyMessageTest, DirectArchiveRoundTripPreservesValue) {
   EXPECT_EQ(incoming.type_name_, kGraphName);
   EXPECT_TRUE(incoming.is_a<GraphPayload>());
 
-  auto recovered = incoming.unpack<GraphPayload>();
-  ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered->node_count, 1234);
-  EXPECT_EQ(recovered->label, "wire-trip");
+  const auto recovered = incoming.unpack<GraphPayload>();
+  ASSERT_TRUE(recovered.is_some());
+  EXPECT_EQ(recovered.unwrap()->node_count, 1234);
+  EXPECT_EQ(recovered.unwrap()->label, "wire-trip");
 }
 
 TEST(AnyMessageTest, PackAsAdHocName) {
@@ -159,9 +165,10 @@ TEST(AnyMessageTest, PackAsAdHocName) {
       reg_any_message_as<GraphPayload>("graph.alias.v1");
   (void)_reg_alias;
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 5;
-  val->label = "alias";
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 5;
+  val.get_mut().unwrap().label = "alias";
 
   auto am = AnyMessage::pack_as<GraphPayload>("graph.alias.v1", val);
   EXPECT_EQ(am.type_name_, "graph.alias.v1");
@@ -193,8 +200,9 @@ TEST(AnyMessageTest, PackAsAdHocName) {
 TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
   EnsureRegistered();
 
-  auto val = std::make_shared<OtherPayload>();
-  val->value = 0xDEADBEEFCAFEBABEull;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<OtherPayload>::make();
+  val.get_mut().unwrap().value = 0xDEADBEEFCAFEBABEull;
 
   AnyMessage outgoing = AnyMessage::pack(val);
   BufferSink sink;
@@ -209,9 +217,9 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
     BinaryReadArchive reader(make_source_proxy(&src));
     rrr::Deserialize_::deserialize(incoming, reader);
   }
-  auto recovered = incoming.unpack<OtherPayload>();
-  ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered->value, 0xDEADBEEFCAFEBABEull);
+  const auto recovered = incoming.unpack<OtherPayload>();
+  ASSERT_TRUE(recovered.is_some());
+  EXPECT_EQ(recovered.unwrap()->value, 0xDEADBEEFCAFEBABEull);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,9 +231,10 @@ TEST(AnyMessageTest, PayloadUpdatesVisibleAfterEncodeDecode) {
 TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 7;
-  val->label = "save/load roundtrip";
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 7;
+  val.get_mut().unwrap().label = "save/load roundtrip";
 
   // Build an AnyMessage and save through the BinaryWriteArchive +
   // BufferSink path (the path rpcgen-generated code uses for fields
@@ -247,10 +256,10 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
 
   EXPECT_EQ(incoming.type_name_, kGraphName);
   EXPECT_TRUE(incoming.is_a<GraphPayload>());
-  auto recovered = incoming.unpack<GraphPayload>();
-  ASSERT_NE(recovered, nullptr);
-  EXPECT_EQ(recovered->node_count, 7);
-  EXPECT_EQ(recovered->label, "save/load roundtrip");
+  const auto recovered = incoming.unpack<GraphPayload>();
+  ASSERT_TRUE(recovered.is_some());
+  EXPECT_EQ(recovered.unwrap()->node_count, 7);
+  EXPECT_EQ(recovered.unwrap()->label, "save/load roundtrip");
 }
 
 // removed
@@ -262,8 +271,9 @@ TEST(AnyMessageTest, SerializableSaveLoadRoundTrip) {
 TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
   EnsureRegistered();
 
-  auto val = std::make_shared<GraphPayload>();
-  val->node_count = 1;
+  // Unique-owner mutation window: the Arc is not shared yet.
+  auto val = rusty::Arc<GraphPayload>::make();
+  val.get_mut().unwrap().node_count = 1;
 
   AnyMessage outgoing(AnyMessage::pack(val));
   BufferSink sink;
@@ -281,7 +291,7 @@ TEST(AnyMessageTest, SerializableUnpackWrongTypeReturnsNullptr) {
 
   EXPECT_TRUE(incoming.is_a<GraphPayload>());
   EXPECT_FALSE(incoming.is_a<OtherPayload>());
-  EXPECT_EQ(incoming.unpack<OtherPayload>(), nullptr);
+  EXPECT_TRUE(incoming.unpack<OtherPayload>().is_none());
 }
 
 }  // namespace

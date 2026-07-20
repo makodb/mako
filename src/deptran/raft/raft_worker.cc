@@ -377,17 +377,16 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
 }
 
 // @unsafe - external calls marked @external [safe]
-std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
+rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     const char* log_entry,
     int length,
     txnid_t tx_id,
     uint32_t par_id) {
 
-  auto tpc_cmd = std::make_shared<TpcCommitCommand>();
-  tpc_cmd->tx_id_ = tx_id;
-
-  auto vpd = std::make_shared<VecPieceData>();
-  vpd->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+  auto vpd = rusty::Arc<VecPieceData>::make();
+  // @unsafe - unique-owner mutation window (factory-fresh Arc).
+  vpd.get_mut().unwrap().sp_vec_piece_data_ =
+      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
 
   auto simple_cmd = std::make_shared<SimpleCommand>();
 
@@ -398,7 +397,14 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   simple_cmd->partition_id_ = par_id;
 
   vpd->sp_vec_piece_data_->push_back(simple_cmd);
-  tpc_cmd->cmd_ = vpd;
+
+  auto tpc_cmd = rusty::Arc<TpcCommitCommand>::make();
+  // @unsafe - unique-owner mutation window (factory-fresh Arc).
+  {
+    auto& mut_cmd = tpc_cmd.get_mut().unwrap();
+    mut_cmd.tx_id_ = tx_id;
+    mut_cmd.cmd_ = std::move(vpd);
+  }
 
   Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id=%lu with %d bytes (Mako/test payload)",
             tx_id, length);
@@ -430,7 +436,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 
   uint64_t index = 0;
   uint64_t term = 0;
-  bool appended = raft_server->Start(tpc_cmd, &index, &term);
+  bool appended = raft_server->Start(std::move(tpc_cmd), &index, &term);
   if (!appended) {
     return;
   }
@@ -590,16 +596,17 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   int len = 0;
 
   // Try TpcCommitCommand (production path with RAFT_BATCH_OPTIMIZATION)
-  auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
-  // tpc_cmd->cmd_ is Command; has_value() for null
+  const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(md);
+  // tpc_cmd is Option<Arc<TpcCommitCommand>>; the payload's cmd_ is
+  // Command; has_value() for null
   // check; marshallable_cast<T>(Command&) overload handles the cast.
-  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
+  if (tpc_cmd.is_some() && tpc_cmd.unwrap()->cmd_.has_value()) {
     // Extract VecPieceData that contains the raw bytes
-    auto vpd = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(vpd != nullptr);
-    if (vpd && vpd->sp_vec_piece_data_ && !vpd->sp_vec_piece_data_->empty()) {
+    const auto vpd = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
+    verify(vpd.is_some());
+    if (vpd.is_some() && vpd.unwrap()->sp_vec_piece_data_ && !vpd.unwrap()->sp_vec_piece_data_->empty()) {
       // Get the first SimpleCommand
-      auto simple_cmd = (*vpd->sp_vec_piece_data_)[0];
+      auto simple_cmd = (*vpd.unwrap()->sp_vec_piece_data_)[0];
       if (simple_cmd && simple_cmd->input.values_ && !simple_cmd->input.values_->empty()) {
         // Extract the raw bytes stored as STR value
         auto& first_val = simple_cmd->input.values_->begin()->second;
@@ -608,7 +615,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
           log = payload.c_str();
           len = static_cast<int>(payload.size());
           Log_debug("[RAFT-CALLBACK] Extracted log from VecPieceData (tx_id=%lu): len=%d",
-                    tpc_cmd->tx_id_, len);
+                    tpc_cmd.unwrap()->tx_id_, len);
         } else {
           Log_error("[RAFT-CALLBACK] VecPieceData value is not STR type for slot %d", slot_id);
           return status;
@@ -629,11 +636,11 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // Extract par_id from the committed entry's SimpleCommand::partition_id_.
   uint32_t par_id = 0;
-  if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
-    auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
-    verify(vpd_inner != nullptr);
-    if (vpd_inner && vpd_inner->sp_vec_piece_data_ && !vpd_inner->sp_vec_piece_data_->empty()) {
-      par_id = (*vpd_inner->sp_vec_piece_data_)[0]->partition_id_;
+  if (tpc_cmd.is_some() && tpc_cmd.unwrap()->cmd_.has_value()) {
+    const auto vpd_inner = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
+    verify(vpd_inner.is_some());
+    if (vpd_inner.is_some() && vpd_inner.unwrap()->sp_vec_piece_data_ && !vpd_inner.unwrap()->sp_vec_piece_data_->empty()) {
+      par_id = (*vpd_inner.unwrap()->sp_vec_piece_data_)[0]->partition_id_;
     }
   }
 

@@ -645,10 +645,10 @@ class RaftServer : public TxLogServer {
     {
 #ifndef RAFT_TEST_CORO
       if (cmd.kind_ == TpcCommitCommand::static_kind()){
-        auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-        auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-        verify(vec_piece_data != nullptr);
-        auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+        const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+        const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+        verify(vec_piece_data.is_some());
+        auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
 
         // Check if this is Mako data (STR values) vs Janus data (I32 values)
         bool is_mako_data = false;

@@ -103,7 +103,7 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
 class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
  public:
   using QuorumEventWrapper::QuorumEventWrapper;
-  std::vector<shared_ptr<VecRecData>> id_sets_;
+  std::vector<rusty::Arc<VecRecData>> id_sets_;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   
@@ -112,8 +112,9 @@ class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
       auto vec_rec_data = marshallable_cast<VecRecData>(id_set);
-      if (vec_rec_data) {
-        id_sets_.push_back(vec_rec_data);
+      if (vec_rec_data.is_some()) {
+        // intentional extraction — last use of the Option local
+        id_sets_.push_back(vec_rec_data.unwrap());
       }
     } else {
       vote_no();
@@ -162,14 +163,14 @@ class JetpackPullCmdQuorumEvent: public QuorumEventWrapper {
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& batch_md) {
     if (y) {
       vote_yes();
-      auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
-      if (batch) {
-        for (size_t i = 0; i < batch->Size(); i++) {
-          auto it = key_index_.find(batch->GetKey(i));
+      const auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
+      if (batch.is_some()) {
+        for (size_t i = 0; i < batch.unwrap()->Size(); i++) {
+          auto it = key_index_.find(batch.unwrap()->GetKey(i));
           if (it == key_index_.end()) {
             continue;
           }
-          const auto& cmd = batch->GetCommand(i);
+          const auto& cmd = batch.unwrap()->GetCommand(i);
           if (!cmd.has_value()) {
             continue;
           }
@@ -432,7 +433,7 @@ class Communicator {
   
   // View management methods (static for global access)
   // @unsafe
-  static void UpdatePartitionView(parid_t partition_id, const std::shared_ptr<ViewData>& view_data);
+  static void UpdatePartitionView(parid_t partition_id, const ViewData& view_data);
   static View GetPartitionView(parid_t partition_id);
   static locid_t GetLeaderForPartition(parid_t partition_id);
   std::pair<int, ClassicProxy*> ConnectToSite(Config::SiteInfo &site,

@@ -133,10 +133,10 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
                                SyncLogResponse& ret_cmd){
   // marshallable_cast works on Command directly via
   // Envelope overload — drop the boundary lift.
-  auto bcmd = marshallable_cast<SyncLogRequest>(cmd_env);
-  verify(bcmd != nullptr);
+  const auto bcmd = marshallable_cast<SyncLogRequest>(cmd_env);
+  verify(bcmd.is_some());
   es->state_lock();
-  if(bcmd->epoch < es->cur_epoch){
+  if(bcmd.unwrap()->epoch < es->cur_epoch){
     //es->state_unlock();
     *valid = 0;
     *ballot = es->cur_epoch;
@@ -152,7 +152,7 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
     BulkPaxosCmd bp_cmd;
     ps->mtx_.lock();
 
-    for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
+    for(int j = bcmd.unwrap()->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
       auto inst = ps->GetInstance(j);
       // committed_cmd_ is Command; the temp_cmd
       // copy + janus::Command(Command) wrapping below relies on
@@ -162,20 +162,20 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
         bp_cmd.ballots.push_back(inst->max_ballot_accepted_);
         auto temp_cmd = inst->committed_cmd_;
       	janus::Command md(temp_cmd);
-      	auto shrd_ptr = make_shared<janus::Command>(md);
-        bp_cmd.cmds.push_back(shrd_ptr);
+      	auto shrd_ptr = rusty::Arc<janus::Command>::make(md);
+        bp_cmd.cmds.push_back(std::move(shrd_ptr));
       }
     }
     //Log_info("The partition %d, sync commit is %d; max executed-committed slot is [%d-%d] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
-    for(int j = ps->max_executed_slot_; j < bcmd->sync_commit_slot[i]; j++){
+    for(int j = ps->max_executed_slot_; j < bcmd.unwrap()->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
       if(!inst->committed_cmd_.has_value()){
         ret_cmd.missing_slots[i].push_back(j);
       }
     }
     //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
-    ret_cmd.sync_data.push_back(
-        make_shared<janus::Command>(make_shared<BulkPaxosCmd>(std::move(bp_cmd))));
+    ret_cmd.sync_data.push_back(rusty::Arc<janus::Command>::make(
+        rusty::Arc<BulkPaxosCmd>::make(std::move(bp_cmd))));
     ps->mtx_.unlock();
   }
 }
@@ -185,12 +185,12 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
                                i32* valid,
                                rusty::Function<void()> cb) {
   // marshallable_cast works on Command directly.
-  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
-  verify(bcmd != nullptr);
+  const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
+  verify(bcmd.is_some());
   *valid = 1;
-  ballot_t cur_b = bcmd->ballots[0];
-  slotid_t cur_slot = bcmd->slots[0];
-  int req_leader = bcmd->leader_id;
+  ballot_t cur_b = bcmd.unwrap()->ballots[0];
+  slotid_t cur_slot = bcmd.unwrap()->slots[0];
+  int req_leader = bcmd.unwrap()->leader_id;
   if(req_leader == 1 && es->machine_id != 1)
         Log_debug("Accept Received from new leader");
   // mtx_.lock();
@@ -212,9 +212,9 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
 
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
-  for(int i = 0; i < bcmd->slots.size(); i++){
-      slotid_t slot_id = bcmd->slots[i];
-      ballot_t ballot_id = bcmd->ballots[i];
+  for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
+      slotid_t slot_id = bcmd.unwrap()->slots[i];
+      ballot_t ballot_id = bcmd.unwrap()->ballots[i];
       // mtx_.lock();
       if(cur_epoch > ballot_id){
         *valid = 0;
@@ -242,7 +242,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->accepted_cmd_ = *bcmd->cmds[i];
+        instance->accepted_cmd_ = *bcmd.unwrap()->cmds[i];
         max_accepted_slot_ = slot_id;
         n_accept_++;
         *valid &= 1;
@@ -266,13 +266,13 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   //Log_info("here");
   //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
   // marshallable_cast works on Command directly.
-  auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
-  verify(bcmd != nullptr);
+  const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
+  verify(bcmd.is_some());
   *valid = 1;
-  ballot_t cur_b = bcmd->ballots[0];
-  slotid_t cur_slot = bcmd->slots[0];
+  ballot_t cur_b = bcmd.unwrap()->ballots[0];
+  slotid_t cur_slot = bcmd.unwrap()->slots[0];
   //Log_info("multi-paxos scheduler decide for slot: %ld", cur_slot);
-  int req_leader = bcmd->leader_id;
+  int req_leader = bcmd.unwrap()->leader_id;
   //es->state_lock();
   mtx_.lock();
   if(cur_b < cur_epoch){
@@ -292,10 +292,10 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
-  for(int i = 0; i < bcmd->slots.size(); i++){
+  for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
       //break;
-      slotid_t slot_id = bcmd->slots[i];
-      ballot_t ballot_id = bcmd->ballots[i];
+      slotid_t slot_id = bcmd.unwrap()->slots[i];
+      ballot_t ballot_id = bcmd.unwrap()->ballots[i];
       mtx_.lock();
       if(cur_epoch > ballot_id){
         *valid = 0;
@@ -323,7 +323,7 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
         verify(instance->max_ballot_accepted_ <= ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->committed_cmd_ = *bcmd->cmds[i];
+        instance->committed_cmd_ = *bcmd.unwrap()->cmds[i];
         *valid &= 1;
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;
@@ -375,12 +375,12 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
                                i32* valid,
                                rusty::Function<void()> cb) {
   // marshallable_cast works on Command directly.
-  auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
-  verify(bcmd != nullptr);
+  const auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
+  verify(bcmd.is_some());
   *valid = 1;
-  ballot_t cur_b = bcmd->ballots[0];
-  slotid_t cur_slot = bcmd->slots[0];
-  int req_leader = bcmd->leader_id;
+  ballot_t cur_b = bcmd.unwrap()->ballots[0];
+  slotid_t cur_slot = bcmd.unwrap()->slots[0];
+  int req_leader = bcmd.unwrap()->leader_id;
   // mtx_.lock();
   if(cur_b < cur_epoch){
     *ballot = cur_epoch;
@@ -398,9 +398,9 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
-  for(int i = 0; i < bcmd->slots.size(); i++){
-      slotid_t slot_id = bcmd->slots[i];
-      ballot_t ballot_id = bcmd->ballots[i];
+  for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
+      slotid_t slot_id = bcmd.unwrap()->slots[i];
+      ballot_t ballot_id = bcmd.unwrap()->ballots[i];
       // mtx_.lock();
       if(cur_epoch > ballot_id){
         *valid = 0;

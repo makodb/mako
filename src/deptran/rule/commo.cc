@@ -136,9 +136,10 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
   verify(!vec_piece_data->empty());
   auto par_id = vec_piece_data->at(0)->PartitionId();
   
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = vec_piece_data;
-  janus::Command md(sp_vpd);
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = vec_piece_data;
+  const auto sp_vpd = rusty::Arc<VecPieceData>::make(std::move(vpd));
+  janus::Command md(sp_vpd.clone());
 
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   int n_leaders = Config::GetConfig()->get_num_leaders(par_id);
@@ -168,7 +169,8 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
     // Record Time
     struct timeval tp;
     gettimeofday(&tp, NULL);
-    sp_vpd->time_sent_from_client_ = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;
+    // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+    { auto& mut_vpd = *const_cast<VecPieceData*>(sp_vpd.get()); mut_vpd.time_sent_from_client_ = tp.tv_sec * 1000 + tp.tv_usec / 1000.0; }
     
     ClassicProxy::RpcRuleSpeculativeExecuteRequest req{};
     req.md = md;
@@ -210,22 +212,22 @@ void CommunicatorRule::BroadcastDispatch(
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {
-          auto sp_view_data = marshallable_cast<ViewData>(view_md);
-          if (sp_view_data) {
-            UpdatePartitionView(par_id, sp_view_data);
+          const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+          if (sp_view_data.is_some()) {
+            UpdatePartitionView(par_id, *sp_view_data.unwrap());
           }
         }
         
         callback(ret, outputs);
       };
   
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = sp_vec_piece;
 
   // Record Time
-  sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
+  vpd.time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  janus::Command md(sp_vpd); // ????
+  janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd))); // ????
 
 	DepId di;
 	di.str = "dep";

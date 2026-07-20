@@ -8,6 +8,8 @@
  */
 
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 #include "__dep__.h"
 #include "rcc/row.h"
@@ -61,7 +63,7 @@ class Tx: public enable_shared_from_this<Tx> {
   // Boundary calls into APIs still taking `shared_ptr<Marshallable>`
   // use `cmd_.inner_marshallable()`.
   Command cmd_{};
-  shared_ptr<ViewData> sp_view_data_ = nullptr;
+  rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
 
 
 #ifdef CHECK_ISO

@@ -337,9 +337,9 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
     txn->reply_.res_ = WRONG_LEADER;
     // For None mode, we need to check if we can get view data from the transaction
     // The view data should have been set by the scheduler
-    if (txn->reply_.sp_view_data_) {
-      Log_info("[WRONG_LEADER] DispatchAck has view data: %s", 
-               txn->reply_.sp_view_data_->ToString().c_str());
+    if (txn->reply_.sp_view_data_.is_some()) {
+      Log_info("[WRONG_LEADER] DispatchAck has view data: %s",
+               txn->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
     }
     GotoNextPhase();
     return;
@@ -528,9 +528,9 @@ void CoordinatorClassic::Commit() {
       aborted_ = true;  // Mark as aborted to clean up
       // The view data should be attached to the TpcCommitCommand by the Raft coordinator
       // It will be propagated to the client through the TxReply
-      if (cmd->reply_.sp_view_data_) {
-        Log_info("[WRONG_LEADER] View data attached to reply: %s", 
-                 cmd->reply_.sp_view_data_->ToString().c_str());
+      if (cmd->reply_.sp_view_data_.is_some()) {
+        Log_info("[WRONG_LEADER] View data attached to reply: %s",
+                 cmd->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
       } else {
         Log_info("[WRONG_LEADER] No view data attached to reply for tx_id: %lu", tx_data().id_);
       }
@@ -650,9 +650,9 @@ void CoordinatorClassic::End() {
     if (tx_data->reply_.res_ == WRONG_LEADER) {
       // Keep WRONG_LEADER status (already set in Commit phase)
       Log_info("[WRONG_LEADER] Maintaining WRONG_LEADER status in End() for tx_id: %lu", tx_data->id_);
-      if (tx_data->reply_.sp_view_data_) {
-        Log_info("[WRONG_LEADER] View data will be sent to client: %s", 
-                 tx_data->reply_.sp_view_data_->ToString().c_str());
+      if (tx_data->reply_.sp_view_data_.is_some()) {
+        Log_info("[WRONG_LEADER] View data will be sent to client: %s",
+                 tx_data->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
       }
     } else {
       tx_data->reply_.res_ = REJECT;

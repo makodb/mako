@@ -81,11 +81,11 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
   // Jetpack: Handle WRONG_LEADER response for Raft
   if (txn_reply.res_ == WRONG_LEADER) {
     Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x%lx", txn_reply.tx_id_);
-    if (txn_reply.sp_view_data_ != nullptr) {
-      auto view_data = txn_reply.sp_view_data_;
+    if (txn_reply.sp_view_data_.is_some()) {
+      const auto& view_data = *txn_reply.sp_view_data_.as_ref().unwrap();
       Log_info("[CLIENT_VIEW] Extracted view data from response: %s",
-               view_data->ToString().c_str());
-      commo_->UpdatePartitionView(view_data->partition_id_, view_data);
+               view_data.ToString().c_str());
+      commo_->UpdatePartitionView(view_data.partition_id_, view_data);
     } else {
       Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x%lx", txn_reply.tx_id_);
     }
@@ -522,11 +522,11 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
       // Jetpack: Handle WRONG_LEADER response for Raft
       if (reply.res_ == WRONG_LEADER) {
         Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x%lx", reply.tx_id_);
-        if (reply.sp_view_data_ != nullptr) {
-          auto view_data = reply.sp_view_data_;
+        if (reply.sp_view_data_.is_some()) {
+          const auto& view_data = *reply.sp_view_data_.as_ref().unwrap();
           Log_info("[CLIENT_VIEW] Extracted view data from response: %s",
-                   view_data->ToString().c_str());
-          commo_->UpdatePartitionView(view_data->partition_id_, view_data);
+                   view_data.ToString().c_str());
+          commo_->UpdatePartitionView(view_data.partition_id_, view_data);
         } else {
           Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x%lx", reply.tx_id_);
         }

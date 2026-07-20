@@ -114,11 +114,10 @@ void serialize(const TxReply& reply, BinaryWriteArchive& ar) {
   rrr::Serialize_::serialize(reply.time_, ar);
   rrr::Serialize_::serialize(reply.txn_type_, ar);
 
-  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
+  bool_t has_view_data = reply.sp_view_data_.is_some() ? 1 : 0;
   rrr::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
-    janus::Command view_md;
-    view_md = reply.sp_view_data_;
+    janus::Command view_md = reply.sp_view_data_.unwrap().clone();
     rrr::Serialize_::serialize(view_md, ar);
   }
 }
@@ -140,7 +139,7 @@ void deserialize(TxReply& reply, BinaryReadArchive& ar) {
     rrr::Deserialize_::deserialize(view_md, ar);
     reply.sp_view_data_ = marshallable_cast<ViewData>(view_md);
   } else {
-    reply.sp_view_data_ = nullptr;
+    reply.sp_view_data_ = rusty::Option<rusty::Arc<ViewData>>();
   }
 }
 

@@ -26,17 +26,17 @@ SimpleRWCommand::SimpleRWCommand() {
 // delegates here.
 SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
   verify(cmd.has_value());
-  shared_ptr<VecPieceData> cmd_cast{nullptr};
+  rusty::Option<rusty::Arc<VecPieceData>> cmd_cast{};
   if (unlikely(cmd.kind_ == TpcBatchCommand::static_kind())) {
-    shared_ptr<TpcBatchCommand> batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
-    verify(batch_cmd != nullptr);
-    verify(batch_cmd->Size() == 1);
-    shared_ptr<TpcCommitCommand> tpc_cmd = batch_cmd->cmds_[0];
+    const auto batch_cmd = marshallable_cast<TpcBatchCommand>(cmd);
+    verify(batch_cmd.is_some());
+    verify(batch_cmd.unwrap()->Size() == 1);
+    const auto& tpc_cmd = batch_cmd.unwrap()->cmds_[0];
     cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
   } else if (likely(cmd.kind_ == TpcCommitCommand::static_kind())) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd != nullptr);
-    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd.is_some());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
   } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
@@ -47,12 +47,13 @@ SimpleRWCommand::SimpleRWCommand(const Command& cmd) {
     // `SimpleRWCommand(const SimpleCommand&)` ctor instead.
     verify(0);
   }
-  verify(cmd_cast != nullptr);
-  shared_ptr<TxPieceData> vector0 = *(cmd_cast->sp_vec_piece_data_->begin());
+  verify(cmd_cast.is_some());
+  shared_ptr<TxPieceData> vector0 =
+      *(cmd_cast.as_ref().unwrap()->sp_vec_piece_data_->begin());
   *this = SimpleRWCommand(*vector0);
   // is_recovery_command_ lives on the wrapper (VecPieceData), not on
   // the inner SimpleCommand — patch it back after delegating.
-  is_recovery_command_ = cmd_cast->is_recovery_command_;
+  is_recovery_command_ = cmd_cast.as_ref().unwrap()->is_recovery_command_;
 }
 
 // SimpleCommand-direct ctor.
@@ -177,18 +178,18 @@ double SimpleRWCommand::GetMsTimeElaps() {
 }
 
 double SimpleRWCommand::GetCommandMsTime(const Command& cmd) {
-  shared_ptr<VecPieceData> cmd_cast{nullptr};
+  rusty::Option<rusty::Arc<VecPieceData>> cmd_cast{};
   if (cmd.kind_ == TpcCommitCommand::static_kind()) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd != nullptr);
-    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd.is_some());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
   } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
     verify(0);
   }
-  verify(cmd_cast != nullptr);
-  return cmd_cast->time_sent_from_client_;
+  verify(cmd_cast.is_some());
+  return cmd_cast.as_ref().unwrap()->time_sent_from_client_;
 }
 
 double SimpleRWCommand::GetCommandMsTimeElaps(const Command& cmd) {
@@ -201,11 +202,11 @@ key_t SimpleRWCommand::GetKey(const Command& cmd) {
 }
 
 bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
-  shared_ptr<VecPieceData> cmd_cast{nullptr};
+  rusty::Option<rusty::Arc<VecPieceData>> cmd_cast{};
   if (cmd.kind_ == TpcCommitCommand::static_kind()) {
-    shared_ptr<TpcCommitCommand> tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd != nullptr);
-    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd->cmd_);
+    const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd.is_some());
+    cmd_cast = marshallable_cast<VecPieceData>(tpc_cmd.unwrap()->cmd_);
   } else if (cmd.kind_ == VecPieceData::static_kind()) {
     cmd_cast = marshallable_cast<VecPieceData>(cmd);
   } else {
@@ -214,8 +215,9 @@ bool SimpleRWCommand::NeedRecordConflictInOriginalPath(const Command& cmd) {
     // inherits Marshallable, so this kind is unreachable.
     verify(0);
   }
-  verify(cmd_cast != nullptr);
-  shared_ptr<TxPieceData> vector0 = *(cmd_cast->sp_vec_piece_data_->begin());
+  verify(cmd_cast.is_some());
+  shared_ptr<TxPieceData> vector0 =
+      *(cmd_cast.as_ref().unwrap()->sp_vec_piece_data_->begin());
   return vector0->rule_mode_on_and_is_original_path_only_command_;
 }
 

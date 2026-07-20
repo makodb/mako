@@ -33,7 +33,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
         } else if (auto sp_graph = am.unpack<RccGraph>()) {
-          callback(res, output, *sp_graph);
+          callback(res, output, *sp_graph.as_ref().unwrap());
         } else {
           verify(0);
         }
@@ -69,9 +69,9 @@ void JanusCommo::SendInquire(parid_t pid,
     }
     rrr::AnyMessage am;
     rrr::deserialize_from(fu->get_reply(), am);
-    auto sp_graph = am.unpack<RccGraph>();
-    verify(sp_graph);
-    callback(*sp_graph);
+    const auto sp_graph = am.unpack<RccGraph>();
+    verify(sp_graph.is_some());
+    callback(*sp_graph.unwrap());
   };
   fuattr.callback = cb;
   // TODO fix.
@@ -107,9 +107,9 @@ void JanusCommo::BroadcastPreAccept(
       int32_t res;
       rrr::AnyMessage am;
       rrr::deserialize_from(fu->get_reply(), res, am);
-      auto sp_graph = am.unpack<RccGraph>();
-      verify(sp_graph);
-      callback(res, std::make_shared<RccGraph>(*sp_graph));
+      const auto sp_graph = am.unpack<RccGraph>();
+      verify(sp_graph.is_some());
+      callback(res, std::make_shared<RccGraph>(*sp_graph.unwrap()));
     };
     verify(txn_id > 0);
     if (skip_graph) {
@@ -122,12 +122,12 @@ void JanusCommo::BroadcastPreAccept(
     } else {
       // graph field is now `AnyMessage`
       // directly (not wrapped in `janus::Command`).
-      auto sp_graph_copy = std::make_shared<RccGraph>(*sp_graph);
+      auto sp_graph_copy = rusty::Arc<RccGraph>::make(*sp_graph);
       ClassicProxy::RpcJanusPreAcceptRequest req;
       req.txn_id = txn_id;
       req.rank = RANK_UNDEFINED;
       req.cmd = cmds;
-      req.graph = rrr::AnyMessage::pack(sp_graph_copy);
+      req.graph = rrr::AnyMessage::pack(std::move(sp_graph_copy));
       auto fu_result = proxy->async_JanusPreAccept(req, fuattr);
       // Arc auto-released
     }
@@ -156,13 +156,13 @@ void JanusCommo::BroadcastAccept(parid_t par_id,
     };
     verify(cmd_id > 0);
     // graph field is `AnyMessage` directly.
-    auto sp_graph = std::make_shared<RccGraph>(*graph);
+    auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
     rank_t rank = RANK_D;
     ClassicProxy::RpcJanusAcceptRequest req;
     req.txn_id = cmd_id;
     req.rank = rank;
     req.ballot = ballot;
-    req.graph = rrr::AnyMessage::pack(sp_graph);
+    req.graph = rrr::AnyMessage::pack(std::move(sp_graph));
     auto fu_result = proxy->async_JanusAccept(req, fuattr);
     // Arc auto-released
   }
@@ -202,12 +202,12 @@ void JanusCommo::BroadcastCommit(
       // Arc auto-released
     } else {
       // graph field is `AnyMessage` directly.
-      auto sp_graph = std::make_shared<RccGraph>(*graph);
+      auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = 0;
       req.need_validation = need_validation;
-      req.graph = rrr::AnyMessage::pack(sp_graph);
+      req.graph = rrr::AnyMessage::pack(std::move(sp_graph));
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

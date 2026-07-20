@@ -58,13 +58,13 @@ void TpcCommitCommand::save(BinaryWriteArchive& ar) const {
   rrr::Serialize_::serialize(term, ar);
   // drive cmd_ through Command's archive op directly.
   rrr::Serialize_::serialize(cmd_, ar);
-  bool_t has_view_data = (sp_view_data_ != nullptr) ? 1 : 0;
+  bool_t has_view_data = sp_view_data_.is_some() ? 1 : 0;
   rrr::Serialize_::serialize(has_view_data, ar);
   if (has_view_data) {
     // was MarshallDeputy view_md(sp_view_data_) — Command
     // produces identical wire bytes via the same registry-dispatched
     // save/load path.
-    janus::Command view_md = sp_view_data_;
+    janus::Command view_md = sp_view_data_.unwrap().clone();
     rrr::Serialize_::serialize(view_md, ar);
   }
 }
@@ -108,17 +108,19 @@ void TpcBatchCommand::save(BinaryWriteArchive& ar) const {
 void TpcBatchCommand::load(BinaryReadArchive& ar) {
   rrr::Deserialize_::deserialize(size_, ar);
   for (uint32_t i = 0; i < size_; i++) {
-    cmds_.emplace_back(std::make_shared<TpcCommitCommand>());
-    cmds_[i]->load(ar);
+    auto cmd = rusty::Arc<TpcCommitCommand>::make();
+    // @unsafe - unique-owner mutation window (factory-fresh Arc).
+    cmd.get_mut().unwrap().load(ar);
+    cmds_.push_back(std::move(cmd));
   }
 }
 
-void TpcBatchCommand::AddCmd(shared_ptr<TpcCommitCommand> cmd) {
+void TpcBatchCommand::AddCmd(rusty::Arc<TpcCommitCommand> cmd) {
   size_++;
-  cmds_.push_back(cmd);
+  cmds_.push_back(std::move(cmd));
 }
 
-void TpcBatchCommand::AddCmds(vector<shared_ptr<TpcCommitCommand> >& cmds) {
+void TpcBatchCommand::AddCmds(vector<rusty::Arc<TpcCommitCommand>>& cmds) {
   cmds_ = cmds;
   size_ = cmds_.size();
 }

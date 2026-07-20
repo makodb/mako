@@ -17,7 +17,7 @@ import rrr.debugging;
 import rrr.serializable;
 import rrr.threading;
 
-// @safe - AnyMessage: shared_ptr-backed typed wire payload; the
+// @safe - AnyMessage: rusty::Arc-backed typed wire payload; the
 // runtime AnyMessageRegistry maps registered names to factory
 // closures. Methods that drive a Marshal operator<</>> chain
 // (`save`, `load`, the four free operator helpers), do a
@@ -42,9 +42,9 @@ void anymessage_load(AnyMessage& self, BinaryReadArchive& ar);
 // found by ADL, declared here anyway for uniformity.) Definitions
 // (inline) follow the registry declarations below.
 template <typename T> bool anymessage_is_a(const AnyMessage& self);
-template <typename T> std::shared_ptr<T> anymessage_unpack(const AnyMessage& self);
-template <typename T> AnyMessage anymessage_pack_as(std::string name, std::shared_ptr<T> val);
-template <typename T> AnyMessage anymessage_pack(std::shared_ptr<T> val);
+template <typename T> rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self);
+template <typename T> AnyMessage anymessage_pack_as(std::string name, rusty::Arc<T> val);
+template <typename T> AnyMessage anymessage_pack(rusty::Arc<T> val);
 
 // `AnyMessage` — typed wire payload `[v64 type_name] [payload bytes]`.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -68,7 +68,7 @@ template <typename T> AnyMessage anymessage_pack(std::shared_ptr<T> val);
 #if RUSTYCPP_RUST
 struct AnyMessage {
     type_name_: std::string,
-    payload_: SerializableProxy,
+    payload_: Option<SerializableProxy>,
 }
 
 impl AnyMessage {
@@ -90,7 +90,7 @@ impl AnyMessage {
 
     // Recover the typed payload. Returns nullptr if T is not the
     // carried type, or if T was never registered.
-    fn unpack<T>(&self) -> std::shared_ptr<T> {
+    fn unpack<T>(&self) -> Option<Arc<T>> {
         anymessage_unpack::<T>(self)
     }
 
@@ -98,34 +98,34 @@ impl AnyMessage {
     // name does NOT need to have been pre-registered — pack_as is the
     // escape hatch for ad-hoc names. The receiver still needs a
     // factory registered under the same name to deserialize.
-    fn pack_as<T>(name: std::string, val: std::shared_ptr<T>) -> AnyMessage {
+    fn pack_as<T>(name: std::string, val: Arc<T>) -> AnyMessage {
         anymessage_pack_as(name, val)
     }
 
     // Build an AnyMessage using T's registered name. Aborts via
     // verify() if T was not registered with `reg_any_message_as<T>(...)`.
-    fn pack<T>(val: std::shared_ptr<T>) -> AnyMessage {
+    fn pack<T>(val: Arc<T>) -> AnyMessage {
         anymessage_pack(val)
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=025e661bad324115ebd231a5a28259d673203cf01e43bf90346bd2680125fca5*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=9d4d497a4139ee687c20a8e328dcb2a62cdce453bcb0f2a99a0c939bc525e78e*/
 struct AnyMessage;
 
 struct AnyMessage {
     std::string type_name_;
-    SerializableProxy payload_;
+    rusty::Option<SerializableProxy> payload_;
 
     void save(BinaryWriteArchive& ar) const;
     void load(BinaryReadArchive& ar);
     template<typename T>
     bool is_a() const;
     template<typename T>
-    std::shared_ptr<T> unpack() const;
+    rusty::Option<rusty::Arc<T>> unpack() const;
     template<typename T>
-    static AnyMessage pack_as(std::string name, std::shared_ptr<T> val);
+    static AnyMessage pack_as(std::string name, rusty::Arc<T> val);
     template<typename T>
-    static AnyMessage pack(std::shared_ptr<T> val);
+    static AnyMessage pack(rusty::Arc<T> val);
 };
 
 
@@ -143,17 +143,17 @@ bool AnyMessage::is_a() const {
 }
 
 template<typename T>
-std::shared_ptr<T> AnyMessage::unpack() const {
+rusty::Option<rusty::Arc<T>> AnyMessage::unpack() const {
     return anymessage_unpack<T>((*this));
 }
 
 template<typename T>
-AnyMessage AnyMessage::pack_as(std::string name, std::shared_ptr<T> val) {
+AnyMessage AnyMessage::pack_as(std::string name, rusty::Arc<T> val) {
     return anymessage_pack_as(std::move(name), std::move(val));
 }
 
 template<typename T>
-AnyMessage AnyMessage::pack(std::shared_ptr<T> val) {
+AnyMessage AnyMessage::pack(rusty::Arc<T> val) {
     return anymessage_pack(std::move(val));
 }
 /*RUSTYCPP:GEN-END id=any_message.message*/
@@ -182,9 +182,9 @@ int register_type(std::string name,
                   std::type_index ti,
                   Factory factory);
 
-// Create a fresh payload proxy for the given name. Returns an
-// empty proxy if the name is not registered.
-SerializableProxy create(const std::string& name);
+// Create a fresh payload proxy for the given name. None if the
+// name is not registered.
+rusty::Option<SerializableProxy> create(const std::string& name);
 
 // Look up the registered name for type `ti`. Returns "" if the
 // type was not registered (owned copy — no borrow escapes the
@@ -205,15 +205,15 @@ void clear_for_testing();
 //   * `AnyMessage::load` can construct a fresh T-shaped payload when
 //     the wire bytes carry `name`.
 //
-// The factory wraps a fresh shared_ptr<T> in a holder-shaped proxy —
+// The factory wraps a fresh Arc<T> in a holder-shaped proxy —
 // same shape `SerializableEnvelope` uses, so unpack semantics match.
 //
 // Returns 0 — suitable for `static int _reg = reg_any_message_as<T>("...");`.
 template <typename T>
 inline int reg_any_message_as(std::string name) {
   auto factory = []() -> SerializableProxy {
-    auto sp = std::make_shared<T>();
-    return std::make_shared<details::SerializableSharedPtrHolder<T>>(
+    auto sp = rusty::Arc<T>::make();
+    return rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
         std::move(sp));
   };
   return any_message_registry::register_type(std::move(name),
@@ -233,33 +233,35 @@ inline bool anymessage_is_a(const AnyMessage& self) {
   return self.type_name_ == name;
 }
 
-// @unsafe - dynamic_cast through `payload_.get()` returning raw `T*`.
+// @unsafe - dynamic_cast through the held base pointer.
 template <typename T>
-inline std::shared_ptr<T> anymessage_unpack(const AnyMessage& self) {
-  if (!anymessage_is_a<T>(self)) return nullptr;
-  if (!self.payload_) return nullptr;
-  if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(
-          self.payload_.get())) {
-    return h->ptr;
+inline rusty::Option<rusty::Arc<T>> anymessage_unpack(const AnyMessage& self) {
+  using Out = rusty::Option<rusty::Arc<T>>;
+  if (!anymessage_is_a<T>(self)) return Out(rusty::None);
+  if (self.payload_.is_none()) return Out(rusty::None);
+  if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
+          self.payload_.unwrap().get())) {
+    return Out(h->ptr.clone());
   }
-  return nullptr;
+  return Out(rusty::None);
 }
 
 // @unsafe - aggregate-constructs the AnyMessage (returned by value;
 // callers store it directly in rcc_rpc.h fields).
 template <typename T>
 inline AnyMessage anymessage_pack_as(std::string name,
-                                     std::shared_ptr<T> val) {
-  verify(val != nullptr);
-  auto payload = std::make_shared<details::SerializableSharedPtrHolder<T>>(
+                                     rusty::Arc<T> val) {
+  auto payload = rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
       std::move(val));
-  return AnyMessage{std::move(name), std::move(payload)};
+  return AnyMessage{std::move(name),
+                    rusty::Option<SerializableProxy>(
+                        SerializableProxy(std::move(payload)))};
 }
 
 // @unsafe - dereferences raw `const std::string*` from name_for_type
 // and forwards to the @unsafe anymessage_pack_as.
 template <typename T>
-inline AnyMessage anymessage_pack(std::shared_ptr<T> val) {
+inline AnyMessage anymessage_pack(rusty::Arc<T> val) {
   const std::string name = any_message_registry::name_for_type_owned(
       std::type_index(typeid(T)));
   verify(!name.empty() &&
@@ -314,8 +316,8 @@ namespace rrr {
 // shared_ptr deref to call payload_->save.
 void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
   rrr::Serialize_::serialize(self.type_name_, ar);
-  if (self.payload_) {
-    self.payload_->save(ar);
+  if (self.payload_.is_some()) {
+    self.payload_.unwrap()->save(ar);
   }
 }
 
@@ -323,11 +325,14 @@ void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
 // shared_ptr deref to call payload_->load.
 void anymessage_load(AnyMessage& self, BinaryReadArchive& ar) {
   rrr::Deserialize_::deserialize(self.type_name_, ar);
-  self.payload_ = any_message_registry::create(self.type_name_);
-  verify(self.payload_ &&
+  auto proxy_opt = any_message_registry::create(self.type_name_);
+  verify(proxy_opt.is_some() &&
          "AnyMessage::load: unknown type name on wire.  "
          "Did the sender register a type the receiver does not know?");
-  self.payload_->load(ar);
+  auto proxy = proxy_opt.unwrap();
+  // @unsafe - unique-owner mutation window (factory-fresh proxy).
+  proxy.get_mut().unwrap().load(ar);
+  self.payload_ = rusty::Option<SerializableProxy>(std::move(proxy));
 }
 
 namespace {
@@ -379,9 +384,8 @@ int any_message_registry::register_type(std::string name,
   return 0;
 }
 
-// @unsafe - trivial factories the DSL cannot spell (braced init /
-// default construction of foreign types).
-SerializableProxy anymessage_empty_proxy() { return SerializableProxy{}; }
+// @unsafe - trivial factory the DSL cannot spell (default
+// construction of a foreign type).
 std::string anymessage_empty_string() { return std::string(); }
 
 // Registry queries, authored as inline Rust DSL (register_type stays a
@@ -391,13 +395,13 @@ std::string anymessage_empty_string() { return std::string(); }
 // must land inside any_message_registry to define the declared API.
 namespace any_message_registry {
 #if RUSTYCPP_RUST
-fn create(name: &std::string) -> SerializableProxy {
+fn create(name: &std::string) -> Option<SerializableProxy> {
     let mut guard = registry().lock().unwrap();
     let entry = (*guard).by_name.get(name);
     if entry.is_none() {
-        return anymessage_empty_proxy();
+        return None;
     }
-    entry.unwrap()()
+    Some(entry.unwrap()())
 }
 
 fn name_for_type_owned(ti: std::type_index) -> std::string {
@@ -425,19 +429,19 @@ fn clear_for_testing() {
     (*guard).name_by_type_hash.clear();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=2af83284f7abe0f6bf2258b7e6fcfaa48386de36fc33a47bb7df25200502dd52*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=fd9cb276dc62424ff420a185fb1ce4752503fb580de883f6be906235ac758eb7*/
 std::string name_for_type_owned(std::type_index ti);
 bool is_registered_name(const std::string& name);
 bool is_registered_type(std::type_index ti);
 void clear_for_testing();
 
-SerializableProxy create(const std::string& name) {
+rusty::Option<SerializableProxy> create(const std::string& name) {
     auto guard = registry().lock().unwrap();
     auto entry = (rusty::detail::deref_if_pointer_like(guard)).by_name.get(name);
     if (entry.is_none()) {
-        return anymessage_empty_proxy();
+        return rusty::Option<SerializableProxy>{rusty::None};
     }
-    return entry.unwrap()();
+    return rusty::Option<SerializableProxy>(entry.unwrap()());
 }
 
 std::string name_for_type_owned(std::type_index ti) {

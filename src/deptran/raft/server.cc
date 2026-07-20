@@ -1207,7 +1207,7 @@ void RaftServer::setIsLeader(bool isLeader) {
       if (commo_) {
         auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
         // @unsafe
-        { commo()->UpdatePartitionView(partition_id_, view_data); }
+        { commo()->UpdatePartitionView(partition_id_, *view_data); }
         Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d",
                  partition_id_, site_id_);
       }
@@ -1624,7 +1624,7 @@ void RaftServer::HeartbeatLoop() {
 #endif
 
 #ifdef RAFT_BATCH_OPTIMIZATION
-              vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
+              vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
               const uint64_t batch_start_idx = std::max<uint64_t>(it->second, min_active_slot_);
               Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
@@ -1641,23 +1641,24 @@ void RaftServer::HeartbeatLoop() {
                 // `marshallable_cast<T>(SerializableEnvelope&)`
                 // overload (in serializable_envelope.hpp) handles
                 // this directly.
-                shared_ptr<TpcCommitCommand> curCmd = marshallable_cast<TpcCommitCommand>(curInstance->log_);
-                if (!curCmd) {
+                auto curCmd = marshallable_cast<TpcCommitCommand>(curInstance->log_);
+                if (curCmd.is_none()) {
                   Log_info("[BATCH_SKIP] site=%d idx=%lu: log entry is not TpcCommitCommand (kind=%d), using raw log",
                            site_id_, idx, curInstance->log_.has_value() ? curInstance->log_.kind_ : -1);
                   cmd = curInstance->log_;
                   break;
                 }
-                curCmd->term = curInstance->term;
-                batch_buffer_.push_back(curCmd);
+                // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+                { auto& mut_cmd = *const_cast<TpcCommitCommand*>(curCmd.as_ref().unwrap().get()); mut_cmd.term = curInstance->term; }
+                batch_buffer_.push_back(curCmd.unwrap());
               }
               if (batch_buffer_.size() > 0) {
                 // Fill-then-wrap: assemble locally, wrap once complete.
                 TpcBatchCommand batch_local;
                 batch_local.AddCmds(batch_buffer_);
                 auto batch_cmd =
-                    std::make_shared<TpcBatchCommand>(std::move(batch_local));
-                cmd = batch_cmd;
+                    rusty::Arc<TpcBatchCommand>::make(std::move(batch_local));
+                cmd = std::move(batch_cmd);
                 const uint64_t batch_end_idx = batch_start_idx + batch_buffer_.size() - 1;
                 const bool truncated = batch_end_idx < lastLogIndex;
                 Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d "
@@ -2543,14 +2544,14 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         log_index_for_durable_ack = lastLogIndex;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
-        auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
-        verify(cmds != nullptr);
+        const auto cmds = marshallable_cast<TpcBatchCommand>(cmd);
+        verify(cmds.is_some());
         int cnt = 0;
-        for (shared_ptr<TpcCommitCommand>& c: cmds->cmds_) {
+        for (const rusty::Arc<TpcCommitCommand>& c: cmds.unwrap()->cmds_) {
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
-          instance->log_ = c;
+          instance->log_ = c.clone();
           instance->term = c->term;
 
           // Capture entry for async persistence
@@ -2647,10 +2648,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #ifndef RAFT_TEST_CORO
       if (cmd.has_value()) {
         if (cmd.kind_ == TpcCommitCommand::static_kind()){
-          auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-          auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd->cmd_);
-          verify(vec_piece_data != nullptr);
-          auto sp_vec_piece = vec_piece_data->sp_vec_piece_data_;
+          const auto p_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+          const auto vec_piece_data = marshallable_cast<VecPieceData>(p_cmd.unwrap()->cmd_);
+          verify(vec_piece_data.is_some());
+          auto sp_vec_piece = vec_piece_data.unwrap()->sp_vec_piece_data_;
           
           vector<struct KeyValue> kv_vector;
           int index = 0;

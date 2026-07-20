@@ -40,9 +40,9 @@ shared_ptr<Tx> RccServer::GetOrCreateTx(txnid_t tid, int rank, bool ro) {
 
 int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
                           TxnOutput* output,
-                          shared_ptr<RccGraph> graph) {
+                          rusty::Arc<RccGraph> graph) {
   std::lock_guard<std::recursive_mutex> guard(mtx_);
-  verify(graph.get());
+  verify(graph.get() != nullptr);
   txnid_t txn_id = cmd[0].root_id_;
 //  verify(RccGraph::partition_id_ == TxLogServer::partition_id_);
   verify(cmd[0].partition_id_ == TxLogServer::partition_id_);
@@ -922,7 +922,7 @@ void RccServer::OnNotifyGlobalValidation(txid_t tx_id, int rank, int validation_
 int RccServer::OnCommit(const txnid_t cmd_id,
                         rank_t rank,
                         bool need_validation,
-                        shared_ptr<RccGraph> sp_graph,
+                        rusty::Arc<RccGraph> sp_graph,
                         TxnOutput *output) {
   verify(0);
   return 0;

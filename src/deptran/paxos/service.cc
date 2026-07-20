@@ -171,7 +171,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
   verify(sched_ != nullptr);
   // Default reply payload (the OnSyncLog early-return path keeps it) —
   // byte-identical to the pre-reshape empty pack.
-  *ret = std::make_shared<SyncLogResponse>();
+  *ret = rusty::Arc<SyncLogResponse>::make();
   Fiber::create_run([&, defer = std::move(defer)] () mutable {
     // Fill-then-wrap: the response lives on the fiber stack and is
     // packed into *ret only after OnSyncLog completes; the reply then
@@ -181,7 +181,7 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
     SyncLogResponse response;
     sched_->OnSyncLog(md_cmd, ballot, valid, response);
     if (*valid == 1) {
-      *ret = std::make_shared<SyncLogResponse>(std::move(response));
+      *ret = rusty::Arc<SyncLogResponse>::make(std::move(response));
     }
     defer.reply();
   });

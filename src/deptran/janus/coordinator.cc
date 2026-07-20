@@ -47,14 +47,14 @@ void CoordinatorJanus::PreAccept() {
 void CoordinatorJanus::PreAcceptAck(phase_t phase,
                                     parid_t par_id,
                                     int res,
-                                    shared_ptr<RccGraph> graph) {
+                                    rusty::Arc<RccGraph> graph) {
   std::lock_guard<std::recursive_mutex> guard(mtx_);
   // if recevie more messages after already gone to next phase, ignore
   if (phase != phase_) return;
-  verify(graph != nullptr);
+  verify(graph.get() != nullptr);
 //  verify(graph->FindV(txn().root_id_) != nullptr);
 //  verify(n_fast_accept_graphs_.size() == 0);
-  n_fast_accept_graphs_[par_id].push_back(graph);
+  n_fast_accept_graphs_[par_id].push_back(std::move(graph));
   if (res == SUCCESS) {
     n_fast_accept_oks_[par_id]++;
   } else if (res == REJECT) {
@@ -328,7 +328,7 @@ int CoordinatorJanus::FastQuorumGraphCheck(parid_t par_id) {
   verify(v != nullptr);
   auto& parent_set = v->GetParents();
   for (int i = 1; i < vec_graph.size(); i++) {
-    RccGraph& graph = *vec_graph[i];
+    const RccGraph& graph = *vec_graph[i];
     auto vv = graph.FindV(cmd_->id_);
     auto& pp_set = vv->GetParents();
     if (parent_set != pp_set) {

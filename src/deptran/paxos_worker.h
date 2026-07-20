@@ -163,7 +163,7 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
 class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
                                                  MakoCommands> {
   public:
-    vector<shared_ptr<janus::Command>> sync_data;
+    vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
 
@@ -185,8 +185,9 @@ class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
       int32_t sz;
       rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
-        auto x = std::make_shared<janus::Command>();
-        rrr::Deserialize_::deserialize(*x, ar);
+        auto x = rusty::Arc<janus::Command>::make();
+        // @unsafe - unique-owner mutation window (factory-fresh Arc).
+        rrr::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
         sync_data.push_back(std::move(x));
       }
       rrr::Deserialize_::deserialize(sz, ar);
@@ -281,7 +282,7 @@ public:
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<shared_ptr<janus::Command>> cmds{};
+  vector<rusty::Arc<janus::Command>> cmds{};
 
   BulkPaxosCmd() = default;
   ~BulkPaxosCmd() {
@@ -324,8 +325,9 @@ public:
       }
       rrr::Deserialize_::deserialize(szc, ar);
       for (int i = 0; i < szc; i++) {
-          auto sp_md = std::make_shared<janus::Command>();
-          rrr::Deserialize_::deserialize(*sp_md, ar);
+          auto sp_md = rusty::Arc<janus::Command>::make();
+          // @unsafe - unique-owner mutation window (factory-fresh Arc).
+          rrr::Deserialize_::deserialize(sp_md.get_mut().unwrap(), ar);
           cmds.push_back(std::move(sp_md));
       }
   }

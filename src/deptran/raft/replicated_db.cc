@@ -29,32 +29,41 @@ static int volatile x_replicated_db =
 // ReplicatedDBCommand factory methods and serialization
 // ===========================================================================
 
-// @unsafe - Creates shared_ptr (non-borrow-checked ownership)
-shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreatePut(
+// @unsafe - unique-owner mutation window on a factory-fresh Arc
+rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreatePut(
     const std::string& key, const std::string& value) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::PUT;
-  cmd->key_ = key;
-  cmd->value_ = value;
+  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
+  {
+    auto& mut_cmd = cmd.get_mut().unwrap();
+    mut_cmd.op_ = ReplicatedDBOp::PUT;
+    mut_cmd.key_ = key;
+    mut_cmd.value_ = value;
+  }
   return cmd;
 }
 
-// @unsafe - Creates shared_ptr (non-borrow-checked ownership)
-shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateDelete(
+// @unsafe - unique-owner mutation window on a factory-fresh Arc
+rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreateDelete(
     const std::string& key) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::DELETE;
-  cmd->key_ = key;
-  cmd->value_ = "";
+  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
+  {
+    auto& mut_cmd = cmd.get_mut().unwrap();
+    mut_cmd.op_ = ReplicatedDBOp::DELETE;
+    mut_cmd.key_ = key;
+    mut_cmd.value_ = "";
+  }
   return cmd;
 }
 
-// @unsafe - Creates shared_ptr (non-borrow-checked ownership)
-shared_ptr<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
+// @unsafe - unique-owner mutation window on a factory-fresh Arc
+rusty::Arc<ReplicatedDBCommand> ReplicatedDBCommand::CreateBatch(
     const std::vector<KVOperation>& ops) {
-  auto cmd = std::make_shared<ReplicatedDBCommand>();
-  cmd->op_ = ReplicatedDBOp::BATCH;
-  cmd->batch_ops_ = ops;
+  auto cmd = rusty::Arc<ReplicatedDBCommand>::make();
+  {
+    auto& mut_cmd = cmd.get_mut().unwrap();
+    mut_cmd.op_ = ReplicatedDBOp::BATCH;
+    mut_cmd.batch_ops_ = ops;
+  }
   return cmd;
 }
 
@@ -188,7 +197,7 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd, &index, &term);
+  bool is_leader = raft_->Start(std::move(cmd), &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Put failed: not leader");
     return false;
@@ -216,7 +225,7 @@ bool ReplicatedDB::Delete(const std::string& key) {
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd, &index, &term);
+  bool is_leader = raft_->Start(std::move(cmd), &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Delete failed: not leader");
     return false;
@@ -243,7 +252,7 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
 
   uint64_t index = 0, term = 0;
-  bool is_leader = raft_->Start(cmd, &index, &term);
+  bool is_leader = raft_->Start(std::move(cmd), &index, &term);
   if (!is_leader) {
     Log_debug("[ReplicatedDB] Batch failed: not leader");
     return false;
@@ -323,8 +332,8 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
     return;
   }
 
-  auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
-  if (!db_cmd) {
+  const auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
+  if (db_cmd.is_none()) {
     Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index %lu", index);
     last_applied_index_ = index;
     PersistLastAppliedIndex();
@@ -332,15 +341,15 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   }
 
   // Apply the operation
-  switch (db_cmd->op_) {
+  switch (db_cmd.unwrap()->op_) {
     case ReplicatedDBOp::PUT:
-      ApplyPut(db_cmd->key_, db_cmd->value_);
+      ApplyPut(db_cmd.unwrap()->key_, db_cmd.unwrap()->value_);
       break;
     case ReplicatedDBOp::DELETE:
-      ApplyDelete(db_cmd->key_);
+      ApplyDelete(db_cmd.unwrap()->key_);
       break;
     case ReplicatedDBOp::BATCH:
-      for (const auto& op : db_cmd->batch_ops_) {
+      for (const auto& op : db_cmd.unwrap()->batch_ops_) {
         switch (op.op) {
           case ReplicatedDBOp::PUT:
             ApplyPut(op.key, op.value);
@@ -356,7 +365,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
       break;
     default:
       Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
-                static_cast<int>(db_cmd->op_), index);
+                static_cast<int>(db_cmd.unwrap()->op_), index);
       break;
   }
 

@@ -198,8 +198,8 @@ void BulkCoordinatorMultiPaxos::Accept() {
     // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.  BroadcastBulkAccept now also takes
     // const Command& (per prep6t), so cmd_ flows through directly.
-    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-    verify(cmd_temp1 != nullptr);
+    const auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1.is_some());
     if(!in_submission_){
       return;
     }
@@ -226,7 +226,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     sp_quorum->wait();
     if (sp_quorum->yes()) {
 	      if(ess_cc->machine_id == 0)
-			Log_debug("Accept: slot %d  is committed, partition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
+			Log_debug("Accept: slot %d  is committed, partition id %d", cmd_temp1.unwrap()->slots[0], frame_->site_info_->partition_id_);
         committed_ = true;
     } else if (sp_quorum->no()) {
         in_submission_ = false;
@@ -248,18 +248,18 @@ void BulkCoordinatorMultiPaxos::Commit() {
 
     // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.
-    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-    verify(cmd_temp1 != nullptr);
+    const auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1.is_some());
     // Fill-then-wrap: build the payload as a local, wrap once complete.
     PaxosPrepCmd prep_cmd;
-    prep_cmd.slots = cmd_temp1->slots;
-    prep_cmd.ballots = cmd_temp1->ballots;
-    prep_cmd.leader_id = cmd_temp1->leader_id;
-    auto commit_cmd = make_shared<PaxosPrepCmd>(std::move(prep_cmd));
+    prep_cmd.slots = cmd_temp1.unwrap()->slots;
+    prep_cmd.ballots = cmd_temp1.unwrap()->ballots;
+    prep_cmd.leader_id = cmd_temp1.unwrap()->leader_id;
+    auto commit_cmd = rusty::Arc<PaxosPrepCmd>::make(std::move(prep_cmd));
 
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd, [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, std::move(commit_cmd), [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_commit){
         return;
       }

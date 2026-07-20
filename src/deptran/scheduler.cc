@@ -540,11 +540,11 @@ int Witness::remove(const janus::Command& cmd_env) {
 #endif
     return removed;
   } else {
-    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
-    verify(cmds != nullptr);
+    const auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
+    verify(cmds.is_some());
     int total_removed = 0;
-    for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd{janus::Command{c}};
+    for (auto& c: cmds.unwrap()->cmds_) {
+      SimpleRWCommand parsed_cmd{janus::Command{c.clone()}};
       bool removed = candidates_[parsed_cmd.key_].remove(SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second));
       if (removed) {
         witness_size_distribution_.mid_time_append(--witness_size_);
@@ -553,9 +553,9 @@ int Witness::remove(const janus::Command& cmd_env) {
         //   candidates_.erase(parsed_cmd.key_);
       }
 #ifdef WITNESS_LOG_DEBUG
-      // c is shared_ptr<TpcCommitCommand>; auto-converts to Command
-      // via the templated non-Marshallable ctor.
-      witness_log_.push_back(WitnessLog(1, janus::Command{c}, removed, witness_size_));
+      // c is Arc<TpcCommitCommand>; wraps into Command via the
+      // templated Arc ctor (explicit clone per repo convention).
+      witness_log_.push_back(WitnessLog(1, janus::Command{c.clone()}, removed, witness_size_));
 #endif
     }
     return total_removed;
@@ -571,11 +571,11 @@ bool Witness::has_appeared(const janus::Command& cmd_env) {
     uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
     return candidates_[parsed_cmd.key_].has_appeared(cmd_id);
   } else {
-    auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
-    verify(cmds != nullptr);
+    const auto cmds = marshallable_cast<TpcBatchCommand>(cmd_env);
+    verify(cmds.is_some());
     bool all_has_appeared = true;
-    for (auto& c: cmds->cmds_) {
-      SimpleRWCommand parsed_cmd{janus::Command{c}};
+    for (auto& c: cmds.unwrap()->cmds_) {
+      SimpleRWCommand parsed_cmd{janus::Command{c.clone()}};
       uint64_t cmd_id = SimpleRWCommand::CombineInt32(parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
       if (!candidates_[parsed_cmd.key_].has_appeared(cmd_id)) {
         all_has_appeared = false;
@@ -603,22 +603,23 @@ std::vector<double> Witness::witness_size_distribution() {
   return ret;
 }
 
-shared_ptr<VecRecData> Witness::id_set() {
-  auto result = std::make_shared<VecRecData>();
-  result->key_data_ = std::make_shared<vector<key_t>>();
-  
+rusty::Arc<VecRecData> Witness::id_set() {
+  // Fill-then-wrap: build the local, wrap in an Arc once complete.
+  VecRecData result;
+  result.key_data_ = std::make_shared<vector<key_t>>();
+
   for (const auto& kv : candidates_) {
     key_t key = kv.first;
     if (kv.second.has_cmd_to_recover()) {
-      result->key_data_->push_back(key);
+      result.key_data_->push_back(key);
     }
   }
-  
+
 #ifdef JETPACK_RECOVERY_DEBUG
-  Log_info("[JETPACK-RECOVERY-Witness] id_set size %d", result->key_data_->size());
+  Log_info("[JETPACK-RECOVERY-Witness] id_set size %d", result.key_data_->size());
 #endif
 
-  return result;
+  return rusty::Arc<VecRecData>::make(std::move(result));
 }
 
 void Witness::reset() {
@@ -1006,10 +1007,10 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
   // Extract the inner command if this is a TpcCommitCommand
   janus::Command inner_cmd = cmd;
   if (cmd.kind_ == TpcCommitCommand::static_kind()) {
-    auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
-    verify(tpc_cmd != nullptr);
-    if (tpc_cmd && tpc_cmd->cmd_.has_value()) {
-      inner_cmd = tpc_cmd->cmd_;
+    const auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd);
+    verify(tpc_cmd.is_some());
+    if (tpc_cmd.is_some() && tpc_cmd.unwrap()->cmd_.has_value()) {
+      inner_cmd = tpc_cmd.unwrap()->cmd_;
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Extracted inner command from TpcCommitCommand, inner kind=%d", inner_cmd.kind_);
 #endif
@@ -1018,19 +1019,24 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
 
   // Check if the inner command is VecPieceData
   if (inner_cmd.kind_ == VecPieceData::static_kind()) {
-    auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
-    if (vec_piece_data && vec_piece_data->sp_vec_piece_data_) {
+    const auto vec_piece_data = marshallable_cast<VecPieceData>(inner_cmd);
+    if (vec_piece_data.is_some() && vec_piece_data.unwrap()->sp_vec_piece_data_) {
       // Mark this as a recovery command
-      vec_piece_data->is_recovery_command_ = true;
+      // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
+      {
+        auto& mut_vpd =
+            *const_cast<VecPieceData*>(vec_piece_data.unwrap().get());
+        mut_vpd.is_recovery_command_ = true;
+      }
 
 #ifdef JETPACK_RECOVERY_DEBUG
-      Log_info("[JETPACK-RECOVERY] Dispatching VecPieceData with %zu pieces", 
-               vec_piece_data->sp_vec_piece_data_->size());
+      Log_info("[JETPACK-RECOVERY] Dispatching VecPieceData with %zu pieces",
+               vec_piece_data.unwrap()->sp_vec_piece_data_->size());
 #endif
-      
+
       // Get the partition ID and command ID from the pieces
-      auto par_id = vec_piece_data->sp_vec_piece_data_->at(0)->PartitionId();
-      auto cmd_id = vec_piece_data->sp_vec_piece_data_->at(0)->root_id_;
+      auto par_id = vec_piece_data.unwrap()->sp_vec_piece_data_->at(0)->PartitionId();
+      auto cmd_id = vec_piece_data.unwrap()->sp_vec_piece_data_->at(0)->root_id_;
       
       // The communicator's view should already be updated from OnJetpackBeginRecovery
       // Double-check that we have the right view
@@ -1090,7 +1096,7 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
       // Use BroadcastDispatch to send to the leader
       // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand sending cmd_id=0x%llx to partition %d (leader locale %d, sched=%s, target=%d)",
       //          (unsigned long long)cmd_id, par_id, current_leader, sched_type, recovery_event ? recovery_event->target_ : -1);
-      comm->BroadcastDispatch(vec_piece_data->sp_vec_piece_data_, coo.get(), callback);
+      comm->BroadcastDispatch(vec_piece_data.unwrap()->sp_vec_piece_data_, coo.get(), callback);
       
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Command dispatched through communicator to leader");
@@ -1117,12 +1123,12 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
   auto config = Config::GetConfig();
   
   // Extract ViewData from janus::Command parameters
-  auto sp_old_view_data = marshallable_cast<ViewData>(old_view);
-  auto sp_new_view_data = marshallable_cast<ViewData>(new_view);
-  
+  const auto sp_old_view_data = marshallable_cast<ViewData>(old_view);
+  const auto sp_new_view_data = marshallable_cast<ViewData>(new_view);
+
   // Update the views if extraction was successful
-  if (sp_old_view_data) {
-    rep_sched_->old_view_ = sp_old_view_data->GetView();
+  if (sp_old_view_data.is_some()) {
+    rep_sched_->old_view_ = sp_old_view_data.unwrap()->GetView();
 #ifdef JETPACK_RECOVERY_DEBUG
     Log_info("[JETPACK-RECOVERY] Updated old_view from janus::Command");
 #endif
@@ -1132,8 +1138,8 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
 #endif
   }
   
-  if (sp_new_view_data) {
-    const View& incoming_view = sp_new_view_data->GetView();
+  if (sp_new_view_data.is_some()) {
+    const View& incoming_view = sp_new_view_data.unwrap()->GetView();
     Log_info("[VIEW_DEBUG] OnJetpackBeginRecovery partition %d view transition %s -> %s",
              partition_id_, rep_sched_->new_view_.ToString().c_str(), incoming_view.ToString().c_str());
     rep_sched_->new_view_ = incoming_view;
@@ -1147,7 +1153,7 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
       Log_info("[JETPACK-RECOVERY] This TxLogServer %p has communicator %p (loc_id=%d)", 
                this, my_comm, my_comm ? my_comm->loc_id_ : -1);
       if (my_comm) {
-        my_comm->UpdatePartitionView(partition_id_, sp_new_view_data);
+        my_comm->UpdatePartitionView(partition_id_, *sp_new_view_data.unwrap());
       }
     }
     
@@ -1161,12 +1167,12 @@ void TxLogServer::OnJetpackBeginRecovery(const janus::Command& old_view,
     //   }
     // }
     
-    Log_info("[JETPACK-RECOVERY] Updated communicator view(s) for partition %d during BeginRecovery: %s", 
-             partition_id_, sp_new_view_data->GetView().ToString().c_str());
-    
+    Log_info("[JETPACK-RECOVERY] Updated communicator view(s) for partition %d during BeginRecovery: %s",
+             partition_id_, sp_new_view_data.unwrap()->GetView().ToString().c_str());
+
     // Log leader information from the new view
-    if (!sp_new_view_data->GetView().leaders_.empty()) {
-      int new_leader = sp_new_view_data->GetView().GetLeader();
+    if (!sp_new_view_data.unwrap()->GetView().leaders_.empty()) {
+      int new_leader = sp_new_view_data.unwrap()->GetView().GetLeader();
       bool should_be_leader = (new_leader == site_id_);
       Log_info("[JETPACK-VIEW-UPDATE] New view leader is %d, this server is %d, should_be_leader=%d", 
                new_leader, site_id_, should_be_leader);
@@ -1223,8 +1229,8 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
 #endif
   
   // Initialize janus::Command objects with ViewData objects
-  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
-  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+  *reply_old_view = rusty::Arc<ViewData>::make(rep_sched_->old_view_);
+  *reply_new_view = rusty::Arc<ViewData>::make(rep_sched_->new_view_);
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1262,8 +1268,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
     return;
   }
   
-  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
-  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+  *reply_old_view = rusty::Arc<ViewData>::make(rep_sched_->old_view_);
+  *reply_new_view = rusty::Arc<ViewData>::make(rep_sched_->new_view_);
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1322,8 +1328,8 @@ void TxLogServer::OnJetpackPrepare(const epoch_t& jepoch,
                                    int32_t* replied_sid, 
                                    int32_t* replied_set_size) {
   // Initialize janus::Command objects with ViewData objects
-  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
-  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+  *reply_old_view = rusty::Arc<ViewData>::make(rep_sched_->old_view_);
+  *reply_new_view = rusty::Arc<ViewData>::make(rep_sched_->new_view_);
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1355,8 +1361,8 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
                                   janus::Command* reply_new_view,
                                   ballot_t* reply_max_seen_ballot) {
   // Initialize janus::Command objects with ViewData objects
-  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
-  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+  *reply_old_view = rusty::Arc<ViewData>::make(rep_sched_->old_view_);
+  *reply_new_view = rusty::Arc<ViewData>::make(rep_sched_->new_view_);
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1399,8 +1405,8 @@ void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
                                          janus::Command* reply_old_view,
                                          janus::Command* reply_new_view) {
   // Initialize janus::Command objects with ViewData objects
-  *reply_old_view = std::make_shared<ViewData>(rep_sched_->old_view_);
-  *reply_new_view = std::make_shared<ViewData>(rep_sched_->new_view_);
+  *reply_old_view = rusty::Arc<ViewData>::make(rep_sched_->old_view_);
+  *reply_new_view = rusty::Arc<ViewData>::make(rep_sched_->new_view_);
 
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     *ok = 1;

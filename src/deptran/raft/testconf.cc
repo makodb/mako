@@ -48,11 +48,11 @@ void RaftTestConfig::SetLearnerAction(void) {
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
-          auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-          verify(commit_cmd != nullptr);
+          const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+          verify(commit_cmd.is_some());
           Log_debug("server %d committed value %d at slot %d",
-                    svr, commit_cmd->tx_id_, slot);
-          RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+                    svr, commit_cmd.unwrap()->tx_id_, slot);
+          RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
           return 0;
         };
     frame->svr_->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
@@ -172,14 +172,19 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   }
 
   // Construct an empty TpcCommitCommand containing cmd as its tx_id_
-  auto cmdptr = std::make_shared<TpcCommitCommand>();
-  auto vpd_p = std::make_shared<VecPieceData>();
-  vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
-  cmdptr->tx_id_ = cmd;
-  cmdptr->cmd_ = vpd_p;
+  auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
+  auto vpd_p = rusty::Arc<VecPieceData>::make();
+  // @unsafe - unique-owner mutation window (factory-fresh Arcs).
+  vpd_p.get_mut().unwrap().sp_vec_piece_data_ =
+      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+  {
+    auto& mut_cmd = cmdptr.get_mut().unwrap();
+    mut_cmd.tx_id_ = cmd;
+    mut_cmd.cmd_ = std::move(vpd_p);
+  }
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
-  bool result = it->second->svr_->Start(cmdptr, index, term);
+  bool result = it->second->svr_->Start(std::move(cmdptr), index, term);
   // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
   return result;
@@ -748,11 +753,11 @@ void RaftTestConfig::Restart(siteid_t svr) {
   commit_callbacks[svr] =
       [svr](int slot, janus::Command md) -> int {
         verify(md.kind_ == TpcCommitCommand::static_kind());
-        auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-        verify(commit_cmd != nullptr);
+        const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+        verify(commit_cmd.is_some());
         Log_debug("server %d committed value %d at slot %d",
-                  svr, commit_cmd->tx_id_, slot);
-        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+                  svr, commit_cmd.unwrap()->tx_id_, slot);
+        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
         return 0;
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);

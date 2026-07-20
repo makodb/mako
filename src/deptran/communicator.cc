@@ -524,9 +524,9 @@ void Communicator::BroadcastDispatch(
         
         // Handle WRONG_LEADER response with view data
         if (ret == WRONG_LEADER && view_md.has_value()) {
-          auto sp_view_data = marshallable_cast<ViewData>(view_md);
-          if (sp_view_data) {
-            UpdatePartitionView(par_id, sp_view_data);
+          const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+          if (sp_view_data.is_some()) {
+            UpdatePartitionView(par_id, *sp_view_data.unwrap());
           }
         }
         callback(ret, outputs);
@@ -552,13 +552,14 @@ void Communicator::BroadcastDispatch(
   Log_debug("send dispatch to site %ld, par %d",
             pair_leader_proxy.first, par_id);
   auto proxy = pair_leader_proxy.second;
-  shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-  sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
+  // Fill-then-wrap: build the payload locally, wrap once complete.
+  VecPieceData vpd;
+  vpd.sp_vec_piece_data_ = sp_vec_piece;
 
   // Record Time
-  sp_vpd->time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
+  vpd.time_sent_from_client_ = SimpleRWCommand::GetCurrentMsTime();
 
-  janus::Command md(sp_vpd);
+  janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd)));
 
   DepId di;
   di.str = "dep";
@@ -648,9 +649,9 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
           else{
             // Handle WRONG_LEADER response with view data
             if (ret == WRONG_LEADER && view_md.has_value()) {
-              auto sp_view_data = marshallable_cast<ViewData>(view_md);
-              if (sp_view_data) {
-                UpdatePartitionView(par_id, sp_view_data);
+              const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+              if (sp_view_data.is_some()) {
+                UpdatePartitionView(par_id, *sp_view_data.unwrap());
               }
               coo->aborted_ = true;
               txn->commit_.store(false);
@@ -691,9 +692,10 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     Log_debug("send dispatch to site %ld",
               pair_leader_proxy.first);
     auto proxy = pair_leader_proxy.second;
-    shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
-    sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-    janus::Command md(sp_vpd); // ????
+    // Fill-then-wrap: build the payload locally, wrap once complete.
+    VecPieceData vpd;
+    vpd.sp_vec_piece_data_ = sp_vec_piece;
+    janus::Command md(rusty::Arc<VecPieceData>::make(std::move(vpd))); // ????
     CoordinatorClassic* classic_coo = (CoordinatorClassic*) coo;
     //classic_coo->debug_cnt++;
 
@@ -932,11 +934,11 @@ Communicator::SendCommit(Coordinator* coo,
       
       // Extract and attach view data if present
       if (view_md.has_value()) {
-        auto sp_view_data = marshallable_cast<ViewData>(view_md);
-        if (sp_view_data) {
+        const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+        if (sp_view_data.is_some()) {
           cmd->reply_.sp_view_data_ = sp_view_data;
-          Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id=%lu: %s", 
-                   tid, sp_view_data->ToString().c_str());
+          Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id=%lu: %s",
+                   tid, sp_view_data.unwrap()->ToString().c_str());
         }
       }
 
@@ -1053,11 +1055,11 @@ Communicator::SendAbort(Coordinator* coo,
 
       // Extract and attach view data if present
       if (view_md.has_value()) {
-        auto sp_view_data = marshallable_cast<ViewData>(view_md);
-        if (sp_view_data) {
+        const auto sp_view_data = marshallable_cast<ViewData>(view_md);
+        if (sp_view_data.is_some()) {
           cmd->reply_.sp_view_data_ = sp_view_data;
           Log_info("[VIEW_PROPAGATE] Received view data in Abort response for tx_id=%lu: %s",
-                   tid, sp_view_data->ToString().c_str());
+                   tid, sp_view_data.unwrap()->ToString().c_str());
         }
       }
 
@@ -1405,8 +1407,8 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
 
-  janus::Command old_view_deputy = std::make_shared<ViewData>(old_view);
-  janus::Command new_view_deputy = std::make_shared<ViewData>(new_view);
+  janus::Command old_view_deputy = rusty::Arc<ViewData>::make(old_view);
+  janus::Command new_view_deputy = rusty::Arc<ViewData>::make(new_view);
   
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1501,9 +1503,10 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   // Log_info("[JETPACK-DEBUG] Found %zu proxies for partition %d", proxies.size(), par_id);
 
   vector<rusty::Arc<Future>> fus;
-  auto key_batch = std::make_shared<VecRecData>();
-  key_batch->key_data_ = std::make_shared<vector<key_t>>(keys.begin(), keys.end());
-  janus::Command key_batch_md = key_batch;
+  // Fill-then-wrap: build the payload locally, wrap once complete.
+  VecRecData key_batch;
+  key_batch.key_data_ = std::make_shared<vector<key_t>>(keys.begin(), keys.end());
+  janus::Command key_batch_md = rusty::Arc<VecRecData>::make(std::move(key_batch));
 	WAN_WAIT;
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1570,11 +1573,12 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
 
-  auto batch_data = std::make_shared<KeyCmdBatchData>();
+  // Fill-then-wrap: build the payload locally, wrap once complete.
+  KeyCmdBatchData batch_data;
   for (const auto& entry : cmds) {
-    batch_data->AddEntry(entry.first, entry.second);
+    batch_data.AddEntry(entry.first, entry.second);
   }
-  janus::Command cmd_deputy = batch_data;
+  janus::Command cmd_deputy = rusty::Arc<KeyCmdBatchData>::make(std::move(batch_data));
   
   // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to %zu sites, need %d votes", proxies.size(), n/2+1);
   
@@ -1798,13 +1802,8 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par
   return e;
 }
 
-void Communicator::UpdatePartitionView(parid_t partition_id, const std::shared_ptr<ViewData>& view_data) {
-  if (!view_data) {
-    Log_info("[COMMUNICATOR_VIEW] Received null view_data for partition %d", partition_id);
-    return;
-  }
-  
-  View view = view_data->view_;
+void Communicator::UpdatePartitionView(parid_t partition_id, const ViewData& view_data) {
+  View view = view_data.view_;
   
   // Lock the mutex for thread-safe access
   std::lock_guard<std::mutex> lock(partition_views_mutex_);

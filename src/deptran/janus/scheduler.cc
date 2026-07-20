@@ -106,8 +106,8 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
 int SchedulerJanus::OnPreAccept(const txid_t txn_id,
                                 const rank_t rank,
                                 const vector<SimpleCommand> &cmds,
-                                shared_ptr<RccGraph> graph,
-                                shared_ptr<RccGraph> res_graph) {
+                                rusty::Arc<RccGraph> graph,
+                                rusty::Arc<RccGraph> res_graph) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(0);
   return 0;
@@ -157,7 +157,7 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
 void SchedulerJanus::OnAccept(const txnid_t txn_id,
                               int rank,
                               const ballot_t &ballot,
-                              shared_ptr<RccGraph> graph,
+                              rusty::Arc<RccGraph> graph,
                               int32_t *res) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(txn_id, rank));
@@ -169,7 +169,10 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
   } else {
     subtx.max_accepted_ballot_ = ballot;
     subtx.max_seen_ballot_ = ballot;
-    Aggregate(*graph);
+    // @unsafe { Aggregate takes RccGraph& (non-const, internal
+    //   aggregation); the Arc payload is const-view and freshly
+    //   unpacked from the wire, so mutating this local view is sound }
+    Aggregate(*const_cast<RccGraph*>(graph.get()));
     *res = SUCCESS;
   }
 }
