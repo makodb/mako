@@ -199,9 +199,9 @@ public:
         while (true) {
             std::vector<KvPair> batch =
                 EngineShardData::scan_range_limited(cur, widen_hi(), kScanChunk);
-            const bool last = batch.size() < kScanChunk;
-            for (auto& kv : batch) out.push_back(std::move(kv));
+            const bool last = batch.empty();   // batch protocol: empty = end
             if (last) break;
+            for (auto& kv : batch) out.push_back(std::move(kv));
             cur = out.back().first;
             cur.push_back('\0');   // resume strictly after the last key
         }

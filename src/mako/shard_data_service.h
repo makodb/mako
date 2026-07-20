@@ -130,8 +130,20 @@ public:
             fprintf(stderr, "DoScanRange WEDGED '%s' (leaked-lock deadline)\n",
                     table.c_str());
         }
+        // Reply-size accounting: the per-RPC data volume the byte budget
+        // bounds. max is process-lifetime, so one grep answers "how big did
+        // a single migration RPC actually get".
+        size_t reply_bytes = 0;
+        for (const auto& kv : rows) reply_bytes += kv.first.size() + kv.second.size();
+        static std::atomic<size_t> s_max_bytes{0};
+        size_t prev_max = s_max_bytes.load(std::memory_order_relaxed);
+        while (reply_bytes > prev_max &&
+               !s_max_bytes.compare_exchange_weak(prev_max, reply_bytes,
+                                                  std::memory_order_relaxed)) {}
         if (logit)
-            fprintf(stderr, "DoScanRange EXIT '%s' rows=%zu\n", table.c_str(), rows.size());
+            fprintf(stderr, "DoScanRange EXIT '%s' rows=%zu bytes=%zu max_bytes=%zu\n",
+                    table.c_str(), rows.size(), reply_bytes,
+                    s_max_bytes.load(std::memory_order_relaxed));
         return rows;
     }
     uint64_t DoChecksum(const std::string& table, const std::string& lo,

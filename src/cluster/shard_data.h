@@ -25,6 +25,16 @@ export module cluster:shard_data;
 
 namespace janus {
 
+// Per-RPC byte budget for one migration chunk: a chunk scan stops
+// collecting once its rows exceed this many key+value bytes, even below the
+// row limit (always accepting at least one row, so an EMPTY batch stays an
+// unambiguous range-end signal). The row limit alone left reply bytes
+// unbounded -- a large-value table scaled a single ScanRange reply
+// arbitrarily, with nothing bounding wire size or peer buffering.
+// BATCH PROTOCOL (all chunked scans): a batch may come back SHORT for the
+// byte budget; only an EMPTY batch means the range ended.
+export constexpr size_t kShardDataChunkMaxBytes = static_cast<size_t>(1) << 20;   // 1 MiB
+
 // @unsafe - participants wrap the storage engine or an RPC transport.
 export class ShardData {
 public:
@@ -106,7 +116,10 @@ public:
         while (true) {
             std::vector<KvPair> batch =
                 source->scan_range_limited(src_cur, hi, kCopyChunk);
-            const bool src_done = batch.size() < kCopyChunk;
+            // Batch protocol: EMPTY = source range exhausted. A short but
+            // NONEMPTY batch is legal (the per-RPC byte budget) and simply
+            // advances the cursor.
+            const bool src_done = batch.empty();
             if (src_done && source->faulted()) {
                 // A dead source reads as an empty tail; finishing the mirror
                 // would DELETE every remaining destination key in the range.
@@ -128,6 +141,7 @@ public:
             while (dst_cur < scan_to) {
                 std::vector<KvPair> mine =
                     scan_range_limited(dst_cur, scan_to, kCopyChunk);
+                if (mine.empty()) break;   // window exhausted (batch protocol)
                 for (const auto& kv : mine) {
                     auto it = std::lower_bound(
                         batch.begin(), batch.end(), kv.first,
@@ -138,7 +152,6 @@ public:
                         remove(kv.first);
                     }
                 }
-                if (mine.size() < kCopyChunk) break;
                 dst_cur = mine.back().first;
                 dst_cur.push_back('\0');
             }

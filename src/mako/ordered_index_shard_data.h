@@ -62,7 +62,10 @@ public:
     // memory-safe OCC read). Returns fewer than `limit` iff the range ended.
     //
     // Internally the window is scanned in SMALL ADAPTIVE SUB-SCANS and
-    // stitched. A single limit-sized (4096-row) one-op scan of a HOT index
+    // stitched, and the whole chunk honors the per-RPC byte budget
+    // (kShardDataChunkMaxBytes): a short-but-nonempty return is legal under
+    // the batch protocol; only an EMPTY return means the range ended. A
+    // single limit-sized (4096-row) one-op scan of a HOT index
     // can lose the OCC race forever: any concurrent write to a visited row
     // aborts the attempt, and when the writer stream's inter-write gap is
     // shorter than the scan itself, no amount of retrying (even backed off)
@@ -81,6 +84,7 @@ public:
         out.reserve(limit);
         std::string cur = lo;
         size_t sub = 64;
+        size_t total_bytes = 0;
         int conflicted_rounds = 0;
         // Deadline for the whole chunk: a row whose lock LEAKED (a lost 2PC
         // install/abort leaves participant row locks with no releasing
@@ -209,7 +213,16 @@ public:
             }
             conflicted_rounds = 0;
             const size_t got = cb.pairs.size();
+            total_bytes += cb.bytes;
             for (auto& kv : cb.pairs) out.push_back(std::move(kv));
+            if (cb.bytes_capped || total_bytes >= kShardDataChunkMaxBytes) {
+                // Per-RPC byte budget: return short-but-nonempty (legal
+                // under the batch protocol; the caller advances its cursor
+                // and asks again). Checked BEFORE the range-end inference:
+                // a bytes-capped sub-scan is short without the range having
+                // ended.
+                return out;
+            }
             if (got < want) break;          // range exhausted
             cur = out.back().first;
             cur.push_back('\0');            // resume strictly after the last key
@@ -260,17 +273,30 @@ private:
         std::vector<KvPair> pairs;
     };
 
-    // Like Collector but stops after `limit` pairs (for chunked scans).
+    // Like Collector but stops after `limit` pairs OR once the collected
+    // key+value bytes exceed the per-RPC byte budget (for chunked scans).
+    // The budget is checked AFTER accepting a row, so every batch carries at
+    // least one row -- an over-budget single row must not produce an empty
+    // batch, because EMPTY is the range-end signal (batch protocol in
+    // shard_data.h).
     class LimitedCollector : public oi_scan_callback {
     public:
         explicit LimitedCollector(size_t limit) : limit_(limit) {}
-        void restart() override { pairs.clear(); }
+        void restart() override { pairs.clear(); bytes = 0; bytes_capped = false; }
         bool invoke(const char* keyp, size_t keylen,
                     const std::string& value) override {
             pairs.emplace_back(std::string(keyp, keylen), value);
-            return pairs.size() < limit_;   // stop once we have `limit`
+            bytes += keylen + value.size();
+            if (pairs.size() >= limit_) return false;   // row limit
+            if (bytes >= kShardDataChunkMaxBytes) {
+                bytes_capped = true;
+                return false;
+            }
+            return true;
         }
         std::vector<KvPair> pairs;
+        size_t bytes = 0;
+        bool bytes_capped = false;
     private:
         size_t limit_;
     };
