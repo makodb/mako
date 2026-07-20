@@ -171,6 +171,17 @@ namespace mako
         // so the sender's retry loop terminates. The idle predicate is the
         // same one RunNontxnOp uses (helper threads park their participant
         // txn as in_progress-but-EMPTY between transactions).
+        //
+        // DEPLOYMENT MODEL (deliberate): the coordinator is itself a server
+        // node and server nodes do not fail, so a participant ALWAYS
+        // assumes the coordinator is alive and holds staged state + row
+        // locks indefinitely until its decision arrives (which
+        // retry-until-success guarantees). There is intentionally NO
+        // participant-side lease/timeout that self-releases locks: under an
+        // always-alive coordinator such a lease would be WRONG -- it could
+        // unilaterally release locks for a commit whose install is still in
+        // flight, breaking atomicity. Revisit only if the no-failure
+        // assumption is ever dropped.
         if (TThread::txn != nullptr && TThread::txn->has_staged_items()) {
             db->shard_abort_txn(nullptr);
             db->shard_reset();
