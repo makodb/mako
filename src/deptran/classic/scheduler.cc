@@ -142,7 +142,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
 	Log_info("time of dispatch2: %d", end.tv_nsec-begin.tv_nsec);*/
   // TODO reimplement this.
-  if (tx->fully_dispatched_->value_ == 0) {
+  if (tx->fully_dispatched_->value_.get() == 0) {
     tx->fully_dispatched_->set(1);
   }
   return ret;

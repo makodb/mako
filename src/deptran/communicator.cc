@@ -603,8 +603,8 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
   int total = cmds_by_par.size();
   //std::shared_ptr<WaitAll> e = Reactor::create_sp_event<WaitAll>();
   std::shared_ptr<IntEvent> e = Reactor::create_sp_event<IntEvent>();
-	e->value_ = 0;
-	e->target_ = total;
+	e->value_.set(0);
+	e->target_.set(total);
   std::unordered_set<int> leaders{};
   auto src_coroid = e->get_fiber_id();
   coo->coro_id_ = src_coroid;
@@ -641,7 +641,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	  			double net = 0.0;
           rrr::deserialize_from(fu->get_reply(), ret, outputs, coro_id, view_md);
 
-          e->value_++;
+          e->value_.set(e->value_.get() + 1);
           if(phase != coo->phase_){
 						verify(0);
 	    			e->test();
@@ -655,7 +655,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               }
               coo->aborted_ = true;
               txn->commit_.store(false);
-              e->value_ = e->target_;
+              e->value_.set(e->target_.get());
               e->test();
               return;
             }
@@ -664,7 +664,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               coo->aborted_ = true;
               txn->commit_.store(false);
 
-							e->value_ = e->target_;
+							e->value_.set(e->target_.get());
 							e->test();
 							return;
             }

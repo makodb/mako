@@ -98,7 +98,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
       value_ = v;
       if (v >= TXN_CMT) {
         for (auto& sp_ev: events_) {
-          verify(sp_ev->target_ == TXN_CMT);
+          verify(sp_ev->target_.get() == TXN_CMT);
           sp_ev->set(v);
         }
         events_.clear();
@@ -112,8 +112,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
         return;
       }
       auto sp_ev =  Reactor::create_sp_event<IntEvent>();
-      sp_ev->value_ = value_;
-      sp_ev->target_ = x;
+      sp_ev->value_.set(value_);
+      sp_ev->target_.set(x);
       events_.push_back(sp_ev);
 //  sp_ev->wait_timeout(1000*1000*1000);
 //  verify(sp_ev->status_ != EventStatus::TIMEOUT);

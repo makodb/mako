@@ -54,7 +54,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     reactor->create_run_fiber([and_event, event1, event2, event3, &completion_value]() {
         and_event->wait();
         // All three events should have their values set
-        completion_value = event1->value_ + event2->value_ + event3->value_;
+        completion_value = event1->value_.get() + event2->value_.get() + event3->value_.get();
     });
     
     // Set events in different order

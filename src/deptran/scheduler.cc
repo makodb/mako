@@ -913,7 +913,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   if (set_size > 0) {
     recovery_event = Reactor::create_sp_event<IntEvent>(set_size);
     // Log_info("[JETPACK-RECOVERY-EVENT] Created recovery event: target=%d, initial value=%d, event_ptr=%p", 
-    //          recovery_event->target_, recovery_event->value_, recovery_event.get());
+    //          recovery_event->target_.get(), recovery_event->value_.get(), recovery_event.get());
   }
   
   // For committed (sid, set_size) pair, ensure all positions exist locally
@@ -968,15 +968,15 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   }
   
   // Wait for all recovery dispatches to complete
-  if (recovery_event && recovery_event->target_ > 0) {
+  if (recovery_event && recovery_event->target_.get() > 0) {
     // Log_info("[JETPACK-RECOVERY-EVENT] Starting Wait(): current value=%d, target=%d", 
-    //          recovery_event->value_, recovery_event->target_);
+    //          recovery_event->value_.get(), recovery_event->target_.get());
     auto start_time = std::chrono::steady_clock::now();
     recovery_event->wait();
     auto end_time = std::chrono::steady_clock::now();
     auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
     Log_info("[JETPACK-RECOVERY-EVENT] Wait() completed after %ldms. Final value=%d, target=%d", 
-             wait_duration, recovery_event->value_, recovery_event->target_);
+             wait_duration, recovery_event->value_.get(), recovery_event->target_.get());
     Log_info("[JETPACK-RECOVERY] All recovery completed");
   }
   
@@ -1063,8 +1063,8 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
       auto callback = [this, par_id, recovery_event, cmd_id](int res, TxnOutput& output) {
 #ifdef JETPACK_RECOVERY_DEBUG
       Log_info("[JETPACK-RECOVERY] Dispatch callback received, res=%d (sid=%d rid=%d target=%d, current=%d)",
-               res, sid, rid, recovery_event ? recovery_event->target_ : -1,
-               recovery_event ? recovery_event->value_ : -1);
+               res, sid, rid, recovery_event ? recovery_event->target_.get() : -1,
+               recovery_event ? recovery_event->value_.get() : -1);
 #endif
         if (res == WRONG_LEADER) {
           // This shouldn't happen if we updated the view correctly during BeginRecovery
@@ -1081,21 +1081,21 @@ void TxLogServer::DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr
         
         // Signal that this recovery dispatch is complete
         if (recovery_event) {
-          int old_value = recovery_event->value_;
+          int old_value = recovery_event->value_.get();
           // Log_info("[JETPACK-RECOVERY-EVENT] About to increment recovery_event: current value=%d, target=%d, partition=%d, res=%d", 
-          //          old_value, recovery_event->target_, par_id, res);
+          //          old_value, recovery_event->target_.get(), par_id, res);
           // Log_info("[JETPACK-RECOVERY-EVENT] This increment is happening in BroadcastDispatch callback (dispatch ACK received)");
           recovery_event->set(old_value + 1);
-          if (recovery_event->value_ % 100 == 0 || recovery_event->is_ready())
+          if (recovery_event->value_.get() % 100 == 0 || recovery_event->is_ready())
             Log_info("[JETPACK-RECOVERY-EVENT] After increment: new value=%d, target=%d. Event ready=%s", 
-                    recovery_event->value_, recovery_event->target_, 
+                    recovery_event->value_.get(), recovery_event->target_.get(), 
                     recovery_event->is_ready() ? "YES" : "NO");
         }
       };
       
       // Use BroadcastDispatch to send to the leader
       // Log_info("[JETPACK-RECOVERY] DispatchRecoveredCommand sending cmd_id=0x%llx to partition %d (leader locale %d, sched=%s, target=%d)",
-      //          (unsigned long long)cmd_id, par_id, current_leader, sched_type, recovery_event ? recovery_event->target_ : -1);
+      //          (unsigned long long)cmd_id, par_id, current_leader, sched_type, recovery_event ? recovery_event->target_.get() : -1);
       comm->BroadcastDispatch(vec_piece_data.unwrap()->sp_vec_piece_data_, coo.get(), callback);
       
 #ifdef JETPACK_RECOVERY_DEBUG

@@ -333,7 +333,7 @@ void ClientWorker::Work() {
 #if 1
           char txid[20];
           sprintf(txid, "%" PRIx64 "|", coo->ongoing_tx_id_);
-          ev->state_.wait_place_ = std::string(txid);
+          (*ev->state_.wait_place_.borrow_mut()) = std::string(txid);
 #endif
           wait_recordplace(ev, wait_timeout(600*1000*1000));
           this->outbound--;

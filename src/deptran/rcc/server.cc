@@ -637,7 +637,7 @@ bool RccServer::FullyDispatched(const RccScc& scc, rank_t rank) {
 //                             } else if (tinfo.current_rank_ < rank) {
 //                               return false;
 //                             } else {
-                               return tinfo.subtx(rank).fully_dispatched_->value_ == 1;
+                               return tinfo.subtx(rank).fully_dispatched_->value_.get() == 1;
 //                             }
                            } else {
                              return true;
@@ -945,7 +945,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //    dtxn->commit_request_received_ = true;
     if (!sp_graph) {
       // quick path without graph, no contention.
-      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
+      verify(dtxn->fully_dispatched_->value_.get()); //cannot handle non-dispatched now.
       UpgradeStatus(*dtxn, TXN_DCD);
       Execute(dtxn);
     } else {
@@ -1108,7 +1108,7 @@ int RccServer::OnPreAccept(txnid_t txn_id,
       }
     }
   }
-  verify(!dtxn->subtx(rank).fully_dispatched_->value_);
+  verify(!dtxn->subtx(rank).fully_dispatched_->value_.get());
   dtxn->subtx(rank).fully_dispatched_->set(1);
   res_parents = parents;
   return SUCCESS;
@@ -1171,7 +1171,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 #ifdef DEBUG_CHECK
   Fiber::create_run([sp_tx, weird, rank](){
     auto sp_e = Reactor::create_sp_event<rrr::IntEvent>();
-    sp_e->state_.test_ = [sp_tx, rank] (int v) -> bool {
+    (*sp_e->state_.test_.borrow_mut()) = [sp_tx, rank] (int v) -> bool {
       auto& subtx = sp_tx->subtx(rank);
       return subtx.local_validated_->is_set_;
     };

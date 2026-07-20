@@ -388,7 +388,7 @@ TEST_F(ReactorTest, EventCreation) {
     // Trigger the event
     event.set(1);
     EXPECT_TRUE(event.is_ready());
-    EXPECT_EQ(event.value_, 1);
+    EXPECT_EQ(event.value_.get(), 1);
 }
 
 TEST_F(ReactorTest, FiberBasic) {

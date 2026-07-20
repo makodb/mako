@@ -145,7 +145,7 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
         }
       }
     }
-    verify(!subtx.fully_dispatched_->value_);
+    verify(!subtx.fully_dispatched_->value_.get());
     subtx.fully_dispatched_->set(1);
     MinItfrGraph(*dtxn, res_graph, false, 1);
     ret = SUCCESS;
@@ -198,7 +198,7 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 ////    dtxn->commit_request_received_ = true;
 //    if (!sp_graph) {
 //      // quick path without graph, no contention.
-//      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
+//      verify(dtxn->fully_dispatched_->value_.get()); //cannot handle non-dispatched now.
 //      UpgradeStatus(*dtxn, TXN_DCD);
 //      Execute(dtxn);
 //    } else {
