@@ -180,117 +180,62 @@ template <class U> class SnapshotReaderAdapterRefMut;
  * - Checksum verification
  * - Concurrent access safety
  */
+#if RUSTYCPP_RUST
+pub trait SnapshotManager {
+    // @unsafe - Creates writer with side effects.
+    fn BeginSnapshot(&mut self, last_index: u64, last_term: i64)
+        -> std::unique_ptr<SnapshotWriter>;
+    // @unsafe - May have side effects and reads from raw pointer.
+    fn TakeSnapshot(&mut self, last_index: u64, last_term: i64,
+                    data: *const c_char, size: usize) -> bool;
+    // @unsafe - Creates reader with side effects.
+    fn BeginLoad(&mut self, metadata: &SnapshotMetadata)
+        -> std::unique_ptr<SnapshotReader>;
+    // @unsafe - Writes to caller-owned output pointers.
+    fn LoadLatestSnapshot(&mut self, metadata_out: *mut SnapshotMetadata,
+                          data_out: *mut std::string) -> bool;
+    // @safe
+    fn GetLatestSnapshot(&self) -> rusty::Option<SnapshotMetadata>;
+    // @safe
+    fn ListSnapshots(&self) -> std::vector<SnapshotMetadata>;
+    // @safe
+    fn HasSnapshotAtOrAfter(&self, min_index: u64) -> bool;
+    // @unsafe - May delete persisted snapshots.
+    fn PruneSnapshots(&mut self, keep_after_index: u64) -> usize;
+    // @unsafe - May delete persisted snapshots.
+    fn DeleteAllSnapshots(&mut self) -> usize;
+    // @lifetime: (&'a) -> &'a
+    fn GetStoragePath(&self) -> &std::string;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=snapshot_manager.manager_interface version=1 rust_sha256=65c211277b0d3a27a9a28af07363a4880ab7d28f226d94b2343d6960e653324c*/
+namespace {
 class SnapshotManager {
- public:
-  virtual ~SnapshotManager() = default;
-
-  // ========================================================================
-  // Snapshot Creation
-  // ========================================================================
-
-  /**
-   * Begin taking a snapshot at the given index.
-   * @param last_index Last log entry to include in snapshot
-   * @param last_term Term of the last included entry
-   * @return Writer for streaming snapshot data, or nullptr on error
-   */
-  // @unsafe - Creates writer with side effects
-  virtual std::unique_ptr<SnapshotWriter> BeginSnapshot(
-      slotid_t last_index, ballot_t last_term) = 0;
-
-  /**
-   * Take a complete snapshot synchronously.
-   * Convenience method that handles writer internally.
-   * @param last_index Last log entry to include
-   * @param last_term Term of last included entry
-   * @param data Complete snapshot data
-   * @param size Size of data
-   * @return true if snapshot was saved successfully
-   */
-  // @unsafe - May have side effects
-  virtual bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
-                           const char* data, size_t size) = 0;
-
-  // ========================================================================
-  // Snapshot Loading
-  // ========================================================================
-
-  /**
-   * Begin loading a snapshot.
-   * @param metadata Metadata of snapshot to load
-   * @return Reader for streaming snapshot data, or nullptr on error
-   */
-  // @unsafe - Creates reader with side effects
-  virtual std::unique_ptr<SnapshotReader> BeginLoad(
-      const SnapshotMetadata& metadata) = 0;
-
-  /**
-   * Load the latest snapshot completely.
-   * @param metadata_out Output: metadata of loaded snapshot
-   * @param data_out Output: snapshot data
-   * @return true if snapshot was loaded successfully
-   */
-  // @unsafe - Allocates and writes to output parameters
-  virtual bool LoadLatestSnapshot(SnapshotMetadata* metadata_out,
-                                  std::string* data_out) = 0;
-
-  // ========================================================================
-  // Snapshot Queries
-  // ========================================================================
-
-  /**
-   * Get metadata of the latest snapshot.
-   * @return Metadata if snapshot exists, None otherwise
-   */
-  // @safe
-  virtual rusty::Option<SnapshotMetadata> GetLatestSnapshot() const = 0;
-
-  /**
-   * List all available snapshots.
-   * @return Vector of snapshot metadata, sorted by index descending
-   */
-  // @safe
-  virtual std::vector<SnapshotMetadata> ListSnapshots() const = 0;
-
-  /**
-   * Check if a snapshot exists at or after the given index.
-   * @param min_index Minimum index to check
-   * @return true if such a snapshot exists
-   */
-  // @safe
-  virtual bool HasSnapshotAtOrAfter(slotid_t min_index) const = 0;
-
-  // ========================================================================
-  // Snapshot Cleanup
-  // ========================================================================
-
-  /**
-   * Delete snapshots older than the given index.
-   * Keeps the snapshot covering the given index.
-   * @param keep_after_index Keep snapshots with last_included_index >= this
-   * @return Number of snapshots deleted
-   */
-  // @unsafe - Deletes files
-  virtual size_t PruneSnapshots(slotid_t keep_after_index) = 0;
-
-  /**
-   * Delete all snapshots.
-   * Used for testing or forced fresh start.
-   * @return Number of snapshots deleted
-   */
-  // @unsafe - Deletes files
-  virtual size_t DeleteAllSnapshots() = 0;
-
-  // ========================================================================
-  // Configuration
-  // ========================================================================
-
-  /**
-   * Get the storage path for snapshots.
-   */
-  // @lifetime: (&'a) -> &'a
-  virtual const std::string& GetStoragePath() const = 0;
+public:
+    virtual ~SnapshotManager() noexcept(false) {}
+    virtual std::unique_ptr<SnapshotWriter> BeginSnapshot(uint64_t last_index, int64_t last_term) = 0;
+    virtual bool TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) = 0;
+    virtual std::unique_ptr<SnapshotReader> BeginLoad(const SnapshotMetadata& metadata) = 0;
+    virtual bool LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) = 0;
+    virtual rusty::Option<SnapshotMetadata> GetLatestSnapshot() const = 0;
+    virtual std::vector<SnapshotMetadata> ListSnapshots() const = 0;
+    virtual bool HasSnapshotAtOrAfter(uint64_t min_index) const = 0;
+    virtual size_t PruneSnapshots(uint64_t keep_after_index) = 0;
+    virtual size_t DeleteAllSnapshots() = 0;
+    virtual const std::string& GetStoragePath() const = 0;
+    SnapshotManager(const SnapshotManager&) = delete;
+    SnapshotManager& operator=(const SnapshotManager&) = delete;
+    SnapshotManager(SnapshotManager&&) = delete;
+    SnapshotManager& operator=(SnapshotManager&&) = delete;
+protected:
+    SnapshotManager() = default;
 };
+}
+
+template <class U> class SnapshotManagerAdapter;
+template <class U> class SnapshotManagerAdapterRef;
+template <class U> class SnapshotManagerAdapterRefMut;
+/*RUSTYCPP:GEN-END id=snapshot_manager.manager_interface*/
 
 /**
  * Configuration for snapshot behavior.
