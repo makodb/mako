@@ -393,6 +393,20 @@ public:
     table_.scan(begin, true, scanner, *ti.ti);
   }
 
+  // Forensic RAW range scan (diagnostics only): hands each row's raw
+  // version word to `f` with NO transaction, NO OCC registration and NO
+  // atomic-read retry -- the point is to inspect a version word that looks
+  // locked (or corrupted) without aborting on it. Never use for data reads.
+  template <typename F>
+  void debugScanVersions(Str begin, Str end, F f, threadinfo_type& ti = mythreadinfo) {
+    auto node_callback = [] (leaf_type*, typename unlocked_cursor_type::nodeversion_value_type) {};
+    auto value_callback = [&] (Str key, versioned_value* e) -> bool {
+      return f(key, static_cast<uint64_t>(e->version()));
+    };
+    range_scanner<decltype(node_callback), decltype(value_callback)> scanner(end, node_callback, value_callback);
+    table_.scan(begin, true, scanner, *ti.ti);
+  }
+
   template <typename Callback, typename ValAllocator = DefaultValAllocator>
   void transRQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {

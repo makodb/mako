@@ -30,6 +30,11 @@ inline thread_local bool g_oi_scan_conflicted = false;
 // finished and commit-time validation failed (read-set contention); K == 0
 // means it died before reading anything (thread/txn state).
 inline thread_local size_t g_oi_scan_abort_progress = 0;
+// Arms a one-shot RAW version-word peek of the aborting row when the next
+// capped scan attempt gives up (consumed by oi_mbta_nontxn_scan): the
+// eternal-lock discriminator -- a well-formed locked version names a holder,
+// garbage bits mean the word was corrupted.
+inline thread_local bool g_oi_scan_peek_versions = false;
 // Bounded-attempt seam for the ONE-OP get/put/insert kernels (same opt-in
 // shape as the scan cap above; 0 = retry forever, the historical contract).
 // The RPC backend's poll thread serves remote non-txn ops INLINE, and an

@@ -610,6 +610,32 @@ inline bool oi_mbta_remove_local(mbta_table *t, lcdf::Str key) {
   return t->remove(key);
 }
 
+// Forensic peek (diagnostics only): RAW version words of the tail of the
+// first `nrows` rows from `start` -- no txn, no OCC, no atomic-read retry,
+// so a locked or corrupted version word is READ, not aborted on. This is
+// the eternal-lock discriminator: a well-formed locked version names a
+// holder; garbage bits mean the word was corrupted.
+// @unsafe { raw engine peek + stderr diagnostics }
+inline void oi_mbta_debug_peek_versions(mbta_table *t, const std::string &start,
+                                        int nrows) {
+  int idx = 0;
+  t->debugScanVersions(
+      mbta_table::Str(start), mbta_table::Str(),
+      [&](mbta_table::Str key, uint64_t v) -> bool {
+        ++idx;
+        if (idx >= nrows - 2) {
+          char kh[49];
+          size_t n = key.length() < 24 ? (size_t)key.length() : 24;
+          for (size_t i = 0; i < n; i++)
+            snprintf(kh + 2 * i, 3, "%02x", (unsigned char)key.data()[i]);
+          kh[2 * n] = '\0';
+          fprintf(stderr, "peek-version row=%d k=%s v=%016llx\n", idx, kh,
+                  (unsigned long long)v);
+        }
+        return idx < nrows;
+      });
+}
+
 // @unsafe - one-op OCC range read with whole-scan retry
 inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
                                 const std::string *end_key,
@@ -666,6 +692,13 @@ inline void oi_mbta_nontxn_scan(mbta_table *t, const std::string &start_key,
       // adaptive caller.
       ++aborted;
       if (max_attempts > 0 && aborted >= max_attempts) {
+        if (mako::g_oi_scan_peek_versions) {
+          // One-shot, armed by the deadline path: name the aborting row's
+          // raw version word before giving up (calls = rows read before the
+          // abort, so the poison is row calls+1).
+          mako::g_oi_scan_peek_versions = false;
+          oi_mbta_debug_peek_versions(t, start_key, (int)calls + 2);
+        }
         callback.restart();   // discard the aborted attempt's partial rows
         if (conflicted) *conflicted = true;
         mako::g_oi_scan_conflicted = true;

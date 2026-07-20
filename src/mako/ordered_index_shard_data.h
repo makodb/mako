@@ -184,6 +184,20 @@ public:
                         }
                         mako::g_oi_scan_conflicted = false;
                     }
+                    // Arm the engine's RAW version peek and drive ONE capped
+                    // attempt across the poison row: the attempt aborts at
+                    // that row, the cap-trip runs the no-OCC peek, and the
+                    // poison's raw version word lands in the log.
+                    {
+                        LimitedCollector cross(got_rows + 1);
+                        mako::g_oi_scan_peek_versions = true;
+                        mako::g_oi_scan_attempt_cap = 1;
+                        mako::g_oi_scan_conflicted = false;
+                        index_->scan(cur, &hi, cross, nullptr);
+                        mako::g_oi_scan_attempt_cap = 0;
+                        mako::g_oi_scan_conflicted = false;
+                        mako::g_oi_scan_peek_versions = false;
+                    }
                     throw mako::oi_scan_wedged{};
                 }
                 const int shift = conflicted_rounds < 5 ? conflicted_rounds : 5;
