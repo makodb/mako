@@ -94,6 +94,26 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
 
 *(newest first; one line per landed conversion — commit, what moved, LOC delta)*
 
+- 2026-07-20 — **★ TCP + REACTOR CONVERT CAMPAIGN** (post-syscall-plan; user: finish TCP then
+  reactor). TCP fully DSL: outbound drain + handle_write (send kernel + 2 erase kernels), inbound
+  drain + frame dispatch (recv over thread_local RecvScratch POD + RefCell-arrow bridges), accept
+  loop (classify-and-wrap AcceptStep kernel + DSL loop policy; Option<Box> for the move-only proxy
+  out-param); tcp_factory_connect kernel-by-verdict (syscall ladder IS the body). REACTOR: slice-1
+  the whole pollworker command cluster (do_add/remove/close/update_mode/add_job/remove_job/
+  process_pending_removals — free fns over the DSL PollThreadWorker struct; 3 Box-trait arrow
+  kernels + a take-to-Vec drain since HashSet rejects the rusty::iter shim); slice-2a the
+  per-thread scheduler singletons (hoisted class-static thread_locals to namespace scope) +
+  running-fiber save/restore/set; slice-2b/3 pollthread_drop (route-2 SYS_gettid). REACTOR FLOOR
+  (kernel-by-verdict, documented at each site): create_run_fiber / check_timeout / continue_fiber
+  and all QuorumEvent members — hand-written-class member bodies dominated by Rc<Fiber>/
+  shared_ptr<EventPollable> arrow-method calls; the DSL move-inserts a repeatedly-passed Rc across
+  arrow calls (correctness break) and shared_ptr virtual dispatch is the arrow wall. These are the
+  Event-flattening project's territory (making the event/fiber classes DSL structs is the real
+  unlock, not per-body conversion). NEW RULES: DSL free-fn param named `self` emits `this->` (use
+  any other name); `loop` reserved-word → kernel; Function<void()> param needs a using-alias;
+  Log_* adjacent to an Rc::make turbofish mis-lowers; (*r).field for Rc locals; named RefCell-guard
+  binding = address-of-temp. Every remaining reactor line now has a named reason.
+
 - 2026-07-19 — **★ SYSCALL PLAN DELIVERED (task #7, 5 items + 2 policy commits)** under the two
   user rules now codified in the porting guide §7.7-7.8: the runtime stays a FAITHFUL Rust-std
   translation (no invented APIs — std has no epoll/poll/mmap surface), syscalls without a std
