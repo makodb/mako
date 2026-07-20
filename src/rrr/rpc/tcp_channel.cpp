@@ -64,9 +64,11 @@ export namespace rrr {
 
 class TcpConnection;
 
-// Default high-water mark for the outbound byte queue. When the queue
-// would grow past this size, `send_frame` returns
-// `ChannelError::WouldBlock` instead of buffering further.
+// Watermark for the outbound byte queue (formerly a high-water DROP
+// threshold). Crossing it never rejects anything anymore — the queue
+// reallocates and keeps buffering; `send_frame` only emits a rate-limited
+// congestion warning. See the comment in `send_frame` for why dropping at
+// a threshold is forbidden in this codebase.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -111,8 +113,9 @@ class TcpConnection {
     TcpConnection(TcpConnection&&)                 = delete;
     TcpConnection& operator=(TcpConnection&&)      = delete;
 
-    // Adjust the outbound queue's high-water mark (defaults to
-    // `kTcpConnectionOutboundHighWaterDefault`). Must be called before
+    // Adjust the outbound queue's congestion watermark (defaults to
+    // `kTcpConnectionOutboundHighWaterDefault`). Crossing it only logs;
+    // the queue never drops (see `send_frame`). Must be called before
     // the connection is registered with a poll thread.
     void set_outbound_high_water(std::size_t bytes);
 
@@ -686,27 +689,27 @@ ChannelError TcpConnection::send_frame(const ChannelFrame& frame) {
     auto guard = outbound_.lock().unwrap();
     auto& buf = *guard;
 
-    // Reject when the queue is already past the high water — we never
-    // append to a buffer that's already over budget so backpressure is
-    // strictly bounded.
+    // NEVER drop for saturation: past the (former high-water) watermark the
+    // queue simply keeps growing — the byte buffer reallocates as needed.
+    // Rejecting here converted congestion into SILENT DATA LOSS: a dropped
+    // reply looks identical to a mute peer, and a dropped 2PC decision
+    // orphans participant row locks (both observed live at great cost).
+    // Under the deployment model (no process failures) the peer eventually
+    // drains, so unbounded buffering is safe; if it ever is not, memory
+    // growth with this warning attached beats invisible drops. The
+    // watermark survives purely as a rate-limited congestion diagnostic.
+    // @unsafe { gettimeofday + stderr diagnostic }
     if (buf.size() >= outbound_high_water_) {
-        // Rate-limited (1/s): a reply path that discards this error DROPS
-        // the reply — the peer's request times out and retries, and under
-        // retry-stacking the queue only grows. Make the drop visible.
-        // @unsafe { gettimeofday + stderr diagnostic }
-        {
-            static std::atomic<long> s_last{0};
-            struct timeval tv;
-            gettimeofday(&tv, nullptr);
-            long prev = s_last.load(std::memory_order_relaxed);
-            if (tv.tv_sec != prev &&
-                s_last.compare_exchange_strong(prev, tv.tv_sec,
-                                               std::memory_order_relaxed)) {
-                fprintf(stderr, "tcpch: send_frame HIGH-WATER reject fd=%d peer=%s queued=%zu frame=%zu\n",
-                        fd_.as_raw_fd(), peer_address_.c_str(), buf.size(), frame.size);
-            }
+        static std::atomic<long> s_last{0};
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        long prev = s_last.load(std::memory_order_relaxed);
+        if (tv.tv_sec != prev &&
+            s_last.compare_exchange_strong(prev, tv.tv_sec,
+                                           std::memory_order_relaxed)) {
+            fprintf(stderr, "tcpch: outbound queue past watermark fd=%d peer=%s queued=%zu frame=%zu — buffering (never dropping)\n",
+                    fd_.as_raw_fd(), peer_address_.c_str(), buf.size(), frame.size);
         }
-        return ChannelError::WouldBlock;
     }
 
     if (!frame_codec_encode_into(buf,

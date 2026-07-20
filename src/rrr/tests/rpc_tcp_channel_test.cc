@@ -15,7 +15,7 @@
 //   - peer hangup -> on_closed(None) fires exactly once
 //   - close() is idempotent (multiple calls, only one on_closed)
 //   - send_frame after close returns ChannelError::ConnectionReset
-//   - send_frame past high-water returns WouldBlock without buffering
+//   - send_frame past the watermark keeps buffering and never drops
 //     beyond the limit
 //   - malformed inbound (negative size header) -> on_error then
 //     on_closed
@@ -382,24 +382,37 @@ TEST_F(TcpConnectionTest, HandleWriteReturnsNoChangeAfterClose) {
 // Backpressure
 // ---------------------------------------------------------------------------
 
-TEST_F(TcpConnectionTest, OutboundHighWaterReturnsWouldBlock) {
+TEST_F(TcpConnectionTest, OutboundSaturationNeverDrops) {
+    // The watermark is a congestion DIAGNOSTIC, not a drop threshold:
+    // sends far past it must all be accepted (the queue reallocates) and
+    // every frame must reach the peer once the queue drains. The old
+    // behavior — WouldBlock rejection at saturation — converted congestion
+    // into silent data loss (dropped replies and 2PC decisions, observed
+    // live) and is forbidden.
     mut_conn().set_outbound_high_water(64);
 
-    // Drain the kernel side first so writes definitely buffer in our
-    // outbound queue rather than passing straight through.
-    // Use a 32-byte payload + 4-byte header = 36 bytes per frame.
+    // 32-byte payload + 4-byte header = 36 bytes per frame; 8 frames =
+    // 288 bytes, more than 4x the 64-byte watermark.
     const std::uint8_t pad[32]{};
+    constexpr int kFrames = 8;
+    for (int i = 0; i < kFrames; i++) {
+        EXPECT_EQ(mut_conn().send_frame({pad, sizeof(pad)}),
+                  ChannelError::None);
+    }
 
-    // First send fills the queue past the high water but is still
-    // accepted (we reject only if the queue is *already* over
-    // budget at entry).
-    EXPECT_EQ(mut_conn().send_frame({pad, sizeof(pad)}), ChannelError::None);
-    EXPECT_EQ(mut_conn().send_frame({pad, sizeof(pad)}), ChannelError::None);
-
-    // Now the queue is at 72 bytes which is past the 64-byte budget;
-    // the next send should be rejected without buffering.
-    EXPECT_EQ(mut_conn().send_frame({pad, sizeof(pad)}),
-              ChannelError::WouldBlock);
+    // Drain the outbound queue into the socketpair, then read it all
+    // back from the peer: exactly kFrames * 36 bytes, nothing dropped.
+    while ((conn().poll_mode() & PollMode::WRITE) != 0) {
+        mut_conn().handle_write();
+    }
+    std::size_t total = 0;
+    std::uint8_t rx[1024];
+    for (;;) {
+        const ssize_t n = ::read(peer_fd_, rx, sizeof(rx));
+        if (n <= 0) break;
+        total += static_cast<std::size_t>(n);
+    }
+    EXPECT_EQ(total, static_cast<std::size_t>(kFrames) * 36u);
 }
 
 // ---------------------------------------------------------------------------
