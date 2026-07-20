@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -187,7 +188,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     auto reactor = Reactor::get_reactor();
     
     const int num_events = 20; // Reduced number for simpler test
-    std::vector<std::shared_ptr<IntEvent>> events;
+    std::vector<rusty::Arc<IntEvent>> events;
     std::atomic<int> processed_count{0};
     
     // Create and trigger all events first (all use default target=1)
@@ -278,7 +279,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
     
     // Create and destroy many events to test memory management
     for (int iteration = 0; iteration < 10; iteration++) {
-        std::vector<std::shared_ptr<IntEvent>> events;
+        std::vector<rusty::Arc<IntEvent>> events;
         
         // Create batch
         for (int i = 0; i < 100; i++) {

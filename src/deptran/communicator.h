@@ -391,7 +391,11 @@ class Communicator {
 	bool paused = false;
 	bool slow = false;
 	int total_;
-	shared_ptr<QuorumEvent> qe;
+	// @unsafe { placeholder event so the const-view Arc handle is always
+	//   non-null (Arc has no null state); only read on the dead `paused`
+	//   debug path in client_worker.cc / classic/coordinator.cc, both of
+	//   which deref it via `->`. Was a default-null shared_ptr before. }
+	rusty::Arc<QuorumEvent> qe{Reactor::create_sp_event<QuorumEvent>(1, 1)};
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;
@@ -471,18 +475,18 @@ class Communicator {
   // declaration — only call site was the now-deleted
   // `CoordinatorClassic::DispatchSync`.
 
-	shared_ptr<QuorumEvent> SendReelect();
+	rusty::Arc<QuorumEvent> SendReelect();
 
-  shared_ptr<IntEvent> BroadcastDispatch(ReadyPiecesData cmds_by_par,
+  rusty::Arc<IntEvent> BroadcastDispatch(ReadyPiecesData cmds_by_par,
                         Coordinator* coo,
                         TxData* txn);
 
-  shared_ptr<WaitAll> SendPrepare(Coordinator* coo,
+  rusty::Arc<WaitAll> SendPrepare(Coordinator* coo,
                                          txnid_t tid,
                                          std::vector<int32_t>& sids);
-  shared_ptr<WaitAll> SendCommit(Coordinator* coo,
+  rusty::Arc<WaitAll> SendCommit(Coordinator* coo,
                                      txnid_t tid);
-  shared_ptr<WaitAll> SendAbort(Coordinator* coo,
+  rusty::Arc<WaitAll> SendAbort(Coordinator* coo,
                                     txnid_t tid);
   /*void SendPrepare(parid_t gid,
                    txnid_t tid,
@@ -550,14 +554,14 @@ class Communicator {
       verify(0);
     }
   shared_ptr<GetLeaderQuorumEvent> BroadcastGetLeader(parid_t par_id, locid_t cur_pause);
-  shared_ptr<QuorumEvent> FailoverPauseSocketOut(parid_t par_id, locid_t loc_id);
-  shared_ptr<QuorumEvent> FailoverResumeSocketOut(parid_t par_id, locid_t loc_id);
+  rusty::Arc<QuorumEvent> FailoverPauseSocketOut(parid_t par_id, locid_t loc_id);
+  rusty::Arc<QuorumEvent> FailoverResumeSocketOut(parid_t par_id, locid_t loc_id);
   void SetNewLeaderProxy(parid_t par_id, locid_t loc_id);
   void SendSimpleCmd(groupid_t gid, SimpleCommand& cmd, std::vector<int32_t>& sids,
       const function<void(int)>& callback);
   
   /* Jetpack recovery begin */
-  shared_ptr<QuorumEvent> JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id, 
+  rusty::Arc<QuorumEvent> JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id,
                                                        const View& old_view, 
                                                        const View& new_view, 
                                                        epoch_t new_view_id);
@@ -568,7 +572,7 @@ class Communicator {
   // take Commands directly
   // (was vector<pair<key_t, shared_ptr<Marshallable>>>).  Callers
   // produce these from GetRecoveredCommands.
-  shared_ptr<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
+  rusty::Arc<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
                                                     epoch_t jepoch, epoch_t oepoch,
                                                     int sid, int rid,
                                                     const std::vector<std::pair<key_t, janus::Command>>& cmds);
@@ -578,13 +582,13 @@ class Communicator {
   shared_ptr<JetpackAcceptQuorumEvent> JetpackBroadcastAccept(parid_t par_id, locid_t loc_id, 
                                                             epoch_t jepoch, epoch_t oepoch, 
                                                             ballot_t max_seen_ballot, int sid, int set_size);
-  shared_ptr<QuorumEvent> JetpackBroadcastCommit(parid_t par_id, locid_t loc_id, 
+  rusty::Arc<QuorumEvent> JetpackBroadcastCommit(parid_t par_id, locid_t loc_id,
                                                  epoch_t jepoch, epoch_t oepoch, 
                                                  int sid, int set_size);
   shared_ptr<JetpackPullRecSetInsQuorumEvent> JetpackBroadcastPullRecSetIns(parid_t par_id, locid_t loc_id, 
                                                                            epoch_t jepoch, epoch_t oepoch, 
                                                                            int sid, int rid);
-  shared_ptr<QuorumEvent> JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch);
+  rusty::Arc<QuorumEvent> JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch);
   /* Jetpack recovery end */
 };
 

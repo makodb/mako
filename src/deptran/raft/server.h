@@ -8,6 +8,7 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -20,7 +21,7 @@
 //   Log_fatal: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
 //   Config::GetConfig: [safe, () -> Config*],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   Fiber::create_run: [safe, (...) -> void],
 //   Fiber::sleep: [safe, (int) -> void],
 //   RandomGenerator::rand_double: [safe, (double, double) -> double],
@@ -561,7 +562,9 @@ class RaftServer : public TxLogServer {
 
   // For looping_ control usage, once ready_for_replication_ is ready (set to 1), a specific coroutine will do replication
   std::recursive_mutex ready_for_replication_mtx_{};
-  shared_ptr<IntEvent> ready_for_replication_;
+  // Nullable event handle: default-empty, assigned via create_sp_event in the
+  // heartbeat loop and reset to None when the loop exits.
+  rusty::Option<rusty::Arc<IntEvent>> ready_for_replication_{rusty::None};
 
   // @safe - election timer setup (threading via @unsafe blocks in implementation)
   void StartElectionTimer() ;

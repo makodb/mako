@@ -93,7 +93,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
    public:
     int value_{};
 //  vector<shared_ptr<IntEvent>> events_{};
-    vector<shared_ptr<IntEvent>> events_{}; // waiting for commits
+    vector<rusty::Arc<IntEvent>> events_{}; // waiting for commits
     void set(const int& v) {
       value_ = v;
       if (v >= TXN_CMT) {
@@ -133,7 +133,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
     RccTx* traverse_path_start_{nullptr};
     RccTx* traverse_path_waitingon_{nullptr};
     TraverseStatus traverse_path_waiting_status_{ERROR};
-    shared_ptr<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
+    rusty::Arc<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
     TxnOutput *p_output_reply_ = nullptr;
     TxnOutput output_ = {};
     bool log_apply_started_{false}; // compared to ???
@@ -142,9 +142,9 @@ class RccTx: public Tx, public Vertex<RccTx> {
     bool waiting_all_anc_committing_{false};
     SharedIntEvent wait_all_anc_commit_done_{};
     bool __debug_local_validated_foreign_{false};
-    shared_ptr<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
-    shared_ptr<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
-    shared_ptr<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
+    rusty::Arc<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
+    rusty::Arc<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
+    rusty::Arc<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
 //  bool fully_dispatched_{false};
     vector<SimpleCommand> dreqs_ = {};
     // hopefully this makes involve checks faster

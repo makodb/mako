@@ -196,10 +196,10 @@ template <typename W> bool event_test_impl(const W& self);
 // the generated method bodies resolve these by ordinary lookup, and the
 // templates instantiate once the concrete struct is complete).
 using SrcFileCStr = const char*;
-template <typename W> std::shared_ptr<EventPollable> event_core_self_lock(const W& self) {
-  return self.self_.lock();
+template <typename W> rusty::Option<rusty::Arc<EventPollable>> event_core_self_lock(const W& self) {
+  return self.self_.upgrade();
 }
-template <typename W> void event_core_set_self(W& self, std::weak_ptr<EventPollable> p) {
+template <typename W> void event_core_set_self(W& self, rusty::sync::Weak<EventPollable> p) {
   self.self_ = std::move(p);
 }
 template <typename W> uint64_t event_core_wakeup_time(const W& self) {
@@ -221,7 +221,7 @@ uint64_t event_core_get_fiber_id();
 // Seeds an event's EventState (wait_place_ tag + creating-fiber capture),
 // matching the legacy Event constructor. Declared here so the BoxEvent
 // hand-bridge's inline ctor (below) can call it; defined after Fiber.
-void event_state_seed(EventState& st);
+void event_state_seed(const EventState& st);
 
 // Per-type construction factory used by Reactor::create_sp_event. Legacy
 // Event subclasses fall through to make_shared (they have real
@@ -231,11 +231,11 @@ void event_state_seed(EventState& st);
 struct NeverEvent;
 struct TimeoutEvent;
 struct IntEvent;
-std::shared_ptr<NeverEvent> never_event_make();
-std::shared_ptr<TimeoutEvent> timeout_event_make(uint64_t wait_us);
-std::shared_ptr<IntEvent> int_event_make(int32_t target);
+rusty::Arc<NeverEvent> never_event_make();
+rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us);
+rusty::Arc<IntEvent> int_event_make(int32_t target);
 template <typename Ev, typename... Args>
-std::shared_ptr<Ev> event_make(Args&&... args) {
+rusty::Arc<Ev> event_make(Args&&... args) {
   if constexpr (std::is_same_v<Ev, NeverEvent>) {
     return never_event_make();
   } else if constexpr (std::is_same_v<Ev, TimeoutEvent>) {
@@ -247,7 +247,7 @@ std::shared_ptr<Ev> event_make(Args&&... args) {
       return int_event_make(std::forward<Args>(args)...);
     }
   } else {
-    return std::make_shared<Ev>(std::forward<Args>(args)...);
+    return rusty::Arc<Ev>::make(std::forward<Args>(args)...);
   }
 }
 
@@ -272,7 +272,7 @@ class BoxEvent : public EventPollable {
   rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
   EventState state_{};
   rusty::Cell<bool> prunable_{true};
-  std::weak_ptr<EventPollable> self_;
+  rusty::sync::Weak<EventPollable> self_;
   // Slot payload. RefCell so get/set/clear stay const under a
   // const-view Arc handle (content_ may be non-Copy, e.g.
   // BoxEvent<std::string>); is_set_ is a Copy flag -> Cell.
@@ -296,8 +296,8 @@ class BoxEvent : public EventPollable {
   void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
   void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
   bool is_composite_event() const { return false; }
-  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
-  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
+  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
   bool test() const override { return event_test_impl(*this); }
@@ -336,7 +336,7 @@ struct IntEvent {
     owner_thread_: rusty::thread::ThreadId,
     state_: EventState,
     prunable_: Cell<bool>,
-    self_: std::weak_ptr<EventPollable>,
+    self_: rusty::sync::Weak<EventPollable>,
     value_: Cell<i32>,
     target_: Cell<i32>,
 }
@@ -363,10 +363,10 @@ impl IntEvent {
     fn is_composite_event(&self) -> bool {
         false
     }
-    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
         event_core_self_lock(self)
     }
-    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
         event_core_set_self(self, self_ptr)
     }
 }
@@ -400,7 +400,7 @@ impl EventPollable for IntEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=c8f9b4953d5488af2212d4819d9eaf1a580fc4e8de01ed86446f92783dcbfbfa*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=51795c7da5e97a13f4a95dc2998b9eb8907aaef9c77b65eb1811026ee70855d8*/
 struct IntEvent;
 
 struct IntEvent : public EventPollable {
@@ -408,10 +408,10 @@ struct IntEvent : public EventPollable {
     rusty::thread::ThreadId owner_thread_;
     EventState state_;
     rusty::Cell<bool> prunable_;
-    std::weak_ptr<EventPollable> self_;
+    rusty::sync::Weak<EventPollable> self_;
     rusty::Cell<int32_t> value_;
     rusty::Cell<int32_t> target_;
-    IntEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init, rusty::Cell<int32_t> value__init, rusty::Cell<int32_t> target__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), value_(std::move(value__init)), target_(std::move(target__init)) {}
+    IntEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::Cell<int32_t> value__init, rusty::Cell<int32_t> target__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), value_(std::move(value__init)), target_(std::move(target__init)) {}
     IntEvent(IntEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), value_(std::move(other.value_)), target_(std::move(other.target_)) {}
 
 
@@ -422,8 +422,8 @@ struct IntEvent : public EventPollable {
     void record_place(SrcFileCStr file, int32_t line) const;
     uint64_t get_fiber_id() const;
     bool is_composite_event() const;
-    std::shared_ptr<EventPollable> get_self() const;
-    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
     bool test() const;
     bool is_ready() const;
     void log() const;
@@ -464,11 +464,11 @@ bool IntEvent::is_composite_event() const {
     return false;
 }
 
-std::shared_ptr<EventPollable> IntEvent::get_self() const {
+rusty::Option<rusty::Arc<EventPollable>> IntEvent::get_self() const {
     return event_core_self_lock((*this));
 }
 
-void IntEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+void IntEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
@@ -527,10 +527,10 @@ inline bool int_event_is_ready(const IntEvent& self) {
 }
 
 // `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
-// it crosses their thresholds. The `std::shared_ptr<IntEvent>` element
+// it crosses their thresholds. The `rusty::Arc<IntEvent>` element
 // type stays std (Reactor::create_sp_event hands out shared_ptr — a
 // declared boundary type), aliased so the DSL can spell the Vec.
-using IntEventSp = std::shared_ptr<IntEvent>;
+using IntEventSp = rusty::Arc<IntEvent>;
 
 struct SharedIntEvent;
 
@@ -619,7 +619,7 @@ struct NeverEvent {
     owner_thread_: rusty::thread::ThreadId,
     state_: EventState,
     prunable_: Cell<bool>,
-    self_: std::weak_ptr<EventPollable>,
+    self_: rusty::sync::Weak<EventPollable>,
 }
 
 impl NeverEvent {
@@ -632,10 +632,10 @@ impl NeverEvent {
     fn is_composite_event(&self) -> bool {
         false
     }
-    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
         event_core_self_lock(self)
     }
-    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
         event_core_set_self(self, self_ptr)
     }
 }
@@ -669,7 +669,7 @@ impl EventPollable for NeverEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=dd4cd39bf83cf177e1f65147e3ed839a83504a7fceabec98b09c068513144858*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=208ba006360937022eeaadf8559e6353e25cfc09fdb59a9576ee3f26323d6edb*/
 struct NeverEvent;
 
 struct NeverEvent : public EventPollable {
@@ -677,16 +677,16 @@ struct NeverEvent : public EventPollable {
     rusty::thread::ThreadId owner_thread_;
     EventState state_;
     rusty::Cell<bool> prunable_;
-    std::weak_ptr<EventPollable> self_;
-    NeverEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)) {}
+    rusty::sync::Weak<EventPollable> self_;
+    NeverEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)) {}
     NeverEvent(NeverEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)) {}
 
 
     void wait_timeout(uint64_t timeout) const;
     void record_place(SrcFileCStr file, int32_t line) const;
     bool is_composite_event() const;
-    std::shared_ptr<EventPollable> get_self() const;
-    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
     bool test() const;
     bool is_ready() const;
     void log() const;
@@ -711,11 +711,11 @@ bool NeverEvent::is_composite_event() const {
     return false;
 }
 
-std::shared_ptr<EventPollable> NeverEvent::get_self() const {
+rusty::Option<rusty::Arc<EventPollable>> NeverEvent::get_self() const {
     return event_core_self_lock((*this));
 }
 
-void NeverEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+void NeverEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
@@ -776,7 +776,7 @@ struct TimeoutEvent {
     owner_thread_: rusty::thread::ThreadId,
     state_: EventState,
     prunable_: Cell<bool>,
-    self_: std::weak_ptr<EventPollable>,
+    self_: rusty::sync::Weak<EventPollable>,
     wakeup_time_: u64,
     wait_us_: u64,
 }
@@ -788,10 +788,10 @@ impl TimeoutEvent {
     fn is_composite_event(&self) -> bool {
         false
     }
-    fn get_self(&self) -> std::shared_ptr<EventPollable> {
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
         event_core_self_lock(self)
     }
-    fn set_self(&mut self, self_ptr: std::weak_ptr<EventPollable>) {
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
         event_core_set_self(self, self_ptr)
     }
 }
@@ -825,7 +825,7 @@ impl EventPollable for TimeoutEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=eef2899c4ec9c28f1203cad725a8d7f624c422bc379756743beaa1a649574a96*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=e9c4d62ad6f1952d10ee6e47c695016ccc924846aafddfeda0d9c6a0400b2532*/
 struct TimeoutEvent;
 
 struct TimeoutEvent : public EventPollable {
@@ -833,17 +833,17 @@ struct TimeoutEvent : public EventPollable {
     rusty::thread::ThreadId owner_thread_;
     EventState state_;
     rusty::Cell<bool> prunable_;
-    std::weak_ptr<EventPollable> self_;
+    rusty::sync::Weak<EventPollable> self_;
     uint64_t wakeup_time_;
     uint64_t wait_us_;
-    TimeoutEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, std::weak_ptr<EventPollable> self__init, uint64_t wakeup_time__init, uint64_t wait_us__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), wakeup_time_(std::move(wakeup_time__init)), wait_us_(std::move(wait_us__init)) {}
+    TimeoutEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, uint64_t wakeup_time__init, uint64_t wait_us__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), wakeup_time_(std::move(wakeup_time__init)), wait_us_(std::move(wait_us__init)) {}
     TimeoutEvent(TimeoutEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), wakeup_time_(std::move(other.wakeup_time_)), wait_us_(std::move(other.wait_us_)) {}
 
 
     void wait() const;
     bool is_composite_event() const;
-    std::shared_ptr<EventPollable> get_self() const;
-    void set_self(std::weak_ptr<EventPollable> self_ptr);
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
     bool test() const;
     bool is_ready() const;
     void log() const;
@@ -864,11 +864,11 @@ bool TimeoutEvent::is_composite_event() const {
     return false;
 }
 
-std::shared_ptr<EventPollable> TimeoutEvent::get_self() const {
+rusty::Option<rusty::Arc<EventPollable>> TimeoutEvent::get_self() const {
     return event_core_self_lock((*this));
 }
 
-void TimeoutEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
+void TimeoutEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
@@ -930,10 +930,10 @@ class WaitAny : public EventPollable {
   rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
   EventState state_{};
   rusty::Cell<bool> prunable_{true};
-  std::weak_ptr<EventPollable> self_;
-  rusty::Vec<std::shared_ptr<EventPollable>> events_;
+  rusty::sync::Weak<EventPollable> self_;
+  rusty::Vec<rusty::Arc<EventPollable>> events_;
 
-  WaitAny(std::shared_ptr<EventPollable> a, std::shared_ptr<EventPollable> b) {
+  WaitAny(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
     event_state_seed(state_);
     events_.push(std::move(a));
     events_.push(std::move(b));
@@ -943,8 +943,8 @@ class WaitAny : public EventPollable {
   void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
   void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
   bool is_composite_event() const { return true; }
-  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
-  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
+  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
   bool test() const override { return event_test_impl(*this); }
@@ -952,7 +952,7 @@ class WaitAny : public EventPollable {
   bool is_ready() const override {
     for (const auto& e : events_) {
       // @unsafe { child virtual dispatch through EventPollable }
-      if (e && e->is_ready()) {
+      if (e->is_ready()) {
         return true;
       }
     }
@@ -978,33 +978,34 @@ class WaitAll : public EventPollable {
   rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
   EventState state_{};
   rusty::Cell<bool> prunable_{true};
-  std::weak_ptr<EventPollable> self_;
-  rusty::Vec<std::shared_ptr<EventPollable>> events_;
+  rusty::sync::Weak<EventPollable> self_;
+  rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events_;
 
   // Default constructor (mako-dev)
   WaitAll() { event_state_seed(state_); }
 
   // Constructor for vector of events
-  explicit WaitAll(const rusty::Vec<std::shared_ptr<EventPollable>>& evs) {
+  explicit WaitAll(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
     event_state_seed(state_);
-    events_.reserve(evs.len());
+    auto guard = events_.borrow_mut();
+    guard->reserve(evs.len());
     for (const auto& ev : evs) {
-      events_.push(ev);
+      guard->push(ev);
     }
   }
 
-  void add_event() {
+  void add_event() const {
     // empty func for recursive variadic parameters
   }
 
   template<typename... Args>
-  void add_event(std::shared_ptr<EventPollable> x, Args... rest) {
-    events_.push(std::move(x));
+  void add_event(rusty::Arc<EventPollable> x, Args... rest) const {
+    events_.borrow_mut()->push(std::move(x));
     add_event(rest...);
   }
 
   template<typename... Args>
-  WaitAll(std::shared_ptr<EventPollable> first, Args... rest) {
+  WaitAll(rusty::Arc<EventPollable> first, Args... rest) {
     event_state_seed(state_);
     add_event(std::move(first), rest...);
   }
@@ -1013,22 +1014,20 @@ class WaitAll : public EventPollable {
   void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
   void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
   bool is_composite_event() const { return true; }
-  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
-  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
+  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
   bool test() const override { return event_test_impl(*this); }
   void log() const override {
-    for(size_t i = 0; i < events_.len(); i++){
-      events_[i]->log();
+    auto guard = events_.borrow();
+    for(size_t i = 0; i < guard->len(); i++){
+      (*guard)[i]->log();
     }
   }
   bool is_ready() const override {
     // All events must be ready (or DONE) for WaitAll to be ready.
-    for (const auto& e : events_) {
-      if (!e) {
-        return false;
-      }
+    for (const auto& e : *events_.borrow()) {
       if (!(e->is_ready() || e->status() == EventStatus::DONE)) {
         return false;
       }
@@ -1403,10 +1402,10 @@ class Reactor {
    */
   // Events managed with std::shared_ptr<Event> for polymorphism support
   // Using RefCell<VecDeque> for safe interior mutability in const methods
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> all_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> waiting_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> timeout_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<EventPollable>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
   // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
@@ -1458,7 +1457,7 @@ class Reactor {
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
-  void check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>&) const;
+  void check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>&) const;
   /**
    * @param ev. is usually allocated on a fiber stack. memory managed by user.
    */
@@ -1594,14 +1593,24 @@ class Reactor {
   // Cross-thread notification reaches an event via its weak_ptr self-ref
   // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
   template <typename Ev, typename... Args>
-  static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
+  static rusty::Arc<Ev> create_sp_event(Args&&... args) {  // @unsafe
     auto ev = event_make<Ev>(args...);
-    ev->state_.__debug_creator = 1;
-    // Set self-reference for cross-thread signaling (weak_ptr)
-    ev->set_self(ev);
-    // Store in all_events_ using RefCell borrow_mut()
+    // Unique-owner init window: ev is freshly minted (strong_count 1),
+    // so get_mut() gives the one mutable access needed to stamp
+    // __debug_creator and install the self weak-ref before ev is ever
+    // shared. The self-ref is a sync::Weak<EventPollable> obtained by
+    // upcasting Arc<Ev> -> Arc<EventPollable> (single-base) then
+    // downgrading (sync::Weak has no derived->base converting ctor).
+    {
+      auto mut_opt = ev.get_mut();
+      verify(mut_opt.is_some());
+      Ev& m = mut_opt.unwrap();
+      m.state_.__debug_creator = 1;
+      m.set_self(rusty::sync::downgrade(rusty::Arc<EventPollable>(ev)));
+    }
+    // Store the canonical strong ref in all_events_ (upcast clone).
     auto reactor = get_reactor();
-    reactor->all_events_.borrow_mut()->push_back(ev);
+    reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
     // Clear out finished events the reactor is the sole owner of (bounded growth).
     reactor->prune_finished_events();
     return ev;
@@ -1616,7 +1625,7 @@ class Reactor {
   //   3. Returned reference points to heap-allocated Event managed by shared_ptr
   // Manual verification required: reference lifetime extends beyond function scope
   template <typename Ev, typename... Args>
-  static Ev& create_event(Args&&... args) {  // @unsafe
+  static const Ev& create_event(Args&&... args) {  // @unsafe
     auto sp = create_sp_event<Ev>(args...);
     sp->set_prunable(false);
     return *sp;
@@ -2064,7 +2073,7 @@ class QuorumEvent : public EventPollable {
   rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
   EventState state_{};
   rusty::Cell<bool> prunable_{true};
-  std::weak_ptr<EventPollable> self_;
+  rusty::sync::Weak<EventPollable> self_;
 
   rusty::Cell<int32_t> n_voted_yes_{0};
   rusty::Cell<int32_t> n_voted_no_{0};
@@ -2087,7 +2096,7 @@ class QuorumEvent : public EventPollable {
   rusty::Cell<uint32_t> leader_id_{0};
   rusty::Cell<int64_t> par_id_{-1};
   rusty::Cell<uint64_t> id_{static_cast<uint64_t>(-1)};
-  shared_ptr<IntEvent> finalize_event_;
+  rusty::Arc<IntEvent> finalize_event_;
 
   QuorumEvent() = delete;
 
@@ -2193,8 +2202,8 @@ class QuorumEvent : public EventPollable {
     Reactor::get_reactor()->slow_.set(false);
     return result;
   }
-  std::shared_ptr<EventPollable> get_self() const { return event_core_self_lock(*this); }
-  void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
+  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
   bool test() const override { return event_test_impl(*this); }
@@ -2224,12 +2233,14 @@ class QuorumEvent : public EventPollable {
 // reseated.
 class QuorumEventWrapper {
  public:
-  std::shared_ptr<QuorumEvent> q_;
+  rusty::Arc<QuorumEvent> q_;
 
   QuorumEventWrapper(int n_total, int quorum)
       : q_(rrr::Reactor::create_sp_event<QuorumEvent>(n_total, quorum)) {}
 
-  QuorumEvent& q() { return *q_; }
+  // Arc is const-view; every QuorumEvent field mutation now goes
+  // through Cell::set / RefCell (both const), so a const ref suffices.
+  const QuorumEvent& q() { return *q_; }
   const QuorumEvent& q() const { return *q_; }
 
   // Forwarded verb surface (matches the former inherited methods):
@@ -2327,13 +2338,13 @@ void event_wait_impl(const W& self, uint64_t timeout) {
 
     // Use RefCell borrow_mut() for safe interior mutability
     auto reactor_rc = Reactor::get_reactor();
-    reactor_rc->waiting_events_.borrow_mut()->push_back(self.get_self());
+    reactor_rc->waiting_events_.borrow_mut()->push_back(self.get_self().unwrap());
 
     // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via test() - zero overhead!
     if (self.is_composite_event()) {
-      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(self.get_self());
+      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(self.get_self().unwrap());
     }
 
 #ifdef EVENT_TIMEOUT_CHECK
@@ -2350,7 +2361,7 @@ void event_wait_impl(const W& self, uint64_t timeout) {
       self.state_.wakeup_time_.set(now + timeout);
       //Log_info("WAITING: %p", get_self().get());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
-      reactor_rc->timeout_events_.borrow_mut()->push_back(self.get_self());
+      reactor_rc->timeout_events_.borrow_mut()->push_back(self.get_self().unwrap());
     }
     // TODO optimize timeout_events, sort by wakeup time.
 //      auto it = timeout_events.end();
@@ -2435,7 +2446,7 @@ uint64_t event_core_get_fiber_id() {
   return fiber_opt.unwrap()->id;
 }
 
-void event_state_seed(EventState& st) {
+void event_state_seed(const EventState& st) {
   (*st.wait_place_.borrow_mut()) = "not recorded";
   auto fiber_opt = Fiber::current_fiber();
   if (fiber_opt.is_some()) {
@@ -2444,37 +2455,37 @@ void event_state_seed(EventState& st) {
   }
 }
 
-std::shared_ptr<NeverEvent> never_event_make() {
-  auto sp = std::make_shared<NeverEvent>(
+rusty::Arc<NeverEvent> never_event_make() {
+  auto sp = rusty::Arc<NeverEvent>::make(
       rusty::Cell<EventStatus>::new_(EventStatus::INIT),
       rusty::thread::current_id(),
       EventState{},
       rusty::Cell<bool>::new_(true),
-      std::weak_ptr<EventPollable>{});
+      rusty::sync::Weak<EventPollable>());
   event_state_seed(sp->state_);
   return sp;
 }
 
-std::shared_ptr<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
-  auto sp = std::make_shared<TimeoutEvent>(
+rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
+  auto sp = rusty::Arc<TimeoutEvent>::make(
       rusty::Cell<EventStatus>::new_(EventStatus::INIT),
       rusty::thread::current_id(),
       EventState{},
       rusty::Cell<bool>::new_(true),
-      std::weak_ptr<EventPollable>{},
+      rusty::sync::Weak<EventPollable>(),
       Time::now(true) + wait_us,  // wakeup_time_: the deadline, at construction
       wait_us);
   event_state_seed(sp->state_);
   return sp;
 }
 
-std::shared_ptr<IntEvent> int_event_make(int32_t target) {
-  auto sp = std::make_shared<IntEvent>(
+rusty::Arc<IntEvent> int_event_make(int32_t target) {
+  auto sp = rusty::Arc<IntEvent>::make(
       rusty::Cell<EventStatus>::new_(EventStatus::INIT),
       rusty::thread::current_id(),
       EventState{},
       rusty::Cell<bool>::new_(true),
-      std::weak_ptr<EventPollable>{},
+      rusty::sync::Weak<EventPollable>(),
       rusty::Cell<int32_t>::new_(0),        // value_
       rusty::Cell<int32_t>::new_(target));
   event_state_seed(sp->state_);
@@ -2511,8 +2522,8 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == EventStatus::TIMEOUT);
   auto* ev_ptr = ev.get();
-  self.events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
-      [ev_ptr](const std::shared_ptr<IntEvent>& item) {
+  self.events_.retain(rusty::Function<bool(const rusty::Arc<IntEvent>&)>(
+      [ev_ptr](const rusty::Arc<IntEvent>& item) {
         return item.get() != ev_ptr;
       }));
   return if_timeout;
@@ -3185,7 +3196,7 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 // virtual-dispatch status()/wakeup_time()/is_ready() (arrow wall), and
 // extract_if/retain take rusty::Function predicates that themselves
 // cross the sp-> arrow — all-kernel body, no separable DSL policy.
-void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& ready_events) const {
+void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const {
   // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
   int64_t time_now = Time::now(true);
 
@@ -3195,7 +3206,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& rea
   // First pass: update status of timed-out events
   for (size_t i = 0; i < guard->len(); ++i) {
     auto& sp = (*guard)[i];
-    EventPollable& event = *sp;
+    const EventPollable& event = *sp;
     auto status = event.status();
     if (status == EventStatus::WAIT) {
       const auto wakeup_time = event.wakeup_time();
@@ -3213,8 +3224,8 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& rea
   // Extract events that are READY or TIMEOUT (timed out)
   {
     auto timed_out = guard->extract_if(
-      rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-        [](const std::shared_ptr<EventPollable>& sp) {
+      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+        [](const rusty::Arc<EventPollable>& sp) {
           auto status = sp->status();
           return status == EventStatus::READY || status == EventStatus::TIMEOUT;
         }));
@@ -3224,8 +3235,8 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<EventPollable>>& rea
   // Remove events that are DONE (shouldn't happen often, but clean up)
   {
     guard->retain(
-      rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-        [](const std::shared_ptr<EventPollable>& sp) {
+      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+        [](const rusty::Arc<EventPollable>& sp) {
           return sp->status() != EventStatus::DONE;
         }));
   }
@@ -3244,9 +3255,9 @@ void Reactor::prune_finished_events() const {
   if (guard->len() < prune_hwm) {
     return;
   }
-  guard->retain(rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-    [](const std::shared_ptr<EventPollable>& e) {
-      return e.use_count() > 1 || !e->prunable();
+  guard->retain(rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+    [](const rusty::Arc<EventPollable>& e) {
+      return e.strong_count() > 1 || !e->prunable();
     }));
   prune_hwm = guard->len() * 2 + 64;
 }
@@ -3263,7 +3274,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       if (process_stackless_tasks()) {
         found_ready_events = true;
       }
-      rusty::VecDeque<std::shared_ptr<EventPollable>> ready_events;
+      rusty::VecDeque<rusty::Arc<EventPollable>> ready_events;
 
       // Process waiting events using RefCell
       {
@@ -3275,8 +3286,8 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Extract READY events
         {
           auto ready_from_waiting = waiting_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-              [](const std::shared_ptr<EventPollable>& ev) {
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
                 return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_waiting.is_empty()) {
@@ -3287,8 +3298,8 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Remove DONE events
         {
           waiting_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-              [](const std::shared_ptr<EventPollable>& ev) {
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
                 return ev->status() != EventStatus::DONE;
               }));
         }
@@ -3302,8 +3313,8 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           auto ready_from_composite = composite_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-              [](const std::shared_ptr<EventPollable>& ev) {
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
                 return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_composite.is_empty()) {
@@ -3313,8 +3324,8 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           composite_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<EventPollable>&)>(
-              [](const std::shared_ptr<EventPollable>& ev) {
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
                 return ev->status() != EventStatus::DONE;
               }));
         }
@@ -4188,7 +4199,8 @@ using rrr::verify;
 using rrr::EventStatus;
 
 QuorumEvent::QuorumEvent(int n_total, int quorum)
-    : n_total_(n_total), quorum_(quorum) {
+    : n_total_(n_total), quorum_(quorum),
+      finalize_event_(rrr::Reactor::create_sp_event<IntEvent>(n_total)) {
   // Flattened (S4): seed the event-core state directly (was Event()'s job).
   event_state_seed(state_);
   // Registered via create_sp_event (not bare make_shared) so the event has a
@@ -4197,7 +4209,6 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
   // is null (latent crash on the copilot finalize path). Nested create is
   // safe here: this ctor runs inside the outer create_sp_event's make_shared,
   // BEFORE the outer all_events_ borrow is taken.
-  finalize_event_ = rrr::Reactor::create_sp_event<IntEvent>(n_total_);
 }
 
 void QuorumEvent::finalize(
@@ -4211,7 +4222,7 @@ void QuorumEvent::finalize(
   Fiber::create_run([timeout, finalize_func = std::move(finalize_func), this]() mutable {
     bool ret = false;
 
-    auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
+    auto final_ev = finalize_event_.clone();  // have to make a copy of finalized event (for reason, see comment A)
     rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
     // borrow_mut (RefCell::borrow_mut is const) — HashMap iteration
     // needs a non-const map; this is a read-only copy-out, no aliasing.

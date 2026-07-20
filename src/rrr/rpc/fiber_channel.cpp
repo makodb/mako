@@ -112,7 +112,7 @@ struct OwnedFrame {
 struct FiberChannel;  // defined by the GEN block below
 void                      fiberchannel_bind_callbacks(FiberChannel& self);
 rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self);
-std::shared_ptr<IntEvent> fiberchannel_make_event();
+rusty::Arc<IntEvent>      fiberchannel_make_event();
 void                      fiberchannel_wait_event(FiberChannel& self);
 OwnedFrame                fiberchannel_owned_copy(const ChannelFrame& f);
 bool                      fiberchannel_ch_is_closed(const FiberChannel& self);
@@ -122,9 +122,9 @@ void                      fiberchannel_close(FiberChannel& self);
 void                      fiberchannel_drop(FiberChannel& self);
 
 // Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
-// std::deque / null std::shared_ptr inline).
-inline std::deque<OwnedFrame>     fiberchannel_empty_queue() { return std::deque<OwnedFrame>{}; }
-inline std::shared_ptr<IntEvent>  fiberchannel_null_event()  { return std::shared_ptr<IntEvent>{}; }
+// std::deque / empty Option inline).
+inline std::deque<OwnedFrame>              fiberchannel_empty_queue() { return std::deque<OwnedFrame>{}; }
+inline rusty::Option<rusty::Arc<IntEvent>> fiberchannel_null_event()  { return rusty::Option<rusty::Arc<IntEvent>>(rusty::None); }
 
 // Fiber-blocking wrapper over a `ChannelConnectionProxy` (see file header).
 // Interior state (rusty::Mutex<std::deque> inbound queue + Cell<bool> closed
@@ -142,7 +142,7 @@ inline std::shared_ptr<IntEvent>  fiberchannel_null_event()  { return std::share
 struct FiberChannel {
     ch_: ChannelConnectionProxy,
     queue_: rusty::Mutex<std::deque<OwnedFrame>>,
-    pending_recv_event_: std::shared_ptr<IntEvent>,
+    pending_recv_event_: rusty::Option<rusty::Arc<IntEvent>>,
     closed_: Cell<bool>,
 }
 
@@ -174,7 +174,7 @@ impl FiberChannel {
                 return rusty::None;
             }
 
-            self.pending_recv_event_ = fiberchannel_make_event();
+            self.pending_recv_event_ = rusty::Some(fiberchannel_make_event());
 
             let mut armed = true;
             {
@@ -186,7 +186,7 @@ impl FiberChannel {
             if armed {
                 fiberchannel_wait_event(self);
             }
-            self.pending_recv_event_.reset();
+            self.pending_recv_event_ = rusty::None;
         }
         rusty::None
     }
@@ -233,16 +233,16 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=1ca55009dcc9aa6dbb0ffec1ab4dbc22cecd95cd377a73f7b69debb3adf4ce77*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=e6354ccab5a8886ba9d3239cf241d9bcc4f3d7e81b23b3d60e60c0ba85cc0ecb*/
 struct FiberChannel;
 
 struct FiberChannel {
     ChannelConnectionProxy ch_;
     rusty::Mutex<std::deque<OwnedFrame>> queue_;
-    std::shared_ptr<IntEvent> pending_recv_event_;
+    rusty::Option<rusty::Arc<IntEvent>> pending_recv_event_;
     rusty::Cell<bool> closed_;
     mutable bool _rusty_forgotten = false;
-    FiberChannel(ChannelConnectionProxy ch__init, rusty::Mutex<std::deque<OwnedFrame>> queue__init, std::shared_ptr<IntEvent> pending_recv_event__init, rusty::Cell<bool> closed__init) : ch_(std::move(ch__init)), queue_(std::move(queue__init)), pending_recv_event_(std::move(pending_recv_event__init)), closed_(std::move(closed__init)) {}
+    FiberChannel(ChannelConnectionProxy ch__init, rusty::Mutex<std::deque<OwnedFrame>> queue__init, rusty::Option<rusty::Arc<IntEvent>> pending_recv_event__init, rusty::Cell<bool> closed__init) : ch_(std::move(ch__init)), queue_(std::move(queue__init)), pending_recv_event_(std::move(pending_recv_event__init)), closed_(std::move(closed__init)) {}
     FiberChannel(const FiberChannel&) = delete;
     FiberChannel(FiberChannel&& other) noexcept : ch_(std::move(other.ch_)), queue_(std::move(other.queue_)), pending_recv_event_(std::move(other.pending_recv_event_)), closed_(std::move(other.closed_)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -293,7 +293,7 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
         if (this->closed_.get()) {
             return rusty::None;
         }
-        this->pending_recv_event_ = fiberchannel_make_event();
+        this->pending_recv_event_ = rusty::Option<rusty::Arc<IntEvent>>(fiberchannel_make_event());
         auto armed = true;
         {
             auto guard = this->queue_.lock().unwrap();
@@ -304,7 +304,7 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
         if (armed) {
             fiberchannel_wait_event((*this));
         }
-        this->pending_recv_event_.reset();
+        this->pending_recv_event_ = rusty::None;
     }
     return rusty::None;
 }
@@ -355,7 +355,7 @@ FiberChannel::~FiberChannel() noexcept(false) {
 // in the export namespace above.
 namespace rrr {
 
-// Forward decl for the signal path (shared_ptr copy + IntEvent::set
+// Forward decl for the signal path (Arc clone + IntEvent::set
 // arrow-deref; called from the DSL on_inbound_* methods).
 void fiberchannel_signal_pending_recv(FiberChannel& self);
 
@@ -401,8 +401,13 @@ OwnedFrame fiberchannel_owned_copy(const ChannelFrame& f) {
 }
 
 void fiberchannel_signal_pending_recv(FiberChannel& self) {
-    auto event = self.pending_recv_event_;  // copy shared_ptr defensively
-    if (event) {
+    // Defensive single read: clone the Option once (bumping the Arc
+    // refcount if set) then operate on the local copy, so a concurrent
+    // reset can't pull the event out mid-use — the same copy-once posture
+    // the shared_ptr version had, no added Mutex.
+    auto held = self.pending_recv_event_.clone();
+    if (held.is_some()) {
+        auto event = held.unwrap();  // owned Arc<IntEvent>
         // @unsafe { IntEvent::set is not annotated @safe yet. }
         {
             event->set(1);
@@ -439,17 +444,18 @@ rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self) {
     return rusty::Some(std::move(f));
 }
 
-// @unsafe - Reactor template factory + shared_ptr hand-off.
-std::shared_ptr<IntEvent> fiberchannel_make_event() {
+// @unsafe - Reactor template factory + Arc hand-off.
+rusty::Arc<IntEvent> fiberchannel_make_event() {
     return Reactor::create_sp_event<IntEvent>();
 }
 
-// @unsafe - fiber-suspending Event::wait through the shared_ptr (a
-// defensive local copy keeps the event alive across the suspend even
-// if the field is reset concurrently).
+// @unsafe - fiber-suspending Event::wait through the Arc (a defensive
+// Arc clone keeps the event alive across the suspend even if the field
+// is reset concurrently).
 void fiberchannel_wait_event(FiberChannel& self) {
-    auto event = self.pending_recv_event_;
-    if (event) {
+    auto held = self.pending_recv_event_.clone();
+    if (held.is_some()) {
+        auto event = held.unwrap();  // owned Arc held across the suspend
         event->wait();
     }
 }

@@ -51,9 +51,17 @@ class Coordinator {
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
 
-	std::vector<shared_ptr<QuorumEvent>> quorum_events_;
-  std::shared_ptr<QuorumEvent> sp_quorum_event;
-  std::shared_ptr<IntEvent> sp_int_event;
+	std::vector<rusty::Arc<QuorumEvent>> quorum_events_;
+  // Unused live (only a commented reference in mencius/commo.cc); nullable,
+  // was a default-null shared_ptr — Option<Arc> keeps the empty state without
+  // eagerly constructing a placeholder QuorumEvent.
+  rusty::Option<rusty::Arc<QuorumEvent>> sp_quorum_event;
+  // Assigned from BroadcastDispatch() (which now returns Arc<IntEvent>) before
+  // every use in classic/coordinator.cc via `sp_int_event->...`. Arc has no
+  // null/default state and the Coordinator ctor (coordinator.cc) does not
+  // initialize it, so a default member initializer supplies a throwaway event
+  // that is overwritten before any wait (same pattern as rcc/tx.h).
+  rusty::Arc<IntEvent> sp_int_event{Reactor::create_sp_event<IntEvent>()};
   int benchmark_;
   // Shared client status for statistics tracking
   rusty::Option<rusty::Arc<ClientStatus>> client_status_;
@@ -66,8 +74,10 @@ class Coordinator {
   // written or read in production paths.
 	bool slow_ = false;
   bool retry_wait_;
-  shared_ptr<IntEvent> sp_ev_commit_{};
-  shared_ptr<IntEvent> sp_ev_done_{};
+  // Nullable: client_worker.cc creates these lazily (rusty::Some(...)) and
+  // resets them to rusty::None after each transaction, so they must be Option.
+  rusty::Option<rusty::Arc<IntEvent>> sp_ev_commit_{};
+  rusty::Option<rusty::Arc<IntEvent>> sp_ev_done_{};
 
   std::atomic<uint64_t> next_pie_id_;
   std::atomic<uint64_t> next_txn_id_;

@@ -653,7 +653,7 @@ class TxLogServer {
   // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
-  void DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event = nullptr);
+  void DispatchRecoveredCommand(const janus::Command& cmd, rusty::Option<rusty::Arc<IntEvent>> recovery_event = rusty::None);
   
   void OnJetpackBeginRecovery(const janus::Command& old_view,
                               const janus::Command& new_view, 

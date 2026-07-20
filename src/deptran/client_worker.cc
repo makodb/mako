@@ -299,10 +299,10 @@ void ClientWorker::Work() {
         num_txn++;
         auto coo = FindOrCreateCoordinator();
         coo->cli_id_ = cli_id_;
-        verify(!coo->sp_ev_commit_);
-        verify(!coo->sp_ev_done_);
-        coo->sp_ev_commit_ = Reactor::create_sp_event<IntEvent>();
-        coo->sp_ev_done_ = Reactor::create_sp_event<IntEvent>();
+        verify(coo->sp_ev_commit_.is_none());
+        verify(coo->sp_ev_done_.is_none());
+        coo->sp_ev_commit_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
+        coo->sp_ev_done_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
 
         Log_debug("Dispatching request for %d", n_tx);
         this->outbound++;
@@ -329,7 +329,7 @@ void ClientWorker::Work() {
 #endif
           this->DispatchRequest(coo);
         if (config_->client_type_ == Config::Closed) {
-          auto ev = coo->sp_ev_commit_;
+          auto ev = coo->sp_ev_commit_.as_ref().unwrap().clone();
 #if 1
           char txid[20];
           sprintf(txid, "%" PRIx64 "|", coo->ongoing_tx_id_);
@@ -344,7 +344,7 @@ void ClientWorker::Work() {
         }
         Fiber::create_run([this, coo](){
           verify(coo->_inuse_);
-          auto ev = coo->sp_ev_done_;
+          auto ev = coo->sp_ev_done_.as_ref().unwrap().clone();
           wait_recordplace(ev, wait());
           verify(coo->coo_id_ > 0);
           verify(coo->_inuse_);
@@ -355,8 +355,8 @@ void ClientWorker::Work() {
           }
           sp_n_tx_done_.set(sp_n_tx_done_.value_+1);
           num_try.fetch_add(coo->n_retry_);
-          coo->sp_ev_done_.reset();
-          coo->sp_ev_commit_.reset();
+          coo->sp_ev_done_ = rusty::Option<rusty::Arc<IntEvent>>(rusty::None);
+          coo->sp_ev_commit_ = rusty::Option<rusty::Arc<IntEvent>>(rusty::None);
           free_coordinators_.push_back(coo);
           coo->_inuse_ = false;
           n_pause_concurrent_[coo->coo_id_] = true;
@@ -532,10 +532,10 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
         }
       }
 
-      coo->sp_ev_commit_->set(1);
-      auto status = coo->sp_ev_done_->status_.get();
+      coo->sp_ev_commit_.as_ref().unwrap()->set(1);
+      auto status = coo->sp_ev_done_.as_ref().unwrap()->status_.get();
       verify(status == EventStatus::WAIT || status == EventStatus::INIT);
-      coo->sp_ev_done_->set(1);
+      coo->sp_ev_done_.as_ref().unwrap()->set(1);
       delete req;
     };
     coo->DoTxAsync(*req);

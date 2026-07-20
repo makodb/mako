@@ -1451,12 +1451,12 @@ void RaftServer::HeartbeatLoop() {
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
-        ready_for_replication_->set(0);
+        ready_for_replication_.as_ref().unwrap()->set(0);
       }
-      ready_for_replication_->wait_timeout(heartbeat_interval_us_);
+      ready_for_replication_.as_ref().unwrap()->wait_timeout(heartbeat_interval_us_);
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
-        ready_for_replication_ = nullptr;
+        ready_for_replication_ = rusty::None;
       }
       // Fiber::sleep(HEARTBEAT_INTERVAL);
       // Log_info("heartbeat loop at loc %d", loc_id_);
@@ -1713,9 +1713,9 @@ void RaftServer::HeartbeatLoop() {
         auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
         auto& resp = *pending.response;  // Access response data
 
-        resp.event->wait_timeout(PER_RPC_TIMEOUT);
+        resp.event.as_ref().unwrap()->wait_timeout(PER_RPC_TIMEOUT);
 
-        if (resp.event->status_.get() == EventStatus::TIMEOUT) {
+        if (resp.event.as_ref().unwrap()->status_.get() == EventStatus::TIMEOUT) {
           Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
           continue;  // Skip this follower, try again next round
         }
@@ -1945,8 +1945,8 @@ RaftServer::~RaftServer() {
     looping_ = false;
 
     // Wake up the HeartbeatLoop if it's sleeping so it can see looping_=false
-    if (ready_for_replication_) {
-      ready_for_replication_->set(1);
+    if (ready_for_replication_.is_some()) {
+      ready_for_replication_.as_ref().unwrap()->set(1);
     }
   }
 

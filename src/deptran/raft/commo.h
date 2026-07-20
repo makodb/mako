@@ -13,7 +13,7 @@
 //   Log_warn: [safe, (...) -> void],
 //   Log_error: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   Config::GetConfig: [safe, () -> Config*],
 //   MarshallDeputy: [safe, (...) -> janus::Command],
 //   Future::safe_release: [safe, (Future*) -> void],
@@ -113,9 +113,11 @@ enum class AckType : uint64_t {
 };
 
 // Response data for async AppendEntries RPC
-// Uses shared_ptr semantics to ensure memory validity when callback fires
+// Uses shared_ptr semantics to ensure memory validity when callback fires.
+// `event` is a nullable Arc handle: the struct is default-constructed (event =
+// None) then the event is assigned via create_sp_event before the RPC is sent.
 struct AppendEntriesResponse {
-  shared_ptr<IntEvent> event;
+  rusty::Option<rusty::Arc<IntEvent>> event{rusty::None};
   uint64_t status = 0;
   uint64_t term = 0;
   uint64_t last_log_index = 0;

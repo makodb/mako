@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
@@ -49,9 +50,8 @@ class RaftQuorum {
   RaftQuorum(int n_total, int n_needed)
       : n_total_(n_total),
         n_needed_(n_needed),
-        // @unsafe { rrr::Reactor::create_sp_event returns std::shared_ptr;
-        //           we keep that shape because the reactor owns the event
-        //           via its all_events_ list. }
+        // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
+        // owns the event via its all_events_ list.
         ready_(::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed)),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
@@ -112,7 +112,7 @@ class RaftQuorum {
   const int n_total_;
   const int n_needed_;
   // See class-level @unsafe note about std::shared_ptr.
-  std::shared_ptr<::rrr::IntEvent> ready_;
+  rusty::Arc<::rrr::IntEvent> ready_;
   rusty::sync::atomic::AtomicI32 n_received_{0};
   mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
 };

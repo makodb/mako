@@ -463,11 +463,11 @@ void Communicator::Resume() {
   }
 }
 
-std::shared_ptr<QuorumEvent> Communicator::SendReelect(){
+rusty::Arc<QuorumEvent> Communicator::SendReelect(){
 	//paused = true;
 	//sleep(10);
 	int total = rpc_par_proxies_[0].size() - 1;
-  std::shared_ptr<QuorumEvent> e = Reactor::create_sp_event<QuorumEvent>(total, 1);
+  rusty::Arc<QuorumEvent> e = Reactor::create_sp_event<QuorumEvent>(total, 1);
 	auto pair_leader_proxy = LeaderProxyForPartition(0);
 	int new_leader = (pair_leader_proxy.first + 1) % total;
 
@@ -596,13 +596,13 @@ void Communicator::BroadcastDispatch(
 
 //need to change this code to solve the quorum info in the graphs
 //either create another event here or inside the coordinator.
-std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
+rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
     ReadyPiecesData cmds_by_par,
     Coordinator* coo,
     TxData* txn) {
   int total = cmds_by_par.size();
   //std::shared_ptr<WaitAll> e = Reactor::create_sp_event<WaitAll>();
-  std::shared_ptr<IntEvent> e = Reactor::create_sp_event<IntEvent>();
+  rusty::Arc<IntEvent> e = Reactor::create_sp_event<IntEvent>();
 	e->value_.set(0);
 	e->target_.set(total);
   std::unordered_set<int> leaders{};
@@ -764,7 +764,7 @@ void Communicator::SendStart(SimpleCommand& cmd,
   verify(0);
 }
 
-shared_ptr<WaitAll>
+rusty::Arc<WaitAll>
 Communicator::SendPrepare(Coordinator* coo,
                           txnid_t tid,
                           std::vector<int32_t>& sids){
@@ -889,7 +889,7 @@ void Communicator::___LogSent(parid_t pid, txnid_t tid) {
   }
 }
 
-shared_ptr<WaitAll>
+rusty::Arc<WaitAll>
 Communicator::SendCommit(Coordinator* coo,
                               txnid_t tid) {
 #ifdef LOG_LEVEL_AS_DEBUG
@@ -1013,7 +1013,7 @@ Communicator::SendCommit(Coordinator* coo,
   Future::safe_release(proxy->async_Commit(tid, 0, fuattr));
 }*/
 
-shared_ptr<WaitAll>
+rusty::Arc<WaitAll>
 Communicator::SendAbort(Coordinator* coo,
                               txnid_t tid) {
 #ifdef LOG_LEVEL_AS_DEBUG
@@ -1261,7 +1261,7 @@ shared_ptr<GetLeaderQuorumEvent> Communicator::BroadcastGetLeader(
   return e;
 }
 
-shared_ptr<QuorumEvent> Communicator::FailoverPauseSocketOut(
+rusty::Arc<QuorumEvent> Communicator::FailoverPauseSocketOut(
     parid_t par_id, locid_t loc_id) {
 #ifdef FAILOVER_DEBUG
   Log_info("!!!!!!!!!!!!!! enter Communicator::FailoverPauseSocketOut");
@@ -1302,7 +1302,7 @@ shared_ptr<QuorumEvent> Communicator::FailoverPauseSocketOut(
   return e;
 }
 
-shared_ptr<QuorumEvent> Communicator::FailoverResumeSocketOut(
+rusty::Arc<QuorumEvent> Communicator::FailoverResumeSocketOut(
     parid_t par_id, locid_t loc_id) {
 #ifdef FAILOVER_DEBUG
   Log_info("!!!!!!!!!!!!!! enter Communicator::FailoverResumeSocketOut");
@@ -1397,7 +1397,7 @@ void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
 }
 
 
-shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id, 
+rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id,
                                                                 const View& old_view, 
                                                                 const View& new_view, 
                                                                 epoch_t new_view_id) {
@@ -1560,7 +1560,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   return e;
 }
 
-shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
+rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
                                                                epoch_t jepoch, epoch_t oepoch,
                                                                int sid, int rid,
                                                                const std::vector<std::pair<key_t, janus::Command>>& cmds) {
@@ -1709,7 +1709,7 @@ shared_ptr<JetpackAcceptQuorumEvent> Communicator::JetpackBroadcastAccept(parid_
   return e;
 }
 
-shared_ptr<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, locid_t loc_id, epoch_t jepoch, epoch_t oepoch, int sid, int set_size) {
+rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, locid_t loc_id, epoch_t jepoch, epoch_t oepoch, int sid, int set_size) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
@@ -1776,7 +1776,7 @@ shared_ptr<JetpackPullRecSetInsQuorumEvent> Communicator::JetpackBroadcastPullRe
   return e;
 }
 
-shared_ptr<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch) {
+rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];

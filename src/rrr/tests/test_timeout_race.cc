@@ -1,6 +1,7 @@
 #include <stdlib.h>
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 #include "../rrr.hpp"
 
 import std;
@@ -155,7 +156,7 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
     auto reactor = Reactor::get_reactor();
     
     // Create multiple events that will timeout
-    std::vector<std::shared_ptr<IntEvent>> events;
+    std::vector<rusty::Arc<IntEvent>> events;
     std::atomic<int> completed_count{0};
     
     for (int i = 0; i < 5; i++) {

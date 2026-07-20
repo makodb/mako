@@ -72,7 +72,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
       rrr::deserialize_from(fu->get_reply(), response->status, response->term, response->last_log_index, response->ack_type);
       Log_debug("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
                site_id, response->status, response->term, response->last_log_index, response->ack_type);
-      response->event->set(1);
+      response->event.as_ref().unwrap()->set(1);
     };
 
     if (!cmd.has_value()) {

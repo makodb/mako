@@ -17,15 +17,17 @@
 // is the genuine `future_retrieved_` flag; FiberFuture has no natural
 // second field, so it carries a `nc_` marker purely for move-only-ness.
 //
-// The state is a `std::shared_ptr<BoxEvent<T>>` (an rrr/reactor boundary
-// type — see CLAUDE.md). Every operation that drives `state_->set` /
-// `->wait` / `->get` is an `@unsafe` shared_ptr deref, so each lives in a
-// generic free function below rather than inside the DSL struct body.
+// The state is a `rusty::Option<rusty::Arc<BoxEvent<T>>>` (nullable: a
+// default/moved-from handle is `None`; the reactor hands out `Arc` from
+// `create_sp_event`). Every operation that drives `->set` / `->wait` /
+// `->get` is an `@unsafe` Arc deref (through a const-view handle), so each
+// lives in a generic free function below rather than in the DSL struct body.
 module;
 
 #include <cstddef>
 #include <cstdint>
 
+#include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
@@ -47,83 +49,84 @@ template <typename T>
 struct FiberFuture;
 
 // =============================================================================
-// @unsafe free functions backing the shared_ptr-deref method bodies.
+// @unsafe free functions backing the Arc-deref method bodies.
 //
-// Pointer parameters (`const std::shared_ptr<BoxEvent<T>>* state`) are
-// deliberate: the DSL lowers `&self.state_` to `&this->state_`, i.e. an
-// address-of yielding a pointer. shared_ptr's const does not propagate to
-// the pointee, so a `const shared_ptr*` still reaches the non-const
-// BoxEvent (no const_cast needed, unlike the old const FiberFuture::get).
+// Pointer parameters (`const rusty::Option<rusty::Arc<BoxEvent<T>>>* state`)
+// are deliberate: the DSL lowers `&self.state_` to `&this->state_`, i.e. an
+// address-of yielding a pointer. Events are const-view Arc handles — every
+// BoxEvent method reached through `(*state).as_ref().unwrap()->…` is already
+// `const` (set/wait/get and the `is_set_` Cell), so no const_cast is needed
+// (unlike the old const FiberFuture::get shim).
 // =============================================================================
 
-// @unsafe - constructs a BoxEvent<T> through shared_ptr via Reactor internals.
+// @unsafe - constructs a BoxEvent<T> as an Arc via Reactor internals.
 template <typename T>
-std::shared_ptr<BoxEvent<T>> fiber_make_state() {
+rusty::Arc<BoxEvent<T>> fiber_make_state() {
   return Reactor::create_sp_event<BoxEvent<T>>();
 }
 
-// @unsafe - a null shared state, for a default/invalid FiberFuture.
+// @safe - the empty (None) state, for a default/invalid FiberFuture.
 template <typename T>
-std::shared_ptr<BoxEvent<T>> fiber_null_state() {
-  return std::shared_ptr<BoxEvent<T>>();
+rusty::Option<rusty::Arc<BoxEvent<T>>> fiber_null_state() {
+  return rusty::None;
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_.get()` / `->set(value)`.
-// Takes the value by `const T&` (BoxEvent::set copies regardless), so there
-// is no extra copy for lvalue callers.
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()` /
+// `->set(value)`. Takes the value by `const T&` (BoxEvent::set copies
+// regardless), so there is no extra copy for lvalue callers.
 template <typename T>
-void fiber_promise_set_value(const std::shared_ptr<BoxEvent<T>>* state, const T& value) {
-  if (!*state) {
+void fiber_promise_set_value(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, const T& value) {
+  if (state->is_none()) {
     throw std::logic_error("FiberPromise has no state (moved-from?)");
   }
-  if ((*state)->is_set_.get()) {
+  if ((*state).as_ref().unwrap()->is_set_.get()) {
     throw std::logic_error("FiberPromise value already set");
   }
-  (*state)->set(value);
+  (*state).as_ref().unwrap()->set(value);
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_.get()`.
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
 template <typename T>
-bool fiber_promise_is_ready(const std::shared_ptr<BoxEvent<T>>* state) {
-  return *state && (*state)->is_set_.get();
+bool fiber_promise_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
 }
 
 // @unsafe - blocks in `wait()` then returns a copy of the shared value.
 template <typename T>
-T fiber_future_get(const std::shared_ptr<BoxEvent<T>>* state) {
-  if (!*state) {
+T fiber_future_get(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  if (state->is_none()) {
     throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
   }
-  if (!(*state)->is_set_.get()) {
-    (*state)->wait();
+  if (!(*state).as_ref().unwrap()->is_set_.get()) {
+    (*state).as_ref().unwrap()->wait();
   }
-  return (*state)->get();
+  return (*state).as_ref().unwrap()->get();
 }
 
-// @unsafe - bounded wait; shared_ptr deref through `(*state)->wait_timeout(timeout_us)`.
+// @unsafe - bounded wait; Arc deref through `(*state).as_ref().unwrap()->wait_timeout(timeout_us)`.
 // `timeout_us == 0` blocks indefinitely (Event::wait's default).
 template <typename T>
-bool fiber_future_wait_for(const std::shared_ptr<BoxEvent<T>>* state, uint64_t timeout_us) {
-  if (!*state) {
+bool fiber_future_wait_for(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, uint64_t timeout_us) {
+  if (state->is_none()) {
     return false;
   }
-  if ((*state)->is_set_.get()) {
+  if ((*state).as_ref().unwrap()->is_set_.get()) {
     return true;
   }
-  (*state)->wait_timeout(timeout_us);
-  return (*state)->is_set_.get();
+  (*state).as_ref().unwrap()->wait_timeout(timeout_us);
+  return (*state).as_ref().unwrap()->is_set_.get();
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_.get()`.
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
 template <typename T>
-bool fiber_future_is_ready(const std::shared_ptr<BoxEvent<T>>* state) {
-  return *state && (*state)->is_set_.get();
+bool fiber_future_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
 }
 
-// @unsafe - presence check on the shared state (touches std::shared_ptr).
+// @safe - presence check on the shared state (Option is_some, no deref).
 template <typename T>
-bool fiber_future_valid(const std::shared_ptr<BoxEvent<T>>* state) {
-  return *state != nullptr;
+bool fiber_future_valid(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some();
 }
 
 // @unsafe - throws if already retrieved, then shares the state into a fresh
@@ -148,7 +151,7 @@ FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self);
 // @safe - see file header.
 #if RUSTYCPP_RUST
 struct FiberPromise<T> {
-    state_: std::shared_ptr<BoxEvent<T>>,
+    state_: rusty::Option<rusty::Arc<BoxEvent<T>>>,
     future_retrieved_: rusty::Cell<bool>,
 }
 
@@ -172,13 +175,13 @@ impl<T> FiberPromise<T> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=future.fiber_promise version=1 rust_sha256=9b8f3650704187b3dc2aaadc1eb1d7720123711e41dbe7ec336a0c14d249dab6*/
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_promise version=1 rust_sha256=8a5a93c7106ab1f3f75bef45dace581e334f58a7ba23d67fcb1981b77abff2e4*/
 template<typename T>
 struct FiberPromise;
 
 template<typename T>
 struct FiberPromise {
-    std::shared_ptr<BoxEvent<T>> state_;
+    rusty::Option<rusty::Arc<BoxEvent<T>>> state_;
     rusty::Cell<bool> future_retrieved_;
 
     FiberPromise()
@@ -211,7 +214,7 @@ struct FiberPromise {
 // @safe - see file header.
 #if RUSTYCPP_RUST
 struct FiberFuture<T> {
-    state_: std::shared_ptr<BoxEvent<T>>,
+    state_: rusty::Option<rusty::Arc<BoxEvent<T>>>,
     nc_: rusty::Cell<bool>,
 }
 
@@ -239,13 +242,13 @@ impl<T> FiberFuture<T> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=ff2490b968c7d3fcdff6595143e363fd02d1ccf368f3deebab2ee2db552b81ef*/
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=460e6ad6219c674869c16a1d8ab1c4f080ded853de712f930a7c13ff950d2cc9*/
 template<typename T>
 struct FiberFuture;
 
 template<typename T>
 struct FiberFuture {
-    std::shared_ptr<BoxEvent<T>> state_;
+    rusty::Option<rusty::Arc<BoxEvent<T>>> state_;
     rusty::Cell<bool> nc_;
 
     FiberFuture()
@@ -268,7 +271,7 @@ struct FiberFuture {
 /*RUSTYCPP:GEN-END id=future.fiber_future*/
 
 // @unsafe - shares the promise's BoxEvent into a new FiberFuture; throws on a
-// second retrieval. The state copy is the only @unsafe step (shared_ptr).
+// second retrieval. The state clone is the only @unsafe step (Arc refcount).
 template <typename T>
 FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self) {
   if (self.future_retrieved_.get()) {
@@ -276,7 +279,7 @@ FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self) {
   }
   self.future_retrieved_.set(true);
   FiberFuture<T> f;
-  f.state_ = self.state_;
+  f.state_ = self.state_.clone();
   return f;
 }
 

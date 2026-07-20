@@ -42,7 +42,7 @@ class JanusCommo : public RccCommo {
       shared_ptr<RccGraph> graph,
       const function<void(int32_t, TxnOutput&)>& callback) override;
 
-  shared_ptr<QuorumEvent> BroadcastInquireValidation(set<parid_t>& pars, txid_t txid);
+  rusty::Arc<QuorumEvent> BroadcastInquireValidation(set<parid_t>& pars, txid_t txid);
   void BroadcastNotifyValidation(txid_t txid, set<parid_t>& pars, int32_t result);
 };
 

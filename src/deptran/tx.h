@@ -41,9 +41,9 @@ class TxLogServer;
  */
 class Tx: public enable_shared_from_this<Tx> {
  public:
-  shared_ptr<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
+  rusty::Arc<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
 //  bool fully_dispatched_{false};
-  shared_ptr<IntEvent> ev_execute_ready_{Reactor::create_sp_event<IntEvent>()};
+  rusty::Arc<IntEvent> ev_execute_ready_{Reactor::create_sp_event<IntEvent>()};
   bool aborted_in_dispatch_{false};
   bool inuse = false;
   txnid_t tid_;
