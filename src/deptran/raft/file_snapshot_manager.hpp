@@ -54,14 +54,14 @@ pub fn file_snapshot_temp_path(storage_path: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.paths version=1 rust_sha256=3de54b7f5a6178dee5430ee423f133d5a2bdc7fcc82a29f5aab899834c8c75ae*/
-std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
-std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term);
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term);
 
-std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+inline std::string file_snapshot_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap");
 }
 
-std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
+inline std::string file_snapshot_temp_path(const std::string& storage_path, uint64_t index, uint64_t term) {
     return ((((rusty::detail::deref_if_pointer_like(storage_path) + std::string("/snapshot_")) + std::to_string(std::move(index))) + std::string("_")) + std::to_string(std::move(term))) + std::string(".snap.tmp");
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.paths*/
@@ -133,52 +133,52 @@ pub fn file_snapshot_metadata_from_name_parts(index_part: &std::string,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.stream_helpers version=1 rust_sha256=2b8291cb63e1f96746a07c22b18c93e1cfb7425b6e4e9e797486be9c3d5f5e3f*/
-size_t file_snapshot_advance_offset(size_t offset, size_t size);
-size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
-bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
-bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
-bool file_snapshot_has_latest(size_t snapshot_count);
-size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
-bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size);
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size);
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset);
+inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index);
+inline bool file_snapshot_has_latest(size_t snapshot_count);
+inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots);
+inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count);
 
-size_t file_snapshot_advance_offset(size_t offset, size_t size) {
-    return rusty::detail::deref_if_pointer_like(offset) + rusty::detail::deref_if_pointer_like(size);
+inline size_t file_snapshot_advance_offset(size_t offset, size_t size) {
+    return offset + size;
 }
 
-size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
-    auto remaining = rusty::detail::deref_if_pointer_like(data_size) - rusty::detail::deref_if_pointer_like(offset);
-    if (rusty::detail::deref_if_pointer_like(buffer_size) < rusty::detail::deref_if_pointer_like(remaining)) {
+inline size_t file_snapshot_reader_bytes_to_read(size_t data_size, size_t offset, size_t buffer_size) {
+    auto remaining = data_size - offset;
+    if (buffer_size < remaining) {
         return std::move(buffer_size);
     } else {
         return std::move(remaining);
     }
 }
 
-bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
-    return rusty::detail::deref_if_pointer_like(valid) && (rusty::detail::deref_if_pointer_like(offset) >= rusty::detail::deref_if_pointer_like(data_size));
+inline bool file_snapshot_reader_is_complete(bool valid, size_t data_size, size_t offset) {
+    return valid && offset >= data_size;
 }
 
-bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
-    return rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(keep_after_index);
+inline bool file_snapshot_should_prune(uint64_t snapshot_index, uint64_t keep_after_index) {
+    return snapshot_index < keep_after_index;
 }
 
-bool file_snapshot_has_latest(size_t snapshot_count) {
-    return rusty::detail::deref_if_pointer_like(snapshot_count) > 0;
+inline bool file_snapshot_has_latest(size_t snapshot_count) {
+    return snapshot_count > 0;
 }
 
-size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
-    if (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) {
+inline size_t file_snapshot_retention_start(size_t snapshot_count, size_t max_snapshots) {
+    if (snapshot_count > max_snapshots) {
         return std::move(max_snapshots);
     } else {
         return std::move(snapshot_count);
     }
 }
 
-bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
-    return (rusty::detail::deref_if_pointer_like(snapshot_count) > rusty::detail::deref_if_pointer_like(max_snapshots)) && (rusty::detail::deref_if_pointer_like(position) >= rusty::detail::deref_if_pointer_like(max_snapshots));
+inline bool file_snapshot_should_delete_for_retention(size_t position, size_t max_snapshots, size_t snapshot_count) {
+    return snapshot_count > max_snapshots && position >= max_snapshots;
 }
 
-SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
+inline SnapshotMetadata file_snapshot_metadata_from_name_parts(const std::string& index_part, const std::string& term_part, size_t size_bytes) {
     return file_snapshot_metadata_from_name_parts_cpp(index_part, term_part, std::move(size_bytes));
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.stream_helpers*/
@@ -476,7 +476,7 @@ struct FileSnapshotWriterCore {
 };
 
 
-FileSnapshotWriterCore::FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term)
+inline FileSnapshotWriterCore::FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term)
     : final_path_(final_path)
     , temp_path_(temp_path)
     , last_index_(last_index)
@@ -487,26 +487,26 @@ FileSnapshotWriterCore::FileSnapshotWriterCore(std::string final_path, std::stri
     , buffer_(std::string())
 {}
 
-bool FileSnapshotWriterCore::Cleanup() const {
+inline bool FileSnapshotWriterCore::Cleanup() const {
     return file_snapshot_writer_cleanup_cpp(&this->temp_path_, this->finalized_, this->aborted_);
 }
 
-bool FileSnapshotWriterCore::Write(const c_char* data, size_t size) {
+inline bool FileSnapshotWriterCore::Write(const c_char* data, size_t size) {
     // @unsafe
     {
         return file_snapshot_writer_write_cpp(&this->buffer_, &this->offset_, this->finalized_, this->aborted_, data, std::move(size));
     }
 }
 
-bool FileSnapshotWriterCore::Finalize() {
+inline bool FileSnapshotWriterCore::Finalize() {
     return file_snapshot_writer_finalize_cpp(&this->final_path_, &this->temp_path_, this->last_index_, this->last_term_, &this->buffer_, &this->finalized_, this->aborted_);
 }
 
-bool FileSnapshotWriterCore::Abort() {
+inline bool FileSnapshotWriterCore::Abort() {
     return file_snapshot_writer_abort_cpp(&this->temp_path_, this->finalized_, &this->aborted_);
 }
 
-size_t FileSnapshotWriterCore::GetOffset() const {
+inline size_t FileSnapshotWriterCore::GetOffset() const {
     return this->offset_;
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.writer_core*/
@@ -649,7 +649,7 @@ struct FileSnapshotReaderCore {
 };
 
 
-FileSnapshotReaderCore::FileSnapshotReaderCore(std::string path)
+inline FileSnapshotReaderCore::FileSnapshotReaderCore(std::string path)
     : path_(path)
     , file_data_(std::string())
     , data_(std::string())
@@ -658,36 +658,36 @@ FileSnapshotReaderCore::FileSnapshotReaderCore(std::string path)
     , valid_(false)
 {}
 
-bool FileSnapshotReaderCore::Open() {
+inline bool FileSnapshotReaderCore::Open() {
     // @unsafe
     {
         return file_snapshot_reader_open_cpp(&this->path_, &this->file_data_, &this->data_, &this->metadata_, &this->valid_);
     }
 }
 
-bool FileSnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
+inline bool FileSnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
     // @unsafe
     {
         return file_snapshot_reader_read_cpp(&this->data_, &this->read_offset_, this->valid_, buffer, std::move(buffer_size), bytes_read);
     }
 }
 
-bool FileSnapshotReaderCore::IsComplete() const {
+inline bool FileSnapshotReaderCore::IsComplete() const {
     return file_snapshot_reader_is_complete_cpp(&this->data_, this->valid_, this->read_offset_);
 }
 
-const SnapshotMetadata& FileSnapshotReaderCore::GetMetadata() const {
+inline const SnapshotMetadata& FileSnapshotReaderCore::GetMetadata() const {
     // @unsafe
     {
         return file_snapshot_reader_metadata_cpp(&this->metadata_);
     }
 }
 
-size_t FileSnapshotReaderCore::GetOffset() const {
+inline size_t FileSnapshotReaderCore::GetOffset() const {
     return this->read_offset_;
 }
 
-bool FileSnapshotReaderCore::IsValid() const {
+inline bool FileSnapshotReaderCore::IsValid() const {
     return this->valid_;
 }
 /*RUSTYCPP:GEN-END id=file_snapshot_manager.reader_core*/
@@ -727,6 +727,418 @@ class FileSnapshotReader : public SnapshotReader {
   FileSnapshotReaderCore core_;
 };
 
+// @unsafe - creates storage_path if missing.
+inline bool file_snapshot_manager_ensure_directory_cpp(
+    const SnapshotConfig* config) {
+  struct stat st;
+  if (stat(config->storage_path.c_str(), &st) == 0) {
+    return S_ISDIR(st.st_mode);
+  }
+  return mkdir(config->storage_path.c_str(), 0755) == 0;
+}
+
+// @unsafe - Returns an owned writer for the configured snapshot path.
+inline std::unique_ptr<SnapshotWriter> file_snapshot_manager_begin_snapshot_cpp(
+    const SnapshotConfig* config, slotid_t last_index, ballot_t last_term) {
+  std::string final_path = file_snapshot_path(config->storage_path,
+                                              last_index, last_term);
+  std::string temp_path = file_snapshot_temp_path(config->storage_path,
+                                                  last_index, last_term);
+  return std::make_unique<FileSnapshotWriter>(final_path, temp_path,
+                                               last_index, last_term);
+}
+
+// @unsafe - Directory operations. DIR* is closed before return; only complete
+// .snap files are returned, not .tmp files.
+inline std::vector<SnapshotMetadata> file_snapshot_manager_list_cpp(
+    const SnapshotConfig* config) {
+  std::vector<SnapshotMetadata> result;
+
+  DIR* dir = opendir(config->storage_path.c_str());
+  if (!dir) {
+    return result;
+  }
+
+  std::regex pattern(R"(snapshot_(\d+)_(\d+)\.snap)");
+  struct dirent* entry;
+
+  while ((entry = readdir(dir)) != nullptr) {
+    std::string name(entry->d_name);
+    std::smatch match;
+    if (std::regex_match(name, match, pattern)) {
+      std::string index_part = match[1].str();
+      std::string term_part = match[2].str();
+      SnapshotMetadata meta = file_snapshot_metadata_from_name_parts(
+          index_part, term_part, 0);
+
+      std::string path = file_snapshot_path(config->storage_path,
+                                            meta.last_included_index,
+                                            meta.last_included_term);
+      struct stat st;
+      if (stat(path.c_str(), &st) == 0) {
+        meta = file_snapshot_metadata_from_name_parts(index_part,
+                                                      term_part,
+                                                      st.st_size);
+      }
+
+      result.push_back(meta);
+    }
+  }
+  closedir(dir);
+
+  std::sort(result.begin(), result.end(),
+            [](const SnapshotMetadata& a, const SnapshotMetadata& b) {
+              return a.last_included_index > b.last_included_index;
+            });
+
+  return result;
+}
+
+// @unsafe - directory scan helper.
+inline rusty::Option<SnapshotMetadata> file_snapshot_manager_latest_cpp(
+    const SnapshotConfig* config) {
+  auto snapshots = file_snapshot_manager_list_cpp(config);
+  if (!file_snapshot_has_latest(snapshots.size())) {
+    return rusty::None;
+  }
+  return rusty::Some(snapshots[0]);
+}
+
+// @unsafe - creates and verifies an owned file reader.
+inline std::unique_ptr<SnapshotReader> file_snapshot_manager_begin_load_cpp(
+    const SnapshotConfig* config, const SnapshotMetadata& metadata) {
+  std::string path = file_snapshot_path(config->storage_path,
+                                        metadata.last_included_index,
+                                        metadata.last_included_term);
+  auto reader = std::make_unique<FileSnapshotReader>(path);
+  if (!reader->IsValid()) {
+    return nullptr;
+  }
+  return reader;
+}
+
+// @unsafe - Reads the latest snapshot into caller-owned output pointers.
+inline bool file_snapshot_manager_load_latest_cpp(
+    const SnapshotConfig* config, SnapshotMetadata* metadata_out,
+    std::string* data_out) {
+  auto latest = file_snapshot_manager_latest_cpp(config);
+  if (latest.is_none()) {
+    return false;
+  }
+
+  auto meta = latest.unwrap();
+  std::string path = file_snapshot_path(config->storage_path,
+                                        meta.last_included_index,
+                                        meta.last_included_term);
+  FileSnapshotReader reader(path);
+  if (!reader.IsValid()) {
+    return false;
+  }
+
+  *metadata_out = reader.GetMetadata();
+
+  data_out->resize(metadata_out->size_bytes);
+  size_t total_read = 0;
+  while (!reader.IsComplete()) {
+    size_t bytes_read;
+    if (!reader.Read(data_out->data() + total_read,
+                     data_out->size() - total_read, &bytes_read)) {
+      return false;
+    }
+    total_read += bytes_read;
+  }
+
+  return true;
+}
+
+// @unsafe - directory scan helper.
+inline bool file_snapshot_manager_has_at_or_after_cpp(
+    const SnapshotConfig* config, slotid_t min_index) {
+  auto snapshots = file_snapshot_manager_list_cpp(config);
+  for (const auto& snap : snapshots) {
+    if (snap.last_included_index >= min_index) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// @unsafe - Deletes snapshot files below keep_after_index.
+inline size_t file_snapshot_manager_prune_cpp(const SnapshotConfig* config,
+                                              slotid_t keep_after_index) {
+  auto snapshots = file_snapshot_manager_list_cpp(config);
+  size_t deleted = 0;
+
+  for (const auto& snap : snapshots) {
+    if (file_snapshot_should_prune(snap.last_included_index, keep_after_index)) {
+      std::string path = file_snapshot_path(config->storage_path,
+                                            snap.last_included_index,
+                                            snap.last_included_term);
+      if (unlink(path.c_str()) == 0) {
+        Log_info("[SNAPSHOT-MGR] Pruned snapshot: %s", path.c_str());
+        deleted++;
+      }
+    }
+  }
+  return deleted;
+}
+
+// @unsafe - Deletes all complete snapshot files known to the manager.
+inline size_t file_snapshot_manager_delete_all_cpp(
+    const SnapshotConfig* config) {
+  auto snapshots = file_snapshot_manager_list_cpp(config);
+  size_t deleted = 0;
+
+  for (const auto& snap : snapshots) {
+    std::string path = file_snapshot_path(config->storage_path,
+                                          snap.last_included_index,
+                                          snap.last_included_term);
+    if (unlink(path.c_str()) == 0) {
+      deleted++;
+    }
+  }
+  Log_info("[SNAPSHOT-MGR] Deleted all %zu snapshots", deleted);
+  return deleted;
+}
+
+// @unsafe - Deletes old complete snapshot files.
+inline void file_snapshot_manager_apply_retention_cpp(
+    const SnapshotConfig* config) {
+  auto snapshots = file_snapshot_manager_list_cpp(config);
+  size_t retention_start = file_snapshot_retention_start(snapshots.size(),
+                                                         config->max_snapshots);
+  if (!file_snapshot_has_latest(snapshots.size()) ||
+      retention_start == snapshots.size()) {
+    return;
+  }
+
+  for (size_t i = retention_start; i < snapshots.size(); i++) {
+    if (!file_snapshot_should_delete_for_retention(i, config->max_snapshots,
+                                                   snapshots.size())) {
+      continue;
+    }
+    std::string path = file_snapshot_path(config->storage_path,
+                                          snapshots[i].last_included_index,
+                                          snapshots[i].last_included_term);
+    if (unlink(path.c_str()) == 0) {
+      Log_info("[SNAPSHOT-MGR] Retention policy: deleted %s", path.c_str());
+    }
+  }
+}
+
+// @unsafe - creates, writes, finalizes snapshot, then applies retention.
+inline bool file_snapshot_manager_take_snapshot_cpp(
+    const SnapshotConfig* config, slotid_t last_index, ballot_t last_term,
+    const char* data, size_t size) {
+  auto writer = file_snapshot_manager_begin_snapshot_cpp(config, last_index,
+                                                         last_term);
+  if (!writer) return false;
+  if (!writer->Write(data, size)) return false;
+  if (!writer->Finalize()) return false;
+
+  file_snapshot_manager_apply_retention_cpp(config);
+  return true;
+}
+
+// @lifetime: (&'a) -> &'a
+inline const std::string& file_snapshot_manager_storage_path_cpp(
+    const SnapshotConfig* config) {
+  return config->storage_path;
+}
+
+#if RUSTYCPP_RUST
+pub struct FileSnapshotManagerCore {
+    config_: SnapshotConfig,
+}
+
+impl FileSnapshotManagerCore {
+    // @safe
+    #[cpp_ctor]
+    fn new(config: SnapshotConfig) -> FileSnapshotManagerCore {
+        FileSnapshotManagerCore {
+            config_: config,
+        }
+    }
+
+    // @unsafe - May create the snapshot directory.
+    fn EnsureDirectory(&self) -> bool {
+        unsafe { file_snapshot_manager_ensure_directory_cpp(&self.config_) }
+    }
+
+    // @unsafe - Creates writer with side effects.
+    fn BeginSnapshot(&self, last_index: u64, last_term: i64)
+        -> std::unique_ptr<SnapshotWriter> {
+        unsafe {
+            file_snapshot_manager_begin_snapshot_cpp(&self.config_,
+                                                     last_index,
+                                                     last_term)
+        }
+    }
+
+    // @unsafe - Creates, writes, finalizes, and applies retention.
+    fn TakeSnapshot(&self, last_index: u64, last_term: i64,
+                    data: *const c_char, size: usize) -> bool {
+        unsafe {
+            file_snapshot_manager_take_snapshot_cpp(&self.config_,
+                                                   last_index,
+                                                   last_term,
+                                                   data,
+                                                   size)
+        }
+    }
+
+    // @unsafe - Creates reader with side effects.
+    fn BeginLoad(&self, metadata: &SnapshotMetadata)
+        -> std::unique_ptr<SnapshotReader> {
+        unsafe {
+            file_snapshot_manager_begin_load_cpp(&self.config_, metadata)
+        }
+    }
+
+    // @unsafe - Writes to caller-owned output pointers.
+    fn LoadLatestSnapshot(&self, metadata_out: *mut SnapshotMetadata,
+                          data_out: *mut std::string) -> bool {
+        unsafe {
+            file_snapshot_manager_load_latest_cpp(&self.config_,
+                                                 metadata_out,
+                                                 data_out)
+        }
+    }
+
+    // @unsafe - Directory scan.
+    fn GetLatestSnapshot(&self) -> rusty::Option<SnapshotMetadata> {
+        unsafe { file_snapshot_manager_latest_cpp(&self.config_) }
+    }
+
+    // @unsafe - Directory scan.
+    fn ListSnapshots(&self) -> std::vector<SnapshotMetadata> {
+        unsafe { file_snapshot_manager_list_cpp(&self.config_) }
+    }
+
+    // @unsafe - Directory scan.
+    fn HasSnapshotAtOrAfter(&self, min_index: u64) -> bool {
+        unsafe { file_snapshot_manager_has_at_or_after_cpp(&self.config_, min_index) }
+    }
+
+    // @unsafe - Deletes files.
+    fn PruneSnapshots(&self, keep_after_index: u64) -> usize {
+        unsafe { file_snapshot_manager_prune_cpp(&self.config_, keep_after_index) }
+    }
+
+    // @unsafe - Deletes files.
+    fn DeleteAllSnapshots(&self) -> usize {
+        unsafe { file_snapshot_manager_delete_all_cpp(&self.config_) }
+    }
+
+    // @lifetime: (&'a) -> &'a
+    fn GetStoragePath(&self) -> &std::string {
+        unsafe { file_snapshot_manager_storage_path_cpp(&self.config_) }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.manager_core version=1 rust_sha256=7350824f65e5c2394553147c241817ce7818dfaceaa5fd9202f3845e1085a39b*/
+struct FileSnapshotManagerCore;
+
+struct FileSnapshotManagerCore {
+    SnapshotConfig config_;
+
+    FileSnapshotManagerCore(SnapshotConfig config);
+    bool EnsureDirectory() const;
+    std::unique_ptr<SnapshotWriter> BeginSnapshot(uint64_t last_index, int64_t last_term) const;
+    bool TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) const;
+    std::unique_ptr<SnapshotReader> BeginLoad(const SnapshotMetadata& metadata) const;
+    bool LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const;
+    rusty::Option<SnapshotMetadata> GetLatestSnapshot() const;
+    std::vector<SnapshotMetadata> ListSnapshots() const;
+    bool HasSnapshotAtOrAfter(uint64_t min_index) const;
+    size_t PruneSnapshots(uint64_t keep_after_index) const;
+    size_t DeleteAllSnapshots() const;
+    const std::string& GetStoragePath() const;
+};
+
+
+inline FileSnapshotManagerCore::FileSnapshotManagerCore(SnapshotConfig config)
+    : config_(config)
+{}
+
+inline bool FileSnapshotManagerCore::EnsureDirectory() const {
+    // @unsafe
+    {
+        return file_snapshot_manager_ensure_directory_cpp(&this->config_);
+    }
+}
+
+inline std::unique_ptr<SnapshotWriter> FileSnapshotManagerCore::BeginSnapshot(uint64_t last_index, int64_t last_term) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_begin_snapshot_cpp(&this->config_, std::move(last_index), std::move(last_term));
+    }
+}
+
+inline bool FileSnapshotManagerCore::TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_take_snapshot_cpp(&this->config_, std::move(last_index), std::move(last_term), data, std::move(size));
+    }
+}
+
+inline std::unique_ptr<SnapshotReader> FileSnapshotManagerCore::BeginLoad(const SnapshotMetadata& metadata) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_begin_load_cpp(&this->config_, metadata);
+    }
+}
+
+inline bool FileSnapshotManagerCore::LoadLatestSnapshot(SnapshotMetadata* metadata_out, std::string* data_out) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_load_latest_cpp(&this->config_, metadata_out, data_out);
+    }
+}
+
+inline rusty::Option<SnapshotMetadata> FileSnapshotManagerCore::GetLatestSnapshot() const {
+    // @unsafe
+    {
+        return file_snapshot_manager_latest_cpp(&this->config_);
+    }
+}
+
+inline std::vector<SnapshotMetadata> FileSnapshotManagerCore::ListSnapshots() const {
+    // @unsafe
+    {
+        return file_snapshot_manager_list_cpp(&this->config_);
+    }
+}
+
+inline bool FileSnapshotManagerCore::HasSnapshotAtOrAfter(uint64_t min_index) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_has_at_or_after_cpp(&this->config_, std::move(min_index));
+    }
+}
+
+inline size_t FileSnapshotManagerCore::PruneSnapshots(uint64_t keep_after_index) const {
+    // @unsafe
+    {
+        return file_snapshot_manager_prune_cpp(&this->config_, std::move(keep_after_index));
+    }
+}
+
+inline size_t FileSnapshotManagerCore::DeleteAllSnapshots() const {
+    // @unsafe
+    {
+        return file_snapshot_manager_delete_all_cpp(&this->config_);
+    }
+}
+
+inline const std::string& FileSnapshotManagerCore::GetStoragePath() const {
+    // @unsafe
+    {
+        return file_snapshot_manager_storage_path_cpp(&this->config_);
+    }
+}
+/*RUSTYCPP:GEN-END id=file_snapshot_manager.manager_core*/
+
 /**
  * File-based snapshot manager implementation.
  * Stores snapshots in a directory with automatic retention policy.
@@ -734,10 +1146,10 @@ class FileSnapshotReader : public SnapshotReader {
 class FileSnapshotManager : public SnapshotManager {
  public:
   // @unsafe - May create the snapshot directory; config_ owns the path string.
-  explicit FileSnapshotManager(const SnapshotConfig& config) : config_(config) {
-    EnsureDirectory();
+  explicit FileSnapshotManager(const SnapshotConfig& config) : core_(config) {
+    core_.EnsureDirectory();
     Log_info("[SNAPSHOT-MGR] Initialized: path=%s max_snapshots=%zu",
-             config_.storage_path.c_str(), config_.max_snapshots);
+             core_.GetStoragePath().c_str(), config.max_snapshots);
   }
 
   ~FileSnapshotManager() override = default;
@@ -751,25 +1163,13 @@ class FileSnapshotManager : public SnapshotManager {
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
       slotid_t last_index, ballot_t last_term) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string final_path = file_snapshot_path(config_.storage_path,
-                                                last_index, last_term);
-    std::string temp_path = file_snapshot_temp_path(config_.storage_path,
-                                                    last_index, last_term);
-    return std::make_unique<FileSnapshotWriter>(final_path, temp_path,
-                                                 last_index, last_term);
+    return core_.BeginSnapshot(last_index, last_term);
   }
 
   // @unsafe - Creates and finalizes snapshot
   bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
                     const char* data, size_t size) override {
-    auto writer = BeginSnapshot(last_index, last_term);
-    if (!writer) return false;
-    if (!writer->Write(data, size)) return false;
-    if (!writer->Finalize()) return false;
-
-    // Apply retention policy
-    ApplyRetentionPolicy();
-    return true;
+    return core_.TakeSnapshot(last_index, last_term, data, size);
   }
 
   // ========================================================================
@@ -780,49 +1180,14 @@ class FileSnapshotManager : public SnapshotManager {
   std::unique_ptr<SnapshotReader> BeginLoad(
       const SnapshotMetadata& metadata) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string path = file_snapshot_path(config_.storage_path,
-                                          metadata.last_included_index,
-                                          metadata.last_included_term);
-    auto reader = std::make_unique<FileSnapshotReader>(path);
-    if (!reader->IsValid()) {
-      return nullptr;
-    }
-    return reader;
+    return core_.BeginLoad(metadata);
   }
 
   // @unsafe - Reads the latest snapshot into caller-owned output pointers.
   bool LoadLatestSnapshot(SnapshotMetadata* metadata_out,
                           std::string* data_out) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto latest = GetLatestSnapshotUnlocked();
-    if (latest.is_none()) {
-      return false;
-    }
-
-    auto meta = latest.unwrap();
-    std::string path = file_snapshot_path(config_.storage_path,
-                                          meta.last_included_index,
-                                          meta.last_included_term);
-    FileSnapshotReader reader(path);
-    if (!reader.IsValid()) {
-      return false;
-    }
-
-    *metadata_out = reader.GetMetadata();
-
-    // Read all data
-    data_out->resize(metadata_out->size_bytes);
-    size_t total_read = 0;
-    while (!reader.IsComplete()) {
-      size_t bytes_read;
-      if (!reader.Read(data_out->data() + total_read,
-                       data_out->size() - total_read, &bytes_read)) {
-        return false;
-      }
-      total_read += bytes_read;
-    }
-
-    return true;
+    return core_.LoadLatestSnapshot(metadata_out, data_out);
   }
 
   // ========================================================================
@@ -832,25 +1197,19 @@ class FileSnapshotManager : public SnapshotManager {
   // @unsafe (with mutex)
   rusty::Option<SnapshotMetadata> GetLatestSnapshot() const override {
     std::lock_guard<std::mutex> lock(mutex_);
-    return GetLatestSnapshotUnlocked();
+    return core_.GetLatestSnapshot();
   }
 
   // @unsafe (with mutex)
   std::vector<SnapshotMetadata> ListSnapshots() const override {
     std::lock_guard<std::mutex> lock(mutex_);
-    return ListSnapshotsUnlocked();
+    return core_.ListSnapshots();
   }
 
   // @unsafe (with mutex)
   bool HasSnapshotAtOrAfter(slotid_t min_index) const override {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto snapshots = ListSnapshotsUnlocked();
-    for (const auto& snap : snapshots) {
-      if (snap.last_included_index >= min_index) {
-        return true;
-      }
-    }
-    return false;
+    return core_.HasSnapshotAtOrAfter(min_index);
   }
 
   // ========================================================================
@@ -860,39 +1219,13 @@ class FileSnapshotManager : public SnapshotManager {
   // @unsafe - Deletes snapshot files below keep_after_index.
   size_t PruneSnapshots(slotid_t keep_after_index) override {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto snapshots = ListSnapshotsUnlocked();
-    size_t deleted = 0;
-
-    for (const auto& snap : snapshots) {
-      if (file_snapshot_should_prune(snap.last_included_index, keep_after_index)) {
-        std::string path = file_snapshot_path(config_.storage_path,
-                                              snap.last_included_index,
-                                              snap.last_included_term);
-        if (unlink(path.c_str()) == 0) {
-          Log_info("[SNAPSHOT-MGR] Pruned snapshot: %s", path.c_str());
-          deleted++;
-        }
-      }
-    }
-    return deleted;
+    return core_.PruneSnapshots(keep_after_index);
   }
 
   // @unsafe - Deletes all complete snapshot files known to the manager.
   size_t DeleteAllSnapshots() override {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto snapshots = ListSnapshotsUnlocked();
-    size_t deleted = 0;
-
-    for (const auto& snap : snapshots) {
-      std::string path = file_snapshot_path(config_.storage_path,
-                                            snap.last_included_index,
-                                            snap.last_included_term);
-      if (unlink(path.c_str()) == 0) {
-        deleted++;
-      }
-    }
-    Log_info("[SNAPSHOT-MGR] Deleted all %zu snapshots", deleted);
-    return deleted;
+    return core_.DeleteAllSnapshots();
   }
 
   // ========================================================================
@@ -901,104 +1234,12 @@ class FileSnapshotManager : public SnapshotManager {
 
   // @lifetime: (&'a) -> &'a
   const std::string& GetStoragePath() const override {
-    return config_.storage_path;
+    return core_.GetStoragePath();
   }
 
  private:
-  // @unsafe - owned configuration. GetStoragePath returns a borrowed reference
-  // to config_.storage_path; callers must not retain it past manager lifetime.
-  SnapshotConfig config_;
   mutable std::mutex mutex_;
-
-  // @unsafe - Creates storage_path if missing.
-  bool EnsureDirectory() const {
-    struct stat st;
-    if (stat(config_.storage_path.c_str(), &st) == 0) {
-      return S_ISDIR(st.st_mode);
-    }
-    return mkdir(config_.storage_path.c_str(), 0755) == 0;
-  }
-
-  // @unsafe - Directory operations (must hold mutex). DIR* is closed before
-  // return; only complete .snap files are returned, not .tmp files.
-  std::vector<SnapshotMetadata> ListSnapshotsUnlocked() const {
-    std::vector<SnapshotMetadata> result;
-
-    DIR* dir = opendir(config_.storage_path.c_str());
-    if (!dir) {
-      return result;
-    }
-
-    std::regex pattern(R"(snapshot_(\d+)_(\d+)\.snap)");
-    struct dirent* entry;
-
-    while ((entry = readdir(dir)) != nullptr) {
-      std::string name(entry->d_name);
-      std::smatch match;
-      if (std::regex_match(name, match, pattern)) {
-        std::string index_part = match[1].str();
-        std::string term_part = match[2].str();
-        SnapshotMetadata meta = file_snapshot_metadata_from_name_parts(
-            index_part, term_part, 0);
-
-        // Get file size
-        std::string path = file_snapshot_path(config_.storage_path,
-                                              meta.last_included_index,
-                                              meta.last_included_term);
-        struct stat st;
-        if (stat(path.c_str(), &st) == 0) {
-          meta = file_snapshot_metadata_from_name_parts(index_part,
-                                                        term_part,
-                                                        st.st_size);
-        }
-
-        result.push_back(meta);
-      }
-    }
-    closedir(dir);
-
-    // Sort by index descending (newest first)
-    std::sort(result.begin(), result.end(),
-              [](const SnapshotMetadata& a, const SnapshotMetadata& b) {
-                return a.last_included_index > b.last_included_index;
-              });
-
-    return result;
-  }
-
-  // @unsafe (must hold mutex)
-  rusty::Option<SnapshotMetadata> GetLatestSnapshotUnlocked() const {
-    auto snapshots = ListSnapshotsUnlocked();
-    if (!file_snapshot_has_latest(snapshots.size())) {
-      return rusty::None;
-    }
-    return rusty::Some(snapshots[0]);
-  }
-
-  // @unsafe - Deletes old complete snapshot files (must hold mutex).
-  void ApplyRetentionPolicy() {
-    auto snapshots = ListSnapshotsUnlocked();
-    size_t retention_start = file_snapshot_retention_start(snapshots.size(),
-                                                           config_.max_snapshots);
-    if (!file_snapshot_has_latest(snapshots.size()) ||
-        retention_start == snapshots.size()) {
-      return;
-    }
-
-    // Delete oldest snapshots beyond retention limit
-    for (size_t i = retention_start; i < snapshots.size(); i++) {
-      if (!file_snapshot_should_delete_for_retention(i, config_.max_snapshots,
-                                                     snapshots.size())) {
-        continue;
-      }
-      std::string path = file_snapshot_path(config_.storage_path,
-                                            snapshots[i].last_included_index,
-                                            snapshots[i].last_included_term);
-      if (unlink(path.c_str()) == 0) {
-        Log_info("[SNAPSHOT-MGR] Retention policy: deleted %s", path.c_str());
-      }
-    }
-  }
+  FileSnapshotManagerCore core_;
 };
 
 }  // namespace raft
