@@ -17,8 +17,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
  public:
   class StatusBox : public BoxEvent<int> {
    public:
-    int& Get() {
-      verify(is_set_);
+    int Get() {
+      verify(is_set_.get());
       return BoxEvent<int>::get();
     }
     void Set(const int& x) {

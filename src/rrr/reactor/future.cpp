@@ -68,7 +68,7 @@ std::shared_ptr<BoxEvent<T>> fiber_null_state() {
   return std::shared_ptr<BoxEvent<T>>();
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_` / `->set(value)`.
+// @unsafe - shared_ptr deref through `(*state)->is_set_.get()` / `->set(value)`.
 // Takes the value by `const T&` (BoxEvent::set copies regardless), so there
 // is no extra copy for lvalue callers.
 template <typename T>
@@ -76,25 +76,25 @@ void fiber_promise_set_value(const std::shared_ptr<BoxEvent<T>>* state, const T&
   if (!*state) {
     throw std::logic_error("FiberPromise has no state (moved-from?)");
   }
-  if ((*state)->is_set_) {
+  if ((*state)->is_set_.get()) {
     throw std::logic_error("FiberPromise value already set");
   }
   (*state)->set(value);
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_`.
+// @unsafe - shared_ptr deref through `(*state)->is_set_.get()`.
 template <typename T>
 bool fiber_promise_is_ready(const std::shared_ptr<BoxEvent<T>>* state) {
-  return *state && (*state)->is_set_;
+  return *state && (*state)->is_set_.get();
 }
 
-// @unsafe - blocks in `wait()` then returns a reference into the shared state.
+// @unsafe - blocks in `wait()` then returns a copy of the shared value.
 template <typename T>
-T& fiber_future_get(const std::shared_ptr<BoxEvent<T>>* state) {
+T fiber_future_get(const std::shared_ptr<BoxEvent<T>>* state) {
   if (!*state) {
     throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
   }
-  if (!(*state)->is_set_) {
+  if (!(*state)->is_set_.get()) {
     (*state)->wait();
   }
   return (*state)->get();
@@ -107,17 +107,17 @@ bool fiber_future_wait_for(const std::shared_ptr<BoxEvent<T>>* state, uint64_t t
   if (!*state) {
     return false;
   }
-  if ((*state)->is_set_) {
+  if ((*state)->is_set_.get()) {
     return true;
   }
   (*state)->wait_timeout(timeout_us);
-  return (*state)->is_set_;
+  return (*state)->is_set_.get();
 }
 
-// @unsafe - shared_ptr deref through `(*state)->is_set_`.
+// @unsafe - shared_ptr deref through `(*state)->is_set_.get()`.
 template <typename T>
 bool fiber_future_is_ready(const std::shared_ptr<BoxEvent<T>>* state) {
-  return *state && (*state)->is_set_;
+  return *state && (*state)->is_set_.get();
 }
 
 // @unsafe - presence check on the shared state (touches std::shared_ptr).
@@ -222,7 +222,7 @@ impl<T> FiberFuture<T> {
         FiberFuture { state_: fiber_null_state::<T>(), nc_: rusty::Cell::new(false) }
     }
 
-    fn get(&mut self) -> &mut T {
+    fn get(&mut self) -> T {
         fiber_future_get(&self.state_)
     }
 
@@ -239,7 +239,7 @@ impl<T> FiberFuture<T> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=3e074c700143d00acb35b99df2465e6571ca7b8fcfac6120b40d9091832cfe6b*/
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=ff2490b968c7d3fcdff6595143e363fd02d1ccf368f3deebab2ee2db552b81ef*/
 template<typename T>
 struct FiberFuture;
 
@@ -252,7 +252,7 @@ struct FiberFuture {
         : state_(fiber_null_state<T>())
         , nc_(rusty::Cell<bool>::new_(false))
     {}
-    T& get() {
+    T get() {
         return fiber_future_get(&this->state_);
     }
     bool wait_for(uint64_t timeout_us) {

@@ -1173,7 +1173,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
     auto sp_e = Reactor::create_sp_event<rrr::IntEvent>();
     (*sp_e->state_.test_.borrow_mut()) = [sp_tx, rank] (int v) -> bool {
       auto& subtx = sp_tx->subtx(rank);
-      return subtx.local_validated_->is_set_;
+      return subtx.local_validated_->is_set_.get();
     };
     sp_e->wait_timeout(60 * 1000 * 1000);
     if (sp_e->status_.get() == EventStatus::TIMEOUT) {
@@ -1207,7 +1207,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
       const_cast<parent_set_t&>(parents));
   verify(subtx.commit_received_.value_ == 0);
   verify(!subtx.__debug_local_validated_foreign_);
-  verify(!subtx.local_validated_->is_set_);
+  verify(!subtx.local_validated_->is_set_.get());
   subtx.commit_received_.set(1);
   UpgradeStatus(*sp_tx, rank, TXN_CMT);
   sp_tx->__DebugCheckParents(rank);

@@ -445,7 +445,7 @@ TEST_F(FiberTest, FutureWithVectorType) {
     auto future = promise.get_future();
     promise.set_value({1, 2, 3, 4, 5});
 
-    auto& result = future.get();
+    auto result = future.get();
     EXPECT_EQ(5u, result.size());
     EXPECT_EQ(1, result[0]);
     EXPECT_EQ(5, result[4]);

@@ -273,21 +273,23 @@ class BoxEvent : public EventPollable {
   EventState state_{};
   rusty::Cell<bool> prunable_{true};
   std::weak_ptr<EventPollable> self_;
-  // Slot payload.
-  Type content_{};
-  bool is_set_{false};
+  // Slot payload. RefCell so get/set/clear stay const under a
+  // const-view Arc handle (content_ may be non-Copy, e.g.
+  // BoxEvent<std::string>); is_set_ is a Copy flag -> Cell.
+  rusty::RefCell<Type> content_{};
+  rusty::Cell<bool> is_set_{false};
 
   BoxEvent() { event_state_seed(state_); }
 
-  Type& get() { return content_; }
-  void set(const Type& c) {
-    is_set_ = true;
-    content_ = c;
+  Type get() const { return *content_.borrow(); }
+  void set(const Type& c) const {
+    is_set_.set(true);
+    (*content_.borrow_mut()) = c;
     test();
   }
-  void clear() {
-    is_set_ = false;
-    content_ = Type{};
+  void clear() const {
+    is_set_.set(false);
+    (*content_.borrow_mut()) = Type{};
   }
 
   // Concrete event surface (matches the flattened structs' inherent fns).
@@ -299,7 +301,7 @@ class BoxEvent : public EventPollable {
 
   // EventPollable trait surface.
   bool test() const override { return event_test_impl(*this); }
-  bool is_ready() const override { return is_set_; }
+  bool is_ready() const override { return is_set_.get(); }
   void log() const override {}
   EventStatus status() const override { return status_.get(); }
   void set_status(EventStatus s) const override { status_.set(s); }
