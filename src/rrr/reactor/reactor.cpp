@@ -3413,6 +3413,11 @@ void pollworker_process_commands(PollThreadWorker& self);
 void pollworker_trigger_job(PollThreadWorker& self);
 void pollworker_process_pending_removals(PollThreadWorker& self);
 void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll);
+// 1-line arrow kernels for the DSL bodies (Box-trait dispatch wall).
+int  pollable_proxy_fd(const PollableProxy& p);
+int  pollable_proxy_mode(const PollableProxy& p);
+rusty::Vec<int> pollworker_take_removals(PollThreadWorker& self);
+void pollworker_close_proxy_of(PollThreadWorker& self, int fd);
 void pollworker_do_remove_pollable(PollThreadWorker& self, int fd);
 void pollworker_do_close_pollable(PollThreadWorker& self, int fd);
 void pollworker_do_update_mode(PollThreadWorker& self, int fd, int new_mode);
@@ -3587,138 +3592,202 @@ void pollworker_trigger_job(PollThreadWorker& self) {
   }
 }
 
-// @unsafe - PollableProxy accessors and Epoll::Add are not borrow-checked
-void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll) {
-  int fd;
-  int poll_mode;
-  // @unsafe { PollableProxy::fd, poll_mode are not borrow-checked }
-  {
-    fd = poll->fd();
-    poll_mode = poll->poll_mode();
-  }
+// The poll-worker command handlers — registration policy, deferred
+// removal, close, interest updates, job set — as inline Rust DSL. The
+// Box-trait arrows (fd/poll_mode/close through PollableProxy) are
+// 1-line kernels; Epoll::Add/Remove/Update are GEN methods.
+#if RUSTYCPP_RUST
+fn pollworker_do_add_pollable(w: &mut PollThreadWorker, poll: PollableProxy) {
+    let fd = pollable_proxy_fd(poll);
+    let poll_mode = pollable_proxy_mode(poll);
 
-  // The pollable can close between CmdAddPollable being enqueued and
-  // processed (teardown racing an accept/connect registration). Its fd
-  // is then -1 and registering would abort inside Epoll::Add (EBADF
-  // verify). A closed pollable can never produce events — drop it.
-  if (fd < 0) {
-    return;
-  }
-
-  // Check if already exists
-  if (self.fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-
-  // Store in maps
-  self.fd_to_pollable_.insert(fd, std::move(poll));
-  self.mode_.insert(fd, poll_mode);
-
-  // @unsafe { Epoll::Add is not borrow-checked }
-  // Add fails (-1) when the fd closed between the registration request
-  // and here (EBADF teardown race) — drop the dead pollable again.
-  {
-    if (self.poll_.Add(fd, poll_mode) != 0) {
-      self.fd_to_pollable_.remove(fd);
-      self.mode_.remove(fd);
+    // The pollable can close between CmdAddPollable being enqueued and
+    // processed (teardown racing an accept/connect registration): fd is
+    // then -1 and registering would abort inside Epoll::Add. A closed
+    // pollable can never produce events — drop it.
+    if fd < 0 {
+        return;
     }
-  }
-}
-
-// @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.
-void pollworker_do_remove_pollable(PollThreadWorker& self, int fd) {
-  if (!self.fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-  // Add to pending_remove (actual removal happens after epoll_wait).
-  self.pending_remove_.insert(fd);
-}
-
-// @safe - rusty::HashMap / HashSet ops are @safe; only the
-// Epoll::Remove syscall path and the virtual Pollable::close()
-// dispatch escape into inner @unsafe blocks.
-void pollworker_do_close_pollable(PollThreadWorker& self, int fd) {
-  // Remove from pending_remove if present.
-  self.pending_remove_.remove(fd);
-
-  auto proxy_opt = self.fd_to_pollable_.get(fd);
-  if (proxy_opt.is_none()) {
-    return;
-  }
-
-  // Remove from epoll if still registered.
-  if (self.mode_.contains_key(fd)) {
-    // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-    { self.poll_.Remove(fd); }
-  }
-
-  // Close the socket via Pollable's close() method.
-  // HashMap::get now returns Option<V&>; unwrap() yields the proxy ref.
-  // @unsafe { virtual Pollable::close() dispatch }
-  { proxy_opt.unwrap()->close(); }
-
-  // Erase from maps, dropping storage references.
-  self.fd_to_pollable_.remove(fd);
-  self.mode_.remove(fd);
-}
-
-// @unsafe - Uses raw pointers for epoll userdata and calls Epoll::Update
-void pollworker_do_update_mode(PollThreadWorker& self, int fd, int new_mode) {
-  if (!self.fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-
-  auto mode_opt = self.mode_.get(fd);
-  if (mode_opt.is_none()) {
-    return;
-  }
-
-  int old_mode = mode_opt.unwrap();
-  self.mode_.insert(fd, new_mode);
-
-  if (new_mode != old_mode) {
-    self.poll_.Update(fd, new_mode, old_mode);
-  }
-}
-
-// @safe - rusty::BTreeSet::insert is @safe via namespace inheritance.
-void pollworker_do_add_job(PollThreadWorker& self, rusty::Arc<Job> job) {
-  self.jobs_.insert(job);
-}
-
-// @safe - std::set::erase is the std equivalent of rusty::BTreeSet::remove.
-void pollworker_do_remove_job(PollThreadWorker& self, rusty::Arc<Job> job) {
-  self.jobs_.erase(job);
-}
-
-// @safe - the rusty::HashSet / HashMap ops are @safe; only `self.poll_.Remove(fd)`
-// (Epoll::Remove, a syscall-issuing path) escapes into an inner @unsafe block.
-void pollworker_process_pending_removals(PollThreadWorker& self) {
-  rusty::HashSet<int> remove_fds = self.pending_remove_.clone();
-  self.pending_remove_.clear();
-
-  for (int fd : remove_fds) {
-    if (!self.fd_to_pollable_.contains_key(fd)) {
-      continue;
+    if w.fd_to_pollable_.contains_key(fd) {
+        return;
     }
-
-    // Check if fd was NOT reused (still in mode map).
-    if (self.mode_.contains_key(fd)) {
-      // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-      { self.poll_.Remove(fd); }
+    w.fd_to_pollable_.insert(fd, poll);
+    w.mode_.insert(fd, poll_mode);
+    // Add fails (-1) on the EBADF teardown race — drop the dead
+    // pollable again.
+    if w.poll_.Add(fd, poll_mode) != 0 {
+        w.fd_to_pollable_.remove(fd);
+        w.mode_.remove(fd);
     }
-
-    self.fd_to_pollable_.remove(fd);
-    self.mode_.remove(fd);
-  }
 }
 
+fn pollworker_do_remove_pollable(w: &mut PollThreadWorker, fd: i32) {
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    // Deferred: actual removal happens after epoll_wait.
+    w.pending_remove_.insert(fd);
+}
 
-// @safe - Update poll mode directly (bypasses channel)
-// Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-// SAFETY: Internal @unsafe block handles epoll operations and address-of
+fn pollworker_do_close_pollable(w: &mut PollThreadWorker, fd: i32) {
+    w.pending_remove_.remove(fd);
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    if w.mode_.contains_key(fd) {
+        w.poll_.Remove(fd);
+    }
+    // Virtual close through the proxy (arrow kernel: unwrap would copy
+    // the move-only Box).
+    pollworker_close_proxy_of(w, fd);
+    w.fd_to_pollable_.remove(fd);
+    w.mode_.remove(fd);
+}
+
+fn pollworker_do_update_mode(w: &mut PollThreadWorker, fd: i32, new_mode: i32) {
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    let mode_opt = w.mode_.get(fd);
+    if mode_opt.is_none() {
+        return;
+    }
+    let old_mode = mode_opt.unwrap();
+    w.mode_.insert(fd, new_mode);
+    if new_mode != old_mode {
+        w.poll_.Update(fd, new_mode, old_mode);
+    }
+}
+
+fn pollworker_do_add_job(w: &mut PollThreadWorker, job: rusty::Arc<Job>) {
+    w.jobs_.insert(job);
+}
+
+fn pollworker_do_remove_job(w: &mut PollThreadWorker, job: rusty::Arc<Job>) {
+    w.jobs_.erase(job);
+}
+
+fn pollworker_process_pending_removals(w: &mut PollThreadWorker) {
+    // take-to-Vec kernel: the HashSet rejects the rusty::iter shim.
+    let remove_fds = pollworker_take_removals(w);
+    let mut i: usize = 0;
+    while i < remove_fds.len() {
+        let fd = remove_fds[i];
+        if w.fd_to_pollable_.contains_key(fd) {
+            // fd not reused (still in the mode map) => unregister.
+            if w.mode_.contains_key(fd) {
+                w.poll_.Remove(fd);
+            }
+            w.fd_to_pollable_.remove(fd);
+            w.mode_.remove(fd);
+        }
+        i += 1;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollworker_cmds version=1 rust_sha256=195fbe036a1b4f3475eded34b645d6f80a489acd017d532eb8c0bc7faebb7c4f*/
+void pollworker_do_add_pollable(PollThreadWorker& w, PollableProxy poll) {
+    const auto fd = pollable_proxy_fd(std::move(poll));
+    auto poll_mode = pollable_proxy_mode(std::move(poll));
+    if (rusty::detail::deref_if_pointer_like(fd) < 0) {
+        return;
+    }
+    if (w.fd_to_pollable_.contains_key(std::move(fd))) {
+        return;
+    }
+    w.fd_to_pollable_.insert(std::move(fd), std::move(poll));
+    w.mode_.insert(std::move(fd), std::move(poll_mode));
+    if (w.poll_.Add(std::move(fd), std::move(poll_mode)) != 0) {
+        w.fd_to_pollable_.remove(std::move(fd));
+        w.mode_.remove(std::move(fd));
+    }
+}
+
+void pollworker_do_remove_pollable(PollThreadWorker& w, int32_t fd) {
+    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+        return;
+    }
+    w.pending_remove_.insert(std::move(fd));
+}
+
+void pollworker_do_close_pollable(PollThreadWorker& w, int32_t fd) {
+    w.pending_remove_.remove(std::move(fd));
+    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+        return;
+    }
+    if (w.mode_.contains_key(std::move(fd))) {
+        w.poll_.Remove(std::move(fd));
+    }
+    pollworker_close_proxy_of(w, std::move(fd));
+    w.fd_to_pollable_.remove(std::move(fd));
+    w.mode_.remove(std::move(fd));
+}
+
+void pollworker_do_update_mode(PollThreadWorker& w, int32_t fd, int32_t new_mode) {
+    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+        return;
+    }
+    auto mode_opt = w.mode_.get(std::move(fd));
+    if (mode_opt.is_none()) {
+        return;
+    }
+    const auto old_mode = mode_opt.unwrap();
+    w.mode_.insert(std::move(fd), std::move(new_mode));
+    if (rusty::detail::deref_if_pointer_like(new_mode) != rusty::detail::deref_if_pointer_like(old_mode)) {
+        w.poll_.Update(std::move(fd), std::move(new_mode), std::move(old_mode));
+    }
+}
+
+void pollworker_do_add_job(PollThreadWorker& w, rusty::Arc<Job> job) {
+    w.jobs_.insert(std::move(job));
+}
+
+void pollworker_do_remove_job(PollThreadWorker& w, rusty::Arc<Job> job) {
+    w.jobs_.erase(std::move(job));
+}
+
+void pollworker_process_pending_removals(PollThreadWorker& w) {
+    const auto remove_fds = pollworker_take_removals(w);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(remove_fds)) {
+        const auto fd = remove_fds[i];
+        if (w.fd_to_pollable_.contains_key(std::move(fd))) {
+            if (w.mode_.contains_key(std::move(fd))) {
+                w.poll_.Remove(std::move(fd));
+            }
+            w.fd_to_pollable_.remove(std::move(fd));
+            w.mode_.remove(std::move(fd));
+        }
+        i += 1;
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.pollworker_cmds*/
+
+// @unsafe - Box-trait arrow dispatch (the 1-line kernels the DSL calls).
+int pollable_proxy_fd(const PollableProxy& p) { return p->fd(); }
+// @unsafe - drains the pending-remove set into an indexable Vec for
+// the DSL sweep (the HashSet's range-for has no rusty::iter shim).
+rusty::Vec<int> pollworker_take_removals(PollThreadWorker& self) {
+    rusty::Vec<int> v;
+    for (int fd : self.pending_remove_) {
+        v.push(fd);
+    }
+    self.pending_remove_.clear();
+    return v;
+}
+int pollable_proxy_mode(const PollableProxy& p) { return p->poll_mode(); }
+void pollworker_close_proxy_of(PollThreadWorker& self, int fd) {
+    auto proxy_opt = self.fd_to_pollable_.get(fd);
+    if (proxy_opt.is_some()) {
+        proxy_opt.unwrap()->close();
+    }
+}
+
+// @safe - Update poll mode directly (bypasses channel); only safe on
+// the poll thread. Kernel by verdict: takes the abstract Pollable by
+// reference (dyn-trait ref params have no verified DSL spelling) for
+// one line of logic.
 void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode) {
-  // @unsafe - address-of operation and epoll modification
   { pollworker_do_update_mode(self, poll.fd(), new_mode); }
 }
 
