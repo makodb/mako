@@ -156,7 +156,22 @@ public:
     void DoDropRange(const std::string& table, const std::string& lo,
                      const std::string& hi) {
         ShardData* shard = resolve(table);
-        if (shard != nullptr) shard->drop_range(lo, hi);
+        if (shard == nullptr) return;
+        try {
+            shard->drop_range(lo, hi);
+        } catch (mako::oi_scan_wedged&) {
+            // drop_range scans the range, and the scan's leaked-lock
+            // deadline can fire (observed live: an aborted back-leg's
+            // partial-copy drop hit the same eternally locked stock row and
+            // the throw unwound this handler, terminating the shard). A
+            // partial drop is best-effort by contract -- the abort path's
+            // dest copy is scratch, and a commit-path residue is already
+            // surfaced by the master's src_left warning. Log and reply.
+            // @unsafe { stderr diagnostics }
+            fprintf(stderr,
+                    "DoDropRange WEDGED '%s' (leaked-lock deadline); "
+                    "partial drop\n", table.c_str());
+        }
     }
     bool DoGet(const std::string& table, const std::string& key, std::string* out) {
         ShardData* shard = resolve(table);
