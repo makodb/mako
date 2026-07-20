@@ -255,162 +255,80 @@ inline void log_entry_load(LogEntry& entry, BinaryReadArchive& ar) {
  *
  * All methods are thread-safe in implementations.
  */
+#if RUSTYCPP_RUST
+pub trait LogStorage {
+    // @safe
+    fn get(&self, slot_id: u64) -> rusty::Option<LogEntry>;
+    // @safe
+    fn put(&mut self, entry: &LogEntry) -> bool;
+    // @safe
+    fn remove(&mut self, slot_id: u64) -> bool;
+    // @safe
+    fn get_range(&self, start: u64, end: u64) -> std::vector<LogEntry>;
+    // @safe
+    fn put_batch(&mut self, entries: &std::vector<LogEntry>) -> bool;
+    // @safe
+    fn remove_range(&mut self, start: u64, end: u64) -> bool;
+    // @safe
+    fn get_first_index(&self) -> u64;
+    // @safe
+    fn get_last_index(&self) -> u64;
+    // @safe
+    fn get_term(&self, slot_id: u64) -> rusty::Option<i64>;
+    // @safe
+    fn size(&self) -> usize;
+    // @safe
+    fn empty(&self) -> bool;
+    // @safe
+    fn set_metadata(&mut self, key: &std::string,
+                    value: &std::string) -> bool;
+    // @safe
+    fn get_metadata(&self, key: &std::string) -> rusty::Option<std::string>;
+    // @safe
+    fn sync(&mut self) -> bool;
+    // @safe
+    fn close(&mut self) -> bool;
+    // @safe
+    fn is_open(&self) -> bool;
+    // @safe
+    fn clear(&mut self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=log_storage.interface version=1 rust_sha256=a186ac27949b2eaaf626139815015bdb754a1d743f936a1c4b9ce7bed486fc55*/
+namespace {
 class LogStorage {
 public:
-    // @safe - Virtual destructor
-    virtual ~LogStorage() = default;
-
-    // ========================================================================
-    // Single Entry Operations
-    // ========================================================================
-
-    /**
-     * Get a log entry by slot ID.
-     * @param slot_id The slot/index to retrieve
-     * @return Some(entry) if found, None if not found
-     */
-    // @safe - Abstract method, implementations must be safe
-    virtual rusty::Option<LogEntry> get(slotid_t slot_id) const = 0;
-
-    /**
-     * Store a log entry.
-     * @param entry The entry to store (slot_id is the key)
-     * @return true on success, false on failure
-     */
-    // @safe - Abstract method
+    virtual ~LogStorage() noexcept(false) {}
+    virtual rusty::Option<LogEntry> get(uint64_t slot_id) const = 0;
     virtual bool put(const LogEntry& entry) = 0;
-
-    /**
-     * Remove a log entry by slot ID.
-     * @param slot_id The slot to remove
-     * @return true if removed, false if not found
-     */
-    // @safe - Abstract method
-    virtual bool remove(slotid_t slot_id) = 0;
-
-    // ========================================================================
-    // Batch Operations
-    // ========================================================================
-
-    /**
-     * Get a range of log entries [start, end).
-     * @param start Start slot (inclusive)
-     * @param end End slot (exclusive)
-     * @return Vector of entries in the range (may be sparse)
-     */
-    // @safe - Abstract method
-    virtual std::vector<LogEntry> get_range(slotid_t start, slotid_t end) const = 0;
-
-    /**
-     * Store multiple log entries atomically.
-     * @param entries Vector of entries to store
-     * @return true if all stored, false on failure
-     */
-    // @safe - Abstract method
+    virtual bool remove(uint64_t slot_id) = 0;
+    virtual std::vector<LogEntry> get_range(uint64_t start, uint64_t end) const = 0;
     virtual bool put_batch(const std::vector<LogEntry>& entries) = 0;
-
-    /**
-     * Remove a range of log entries [start, end).
-     * @param start Start slot (inclusive)
-     * @param end End slot (exclusive)
-     * @return true on success
-     */
-    // @safe - Abstract method
-    virtual bool remove_range(slotid_t start, slotid_t end) = 0;
-
-    // ========================================================================
-    // Index Queries
-    // ========================================================================
-
-    /**
-     * Get the first (lowest) slot ID in the log.
-     * @return First slot ID, or 0 if empty
-     */
-    // @safe - Abstract method
-    virtual slotid_t get_first_index() const = 0;
-
-    /**
-     * Get the last (highest) slot ID in the log.
-     * @return Last slot ID, or 0 if empty
-     */
-    // @safe - Abstract method
-    virtual slotid_t get_last_index() const = 0;
-
-    /**
-     * Get the term/ballot for a specific slot.
-     * @param slot_id The slot to query
-     * @return Some(term) if found, None if not found
-     */
-    // @safe - Abstract method
-    virtual rusty::Option<ballot_t> get_term(slotid_t slot_id) const = 0;
-
-    /**
-     * Get the number of entries in the log.
-     * @return Number of stored entries
-     */
-    // @safe - Abstract method
+    virtual bool remove_range(uint64_t start, uint64_t end) = 0;
+    virtual uint64_t get_first_index() const = 0;
+    virtual uint64_t get_last_index() const = 0;
+    virtual rusty::Option<int64_t> get_term(uint64_t slot_id) const = 0;
     virtual size_t size() const = 0;
-
-    /**
-     * Check if the log is empty.
-     * @return true if no entries stored
-     */
-    // @safe - Abstract method
     virtual bool empty() const = 0;
-
-    // ========================================================================
-    // Metadata Operations
-    // ========================================================================
-
-    /**
-     * Store metadata (term, vote, commit index, etc.).
-     * @param key Metadata key
-     * @param value Metadata value
-     * @return true on success
-     */
-    // @safe - Abstract method
     virtual bool set_metadata(const std::string& key, const std::string& value) = 0;
-
-    /**
-     * Retrieve metadata.
-     * @param key Metadata key
-     * @return Some(value) if found, None if not found
-     */
-    // @safe - Abstract method
     virtual rusty::Option<std::string> get_metadata(const std::string& key) const = 0;
-
-    // ========================================================================
-    // Lifecycle Operations
-    // ========================================================================
-
-    /**
-     * Force sync all pending writes to durable storage.
-     * @return true on success
-     */
-    // @safe - Abstract method
     virtual bool sync() = 0;
-
-    /**
-     * Close the storage, releasing resources.
-     * @return true on success
-     */
-    // @safe - Abstract method
     virtual bool close() = 0;
-
-    /**
-     * Check if storage is open and ready.
-     * @return true if open
-     */
-    // @safe - Abstract method
     virtual bool is_open() const = 0;
-
-    /**
-     * Clear all entries and metadata.
-     * @return true on success
-     */
-    // @safe - Abstract method
     virtual bool clear() = 0;
+    LogStorage(const LogStorage&) = delete;
+    LogStorage& operator=(const LogStorage&) = delete;
+    LogStorage(LogStorage&&) = delete;
+    LogStorage& operator=(LogStorage&&) = delete;
+protected:
+    LogStorage() = default;
 };
+}
+
+template <class U> class LogStorageAdapter;
+template <class U> class LogStorageAdapterRef;
+template <class U> class LogStorageAdapterRefMut;
+/*RUSTYCPP:GEN-END id=log_storage.interface*/
 
 }  // namespace raft
 }  // namespace janus
