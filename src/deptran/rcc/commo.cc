@@ -10,7 +10,7 @@ namespace janus {
 void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
                             const function<void(int res,
                                                 TxnOutput&,
-                                                RccGraph&)>& callback) {
+                                                const RccGraph&)>& callback) {
   rrr::FutureAttr fuattr;
   auto tid = cmd[0].root_id_;
   auto par_id = cmd[0].partition_id_;
@@ -112,7 +112,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
 void RccCommo::SendInquire(parid_t pid,
                            epoch_t epoch,
                            txnid_t tid,
-                           const function<void(RccGraph& graph)>& callback) {
+                           const function<void(const RccGraph& graph)>& callback) {
   FutureAttr fuattr;
   function<void(rusty::Arc<Future>)> cb = [callback] (rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {

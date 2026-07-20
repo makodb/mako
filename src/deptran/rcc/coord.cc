@@ -68,7 +68,7 @@ void RccCoord::DispatchAsync() {
 void RccCoord::DispatchAck(phase_t phase,
                            int res,
                            TxnOutput& output,
-                           RccGraph &graph) {
+                           const RccGraph& graph) {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   verify(phase == phase_); // cannot proceed without all acks.
   verify(tx_data().root_id_ == tx_data().id_);

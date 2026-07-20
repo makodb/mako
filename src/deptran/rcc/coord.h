@@ -45,7 +45,7 @@ class RccCoord : public CoordinatorClassic {
   virtual void DispatchAck(phase_t phase,
                            int res,
                            TxnOutput& cmd,
-                           RccGraph& graph);
+                           const RccGraph& graph);
   void Finish();
   void FinishAck(phase_t phase,
                  int res,
