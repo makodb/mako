@@ -111,7 +111,7 @@ enum class EventStatus : int32_t {
   DEBUG = 5,
 };
 
-using EventTestFn = rusty::Function<bool(int)>;
+using EventTestFn = rusty::Function<bool(int) const>;
 #if RUSTYCPP_RUST
 struct EventState {
     __debug_creator: i32,
@@ -154,9 +154,9 @@ struct EventState {
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 #if RUSTYCPP_RUST
 pub trait EventPollable {
-    fn test(&mut self) -> bool;
-    fn is_ready(&mut self) -> bool;
-    fn log(&mut self);
+    fn test(&self) -> bool;
+    fn is_ready(&self) -> bool;
+    fn log(&self);
     fn status(&self) -> EventStatus;
     fn set_status(&self, s: EventStatus);
     fn wakeup_time(&self) -> u64;
@@ -165,13 +165,13 @@ pub trait EventPollable {
     fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>>;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.event_pollable version=1 rust_sha256=a0e9c68e0972929eebf915a3f8a0012c2b06406dd6acefb72d864528c71d90e6*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.event_pollable version=1 rust_sha256=342f3c1646b41349ac6febce95fc5c9a264abe74cb3f7e2d2c3ba25df0feb539*/
 class EventPollable {
 public:
     virtual ~EventPollable() noexcept(false) {}
-    virtual bool test() = 0;
-    virtual bool is_ready() = 0;
-    virtual void log() = 0;
+    virtual bool test() const = 0;
+    virtual bool is_ready() const = 0;
+    virtual void log() const = 0;
     virtual EventStatus status() const = 0;
     virtual void set_status(EventStatus s) const = 0;
     virtual uint64_t wakeup_time() const = 0;
@@ -195,7 +195,7 @@ template <class U> class EventPollableAdapterRefMut;
 // event machinery below): the flattened DSL structs' generated method
 // bodies call these by ordinary lookup, so the names must exist first.
 template <typename W> void event_wait_impl(W& self, uint64_t timeout);
-template <typename W> bool event_test_impl(W& self);
+template <typename W> bool event_test_impl(const W& self);
 
 // Shared core-field kernels for the flattened DSL structs (each carries
 // the same five event-core fields, so one template set serves them all;
@@ -304,9 +304,9 @@ class BoxEvent : public EventPollable {
   void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
-  bool test() override { return event_test_impl(*this); }
-  bool is_ready() override { return is_set_; }
-  void log() override {}
+  bool test() const override { return event_test_impl(*this); }
+  bool is_ready() const override { return is_set_; }
+  void log() const override {}
   EventStatus status() const override { return status_.get(); }
   void set_status(EventStatus s) const override { status_.set(s); }
   uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
@@ -331,7 +331,7 @@ class BoxEvent : public EventPollable {
 // the source of truth; the transpiler regenerates the matching
 // `RUSTYCPP:GEN-BEGIN ... END` block.
 int32_t int_event_set(IntEvent& self, int32_t n);
-bool int_event_is_ready(IntEvent& self);
+bool int_event_is_ready(const IntEvent& self);
 uint64_t event_core_get_fiber_id();
 
 #if RUSTYCPP_RUST
@@ -377,13 +377,13 @@ impl IntEvent {
 
 #[cpp_inherit]
 impl EventPollable for IntEvent {
-    fn test(&mut self) -> bool {
+    fn test(&self) -> bool {
         event_test_impl(self)
     }
-    fn is_ready(&mut self) -> bool {
+    fn is_ready(&self) -> bool {
         int_event_is_ready(self)
     }
-    fn log(&mut self) {}
+    fn log(&self) {}
     fn status(&self) -> EventStatus {
         self.status_.get()
     }
@@ -404,7 +404,7 @@ impl EventPollable for IntEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=51b5894250b1b5eb767558d90a953e71ae0940ddf526ba802036c5ae1b2224f0*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=5d97f825c7a386d5fc82026b30999bfae594f9cff6d33e2f8d25efa054d6bd75*/
 struct IntEvent;
 
 struct IntEvent : public EventPollable {
@@ -428,9 +428,9 @@ struct IntEvent : public EventPollable {
     bool is_composite_event() const;
     std::shared_ptr<EventPollable> get_self() const;
     void set_self(std::weak_ptr<EventPollable> self_ptr);
-    bool test();
-    bool is_ready();
-    void log();
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
     EventStatus status() const;
     void set_status(EventStatus s) const;
     uint64_t wakeup_time() const;
@@ -476,15 +476,15 @@ void IntEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
-bool IntEvent::test() {
+bool IntEvent::test() const {
     return event_test_impl((*this));
 }
 
-bool IntEvent::is_ready() {
+bool IntEvent::is_ready() const {
     return int_event_is_ready((*this));
 }
 
-void IntEvent::log() {
+void IntEvent::log() const {
 }
 
 EventStatus IntEvent::status() const {
@@ -522,7 +522,7 @@ inline int32_t int_event_set(IntEvent& self, int32_t n) {
 }
 
 // @unsafe - invokes the state_.test_ rusty::Function (custom predicate).
-inline bool int_event_is_ready(IntEvent& self) {
+inline bool int_event_is_ready(const IntEvent& self) {
   if (self.state_.test_) {
     return self.state_.test_(self.value_);
   }
@@ -645,13 +645,13 @@ impl NeverEvent {
 
 #[cpp_inherit]
 impl EventPollable for NeverEvent {
-    fn test(&mut self) -> bool {
+    fn test(&self) -> bool {
         event_test_impl(self)
     }
-    fn is_ready(&mut self) -> bool {
+    fn is_ready(&self) -> bool {
         false
     }
-    fn log(&mut self) {}
+    fn log(&self) {}
     fn status(&self) -> EventStatus {
         self.status_.get()
     }
@@ -672,7 +672,7 @@ impl EventPollable for NeverEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=c24312ddfb83416ce8c2844b24c0876764758ee23f7655c759825ecef9c384f0*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=30d28cd3afa751c269a819f9729456a403a981c102bf245fbc5f66197e436c9f*/
 struct NeverEvent;
 
 struct NeverEvent : public EventPollable {
@@ -690,9 +690,9 @@ struct NeverEvent : public EventPollable {
     bool is_composite_event() const;
     std::shared_ptr<EventPollable> get_self() const;
     void set_self(std::weak_ptr<EventPollable> self_ptr);
-    bool test();
-    bool is_ready();
-    void log();
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
     EventStatus status() const;
     void set_status(EventStatus s) const;
     uint64_t wakeup_time() const;
@@ -722,15 +722,15 @@ void NeverEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
-bool NeverEvent::test() {
+bool NeverEvent::test() const {
     return event_test_impl((*this));
 }
 
-bool NeverEvent::is_ready() {
+bool NeverEvent::is_ready() const {
     return false;
 }
 
-void NeverEvent::log() {
+void NeverEvent::log() const {
 }
 
 EventStatus NeverEvent::status() const {
@@ -801,13 +801,13 @@ impl TimeoutEvent {
 
 #[cpp_inherit]
 impl EventPollable for TimeoutEvent {
-    fn test(&mut self) -> bool {
+    fn test(&self) -> bool {
         event_test_impl(self)
     }
-    fn is_ready(&mut self) -> bool {
+    fn is_ready(&self) -> bool {
         timeout_event_is_ready(self)
     }
-    fn log(&mut self) {}
+    fn log(&self) {}
     fn status(&self) -> EventStatus {
         self.status_.get()
     }
@@ -828,7 +828,7 @@ impl EventPollable for TimeoutEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=410d9234858448c6b1e85e412ea0856130e227a00bb3f2fc2374e728549e96dd*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=f09fa016311fda428704babe4e9a8c1af7710b6b45101e68a7b9bb0452e3c438*/
 struct TimeoutEvent;
 
 struct TimeoutEvent : public EventPollable {
@@ -847,9 +847,9 @@ struct TimeoutEvent : public EventPollable {
     bool is_composite_event() const;
     std::shared_ptr<EventPollable> get_self() const;
     void set_self(std::weak_ptr<EventPollable> self_ptr);
-    bool test();
-    bool is_ready();
-    void log();
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
     EventStatus status() const;
     void set_status(EventStatus s) const;
     uint64_t wakeup_time() const;
@@ -875,15 +875,15 @@ void TimeoutEvent::set_self(std::weak_ptr<EventPollable> self_ptr) {
     event_core_set_self((*this), std::move(self_ptr));
 }
 
-bool TimeoutEvent::test() {
+bool TimeoutEvent::test() const {
     return event_test_impl((*this));
 }
 
-bool TimeoutEvent::is_ready() {
+bool TimeoutEvent::is_ready() const {
     return timeout_event_is_ready((*this));
 }
 
-void TimeoutEvent::log() {
+void TimeoutEvent::log() const {
 }
 
 EventStatus TimeoutEvent::status() const {
@@ -950,9 +950,9 @@ class WaitAny : public EventPollable {
   void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
-  bool test() override { return event_test_impl(*this); }
+  bool test() const override { return event_test_impl(*this); }
   // @safe - ready as soon as any child event is ready.
-  bool is_ready() override {
+  bool is_ready() const override {
     for (const auto& e : events_) {
       // @unsafe { child virtual dispatch through EventPollable }
       if (e && e->is_ready()) {
@@ -961,7 +961,7 @@ class WaitAny : public EventPollable {
     }
     return false;
   }
-  void log() override {}
+  void log() const override {}
   EventStatus status() const override { return status_.get(); }
   void set_status(EventStatus s) const override { status_.set(s); }
   uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
@@ -1020,13 +1020,13 @@ class WaitAll : public EventPollable {
   void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
-  bool test() override { return event_test_impl(*this); }
-  void log() override {
+  bool test() const override { return event_test_impl(*this); }
+  void log() const override {
     for(size_t i = 0; i < events_.len(); i++){
       events_[i]->log();
     }
   }
-  bool is_ready() override {
+  bool is_ready() const override {
     // All events must be ready (or DONE) for WaitAll to be ready.
     for (const auto& e : events_) {
       if (!e) {
@@ -2125,7 +2125,7 @@ class QuorumEvent : public EventPollable {
 
   // Formerly virtual with per-protocol overrides; now a policy switch
   // (kept virtual through the transition — no overriders remain).
-  virtual bool yes() {
+  bool yes() const {
     bool base = n_voted_yes_ >= quorum_;
     if (policy_ == QuorumPolicy::LEADER_AND) {
       return base && n_leader_yes_ >= num_leader_;
@@ -2133,7 +2133,7 @@ class QuorumEvent : public EventPollable {
     return base;
   }
 
-  virtual bool no() {
+  bool no() const {
     if (policy_ == QuorumPolicy::ALL_NO) {
       return n_voted_no_ == n_total_;
     }
@@ -2153,7 +2153,7 @@ class QuorumEvent : public EventPollable {
   // `finalize_event_->status_` is @safe.
   void vote_no();
 
-  bool is_ready() override {
+  bool is_ready() const override {
     switch (policy_) {
       case QuorumPolicy::ALWAYS_READY:
         return true;
@@ -2198,8 +2198,8 @@ class QuorumEvent : public EventPollable {
   void set_self(std::weak_ptr<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
 
   // EventPollable trait surface.
-  bool test() override { return event_test_impl(*this); }
-  void log() override {}
+  bool test() const override { return event_test_impl(*this); }
+  void log() const override {}
   EventStatus status() const override { return status_.get(); }
   void set_status(EventStatus s) const override { status_.set(s); }
   uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
@@ -2390,7 +2390,7 @@ void event_wait_impl(W& self, uint64_t timeout) {
 // Verbatim test() machinery as a kernel over the concrete event type W
 // (see event_wait_impl above for the duck-typed surface contract).
 template <typename W>
-bool event_test_impl(W& self) {
+bool event_test_impl(const W& self) {
   verify(self.state_.__debug_creator);
   if (self.is_ready()) {
     if (self.status_.get() == EventStatus::INIT) {
