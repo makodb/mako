@@ -455,6 +455,23 @@ namespace mako
         return (++n % k) == 0;
     }
 
+    // MAKO_FI_FAIL_DECISIONS=K (fault injection, off by default): every Kth
+    // SUCCESSFUL decision RPC reports FAILURE to its caller anyway --
+    // exercising the coordinator's retry-until-success loop end to end (the
+    // resend reaches an already-resolved participant, which must ack; the
+    // loop must then terminate). This is exactly the lost-REPLY failure
+    // mode that leaked locks when the result was ignored.
+    static bool fi_report_failure_due() {
+        static const int k = []() {
+            // @unsafe { getenv/atoi are libc }
+            const char *e = getenv("MAKO_FI_FAIL_DECISIONS");
+            return e != nullptr ? atoi(e) : 0;
+        }();
+        if (k <= 0) return false;
+        static thread_local int n = 0;
+        return (++n % k) == 0;
+    }
+
     int ShardClient::remoteInstall(uint32_t timestamp) {
         auto send_once = [&]() -> int {
             // Single timestamp encoding - no vector needed
@@ -477,6 +494,9 @@ namespace mako
         int ret = send_once();
         if (ret == ErrorCode::SUCCESS && fi_duplicate_decision_due()) {
             (void)send_once();   // duplicate on the wire; result irrelevant
+        }
+        if (ret == ErrorCode::SUCCESS && fi_report_failure_due()) {
+            return ErrorCode::ERROR;   // lost-reply injection: caller must retry
         }
         return ret;
     }
@@ -653,6 +673,9 @@ namespace mako
         int ret = send_once();
         if (ret == ErrorCode::SUCCESS && fi_duplicate_decision_due()) {
             (void)send_once();   // duplicate on the wire; result irrelevant
+        }
+        if (ret == ErrorCode::SUCCESS && fi_report_failure_due()) {
+            return ErrorCode::ERROR;   // lost-reply injection: caller must retry
         }
         return ret;
     }

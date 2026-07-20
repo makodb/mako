@@ -618,12 +618,20 @@ bool Transaction::try_commit(bool no_paxos) {
             // NO later message that would release them -- walking away leaks
             // those locks FOREVER (observed live: one stock row stayed
             // locked 24+ minutes and pinned the migration data plane).
-            // Mako accepts 2PC's blocking window, so retry within a bound:
-            // install is idempotent for participants that already applied
-            // it, and each retry is another chance to release the rest.
+            // Retry UNTIL SUCCESS: the deployment model assumes shard
+            // processes do not fail, so the peer eventually answers, and
+            // participants ack duplicate installs (resolved txns reply
+            // SUCCESS), so resends are safe and the loop terminates even
+            // when only the REPLY was lost. Blocking this worker is the
+            // deliberate trade -- an unreleased participant lock is a
+            // system-wide hazard, one stalled worker is not. The warning
+            // keeps a long-stuck decision visible instead of silent.
             for (int retry_c = 0; ; ++retry_c) {
                 if (TThread::sclient->remoteInstall(tid_unique_) <= 0) break;
-                if (retry_c >= 4) break;   // 5 tries total
+                if (retry_c > 0 && retry_c % 5 == 0) {
+                    Warning("remoteInstall still unacknowledged after %d "
+                            "attempts; retrying until success", retry_c);
+                }
                 // @unsafe { usleep is libc }
                 usleep(50 * 1000);
             }
@@ -668,10 +676,16 @@ abort:
         // The abort is the ONLY message that releases the locks this txn's
         // BatchLock took on remote participants; a single lost/timed-out
         // send leaks them forever (same forever-locked-row pathology as the
-        // install path above). Retry within a bound -- abort is idempotent.
+        // install path above). Retry UNTIL SUCCESS under the same
+        // no-process-failure deployment assumption -- participants ack
+        // duplicate/vacuous aborts, so resends are safe and the loop
+        // terminates even when only the reply was lost.
         for (int retry_c = 0; ; ++retry_c) {
             if (TThread::sclient->remoteAbort() <= 0) break;
-            if (retry_c >= 2) break;   // 3 tries total
+            if (retry_c > 0 && retry_c % 5 == 0) {
+                Warning("remoteAbort still unacknowledged after %d attempts; "
+                        "retrying until success", retry_c);
+            }
             // @unsafe { usleep is libc }
             usleep(50 * 1000);
         }
