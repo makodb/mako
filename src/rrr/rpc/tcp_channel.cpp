@@ -2026,113 +2026,171 @@ void tcplistener_close(const TcpListener& self) {
 // @unsafe - accept loop: rusty::net::TcpListener::accept + per-accept
 // setsockopt(macOS) + TcpConnection construction + on_accept/on_error
 // callback dispatch under the spinlock.
-bool tcplistener_handle_read(const TcpListener& self) {
-    if (self.closed_.get()) return false;
-    if (!self.listener_.is_bound()) return false;
+// One accept iteration's mechanics (foreign Result/pair/TcpStream
+// interop, the APPLE SO_NOSIGPIPE split, the RAII unwrap into
+// TcpConnection, poll-thread wiring, proxy construction) — a single
+// classify-and-wrap kernel. Returns 1 accepted (out->proxy filled),
+// 0 retriable/no-work, 2 nonblock-config failure (out->ch filled),
+// -1 hard error (out->ch + out->msg filled).
+struct AcceptStep {
+    ChannelError ch = ChannelError::None;
+    std::string msg;
+    rusty::Option<ChannelConnectionProxy> proxy;
+};
+AcceptStep tcplistener_accept_step_new();
+int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out);
+ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s);
+bool tcplistener_is_bound(const TcpListener& self);
 
-    bool any_progress = false;
-    while (true) {
-        auto accept_result = const_cast<rusty::net::TcpListener&>(self.listener_).accept();
-        if (accept_result.is_err()) {
-            auto err = accept_result.unwrap_err();
-            auto kind = err.kind();
-            // Retriable / "no work" — break out so the caller doesn't spin.
-            if (kind == rusty::io::Error::Kind::WouldBlock ||
-                kind == rusty::io::Error::Kind::Interrupted ||
-                kind == rusty::io::Error::Kind::ConnectionAborted) {
-                break;
+// The accept LOOP policy — progress accounting, retriable break,
+// nonblock-failure skip, hard-error close, on_accept dispatch — as
+// DSL over the step kernel.
+#if RUSTYCPP_RUST
+fn tcplistener_handle_read(lst: &TcpListener) -> bool {
+    if lst.closed_.get() {
+        return false;
+    }
+    if !tcplistener_is_bound(lst) {
+        return false;
+    }
+    let mut any_progress = false;
+    let mut accepting = true;
+    while accepting {
+        let mut step = tcplistener_accept_step_new();
+        let rc = tcplistener_accept_step(lst, &mut step);
+        if rc == 1 {
+            any_progress = true;
+            let mut guard = lst.on_accept_.lock().unwrap();
+            if *guard {
+                (*guard)(tcplistener_take_proxy(&mut step));
             }
-            // Non-recoverable failure.
-            const ChannelError ch = io_kind_to_channel_error(kind);
+        } else if rc == 0 {
+            accepting = false;
+        } else if rc == 2 {
+            let mut guard = lst.on_error_.lock().unwrap();
+            if *guard {
+                (*guard)(step.ch, "accept: failed to set non-blocking");
+            }
+        } else {
             {
-                auto guard = self.on_error_.lock().unwrap();
-                if (*guard) {
-                    (*guard)(ch, err.to_string());
+                let mut guard = lst.on_error_.lock().unwrap();
+                if *guard {
+                    (*guard)(step.ch, step.msg);
                 }
             }
-            // For EMFILE/ENFILE we don't want to close — the listener
-            // is still functional once a fd is freed up. Use the
-            // io::Error::Kind that maps to those (currently we have no
-            // dedicated Kind, so we close on everything else).
-            tcplistener_close(self);
+            tcplistener_close(lst);
             return any_progress;
         }
+    }
+    any_progress
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener_read version=1 rust_sha256=bf02f686ebcc74f1f40e3606bcc354f33435b549187e8bfbf90485eed2192fd4*/
+bool tcplistener_handle_read(const TcpListener& lst) {
+    if (lst.closed_.get()) {
+        return false;
+    }
+    if (!tcplistener_is_bound(lst)) {
+        return false;
+    }
+    auto any_progress = false;
+    auto accepting = true;
+    while (accepting) {
+        auto step = tcplistener_accept_step_new();
+        const auto rc = tcplistener_accept_step(lst, &step);
+        if (rusty::detail::deref_if_pointer_like(rc) == 1) {
+            any_progress = true;
+            auto guard = lst.on_accept_.lock().unwrap();
+            if (rusty::detail::deref_if_pointer_like(guard)) {
+                (rusty::detail::deref_if_pointer_like(guard))(tcplistener_take_proxy(&step));
+            }
+        } else if (rusty::detail::deref_if_pointer_like(rc) == 0) {
+            accepting = false;
+        } else if (rusty::detail::deref_if_pointer_like(rc) == 2) {
+            auto guard = lst.on_error_.lock().unwrap();
+            if (rusty::detail::deref_if_pointer_like(guard)) {
+                (rusty::detail::deref_if_pointer_like(guard))(std::move(step.ch), "accept: failed to set non-blocking");
+            }
+        } else {
+            {
+                auto guard = lst.on_error_.lock().unwrap();
+                if (rusty::detail::deref_if_pointer_like(guard)) {
+                    (rusty::detail::deref_if_pointer_like(guard))(std::move(step.ch), std::move(step.msg));
+                }
+            }
+            tcplistener_close(lst);
+            return std::move(any_progress);
+        }
+    }
+    return std::move(any_progress);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.listener_read*/
 
-        auto accepted = accept_result.unwrap();
-        rusty::net::TcpStream stream = std::move(accepted.first);
-        rusty::net::SocketAddrV4 peer_addr = accepted.second;
+// @unsafe - value-init factory + move-out helper for the DSL.
+AcceptStep tcplistener_accept_step_new() { return AcceptStep{}; }
+ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s) { return s->proxy.take().unwrap(); }
 
-        any_progress = true;
+// @unsafe - const method on the foreign rusty::net::TcpListener field.
+bool tcplistener_is_bound(const TcpListener& self) {
+    return self.listener_.is_bound();
+}
+
+// @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
+int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
+    auto accept_result = const_cast<rusty::net::TcpListener&>(self.listener_).accept();
+    if (accept_result.is_err()) {
+        auto err = accept_result.unwrap_err();
+        auto kind = err.kind();
+        // Retriable / "no work" — the DSL loop breaks without spinning.
+        if (kind == rusty::io::Error::Kind::WouldBlock ||
+            kind == rusty::io::Error::Kind::Interrupted ||
+            kind == rusty::io::Error::Kind::ConnectionAborted) {
+            return 0;
+        }
+        out->ch = io_kind_to_channel_error(kind);
+        out->msg = err.to_string();
+        return -1;
+    }
+
+    auto accepted = accept_result.unwrap();
+    rusty::net::TcpStream stream = std::move(accepted.first);
+    rusty::net::SocketAddrV4 peer_addr = accepted.second;
 
 #ifdef __APPLE__
-        // Prevent SIGPIPE termination on write() to closed sockets.
-        // Linux uses MSG_NOSIGNAL on send(); macOS lacks that flag.
-        // Apply directly to the underlying fd before we hand it to
-        // TcpConnection.
-        {
-            const int yes = 1;
-            // @unsafe { setsockopt(SO_NOSIGPIPE) on macOS only. }
-            (void)::setsockopt(stream.as_owned_fd().as_raw_fd(),
-                               SOL_SOCKET, SO_NOSIGPIPE,
-                               &yes, sizeof(yes));
-        }
+    // Prevent SIGPIPE termination on write() to closed sockets (Linux
+    // uses MSG_NOSIGNAL on send(); macOS lacks that flag).
+    {
+        const int yes = 1;
+        (void)::setsockopt(stream.as_owned_fd().as_raw_fd(),
+                           SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+    }
 #endif
 
-        // Non-blocking accepted socket — matches the rest of the
-        // channel layer's expectations.
-        auto nonblock_result = stream.set_nonblocking(true);
-        if (nonblock_result.is_err()) {
-            auto guard = self.on_error_.lock().unwrap();
-            if (*guard) {
-                (*guard)(io_kind_to_channel_error(
-                             nonblock_result.unwrap_err().kind()),
-                         "accept: failed to set non-blocking");
-            }
-            // stream drops here, closing the accepted fd.
-            continue;
-        }
-
-        std::string peer_addr_str =
-            rusty::net::socket_addr_v4_to_string(peer_addr);
-
-        // Hand the accepted fd to TcpConnection. We unwrap the
-        // TcpStream back into a raw int because TcpConnection still
-        // takes an int fd — Phase D will swap TcpConnection's
-        // OwnedFd field for a TcpStream and we'll pass the
-        // TcpStream directly.
-        int conn_fd;
-        // @unsafe { into_owned_fd() releases ownership of the
-        //           underlying fd; into_raw_fd() relinquishes the
-        //           OwnedFd's RAII close. We rebuild RAII inside the
-        //           TcpConnection ctor below. }
-        { conn_fd = stream.into_owned_fd().into_raw_fd(); }
-        auto conn = rusty::Arc<TcpConnection>::make(
-            conn_fd, std::move(peer_addr_str));
-
-        if (self.poll_thread_.is_some()) {
-            // wire the poll thread into
-            // the accepted connection BEFORE registering its pollable
-            // proxy, so non-poll-thread `send_frame` callers on the
-            // server side can also post `update_mode` actively.
-            {
-                auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
-                mut_conn.set_poll_thread(self.poll_thread_.as_ref().unwrap().clone());
-            }
-            self.poll_thread_.as_ref().unwrap()->add_proxy(
-                make_tcp_connection_pollable_proxy(conn.clone()));
-        }
-
-        ChannelConnectionProxy proxy =
-            make_tcp_connection_channel_proxy(std::move(conn));
-
-        auto guard = self.on_accept_.lock().unwrap();
-        if (*guard) {
-            (*guard)(std::move(proxy));
-        }
-        // If no on_accept callback is installed, the proxy drops here
-        // and the connection is destroyed.
+    auto nonblock_result = stream.set_nonblocking(true);
+    if (nonblock_result.is_err()) {
+        out->ch = io_kind_to_channel_error(nonblock_result.unwrap_err().kind());
+        // stream drops here, closing the accepted fd.
+        return 2;
     }
-    return any_progress;
+
+    std::string peer_addr_str = rusty::net::socket_addr_v4_to_string(peer_addr);
+
+    // Hand the accepted fd to TcpConnection (Phase D will pass the
+    // TcpStream directly).
+    int conn_fd = stream.into_owned_fd().into_raw_fd();
+    auto conn = rusty::Arc<TcpConnection>::make(conn_fd, std::move(peer_addr_str));
+
+    if (self.poll_thread_.is_some()) {
+        {
+            auto& mut_conn = const_cast<TcpConnection&>(*conn.get());
+            mut_conn.set_poll_thread(self.poll_thread_.as_ref().unwrap().clone());
+        }
+        self.poll_thread_.as_ref().unwrap()->add_proxy(
+            make_tcp_connection_pollable_proxy(conn.clone()));
+    }
+
+    out->proxy = rusty::Some(make_tcp_connection_channel_proxy(std::move(conn)));
+    return 1;
 }
 
 // @unsafe - drives the on_error callback then closes the listener.
