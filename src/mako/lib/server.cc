@@ -46,6 +46,11 @@ namespace mako
     {
         db = dbX;
         open_tables_table_id = open_tables_table_idX;
+        for (const auto& e : open_tables_table_idX) {
+            if (e.first > 0 && e.first < kMaxTableId) {
+                tables_by_id_[e.first].store(e.second, std::memory_order_release);
+            }
+        }
 
         txn_obj_buf.reserve(str_arena::MinStrReserveLength);
         txn_obj_buf.resize(db->sizeof_txn_object(0));
@@ -66,7 +71,10 @@ namespace mako
     {
         if (table_id <= 0 || !table)
             return;
-        open_tables_table_id[table_id] = table;
+        open_tables_table_id[table_id] = table;   // snapshot for GetOpenTables only
+        if (table_id < kMaxTableId) {
+            tables_by_id_[table_id].store(table, std::memory_order_release);
+        }
     }
 
     // Rate-limited observability for the duplicate-decision acks in
@@ -323,7 +331,7 @@ namespace mako
                     item_micro::key k_s_new(*k_s);
                     for (int i=0; i<mako::mega_batch_size; i++) {
                         k_s_new.i_id = base_ol_i_id + i;
-                        open_tables_table_id[table_id]->shard_put(EncodeK(obj_key0, k_s_new), obj_v);
+                        table_for(table_id)->shard_put(EncodeK(obj_key0, k_s_new), obj_v);
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
                    status = ErrorCode::ABORT;
@@ -361,7 +369,7 @@ namespace mako
                     stock::key k_s_new(*k_s);
                     for (int i=0; i<mako::mega_batch_size; i++) {
                         k_s_new.s_i_id = base_ol_i_id + i;
-                        open_tables_table_id[table_id]->shard_put(EncodeK(obj_key0, k_s_new), obj_v);
+                        table_for(table_id)->shard_put(EncodeK(obj_key0, k_s_new), obj_v);
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
                    //db->shard_abort_txn(nullptr);
@@ -400,7 +408,7 @@ namespace mako
 
             if (table_id > 0) {
                 try {
-                    open_tables_table_id[table_id]->shard_put(obj_key0, obj_v);
+                    table_for(table_id)->shard_put(obj_key0, obj_v);
                 } catch (abstract_db::abstract_abort_exception &ex) {
                    //db->shard_abort_txn(nullptr);
                    status = ErrorCode::ABORT;
@@ -431,7 +439,7 @@ namespace mako
 
         if (table_id > 0) {
             try {
-                open_tables_table_id[table_id]->shard_put(obj_key0, obj_v);
+                table_for(table_id)->shard_put(obj_key0, obj_v);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 //db->shard_abort_txn(nullptr);
                 status = ErrorCode::ABORT;
@@ -461,7 +469,7 @@ namespace mako
         static_limit_callback<512> c(s_arena.get(), true); // probably a safe bet for now, NMaxCustomerIdxScanElems
         if (req->table_id > 0) {
             try {
-                open_tables_table_id[req->table_id]->shard_scan(obj_key0, &obj_key1, c, s_arena.get());
+                table_for(req->table_id)->shard_scan(obj_key0, &obj_key1, c, s_arena.get());
                 if (c.size() == 0) {
                     //Warning("# of scan is 0, table_id: %d", (int)req->table_id);
                     throw abstract_db::abstract_abort_exception();
@@ -509,7 +517,7 @@ namespace mako
                 item_micro::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
+                   ret = table_for(req->table_id)->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),value_size);
                    offset = 0;
                 }
@@ -560,7 +568,7 @@ namespace mako
                 stock::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.s_i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
+                   ret = table_for(req->table_id)->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),mako::size_per_stock_value);
                    //offset += mako::size_per_stock_value;
                    offset = 0;
@@ -606,13 +614,13 @@ namespace mako
         int status = ErrorCode::SUCCESS;
         if (req->table_id > 0) {
             // Check if table exists (may not exist in micro benchmark mode)
-            auto it = open_tables_table_id.find(req->table_id);
-            if (it == open_tables_table_id.end() || it->second == nullptr) {
+            abstract_ordered_index* get_table = table_for(req->table_id);
+            if (get_table == nullptr) {
                 db->shard_abort_txn(nullptr);
                 status = ErrorCode::ABORT;
             } else {
                 try {
-                    bool ret = it->second->shard_get(obj_key0, obj_v, std::string::npos);
+                    bool ret = get_table->shard_get(obj_key0, obj_v, std::string::npos);
                     // abort here,
                     //  "not found a key" maybe a expected behavior
                     if (!ret){ // key not found or found but invalid
@@ -715,8 +723,8 @@ namespace mako
             return ErrorCode::SERVER_BUSY;
         }
 
-        auto it = open_tables_table_id.find(table_id);
-        if (it == open_tables_table_id.end() || it->second == nullptr) {
+        abstract_ordered_index* op_table = table_for(table_id);
+        if (op_table == nullptr) {
             return ErrorCode::ERROR;  // table not found
         }
 
@@ -797,17 +805,17 @@ namespace mako
         try {
             switch (opType) {
             case nontxnPutReqType:
-                *op_result = it->second->put(key, value);
+                *op_result = op_table->put(key, value);
                 break;
             case nontxnInsertReqType:
-                *op_result = it->second->insert(key, value);
+                *op_result = op_table->insert(key, value);
                 break;
             case nontxnRemoveReqType:
-                *op_result = it->second->remove(lcdf::Str(key));
+                *op_result = op_table->remove(lcdf::Str(key));
                 break;
             case nontxnGetReqType:
                 get_out->clear();
-                *op_result = it->second->get(lcdf::Str(key), *get_out, std::string::npos);
+                *op_result = op_table->get(lcdf::Str(key), *get_out, std::string::npos);
                 if (!*op_result)
                     status = ErrorCode::ABORT;  // key not found
                 break;

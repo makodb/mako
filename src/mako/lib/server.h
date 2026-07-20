@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <array>
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/common.h"
@@ -137,7 +138,32 @@ namespace mako
 
         // store layer
         abstract_db *db;
+        // Boot/registration snapshot only (see GetOpenTables); handler
+        // threads must NEVER read this map -- they use tables_by_id_.
         map<int, abstract_ordered_index *> open_tables_table_id;
+
+        // Hot-path table lookup: FIXED-STRUCTURE array of atomic pointers.
+        // Helper threads resolve tables on EVERY remote op with no lock,
+        // while live migration ADOPTS tables mid-run (UpdateTableEntry);
+        // the previous std::map rebalanced its tree under those lock-free
+        // readers -- a data race that walked garbage node pointers
+        // (observed live: SIGSEGV in a masstree scan through a poisoned
+        // table pointer during the stock adoption window). Table ids are
+        // small, sequential and preallocated, and entries are only ever
+        // ADDED (index objects live for the process), so an acquire load
+        // of one fixed slot is race-free by construction.
+        static constexpr int kMaxTableId = 4096;
+        std::array<std::atomic<abstract_ordered_index*>, kMaxTableId> tables_by_id_{};
+
+    public:
+        // @safe - lock-free acquire load; nullptr for unknown/out-of-range
+        //   ids (the old operator[] minted a null entry for those anyway).
+        abstract_ordered_index* table_for(int id) const {
+            if (id <= 0 || id >= kMaxTableId) return nullptr;
+            return tables_by_id_[id].load(std::memory_order_acquire);
+        }
+
+    private:
         // map<string, vector<abstract_ordered_index *>> partitions;
         // map<string, vector<abstract_ordered_index *>> remote_partitions;
 
