@@ -2253,6 +2253,11 @@ ChannelError connect_errno_to_channel_error(int32_t err) {
 // @unsafe - socket(2) / connect(2) / setsockopt(2) / fcntl(2) syscalls
 // + reinterpret_cast<sockaddr*> on the sockaddr_in + PollThread::
 // add_proxy is @unsafe + raw fd handling.
+// KERNEL by verdict (TCP sweep): unlike the accept loop, connect has
+// no loop/callback POLICY separable from its syscall sequence — the
+// socket/nonblock/EINPROGRESS/select/SO_ERROR ladder with
+// close-on-every-error IS the body. A DSL shell over one fat step
+// kernel would be cosmetic fragmentation (anti-fragmentation rule).
 ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr) {
     auto parse_result = rusty::net::socket_addr_v4_from_str(addr);
     if (parse_result.is_err()) {
