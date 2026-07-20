@@ -2066,25 +2066,27 @@ class QuorumEvent : public EventPollable {
   rusty::Cell<bool> prunable_{true};
   std::weak_ptr<EventPollable> self_;
 
-  int32_t n_voted_yes_{0};
-  int32_t n_voted_no_{0};
-  rusty::HashMap<uint16_t, rrr::i64> xids_;
+  rusty::Cell<int32_t> n_voted_yes_{0};
+  rusty::Cell<int32_t> n_voted_no_{0};
+  rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>> xids_;
 
  public:
   int32_t n_total_ = -1;
   int32_t quorum_ = -1;
-  QuorumPolicy policy_{QuorumPolicy::DEFAULT};
+  rusty::Cell<QuorumPolicy> policy_{QuorumPolicy::DEFAULT};
   // Policy-specific state, hoisted from the former subclasses so the
-  // readiness predicate only ever reads QuorumEvent's own fields:
-  bool committed_seen_ = false;   // COMMITTED_SHORT (CopilotPrepare)
-  int32_t num_leader_{0};         // LEADER_AND (RuleSpeculativeExecute)
-  int32_t n_leader_yes_{0};       // LEADER_AND
-  int32_t n_leader_no_{0};        // LEADER_AND
-  int64_t highest_term_{0} ;
-  bool timeouted_ = false;        // kept public and never written (see ALL_NO note)
-  uint32_t leader_id_{0} ;
-  int64_t par_id_ = -1;
-  uint64_t id_ = -1;
+  // readiness predicate only ever reads QuorumEvent's own fields.
+  // Interior-mutable (Cell) so the readiness/vote methods are const,
+  // and the protocol coordinators set them through a const-view Arc.
+  rusty::Cell<bool> committed_seen_{false};   // COMMITTED_SHORT (CopilotPrepare)
+  rusty::Cell<int32_t> num_leader_{0};        // LEADER_AND (RuleSpeculativeExecute)
+  rusty::Cell<int32_t> n_leader_yes_{0};      // LEADER_AND
+  rusty::Cell<int32_t> n_leader_no_{0};       // LEADER_AND
+  rusty::Cell<int64_t> highest_term_{0};
+  rusty::Cell<bool> timeouted_{false};        // kept public and never written (see ALL_NO note)
+  rusty::Cell<uint32_t> leader_id_{0};
+  rusty::Cell<int64_t> par_id_{-1};
+  rusty::Cell<uint64_t> id_{static_cast<uint64_t>(-1)};
   shared_ptr<IntEvent> finalize_event_;
 
   QuorumEvent() = delete;
@@ -2098,14 +2100,14 @@ class QuorumEvent : public EventPollable {
    * @param site site id of the RPC issuing to
    * @param xid TXid of the RPC
    */
-  void add_xid(uint16_t site, rrr::i64 xid);
+  void add_xid(uint16_t site, rrr::i64 xid) const;
 
   /**
    * Remove an replied RPC from the dangling RPC list
    *
    * @param site site id of the reply coming from
    */
-  void remove_xid(uint16_t site);
+  void remove_xid(uint16_t site) const;
 
   /**
    * call finalize before/after wait() to cleanup the side-effect of the quorum-event
@@ -2118,40 +2120,40 @@ class QuorumEvent : public EventPollable {
    * @param finalize_func what to do in finalization, take a list of dangling RPC
    */
   void finalize(uint64_t timeout,
-                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
+                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func) const;
 
   // Formerly virtual with per-protocol overrides; now a policy switch
   // (kept virtual through the transition — no overriders remain).
   bool yes() const {
-    bool base = n_voted_yes_ >= quorum_;
-    if (policy_ == QuorumPolicy::LEADER_AND) {
-      return base && n_leader_yes_ >= num_leader_;
+    bool base = n_voted_yes_.get() >= quorum_;
+    if (policy_.get() == QuorumPolicy::LEADER_AND) {
+      return base && n_leader_yes_.get() >= num_leader_.get();
     }
     return base;
   }
 
   bool no() const {
-    if (policy_ == QuorumPolicy::ALL_NO) {
-      return n_voted_no_ == n_total_;
+    if (policy_.get() == QuorumPolicy::ALL_NO) {
+      return n_voted_no_.get() == n_total_;
     }
     verify(n_total_ >= quorum_);
-    bool base = n_voted_no_ > (n_total_ - quorum_);
-    if (policy_ == QuorumPolicy::LEADER_AND) {
-      return base || n_leader_no_ > 0;
+    bool base = n_voted_no_.get() > (n_total_ - quorum_);
+    if (policy_.get() == QuorumPolicy::LEADER_AND) {
+      return base || n_leader_no_.get() > 0;
     }
     return base;
   }
 
   // @safe - test(), Time::now(false), rusty::Vec::push, IntEvent::set
   // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
-  void vote_yes();
+  void vote_yes() const;
 
   // @safe - test() and IntEvent::set are @safe; Cell::get on
   // `finalize_event_->status_` is @safe.
-  void vote_no();
+  void vote_no() const;
 
   bool is_ready() const override {
-    switch (policy_) {
+    switch (policy_.get()) {
       case QuorumPolicy::ALWAYS_READY:
         return true;
       case QuorumPolicy::ALL_NO:
@@ -2159,15 +2161,15 @@ class QuorumEvent : public EventPollable {
         // DEFAULT while timeouted_ has zero writers — see the enum note).
         return yes() || no();
       case QuorumPolicy::COMMITTED_SHORT:
-        if (timeouted_) {
+        if (timeouted_.get()) {
           return true;
         }
-        if (committed_seen_) {
+        if (committed_seen_.get()) {
           return true;
         }
         return yes() || no();
       default:
-        if (timeouted_) {
+        if (timeouted_.get()) {
           // TODO add time out support
           return true;
         }
@@ -2183,10 +2185,10 @@ class QuorumEvent : public EventPollable {
   // get_fiber_id/is_slow/test to this).
   void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
   void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
-  uint64_t get_fiber_id() { return event_core_get_fiber_id(); }
+  uint64_t get_fiber_id() const { return event_core_get_fiber_id(); }
   // @unsafe - reads/clears the reactor's shared slow_ flag (matches the
   // former Event::is_slow); slow_ is public and Reactor is complete here.
-  bool is_slow() {
+  bool is_slow() const {
     bool result = Reactor::get_reactor()->slow_.get();
     Reactor::get_reactor()->slow_.set(false);
     return result;
@@ -4200,7 +4202,7 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
 
 void QuorumEvent::finalize(
     uint64_t timeout,
-    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
+    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) const {
 
 
   // rusty::Function is move-only, so capture the callback by move
@@ -4211,7 +4213,9 @@ void QuorumEvent::finalize(
 
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
     rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
-    for (auto it : xids_)
+    // borrow_mut (RefCell::borrow_mut is const) — HashMap iteration
+    // needs a non-const map; this is a read-only copy-out, no aliasing.
+    for (auto it : *xids_.borrow_mut())
       dangling_rpc.push(it);  // fetch out dangling rpc info before it's freed (see comment A)
 
     final_ev->wait_timeout(timeout);
@@ -4233,30 +4237,30 @@ void QuorumEvent::finalize(
   }, __FILE__, __LINE__);
 }
 
-void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) {
-  xids_[site] = xid;
+void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) const {
+  (*xids_.borrow_mut())[site] = xid;
 }
 
-void QuorumEvent::remove_xid(uint16_t site) {
-  xids_.remove(site);
+void QuorumEvent::remove_xid(uint16_t site) const {
+  xids_.borrow_mut()->remove(site);
 }
 
-void QuorumEvent::vote_yes() {
-  n_voted_yes_++;
+void QuorumEvent::vote_yes() const {
+  n_voted_yes_.set(n_voted_yes_.get() + 1);
   test();
 
   if (finalize_event_->status_.get() != EventStatus::TIMEOUT &&
       finalize_event_->status_.get() != EventStatus::DONE)
-    finalize_event_->set(n_voted_yes_ + n_voted_no_);
+    finalize_event_->set(n_voted_yes_.get() + n_voted_no_.get());
 }
 
-void QuorumEvent::vote_no() {
-  n_voted_no_++;
+void QuorumEvent::vote_no() const {
+  n_voted_no_.set(n_voted_no_.get() + 1);
   test();
 
   if (finalize_event_->status_.get() != EventStatus::TIMEOUT &&
       finalize_event_->status_.get() != EventStatus::DONE)
-    finalize_event_->set(n_voted_yes_ + n_voted_no_);
+    finalize_event_->set(n_voted_yes_.get() + n_voted_no_.get());
 }
 
 

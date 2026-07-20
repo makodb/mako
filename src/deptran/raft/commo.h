@@ -65,9 +65,9 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
       }
     } else {
       vote_no();
-      if(term > q().highest_term_)
+      if(term > q().highest_term_.get())
       {
-        q().highest_term_ = term ;
+        q().highest_term_.set(term);
       }
     }
   }
@@ -79,7 +79,7 @@ class RaftVoteQuorumEvent: public QuorumEventWrapper {
 
   // @safe
   int64_t Term() {
-    return q().highest_term_;
+    return q().highest_term_.get();
   }
 
   // @unsafe - Get the set of sites that voted yes (memory votes)

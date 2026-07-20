@@ -2054,7 +2054,7 @@ bool RaftServer::RequestVote() {
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_ELECTION] server %d term %lu vote outcome yes=%d no=%d highest_term_seen=%ld timeout=%d",
-           site_id_, term, sp_quorum->q().n_voted_yes_, sp_quorum->q().n_voted_no_, sp_quorum->Term(), sp_quorum->q().timeouted_);
+           site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term(), sp_quorum->q().timeouted_.get());
 #endif
   if (sp_quorum->yes()) {
     verify(currentTerm >= term);
@@ -2101,7 +2101,7 @@ bool RaftServer::RequestVote() {
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
     Log_info("[RAFT_ELECTION] server %d won election term %lu (votes yes=%d no=%d)",
-             site_id_, term, sp_quorum->q().n_voted_yes_, sp_quorum->q().n_voted_no_);
+             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
 
     this->rep_frame_ = this->frame_ ;
@@ -2135,7 +2135,7 @@ bool RaftServer::RequestVote() {
     setIsLeader(false) ;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
     Log_info("[RAFT_ELECTION] server %d lost election term %lu (yes=%d no=%d) highest_term=%ld",
-             site_id_, term, sp_quorum->q().n_voted_yes_, sp_quorum->q().n_voted_no_, sp_quorum->Term());
+             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get(), sp_quorum->Term());
 #endif
     //reset cur term if new term is higher
     ballot_t new_term = sp_quorum->Term() ;
@@ -2155,7 +2155,7 @@ bool RaftServer::RequestVote() {
     Log_debug("vote timeout %d", loc_id);
 #ifdef RAFT_LEADER_ELECTION_DEBUG
     Log_info("[RAFT_ELECTION] server %d election timed out term %lu (yes=%d no=%d)",
-             site_id_, term, sp_quorum->q().n_voted_yes_, sp_quorum->q().n_voted_no_);
+             site_id_, term, sp_quorum->q().n_voted_yes_.get(), sp_quorum->q().n_voted_no_.get());
 #endif
   	req_voting_ = false ;
 		return false;

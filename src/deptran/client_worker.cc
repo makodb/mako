@@ -312,7 +312,7 @@ void ClientWorker::Work() {
           if(first) {
             coo->commo_->count_lock_.lock();
             coo->commo_->total_ = this->outbound;
-            coo->commo_->qe->n_voted_yes_ = this->outbound;
+            coo->commo_->qe->n_voted_yes_.set(this->outbound);
             coo->commo_->count_lock_.unlock();
             Log_info("is it ready: %d", coo->commo_->qe->is_ready());
             coo->commo_->qe->test();

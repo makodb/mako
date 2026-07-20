@@ -453,14 +453,14 @@ TEST_F(ReactorTest, QuorumEvent) {
     EXPECT_FALSE(sp_event->is_ready());
     
     // Vote once
-    sp_event->n_voted_yes_ = 1;
+    sp_event->n_voted_yes_.set(1);
     EXPECT_FALSE(sp_event->is_ready());
     
     // Vote again - should trigger
-    sp_event->n_voted_yes_ = 2;
+    sp_event->n_voted_yes_.set(2);
     EXPECT_TRUE(sp_event->is_ready());
     EXPECT_TRUE(sp_event->yes());
-    EXPECT_EQ(sp_event->n_voted_yes_, 2);
+    EXPECT_EQ(sp_event->n_voted_yes_.get(), 2);
 }
 
 TEST_F(ReactorTest, StressTest) {

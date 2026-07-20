@@ -38,9 +38,9 @@ class PaxosPrepareQuorumEvent: public QuorumEventWrapper {
   }
   void FeedResponse(bool y) {
     if (y) {
-      q().n_voted_yes_++;
+      q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
     } else {
-      q().n_voted_no_++;
+      q().n_voted_no_.set(q().n_voted_no_.get() + 1);
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
@@ -54,9 +54,9 @@ class PaxosAcceptQuorumEvent: public QuorumEventWrapper {
   using QuorumEventWrapper::QuorumEventWrapper;
   void FeedResponse(bool y) {
     if (y) {
-      q().n_voted_yes_++;
+      q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
     } else {
-      q().n_voted_no_++;
+      q().n_voted_no_.set(q().n_voted_no_.get() + 1);
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
@@ -69,11 +69,11 @@ class GetLeaderQuorumEvent : public QuorumEventWrapper {
   // no() == every voter said no; is_ready() == yes()||no().
   GetLeaderQuorumEvent(int n_total, int quorum)
       : QuorumEventWrapper(n_total, quorum) {
-    q().policy_ = QuorumPolicy::ALL_NO;
+    q().policy_.set(QuorumPolicy::ALL_NO);
   }
   void FeedResponse(bool y, locid_t leader_id) {
     if (y) {
-      q().leader_id_ = leader_id;
+      q().leader_id_.set(leader_id);
       vote_yes();
     } else {
       vote_no();
@@ -93,8 +93,8 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
   // onto QuorumEvent so the policy only reads its own fields.
   RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
     : QuorumEventWrapper(n_total, quorum) {
-      q().policy_ = QuorumPolicy::LEADER_AND;
-      q().num_leader_ = num_leader;
+      q().policy_.set(QuorumPolicy::LEADER_AND);
+      q().num_leader_.set(num_leader);
   }
   void FeedResponse(bool y, value_t result, bool is_leader);
   value_t GetResult();

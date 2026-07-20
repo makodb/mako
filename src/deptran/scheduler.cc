@@ -676,10 +676,10 @@ void TxLogServer::JetpackBeginRecovery() {
   e->wait();
   
   if (!e->yes()) {
-    Log_info("[JETPACK-RECOVERY] BeginRecovery FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
+    Log_info("[JETPACK-RECOVERY] BeginRecovery FAILED: got %d/%d responses", e->n_voted_yes_.get(), e->n_total_);
     return;
   }
-  Log_info("[JETPACK-RECOVERY] BeginRecovery SUCCESS: got %d/%d responses", e->n_voted_yes_, e->n_total_);
+  Log_info("[JETPACK-RECOVERY] BeginRecovery SUCCESS: got %d/%d responses", e->n_voted_yes_.get(), e->n_total_);
 }
 
 void TxLogServer::JetpackRecovery() {
@@ -690,7 +690,7 @@ void TxLogServer::JetpackRecovery() {
   id_set_e->wait();
   
   if (!id_set_e->yes()) {
-    Log_info("[JETPACK-RECOVERY] PullIdSet FAILED: got %d/%d responses", id_set_e->q().n_voted_yes_, id_set_e->q().n_total_);
+    Log_info("[JETPACK-RECOVERY] PullIdSet FAILED: got %d/%d responses", id_set_e->q().n_voted_yes_.get(), id_set_e->q().n_total_);
     // Update local jepoch, oepoch from the responses
     if (id_set_e->max_jepoch_ > jepoch_) {
 #ifdef JETPACK_RECOVERY_DEBUG
@@ -709,7 +709,7 @@ void TxLogServer::JetpackRecovery() {
     return;
   }
   
-  Log_info("[JETPACK-RECOVERY] PullIdSet SUCCESS: got %d/%d responses", id_set_e->q().n_voted_yes_, id_set_e->q().n_total_);
+  Log_info("[JETPACK-RECOVERY] PullIdSet SUCCESS: got %d/%d responses", id_set_e->q().n_voted_yes_.get(), id_set_e->q().n_total_);
   
   // Make union of all key_set with largest jepoch
   shared_ptr<vector<key_t>> key_set = id_set_e->GetMergedKeys();
@@ -736,7 +736,7 @@ void TxLogServer::JetpackRecovery() {
 
     if (!pulled_cmd_e->yes()) {
       Log_info("[JETPACK-RECOVERY] PullCmd batch FAILED: got %d/%d responses wait=%lldms",
-               pulled_cmd_e->q().n_voted_yes_, pulled_cmd_e->q().n_total_, (long long) pull_wait_ms);
+               pulled_cmd_e->q().n_voted_yes_.get(), pulled_cmd_e->q().n_total_, (long long) pull_wait_ms);
       if (pulled_cmd_e->max_jepoch_ > jepoch_) {
         jepoch_ = pulled_cmd_e->max_jepoch_;
         witness_.reset();
@@ -765,7 +765,7 @@ void TxLogServer::JetpackRecovery() {
                    recovered_entries.size(), rid, (long long) record_wait_ms);
         } else {
           Log_info("[JETPACK-RECOVERY] RecordCmd batch FAILED: got %d/%d responses wait=%lldms",
-                   record_e->n_voted_yes_, record_e->n_total_, (long long) record_wait_ms);
+                   record_e->n_voted_yes_.get(), record_e->n_total_, (long long) record_wait_ms);
         }
       }
     }
@@ -797,7 +797,7 @@ void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
   e->wait();
   
   if (!e->yes()) {
-    Log_info("[JETPACK-RECOVERY] Prepare FAILED: got %d/%d responses", e->q().n_voted_yes_, e->q().n_total_);
+    Log_info("[JETPACK-RECOVERY] Prepare FAILED: got %d/%d responses", e->q().n_voted_yes_.get(), e->q().n_total_);
     // Update local epochs and ballots from failed responses
     if (e->max_jepoch_ > jepoch_) {
 #ifdef JETPACK_RECOVERY_DEBUG
@@ -822,7 +822,7 @@ void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
     return;
   }
   
-  Log_info("[JETPACK-RECOVERY] Prepare SUCCESS: got %d/%d responses", e->q().n_voted_yes_, e->q().n_total_);
+  Log_info("[JETPACK-RECOVERY] Prepare SUCCESS: got %d/%d responses", e->q().n_voted_yes_.get(), e->q().n_total_);
   
   // Determine which sid and set_size to propose
   int propose_sid = default_sid;        // Default value from recovery
@@ -859,7 +859,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
   e->wait();
   
   if (!e->yes()) {
-    Log_info("[JETPACK-RECOVERY] Accept FAILED: got %d/%d responses", e->q().n_voted_yes_, e->q().n_total_);
+    Log_info("[JETPACK-RECOVERY] Accept FAILED: got %d/%d responses", e->q().n_voted_yes_.get(), e->q().n_total_);
     // Update local epochs and ballots from failed responses
     if (e->max_jepoch_ > jepoch_) {
 #ifdef JETPACK_RECOVERY_DEBUG
@@ -885,7 +885,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
   }
   
   Log_info("[JETPACK-RECOVERY] Accept SUCCESS: got %d/%d responses, proceeding to commit sid=%d, set_size=%d", 
-           e->q().n_voted_yes_, e->q().n_total_, propose_sid, propose_set_size);
+           e->q().n_voted_yes_.get(), e->q().n_total_, propose_sid, propose_set_size);
   JetpackCommit(propose_sid, propose_set_size);
 }
 
@@ -943,7 +943,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
       } else {
 #ifdef JETPACK_RECOVERY_DEBUG
         Log_info("[JETPACK-RECOVERY] PullRecSetIns FAILED for sid=%d, rid=%d: got %d/%d responses",
-                 sid, rid, pull_e->q().n_voted_yes_, pull_e->q().n_total_);
+                 sid, rid, pull_e->q().n_voted_yes_.get(), pull_e->q().n_total_);
 #endif
       }
     }

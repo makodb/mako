@@ -47,7 +47,7 @@ class CopilotPrepareQuorumEvent : public QuorumEventWrapper {
   // as QuorumPolicy::COMMITTED_SHORT (S3).
   CopilotPrepareQuorumEvent(int n_total, int quorum)
       : QuorumEventWrapper(n_total, quorum), ret_cmds_by_status_(n_status) {
-    q().policy_ = QuorumPolicy::COMMITTED_SHORT;
+    q().policy_.set(QuorumPolicy::COMMITTED_SHORT);
   }
 
   void FeedResponse(bool y) {
@@ -78,7 +78,7 @@ class CopilotFakeQuorumEvent : public QuorumEventWrapper {
   // Readiness now lives on QuorumEvent as QuorumPolicy::ALWAYS_READY (S3).
   CopilotFakeQuorumEvent(int n_total)
     : QuorumEventWrapper(n_total, 0) {
-    q().policy_ = QuorumPolicy::ALWAYS_READY;
+    q().policy_.set(QuorumPolicy::ALWAYS_READY);
   }
 
   void FeedResponse() { vote_yes(); }

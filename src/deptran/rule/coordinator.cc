@@ -204,7 +204,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
     if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000)
       client_worker_->cli2cli_[1].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
     client_worker_->cli2cli_[6+cmd_is_write_].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
-  } else if (e->no() || e->q().timeouted_) {
+  } else if (e->no() || e->q().timeouted_.get()) {
     fast_path_success_ = false;
   } else {
     verify(0);

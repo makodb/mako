@@ -117,7 +117,7 @@ void CoordinatorClassic::GotoNextPhase() {
 				if(first){
 					commo()->count_lock_.lock();
 					commo()->total_++;
-					commo()->qe->n_voted_yes_++;
+					commo()->qe->n_voted_yes_.set(commo()->qe->n_voted_yes_.get() + 1);
 					commo()->count_lock_.unlock();
 					Log_info("is it ready: %d", commo()->qe->is_ready());
 					commo()->qe->test();
@@ -714,10 +714,10 @@ retry:
   e->wait();
   if (e->yes()) {
     // assign new leader
-    Log_debug("set a new leader %d", e->q().leader_id_);
-    commo()->SetNewLeaderProxy(par_id, e->q().leader_id_);
-    if (prev_pause_srv != e->q().leader_id_) {
-      *cur_pause = e->q().leader_id_;
+    Log_debug("set a new leader %d", e->q().leader_id_.get());
+    commo()->SetNewLeaderProxy(par_id, e->q().leader_id_.get());
+    if (prev_pause_srv != e->q().leader_id_.get()) {
+      *cur_pause = e->q().leader_id_.get();
     }
   } else if (e->no()) {
     auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);

@@ -47,7 +47,7 @@ inline void CopilotPrepareQuorumEvent::FeedRetCmd(ballot_t ballot,
   // int_status &= CLR_FLAG_TAKEOVER;
   verify(int_status <= n_status);
   if (int_status >= Status::COMMITED) { // committed or executed
-    q().committed_seen_ = true;
+    q().committed_seen_.set(true);
     int_status = Status::COMMITED;  // reduce all status greater than COMMIT to COMMIT
   } else if (int_status == Status::FAST_ACCEPTED) {
     int_status = Status::FAST_ACCEPTED_EQ; // reduce FAST_ACCEPTED to FAST_ACCEPTED_EQ
@@ -64,7 +64,7 @@ vector<CopilotData>& CopilotPrepareQuorumEvent::GetCmds(enum Status status) {
 }
 
 void CopilotPrepareQuorumEvent::Show() {
-  std::cout << q().committed_seen_ << std::endl;
+  std::cout << q().committed_seen_.get() << std::endl;
   for (int i = 0; i < ret_cmds_by_status_.size(); i++)
     std::cout << i << ":" << ret_cmds_by_status_[i].size() << std::endl;
 }

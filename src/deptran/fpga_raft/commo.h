@@ -39,15 +39,15 @@ class FpgaRaftVoteQuorumEvent: public QuorumEventWrapper {
       vote_yes();
     } else {
       vote_no();
-      if(term > q().highest_term_)
+      if(term > q().highest_term_.get())
       {
-        q().highest_term_ = term ;
+        q().highest_term_.set(term);
       }      
     }
   }
   
   int64_t Term() {
-    return q().highest_term_;
+    return q().highest_term_.get();
   }
 };
 
@@ -62,15 +62,15 @@ class FpgaRaftVote2FPGAQuorumEvent: public QuorumEventWrapper {
       vote_yes();
     } else {
       vote_no();
-      if(term > q().highest_term_)
+      if(term > q().highest_term_.get())
       {
-        q().highest_term_ = term ;
+        q().highest_term_.set(term);
       }      
     }
   }
   
   int64_t Term() {
-    return q().highest_term_;
+    return q().highest_term_.get();
   }
 };
 
@@ -85,7 +85,7 @@ class FpgaRaftAcceptQuorumEvent: public QuorumEventWrapper {
     }
     /*Log_debug("multi-paxos comm accept event, "
               "yes vote: %d, no vote: %d",
-              n_voted_yes_, n_voted_no_);*/
+              n_voted_yes_.get(), n_voted_no_.get());*/
   }
 };
 
@@ -95,7 +95,7 @@ class FpgaRaftAppendQuorumEvent: public QuorumEventWrapper {
     using QuorumEventWrapper::QuorumEventWrapper;
     void FeedResponse(bool appendOK, uint64_t index, std::string ip_addr = "") {
         if (appendOK) {
-            if ((q().n_voted_yes_ == 0) && (q().n_voted_no_ == 0))
+            if ((q().n_voted_yes_.get() == 0) && (q().n_voted_no_.get() == 0))
                 minIndex = index;
             else
                 minIndex = std::min(minIndex, index);
@@ -105,7 +105,7 @@ class FpgaRaftAppendQuorumEvent: public QuorumEventWrapper {
         }
         /*Log_debug("fpga-raft comm accept event, "
                   "yes vote: %d, no vote: %d, min index: %d",
-                  n_voted_yes_, n_voted_no_, minIndex);*/
+                  n_voted_yes_.get(), n_voted_no_.get(), minIndex);*/
     }
 };
 

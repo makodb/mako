@@ -36,11 +36,11 @@ void RuleSpeculativeExecuteQuorumEvent::FeedResponse(bool y, value_t result, boo
       result_ = result;
     }
     if (is_leader)
-      q().n_leader_yes_++;
+      q().n_leader_yes_.set(q().n_leader_yes_.get() + 1);
     vote_yes();
   } else {
     if (is_leader)
-      q().n_leader_no_++;
+      q().n_leader_no_.set(q().n_leader_no_.get() + 1);
     vote_no();
   }
 }
@@ -784,8 +784,8 @@ Communicator::SendPrepare(Coordinator* coo,
     e->add_event(qe);
     auto src_coroid = qe->get_fiber_id();
       
-    qe->id_ = Communicator::global_id;
-    qe->par_id_ = quorum_id++;
+    qe->id_.set(Communicator::global_id);
+    qe->par_id_.set(quorum_id++);
     FutureAttr fuattr;
     fuattr.callback = [this, e, qe, src_coroid, site_id, coo, phase, cmd, tid](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
@@ -809,7 +809,7 @@ Communicator::SendPrepare(Coordinator* coo,
         cmd->commit_.store(false);
         coo->aborted_ = true;
       }
-      qe->n_voted_yes_++;
+      qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
     };
     
@@ -906,7 +906,7 @@ Communicator::SendCommit(Coordinator* coo,
     auto proxies = rpc_par_proxies_[rp];
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
-    qe->id_ = Communicator::global_id;
+    qe->id_.set(Communicator::global_id);
     auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
@@ -954,7 +954,7 @@ Communicator::SendCommit(Coordinator* coo,
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
       if(coo->phase_ != phase) return;
-      qe->n_voted_yes_++;
+      qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
     };
 
@@ -1029,7 +1029,7 @@ Communicator::SendAbort(Coordinator* coo,
     auto site_id = leader_id;
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::create_sp_event<QuorumEvent>(n_total, 1);
-    qe->id_ = Communicator::global_id;
+    qe->id_.set(Communicator::global_id);
     auto src_coroid = qe->get_fiber_id();
 
     e->add_event(qe);
@@ -1074,7 +1074,7 @@ Communicator::SendAbort(Coordinator* coo,
       // qe->add_dep(coo->cli_id_, src_coroid, site_id, coro_id);
 
       if(coo->phase_ != phase) return;
-      qe->n_voted_yes_++;
+      qe->n_voted_yes_.set(qe->n_voted_yes_.get() + 1);
       e->test();
     };
 

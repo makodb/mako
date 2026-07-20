@@ -58,7 +58,7 @@ void CoordinatorMencius::Suggest() {
   auto start = chrono::system_clock::now();
   commo()->svr_workers_g = svr_workers_g;
   auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_);
-  sp_quorum->q().id_ = dep_id_;
+  sp_quorum->q().id_.set(dep_id_);
 	//Log_info("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
   //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
 
