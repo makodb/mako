@@ -79,6 +79,15 @@ export namespace rrr {
 class Reactor;
 class Fiber;
 
+// Per-thread scheduler singletons + the running-fiber slot. Namespace-
+// scope (not class-static) so the DSL singleton/save/restore logic can
+// name them; `inline` keeps vague linkage (same clang-21 dup-symbol
+// rationale as the former class members).
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
+inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
+
+
 // `EventState` — the cleanly-DSL-able portion of an Event's data, factored out
 // of the hand-written `class Event` into an inline-Rust struct. These nine
 // fields are pure rusty/POD types with no interior-mutability or vtable
@@ -1382,9 +1391,10 @@ class Reactor {
   // in every TU that uses it via an inline accessor, causing duplicate-
   // definition linker errors. clang 22 happened to avoid this; we use
   // `inline` to make the linkage explicit and toolchain-independent.
-  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
-  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
-  static inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
+  // (sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ hoisted
+  // to namespace-scope thread_locals above the class — the DSL free fns
+  // that own the singleton/running-fiber logic cannot name class
+  // statics; same move the file already made for g_current_poll_worker.)
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
@@ -2263,8 +2273,8 @@ namespace rrr {
 // void Event::Wait(uint64_t timeoutuint64_t timeout) {
 // //  verify(__debug_creator); // if this fails, the event is not created by reactor.
 
-//   verify(Reactor::sp_reactor_th_);
-//   verify(Reactor::sp_reactor_th_->thread_id_ == rusty::thread::current_id());
+//   verify(sp_reactor_th_);
+//   verify(sp_reactor_th_->thread_id_ == rusty::thread::current_id());
 //   if (IsReady()) {
 //     status_ = DONE; // does not need to wait.
 //     return;
@@ -2295,8 +2305,8 @@ namespace rrr {
 template <typename W>
 void event_wait_impl(W& self, uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
-  verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
+  verify(sp_reactor_th_.is_some());
+  verify(sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
   if (self.status_.get() == EventStatus::DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
   if (self.is_ready()) {
@@ -2756,7 +2766,7 @@ inline void stackless_profile_report_periodic() {
 rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
   // @unsafe - RefCell::borrow, Rc::clone
   {
-    auto guard = Reactor::sp_running_fiber_th_.borrow();
+    auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).is_none()) {
       return rusty::None;
     }
@@ -2795,29 +2805,115 @@ void Fiber::sleep(uint64_t microseconds) {
  * - Returns valid Rc<Reactor> pinned to current thread
  * - Reactor's thread_id_ matches rusty::thread::current_id()
  */
+// @unsafe - Rc<Reactor> allocation + the create-time log lines (kept
+// as kernels: Rc::<T>::make turbofish adjacent to a Log_* call
+// mis-lowers the log as a member of the turbofish expression).
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl();
+void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber);
+void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber);
+rusty::Rc<Reactor> reactor_make() { return rusty::Rc<Reactor>::make(); }
+// @unsafe - RefCell borrow returns a temporary Ref the DSL can't bind
+// as a named guard; the read is one line, kept as a kernel.
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl() {
+    auto guard = sp_running_fiber_th_.borrow();
+    if ((*guard).is_some()) {
+        return rusty::Some((*guard).as_ref().unwrap().clone());
+    }
+    return rusty::Option<rusty::Rc<Fiber>>{};
+}
+
+// @unsafe - RefMut borrow_mut() returns a temporary the DSL binds as
+// address-of; these one-line writes stay kernels.
+void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
+    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
+}
+void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber) {
+    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
+}
+void reactor_log_create(bool disk) {
+    if (disk) { Log_debug("create a disk fiber scheduler"); return; }
+    Log_debug("create a fiber scheduler");
+    if (!REUSING_FIBER) { Log_warn("reusing fiber not enabled!"); }
+}
+
+// Singleton fetch-or-init for the per-thread schedulers, authored as
+// inline Rust DSL over the namespace-scope TLS slots; the members
+// below are 1-line shims.
+#if RUSTYCPP_RUST
+fn reactor_tls_get() -> rusty::Rc<Reactor> {
+    if sp_reactor_th_.is_none() {
+        reactor_log_create(false);
+        let mut r = reactor_make();
+        (*r).thread_id_.set(rusty::thread::current_id());
+        sp_reactor_th_ = rusty::Some(r);
+    }
+    sp_reactor_th_.as_ref().unwrap().clone()
+}
+
+fn reactor_tls_get_disk() -> rusty::Rc<Reactor> {
+    if sp_disk_reactor_th_.is_none() {
+        reactor_log_create(true);
+        let mut r = reactor_make();
+        (*r).thread_id_.set(rusty::thread::current_id());
+        sp_disk_reactor_th_ = rusty::Some(r);
+    }
+    sp_disk_reactor_th_.as_ref().unwrap().clone()
+}
+
+fn reactor_tls_save_running() -> rusty::Option<rusty::Rc<Fiber>> {
+    reactor_tls_save_running_impl()
+}
+
+fn reactor_tls_restore_running(old_fiber: rusty::Option<rusty::Rc<Fiber>>) {
+    reactor_tls_restore_running_impl(old_fiber);
+}
+
+fn reactor_tls_set_running(fiber: &rusty::Rc<Fiber>) {
+    reactor_tls_set_running_impl(fiber);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.tls_singletons version=1 rust_sha256=9dd0ea584d04ac0dd0add842e3fcc67c71a447e5aa5febec38e93cf2bd096889*/
+rusty::Rc<Reactor> reactor_tls_get() {
+    if (sp_reactor_th_.is_none()) {
+        reactor_log_create(false);
+        auto r = reactor_make();
+        (rusty::detail::deref_if_pointer_like(r)).thread_id_.set(rusty::thread::current_id());
+        sp_reactor_th_ = rusty::Some(std::move(r));
+    }
+    return rusty::clone(sp_reactor_th_.as_ref().unwrap());
+}
+
+rusty::Rc<Reactor> reactor_tls_get_disk() {
+    if (sp_disk_reactor_th_.is_none()) {
+        reactor_log_create(true);
+        auto r = reactor_make();
+        (rusty::detail::deref_if_pointer_like(r)).thread_id_.set(rusty::thread::current_id());
+        sp_disk_reactor_th_ = rusty::Some(std::move(r));
+    }
+    return rusty::clone(sp_disk_reactor_th_.as_ref().unwrap());
+}
+
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running() {
+    return reactor_tls_save_running_impl();
+}
+
+void reactor_tls_restore_running(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
+    reactor_tls_restore_running_impl(std::move(old_fiber));
+}
+
+void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
+    reactor_tls_set_running_impl(fiber);
+}
+/*RUSTYCPP:GEN-END id=reactor.tls_singletons*/
+
 rusty::Rc<Reactor>
 Reactor::get_reactor() {
-  // @unsafe { Option operator=, unwrap, Rc::make are not borrow-checked }
-  {
-  if (sp_reactor_th_.is_none()) {
-    Log_debug("create a fiber scheduler");
-    if (!REUSING_FIBER)
-      Log_warn("reusing fiber not enabled!");
-    sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
-  }
-  return sp_reactor_th_.as_ref().unwrap().clone();
-  }
+  return reactor_tls_get();
 }
 
 rusty::Rc<Reactor>
 Reactor::get_disk_reactor() {
-  if (sp_disk_reactor_th_.is_none()) {
-    Log_debug("create a disk fiber scheduler");
-    sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
-  }
-  return sp_disk_reactor_th_.as_ref().unwrap().clone();
+  return reactor_tls_get_disk();
 }
 
 // =============================================================================
@@ -2859,33 +2955,18 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
   }
 }
 
-// @safe - Saves current running fiber to allow nesting
+// @safe - 1-line shims into the DSL TLS helpers above.
 rusty::Option<rusty::Rc<Fiber>>
 Reactor::save_running_fiber() const {
-  // @unsafe
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    if ((*guard).is_some()) {
-      return rusty::Some((*guard).as_ref().unwrap().clone());
-    }
-    return rusty::Option<rusty::Rc<Fiber>>{};
-  }
+  return reactor_tls_save_running();
 }
 
-// @safe - Restores previously saved running fiber
 void Reactor::restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const {
-  // @unsafe
-  {
-    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
-  }
+  reactor_tls_restore_running(std::move(old_fiber));
 }
 
-// @safe - Sets the current running fiber
 void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe
-  {
-    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
-  }
+  reactor_tls_set_running(fiber);
 }
 
 // @safe - Registers a fiber in the active set

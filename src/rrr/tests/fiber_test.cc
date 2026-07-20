@@ -21,8 +21,8 @@ protected:
         // suspended in one test (e.g. after a yield/sleep) stay registered
         // in the next test's `reactor->loop()` call and block it forever.
         // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
-        *Reactor::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        Reactor::sp_reactor_th_ = rusty::None;
+        *rrr::sp_running_fiber_th_.borrow_mut() = rusty::None;
+        rrr::sp_reactor_th_ = rusty::None;
     }
 };
 

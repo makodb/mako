@@ -150,7 +150,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   // clients of this method.
   Log_info("CreateCommo: Thread ID = %lu", std::this_thread::get_id());
   {
-    auto guard = Reactor::sp_running_fiber_th_.borrow();
+    auto guard = rrr::sp_running_fiber_th_.borrow();
     Log_info("CreateCommo: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
@@ -194,7 +194,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         Log_info("Test fiber: Starting execution");
         Log_info("Test fiber: Thread ID = %lu", std::this_thread::get_id());
         {
-          auto guard = Reactor::sp_running_fiber_th_.borrow();
+          auto guard = rrr::sp_running_fiber_th_.borrow();
           Log_info("Test fiber: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
         }
 
