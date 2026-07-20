@@ -1236,6 +1236,18 @@ constexpr size_t kRecvScratchBytes = static_cast<size_t>(64) * static_cast<size_
 // Outbound byte buffer alias so the DSL can spell the parameter type.
 using TcpOutBuf = std::vector<std::uint8_t>;
 ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf);
+// Stack scratch for the recv drain (the DSL has no local arrays; the
+// C-array field decays at the kernel call site; guaranteed RVO makes
+// the factory return copy-free).
+struct RecvScratch { std::uint8_t arr[kRecvScratchBytes]; };
+RecvScratch* tcpconn_scratch();
+int64_t      tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s);
+FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v);
+FrameView    tcpconn_frame_view_empty();
+ChannelFrame tcpconn_frame_of(FrameView* v);
+void         tcpconn_append_inbound(const TcpConnection& conn, std::size_t n);
+void         tcpconn_consume_inbound(const TcpConnection& conn);
+void         tcpconn_reset_inbound(const TcpConnection& conn);
 int64_t      tcpconn_send_bytes(const TcpConnection& conn, TcpOutBuf& buf, size_t offset);
 void         tcpconn_trim_sent(TcpOutBuf& buf, size_t offset);
 void         tcpconn_drop_after_error(TcpOutBuf& buf, size_t offset);
@@ -1408,102 +1420,193 @@ void tcpconn_reset_fd(const TcpConnection& conn) {
 // @unsafe - recv(2) syscall into a raw `char` scratch buffer +
 // FrameStreamReader::append / next_frame / consume_frame are all
 // @unsafe + raw `uint8_t*` payload pointers stored on the FrameView.
-bool tcpconn_handle_read(const TcpConnection& self) {
-    if (self.closed_.get()) return false;
-
-    std::uint8_t scratch[kRecvScratchBytes];
-    bool any_progress = false;
-
-    while (true) {
-        ssize_t n;
-        // @unsafe { ::recv libc syscall — reads raw bytes into the
-        //           scratch buffer. }
-        { n = ::recv(self.fd_.as_raw_fd(), scratch, sizeof(scratch), 0); }
-        if (n > 0) {
-            self.inbound_.borrow_mut()->append(scratch, static_cast<std::size_t>(n));
-            any_progress = true;
-            // Drain the syscall in a loop so edge-triggered epoll users
-            // don't lose readiness; cap at one iteration when the
-            // syscall returns less than the scratch (level-triggered
-            // would be fine either way).
-            if (static_cast<std::size_t>(n) < sizeof(scratch)) {
-                break;
-            }
-            continue;
-        }
-        if (n == 0) {
-            // Peer closed cleanly. Signal the listener; do not fire
-            // on_error — this isn't a fault, it's a graceful close.
-            self.closed_.set(true);
-            // Irreducible plain-field assignment on the const facade
-        // (fd teardown at close) — the documented localized-const_cast
-        // pattern; every other mutation here is interior-mutable.
-        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
-            tcpconn_deliver_on_closed_locked(self, ChannelError::None);
-            return false;
-        }
-        // n < 0
-        const int err = errno;
-        if (err == EAGAIN || err == EWOULDBLOCK) {
-            break;
-        }
-        if (err == EINTR) {
-            continue;
-        }
-        // Hard transport error.
-        const ChannelError ch = tcpconn_errno_to_channel_error(err);
-        {
-            auto guard = self.on_error_.lock().unwrap();
-            if (*guard) {
-                (*guard)(ch, std::strerror(err));
-            }
-        }
-        self.closed_.set(true);
-        // Irreducible plain-field assignment on the const facade
-        // (fd teardown at close) — the documented localized-const_cast
-        // pattern; every other mutation here is interior-mutable.
-        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
-        tcpconn_deliver_on_closed_locked(self, ch);
+// Read-readiness: drain recv(2) into the frame reader (edge-trigger
+// safe), then dispatch complete frames — all DSL; the syscall, the
+// scratch buffer, and the small POD builders live in kernels.
+#if RUSTYCPP_RUST
+fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
+    if conn.closed_.get() {
         return false;
     }
+    let mut any_progress = false;
+    let mut draining = true;
+    while draining {
+        let n = tcpconn_recv_bytes(conn, tcpconn_scratch());
+        if n > 0 {
+            tcpconn_append_inbound(conn, n as usize);
+            any_progress = true;
+            if (n as usize) < kRecvScratchBytes {
+                draining = false;
+            }
+        } else if n == 0 {
+            // Peer closed cleanly: no on_error, just the close latch.
+            conn.closed_.set(true);
+            tcpconn_reset_fd(conn);
+            tcpconn_deliver_on_closed_locked(conn, ChannelError_None());
+            return false;
+        } else {
+            let err: i32 = errno;
+            if err == EAGAIN || err == EWOULDBLOCK {
+                draining = false;
+            } else if err == EINTR {
+                // retry — loop continues
+            } else {
+                let ch = tcpconn_errno_to_channel_error(err);
+                {
+                    let mut guard = conn.on_error_.lock().unwrap();
+                    if *guard {
+                        (*guard)(ch, strerror(err));
+                    }
+                }
+                conn.closed_.set(true);
+                tcpconn_reset_fd(conn);
+                tcpconn_deliver_on_closed_locked(conn, ch);
+                return false;
+            }
+        }
+    }
 
-    // Now drain any complete frames out of the inbound buffer.
-    while (true) {
-        FrameView v{};
-        const FrameDecodeStatus s = self.inbound_.borrow()->next_frame(v);
-        if (s == FrameDecodeStatus::Complete) {
-            ChannelFrame cf{v.payload, v.payload_size};
+    let mut decoding = true;
+    while decoding {
+        let mut v = tcpconn_frame_view_empty();
+        let s = tcpconn_next_frame(conn, &mut v);
+        if s == FrameDecodeStatus::Complete {
+            let cf = tcpconn_frame_of(&mut v);
             {
-                auto guard = self.on_frame_.lock().unwrap();
-                if (*guard) {
+                let mut guard = conn.on_frame_.lock().unwrap();
+                if *guard {
                     (*guard)(cf);
                 }
             }
-            self.inbound_.borrow_mut()->consume_frame();
-            continue;
-        }
-        if (s == FrameDecodeStatus::NeedMoreBytes) {
-            break;
-        }
-        // Malformed.
-        {
-            auto guard = self.on_error_.lock().unwrap();
-            if (*guard) {
-                (*guard)(ChannelError::Internal,
-                         "malformed frame on inbound stream");
+            tcpconn_consume_inbound(conn);
+        } else if s == FrameDecodeStatus::NeedMoreBytes {
+            decoding = false;
+        } else {
+            // Malformed inbound stream.
+            {
+                let mut guard = conn.on_error_.lock().unwrap();
+                if *guard {
+                    (*guard)(ChannelError_Internal(), "malformed frame on inbound stream");
+                }
             }
+            conn.closed_.set(true);
+            tcpconn_reset_fd(conn);
+            tcpconn_reset_inbound(conn);
+            tcpconn_deliver_on_closed_locked(conn, ChannelError_Internal());
+            return false;
         }
-        self.closed_.set(true);
-        // Irreducible plain-field assignment on the const facade
-        // (fd teardown at close) — the documented localized-const_cast
-        // pattern; every other mutation here is interior-mutable.
-        const_cast<TcpConnection&>(self).fd_ = rusty::os::fd::OwnedFd{};  // RAII close
-        self.inbound_.borrow_mut()->reset();
-        tcpconn_deliver_on_closed_locked(self, ChannelError::Internal);
+    }
+    any_progress
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=62f096913102c8052146fad0fb0cf51ba572d5c5a8576f8361a3bd626adea2f3*/
+bool tcpconn_handle_read(const TcpConnection& conn) {
+    if (conn.closed_.get()) {
         return false;
     }
+    auto any_progress = false;
+    auto draining = true;
+    while (draining) {
+        const auto n_self_ref_tmp = tcpconn_recv_bytes(conn, tcpconn_scratch());
+        const auto n = std::move(n_self_ref_tmp);
+        if (rusty::detail::deref_if_pointer_like(n) > 0) {
+            tcpconn_append_inbound(conn, static_cast<size_t>(n));
+            any_progress = true;
+            if (((static_cast<size_t>(n))) < rusty::detail::deref_if_pointer_like(kRecvScratchBytes)) {
+                draining = false;
+            }
+        } else if (rusty::detail::deref_if_pointer_like(n) == 0) {
+            conn.closed_.set(true);
+            tcpconn_reset_fd(conn);
+            tcpconn_deliver_on_closed_locked(conn, ChannelError_None());
+            return false;
+        } else {
+            const int32_t err = errno;
+            if ((rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EAGAIN)) || (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EWOULDBLOCK))) {
+                draining = false;
+            } else if (rusty::detail::deref_if_pointer_like(err) == rusty::detail::deref_if_pointer_like(EINTR)) {
+            } else {
+                const auto ch = tcpconn_errno_to_channel_error(std::move(err));
+                {
+                    auto guard = conn.on_error_.lock().unwrap();
+                    if (rusty::detail::deref_if_pointer_like(guard)) {
+                        (rusty::detail::deref_if_pointer_like(guard))(std::move(ch), strerror(std::move(err)));
+                    }
+                }
+                conn.closed_.set(true);
+                tcpconn_reset_fd(conn);
+                tcpconn_deliver_on_closed_locked(conn, std::move(ch));
+                return false;
+            }
+        }
+    }
+    auto decoding = true;
+    while (decoding) {
+        auto v = tcpconn_frame_view_empty();
+        const auto s = tcpconn_next_frame(conn, &v);
+        if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(FrameDecodeStatus::Complete)) {
+            const auto cf = tcpconn_frame_of(&v);
+            {
+                auto guard = conn.on_frame_.lock().unwrap();
+                if (rusty::detail::deref_if_pointer_like(guard)) {
+                    (rusty::detail::deref_if_pointer_like(guard))(std::move(cf));
+                }
+            }
+            tcpconn_consume_inbound(conn);
+        } else if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(FrameDecodeStatus::NeedMoreBytes)) {
+            decoding = false;
+        } else {
+            {
+                auto guard = conn.on_error_.lock().unwrap();
+                if (rusty::detail::deref_if_pointer_like(guard)) {
+                    (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "malformed frame on inbound stream");
+                }
+            }
+            conn.closed_.set(true);
+            tcpconn_reset_fd(conn);
+            tcpconn_reset_inbound(conn);
+            tcpconn_deliver_on_closed_locked(conn, ChannelError_Internal());
+            return false;
+        }
+    }
+    return std::move(any_progress);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.handle_read*/
 
-    return any_progress;
+// @unsafe - per-poll-thread recv scratch (single-threaded per
+// connection by the poll contract; thread_local keeps 64 KiB off the
+// hot stack and out of the DSL's grammar).
+RecvScratch* tcpconn_scratch() {
+    static thread_local RecvScratch s;
+    return &s;
+}
+
+// @unsafe - recv(2) into the scratch.
+int64_t tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s) {
+    return ::recv(conn.fd_.as_raw_fd(), s->arr, sizeof(s->arr), 0);
+}
+
+// @unsafe - RefCell arrow into the frame reader (append the scratch
+// prefix that recv filled).
+void tcpconn_append_inbound(const TcpConnection& conn, std::size_t n) {
+    conn.inbound_.borrow_mut()->append(tcpconn_scratch()->arr, n);
+}
+
+// @unsafe - RefCell arrows into the frame reader.
+FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v) {
+    return conn.inbound_.borrow()->next_frame(*v);
+}
+void tcpconn_consume_inbound(const TcpConnection& conn) {
+    conn.inbound_.borrow_mut()->consume_frame();
+}
+void tcpconn_reset_inbound(const TcpConnection& conn) {
+    conn.inbound_.borrow_mut()->reset();
+}
+
+// @unsafe - POD builders the DSL grammar cannot spell (braced init).
+FrameView tcpconn_frame_view_empty() { return FrameView{}; }
+ChannelFrame tcpconn_frame_of(FrameView* v) {
+    return ChannelFrame{v->payload, v->payload_size};
 }
 
 // Write-readiness: drain what the kernel will take, keep or drop the
