@@ -141,7 +141,7 @@ struct IdempotencyKeyHash {
 
 
 uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
-    return rusty::detail::deref_if_pointer_like(key.client_id) ^ (static_cast<size_t>(key.sequence) * static_cast<size_t>(static_cast<uint64_t>(11400714819323198485)));
+    return rusty::detail::deref_if_pointer_like(key.client_id) ^ rusty::wrapping_mul(key.sequence, static_cast<std::remove_cvref_t<decltype(key.sequence)>>(static_cast<uint64_t>(11400714819323198485)));
 }
 /*RUSTYCPP:GEN-END id=idempotency.key_hash*/
 
@@ -665,7 +665,7 @@ bool IdempotencyCache::remove(const IdempotencyKey& key) const {
     const auto n = rusty::len(guard);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
-        if ((rusty::detail::deref_if_pointer_like(guard[i].key.client_id) == rusty::detail::deref_if_pointer_like(key.client_id)) && (rusty::detail::deref_if_pointer_like(guard[i].key.sequence) == rusty::detail::deref_if_pointer_like(key.sequence))) {
+        if ((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }(guard[i]).client_id) == rusty::detail::deref_if_pointer_like(key.client_id)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }(guard[i]).sequence) == rusty::detail::deref_if_pointer_like(key.sequence))) {
             (*guard).remove(i);
             return true;
         }
@@ -714,14 +714,14 @@ void IdempotencyCache::reset_stats() const {
 
 size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
     const auto cfg = this->config_.get();
-    if (!cfg.enabled || (rusty::detail::deref_if_pointer_like(cfg.ttl_ms) == static_cast<uint64_t>(0))) {
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)) == static_cast<uint64_t>(0))) {
         return static_cast<size_t>(0);
     }
     auto guard = this->cache_.lock().unwrap();
     size_t evicted = static_cast<size_t>(0);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(guard)) {
-        if (guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
+        if (guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
             (*guard).remove(i);
             evicted = rusty::detail::deref_if_pointer_like(evicted) + static_cast<size_t>(1);
         } else {

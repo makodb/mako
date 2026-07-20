@@ -174,7 +174,8 @@ template <>
 class SinkBaseAdapter<BufferSink> final : public SinkBase {
     BufferSink value_;
 public:
-    explicit SinkBaseAdapter(BufferSink v) : value_(std::move(v)) {}
+    SinkBaseAdapter(BufferSink v) : value_(std::move(v)) {}
+    SinkBaseAdapter(SinkBaseAdapter&& other) : value_(std::move(other.value_)) {}
     void write_bytes(const uint8_t* p, size_t n) override {
         value_.write_bytes(p, n);
     }
@@ -302,7 +303,8 @@ template <>
 class SourceBaseAdapter<BufferSource> final : public SourceBase {
     BufferSource value_;
 public:
-    explicit SourceBaseAdapter(BufferSource v) : value_(std::move(v)) {}
+    SourceBaseAdapter(BufferSource v) : value_(std::move(v)) {}
+    SourceBaseAdapter(SourceBaseAdapter&& other) : value_(std::move(other.value_)) {}
     size_t read_bytes(uint8_t* p, size_t n) override {
         return value_.read_bytes(p, n);
     }
@@ -434,7 +436,8 @@ template <>
 class SinkBaseAdapter<FdSink> final : public SinkBase {
     FdSink value_;
 public:
-    explicit SinkBaseAdapter(FdSink v) : value_(std::move(v)) {}
+    SinkBaseAdapter(FdSink v) : value_(std::move(v)) {}
+    SinkBaseAdapter(SinkBaseAdapter&& other) : value_(std::move(other.value_)) {}
     void write_bytes(const uint8_t* p, size_t n) override {
         value_.write_bytes(p, n);
     }
@@ -527,7 +530,8 @@ template <>
 class SourceBaseAdapter<FdSource> final : public SourceBase {
     FdSource value_;
 public:
-    explicit SourceBaseAdapter(FdSource v) : value_(std::move(v)) {}
+    SourceBaseAdapter(FdSource v) : value_(std::move(v)) {}
+    SourceBaseAdapter(SourceBaseAdapter&& other) : value_(std::move(other.value_)) {}
     size_t read_bytes(uint8_t* p, size_t n) override {
         return value_.read_bytes(p, n);
     }
@@ -854,8 +858,8 @@ template <class U> class SerializeAdapterRefMut;
 // Methods for v32
 void serialize(BinaryWriteArchive& ar) const {
     auto b = varint_buf_new();
-    const auto bsize = SparseInt::dump32(this->get(), std::move(b.arr));
-    ar.write_bytes(std::move(b.arr), std::move(bsize));
+    const auto bsize = SparseInt::dump32(this->get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+    ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
 }
 #endif  // patcher: end orphan-impl stub
 
@@ -869,8 +873,8 @@ void serialize(BinaryWriteArchive& ar) const {
 // Methods for v64
 void serialize(BinaryWriteArchive& ar) const {
     auto b = varint_buf_new();
-    const auto bsize = SparseInt::dump64(this->get(), std::move(b.arr));
-    ar.write_bytes(std::move(b.arr), std::move(bsize));
+    const auto bsize = SparseInt::dump64(this->get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+    ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
 }
 #endif  // patcher: end orphan-impl stub
 
@@ -885,7 +889,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<int32_t>());
     }
 }
@@ -902,7 +906,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<int8_t>());
     }
 }
@@ -919,7 +923,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<int16_t>());
     }
 }
@@ -936,7 +940,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<int64_t>());
     }
 }
@@ -953,7 +957,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
     }
 }
@@ -970,7 +974,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
     }
 }
@@ -987,7 +991,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
     }
 }
@@ -1004,7 +1008,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
     }
 }
@@ -1021,7 +1025,7 @@ void serialize(BinaryWriteArchive& ar) const {
 void serialize(BinaryWriteArchive& ar) const {
     // @unsafe
     {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&(*this))));
+        const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(rusty::detail::ptr_or_addr((*this)))));
         ar.write_bytes(p, rusty::mem::size_of<double>());
     }
 }
@@ -1032,22 +1036,22 @@ namespace rusty_ext {
     void serialize(const v32& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump32(self_.get(), std::move(b.arr));
-        ar.write_bytes(std::move(b.arr), std::move(bsize));
+        const auto bsize = SparseInt::dump32(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
     }
 
     void serialize(const v64& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump64(self_.get(), std::move(b.arr));
-        ar.write_bytes(std::move(b.arr), std::move(bsize));
+        const auto bsize = SparseInt::dump64(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
     }
 
     void serialize(const int32_t& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int32_t>());
         }
     }
@@ -1056,7 +1060,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int8_t>());
         }
     }
@@ -1065,7 +1069,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int16_t>());
         }
     }
@@ -1074,7 +1078,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int64_t>());
         }
     }
@@ -1083,7 +1087,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
         }
     }
@@ -1092,7 +1096,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
         }
     }
@@ -1101,7 +1105,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
         }
     }
@@ -1110,7 +1114,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
         }
     }
@@ -1119,7 +1123,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<double>());
         }
     }
@@ -1130,7 +1134,8 @@ template <>
 class SerializeAdapter<v32> final : public Serialize {
     v32 value_;
 public:
-    explicit SerializeAdapter(v32 v) : value_(std::move(v)) {}
+    SerializeAdapter(v32 v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1160,7 +1165,8 @@ template <>
 class SerializeAdapter<v64> final : public Serialize {
     v64 value_;
 public:
-    explicit SerializeAdapter(v64 v) : value_(std::move(v)) {}
+    SerializeAdapter(v64 v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1190,7 +1196,8 @@ template <>
 class SerializeAdapter<int32_t> final : public Serialize {
     int32_t value_;
 public:
-    explicit SerializeAdapter(int32_t v) : value_(std::move(v)) {}
+    SerializeAdapter(int32_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1220,7 +1227,8 @@ template <>
 class SerializeAdapter<int8_t> final : public Serialize {
     int8_t value_;
 public:
-    explicit SerializeAdapter(int8_t v) : value_(std::move(v)) {}
+    SerializeAdapter(int8_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1250,7 +1258,8 @@ template <>
 class SerializeAdapter<int16_t> final : public Serialize {
     int16_t value_;
 public:
-    explicit SerializeAdapter(int16_t v) : value_(std::move(v)) {}
+    SerializeAdapter(int16_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1280,7 +1289,8 @@ template <>
 class SerializeAdapter<int64_t> final : public Serialize {
     int64_t value_;
 public:
-    explicit SerializeAdapter(int64_t v) : value_(std::move(v)) {}
+    SerializeAdapter(int64_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1310,7 +1320,8 @@ template <>
 class SerializeAdapter<uint8_t> final : public Serialize {
     uint8_t value_;
 public:
-    explicit SerializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    SerializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1340,7 +1351,8 @@ template <>
 class SerializeAdapter<uint16_t> final : public Serialize {
     uint16_t value_;
 public:
-    explicit SerializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    SerializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1370,7 +1382,8 @@ template <>
 class SerializeAdapter<uint32_t> final : public Serialize {
     uint32_t value_;
 public:
-    explicit SerializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    SerializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1400,7 +1413,8 @@ template <>
 class SerializeAdapter<uint64_t> final : public Serialize {
     uint64_t value_;
 public:
-    explicit SerializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    SerializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1430,7 +1444,8 @@ template <>
 class SerializeAdapter<double> final : public Serialize {
     double value_;
 public:
-    explicit SerializeAdapter(double v) : value_(std::move(v)) {}
+    SerializeAdapter(double v) : value_(std::move(v)) {}
+    SerializeAdapter(SerializeAdapter&& other) : value_(std::move(other.value_)) {}
     void serialize(BinaryWriteArchive& ar) const override {
         rusty_ext::serialize(value_, ar);
     }
@@ -1462,8 +1477,8 @@ namespace Serialize_ {
     void serialize(const v32& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump32(self_.get(), std::move(b.arr));
-        ar.write_bytes(std::move(b.arr), std::move(bsize));
+        const auto bsize = SparseInt::dump32(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
     }
 
 }
@@ -1472,8 +1487,8 @@ namespace Serialize_ {
     void serialize(const v64& self_, BinaryWriteArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        const auto bsize = SparseInt::dump64(self_.get(), std::move(b.arr));
-        ar.write_bytes(std::move(b.arr), std::move(bsize));
+        const auto bsize = SparseInt::dump64(self_.get(), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)));
+        ar.write_bytes(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), std::move(bsize));
     }
 
 }
@@ -1483,7 +1498,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int32_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int32_t>());
         }
     }
@@ -1495,7 +1510,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int8_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int8_t>());
         }
     }
@@ -1507,7 +1522,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int16_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int16_t>());
         }
     }
@@ -1519,7 +1534,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const int64_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<int64_t>());
         }
     }
@@ -1531,7 +1546,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint8_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint8_t>());
         }
     }
@@ -1543,7 +1558,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint16_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint16_t>());
         }
     }
@@ -1555,7 +1570,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint32_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint32_t>());
         }
     }
@@ -1567,7 +1582,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const uint64_t*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<uint64_t>());
         }
     }
@@ -1579,7 +1594,7 @@ namespace Serialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(&self_)));
+            const uint8_t* p = reinterpret_cast<const uint8_t*>((static_cast<const double*>(rusty::detail::ptr_or_addr(self_))));
             ar.write_bytes(p, rusty::mem::size_of<double>());
         }
     }
@@ -2067,12 +2082,12 @@ template <class U> class DeserializeAdapterRefMut;
 // Methods for v32
 void deserialize(BinaryReadArchive& ar) {
     auto b = varint_buf_new();
-    verify(ar.read_exact(std::move(b.arr), 1));
-    const auto total = SparseInt::buf_size(b.arr[0]);
+    verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+    const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
     if (rusty::detail::deref_if_pointer_like(total) > 1) {
         verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
     }
-    this->set(SparseInt::load32(std::move(b.arr)));
+    this->set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
 }
 #endif  // patcher: end orphan-impl stub
 
@@ -2086,12 +2101,12 @@ void deserialize(BinaryReadArchive& ar) {
 // Methods for v64
 void deserialize(BinaryReadArchive& ar) {
     auto b = varint_buf_new();
-    verify(ar.read_exact(std::move(b.arr), 1));
-    const auto total = SparseInt::buf_size(b.arr[0]);
+    verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+    const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
     if (rusty::detail::deref_if_pointer_like(total) > 1) {
         verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
     }
-    this->set(SparseInt::load64(std::move(b.arr)));
+    this->set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
 }
 #endif  // patcher: end orphan-impl stub
 
@@ -2106,7 +2121,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
     }
 }
@@ -2123,7 +2138,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
     }
 }
@@ -2140,7 +2155,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
     }
 }
@@ -2157,7 +2172,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
     }
 }
@@ -2174,7 +2189,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
     }
 }
@@ -2191,7 +2206,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
     }
 }
@@ -2208,7 +2223,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
     }
 }
@@ -2225,7 +2240,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
     }
 }
@@ -2242,7 +2257,7 @@ void deserialize(BinaryReadArchive& ar) {
 void deserialize(BinaryReadArchive& ar) {
     // @unsafe
     {
-        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&(*this)))));
+        uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr((*this))))));
         ar.read_or_abort(p, rusty::mem::size_of<double>());
     }
 }
@@ -2253,30 +2268,30 @@ namespace rusty_ext {
     void deserialize(v32& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        verify(ar.read_exact(std::move(b.arr), 1));
-        const auto total = SparseInt::buf_size(b.arr[0]);
+        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
             verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load32(std::move(b.arr)));
+        self_.set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
     }
 
     void deserialize(v64& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        verify(ar.read_exact(std::move(b.arr), 1));
-        const auto total = SparseInt::buf_size(b.arr[0]);
+        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
             verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load64(std::move(b.arr)));
+        self_.set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
     }
 
     void deserialize(int32_t& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
         }
     }
@@ -2285,7 +2300,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
         }
     }
@@ -2294,7 +2309,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
         }
     }
@@ -2303,7 +2318,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
         }
     }
@@ -2312,7 +2327,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
         }
     }
@@ -2321,7 +2336,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
         }
     }
@@ -2330,7 +2345,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
         }
     }
@@ -2339,7 +2354,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
         }
     }
@@ -2348,7 +2363,7 @@ namespace rusty_ext {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<double>());
         }
     }
@@ -2359,7 +2374,8 @@ template <>
 class DeserializeAdapter<v32> final : public Deserialize {
     v32 value_;
 public:
-    explicit DeserializeAdapter(v32 v) : value_(std::move(v)) {}
+    DeserializeAdapter(v32 v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2389,7 +2405,8 @@ template <>
 class DeserializeAdapter<v64> final : public Deserialize {
     v64 value_;
 public:
-    explicit DeserializeAdapter(v64 v) : value_(std::move(v)) {}
+    DeserializeAdapter(v64 v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2419,7 +2436,8 @@ template <>
 class DeserializeAdapter<int32_t> final : public Deserialize {
     int32_t value_;
 public:
-    explicit DeserializeAdapter(int32_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(int32_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2449,7 +2467,8 @@ template <>
 class DeserializeAdapter<int8_t> final : public Deserialize {
     int8_t value_;
 public:
-    explicit DeserializeAdapter(int8_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(int8_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2479,7 +2498,8 @@ template <>
 class DeserializeAdapter<int16_t> final : public Deserialize {
     int16_t value_;
 public:
-    explicit DeserializeAdapter(int16_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(int16_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2509,7 +2529,8 @@ template <>
 class DeserializeAdapter<int64_t> final : public Deserialize {
     int64_t value_;
 public:
-    explicit DeserializeAdapter(int64_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(int64_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2539,7 +2560,8 @@ template <>
 class DeserializeAdapter<uint8_t> final : public Deserialize {
     uint8_t value_;
 public:
-    explicit DeserializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(uint8_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2569,7 +2591,8 @@ template <>
 class DeserializeAdapter<uint16_t> final : public Deserialize {
     uint16_t value_;
 public:
-    explicit DeserializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(uint16_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2599,7 +2622,8 @@ template <>
 class DeserializeAdapter<uint32_t> final : public Deserialize {
     uint32_t value_;
 public:
-    explicit DeserializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(uint32_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2629,7 +2653,8 @@ template <>
 class DeserializeAdapter<uint64_t> final : public Deserialize {
     uint64_t value_;
 public:
-    explicit DeserializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(uint64_t v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2659,7 +2684,8 @@ template <>
 class DeserializeAdapter<double> final : public Deserialize {
     double value_;
 public:
-    explicit DeserializeAdapter(double v) : value_(std::move(v)) {}
+    DeserializeAdapter(double v) : value_(std::move(v)) {}
+    DeserializeAdapter(DeserializeAdapter&& other) : value_(std::move(other.value_)) {}
     void deserialize(BinaryReadArchive& ar) override {
         rusty_ext::deserialize(value_, ar);
     }
@@ -2691,12 +2717,12 @@ namespace Deserialize_ {
     void deserialize(v32& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        verify(ar.read_exact(std::move(b.arr), 1));
-        const auto total = SparseInt::buf_size(b.arr[0]);
+        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
             verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load32(std::move(b.arr)));
+        self_.set(SparseInt::load32(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
     }
 
 }
@@ -2705,12 +2731,12 @@ namespace Deserialize_ {
     void deserialize(v64& self_, BinaryReadArchive& ar) {
         using Self = std::remove_reference_t<decltype(self_)>;
         auto b = varint_buf_new();
-        verify(ar.read_exact(std::move(b.arr), 1));
-        const auto total = SparseInt::buf_size(b.arr[0]);
+        verify(ar.read_exact(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)), 1));
+        const auto total = SparseInt::buf_size([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b)[static_cast<size_t>(0)]);
         if (rusty::detail::deref_if_pointer_like(total) > 1) {
             verify(ar.read_exact(varint_tail(&b), rusty::detail::deref_if_pointer_like(total) - 1));
         }
-        self_.set(SparseInt::load64(std::move(b.arr)));
+        self_.set(SparseInt::load64(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.arr); }) { return (__r.arr); } else if constexpr (requires { (__r.arr_field); }) { return (__r.arr_field); } else if constexpr (requires { ((*__r).arr); }) { return ((*__r).arr); } else { return ((*__r).arr_field); } }(b))));
     }
 
 }
@@ -2720,7 +2746,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int32_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int32_t>());
         }
     }
@@ -2732,7 +2758,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int8_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int8_t>());
         }
     }
@@ -2744,7 +2770,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int16_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int16_t>());
         }
     }
@@ -2756,7 +2782,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<int64_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<int64_t>());
         }
     }
@@ -2768,7 +2794,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint8_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint8_t>());
         }
     }
@@ -2780,7 +2806,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint16_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint16_t>());
         }
     }
@@ -2792,7 +2818,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint32_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint32_t>());
         }
     }
@@ -2804,7 +2830,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<uint64_t*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<uint64_t>());
         }
     }
@@ -2816,7 +2842,7 @@ namespace Deserialize_ {
         using Self = std::remove_reference_t<decltype(self_)>;
         // @unsafe
         {
-            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(&self_))));
+            uint8_t* const p = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>((static_cast<double*>(rusty::detail::ptr_or_addr(self_)))));
             ar.read_or_abort(p, rusty::mem::size_of<double>());
         }
     }

@@ -260,7 +260,7 @@ ReconnectCalculator ReconnectCalculator::new_(const ReconnectPolicy& policy) {
 }
 
 bool ReconnectCalculator::should_retry() const {
-    if (!this->policy.auto_reconnect) {
+    if (rusty::detail::rust_not(this->policy.auto_reconnect)) {
         return false;
     }
     if (rusty::detail::deref_if_pointer_like(this->policy.max_retries) == static_cast<uint32_t>(0)) {
@@ -288,7 +288,7 @@ uint32_t ReconnectCalculator::next_delay_ms() const {
     if (rusty::detail::deref_if_pointer_like(this->policy.jitter_enabled) && (rusty::detail::deref_if_pointer_like(delay) > 0.0)) {
         delay *= RandomGenerator::rand_double(0.5, 1.5);
     }
-    return static_cast<uint32_t>(delay);
+    return rusty::float_to_int_cast<uint32_t>(delay);
 }
 
 uint32_t ReconnectCalculator::peek_delay_ms() const {
@@ -306,7 +306,7 @@ uint32_t ReconnectCalculator::peek_delay_ms() const {
     if (rusty::detail::deref_if_pointer_like(delay) > ((static_cast<double>(this->policy.max_delay_ms)))) {
         delay = static_cast<double>(this->policy.max_delay_ms);
     }
-    return static_cast<uint32_t>(delay);
+    return rusty::float_to_int_cast<uint32_t>(delay);
 }
 
 void ReconnectCalculator::reset() const {
@@ -318,7 +318,7 @@ uint32_t ReconnectCalculator::retry_count() const {
 }
 
 bool ReconnectCalculator::retries_exhausted() const {
-    if (!this->policy.auto_reconnect) {
+    if (rusty::detail::rust_not(this->policy.auto_reconnect)) {
         return true;
     }
     if (rusty::detail::deref_if_pointer_like(this->policy.max_retries) == static_cast<uint32_t>(0)) {

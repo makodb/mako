@@ -59,10 +59,10 @@ int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode);
 
 int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode) {
     auto ev = epoll_event_zeroed();
-    ev.data.fd = std::move(fd);
-    ev.events = (rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLIN)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.data); }) { return (__r.data); } else if constexpr (requires { (__r.data_field); }) { return (__r.data_field); } else if constexpr (requires { ((*__r).data); }) { return ((*__r).data); } else { return ((*__r).data_field); } }(ev).fd = std::move(fd);
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev) = (rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLIN)) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
     if (((rusty::detail::deref_if_pointer_like(poll_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLOUT;
+        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLOUT;
     }
     auto result = epoll_ctl(std::move(poll_fd), EPOLL_CTL_ADD, std::move(fd), &ev);
     if ((rusty::detail::deref_if_pointer_like(result) != 0) && (rusty::detail::deref_if_pointer_like(errno) == rusty::detail::deref_if_pointer_like(EEXIST))) {
@@ -131,13 +131,13 @@ int32_t epoll_update_impl_body(int32_t poll_fd, int32_t fd, int32_t new_mode);
 
 int32_t epoll_update_impl_body(int32_t poll_fd, int32_t fd, int32_t new_mode) {
     auto ev = epoll_event_zeroed();
-    ev.data.fd = std::move(fd);
-    ev.events = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.data); }) { return (__r.data); } else if constexpr (requires { (__r.data_field); }) { return (__r.data_field); } else if constexpr (requires { ((*__r).data); }) { return ((*__r).data); } else { return ((*__r).data_field); } }(ev).fd = std::move(fd);
+    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev) = rusty::detail::deref_if_pointer_like(EPOLLET) | rusty::detail::deref_if_pointer_like(EPOLLRDHUP);
     if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::READ)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLIN;
+        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLIN;
     }
     if (((rusty::detail::deref_if_pointer_like(new_mode) & PollMode::WRITE)) != static_cast<int32_t>(0)) {
-        rusty::detail::deref_if_pointer_like(ev.events) |= EPOLLOUT;
+        rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.events); }) { return (__r.events); } else if constexpr (requires { (__r.events_field); }) { return (__r.events_field); } else if constexpr (requires { ((*__r).events); }) { return ((*__r).events); } else { return ((*__r).events_field); } }(ev)) |= EPOLLOUT;
     }
     const auto rc = epoll_ctl(std::move(poll_fd), EPOLL_CTL_MOD, std::move(fd), &ev);
     if (rusty::detail::deref_if_pointer_like(rc) != 0) {

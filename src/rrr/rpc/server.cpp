@@ -1389,7 +1389,7 @@ Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
 }
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
-    if (!factory) {
+    if (rusty::detail::rust_not(factory)) {
         return;
     }
     this->channel_factory_field = rusty::Option<ChannelFactoryProxy>(std::move(factory));

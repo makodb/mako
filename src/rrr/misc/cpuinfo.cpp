@@ -202,14 +202,14 @@ rusty::Vec<double> CPUInfo::get_cpu_stat() {
     auto _guard = this->mtx_.lock().unwrap();
     auto result = rusty::Vec<double>::new_();
     const auto sample = rusty::sys::process::process_times();
-    const auto ticks = std::move(sample.wall_ticks);
-    const auto stime = std::move(sample.system_ticks);
-    const auto utime = std::move(sample.user_ticks);
+    auto ticks = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wall_ticks); }) { return (__r.wall_ticks); } else if constexpr (requires { (__r.wall_ticks_field); }) { return (__r.wall_ticks_field); } else if constexpr (requires { ((*__r).wall_ticks); }) { return ((*__r).wall_ticks); } else { return ((*__r).wall_ticks_field); } }(sample));
+    auto stime = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.system_ticks); }) { return (__r.system_ticks); } else if constexpr (requires { (__r.system_ticks_field); }) { return (__r.system_ticks_field); } else if constexpr (requires { ((*__r).system_ticks); }) { return ((*__r).system_ticks); } else { return ((*__r).system_ticks_field); } }(sample));
+    auto utime = std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.user_ticks); }) { return (__r.user_ticks); } else if constexpr (requires { (__r.user_ticks_field); }) { return (__r.user_ticks_field); } else if constexpr (requires { ((*__r).user_ticks); }) { return ((*__r).user_ticks); } else { return ((*__r).user_ticks_field); } }(sample));
     int64_t last_ticks = static_cast<int64_t>(0);
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
         last_ticks = this->last_ticks_[rusty::detail::deref_if_pointer_like(this->index) - 1];
     } else {
-        last_ticks = this->last_ticks_[9];
+        last_ticks = this->last_ticks_[static_cast<size_t>(9)];
     }
     cpuinfo_log_ticks(std::move(last_ticks), std::move(ticks));
     if (rusty::detail::deref_if_pointer_like(ticks) <= (rusty::detail::deref_if_pointer_like(last_ticks) + 60)) {
@@ -239,16 +239,16 @@ rusty::Vec<double> CPUInfo::get_cpu_stat() {
             this->last_ticks_[i] = this->last_ticks_[rusty::detail::deref_if_pointer_like(i) + 1];
             rusty::detail::deref_if_pointer_like(i) += 1;
         }
-        this->last_kernel_ticks_[9] = std::move(stime);
-        this->last_user_ticks_[9] = std::move(utime);
-        this->last_ticks_[9] = std::move(ticks);
+        this->last_kernel_ticks_[static_cast<size_t>(9)] = std::move(stime);
+        this->last_user_ticks_[static_cast<size_t>(9)] = std::move(utime);
+        this->last_ticks_[static_cast<size_t>(9)] = std::move(ticks);
     }
     auto cpu_total = 0.0;
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
         cpu_total = -1.0;
     } else {
-        const auto busy = ((rusty::detail::deref_if_pointer_like(stime) - this->last_kernel_ticks_[8])) + ((rusty::detail::deref_if_pointer_like(utime) - this->last_user_ticks_[8]));
-        cpu_total = ((static_cast<double>(busy))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - this->last_ticks_[8]))));
+        const auto busy = ((rusty::detail::deref_if_pointer_like(stime) - this->last_kernel_ticks_[static_cast<size_t>(8)])) + ((rusty::detail::deref_if_pointer_like(utime) - this->last_user_ticks_[static_cast<size_t>(8)]));
+        cpu_total = ((static_cast<double>(busy))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - this->last_ticks_[static_cast<size_t>(8)]))));
     }
     this->last_cpu = std::move(cpu_total);
     if (rusty::detail::deref_if_pointer_like(this->index) < 10) {
@@ -428,8 +428,8 @@ void cpuinfo_get_network(CPUInfo& info, const std::string& pid, rusty::Vec<doubl
     CPUInfo* info_shadow1 = &info;
     const auto content = cpuinfo_read_proc(cpuinfo_net_path(pid));
     const auto line = cpuinfo_nth_line(std::move(content), 3);
-    const auto txed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 1));
-    const auto rxed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 9));
+    auto txed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 1));
+    auto rxed = cpuinfo_parse_ulong(cpuinfo_nth_field(std::move(line), 9));
     double tx_total = -1.0;
     double rx_total = -1.0;
     if (rusty::detail::deref_if_pointer_like((*info_shadow1).index) < 10) {
@@ -442,13 +442,13 @@ void cpuinfo_get_network(CPUInfo& info, const std::string& pid, rusty::Vec<doubl
             (*info_shadow1).last_bytes_rxed[j] = (*info_shadow1).last_bytes_rxed[rusty::detail::deref_if_pointer_like(j) + 1];
             rusty::detail::deref_if_pointer_like(j) += 1;
         }
-        (*info_shadow1).last_bytes_txed[9] = std::move(txed);
-        (*info_shadow1).last_bytes_rxed[9] = std::move(rxed);
+        (*info_shadow1).last_bytes_txed[static_cast<size_t>(9)] = std::move(txed);
+        (*info_shadow1).last_bytes_rxed[static_cast<size_t>(9)] = std::move(rxed);
     }
-    if (rusty::detail::deref_if_pointer_like(ticks) != (*info_shadow1).last_ticks_[0]) {
+    if (rusty::detail::deref_if_pointer_like(ticks) != (*info_shadow1).last_ticks_[static_cast<size_t>(0)]) {
         if (rusty::detail::deref_if_pointer_like((*info_shadow1).index) >= 10) {
-            tx_total = static_cast<double>((((rusty::detail::deref_if_pointer_like(txed) - (*info_shadow1).last_bytes_txed[8])) / ((static_cast<uint64_t>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[8]))))));
-            rx_total = static_cast<double>((((rusty::detail::deref_if_pointer_like(rxed) - (*info_shadow1).last_bytes_rxed[8])) / ((static_cast<uint64_t>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[8]))))));
+            tx_total = static_cast<double>((((rusty::detail::deref_if_pointer_like(txed) - (*info_shadow1).last_bytes_txed[static_cast<size_t>(8)])) / ((static_cast<uint64_t>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[static_cast<size_t>(8)]))))));
+            rx_total = static_cast<double>((((rusty::detail::deref_if_pointer_like(rxed) - (*info_shadow1).last_bytes_rxed[static_cast<size_t>(8)])) / ((static_cast<uint64_t>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[static_cast<size_t>(8)]))))));
         }
     }
     result->push(std::move(tx_total));
@@ -472,11 +472,11 @@ void cpuinfo_get_memory(CPUInfo& info, const std::string& pid, rusty::Vec<double
             (*info_shadow1).last_mem_usage[j] = (*info_shadow1).last_mem_usage[rusty::detail::deref_if_pointer_like(j) + 1];
             rusty::detail::deref_if_pointer_like(j) += 1;
         }
-        (*info_shadow1).last_mem_usage[9] = static_cast<uint64_t>(mem_usage);
+        (*info_shadow1).last_mem_usage[static_cast<size_t>(9)] = static_cast<uint64_t>(mem_usage);
     }
-    if (rusty::detail::deref_if_pointer_like(ticks) != (*info_shadow1).last_ticks_[0]) {
+    if (rusty::detail::deref_if_pointer_like(ticks) != (*info_shadow1).last_ticks_[static_cast<size_t>(0)]) {
         if (rusty::detail::deref_if_pointer_like((*info_shadow1).index) >= 10) {
-            mem_total = ((rusty::detail::deref_if_pointer_like(mem_usage) - ((static_cast<double>((*info_shadow1).last_mem_usage[8]))))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[8]))));
+            mem_total = ((rusty::detail::deref_if_pointer_like(mem_usage) - ((static_cast<double>((*info_shadow1).last_mem_usage[static_cast<size_t>(8)]))))) / ((static_cast<double>((rusty::detail::deref_if_pointer_like(ticks) - (*info_shadow1).last_ticks_[static_cast<size_t>(8)]))));
         }
     }
     result->push(std::move(mem_total));

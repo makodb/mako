@@ -148,7 +148,7 @@ fn bt_render(cap: &BtCapture) -> std::string {
 /*RUSTYCPP:GEN-BEGIN id=debugging.bt_render version=1 rust_sha256=5e566583a7c846c8e5883cd8599f2ef651e682549caba5738cd579ebad1007f8*/
 std::string bt_render(const BtCapture& cap) {
     auto out = bt_empty_string();
-    if (!cap.ok) {
+    if (rusty::detail::rust_not(cap.ok)) {
         out.append("  *** failed to obtain stack trace!\n");
         return std::move(out);
     }

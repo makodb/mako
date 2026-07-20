@@ -448,7 +448,7 @@ void CompletionTracker::set_config(CompletionTrackerConfig config) {
 
 void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
     const auto cfg = this->config_.get();
-    if (!cfg.enabled) {
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg))) {
         return;
     }
     auto set_guard = this->completed_set_.lock().unwrap();
@@ -456,7 +456,7 @@ void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
         return;
     }
     auto list_guard = this->lru_list_.lock().unwrap();
-    while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like(cfg.max_entries)) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
+    while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.max_entries); }) { return (__r.max_entries); } else if constexpr (requires { (__r.max_entries_field); }) { return (__r.max_entries_field); } else if constexpr (requires { ((*__r).max_entries); }) { return ((*__r).max_entries); } else { return ((*__r).max_entries_field); } }(cfg))) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
         int64_t oldest_xid = (*list_guard).back().xid;
         (*set_guard).remove(std::move(oldest_xid));
         (*list_guard).pop_back();
@@ -470,18 +470,18 @@ void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
 bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
     const auto cfg = this->config_.get();
     this->queries_.set(this->queries_.get() + static_cast<uint64_t>(1));
-    if (!cfg.enabled) {
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg))) {
         return false;
     }
     auto set_guard = this->completed_set_.lock().unwrap();
-    if (!rusty::contains(set_guard, std::move(xid))) {
+    if (rusty::detail::rust_not(rusty::contains(set_guard, std::move(xid)))) {
         return false;
     }
     auto list_guard = this->lru_list_.lock().unwrap();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
-        if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
-            if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
+        if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.xid); }) { return (__r.xid); } else if constexpr (requires { (__r.xid_field); }) { return (__r.xid_field); } else if constexpr (requires { ((*__r).xid); }) { return ((*__r).xid); } else { return ((*__r).xid_field); } }(list_guard[i])) == rusty::detail::deref_if_pointer_like(xid)) {
+            if (list_guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
                 (*set_guard).remove(std::move(xid));
                 (*list_guard).remove(std::move(i));
                 return false;
@@ -496,14 +496,14 @@ bool CompletionTracker::is_completed(int64_t xid, uint64_t current_time_ms) {
 
 bool CompletionTracker::remove(int64_t xid) {
     auto set_guard = this->completed_set_.lock().unwrap();
-    if (!rusty::contains(set_guard, std::move(xid))) {
+    if (rusty::detail::rust_not(rusty::contains(set_guard, std::move(xid)))) {
         return false;
     }
     (*set_guard).remove(std::move(xid));
     auto list_guard = this->lru_list_.lock().unwrap();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
-        if (rusty::detail::deref_if_pointer_like(list_guard[i].xid) == rusty::detail::deref_if_pointer_like(xid)) {
+        if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.xid); }) { return (__r.xid); } else if constexpr (requires { (__r.xid_field); }) { return (__r.xid_field); } else if constexpr (requires { ((*__r).xid); }) { return ((*__r).xid); } else { return ((*__r).xid_field); } }(list_guard[i])) == rusty::detail::deref_if_pointer_like(xid)) {
             (*list_guard).remove(std::move(i));
             return true;
         }
@@ -557,7 +557,7 @@ void CompletionTracker::reset_stats() {
 
 size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
     const auto cfg = this->config_.get();
-    if (!cfg.enabled || (rusty::detail::deref_if_pointer_like(cfg.ttl_ms) == static_cast<uint64_t>(0))) {
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)) == static_cast<uint64_t>(0))) {
         return static_cast<size_t>(0);
     }
     auto set_guard = this->completed_set_.lock().unwrap();
@@ -565,8 +565,8 @@ size_t CompletionTracker::evict_expired(uint64_t current_time_ms) {
     size_t evicted = static_cast<size_t>(0);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::len(list_guard)) {
-        if (list_guard[i].is_expired(std::move(current_time_ms), std::move(cfg.ttl_ms))) {
-            int64_t xid = list_guard[i].xid;
+        if (list_guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
+            int64_t xid = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.xid); }) { return (__r.xid); } else if constexpr (requires { (__r.xid_field); }) { return (__r.xid_field); } else if constexpr (requires { ((*__r).xid); }) { return ((*__r).xid); } else { return ((*__r).xid_field); } }(list_guard[i]);
             (*set_guard).remove(std::move(xid));
             (*list_guard).remove(std::move(i));
             evicted += static_cast<size_t>(1);

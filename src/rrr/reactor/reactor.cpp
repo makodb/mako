@@ -1143,7 +1143,7 @@ struct fiber_yield_t {
 
 
 fiber_yield_t fiber_yield_t::new_(fiber_task_t& task) {
-    return fiber_yield_t{.task_ = static_cast<fiber_task_t*>(&task)};
+    return fiber_yield_t{.task_ = static_cast<fiber_task_t*>(rusty::detail::ptr_or_addr(task))};
 }
 /*RUSTYCPP:GEN-END id=reactor.fiber_yield*/
 
@@ -3808,7 +3808,7 @@ void pollworker_do_add_pollable(PollThreadWorker& w, PollableProxy poll) {
 }
 
 void pollworker_do_remove_pollable(PollThreadWorker& w, int32_t fd) {
-    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
         return;
     }
     w.pending_remove_.insert(std::move(fd));
@@ -3816,7 +3816,7 @@ void pollworker_do_remove_pollable(PollThreadWorker& w, int32_t fd) {
 
 void pollworker_do_close_pollable(PollThreadWorker& w, int32_t fd) {
     w.pending_remove_.remove(std::move(fd));
-    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
         return;
     }
     if (w.mode_.contains_key(std::move(fd))) {
@@ -3828,7 +3828,7 @@ void pollworker_do_close_pollable(PollThreadWorker& w, int32_t fd) {
 }
 
 void pollworker_do_update_mode(PollThreadWorker& w, int32_t fd, int32_t new_mode) {
-    if (!w.fd_to_pollable_.contains_key(std::move(fd))) {
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
         return;
     }
     auto mode_opt = w.mode_.get(std::move(fd));

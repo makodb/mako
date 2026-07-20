@@ -393,7 +393,7 @@ void CircuitBreaker::set_config(CircuitBreakerConfig config) const {
 }
 
 bool CircuitBreaker::allow_request() const {
-    if (!this->config_field.get().enabled) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled)) {
         return true;
     }
     const CircuitState current = this->state_field.get();
@@ -413,7 +413,7 @@ bool CircuitBreaker::allow_request() const {
         return false;
     }
     if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::HALF_OPEN)))) {
-        if (!this->probe_in_progress.get()) {
+        if (rusty::detail::rust_not(this->probe_in_progress.get())) {
             this->probe_in_progress.set(true);
             return true;
         }
@@ -423,7 +423,7 @@ bool CircuitBreaker::allow_request() const {
 }
 
 void CircuitBreaker::record_success() const {
-    if (!this->config_field.get().enabled) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled)) {
         return;
     }
     const CircuitState current = this->state_field.get();
@@ -449,7 +449,7 @@ void CircuitBreaker::record_success() const {
 }
 
 void CircuitBreaker::record_failure() const {
-    if (!this->config_field.get().enabled) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled)) {
         return;
     }
     const CircuitState current = this->state_field.get();

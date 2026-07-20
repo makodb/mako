@@ -410,7 +410,7 @@ void InMemoryChannel::close() const {
                 return;
             }
             (rusty::detail::deref_if_pointer_like(guard)).a_closed = true;
-            if (!(rusty::detail::deref_if_pointer_like(guard)).b_closed) {
+            if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(guard)).b_closed)) {
                 peer_on_closed = (rusty::detail::deref_if_pointer_like(guard)).b_on_closed;
                 fire_peer_closed = true;
             }
@@ -419,7 +419,7 @@ void InMemoryChannel::close() const {
                 return;
             }
             (rusty::detail::deref_if_pointer_like(guard)).b_closed = true;
-            if (!(rusty::detail::deref_if_pointer_like(guard)).a_closed) {
+            if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(guard)).a_closed)) {
                 peer_on_closed = (rusty::detail::deref_if_pointer_like(guard)).a_on_closed;
                 fire_peer_closed = true;
             }
@@ -739,7 +739,7 @@ ChannelError InMemoryListener::listen(std::string_view addr) const {
         if ((*guard).closed) {
             return ChannelError_Internal();
         }
-        if (!(*guard).local_address.empty()) {
+        if (rusty::detail::rust_not((*guard).local_address.empty())) {
             if (rusty::detail::deref_if_pointer_like((*guard).local_address) == std::string(std::move(addr))) {
                 return ChannelError_None();
             }
@@ -752,7 +752,7 @@ ChannelError InMemoryListener::listen(std::string_view addr) const {
         (*guard).local_address = std::string(std::move(addr));
         w = rusty::clone(this->self_weak_.as_ref().unwrap());
     }
-    if (!this->switchboard_->register_listener(std::string(std::move(addr)), std::move(w))) {
+    if (rusty::detail::rust_not(this->switchboard_->register_listener(std::string(std::move(addr)), std::move(w)))) {
         auto guard = this->inner_.lock().unwrap();
         (*guard).local_address.clear();
         return ChannelError_AddressInUse();
@@ -770,7 +770,7 @@ void InMemoryListener::close() const {
         (*guard).closed = true;
         addr_to_unregister = (*guard).local_address;
     }
-    if (!addr_to_unregister.empty()) {
+    if (rusty::detail::rust_not(addr_to_unregister.empty())) {
         this->switchboard_->unregister_listener(std::move(addr_to_unregister));
     }
 }

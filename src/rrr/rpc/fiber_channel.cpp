@@ -300,7 +300,7 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
         auto armed = true;
         {
             auto guard = this->queue_.lock().unwrap();
-            if (!((*guard)).empty() || this->closed_.get()) {
+            if (rusty::detail::rust_not(((*guard)).empty()) || this->closed_.get()) {
                 armed = false;
             }
         }

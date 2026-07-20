@@ -241,7 +241,7 @@ struct RequestOptions {
 
 
 RequestOptions RequestOptions::new_() {
-    return RequestOptions{.timeout_ms = static_cast<uint64_t>(1000), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(0), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1, .idempotent = false};
+    return RequestOptions{.timeout_ms = static_cast<uint64_t>(1000), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(0), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1f, .idempotent = false};
 }
 
 RequestOptions RequestOptions::defaults() {
@@ -249,23 +249,23 @@ RequestOptions RequestOptions::defaults() {
 }
 
 RequestOptions RequestOptions::with_retry(uint16_t max_retries, uint64_t timeout_ms) {
-    return RequestOptions{.timeout_ms = std::move(timeout_ms), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = std::move(max_retries), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1, .idempotent = true};
+    return RequestOptions{.timeout_ms = std::move(timeout_ms), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = std::move(max_retries), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1f, .idempotent = true};
 }
 
 RequestOptions RequestOptions::idempotent_retry(uint16_t max_retries) {
-    return RequestOptions{.timeout_ms = static_cast<uint64_t>(1000), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = std::move(max_retries), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1, .idempotent = true};
+    return RequestOptions{.timeout_ms = static_cast<uint64_t>(1000), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = std::move(max_retries), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1f, .idempotent = true};
 }
 
 RequestOptions RequestOptions::no_timeout() {
-    return RequestOptions{.timeout_ms = static_cast<uint64_t>(0), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(0), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1, .idempotent = false};
+    return RequestOptions{.timeout_ms = static_cast<uint64_t>(0), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(0), .base_delay_ms = static_cast<uint16_t>(50), .max_delay_ms = static_cast<uint16_t>(5000), .jitter_factor = 0.1f, .idempotent = false};
 }
 
 RequestOptions RequestOptions::fast() {
-    return RequestOptions{.timeout_ms = static_cast<uint64_t>(100), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(2), .base_delay_ms = static_cast<uint16_t>(10), .max_delay_ms = static_cast<uint16_t>(100), .jitter_factor = 0.1, .idempotent = true};
+    return RequestOptions{.timeout_ms = static_cast<uint64_t>(100), .total_timeout_ms = static_cast<uint64_t>(0), .max_retries = static_cast<uint16_t>(2), .base_delay_ms = static_cast<uint16_t>(10), .max_delay_ms = static_cast<uint16_t>(100), .jitter_factor = 0.1f, .idempotent = true};
 }
 
 RequestOptions RequestOptions::patient() {
-    return RequestOptions{.timeout_ms = static_cast<uint64_t>(10000), .total_timeout_ms = static_cast<uint64_t>(60000), .max_retries = static_cast<uint16_t>(5), .base_delay_ms = static_cast<uint16_t>(500), .max_delay_ms = static_cast<uint16_t>(10000), .jitter_factor = 0.1, .idempotent = true};
+    return RequestOptions{.timeout_ms = static_cast<uint64_t>(10000), .total_timeout_ms = static_cast<uint64_t>(60000), .max_retries = static_cast<uint16_t>(5), .base_delay_ms = static_cast<uint16_t>(500), .max_delay_ms = static_cast<uint16_t>(10000), .jitter_factor = 0.1f, .idempotent = true};
 }
 
 bool RequestOptions::can_retry(uint16_t current_retry_count) const {
@@ -286,14 +286,14 @@ uint64_t RequestOptions::calculate_delay_ms(uint16_t attempt) const {
     if (rusty::detail::deref_if_pointer_like(delay) > ((static_cast<double>(this->max_delay_ms)))) {
         delay = static_cast<double>(this->max_delay_ms);
     }
-    if (rusty::detail::deref_if_pointer_like(this->jitter_factor) > 0.0) {
+    if (rusty::detail::deref_if_pointer_like(this->jitter_factor) > 0.0f) {
         const double jitter = (rusty::detail::deref_if_pointer_like(delay) * ((static_cast<double>(this->jitter_factor)))) * RandomGenerator::rand_double(-0.5, 0.5);
         delay += jitter;
         if (rusty::detail::deref_if_pointer_like(delay) < 0.0) {
             delay = 0.0;
         }
     }
-    return static_cast<uint64_t>(delay);
+    return rusty::float_to_int_cast<uint64_t>(delay);
 }
 
 bool RequestOptions::is_total_timeout_exceeded(uint64_t elapsed_ms) const {

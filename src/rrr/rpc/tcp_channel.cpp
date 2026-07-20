@@ -356,7 +356,7 @@ int32_t TcpConnection::fd() const {
 int32_t TcpConnection::poll_mode() const {
     int32_t mode = PollMode::READ;
     auto guard = this->outbound_.lock().unwrap();
-    if (!((*guard)).empty()) {
+    if (rusty::detail::rust_not(((*guard)).empty())) {
         mode |= PollMode::WRITE;
     }
     return std::move(mode);
@@ -380,7 +380,7 @@ void TcpConnection::handle_error() const {
 }
 
 bool TcpConnection::check_pending_write_update() const {
-    if (!this->pending_write_update_.get()) {
+    if (rusty::detail::rust_not(this->pending_write_update_.get())) {
         return false;
     }
     this->pending_write_update_.set(false);
@@ -1507,8 +1507,7 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
     auto any_progress = false;
     auto draining = true;
     while (draining) {
-        const auto n_self_ref_tmp = tcpconn_recv_bytes(conn, tcpconn_scratch());
-        const auto n = std::move(n_self_ref_tmp);
+        const auto n = tcpconn_recv_bytes(conn, tcpconn_scratch());
         if (rusty::detail::deref_if_pointer_like(n) > 0) {
             tcpconn_append_inbound(conn, static_cast<size_t>(n));
             any_progress = true;
@@ -1748,9 +1747,8 @@ fn tcpconn_drain_outbound_locked(conn: &TcpConnection, buf: &mut TcpOutBuf) -> C
 ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf& buf) {
     size_t offset = static_cast<size_t>(0);
     auto blocked = false;
-    while (!blocked && (rusty::detail::deref_if_pointer_like(offset) < buf.size())) {
-        const auto n_self_ref_tmp = tcpconn_send_bytes(conn, buf, std::move(offset));
-        const auto n = std::move(n_self_ref_tmp);
+    while (rusty::detail::rust_not(blocked) && (rusty::detail::deref_if_pointer_like(offset) < buf.size())) {
+        const auto n = tcpconn_send_bytes(conn, buf, std::move(offset));
         if (rusty::detail::deref_if_pointer_like(n) > 0) {
             offset += static_cast<size_t>(n);
         } else if (rusty::detail::deref_if_pointer_like(n) == 0) {
@@ -1767,7 +1765,7 @@ ChannelError tcpconn_drain_outbound_locked(const TcpConnection& conn, TcpOutBuf&
         }
     }
     tcpconn_trim_sent(buf, std::move(offset));
-    if ((rusty::detail::deref_if_pointer_like(offset) == static_cast<size_t>(0)) && !buf.empty()) {
+    if ((rusty::detail::deref_if_pointer_like(offset) == static_cast<size_t>(0)) && rusty::detail::rust_not(buf.empty())) {
         return ChannelError_WouldBlock();
     }
     return ChannelError_None();
@@ -2090,7 +2088,7 @@ bool tcplistener_handle_read(const TcpListener& lst) {
     if (lst.closed_.get()) {
         return false;
     }
-    if (!tcplistener_is_bound(lst)) {
+    if (rusty::detail::rust_not(tcplistener_is_bound(lst))) {
         return false;
     }
     auto any_progress = false;
@@ -2109,13 +2107,13 @@ bool tcplistener_handle_read(const TcpListener& lst) {
         } else if (rusty::detail::deref_if_pointer_like(rc) == 2) {
             auto guard = lst.on_error_.lock().unwrap();
             if (rusty::detail::deref_if_pointer_like(guard)) {
-                (rusty::detail::deref_if_pointer_like(guard))(std::move(step.ch), "accept: failed to set non-blocking");
+                (rusty::detail::deref_if_pointer_like(guard))(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), "accept: failed to set non-blocking");
             }
         } else {
             {
                 auto guard = lst.on_error_.lock().unwrap();
                 if (rusty::detail::deref_if_pointer_like(guard)) {
-                    (rusty::detail::deref_if_pointer_like(guard))(std::move(step.ch), std::move(step.msg));
+                    (rusty::detail::deref_if_pointer_like(guard))(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ch); }) { return (__r.ch); } else if constexpr (requires { (__r.ch_field); }) { return (__r.ch_field); } else if constexpr (requires { ((*__r).ch); }) { return ((*__r).ch); } else { return ((*__r).ch_field); } }(step)), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.msg); }) { return (__r.msg); } else if constexpr (requires { (__r.msg_field); }) { return (__r.msg_field); } else if constexpr (requires { ((*__r).msg); }) { return ((*__r).msg); } else { return ((*__r).msg_field); } }(step)));
                 }
             }
             tcplistener_close(lst);

@@ -352,7 +352,7 @@ void HeartbeatManager::set_on_timeout(HeartbeatTimeoutCallback callback) const {
 }
 
 bool HeartbeatManager::should_send_heartbeat() const {
-    if (!this->config_field.get().enabled || this->timed_out.get()) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled) || this->timed_out.get()) {
         return false;
     }
     if (this->pending_pong.get()) {
@@ -365,7 +365,7 @@ bool HeartbeatManager::should_send_heartbeat() const {
 }
 
 void HeartbeatManager::on_heartbeat_sent() const {
-    if (!this->config_field.get().enabled) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled)) {
         return;
     }
     this->last_send_time.set(heartbeat_time_us());
@@ -373,7 +373,7 @@ void HeartbeatManager::on_heartbeat_sent() const {
 }
 
 void HeartbeatManager::on_pong_received() const {
-    if (!this->config_field.get().enabled) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled)) {
         return;
     }
     this->last_recv_time.set(heartbeat_time_us());
@@ -383,10 +383,10 @@ void HeartbeatManager::on_pong_received() const {
 }
 
 bool HeartbeatManager::check_timeout() const {
-    if (!this->config_field.get().enabled || this->timed_out.get()) {
+    if (rusty::detail::rust_not(this->config_field.get().enabled) || this->timed_out.get()) {
         return false;
     }
-    if (!this->pending_pong.get()) {
+    if (rusty::detail::rust_not(this->pending_pong.get())) {
         return false;
     }
     const uint64_t now = heartbeat_time_us();
@@ -409,7 +409,7 @@ bool HeartbeatManager::check_timeout() const {
 }
 
 uint32_t HeartbeatManager::time_until_next_heartbeat_ms() const {
-    if ((!this->config_field.get().enabled || this->timed_out.get()) || this->pending_pong.get()) {
+    if ((rusty::detail::rust_not(this->config_field.get().enabled) || this->timed_out.get()) || this->pending_pong.get()) {
         return this->config_field.get().interval_ms;
     }
     const uint64_t now = heartbeat_time_us();

@@ -301,39 +301,39 @@ size_t SparseInt::buf_size(uint8_t byte0) {
 size_t SparseInt::dump32(int32_t val, uint8_t* buf) {
     const auto u = static_cast<uint32_t>(val);
     if ((-64 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 63)) {
-        buf[0] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
-        buf[0] &= 127;
+        buf[static_cast<size_t>(0)] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[static_cast<size_t>(0)] &= 127;
         return static_cast<size_t>(1);
     } else if ((-8192 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 8191)) {
-        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
-        buf[1] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
-        buf[0] &= 63;
-        buf[0] |= 128;
+        buf[static_cast<size_t>(0)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[static_cast<size_t>(1)] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[static_cast<size_t>(0)] &= 63;
+        buf[static_cast<size_t>(0)] |= 128;
         return static_cast<size_t>(2);
     } else if ((-1048576 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 1048575)) {
-        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
-        buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
-        buf[2] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
-        buf[0] &= 31;
-        buf[0] |= 192;
+        buf[static_cast<size_t>(0)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+        buf[static_cast<size_t>(1)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[static_cast<size_t>(2)] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[static_cast<size_t>(0)] &= 31;
+        buf[static_cast<size_t>(0)] |= 192;
         return static_cast<size_t>(3);
     } else if ((-134217728 <= rusty::detail::deref_if_pointer_like(val)) && (rusty::detail::deref_if_pointer_like(val) <= 134217727)) {
-        buf[0] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
-        buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
-        buf[2] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
-        buf[3] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
-        buf[0] &= 15;
-        buf[0] |= 224;
+        buf[static_cast<size_t>(0)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
+        buf[static_cast<size_t>(1)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+        buf[static_cast<size_t>(2)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+        buf[static_cast<size_t>(3)] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+        buf[static_cast<size_t>(0)] &= 15;
+        buf[static_cast<size_t>(0)] |= 224;
         return static_cast<size_t>(4);
     }
-    buf[1] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
-    buf[2] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
-    buf[3] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
-    buf[4] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
+    buf[static_cast<size_t>(1)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 24)) & 255));
+    buf[static_cast<size_t>(2)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 16)) & 255));
+    buf[static_cast<size_t>(3)] = static_cast<uint8_t>((((rusty::detail::deref_if_pointer_like(u) >> 8)) & 255));
+    buf[static_cast<size_t>(4)] = static_cast<uint8_t>((rusty::detail::deref_if_pointer_like(u) & 255));
     if (rusty::detail::deref_if_pointer_like(val) < 0) {
-        buf[0] = 247;
+        buf[static_cast<size_t>(0)] = 247;
     } else {
-        buf[0] = 240;
+        buf[static_cast<size_t>(0)] = 240;
     }
     return static_cast<size_t>(5);
 }
@@ -348,25 +348,25 @@ size_t SparseInt::dump64(int64_t val, uint8_t* buf) {
             j += 1;
         }
         if (rusty::detail::deref_if_pointer_like(n) == 1) {
-            buf[0] &= 127;
+            buf[static_cast<size_t>(0)] &= 127;
         } else if (rusty::detail::deref_if_pointer_like(n) == 2) {
-            buf[0] &= 63;
-            buf[0] |= 128;
+            buf[static_cast<size_t>(0)] &= 63;
+            buf[static_cast<size_t>(0)] |= 128;
         } else if (rusty::detail::deref_if_pointer_like(n) == 3) {
-            buf[0] &= 31;
-            buf[0] |= 192;
+            buf[static_cast<size_t>(0)] &= 31;
+            buf[static_cast<size_t>(0)] |= 192;
         } else if (rusty::detail::deref_if_pointer_like(n) == 4) {
-            buf[0] &= 15;
-            buf[0] |= 224;
+            buf[static_cast<size_t>(0)] &= 15;
+            buf[static_cast<size_t>(0)] |= 224;
         } else if (rusty::detail::deref_if_pointer_like(n) == 5) {
-            buf[0] &= 7;
-            buf[0] |= 240;
+            buf[static_cast<size_t>(0)] &= 7;
+            buf[static_cast<size_t>(0)] |= 240;
         } else if (rusty::detail::deref_if_pointer_like(n) == 6) {
-            buf[0] &= 3;
-            buf[0] |= 248;
+            buf[static_cast<size_t>(0)] &= 3;
+            buf[static_cast<size_t>(0)] |= 248;
         } else {
-            buf[0] &= 1;
-            buf[0] |= 252;
+            buf[static_cast<size_t>(0)] &= 1;
+            buf[static_cast<size_t>(0)] |= 252;
         }
         return static_cast<size_t>(n);
     }
@@ -376,15 +376,15 @@ size_t SparseInt::dump64(int64_t val, uint8_t* buf) {
         j += 1;
     }
     if (rusty::detail::deref_if_pointer_like(n) == 8) {
-        buf[0] = 254;
+        buf[static_cast<size_t>(0)] = 254;
         return static_cast<size_t>(8);
     }
-    buf[0] = 255;
+    buf[static_cast<size_t>(0)] = 255;
     return static_cast<size_t>(9);
 }
 
 int32_t SparseInt::load32(const uint8_t* buf) {
-    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[0]));
+    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
     uint32_t u = static_cast<uint32_t>(0);
     if (rusty::detail::deref_if_pointer_like(bsize) < 5) {
         int32_t i = static_cast<int32_t>(0);
@@ -392,7 +392,7 @@ int32_t SparseInt::load32(const uint8_t* buf) {
             u |= ((static_cast<uint32_t>(buf[((rusty::detail::deref_if_pointer_like(bsize) - 1)) - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
             i += 1;
         }
-        auto top = buf[0];
+        auto top = buf[static_cast<size_t>(0)];
         rusty::detail::deref_if_pointer_like(top) &= static_cast<uint8_t>((255 >> rusty::detail::deref_if_pointer_like(bsize)));
         if (((((rusty::detail::deref_if_pointer_like(top) >> ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & static_cast<int32_t>(1))) == static_cast<int32_t>(1)) {
             rusty::detail::deref_if_pointer_like(top) |= static_cast<uint8_t>((((255 << ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & 255));
@@ -414,7 +414,7 @@ int32_t SparseInt::load32(const uint8_t* buf) {
 }
 
 int64_t SparseInt::load64(const uint8_t* buf) {
-    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[0]));
+    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
     uint64_t u = static_cast<uint64_t>(0);
     if (rusty::detail::deref_if_pointer_like(bsize) < 8) {
         int32_t i = static_cast<int32_t>(0);
@@ -422,7 +422,7 @@ int64_t SparseInt::load64(const uint8_t* buf) {
             u |= ((static_cast<uint64_t>(buf[((rusty::detail::deref_if_pointer_like(bsize) - 1)) - rusty::detail::deref_if_pointer_like(i)]))) << ((8 * rusty::detail::deref_if_pointer_like(i)));
             i += 1;
         }
-        auto top = buf[0];
+        auto top = buf[static_cast<size_t>(0)];
         rusty::detail::deref_if_pointer_like(top) &= static_cast<uint8_t>((255 >> rusty::detail::deref_if_pointer_like(bsize)));
         if (((((rusty::detail::deref_if_pointer_like(top) >> ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & static_cast<int32_t>(1))) == static_cast<int32_t>(1)) {
             rusty::detail::deref_if_pointer_like(top) |= static_cast<uint8_t>((((255 << ((7 - rusty::detail::deref_if_pointer_like(bsize))))) & 255));

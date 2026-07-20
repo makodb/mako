@@ -805,16 +805,16 @@ void Future::wait() const {
         return;
     }
     auto guard = this->state_.lock().unwrap();
-    this->ready_cond_.wait_while(std::move(guard), [&](auto&& s) { return !s.ready && !s.timed_out; }).unwrap();
+    this->ready_cond_.wait_while(std::move(guard), [&](auto&& s) { return rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ready); }) { return (__r.ready); } else if constexpr (requires { (__r.ready_field); }) { return (__r.ready_field); } else if constexpr (requires { ((*__r).ready); }) { return ((*__r).ready); } else { return ((*__r).ready_field); } }(s)) && rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.timed_out); }) { return (__r.timed_out); } else if constexpr (requires { (__r.timed_out_field); }) { return (__r.timed_out_field); } else if constexpr (requires { ((*__r).timed_out); }) { return ((*__r).timed_out); } else { return ((*__r).timed_out_field); } }(s)); }).unwrap();
 }
 
 void Future::timed_wait(double sec) const {
     auto guard = this->state_.lock().unwrap();
     const auto duration = fut_secs(std::move(sec));
-    auto result = this->ready_cond_.wait_timeout_while(std::move(guard), std::move(duration), [&](auto&& s) { return !s.ready && !s.timed_out; }).unwrap();
-    auto guard_shadow1 = std::move(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else return std::get<0>(std::forward<decltype(__t)>(__t)); })(result));
-    const bool condition_became_false = ([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else return std::get<1>(std::forward<decltype(__t)>(__t)); })(result);
-    if (!condition_became_false && !(rusty::detail::deref_if_pointer_like(guard_shadow1)).ready) {
+    auto result = this->ready_cond_.wait_timeout_while(std::move(guard), std::move(duration), [&](auto&& s) { return rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ready); }) { return (__r.ready); } else if constexpr (requires { (__r.ready_field); }) { return (__r.ready_field); } else if constexpr (requires { ((*__r).ready); }) { return ((*__r).ready); } else { return ((*__r).ready_field); } }(s)) && rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.timed_out); }) { return (__r.timed_out); } else if constexpr (requires { (__r.timed_out_field); }) { return (__r.timed_out_field); } else if constexpr (requires { ((*__r).timed_out); }) { return ((*__r).timed_out); } else { return ((*__r).timed_out_field); } }(s)); }).unwrap();
+    auto guard_shadow1 = std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(result)));
+    const bool condition_became_false = rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(result));
+    if (!condition_became_false && rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(guard_shadow1)).ready)) {
         (rusty::detail::deref_if_pointer_like(guard_shadow1)).timed_out = true;
         this->error_code_.set(std::move(ETIMEDOUT));
         this->timeout_type_.set(rusty::clone(rusty::clone(TimeoutType::RESPONSE_TIMEOUT)));
@@ -908,7 +908,7 @@ void Future::notify_ready(rusty::Arc<Future> self_arc) const {
         completion_callbacks = rusty::mem::take((*guard).completion_callbacks);
     }
     this->ready_cond_.notify_all();
-    for (auto&& callback : rusty::for_in(rusty::iter(completion_callbacks))) {
+    for (auto&& callback : rusty::for_in(rusty::iter_mut(completion_callbacks))) {
         if (callback) {
             callback();
         }
@@ -1954,7 +1954,7 @@ void ClientConnection::on_channel_closed_fan_out() const {
         this->invoke_disconnected_callback();
     }
     const std::string addr = this->reconnect_address_.get();
-    if (rusty::detail::deref_if_pointer_like(this->reconnect_policy_.get().auto_reconnect) && !addr.empty()) {
+    if (rusty::detail::deref_if_pointer_like(this->reconnect_policy_.get().auto_reconnect) && rusty::detail::rust_not(addr.empty())) {
         // @unsafe
         {
             this->reconnect_.channel_reconnect_attempts_.fetch_add(1, rusty::sync::atomic::Ordering::AcqRel);
@@ -1963,7 +1963,7 @@ void ClientConnection::on_channel_closed_fan_out() const {
         if (reconnect_aborted) {
             return;
         }
-        const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+        WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
         rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
@@ -1971,7 +1971,7 @@ if (conn_opt.is_none()) {
 }
 const auto conn = conn_opt.unwrap();
 const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
-if (!(rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect || rusty::detail::deref_if_pointer_like(conn_aborted)) {
+if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect) || rusty::detail::deref_if_pointer_like(conn_aborted)) {
     return;
 }
 const auto state = ((rusty::detail::deref_if_pointer_like(conn))).connection_state();
@@ -2014,8 +2014,8 @@ void ClientConnection::reset_channel_mode_for_reconnect() const {
 }
 
 int32_t ClientConnection::connect(const int8_t* addr) const {
-    verify(!this->state_machine_.is_connected());
-    if (!this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::CONNECTING)))) {
+    verify(rusty::detail::rust_not(this->state_machine_.is_connected()));
+    if (rusty::detail::rust_not(this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::CONNECTING))))) {
         log_connect_bad_state(this->state_machine_.state());
         this->invoke_error_callback(EINVAL, "invalid state for connect");
         return EINVAL;
@@ -2030,7 +2030,7 @@ int32_t ClientConnection::connect(const int8_t* addr) const {
 }
 
 void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
-    if (!channel.is_valid()) {
+    if (rusty::detail::rust_not(channel.is_valid())) {
         return;
     }
     {
@@ -2039,7 +2039,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
         fiberchannel_bind_callbacks(((*guard)).as_ref().unwrap());
     }
     this->channel_mode_.set(true);
-    const WeakClientConnection weak_self = rusty::clone(this->weak_self_);
+    WeakClientConnection weak_self = rusty::clone(this->weak_self_);
     Fiber::create_run([=, weak_self = std::move(weak_self)]() mutable {
 auto conn_opt = weak_self.upgrade();
 if (conn_opt.is_none()) {
@@ -2059,7 +2059,7 @@ void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) const
 }
 
 void ClientConnection::bind_factory(ChannelFactoryProxy factory) {
-    if (!factory.is_valid()) {
+    if (rusty::detail::rust_not(factory.is_valid())) {
         return;
     }
     auto guard = this->factory_.lock().unwrap();
@@ -2091,7 +2091,7 @@ void ClientConnection::invalidate_pending_futures() const {
             i += static_cast<size_t>(1);
         }
     }
-    for (auto&& cb : rusty::for_in(rusty::iter(drained_callbacks))) {
+    for (auto&& cb : rusty::for_in(rusty::iter_mut(drained_callbacks))) {
         this->metrics_.record_request_dropped();
         cb(ENOTCONN, null_reply_bytes(), 0);
     }
@@ -2147,7 +2147,7 @@ void ClientConnection::close() const {
     }
     if (was_connected) {
         this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::DISCONNECTED)));
-    } else if (!this->state_machine_.is_terminal()) {
+    } else if (rusty::detail::rust_not(this->state_machine_.is_terminal())) {
         this->state_machine_.force_state(rusty::clone(rusty::clone(ConnectionState::DISCONNECTED)));
     }
     this->heartbeat_manager_.reset();
@@ -2174,7 +2174,7 @@ int32_t ClientConnection::reconnect(OnReconnectCompleteCallbackFn on_complete) c
 
 void ClientConnection::set_buffering_config(const BufferingConfig& config) const {
     this->buffering_config_.set(std::move(config));
-    if (!this->pending_queue_.empty()) {
+    if (rusty::detail::rust_not(this->pending_queue_.empty())) {
         this->pending_queue_.clear_all(ECONNABORTED);
     }
     this->pending_queue_.update_config(config.to_queue_config());
@@ -2182,14 +2182,14 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
 
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
     this->heartbeat_manager_.set_config(config);
-    const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+    WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
     this->heartbeat_manager_.set_on_timeout([=, weak_conn = std::move(weak_conn)]() mutable {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
     return;
 }
 const auto conn = conn_opt.unwrap();
-if (!((rusty::detail::deref_if_pointer_like(conn))).connected()) {
+if (rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(conn))).connected())) {
     return;
 }
 // @unsafe
@@ -2221,7 +2221,7 @@ bool ClientConnection::allow_request_with_circuit_metrics() const {
     auto allowed = this->circuit_breaker_.allow_request();
     auto after = this->circuit_breaker_.state();
     this->record_circuit_state_transition(std::move(before), std::move(after));
-    if (!allowed) {
+    if (rusty::detail::rust_not(allowed)) {
         this->metrics_.record_circuit_open_rejection();
     }
     return std::move(allowed);
@@ -2266,35 +2266,35 @@ void ClientConnection::record_circuit_result(int32_t err) const {
 }
 
 void ClientConnection::invoke_error_callback(int32_t err, const std::string& message) const {
-    if (!this->callback_manager_.is_valid()) {
+    if (rusty::detail::rust_not(this->callback_manager_.is_valid())) {
         return;
     }
     ((rusty::detail::deref_if_pointer_like(this->callback_manager_))).invoke_on_error(clientconn_map_system_error(std::move(err)), message);
 }
 
 void ClientConnection::invoke_disconnected_callback() const {
-    if (!this->callback_manager_.is_valid()) {
+    if (rusty::detail::rust_not(this->callback_manager_.is_valid())) {
         return;
     }
     ((rusty::detail::deref_if_pointer_like(this->callback_manager_))).invoke_on_disconnected();
 }
 
 void ClientConnection::invoke_reconnecting_callback() const {
-    if (!this->callback_manager_.is_valid()) {
+    if (rusty::detail::rust_not(this->callback_manager_.is_valid())) {
         return;
     }
     ((rusty::detail::deref_if_pointer_like(this->callback_manager_))).invoke_on_reconnecting();
 }
 
 void ClientConnection::invoke_reconnected_callback(bool success) const {
-    if (!this->callback_manager_.is_valid()) {
+    if (rusty::detail::rust_not(this->callback_manager_.is_valid())) {
         return;
     }
     ((rusty::detail::deref_if_pointer_like(this->callback_manager_))).invoke_on_reconnected(std::move(success));
 }
 
 void ClientConnection::invoke_connected_callback() const {
-    if (!this->callback_manager_.is_valid()) {
+    if (rusty::detail::rust_not(this->callback_manager_.is_valid())) {
         return;
     }
     ((rusty::detail::deref_if_pointer_like(this->callback_manager_))).invoke_on_connected();
@@ -2323,7 +2323,7 @@ void ClientConnection::handle_error() const {
         if (addr.empty()) {
             return;
         }
-        const WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
+        WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
         rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
@@ -2331,7 +2331,7 @@ if (conn_opt.is_none()) {
 }
 const auto conn = conn_opt.unwrap();
 const bool conn_aborted = (rusty::detail::deref_if_pointer_like(conn)).reconnect_.reconnect_abort_.load(rusty::sync::atomic::Ordering::Acquire);
-if (!(rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect || rusty::detail::deref_if_pointer_like(conn_aborted)) {
+if (rusty::detail::rust_not((rusty::detail::deref_if_pointer_like(conn)).reconnect_policy_.get().auto_reconnect) || rusty::detail::deref_if_pointer_like(conn_aborted)) {
     return;
 }
 const auto state = ((rusty::detail::deref_if_pointer_like(conn))).connection_state();
@@ -2347,7 +2347,7 @@ if ((((static_cast<int32_t>(state))) == ((static_cast<int32_t>(ConnectionState::
 }
 
 bool ClientConnection::check_pending_write_update() const {
-    if (this->state_machine_.is_connected() && !this->paused_.get()) {
+    if (this->state_machine_.is_connected() && rusty::detail::rust_not(this->paused_.get())) {
         if (this->heartbeat_manager_.check_timeout()) {
             return false;
         }
@@ -3217,7 +3217,7 @@ FutureResult Client::request(int32_t rpc_id, const FutureAttr& attr, F write_fn)
         return FutureResult::Err(ENOTCONN);
     }
     this->rpc_id_field.set(std::move(rpc_id));
-    return guard->as_ref().unwrap()->request(std::move(rpc_id), attr, std::move(write_fn));
+    return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->request(std::move(rpc_id), attr, std::move(write_fn));
 }
 
 template<typename F>
@@ -3227,7 +3227,7 @@ FutureResult Client::request_with_options(int32_t rpc_id, const RequestOptions& 
         return FutureResult::Err(ENOTCONN);
     }
     this->rpc_id_field.set(std::move(rpc_id));
-    return guard->as_ref().unwrap()->request_with_options(std::move(rpc_id), options, FutureAttr{}, std::move(write_fn));
+    return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->request_with_options(std::move(rpc_id), options, FutureAttr{}, std::move(write_fn));
 }
 
 template<typename F>
@@ -3237,7 +3237,7 @@ auto Client::request_async(int32_t rpc_id, F write_fn, AsyncReplyCallback on_rep
         return rusty::Result<rusty::Unit, int32_t>::Err(ENOTCONN);
     }
     this->rpc_id_field.set(std::move(rpc_id));
-    return guard->as_ref().unwrap()->request_async(std::move(rpc_id), std::move(write_fn), std::move(on_reply));
+    return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->request_async(std::move(rpc_id), std::move(write_fn), std::move(on_reply));
 }
 
 void Client::set_valid(bool _valid) const {
@@ -3278,11 +3278,11 @@ int32_t Client::connect(const int8_t* addr, bool client) const {
 void Client::close() const {
     auto guard = this->connection_field.borrow_mut();
     if (guard->is_some()) {
-        auto& conn_ref = guard->as_ref().unwrap();
+        auto& conn_ref = ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap();
         const bool was_connected = conn_ref->connected();
         conn_ref->mark_closing();
         if (was_connected) {
-            const rusty::Arc<ClientConnection> conn_arc = rusty::clone(conn_ref);
+            rusty::Arc<ClientConnection> conn_arc = rusty::clone(conn_ref);
             const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() mutable {
 conn_arc->close();
 }));
@@ -3294,21 +3294,21 @@ conn_arc->close();
 void Client::handle_free(int64_t xid) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->handle_free(std::move(xid));
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->handle_free(std::move(xid));
     }
 }
 
 void Client::pause() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->pause();
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->pause();
     }
 }
 
 void Client::resume() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->resume();
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->resume();
     }
 }
 
@@ -3320,11 +3320,11 @@ int32_t Client::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
         }
         return ENOTCONN;
     }
-    return guard->as_ref().unwrap()->reconnect(std::move(on_complete));
+    return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->reconnect(std::move(on_complete));
 }
 
 void Client::set_channel_factory(ChannelFactoryProxy factory) const {
-    if (!factory) {
+    if (rusty::detail::rust_not(factory)) {
         return;
     }
     auto guard = this->pending_factory_field.lock().unwrap();
@@ -3339,7 +3339,7 @@ bool Client::has_pending_channel_factory() const {
 size_t Client::pending_request_count() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->pending_request_count();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->pending_request_count();
     }
     return static_cast<size_t>(0);
 }
@@ -3347,32 +3347,32 @@ size_t Client::pending_request_count() const {
 void Client::clear_pending_requests(int32_t error_code) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->clear_pending_requests(std::move(error_code));
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->clear_pending_requests(std::move(error_code));
     }
 }
 
 bool Client::is_reconnecting() const {
     const auto guard = this->connection_field.borrow();
-    return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
+    return guard->is_some() && ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->is_reconnecting();
 }
 
 rusty::String Client::host() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->host();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->host();
     }
     return rusty::String{};
 }
 
 bool Client::connected() const {
     const auto guard = this->connection_field.borrow();
-    return guard->is_some() && guard->as_ref().unwrap()->connected();
+    return guard->is_some() && ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->connected();
 }
 
 ConnectionState Client::connection_state() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->connection_state();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->connection_state();
     }
     return rusty::clone(rusty::clone(ConnectionState::NEW));
 }
@@ -3392,7 +3392,7 @@ bool Client::try_reconnect_if_needed() const {
 rusty::Option<rusty::Arc<ClientConnection>> Client::connection() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return rusty::Option<rusty::Arc<ClientConnection>>(rusty::clone(guard->as_ref().unwrap()));
+        return rusty::Option<rusty::Arc<ClientConnection>>(rusty::clone(([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()));
     }
     return rusty::Option<rusty::Arc<ClientConnection>>{rusty::None};
 }
@@ -3400,7 +3400,7 @@ rusty::Option<rusty::Arc<ClientConnection>> Client::connection() const {
 uint64_t Client::server_instance_id() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->server_instance_id();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->server_instance_id();
     }
     return static_cast<uint64_t>(0);
 }
@@ -3408,14 +3408,14 @@ uint64_t Client::server_instance_id() const {
 void Client::set_on_server_restart(OnServerRestartCallbackFn callback) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_on_server_restart(std::move(callback));
     }
 }
 
 bool Client::check_server_instance(uint64_t new_id) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->check_server_instance(std::move(new_id));
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->check_server_instance(std::move(new_id));
     }
     return false;
 }
@@ -3424,14 +3424,14 @@ void Client::set_reconnect_policy(const ReconnectPolicy& policy) const {
     this->pending_reconnect_policy_field.set(policy);
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_reconnect_policy(policy);
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_reconnect_policy(policy);
     }
 }
 
 void Client::set_buffering_config(const BufferingConfig& config) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_buffering_config(config);
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_buffering_config(config);
     }
 }
 
@@ -3439,14 +3439,14 @@ void Client::set_keepalive(const KeepaliveConfig& config) const {
     this->pending_keepalive_config_field.set(config);
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_keepalive(config);
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_keepalive(config);
     }
 }
 
 KeepaliveConfig Client::keepalive_config() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->keepalive_config();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->keepalive_config();
     }
     return this->pending_keepalive_config_field.get();
 }
@@ -3455,14 +3455,14 @@ void Client::set_heartbeat(const HeartbeatConfig& config) const {
     this->pending_heartbeat_config_field.set(config);
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_heartbeat_config(config);
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_heartbeat_config(config);
     }
 }
 
 HeartbeatConfig Client::heartbeat_config() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->heartbeat_config();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->heartbeat_config();
     }
     return this->pending_heartbeat_config_field.get();
 }
@@ -3471,14 +3471,14 @@ void Client::set_circuit_breaker(const CircuitBreakerConfig& config) const {
     this->pending_circuit_breaker_config_field.set(config);
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        guard->as_ref().unwrap()->set_circuit_breaker_config(config);
+        ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->set_circuit_breaker_config(config);
     }
 }
 
 CircuitBreakerConfig Client::circuit_breaker_config() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->circuit_breaker_config();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->circuit_breaker_config();
     }
     return this->pending_circuit_breaker_config_field.get();
 }
@@ -3486,7 +3486,7 @@ CircuitBreakerConfig Client::circuit_breaker_config() const {
 CircuitState Client::circuit_breaker_state() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->circuit_breaker_state();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->circuit_breaker_state();
     }
     return rusty::clone(rusty::clone(CircuitState::CLOSED));
 }
@@ -3494,7 +3494,7 @@ CircuitState Client::circuit_breaker_state() const {
 bool Client::is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->is_idle(std::move(idle_ms), std::move(current_time_ms));
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->is_idle(std::move(idle_ms), std::move(current_time_ms));
     }
     return false;
 }
@@ -3502,7 +3502,7 @@ bool Client::is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
 bool Client::validate_connection() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->validate_connection();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->validate_connection();
     }
     return false;
 }
@@ -3510,7 +3510,7 @@ bool Client::validate_connection() const {
 const ConnectionMetrics& Client::metrics() const {
     const auto guard = this->connection_field.borrow();
     if (guard->is_some()) {
-        return guard->as_ref().unwrap()->metrics();
+        return ([&](auto&& __b) -> decltype(auto) { if constexpr (requires { (*__b).as_ref(); }) { return (*__b).as_ref(); } else { return __b.as_ref(); } })(guard).unwrap()->metrics();
     }
     return this->empty_metrics_field;
 }
@@ -3770,18 +3770,18 @@ PoolConfig ClientPool::pool_config() const {
 
 bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
     const auto cfg = this->config_.get();
-    if (!cfg.health_check_enabled) {
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.health_check_enabled); }) { return (__r.health_check_enabled); } else if constexpr (requires { (__r.health_check_enabled_field); }) { return (__r.health_check_enabled_field); } else if constexpr (requires { ((*__r).health_check_enabled); }) { return ((*__r).health_check_enabled); } else { return ((*__r).health_check_enabled_field); } }(cfg))) {
         return true;
     }
-    if (!((rusty::detail::deref_if_pointer_like(client))).connected()) {
+    if (rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(client))).connected())) {
         return false;
     }
     const auto requests_sent = ((rusty::detail::deref_if_pointer_like(client))).metrics().requests_sent();
-    if (rusty::detail::deref_if_pointer_like(requests_sent) < rusty::detail::deref_if_pointer_like(cfg.min_requests_for_health)) {
+    if (rusty::detail::deref_if_pointer_like(requests_sent) < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.min_requests_for_health); }) { return (__r.min_requests_for_health); } else if constexpr (requires { (__r.min_requests_for_health_field); }) { return (__r.min_requests_for_health_field); } else if constexpr (requires { ((*__r).min_requests_for_health); }) { return ((*__r).min_requests_for_health); } else { return ((*__r).min_requests_for_health_field); } }(cfg))) {
         return true;
     }
     const auto success_rate = ((rusty::detail::deref_if_pointer_like(client))).metrics().success_rate_percent();
-    return rusty::detail::deref_if_pointer_like(success_rate) >= rusty::detail::deref_if_pointer_like(cfg.unhealthy_threshold_percent);
+    return rusty::detail::deref_if_pointer_like(success_rate) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.unhealthy_threshold_percent); }) { return (__r.unhealthy_threshold_percent); } else if constexpr (requires { (__r.unhealthy_threshold_percent_field); }) { return (__r.unhealthy_threshold_percent_field); } else if constexpr (requires { ((*__r).unhealthy_threshold_percent); }) { return ((*__r).unhealthy_threshold_percent); } else { return ((*__r).unhealthy_threshold_percent_field); } }(cfg));
 }
 
 size_t ClientPool::get_healthy_client_count(const std::string& addr) const {
