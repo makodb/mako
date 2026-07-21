@@ -442,35 +442,35 @@ void RaftServer::InitializeSnapshotManager() {
   auto manager = std::make_shared<janus::raft::FileSnapshotManager>(snap_config);
   SetSnapshotManager(manager);
 
-  // If a snapshot exists, load its metadata into snapidx_/snapterm_
+  // If a snapshot exists, load its metadata into the snapshot progress core.
   auto latest = manager->GetLatestSnapshot();
   if (latest.is_some()) {
     auto meta = latest.unwrap();
-    snapidx_ = meta.last_included_index;
-    snapterm_ = meta.last_included_term;
+    snapshot_progress_core_.set_snapshot_index(meta.last_included_index);
+    snapshot_progress_core_.set_snapshot_term(meta.last_included_term);
     Log_info("[RAFT-SNAPSHOT] Loaded snapshot metadata: index=%lu term=%lu size=%zu",
-             snapidx_, snapterm_, meta.size_bytes);
+             snapshot_progress_core_.snapshot_index(), snapshot_progress_core_.snapshot_term(), meta.size_bytes);
   }
 
   // @unsafe - Recover server state from snapshot metadata
   // InitializeSnapshotManager() runs AFTER RecoverFromStorage() in Setup(),
   // so log-recovered values may already be set. Only advance, never go backwards.
-  if (snapidx_ > 0) {
-    if (snapidx_ > executeIndex) {
-      executeIndex = snapidx_;
+  if (snapshot_progress_core_.snapshot_index() > 0) {
+    if (snapshot_progress_core_.snapshot_index() > executeIndex) {
+      executeIndex = snapshot_progress_core_.snapshot_index();
       Log_info("[RAFT-SNAPSHOT] Recovery: set executeIndex=%lu from snapshot", executeIndex);
     }
-    if (snapidx_ > commitIndex) {
-      commitIndex = snapidx_;
+    if (snapshot_progress_core_.snapshot_index() > commitIndex) {
+      commitIndex = snapshot_progress_core_.snapshot_index();
       PersistCommitIndexToLogStorage();
       Log_info("[RAFT-SNAPSHOT] Recovery: set commitIndex=%lu from snapshot", commitIndex);
     }
-    if (snapidx_ > lastLogIndex) {
-      lastLogIndex = snapidx_;
+    if (snapshot_progress_core_.snapshot_index() > lastLogIndex) {
+      lastLogIndex = snapshot_progress_core_.snapshot_index();
       Log_info("[RAFT-SNAPSHOT] Recovery: set lastLogIndex=%lu from snapshot", lastLogIndex);
     }
-    if (snapidx_ + 1 > min_active_slot_) {
-      min_active_slot_ = snapidx_ + 1;
+    if (snapshot_progress_core_.snapshot_index() + 1 > min_active_slot_) {
+      min_active_slot_ = snapshot_progress_core_.snapshot_index() + 1;
       Log_info("[RAFT-SNAPSHOT] Recovery: set min_active_slot_=%lu from snapshot", min_active_slot_);
     }
   }
@@ -492,12 +492,12 @@ bool RaftServer::HasSnapshot() const {
 
 // @safe - Returns the last snapshotted log index
 uint64_t RaftServer::GetSnapshotIndex() const {
-  return snapidx_;
+  return snapshot_progress_core_.snapshot_index();
 }
 
 // @safe - Returns the term of the last snapshotted log entry
 uint64_t RaftServer::GetSnapshotTerm() const {
-  return snapterm_;
+  return snapshot_progress_core_.snapshot_term();
 }
 
 // @unsafe - Log compaction (storage operations wrapped in @unsafe blocks)
@@ -626,9 +626,9 @@ void RaftServer::CreateSnapshot() {
   }
 
   // Update snapshot metadata
-  slotid_t old_snapidx = snapidx_;
-  snapidx_ = snap_index;
-  snapterm_ = snap_term;
+  slotid_t old_snapidx = snapshot_progress_core_.snapshot_index();
+  snapshot_progress_core_.set_snapshot_index(snap_index);
+  snapshot_progress_core_.set_snapshot_term(snap_term);
 
   Log_info("[RAFT-SNAPSHOT] Site %d: Snapshot saved at index=%lu term=%lu (prev snapidx=%lu)",
            site_id_, snap_index, snap_term, old_snapidx);
@@ -706,6 +706,7 @@ RaftServer::RaftServer(Frame * frame)
     membership_core_(RaftServerMembershipCore::new_()),
     speculative_core_(RaftServerSpeculativeCore::new_()),
     vote_core_(RaftServerVoteCore::new_(INVALID_SITEID)),
+    snapshot_progress_core_(RaftServerSnapshotProgressCore::new_()),
     timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
@@ -868,12 +869,12 @@ void RaftServer::StartApplyThread() {
         // Cheap unlocked pre-check so the hot path stays lock-free when
         // we're far from the threshold or have no manager configured.
         if (snapshot_manager_ && server_snapshot_is_due(
-                snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
+                snapshot_progress_core_.snapshot_index(), executeIndex, tuning_core_.snapshot_threshold())) {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          // Re-check under the lock: CreateSnapshot mutates snapidx_ and
+          // Re-check under the lock: CreateSnapshot mutates snapshot index and
           // raft_logs_ via CompactLog.
           if (snapshot_manager_ && server_snapshot_is_due(
-                  snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
+                  snapshot_progress_core_.snapshot_index(), executeIndex, tuning_core_.snapshot_threshold())) {
             CreateSnapshot();
           }
         }
@@ -1392,7 +1393,7 @@ void RaftServer::applyLogs() {
 
   // Check if we should take a snapshot
   if (snapshot_manager_ && server_snapshot_is_due(
-          snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
+          snapshot_progress_core_.snapshot_index(), executeIndex, tuning_core_.snapshot_threshold())) {
     CreateSnapshot();
   }
 
@@ -1402,8 +1403,8 @@ void RaftServer::applyLogs() {
                         ? executeIndex - log_retention_window
                         : 0;
   // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
-  if (snapidx_ > 0 && cutoff > snapidx_) {
-    cutoff = snapidx_;
+  if (snapshot_progress_core_.snapshot_index() > 0 && cutoff > snapshot_progress_core_.snapshot_index()) {
+    cutoff = snapshot_progress_core_.snapshot_index();
   }
   while (min_active_slot_ < cutoff) {
     removeCmd(min_active_slot_);
@@ -1624,9 +1625,9 @@ void RaftServer::HeartbeatLoop() {
             verify(prevLogIndex <= lastLogIndex);
             if (prevLogIndex == 0) {
               prevLogTerm = 0;
-            } else if (prevLogIndex == snapidx_ && snapidx_ > 0) {
+            } else if (prevLogIndex == snapshot_progress_core_.snapshot_index() && snapshot_progress_core_.snapshot_index() > 0) {
               // Keep using snapshot boundary metadata after compaction.
-              prevLogTerm = snapterm_;
+              prevLogTerm = snapshot_progress_core_.snapshot_term();
             } else {
               auto instance = GetRaftInstance(prevLogIndex);
               if (!instance) {
@@ -2063,13 +2064,13 @@ bool RaftServer::RequestVote() {
 
     LogTermChange("starting election", prev_local_term, currentTerm);
     // PersistState() already called above - no need for duplicate persistence
-    lstoff = lastLogIndex - snapidx_ ;
+    lstoff = lastLogIndex - snapshot_progress_core_.snapshot_index() ;
     if (lstoff == 0) {
-      lst_idx = snapidx_;
-      lst_term = snapterm_;
+      lst_idx = snapshot_progress_core_.snapshot_index();
+      lst_term = snapshot_progress_core_.snapshot_term();
     } else {
       auto log = GetRaftInstance(lstoff) ; // causes min_active_slot_ verification error (server.h:247)
-      lst_idx = lstoff + snapidx_ ;
+      lst_idx = lstoff + snapshot_progress_core_.snapshot_index() ;
       lst_term = log->term ;
     }
   }
@@ -2239,9 +2240,9 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   }
 
   // lstoff starts from 1
-  uint32_t lstoff = lastLogIndex - snapidx_ ;
+  uint32_t lstoff = lastLogIndex - snapshot_progress_core_.snapshot_index() ;
 
-  ballot_t curlstterm = snapterm_ ;
+  ballot_t curlstterm = snapshot_progress_core_.snapshot_term() ;
   slotid_t curlstidx = lastLogIndex ;
 
   if(lstoff > 0 )
@@ -2510,15 +2511,15 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   bool term_ok = server_append_term_is_acceptable(
       leaderCurrentTerm, this->currentTerm);
   const bool compacted_prefix_miss = server_append_prefix_is_compacted_miss(
-      leaderPrevLogIndex, min_active_slot_, snapidx_);
+      leaderPrevLogIndex, min_active_slot_, snapshot_progress_core_.snapshot_index());
   bool index_ok = server_append_index_is_acceptable(
       leaderPrevLogIndex, this->lastLogIndex, compacted_prefix_miss);
   uint64_t local_prev_term = 0;
   if (leaderPrevLogIndex == 0) {
       local_prev_term = 0;
-  } else if (leaderPrevLogIndex == snapidx_) {
+  } else if (leaderPrevLogIndex == snapshot_progress_core_.snapshot_index()) {
       // Snapshot boundary is still valid even when log entries are compacted.
-      local_prev_term = snapterm_;
+      local_prev_term = snapshot_progress_core_.snapshot_term();
   } else if (leaderPrevLogIndex <= this->lastLogIndex && !compacted_prefix_miss) {
       auto prev_instance = GetRaftInstance(leaderPrevLogIndex);
       local_prev_term = prev_instance ? prev_instance->term : 0;
@@ -2974,8 +2975,8 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // ============================================================================
   // Update snapshot metadata
   // ============================================================================
-  snapidx_ = last_included_index;
-  snapterm_ = last_included_term;
+  snapshot_progress_core_.set_snapshot_index(last_included_index);
+  snapshot_progress_core_.set_snapshot_term(last_included_term);
 
   // ============================================================================
   // Discard log entries covered by the snapshot
@@ -3031,7 +3032,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
 
   Log_info("[INSTALL-SNAPSHOT] Site %d: Installed snapshot from leader %lu "
            "(snapidx=%lu, snapterm=%lu, commitIndex=%lu, executeIndex=%lu, lastLogIndex=%lu)",
-           site_id_, leader_id, snapidx_, snapterm_, commitIndex, executeIndex, lastLogIndex);
+           site_id_, leader_id, snapshot_progress_core_.snapshot_index(), snapshot_progress_core_.snapshot_term(), commitIndex, executeIndex, lastLogIndex);
 }
 
 // @unsafe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)

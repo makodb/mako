@@ -1045,6 +1045,78 @@ inline void RaftServerVoteCore::set_req_voting(bool value) {
 }
 /*RUSTYCPP:GEN-END id=server.9*/
 
+#if RUSTYCPP_RUST
+pub struct RaftServerSnapshotProgressCore {
+    snapshot_index_: rusty::Cell<u64>,
+    snapshot_term_: rusty::Cell<u64>,
+}
+
+impl RaftServerSnapshotProgressCore {
+    // @safe
+    fn new() -> RaftServerSnapshotProgressCore {
+        RaftServerSnapshotProgressCore {
+            snapshot_index_: rusty::Cell::<u64>::new_(0),
+            snapshot_term_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn snapshot_index(&self) -> u64 {
+        self.snapshot_index_.get()
+    }
+
+    // @safe
+    fn set_snapshot_index(&mut self, index: u64) {
+        self.snapshot_index_.set(index)
+    }
+
+    // @safe
+    fn snapshot_term(&self) -> u64 {
+        self.snapshot_term_.get()
+    }
+
+    // @safe
+    fn set_snapshot_term(&mut self, term: u64) {
+        self.snapshot_term_.set(term)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.10 version=1 rust_sha256=a9ea7a8b097f26cdbb5f8edba54c4265d9e0ef27c869c1db960affe67c763d30*/
+struct RaftServerSnapshotProgressCore;
+
+struct RaftServerSnapshotProgressCore {
+    rusty::Cell<uint64_t> snapshot_index_;
+    rusty::Cell<uint64_t> snapshot_term_;
+
+    static RaftServerSnapshotProgressCore new_();
+    uint64_t snapshot_index() const;
+    void set_snapshot_index(uint64_t index);
+    uint64_t snapshot_term() const;
+    void set_snapshot_term(uint64_t term);
+};
+
+
+inline RaftServerSnapshotProgressCore RaftServerSnapshotProgressCore::new_() {
+    return RaftServerSnapshotProgressCore{.snapshot_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .snapshot_term_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline uint64_t RaftServerSnapshotProgressCore::snapshot_index() const {
+    return this->snapshot_index_.get();
+}
+
+inline void RaftServerSnapshotProgressCore::set_snapshot_index(uint64_t index) {
+    this->snapshot_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSnapshotProgressCore::snapshot_term() const {
+    return this->snapshot_term_.get();
+}
+
+inline void RaftServerSnapshotProgressCore::set_snapshot_term(uint64_t term) {
+    this->snapshot_term_.set(std::move(term));
+}
+/*RUSTYCPP:GEN-END id=server.10*/
+
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
 // threading/atomics, storage, callbacks, and consensus orchestration remain
@@ -1123,8 +1195,7 @@ class RaftServer : public TxLogServer {
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   bool stop_ = false ;
   RaftServerVoteCore vote_core_;
-  slotid_t snapidx_ = 0 ;
-  ballot_t snapterm_ = 0 ;
+  RaftServerSnapshotProgressCore snapshot_progress_core_;
   int32_t wait_int_ = 100000 ;
   bool disconnected_ = false;
   bool in_applying_logs_ = false ;

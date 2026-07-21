@@ -5744,7 +5744,7 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
  * 2. Set up snapshot manager on a follower with low threshold
  * 3. Commit entries, manually trigger CreateSnapshot on the follower
  * 4. Kill the follower, restart it (snapshot manager re-initialized)
- * 5. Verify state reflects snapshot: executeIndex >= snapidx_, etc.
+ * 5. Verify state reflects snapshot: executeIndex >= snapshot index, etc.
  * 6. Verify cluster can still make progress
  */
 int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
@@ -5873,7 +5873,7 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
  * Scenario:
  * 1. Start cluster, elect leader
  * 2. Set up snapshot manager on a server, commit entries, create snapshot
- * 3. Record snapidx_
+ * 3. Record snapshot index
  * 4. Commit more entries so executeIndex/commitIndex are ahead of snapshot
  * 5. Call InitializeSnapshotManager() again (simulating re-init)
  * 6. Verify indices were NOT set backwards
@@ -6208,7 +6208,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   Log_info("TEST 69: Follower snapshot index=%lu (leader=%lu)",
            follower_snap_idx, leader_snap_idx);
   Assert2(follower_snap_idx >= leader_snap_idx,
-          "Follower snapidx_ should match leader's (%lu), got %lu",
+          "Follower snapshot index should match leader's (%lu), got %lu",
           leader_snap_idx, follower_snap_idx);
 
   // Verify new entries can be committed with all 5 nodes
