@@ -249,7 +249,7 @@ ReplicatedDB::~ReplicatedDB() {
 
 // @unsafe - Submits PUT command through Raft, blocks until committed
 bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
-  if (!db_ || !raft_) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, true)) return false;
 
   auto cmd = ReplicatedDBCommand::CreatePut(key, value);
 
@@ -268,16 +268,16 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   });
 
   // Poll until callback fires
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);  // 100us poll interval
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Submits DELETE command through Raft, blocks until committed
 bool ReplicatedDB::Delete(const std::string& key) {
-  if (!db_ || !raft_) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, true)) return false;
 
   auto cmd = ReplicatedDBCommand::CreateDelete(key);
 
@@ -295,16 +295,16 @@ bool ReplicatedDB::Delete(const std::string& key) {
     committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Submits BATCH command through Raft, blocks until committed
 bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
-  if (!db_ || !raft_ || ops.empty()) return false;
+  if (!replicated_db_can_submit(db_ != nullptr, raft_ != nullptr, !ops.empty())) return false;
 
   auto cmd = ReplicatedDBCommand::CreateBatch(ops);
 
@@ -322,16 +322,16 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
     committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
   });
 
-  while (committed.load() == 0) {
+  while (replicated_db_commit_pending(committed.load())) {
     usleep(100);
   }
 
-  return committed.load() > 0;
+  return replicated_db_commit_succeeded(committed.load());
 }
 
 // @unsafe - Direct RocksDB read (stale read, no Raft involvement)
 bool ReplicatedDB::Get(const std::string& key, std::string* value) {
-  if (!db_ || !value) return false;
+  if (!replicated_db_can_get(db_ != nullptr, value != nullptr)) return false;
 
   size_t value_len = 0;
   char* err = nullptr;
@@ -344,7 +344,7 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
               key.c_str(), err_str.c_str());
     return false;
   }
-  if (value_ptr == nullptr) {
+  if (!replicated_db_read_found(value_ptr != nullptr)) {
     return false;  // Key not found
   }
 
@@ -355,7 +355,8 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
 
 // @unsafe - Linearizable read via ReadIndex protocol
 bool ReplicatedDB::LinearizableGet(const std::string& key, std::string* value) {
-  if (!raft_ || !raft_->IsLeader()) {
+  if (!replicated_db_can_linearizable_read(raft_ != nullptr,
+                                           raft_ != nullptr && raft_->IsLeader())) {
     Log_warn("[REPLICATED-DB] LinearizableGet: not leader");
     return false;
   }
@@ -699,7 +700,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 0. Check compression header and decompress if needed
   // @unsafe { LZ4 C API, memcpy }
-  if (data.size() < 1) {
+  if (!replicated_db_snapshot_has_header(data.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: data too small for header");
     return;
   }
@@ -707,9 +708,9 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   uint8_t compression = static_cast<uint8_t>(data[0]);
   std::string blob;
 
-  if (compression == SNAPSHOT_LZ4) {
+  if (replicated_db_snapshot_is_lz4(compression, SNAPSHOT_LZ4)) {
     // LZ4 compressed: header(1) + orig_size(4) + compressed_data
-    if (data.size() < 1 + sizeof(uint32_t)) {
+    if (!replicated_db_snapshot_has_bytes(1, sizeof(uint32_t), data.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated LZ4 header");
       return;
     }
@@ -727,7 +728,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     }
     Log_info("[ReplicatedDB] Snapshot decompressed: %zu -> %u bytes",
              data.size(), orig_size);
-  } else if (compression == SNAPSHOT_UNCOMPRESSED) {
+  } else if (replicated_db_snapshot_is_uncompressed(compression, SNAPSHOT_UNCOMPRESSED)) {
     // Uncompressed: header(1) + raw blob
     blob = data.substr(1);
   } else {
@@ -738,7 +739,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   // 1. Parse the blob header
   size_t offset = 0;
-  if (blob.size() < sizeof(uint32_t)) {
+  if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint32_t), blob.size())) {
     Log_error("[ReplicatedDB] LoadStateMachineSnapshot: blob too small for header");
     return;
   }
@@ -751,7 +752,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   files.reserve(num_files);
 
   for (uint32_t i = 0; i < num_files; i++) {
-    if (offset + sizeof(uint32_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint32_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name_len", i);
       return;
     }
@@ -759,14 +760,14 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&name_len, blob.data() + offset, sizeof(name_len));
     offset += sizeof(name_len);
 
-    if (offset + name_len > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, name_len, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name", i);
       return;
     }
     std::string name(blob.data() + offset, name_len);
     offset += name_len;
 
-    if (offset + sizeof(uint64_t) > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, sizeof(uint64_t), blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u size", i);
       return;
     }
@@ -774,7 +775,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::memcpy(&file_size, blob.data() + offset, sizeof(file_size));
     offset += sizeof(file_size);
 
-    if (offset + file_size > blob.size()) {
+    if (!replicated_db_snapshot_has_bytes(offset, file_size, blob.size())) {
       Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u data", i);
       return;
     }

@@ -3,6 +3,7 @@
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
 #include "rusty/rusty.hpp"
+#include "rusty/slice.hpp"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -234,11 +235,68 @@ pub fn replicated_db_command_is_delete(op: janus::ReplicatedDBOp) -> bool {
 pub fn replicated_db_command_is_batch(op: janus::ReplicatedDBOp) -> bool {
     op == janus::ReplicatedDBOp::BATCH
 }
+
+pub fn replicated_db_can_submit(has_db: bool,
+                                has_raft: bool,
+                                has_ops: bool) -> bool {
+    has_db && has_raft && has_ops
+}
+
+pub fn replicated_db_commit_succeeded(commit_state: i32) -> bool {
+    commit_state > 0
+}
+
+pub fn replicated_db_commit_pending(commit_state: i32) -> bool {
+    commit_state == 0
+}
+
+pub fn replicated_db_can_get(has_db: bool, has_value_out: bool) -> bool {
+    has_db && has_value_out
+}
+
+pub fn replicated_db_read_found(has_value_ptr: bool) -> bool {
+    has_value_ptr
+}
+
+pub fn replicated_db_can_linearizable_read(has_raft: bool,
+                                           is_leader: bool) -> bool {
+    has_raft && is_leader
+}
+
+pub fn replicated_db_snapshot_has_header(size: usize) -> bool {
+    size >= 1
+}
+
+pub fn replicated_db_snapshot_is_lz4(compression: u8,
+                                     lz4_tag: u8) -> bool {
+    compression == lz4_tag
+}
+
+pub fn replicated_db_snapshot_is_uncompressed(compression: u8,
+                                              uncompressed_tag: u8) -> bool {
+    compression == uncompressed_tag
+}
+
+pub fn replicated_db_snapshot_has_bytes(offset: usize,
+                                        needed: usize,
+                                        total: usize) -> bool {
+    offset <= total && needed <= total - offset
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=b84cdb0404fba5c6826be7b84b600dddd5c875bcf0df01587b38761c936ad429*/
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=7aa0406709a18dd45cb9d3ca8cf2bee1dcde82db83dde5c1a16a5545de0826f1*/
 inline bool replicated_db_has_command_payload(bool has_value);
 inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
 inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
+inline bool replicated_db_can_submit(bool has_db, bool has_raft, bool has_ops);
+inline bool replicated_db_commit_succeeded(int32_t commit_state);
+inline bool replicated_db_commit_pending(int32_t commit_state);
+inline bool replicated_db_can_get(bool has_db, bool has_value_out);
+inline bool replicated_db_read_found(bool has_value_ptr);
+inline bool replicated_db_can_linearizable_read(bool has_raft, bool is_leader);
+inline bool replicated_db_snapshot_has_header(size_t size);
+inline bool replicated_db_snapshot_is_lz4(uint8_t compression, uint8_t lz4_tag);
+inline bool replicated_db_snapshot_is_uncompressed(uint8_t compression, uint8_t uncompressed_tag);
+inline bool replicated_db_snapshot_has_bytes(size_t offset, size_t needed, size_t total);
 
 inline bool replicated_db_has_command_payload(bool has_value) {
     return has_value;
@@ -262,6 +320,46 @@ inline bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
 
 inline bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
     return op == janus::ReplicatedDBOp::BATCH;
+}
+
+inline bool replicated_db_can_submit(bool has_db, bool has_raft, bool has_ops) {
+    return (rusty::detail::deref_if_pointer_like(has_db) && rusty::detail::deref_if_pointer_like(has_raft)) && rusty::detail::deref_if_pointer_like(has_ops);
+}
+
+inline bool replicated_db_commit_succeeded(int32_t commit_state) {
+    return rusty::detail::deref_if_pointer_like(commit_state) > 0;
+}
+
+inline bool replicated_db_commit_pending(int32_t commit_state) {
+    return rusty::detail::deref_if_pointer_like(commit_state) == static_cast<int32_t>(0);
+}
+
+inline bool replicated_db_can_get(bool has_db, bool has_value_out) {
+    return rusty::detail::deref_if_pointer_like(has_db) && rusty::detail::deref_if_pointer_like(has_value_out);
+}
+
+inline bool replicated_db_read_found(bool has_value_ptr) {
+    return std::move(has_value_ptr);
+}
+
+inline bool replicated_db_can_linearizable_read(bool has_raft, bool is_leader) {
+    return rusty::detail::deref_if_pointer_like(has_raft) && rusty::detail::deref_if_pointer_like(is_leader);
+}
+
+inline bool replicated_db_snapshot_has_header(size_t size) {
+    return rusty::detail::deref_if_pointer_like(size) >= 1;
+}
+
+inline bool replicated_db_snapshot_is_lz4(uint8_t compression, uint8_t lz4_tag) {
+    return rusty::detail::deref_if_pointer_like(compression) == rusty::detail::deref_if_pointer_like(lz4_tag);
+}
+
+inline bool replicated_db_snapshot_is_uncompressed(uint8_t compression, uint8_t uncompressed_tag) {
+    return rusty::detail::deref_if_pointer_like(compression) == rusty::detail::deref_if_pointer_like(uncompressed_tag);
+}
+
+inline bool replicated_db_snapshot_has_bytes(size_t offset, size_t needed, size_t total) {
+    return (rusty::detail::deref_if_pointer_like(offset) <= rusty::detail::deref_if_pointer_like(total)) && (rusty::detail::deref_if_pointer_like(needed) <= (rusty::detail::deref_if_pointer_like(total) - rusty::detail::deref_if_pointer_like(offset)));
 }
 /*RUSTYCPP:GEN-END id=replicated_db.command_helpers*/
 
