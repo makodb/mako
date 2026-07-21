@@ -1509,11 +1509,12 @@ void RaftServer::HeartbeatLoop() {
         uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
         Log_debug("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
 
-        if (newCommitIndex > lastLogIndex) {
-          newCommitIndex = lastLogIndex;
-        }
+        newCommitIndex = server_commit_index_clamp(newCommitIndex, lastLogIndex);
 
-        if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+        if (newCommitIndex > commitIndex &&
+            server_commit_index_should_advance(
+                newCommitIndex, commitIndex,
+                GetRaftInstance(newCommitIndex)->term, currentTerm)) {
           uint64_t old_commit = commitIndex;
           Log_debug("newCommitIndex %d", newCommitIndex);
           commitIndex = newCommitIndex;
@@ -1861,10 +1862,11 @@ void RaftServer::HeartbeatLoop() {
         }
         std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
         uint64_t finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];
-        if (finalCommitIndex > lastLogIndex) {
-          finalCommitIndex = lastLogIndex;
-        }
-        if (finalCommitIndex > commitIndex && (GetRaftInstance(finalCommitIndex)->term == currentTerm)) {
+        finalCommitIndex = server_commit_index_clamp(finalCommitIndex, lastLogIndex);
+        if (finalCommitIndex > commitIndex &&
+            server_commit_index_should_advance(
+                finalCommitIndex, commitIndex,
+                GetRaftInstance(finalCommitIndex)->term, currentTerm)) {
           uint64_t old_commit = commitIndex;
           Log_debug("[PHASE3-COMMIT] Advancing commitIndex %lu -> %lu", commitIndex, finalCommitIndex);
           commitIndex = finalCommitIndex;
@@ -1898,7 +1900,7 @@ void RaftServer::HeartbeatLoop() {
           if (raft::raft_quorum_count_reached(ack_count, quorum)) {
             // Verify the entry is from current term
             auto instance = GetRaftInstance(idx);
-            if (instance && instance->term == currentTerm) {
+            if (instance && server_log_entry_is_current_term(instance->term, currentTerm)) {
               newSpecCommitIndex = idx;
             }
           } else {
