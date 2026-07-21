@@ -508,7 +508,7 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
   if (up_to_index > commitIndex) {
     Log_warn("[RAFT-COMPACT] Site %d: Cannot compact beyond commitIndex (%lu > %lu)",
              site_id_, up_to_index, commitIndex);
-    up_to_index = commitIndex;
+    up_to_index = server_compaction_index_clamp(up_to_index, commitIndex);
   }
 
   // Determine first compactable slot. Without persistent storage we still
@@ -576,7 +576,7 @@ void RaftServer::CreateSnapshot() {
   }
 
   slotid_t snap_index = executeIndex;
-  if (snap_index == 0) {
+  if (!server_snapshot_index_is_available(snap_index)) {
     Log_debug("[RAFT-SNAPSHOT] Site %d: executeIndex is 0, nothing to snapshot",
               site_id_);
     return;
@@ -861,13 +861,13 @@ void RaftServer::StartApplyThread() {
         // Snapshot trigger for queued apply path.
         // Cheap unlocked pre-check so the hot path stays lock-free when
         // we're far from the threshold or have no manager configured.
-        if (snapshot_manager_ && snapidx_ < executeIndex &&
-            (executeIndex - snapidx_) > snapshot_threshold_) {
+        if (snapshot_manager_ && server_snapshot_is_due(
+                snapidx_, executeIndex, snapshot_threshold_)) {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
           // Re-check under the lock: CreateSnapshot mutates snapidx_ and
           // raft_logs_ via CompactLog.
-          if (snapshot_manager_ && snapidx_ < executeIndex &&
-              (executeIndex - snapidx_) > snapshot_threshold_) {
+          if (snapshot_manager_ && server_snapshot_is_due(
+                  snapidx_, executeIndex, snapshot_threshold_)) {
             CreateSnapshot();
           }
         }
@@ -1169,8 +1169,10 @@ void RaftServer::setIsLeader(bool isLeader) {
 
 
   // This 2 lines MUST put BEFORE is_leader_ = isLeader ! otherwise they will become 0, and new view will without leader
-  bool become_new_leader = isLeader && (!is_leader_);
-  bool become_new_follower = (!isLeader) && is_leader_;
+  bool become_new_leader = server_leadership_transition_to_leader(
+      isLeader, is_leader_);
+  bool become_new_follower = server_leadership_transition_to_follower(
+      isLeader, is_leader_);
 
   // Update the leader state after view handling
   is_leader_ = isLeader;
@@ -1380,8 +1382,8 @@ void RaftServer::applyLogs() {
   in_applying_logs_ = false;
 
   // Check if we should take a snapshot
-  if (snapshot_manager_ && snapidx_ < executeIndex &&
-      (executeIndex - snapidx_) > snapshot_threshold_) {
+  if (snapshot_manager_ && server_snapshot_is_due(
+          snapidx_, executeIndex, snapshot_threshold_)) {
     CreateSnapshot();
   }
 
@@ -2522,7 +2524,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       current_leader_id_ = leaderSiteId;
       // @unsafe
       { resetTimer("AppendEntries from current-term leader"); }
-      if (leaderCurrentTerm > this->currentTerm) {
+      if (server_observed_higher_term(leaderCurrentTerm, this->currentTerm)) {
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
@@ -2806,7 +2808,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   // Edge Case 1b: Leader is ahead of us - update term
   // ============================================================================
-  if (leaderTerm > currentTerm) {
+  if (server_observed_higher_term(leaderTerm, currentTerm)) {
     Log_info("[TIMEOUT-NOW] Site %d: Leader %d has higher term (%lu > %lu) - updating term and stepping down",
              site_id_, leaderSiteId, leaderTerm, currentTerm);
 
@@ -2914,7 +2916,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // ============================================================================
   // Edge Case 2: Higher or equal term - accept as legitimate leader
   // ============================================================================
-  if (term > currentTerm) {
+  if (server_observed_higher_term(term, currentTerm)) {
     Log_info("[INSTALL-SNAPSHOT] Site %d: Leader %lu has higher term (%lu > %lu) - updating",
              site_id_, leader_id, term, currentTerm);
     auto prev_term = currentTerm;

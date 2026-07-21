@@ -211,8 +211,42 @@ pub fn server_commit_index_should_advance(candidate_index: u64,
 pub fn server_log_entry_is_current_term(entry_term: u64, current_term: u64) -> bool {
     entry_term == current_term
 }
+
+pub fn server_snapshot_index_is_available(execute_index: u64) -> bool {
+    execute_index != 0
+}
+
+pub fn server_snapshot_is_due(snapshot_index: u64,
+                              execute_index: u64,
+                              snapshot_threshold: u64) -> bool {
+    snapshot_index < execute_index &&
+        (execute_index - snapshot_index) > snapshot_threshold
+}
+
+pub fn server_compaction_index_clamp(candidate_index: u64,
+                                     commit_index: u64) -> u64 {
+    if candidate_index > commit_index {
+        commit_index
+    } else {
+        candidate_index
+    }
+}
+
+pub fn server_leadership_transition_to_leader(new_is_leader: bool,
+                                              previous_is_leader: bool) -> bool {
+    new_is_leader && !previous_is_leader
+}
+
+pub fn server_leadership_transition_to_follower(new_is_leader: bool,
+                                                previous_is_leader: bool) -> bool {
+    !new_is_leader && previous_is_leader
+}
+
+pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> bool {
+    observed_term > current_term
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=14be6f1b607166349d3942f3f2ab6e390b62d4d3e00f33a99f3f999f0dbfd5be*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=516599f9484078ae86617ec251fd46ac6ac02a8a98c302c8be3cc40cd2d90625*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
@@ -227,6 +261,12 @@ inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t 
 inline uint64_t server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
 inline bool server_commit_index_should_advance(uint64_t candidate_index, uint64_t current_commit_index, uint64_t candidate_term, uint64_t current_term);
 inline bool server_log_entry_is_current_term(uint64_t entry_term, uint64_t current_term);
+inline bool server_snapshot_index_is_available(uint64_t execute_index);
+inline bool server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t snapshot_threshold);
+inline uint64_t server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index);
+inline bool server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader);
+inline bool server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader);
+inline bool server_observed_higher_term(uint64_t observed_term, uint64_t current_term);
 
 inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
     return reason == StepDownReason::UnsecuredFailure;
@@ -302,6 +342,34 @@ inline bool server_commit_index_should_advance(uint64_t candidate_index, uint64_
 
 inline bool server_log_entry_is_current_term(uint64_t entry_term, uint64_t current_term) {
     return rusty::detail::deref_if_pointer_like(entry_term) == rusty::detail::deref_if_pointer_like(current_term);
+}
+
+inline bool server_snapshot_index_is_available(uint64_t execute_index) {
+    return rusty::detail::deref_if_pointer_like(execute_index) != static_cast<uint64_t>(0);
+}
+
+inline bool server_snapshot_is_due(uint64_t snapshot_index, uint64_t execute_index, uint64_t snapshot_threshold) {
+    return (rusty::detail::deref_if_pointer_like(snapshot_index) < rusty::detail::deref_if_pointer_like(execute_index)) && (((rusty::detail::deref_if_pointer_like(execute_index) - rusty::detail::deref_if_pointer_like(snapshot_index))) > rusty::detail::deref_if_pointer_like(snapshot_threshold));
+}
+
+inline uint64_t server_compaction_index_clamp(uint64_t candidate_index, uint64_t commit_index) {
+    if (rusty::detail::deref_if_pointer_like(candidate_index) > rusty::detail::deref_if_pointer_like(commit_index)) {
+        return std::move(commit_index);
+    } else {
+        return std::move(candidate_index);
+    }
+}
+
+inline bool server_leadership_transition_to_leader(bool new_is_leader, bool previous_is_leader) {
+    return rusty::detail::deref_if_pointer_like(new_is_leader) && !previous_is_leader;
+}
+
+inline bool server_leadership_transition_to_follower(bool new_is_leader, bool previous_is_leader) {
+    return !new_is_leader && rusty::detail::deref_if_pointer_like(previous_is_leader);
+}
+
+inline bool server_observed_higher_term(uint64_t observed_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(observed_term) > rusty::detail::deref_if_pointer_like(current_term);
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 
