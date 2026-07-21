@@ -550,7 +550,6 @@ pub struct MemorySnapshotManagerCore {
 
 impl MemorySnapshotManagerCore {
     // @safe
-    #[cpp_ctor]
     fn new() -> MemorySnapshotManagerCore {
         MemorySnapshotManagerCore {
             has_snapshot_: false,
@@ -645,7 +644,7 @@ impl MemorySnapshotManagerCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.manager_core version=1 rust_sha256=db0be90af9fdaf81d0c08596db920809063328070fac3781b9a33bbc1e410b24*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.manager_core version=1 rust_sha256=3ffeff6f0a9192c71b888529fa8118486ec802650930019f6aa8b4c839fadcb0*/
 struct MemorySnapshotManagerCore;
 
 struct MemorySnapshotManagerCore {
@@ -654,7 +653,7 @@ struct MemorySnapshotManagerCore {
     std::string payload_;
     std::string storage_path_;
 
-    MemorySnapshotManagerCore();
+    static MemorySnapshotManagerCore new_();
     std::unique_ptr<SnapshotWriter> BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term);
     bool TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size);
     std::unique_ptr<SnapshotReader> BeginLoad(const SnapshotMetadata& _metadata) const;
@@ -668,12 +667,9 @@ struct MemorySnapshotManagerCore {
 };
 
 
-inline MemorySnapshotManagerCore::MemorySnapshotManagerCore()
-    : has_snapshot_(false)
-    , meta_(SnapshotMetadata{})
-    , payload_(std::string())
-    , storage_path_(std::string("<memory>"))
-{}
+inline MemorySnapshotManagerCore MemorySnapshotManagerCore::new_() {
+    return MemorySnapshotManagerCore{.has_snapshot_ = false, .meta_ = SnapshotMetadata{}, .payload_ = std::string(), .storage_path_ = std::string("<memory>")};
+}
 
 inline std::unique_ptr<SnapshotWriter> MemorySnapshotManagerCore::BeginSnapshot(std::mutex* mtx, uint64_t last_index, int64_t last_term) {
     // @unsafe
@@ -731,7 +727,8 @@ inline const std::string& MemorySnapshotManagerCore::GetStoragePath() const {
 class MemorySnapshotManager : public SnapshotManager {
  public:
   // @safe
-  MemorySnapshotManager() = default;
+  MemorySnapshotManager()
+      : core_(MemorySnapshotManagerCore::new_()) {}
 
   // @unsafe - returned writer owns itself but borrows this manager's payload,
   // metadata, flag, and mutex. Do not let the writer outlive the manager.
