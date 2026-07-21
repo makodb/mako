@@ -60,6 +60,11 @@ using watermark_callback_t = rusty::Function<int(
     std::queue<std::tuple<int, int, int, int, const char*>>&
 )>;
 
+struct RaftWorkerPendingLog {
+  std::string payload;
+  uint32_t par_id;
+};
+
 // @unsafe - Part 1 migration boundary. This worker still owns thread
 // coordination state and raw protocol/RPC handles; keep the ownership map below
 // accurate before converting any field to Box/Arc/Option or moving to DSL.
@@ -88,11 +93,7 @@ private:
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
   std::mutex condition_mutex_;
-  struct PendingLog {
-    std::string payload;
-    uint32_t par_id;
-  };
-  std::deque<PendingLog> submit_queue_;
+  std::deque<RaftWorkerPendingLog> submit_queue_;
   std::mutex submit_mutex_;
   std::condition_variable submit_cv_;
   std::atomic<bool> submit_thread_stop_{false};

@@ -343,7 +343,7 @@ void RaftWorker::StopSubmitThread() {
   submit_thread_started_ = false;
   submit_thread_stop_ = false;
 
-  std::deque<PendingLog> remaining;
+  std::deque<RaftWorkerPendingLog> remaining;
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
     remaining.swap(submit_queue_);
@@ -363,7 +363,7 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
     return;
   }
 
-  PendingLog entry;
+  RaftWorkerPendingLog entry;
   // @unsafe
   { // std::string::assign from raw const char* pointer
     entry.payload.assign(log, len);
@@ -749,7 +749,7 @@ void RaftWorker::SubmitLoop() {
     }
 
     int limit = std::max(batch_limit_, 1);
-    std::vector<PendingLog> batch;
+    std::vector<RaftWorkerPendingLog> batch;
     batch.reserve(limit);
     while (!submit_queue_.empty() && static_cast<int>(batch.size()) < limit) {
       batch.push_back(std::move(submit_queue_.front()));
