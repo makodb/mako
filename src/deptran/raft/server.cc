@@ -1416,7 +1416,7 @@ void RaftServer::applyLogs() {
 // This struct holds context for each pending AppendEntries RPC.
 // Used to send RPCs in parallel and process responses without blocking.
 // The response field uses shared_ptr to ensure memory validity when callback fires.
-struct PendingAppendEntries {
+struct RaftServerPendingAppendEntries {
   siteid_t follower_id;
   shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
   // migrated from
@@ -1526,7 +1526,7 @@ void RaftServer::HeartbeatLoop() {
       // Use unique_ptr to ensure stable memory addresses for the callback pointers.
       // The async RPC callback writes to ret_status/ret_term/ret_last_log_index,
       // so these must remain at fixed addresses until the RPC completes.
-      std::vector<std::unique_ptr<PendingAppendEntries>> pending_rpcs;
+      std::vector<std::unique_ptr<RaftServerPendingAppendEntries>> pending_rpcs;
 
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
@@ -1688,7 +1688,7 @@ void RaftServer::HeartbeatLoop() {
         }
 
         // Create pending RPC context
-        auto pending = std::make_unique<PendingAppendEntries>();
+        auto pending = std::make_unique<RaftServerPendingAppendEntries>();
         pending->follower_id = site_id;
         pending->cmd = cmd;
         pending->sent_term = term;
