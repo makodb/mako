@@ -49,43 +49,186 @@ namespace raft {
 // Phase 6.5 will swap this for a RaftServer-backed dispatcher.
 // ---------------------------------------------------------------------------
 
+#if RUSTYCPP_RUST
+pub struct DummyDispatcherCore {
+    self_: u16,
+}
+
+impl DummyDispatcherCore {
+    // @safe
+    #[cpp_ctor]
+    fn new(self_site: u16) -> DummyDispatcherCore {
+        DummyDispatcherCore {
+            self_: self_site,
+        }
+    }
+
+    // @safe
+    fn handle_vote(&self, req: VoteReq) -> VoteReply {
+        VoteReply {
+            max_ballot: req.current_term,
+            vote_granted: true,
+        }
+    }
+
+    // @safe
+    fn handle_vote_durable(&self, _req: VoteDurableReq) -> VoteDurableReply {
+        VoteDurableReply {
+            acknowledged: true,
+        }
+    }
+
+    // @safe
+    fn handle_append_entries(&self, _req: AppendEntriesReq) -> AppendEntriesReply {
+        AppendEntriesReply {
+            follower_append_ok: 1,
+            follower_current_term: 0,
+            follower_last_log_index: 0,
+            follower_ack_type: 0,
+        }
+    }
+
+    // @safe
+    fn handle_empty_append_entries(&self, _req: EmptyAppendEntriesReq)
+        -> EmptyAppendEntriesReply {
+        EmptyAppendEntriesReply {
+            follower_append_ok: 1,
+            follower_current_term: 0,
+            follower_last_log_index: 0,
+            follower_ack_type: 0,
+        }
+    }
+
+    // @safe
+    fn handle_append_entries_durable(&self, _req: AppendEntriesDurableReq)
+        -> AppendEntriesDurableReply {
+        AppendEntriesDurableReply {
+            acknowledged: true,
+        }
+    }
+
+    // @safe
+    fn handle_timeout_now(&self, _req: TimeoutNowReq) -> TimeoutNowReply {
+        TimeoutNowReply {
+            follower_term: 0,
+            success: true,
+        }
+    }
+
+    // @safe
+    fn handle_notify_restart(&self, _req: NotifyRestartReq) -> NotifyRestartReply {
+        NotifyRestartReply {
+            acknowledged: true,
+        }
+    }
+
+    // @safe
+    fn handle_install_snapshot(&self, _req: InstallSnapshotReq) -> InstallSnapshotReply {
+        InstallSnapshotReply {
+            term_out: 0,
+        }
+    }
+
+    // @safe
+    fn self_site_id(&self) -> u16 {
+        self.self_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_node.dummy_dispatcher_core version=1 rust_sha256=3d36dd28ed5954a025b28f2a612dd4ee954ed00f4971c22b7e658608594d9e81*/
+struct DummyDispatcherCore;
+
+struct DummyDispatcherCore {
+    uint16_t self_;
+
+    DummyDispatcherCore(uint16_t self_site);
+    VoteReply handle_vote(VoteReq req) const;
+    VoteDurableReply handle_vote_durable(VoteDurableReq _req) const;
+    AppendEntriesReply handle_append_entries(AppendEntriesReq _req) const;
+    EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq _req) const;
+    AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq _req) const;
+    TimeoutNowReply handle_timeout_now(TimeoutNowReq _req) const;
+    NotifyRestartReply handle_notify_restart(NotifyRestartReq _req) const;
+    InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq _req) const;
+    uint16_t self_site_id() const;
+};
+
+
+DummyDispatcherCore::DummyDispatcherCore(uint16_t self_site)
+    : self_(self_site)
+{}
+
+VoteReply DummyDispatcherCore::handle_vote(VoteReq req) const {
+    return VoteReply{.max_ballot = std::move(req.current_term), .vote_granted = true};
+}
+
+VoteDurableReply DummyDispatcherCore::handle_vote_durable(VoteDurableReq _req) const {
+    return VoteDurableReply{.acknowledged = true};
+}
+
+AppendEntriesReply DummyDispatcherCore::handle_append_entries(AppendEntriesReq _req) const {
+    return AppendEntriesReply{.follower_append_ok = 1, .follower_current_term = 0, .follower_last_log_index = 0, .follower_ack_type = 0};
+}
+
+EmptyAppendEntriesReply DummyDispatcherCore::handle_empty_append_entries(EmptyAppendEntriesReq _req) const {
+    return EmptyAppendEntriesReply{.follower_append_ok = 1, .follower_current_term = 0, .follower_last_log_index = 0, .follower_ack_type = 0};
+}
+
+AppendEntriesDurableReply DummyDispatcherCore::handle_append_entries_durable(AppendEntriesDurableReq _req) const {
+    return AppendEntriesDurableReply{.acknowledged = true};
+}
+
+TimeoutNowReply DummyDispatcherCore::handle_timeout_now(TimeoutNowReq _req) const {
+    return TimeoutNowReply{.follower_term = 0, .success = true};
+}
+
+NotifyRestartReply DummyDispatcherCore::handle_notify_restart(NotifyRestartReq _req) const {
+    return NotifyRestartReply{.acknowledged = true};
+}
+
+InstallSnapshotReply DummyDispatcherCore::handle_install_snapshot(InstallSnapshotReq _req) const {
+    return InstallSnapshotReply{.term_out = 0};
+}
+
+uint16_t DummyDispatcherCore::self_site_id() const {
+    return this->self_;
+}
+/*RUSTYCPP:GEN-END id=raft_node.dummy_dispatcher_core*/
+
 class DummyDispatcher : public DispatcherBase {
  public:
   // @safe
-  explicit DummyDispatcher(siteid_t self) : self_(self) {}
+  explicit DummyDispatcher(siteid_t self) : core_(self) {}
 
   VoteReply handle_vote(VoteReq req) override {
-    VoteReply r{};
-    r.max_ballot   = req.current_term;
-    r.vote_granted = true;
-    return r;
+    return core_.handle_vote(std::move(req));
   }
-  VoteDurableReply handle_vote_durable(VoteDurableReq) override {
-    VoteDurableReply r{}; r.acknowledged = true; return r;
+  VoteDurableReply handle_vote_durable(VoteDurableReq req) override {
+    return core_.handle_vote_durable(std::move(req));
   }
-  AppendEntriesReply handle_append_entries(AppendEntriesReq) override {
-    AppendEntriesReply r{}; r.follower_append_ok = 1; return r;
+  AppendEntriesReply handle_append_entries(AppendEntriesReq req) override {
+    return core_.handle_append_entries(std::move(req));
   }
-  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq) override {
-    EmptyAppendEntriesReply r{}; r.follower_append_ok = 1; return r;
+  EmptyAppendEntriesReply handle_empty_append_entries(EmptyAppendEntriesReq req) override {
+    return core_.handle_empty_append_entries(std::move(req));
   }
-  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq) override {
-    AppendEntriesDurableReply r{}; r.acknowledged = true; return r;
+  AppendEntriesDurableReply handle_append_entries_durable(AppendEntriesDurableReq req) override {
+    return core_.handle_append_entries_durable(std::move(req));
   }
-  TimeoutNowReply handle_timeout_now(TimeoutNowReq) override {
-    TimeoutNowReply r{}; r.success = true; return r;
+  TimeoutNowReply handle_timeout_now(TimeoutNowReq req) override {
+    return core_.handle_timeout_now(std::move(req));
   }
-  NotifyRestartReply handle_notify_restart(NotifyRestartReq) override {
-    NotifyRestartReply r{}; r.acknowledged = true; return r;
+  NotifyRestartReply handle_notify_restart(NotifyRestartReq req) override {
+    return core_.handle_notify_restart(std::move(req));
   }
-  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq) override {
-    InstallSnapshotReply r{}; r.term_out = 0; return r;
+  InstallSnapshotReply handle_install_snapshot(InstallSnapshotReq req) override {
+    return core_.handle_install_snapshot(std::move(req));
   }
 
-  siteid_t self_site_id() const { return self_; }
+  siteid_t self_site_id() const { return core_.self_site_id(); }
 
  private:
-  siteid_t self_{0};
+  DummyDispatcherCore core_;
 };
 
 // ---------------------------------------------------------------------------

@@ -135,15 +135,15 @@ inline bool memory_snapshot_writer_abort_cpp(std::string* buffer,
 }
 
 // @unsafe - copies snapshot payload bytes into caller-owned raw output buffer.
-inline bool memory_snapshot_reader_read_cpp(const std::string& payload,
+inline bool memory_snapshot_reader_read_cpp(const std::string* payload,
                                             size_t* offset,
                                             char* buffer,
                                             size_t buffer_size,
                                             size_t* bytes_read) {
-  size_t n = memory_snapshot_reader_bytes_to_read(payload.size(),
+  size_t n = memory_snapshot_reader_bytes_to_read(payload->size(),
                                                   *offset,
                                                   buffer_size);
-  std::memcpy(buffer, payload.data() + *offset, n);
+  std::memcpy(buffer, payload->data() + *offset, n);
   *offset = memory_snapshot_advance_offset(*offset, n);
   *bytes_read = n;
   return true;
