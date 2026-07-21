@@ -60,10 +60,20 @@ using watermark_callback_t = rusty::Function<int(
     std::queue<std::tuple<int, int, int, int, const char*>>&
 )>;
 
+#if RUSTYCPP_RUST
+pub struct RaftWorkerPendingLog {
+    payload: std::string,
+    par_id: u32,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.1 version=1 rust_sha256=20411c3764b6a6b2c754885de1d5c15a2e8f4984d54840c2fc0570953c448413*/
+struct RaftWorkerPendingLog;
+
 struct RaftWorkerPendingLog {
-  std::string payload;
-  uint32_t par_id;
+    std::string payload;
+    uint32_t par_id;
 };
+/*RUSTYCPP:GEN-END id=raft_worker.1*/
 
 // @unsafe - Part 1 migration boundary. This worker still owns thread
 // coordination state and raw protocol/RPC handles; keep the ownership map below
