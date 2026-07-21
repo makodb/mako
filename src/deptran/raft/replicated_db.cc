@@ -26,6 +26,15 @@ using namespace janus;
 static int volatile x_replicated_db =
     rrr::SerializableRegistry::reg<ReplicatedDBCommand>();
 
+namespace janus {
+
+struct ReplicatedDBFileEntry {
+  std::string name;
+  std::string contents;
+};
+
+}  // namespace janus
+
 // ===========================================================================
 // ReplicatedDBCommand factory methods and serialization
 // ===========================================================================
@@ -728,11 +737,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   offset += sizeof(num_files);
 
   // Parse all file entries before modifying anything
-  struct FileEntry {
-    std::string name;
-    std::string contents;
-  };
-  std::vector<FileEntry> files;
+  std::vector<ReplicatedDBFileEntry> files;
   files.reserve(num_files);
 
   for (uint32_t i = 0; i < num_files; i++) {
