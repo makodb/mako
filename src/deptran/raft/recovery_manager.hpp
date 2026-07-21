@@ -342,6 +342,101 @@ inline void recovery_result_assign_recovery_time(RecoveryResult& result, uint64_
 }
 /*RUSTYCPP:GEN-END id=recovery_manager.small_helpers*/
 
+#if RUSTYCPP_RUST
+pub struct RecoveryManagerCore {
+    config_: RecoveryConfig,
+    initialized_: rusty::Cell<bool>,
+    detected_mode_: rusty::Cell<RecoveryMode>,
+}
+
+impl RecoveryManagerCore {
+    // @safe
+    fn new(config: RecoveryConfig) -> RecoveryManagerCore {
+        RecoveryManagerCore {
+            config_: config,
+            initialized_: rusty::Cell::<bool>::new_(false),
+            detected_mode_: rusty::Cell::<RecoveryMode>::new_(RecoveryMode::FRESH_START),
+        }
+    }
+
+    // @safe
+    fn set_detected_mode(&mut self, mode: RecoveryMode) {
+        self.detected_mode_.set(mode)
+    }
+
+    // @safe
+    fn mark_initialized(&mut self) {
+        self.initialized_.set(true)
+    }
+
+    // @safe
+    fn needs_recovery(&self) -> bool {
+        recovery_mode_needs_recovery(self.detected_mode_.get())
+    }
+
+    // @safe
+    fn detected_mode(&self) -> RecoveryMode {
+        self.detected_mode_.get()
+    }
+
+    // @safe
+    fn is_initialized(&self) -> bool {
+        self.initialized_.get()
+    }
+
+    // @lifetime: (&'a) -> &'a
+    fn storage_path(&self) -> &std::string {
+        &self.config_.storage_path
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.5 version=1 rust_sha256=2afc971075d349079ee9dc52afc8ae816eedd9c5c33bf7d6d8e15815fdef464c*/
+struct RecoveryManagerCore;
+
+struct RecoveryManagerCore {
+    RecoveryConfig config_;
+    rusty::Cell<bool> initialized_;
+    rusty::Cell<RecoveryMode> detected_mode_;
+
+    static RecoveryManagerCore new_(RecoveryConfig config);
+    void set_detected_mode(RecoveryMode mode);
+    void mark_initialized();
+    bool needs_recovery() const;
+    RecoveryMode detected_mode() const;
+    bool is_initialized() const;
+    const std::string& storage_path() const;
+};
+
+
+inline RecoveryManagerCore RecoveryManagerCore::new_(RecoveryConfig config) {
+    return RecoveryManagerCore{.config_ = std::move(config), .initialized_ = rusty::Cell<bool>::new_(false), .detected_mode_ = rusty::Cell<RecoveryMode>::new_(rusty::clone(rusty::clone(RecoveryMode::FRESH_START)))};
+}
+
+inline void RecoveryManagerCore::set_detected_mode(RecoveryMode mode) {
+    this->detected_mode_.set(std::move(mode));
+}
+
+inline void RecoveryManagerCore::mark_initialized() {
+    this->initialized_.set(true);
+}
+
+inline bool RecoveryManagerCore::needs_recovery() const {
+    return recovery_mode_needs_recovery(this->detected_mode_.get());
+}
+
+inline RecoveryMode RecoveryManagerCore::detected_mode() const {
+    return this->detected_mode_.get();
+}
+
+inline bool RecoveryManagerCore::is_initialized() const {
+    return this->initialized_.get();
+}
+
+inline const std::string& RecoveryManagerCore::storage_path() const {
+    return this->config_.storage_path;
+}
+/*RUSTYCPP:GEN-END id=recovery_manager.5*/
+
 /**
  * Recovery Manager coordinates the recovery sequence for Raft/Paxos servers.
  *
@@ -358,25 +453,24 @@ class RecoveryManager {
  public:
   // @safe - Constructor with config
   explicit RecoveryManager(RecoveryConfig config)
-      : config_(std::move(config)),
-        initialized_(false),
-        detected_mode_(RecoveryMode::FRESH_START) {}
+      : core_(RecoveryManagerCore::new_(std::move(config))),
+        storage_(nullptr) {}
 
   // @unsafe - Uses filesystem operations
   RecoveryMode detect_mode() const {
-    if (config_.force_fresh_start) {
+    if (core_.config_.force_fresh_start) {
       return RecoveryMode::FORCED_FRESH;
     }
 
     // Check if storage directory exists and has RocksDB data
     std::error_code ec;
-    bool exists = std::filesystem::exists(config_.storage_path, ec);  // @unsafe
+    bool exists = std::filesystem::exists(core_.config_.storage_path, ec);  // @unsafe
     if (!exists || ec) {  // @unsafe
       return RecoveryMode::FRESH_START;
     }
 
     // Check for CURRENT file which indicates valid RocksDB
-    std::string current_file = config_.storage_path + "/CURRENT";
+    std::string current_file = core_.config_.storage_path + "/CURRENT";
     exists = std::filesystem::exists(current_file, ec);  // @unsafe
     if (!exists || ec) {  // @unsafe
       return RecoveryMode::FRESH_START;
@@ -391,53 +485,53 @@ class RecoveryManager {
       return storage_;
     }
 
-    detected_mode_.set(detect_mode());
+    core_.set_detected_mode(detect_mode());
 
     // Handle forced fresh start
-    if (recovery_should_clear_forced_fresh(detected_mode_.get(),
-                                           config_.clear_on_forced_fresh)) {
+    if (recovery_should_clear_forced_fresh(core_.detected_mode(),
+                                           core_.config_.clear_on_forced_fresh)) {
       // @unsafe { filesystem operations }
       std::error_code ec;
-      std::filesystem::remove_all(config_.storage_path, ec);
+      std::filesystem::remove_all(core_.config_.storage_path, ec);
       if (ec) {
         Log_error("Failed to clear storage at %s: %s",
-                  config_.storage_path.c_str(), ec.message().c_str());
+                  core_.config_.storage_path.c_str(), ec.message().c_str());
       }
     }
 
     // Create storage
-    storage_ = std::make_shared<RocksDBLogStorage>(config_.storage_path);
+    storage_ = std::make_shared<RocksDBLogStorage>(core_.config_.storage_path);
     if (recovery_storage_open_failed(storage_ != nullptr,
                                      storage_ != nullptr && storage_->is_open())) {
-      Log_error("Failed to open RocksDB at %s", config_.storage_path.c_str());
+      Log_error("Failed to open RocksDB at %s", core_.config_.storage_path.c_str());
       storage_ = nullptr;
       return nullptr;
     }
 
-    initialized_.set(true);
+    core_.mark_initialized();
     Log_info("Recovery: Storage opened at %s (mode=%d)",
-             config_.storage_path.c_str(), static_cast<int>(detected_mode_.get()));
+             core_.config_.storage_path.c_str(), static_cast<int>(core_.detected_mode()));
     return storage_;
   }
 
   // @lifetime: (&'a) -> &'a
   const std::string& storage_path() const {
-    return config_.storage_path;
+    return core_.storage_path();
   }
 
   // @safe - Check if recovery is needed (vs fresh start)
   bool needs_recovery() const {
-    return recovery_mode_needs_recovery(detected_mode_.get());
+    return core_.needs_recovery();
   }
 
   // @safe - Get detected mode
   RecoveryMode get_detected_mode() const {
-    return detected_mode_.get();
+    return core_.detected_mode();
   }
 
   // @safe - Check if initialized
   bool is_initialized() const {
-    return initialized_.get();
+    return core_.is_initialized();
   }
 
   // @unsafe - Get storage (may be nullptr)
@@ -455,7 +549,7 @@ class RecoveryManager {
    */
   template <typename SetStorageFn, typename RecoverFn, typename GetStatsFn>
   RecoveryResult recover(SetStorageFn set_storage, RecoverFn recover, GetStatsFn get_stats) {
-    RecoveryResult result = recovery_result_begin(detected_mode_.get());
+    RecoveryResult result = recovery_result_begin(core_.detected_mode());
 
     auto start_time = std::chrono::steady_clock::now();
 
@@ -499,10 +593,8 @@ class RecoveryManager {
   }
 
  private:
-  RecoveryConfig config_;
+  RecoveryManagerCore core_;
   std::shared_ptr<LogStorage> storage_;
-  rusty::Cell<bool> initialized_;
-  rusty::Cell<RecoveryMode> detected_mode_;
 };
 
 }  // namespace raft
