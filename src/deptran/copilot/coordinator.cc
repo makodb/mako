@@ -30,7 +30,7 @@ CoordinatorCopilot::CoordinatorCopilot(uint32_t coo_id,
   : Coordinator(coo_id, benchmark, std::move(client_status), thread_id) {}
 
 CoordinatorCopilot::~CoordinatorCopilot() {
-  // Log_debug("copilot coord %d destroyed", (int)coo_id_);
+  // Log_debug("copilot coord {} destroyed", (int)coo_id_);
 }
 
 inline ballot_t CoordinatorCopilot::makeUniqueBallot(ballot_t ballot) {
@@ -53,7 +53,7 @@ void CoordinatorCopilot::Submit(const janus::Command& cmd,
   done_ = false;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
+  Log_info("cmd<{}, {}> entered site {} CoordinatorCopilot::Submit", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_);
 #endif
   // cmd_now_ is now janus::Command.
   verify(!cmd_now_.has_value());
@@ -86,8 +86,8 @@ start_prepare:
                                              is_pilot_, slot_id_,
                                              new_ballot);
   Log_debug(
-      "Copilot coordinator %u broadcast PREPARE for"
-      "partition: %u, %s slot: %lu ballot %ld", coo_id_,
+      "Copilot coordinator {} broadcast PREPARE for"
+      "partition: {}, {} slot: {} ballot {}", coo_id_,
       par_id_, indicator[is_pilot_], slot_id_, new_ballot);
   // sq_quorum->id_ = dep_id_;
 
@@ -155,7 +155,7 @@ start_prepare:
   } else {
     // retry with higher ballot number
     sq_quorum->Show();
-    Log_warn("%s : %lu Prepare failed, retry",
+    Log_warn("{} : {} Prepare failed, retry",
               indicator[is_pilot_], slot_id_);
     goto start_prepare;
   }
@@ -172,18 +172,18 @@ void CoordinatorCopilot::FastAccept() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   static_cast<CopilotFrame*>(frame_)->n_fast_accept_++;
   if ((static_cast<CopilotFrame*>(frame_)->n_fast_accept_ & 0xfff) == 0)
-      Log_info("fast/reg/total %u/%u/%u", static_cast<CopilotFrame*>(frame_)->n_fast_path_,
+      Log_info("fast/reg/total {}/{}/{}", static_cast<CopilotFrame*>(frame_)->n_fast_path_,
         static_cast<CopilotFrame*>(frame_)->n_regular_path_,
         static_cast<CopilotFrame*>(frame_)->n_fast_accept_);
   Log_debug(
-      "Copilot coordinator %u broadcast FAST_ACCEPT, "
-      "partition: %u, %s : %lu -> %lu",
+      "Copilot coordinator {} broadcast FAST_ACCEPT, "
+      "partition: {}, {} : {} -> {}",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
       // marshallable_cast<TpcCommitCommand>(cmd_now_)->tx_id_);
   // removed `begin = Time::now(true);` —
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
-  // Log_info("FastAccept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
+  // Log_info("FastAccept loc_id_={} is_pilot_={} slot_id_={} cmd<{}, {}> dep_={}", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   // BroadcastFastAccept now takes janus::Command.
   auto sq_quorum = commo()->BroadcastFastAccept(par_id_,
                                                 is_pilot_, slot_id_,
@@ -191,18 +191,18 @@ void CoordinatorCopilot::FastAccept() {
                                                 dep_,
                                                 cmd_now_);
   // sq_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
+  // Log_debug("current coroutine's dep_id: {}", Fiber::current_fiber()->dep_id_);
 
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
   // GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+  Log_info("cmd<{}, {}> site {} Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
   // marshallable_cast<T>(Command&) overload handles cmd_now_ directly.
-  Log_info("[2+] [tx=%d] FastAccept quorum finish %.3f", marshallable_cast<TpcBatchCommand>(cmd_now_).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2+] [tx={}] FastAccept quorum finish {:.3f}", marshallable_cast<TpcBatchCommand>(cmd_now_).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // removed `fac = Time::now(true) - begin;`
   // — `fac` was a timing counter that nothing read.
@@ -228,7 +228,7 @@ void CoordinatorCopilot::FastAccept() {
   } else {
     if (sq_quorum->yes()) {
 #ifdef FULL_LOG_DEBUG
-      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+      Log_info("cmd<{}, {}> site {} sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
       /**
        * go to accept phase (regular-path):
@@ -238,7 +238,7 @@ void CoordinatorCopilot::FastAccept() {
        */
       dep_ = sq_quorum->GetFinalDep();
       static_cast<CopilotFrame*>(frame_)->n_regular_path_++;
-      Log_debug("Final dep: %lu, continue on regular path", dep_);
+      Log_debug("Final dep: {}, continue on regular path", dep_);
     } else if (sq_quorum->no()) {
       // TODO process the case: failed to get a majority.
       verify(0);
@@ -255,21 +255,21 @@ void CoordinatorCopilot::Accept() {
   static_cast<CopilotFrame*>(frame_)->n_accept_++;
   verify(current_phase_ == Phase::ACCEPT);
   Log_debug(
-      "Copilot coordinator %u broadcast ACCEPT, "
-      "partition: %u, %s : %lu -> %lu",
+      "Copilot coordinator {} broadcast ACCEPT, "
+      "partition: {}, {} : {} -> {}",
       coo_id_, par_id_, indicator[is_pilot_], slot_id_, dep_);
 
   // removed `begin = Time::now(true);` —
   // see companion comment in CoordinatorCopilot::Submit.
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
-  // Log_info("Accept loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
+  // Log_info("Accept loc_id_={} is_pilot_={} slot_id_={} cmd<{}, {}> dep_={}", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_,
                                             is_pilot_, slot_id_,
                                             curr_ballot_,
                                             dep_,
                                             cmd_now_);
   // sp_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
+  // Log_debug("current coroutine's dep_id: {}", Fiber::current_fiber()->dep_id_);
 
   sp_quorum->wait();
 #ifdef DO_FINALIZE
@@ -302,11 +302,11 @@ void CoordinatorCopilot::Commit() {
   static_cast<CopilotFrame*>(frame_)->n_commit_++;
   verify(current_phase_ == Phase::COMMIT);
   commit_callback_();
-  Log_debug("Copilot coordinator %u broadcast COMMIT for partition: %d, %s : %lu -> %lu",
+  Log_debug("Copilot coordinator {} broadcast COMMIT for partition: {}, {} : {} -> {}",
             coo_id_, (int)par_id_, indicator[is_pilot_], slot_id_, dep_);
 
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd_now_);
-  // Log_info("Commit loc_id_=%d is_pilot_=%d slot_id_=%d cmd<%d, %d> dep_=%d", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
+  // Log_info("Commit loc_id_={} is_pilot_={} slot_id_={} cmd<{}, {}> dep_={}", loc_id_, is_pilot_, slot_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, dep_);
   auto sp_quorum = commo()->BroadcastCommit(par_id_,
                                             is_pilot_, slot_id_,
                                             dep_,
@@ -342,7 +342,7 @@ void CoordinatorCopilot::Commit() {
       uint8_t cur_pilot = is_pilot_;
       slotid_t cur_slot = slot_id_;  // save the property of current insatnce , cause initFastTakeover resets the property
       
-      Log_info("TAKEOVER on %s for %lu from %lu to %lu", indicator[cur_pilot], cur_slot, start, end);
+      Log_info("TAKEOVER on {} for {} from {} to {}", indicator[cur_pilot], cur_slot, start, end);
       for (auto i = start; i <= end; i++) {
         auto ucmit_ins = sch_->GetInstance(i, REVERSE(cur_pilot));
         if (ucmit_ins
@@ -352,8 +352,8 @@ void CoordinatorCopilot::Commit() {
           verify(IsPilot() || IsCopilot());
           take++;
           Log_info(
-              "initiate fast-TAKEOVER on %s for slot %lu 's dep:"
-              " %s, %lu, status: %x",
+              "initiate fast-TAKEOVER on {} for slot {} 's dep:"
+              " {}, {}, status: {:x}",
               indicator[cur_pilot], cur_slot, indicator[ucmit_ins->is_pilot],
               ucmit_ins->slot_id, ucmit_ins->status);
           // initFastTakeover(ucmit_ins); // Ze: temporarily comment this line for fixing zoo open loop unexpected TAKEOVER problem

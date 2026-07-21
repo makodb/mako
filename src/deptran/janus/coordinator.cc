@@ -69,7 +69,7 @@ void CoordinatorJanus::PreAcceptAck(phase_t phase,
       // receive enough identical replies to continue fast path.
       // go to the commit.
       fast_path_ = true;
-//      Log_info("pre acked success on txn_id: %llx", cmd_->id_);
+//      Log_info("pre acked success on txn_id: {:x}", cmd_->id_);
       ChooseGraph();
       GotoNextPhase();
     } else {
@@ -116,7 +116,7 @@ void CoordinatorJanus::ChooseGraph() {
 void CoordinatorJanus::Accept() {
 //  std::lock_guard<std::recursive_mutex> guard(mtx_);
 //  verify(!fast_path_);
-////  Log_info("broadcast accept request for txn_id: %llx", cmd_->id_);
+////  Log_info("broadcast accept request for txn_id: {:x}", cmd_->id_);
 //  ChooseGraph();
 //  TxData* txn = (TxData*) cmd_;
 //  auto dtxn = sp_graph_->FindV(cmd_->id_);

@@ -25,7 +25,7 @@ bool ShardingPolicyCache::fetch_from_cnode(const std::string& c_node_addr) {
 
     if (!client.connect()) {
         // @unsafe { logging I/O }
-        Log_error("ShardingPolicyCache: Failed to connect to c-node at %s",
+        Log_error("ShardingPolicyCache: Failed to connect to c-node at {}",
                   c_node_addr.c_str());
         return false;
     }
@@ -55,7 +55,7 @@ bool ShardingPolicyCache::fetch_from_client(ConfigClient& client) {
     initialized_.set(true);
 
     // @unsafe { logging I/O }
-    Log_info("ShardingPolicyCache: Cached sharding policy version %lu", version);
+    Log_info("ShardingPolicyCache: Cached sharding policy version {}", version);
     return true;
 }
 

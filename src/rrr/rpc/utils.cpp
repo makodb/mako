@@ -214,7 +214,7 @@ int find_open_port() {
     ::close(fd);
 
     if (port != -1) {
-        Log_info("Found open port: %d", port);
+        Log_info("Found open port: {}", port);
         return port;
     }
 

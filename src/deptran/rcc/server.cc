@@ -63,7 +63,7 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
 //  auto sz = MinItfrGraph(*dtxn, graph, true, depth);
 //#ifdef DEBUG_CODE
 //    if (sz > 4) {
-//      Log_fatal("something is wrong, graph size %d", sz);
+//      Log_fatal("something is wrong, graph size {}", sz);
 //    }
 //#endif
 #ifdef DEBUG_CODE
@@ -76,7 +76,7 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
                != info2.partition_.end());
     verify(sz > 0);
     if (RandomGenerator::rand(1, 2000) <= 1)
-      Log_info("dispatch ret graph size: %d", graph->size());
+      Log_info("dispatch ret graph size: {}", graph->size());
   }
 #endif
   // removed commented-out
@@ -150,7 +150,7 @@ void RccServer::__DebugExamineFridge() {
         in_wait_anc_cmt++;
       }
     }
-//    Log_info("my partition: %d", (int) partition_id_);
+//    Log_info("my partition: {}", (int) partition_id_);
     if (tinfo.status() < TXN_CMT) {
       if (tinfo.Involve(partition_id_)) {
         in_wait_self_cmt++;
@@ -162,11 +162,11 @@ void RccServer::__DebugExamineFridge() {
     }
   }
   int sz = (int)fridge_.size();
-  Log_info("examining fridge. fridge size: %d, in_ask: %d, in_wait_self_cmt: %d"
-               " in_wait_anc_exec: %d, in wait anc cmt: %d, else %d",
+  Log_info("examining fridge. fridge size: {}, in_ask: {}, in_wait_self_cmt: {}"
+               " in_wait_anc_exec: {}, in wait anc cmt: {}, else {}",
            sz, in_ask, in_wait_self_cmt, in_wait_anc_exec, in_wait_anc_cmt,
            sz - in_ask - in_wait_anc_exec - in_wait_anc_cmt - in_wait_self_cmt);
-//  Log_info("wait for myself commit: %llx par: %d", id, (int)partition_id_);
+//  Log_info("wait for myself commit: {:x} par: {}", id, (int)partition_id_);
 #endif
 }
 
@@ -581,7 +581,7 @@ void RccServer::Decide(const RccScc& scc, int rank) {
       return;
     }
     UpgradeStatus(*v, rank, TXN_DCD);
-//    Log_info("txnid: %llx, parent size: %d", v->id(), v->parents_.size());
+//    Log_info("txnid: {:x}, parent size: {}", v->id(), v->parents_.size());
   }
 }
 
@@ -929,7 +929,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 /*
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on commit graph size: %d", graph.size());
+//    Log_info("on commit graph size: {}", graph.size());
   int ret = SUCCESS;
   // union the graph into dep graph
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
@@ -941,7 +941,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
     verify(dtxn->local_validated_->get() != 0);
     ret = SUCCESS; // TODO no return output?
   } else {
-//    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+//    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 //    dtxn->commit_request_received_ = true;
     if (!sp_graph) {
       // quick path without graph, no contention.
@@ -1072,9 +1072,9 @@ int RccServer::OnPreAccept(txnid_t txn_id,
                            rank_t rank,
                            const vector<SimpleCommand> &cmds,
                            parent_set_t& res_parents) {
-//  Log_info("on preaccept: %llx par: %d", txn_id, (int)partition_id_);
+//  Log_info("on preaccept: {:x} par: {}", txn_id, (int)partition_id_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on pre-accept graph size: %d", graph.size());
+//    Log_info("on pre-accept graph size: {}", graph.size());
   if ((rank == RANK_I && SKIP_I) || (rank == RANK_D && SKIP_D)) {
     return SUCCESS;
   }
@@ -1159,7 +1159,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   Log_debug("committing dtxn %" PRIx64, cmd_id);
   verify(rank == RANK_D || rank == RANK_I);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on commit graph size: %d", graph.size());
+//    Log_info("on commit graph size: {}", graph.size());
   auto sp_tx = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id, rank));
 //  verify(rank == dtxn->current_rank_);
 //  verify(sp_tx->p_output_reply_ == nullptr);
@@ -1194,7 +1194,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //  if (sp_tx->HasLogApplyStarted()) {
 //    return SUCCESS;
 //  }
-//    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+//    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 //    dtxn->commit_request_received_ = true;
   verify(subtx.Involve(partition_id_));
 //  if (sp_tx->status() >= TXN_CMT) {

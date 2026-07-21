@@ -68,7 +68,7 @@ bool RaftFrame::IsRaftLabTestConfig() {
       is_lab_test_config_ = (config->GetNumPartition() == 1 &&
                               config->GetPartitionSize(0) == 5);
       lab_test_config_checked_ = true;
-      Log_info("RaftFrame: Lab test config check: partitions=%u, replicas=%d, is_lab_test=%s",
+      Log_info("RaftFrame: Lab test config check: partitions={}, replicas={}, is_lab_test={}",
                config->GetNumPartition(), config->GetPartitionSize(0),
                is_lab_test_config_ ? "true" : "false");
     }
@@ -109,7 +109,7 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   coo->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
   coo->loc_id_ = this->site_info_->locale_id;
   verify(coo->n_replica_ != 0); // TODO
-  Log_debug("create new fpga raft coord, coo_id: %d", (int) coo->coo_id_);
+  Log_debug("create new fpga raft coord, coo_id: {}", (int) coo->coo_id_);
   return coo;
 }
 
@@ -127,7 +127,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
     return svr_.get();
   }
   // @unsafe
-  { Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id); }
+  { Log_debug("create new fpga raft sched loc: {}", this->site_info_->locale_id); }
 
 #ifdef RAFT_TEST_CORO
   // Only run test framework code if in raft lab test configuration
@@ -148,10 +148,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
-  Log_info("CreateCommo: Thread ID = %lu", std::this_thread::get_id());
+  Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
   {
     auto guard = rrr::sp_running_fiber_th_.borrow();
-    Log_info("CreateCommo: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+    Log_info("CreateCommo: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
@@ -163,7 +163,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   if (IsRaftLabTestConfig()) {
     Log_info("CreateCommo: RAFT_TEST_CORO enabled (lab test mode)");
     raft_test_mutex_.lock();
-    Log_info("CreateCommo: n_replicas_ = %d, n_commo_ = %d", n_replicas_, n_commo_created_);
+    Log_info("CreateCommo: n_replicas_ = {}, n_commo_ = {}", n_replicas_, n_commo_created_);
 
     // Simple verification: ensure all 5 schedulers are created
     verify(n_replicas_ == 5);
@@ -181,7 +181,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 
     // Use a simple counter approach like lab solution
     n_commo_created_++;
-    Log_info("CreateCommo: n_commo_ now = %d", n_commo_created_);
+    Log_info("CreateCommo: n_commo_ now = {}", n_commo_created_);
     raft_test_mutex_.unlock();
 
     // Only site 0 creates and manages the test fiber
@@ -192,10 +192,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 
       raft_test_fiber_ = rusty::Some(Fiber::create_run([this] () {
         Log_info("Test fiber: Starting execution");
-        Log_info("Test fiber: Thread ID = %lu", std::this_thread::get_id());
+        Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
         {
           auto guard = rrr::sp_running_fiber_th_.borrow();
-          Log_info("Test fiber: sp_running_fiber_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+          Log_info("Test fiber: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
         }
 
         // Yield until all 5 communicators are initialized
@@ -217,7 +217,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
         Reactor::get_reactor()->looping_.set(false);
         return;
       }));
-      Log_info("raft_test_fiber_ id=%d", raft_test_fiber_.as_ref().unwrap()->id);
+      Log_info("raft_test_fiber_ id={}", raft_test_fiber_.as_ref().unwrap()->id);
 
       // wait until n_commo_created_ == 5, then resume the fiber
       raft_test_mutex_.lock();
@@ -232,7 +232,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   }
   #endif
 
-  Log_info("CreateCommo: Returning commo_ = %p", commo_.get());
+  Log_info("CreateCommo: Returning commo_ = {}", (void*)commo_.get());
   return commo_.get();
 }
 

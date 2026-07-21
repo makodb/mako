@@ -49,7 +49,7 @@ void CoordinatorClassic::ForwardTxnRequest(TxRequest& req) {
 }
 
 void CoordinatorClassic::ForwardTxRequestAck(const TxReply& txn_reply) {
-  Log_info("%s: %d", __FUNCTION__, txn_reply.res_);
+  Log_info("{}: {}", __FUNCTION__, txn_reply.res_);
   committed_ = (txn_reply.res_ == REJECT) ? false : true;
   aborted_ = !committed_;
   phase_ = Phase::COMMIT;
@@ -73,7 +73,7 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
   n_retry_ = 0;
   Reset(); // In case of reuse.
 
-  Log_debug("do one request txn_id: %d", cmd_->id_);
+  Log_debug("do one request txn_id: {}", cmd_->id_);
   auto config = Config::GetConfig();
   bool not_forwarding = forward_status_ != PROCESS_FORWARD_REQUEST;
 
@@ -81,17 +81,17 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
     client_status_.as_ref().unwrap()->txn_start_one(thread_id_, cmd->type_);
   }
   if (config->forwarding_enabled_ && forward_status_ == FORWARD_TO_LEADER) {
-    Log_info("forward to leader: %d; cooid: %d",
-             forward_status_,
+    Log_info("forward to leader: {}; cooid: {}",
+             (int)forward_status_,
              this->coo_id_);
     verify(0); // not supported yet for the new open closed loop.
     ForwardTxnRequest(req);
   } else {
-    Log_debug("start txn!!! : %d", forward_status_);
+    Log_debug("start txn!!! : {}", (int)forward_status_);
     // this GotoNextPhase is in none/coordinator.cc, coz this is CoordinatorNone instance
     // class CoordinatorNone : public CoordinatorClassic { }
     Fiber::create_run([this]() {
-        // Log_info("Start CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
+        // Log_info("Start CoroutineID {} {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
         GotoNextPhase();
       }, __FILE__, __LINE__
     );
@@ -100,17 +100,17 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
 
 
 void CoordinatorClassic::GotoNextPhase() {
-  //Log_info("We're moving along: %d", phase_ % 4);
+  //Log_info("We're moving along: {}", phase_ % 4);
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
   phase_++;
 	bool first = true;
-  //Log_info("Current phase is %d", current_phase);
-  //Log_info("aborted and committed: %d, %d", aborted_, committed_);
+  //Log_info("Current phase is {}", current_phase);
+  //Log_info("aborted and committed: {}, {}", aborted_, committed_);
   switch (current_phase) {
     case Phase::INIT_END:
 			if (n_retry_ > 0) Log_info("dispatching after restart");
-      //Log_info("Dispatching for some reason: %x, %d", this, phase_);
+      //Log_info("Dispatching for some reason: {:x}, {}", this, phase_);
       verify(phase_ % n_phase == Phase::DISPATCH);
 
 			/*while(commo()->paused){
@@ -119,11 +119,11 @@ void CoordinatorClassic::GotoNextPhase() {
 					commo()->total_++;
 					commo()->qe->n_voted_yes_.set(commo()->qe->n_voted_yes_.get() + 1);
 					commo()->count_lock_.unlock();
-					Log_info("is it ready: %d", commo()->qe->is_ready());
+					Log_info("is it ready: {}", commo()->qe->is_ready());
 					commo()->qe->test();
 					first = false;
 				}
-				Log_info("total: %d", commo()->total_);
+				Log_info("total: {}", commo()->total_);
 				auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
 				t->wait_timeout(0.1*1000*1000);
 			}*/
@@ -131,7 +131,7 @@ void CoordinatorClassic::GotoNextPhase() {
       break;
       //break;
     case Phase::DISPATCH:
-      //Log_info("Preparing for some reason: %x, %d", this, phase_);
+      //Log_info("Preparing for some reason: {:x}, {}", this, phase_);
       verify(phase_ % n_phase == Phase::PREPARE);
       verify(!committed_);
       if (!aborted_) {
@@ -139,13 +139,13 @@ void CoordinatorClassic::GotoNextPhase() {
         Prepare();
       } else {
         phase_++;
-        Log_info("Aborting for some reason: %d", n_retry_);
+        Log_info("Aborting for some reason: {}", n_retry_);
         EarlyAbort();
 				break;
       }
       //break;
     case Phase::PREPARE:
-      //Log_info("Committing for some reason: %x, %d", this, phase_);
+      //Log_info("Committing for some reason: {:x}, {}", this, phase_);
       verify(phase_ % n_phase == Phase::COMMIT);
       phase_++;
       Commit();
@@ -159,7 +159,7 @@ void CoordinatorClassic::GotoNextPhase() {
         End();
       }
       else if (aborted_) {
-        Log_info("Restarting for some reason: %d", n_retry_);
+        Log_info("Restarting for some reason: {}", n_retry_);
         //phase_++;
         Restart();
       } else
@@ -205,7 +205,7 @@ void CoordinatorClassic::Restart() {
       client_status_.as_ref().unwrap()->txn_give_up_one(this->thread_id_, txn->type_);
     End();
   } else {
-    Log_info("retry count %d, max_retry: %d, this coord: %llx", n_retry_, max_retry, this);
+    Log_info("retry count {}, max_retry: {}, this coord: {}", n_retry_, max_retry, (void*)this);
     Reset();
     txn->Reset();
     //could be a problem or maybe not???
@@ -246,7 +246,7 @@ void CoordinatorClassic::DispatchAsync() {
                                          std::placeholders::_2));
   }
 
-  Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
+  Log_debug("Dispatch cnt: {} for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
 // removed `CoordinatorClassic::DispatchSync`
@@ -277,7 +277,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
 
   // Check for timeout
   if (sp_int_event->status_.get() == EventStatus::TIMEOUT) {
-    Log_warn("Transaction %lu: DispatchAsync timed out after %lu us",
+    Log_warn("Transaction {}: DispatchAsync timed out after {} us",
              (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
     aborted_ = true;
     tx_data().reply_.timed_out_ = true;
@@ -294,7 +294,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   } else if (last && aborted_) {
 		GotoNextPhase();
 	}
-  //Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
+  //Log_debug("Dispatch cnt: {} for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
 bool CoordinatorClassic::AllDispatchAcked() {
@@ -327,18 +327,18 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   if (res == REJECT) {
     aborted_ = true;
     txn->commit_.store(false);
-    // Log_info("DispatchAck Reject CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
+    // Log_info("DispatchAck Reject CoroutineID {} {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
     return;
   } else if (res == WRONG_LEADER) {
-    Log_info("[WRONG_LEADER] DispatchAck received WRONG_LEADER for tx_id: %lu", txn->id_);
+    Log_info("[WRONG_LEADER] DispatchAck received WRONG_LEADER for tx_id: {}", txn->id_);
     aborted_ = true;
     txn->commit_.store(false);
     txn->reply_.res_ = WRONG_LEADER;
     // For None mode, we need to check if we can get view data from the transaction
     // The view data should have been set by the scheduler
     if (txn->reply_.sp_view_data_.is_some()) {
-      Log_info("[WRONG_LEADER] DispatchAck has view data: %s",
+      Log_info("[WRONG_LEADER] DispatchAck has view data: {}",
                txn->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
     }
     GotoNextPhase();
@@ -356,25 +356,25 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
     const innid_t& inn_id = pair.first;
     verify(!dispatch_acks_.at(inn_id));
     dispatch_acks_[inn_id] = true;
-    Log_debug("get start ack %ld/%ld for cmd_id: %lx, inn_id: %d",
+    Log_debug("get start ack {}/{} for cmd_id: {:x}, inn_id: {}",
               n_dispatch_ack_, n_dispatch_, cmd_->id_, inn_id);
     txn->Merge(pair.first, pair.second);
   }
   if (txn->HasMoreUnsentPiece()) {
-    Log_debug("command has more sub-cmd, cmd_id: %llx,"
-                  " n_started_: %d, n_pieces: %d",
+    Log_debug("command has more sub-cmd, cmd_id: {:x},"
+                  " n_started_: {}, n_pieces: {}",
               txn->id_, txn->n_pieces_dispatched_, txn->GetNPieceAll());
     DispatchAsync();
   } else if (AllDispatchAcked()) {
-    Log_debug("receive all start acks, txn_id: %llx; START PREPARE",
+    Log_debug("receive all start acks, txn_id: {:x}; START PREPARE",
               txn->id_);
     dispatch_ack_ = true;
-    // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d cmd_ver=%d current_phase=%d [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
+    // Log_info("CoordinatorRule coo_id={} thread_id={} cmd_ver_={} cmd_ver={} current_phase={} [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
     if (phase != phase_) {
-      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
+      // Log_info("AllDispatchAcked Failed CoroutineID {} {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
       return;
     }
-    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
+    // Log_info("AllDispatchAcked Successed CoroutineID {} {}", Fiber::current_fiber()->id, Fiber::current_fiber()->global_id);
     GotoNextPhase();
   }
 }
@@ -390,7 +390,7 @@ void CoordinatorClassic::Prepare() {
     sids.push_back(site);
   }
 
-  Log_info("send prepare tid: %ld",
+  Log_info("send prepare tid: {}",
             cmd_->id_);
   auto phase = phase_;
   
@@ -410,15 +410,15 @@ void CoordinatorClassic::Prepare() {
 
   // Check for timeout
   if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
-    Log_warn("Transaction %lu: Prepare timed out after %lu us",
+    Log_warn("Transaction {}: Prepare timed out after {} us",
              (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
     aborted_ = true;
     tx_data().reply_.timed_out_ = true;
     tx_data().reply_.res_ = TXN_TIMEOUT;
   }
 
-	//Log_info("slow inside Prepare is: %d", commo()->slow);
-  Log_info("DONE send prepare tid: %ld",
+	//Log_info("slow inside Prepare is: {}", commo()->slow);
+  Log_info("DONE send prepare tid: {}",
             cmd_->id_);
   quorum_event->log();
 
@@ -451,12 +451,12 @@ void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
   if (res == REJECT) {
     cmd->commit_.store(false);
     aborted_ = true;
-//    Log_fatal("2PL prepare failed due to error %d", e);
+//    Log_fatal("2PL prepare failed due to error {}", e);
   }
-  Log_debug("tid %llx; prepare result %d", (int64_t) cmd_->root_id_, res);
+  Log_debug("tid {:x}; prepare result {}", (int64_t) cmd_->root_id_, res);
 
   if (n_prepare_ack_ == cmd->partition_ids_.size()) {
-    Log_debug("2PL prepare finished for %ld", cmd->root_id_);
+    Log_debug("2PL prepare finished for {}", cmd->root_id_);
     if (!aborted_) {
       cmd->commit_.store(true);
       committed_ = true;
@@ -503,20 +503,20 @@ void CoordinatorClassic::Commit() {
     auto quorum_event = commo()->SendCommit(this,
                                             tx_data().id_);
 
-		Log_info("send commit tid: %ld",
+		Log_info("send commit tid: {}",
             cmd_->id_);
 		quorum_event->wait_timeout(txn_timeout_);
 
     // Check for timeout (best-effort commit to reachable shards)
     if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
-      Log_warn("Transaction %lu: Commit timed out after %lu us (some shards unreachable)",
+      Log_warn("Transaction {}: Commit timed out after {} us (some shards unreachable)",
                (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
       // Note: committed to reachable shards, unreachable shards missed
       // Don't change result - transaction was committed (just some shards missed)
       tx_data().reply_.timed_out_ = true;
     }
 
-		Log_info("DONE send commit tid: %ld",
+		Log_info("DONE send commit tid: {}",
             cmd_->id_);
     quorum_event->log();
 		
@@ -524,15 +524,15 @@ void CoordinatorClassic::Commit() {
       aborted_ = true;
     } else if(cmd->reply_.res_ == WRONG_LEADER) {
       // Handle WRONG_LEADER response
-      Log_info("[WRONG_LEADER] Coordinator received WRONG_LEADER in Commit phase for tx_id: %lu", tx_data().id_);
+      Log_info("[WRONG_LEADER] Coordinator received WRONG_LEADER in Commit phase for tx_id: {}", tx_data().id_);
       aborted_ = true;  // Mark as aborted to clean up
       // The view data should be attached to the TpcCommitCommand by the Raft coordinator
       // It will be propagated to the client through the TxReply
       if (cmd->reply_.sp_view_data_.is_some()) {
-        Log_info("[WRONG_LEADER] View data attached to reply: %s",
+        Log_info("[WRONG_LEADER] View data attached to reply: {}",
                  cmd->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
       } else {
-        Log_info("[WRONG_LEADER] No view data attached to reply for tx_id: %lu", tx_data().id_);
+        Log_info("[WRONG_LEADER] No view data attached to reply for tx_id: {}", tx_data().id_);
       }
     } else {
       committed_ = true;
@@ -553,19 +553,19 @@ void CoordinatorClassic::Commit() {
     tx_data().reply_.res_ = REJECT;
     auto quorum_event = commo()->SendAbort(this,
                                            tx_data().id_);
-		Log_info("send abort tid: %ld",
+		Log_info("send abort tid: {}",
             cmd_->id_);
     quorum_event->wait_timeout(txn_timeout_);
 
     // Check for timeout (best-effort abort on reachable shards)
     if (quorum_event->status_.get() == EventStatus::TIMEOUT) {
-      Log_warn("Transaction %lu: Abort timed out after %lu us (some shards unreachable)",
+      Log_warn("Transaction {}: Abort timed out after {} us (some shards unreachable)",
                (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
       // Note: aborted on reachable shards, unreachable shards missed
       tx_data().reply_.timed_out_ = true;
     }
 
-		Log_info("DONE send abort tid: %ld",
+		Log_info("DONE send abort tid: {}",
             cmd_->id_);
     quorum_event->log();
 
@@ -602,7 +602,7 @@ void CoordinatorClassic::CommitAck(phase_t phase) {
   if (phase != phase_) return;
   TxData* cmd = (TxData*) cmd_;
   n_finish_ack_++;
-  Log_info("finish cmd_id_: %ld; n_finish_ack_: %ld; n_finish_req_: %ld",
+  Log_info("finish cmd_id_: {}; n_finish_ack_: {}; n_finish_req_: {}",
             cmd_->id_, n_finish_ack_, n_finish_req_);
   verify(cmd->GetPartitionIds().size() == n_finish_req_);
   // Perhaps a bug here?
@@ -614,7 +614,7 @@ void CoordinatorClassic::CommitAck(phase_t phase) {
     }
     // GotoNextPhase();
   }
-  Log_debug("callback: %s, retry: %s",
+  Log_debug("callback: {}, retry: {}",
             committed_ ? "True" : "False",
             aborted_ ? "True" : "False");
 }
@@ -649,9 +649,9 @@ void CoordinatorClassic::End() {
     // Check if this was actually a WRONG_LEADER case
     if (tx_data->reply_.res_ == WRONG_LEADER) {
       // Keep WRONG_LEADER status (already set in Commit phase)
-      Log_info("[WRONG_LEADER] Maintaining WRONG_LEADER status in End() for tx_id: %lu", tx_data->id_);
+      Log_info("[WRONG_LEADER] Maintaining WRONG_LEADER status in End() for tx_id: {}", tx_data->id_);
       if (tx_data->reply_.sp_view_data_.is_some()) {
-        Log_info("[WRONG_LEADER] View data will be sent to client: %s",
+        Log_info("[WRONG_LEADER] View data will be sent to client: {}",
                  tx_data->reply_.sp_view_data_.as_ref().unwrap()->ToString().c_str());
       }
     } else {
@@ -664,7 +664,7 @@ void CoordinatorClassic::End() {
   Log_debug("call reply for tx_id: %"
                 PRIx64, ongoing_tx_id_);
 #ifdef FULL_LOG_DEBUG
-  Log_info("callback for cmd<%d, %d>", tx_data->client_id_, tx_data->cmd_id_in_client_);
+  Log_info("callback for cmd<{}, {}>", tx_data->client_id_, tx_data->cmd_id_in_client_);
 #endif
   tx_data->callback_(tx_reply_buf);
   ongoing_tx_id_ = 0;
@@ -709,12 +709,12 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
 void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_pause) {
   locid_t prev_pause_srv = *cur_pause;
 retry:
-  Log_debug("start setting a new leader from %d", prev_pause_srv);
+  Log_debug("start setting a new leader from {}", prev_pause_srv);
   auto e = commo()->BroadcastGetLeader(par_id, prev_pause_srv);
   e->wait();
   if (e->yes()) {
     // assign new leader
-    Log_debug("set a new leader %d", e->q().leader_id_.get());
+    Log_debug("set a new leader {}", e->q().leader_id_.get());
     commo()->SetNewLeaderProxy(par_id, e->q().leader_id_.get());
     if (prev_pause_srv != e->q().leader_id_.get()) {
       *cur_pause = e->q().leader_id_.get();

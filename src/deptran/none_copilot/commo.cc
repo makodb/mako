@@ -20,7 +20,7 @@ CommunicatorNoneCopilot::PilotProxyForPartition(parid_t par_id) const {
                      return site.locale_id == 0;
                    });
   if (pilot_it == partition_proxies.end())
-    Log_fatal("couldn't find pilot for partition %d", par_id);
+    Log_fatal("couldn't find pilot for partition {}", par_id);
   verify(pilot_it->second);
 
   auto copilot_it =
@@ -31,7 +31,7 @@ CommunicatorNoneCopilot::PilotProxyForPartition(parid_t par_id) const {
                      return site.locale_id == 1;
                    });
   if (copilot_it == partition_proxies.end())
-    Log_fatal("couldn't find copilot for partition %d", par_id);
+    Log_fatal("couldn't find copilot for partition {}", par_id);
   verify(copilot_it->second);
 
   return { *pilot_it, *copilot_it };  
@@ -70,12 +70,12 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     callback(ret, outputs);
   };
   // auto pair_leader_proxy = LeaderProxyForPartition(par_id);
-  // Log_debug("send dispatch to site %ld",
+  // Log_debug("send dispatch to site {}",
   //           pair_leader_proxy.first);
   // auto proxy = pair_leader_proxy.second;
   auto pair_proxies = PilotProxyForPartition(par_id);
   verify(pair_proxies.size() == 2);
-  Log_debug("send dispatch to site %d, %d", pair_proxies[0].first,
+  Log_debug("send dispatch to site {}, {}", pair_proxies[0].first,
             pair_proxies[1].first);
   VecPieceData vpd;
   vpd.sp_vec_piece_data_ = sp_vec_piece;

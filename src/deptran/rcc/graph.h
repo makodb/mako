@@ -784,7 +784,7 @@ class Graph {
 //          if (scc_set.find(vt) != scc_set.end()) {
 //            type2 = true;
 //          } else {
-//            // Log::debug("parent type greater than 2 but not in the same scc");
+//            // Log_debug("parent type greater than 2 but not in the same scc");
 //          }
 //        }
 //      }
@@ -925,14 +925,14 @@ class Graph {
       auto i = this->vertex_index().find(v->data_->id());
 
       if (i == vertex_index().end()) {
-        //       Log::debug("union: insert a new node in to the graph. node id:
-        // %llx", v->data_.id());
+        //       Log_debug("union: insert a new node in to the graph. node id:
+        // {:x}", v->data_.id());
         new_ov = new V(v->data_->id());
         new_ov->data_ = v->data_;
         vertex_index()[new_ov->data_->id()] = new_ov;
       } else {
-        //       Log::debug("union: the node is already in the graph. node id:
-        // %llx", v->data_.id());
+        //       Log_debug("union: the node is already in the graph. node id:
+        // {:x}", v->data_.id());
         new_ov = i->second;
         new_ov->data_->union_data(*(v->data_), false, is_server);
       }

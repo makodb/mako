@@ -61,9 +61,9 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
     // @unsafe
     {
     auto& site = config->SiteById(svr_->site_id_);
-    Log_info("[WRONG_LEADER] Submit to server %d (loc_id %d) which is not leader (currentTerm=%lu, commitIndex=%lu, lastLogIndex=%lu)",
+    Log_info("[WRONG_LEADER] Submit to server {} (loc_id {}) which is not leader (currentTerm={}, commitIndex={}, lastLogIndex={})",
              svr_->site_id_, loc_id_, svr_->currentTerm, svr_->commitIndex, svr_->lastLogIndex);
-    Log_info("[WRONG_LEADER] Server %d site info: host=%s locale_id=%d partition=%d", svr_->site_id_, site.host.c_str(), site.locale_id, site.partition_id_);
+    Log_info("[WRONG_LEADER] Server {} site info: host={} locale_id={} partition={}", svr_->site_id_, site.host.c_str(), site.locale_id, site.partition_id_);
     }
 
     // Handle WRONG_LEADER case
@@ -81,7 +81,7 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
         {
         current_view = svr_->new_view_;
 
-        Log_info("[WRONG_LEADER] Server %d retrieving view: %s",
+        Log_info("[WRONG_LEADER] Server {} retrieving view: {}",
                  svr_->site_id_, current_view.ToString().c_str());
         }
 
@@ -96,7 +96,7 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                             -1,  // Unknown leader for now
                             svr_->currentTerm);
           }
-          Log_info("[WRONG_LEADER] View was empty, created new view with unknown leader: %s",
+          Log_info("[WRONG_LEADER] View was empty, created new view with unknown leader: {}",
                    current_view.ToString().c_str());
         }
 
@@ -107,7 +107,7 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
           mut_cmd.sp_view_data_ = rusty::Option<rusty::Arc<ViewData>>(
               rusty::Arc<ViewData>::make(current_view, par_id_));
         }
-        Log_info("[WRONG_LEADER] Attached view data to response for partition %d: %s",
+        Log_info("[WRONG_LEADER] Attached view data to response for partition {}: {}",
                  par_id_, tpc_cmd.unwrap()->sp_view_data_.unwrap()->ToString().c_str());
       }
     }
@@ -122,7 +122,7 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
     }
     return;
   } else {
-    // Log_info("[YYYYY] Submit to loc_id %d, which is leader. Command kind=%d, is_recovery=%d",
+    // Log_info("[YYYYY] Submit to loc_id {}, which is leader. Command kind={}, is_recovery={}",
     //          loc_id_, cmd_env.has_value() ? cmd_env.kind_ : -1, SimpleRWCommand(cmd_env.inner_marshallable()).IsRecoveryCommand());
   }
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -162,7 +162,7 @@ void CoordinatorRaft::AppendEntries() {
     while (this->svr_->commitIndex < index) {
       Reactor::create_sp_event<TimeoutEvent>(1000)->wait();
       if (this->svr_->currentTerm != term) {
-        Log_info("Term changed during AppendEntries: expected %lu, got %lu. Leader changed.",
+        Log_info("Term changed during AppendEntries: expected {}, got {}. Leader changed.",
                  term, this->svr_->currentTerm);
         // The command may or may not be committed by the new leader
         // Mark as not committed and let higher layers retry
@@ -240,7 +240,7 @@ void CoordinatorRaft::GotoNextPhase() {
       break;
     default:
       // @unsafe { Log_error is not borrow-checked }
-      Log_error("[RAFT] CoordinatorRaft::GotoNextPhase: unexpected phase %d", current_phase);
+      Log_error("[RAFT] CoordinatorRaft::GotoNextPhase: unexpected phase {}", current_phase);
       break;
   }
 }

@@ -21,7 +21,7 @@ TEST(Time, perf) {
     }
 
     t.stop();
-    Log_info("time now rate: %f per sec, tmp: %lu", n / t.elapsed(), tmp);
+    Log_info("time now rate: {:f} per sec, tmp: {}", n / t.elapsed(), tmp);
 }
 
 TEST(Timer, loop) {

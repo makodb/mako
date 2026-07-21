@@ -26,7 +26,7 @@ namespace janus {
 //        callback(res, output);
 //      };
 //  fuattr.callback = cb;
-//  Log_debug("SendStart to %ld from %ld", cmd[0].PartitionId(), coo->coo_id_);
+//  Log_debug("SendStart to {} from {}", cmd[0].PartitionId(), coo->coo_id_);
 ////  verify(cmd.type_ > 0);
 ////  verify(cmd.root_type_ > 0);
 //  Future::safe_release(proxy->async_Dispatch(cmd, fuattr));

@@ -188,14 +188,14 @@ public:
         db_ = rocksdb_open(options_, db_path_.c_str(), &err);
         if (err != nullptr || db_ == nullptr) {
             std::string err_str = take_rocksdb_error(&err);
-            rrr::Log_error("[RocksDBLogStorage] Failed to open %s: %s",
+            rrr::Log_error("[RocksDBLogStorage] Failed to open {}: {}",
                       db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
             db_ = nullptr;
             return false;
         }
 
         is_open_.set(true);
-        rrr::Log_info("[RocksDBLogStorage] Opened database at %s", db_path_.c_str());
+        rrr::Log_info("[RocksDBLogStorage] Opened database at {}", db_path_.c_str());
         return true;
     }
 

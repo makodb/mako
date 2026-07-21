@@ -23,7 +23,7 @@ bool init_config_node() {
         return true;  // Not a c-node, nothing to do
     }
 
-    rrr::Log_info("Initializing config node at %s", benchConfig.getConfigDbPath().c_str());
+    rrr::Log_info("Initializing config node at {}", benchConfig.getConfigDbPath().c_str());
 
     // Create and open ConfigStore
     // @unsafe { new operator }
@@ -31,7 +31,7 @@ bool init_config_node() {
     // @unsafe { RocksDB I/O }
     if (!g_config_store->open()) {
         // @unsafe { logging I/O }
-        rrr::Log_warn("Failed to open ConfigStore at %s", benchConfig.getConfigDbPath().c_str());
+        rrr::Log_warn("Failed to open ConfigStore at {}", benchConfig.getConfigDbPath().c_str());
         delete g_config_store;
         g_config_store = nullptr;
         return false;
@@ -57,7 +57,7 @@ bool init_config_node() {
             if (!g_config_store->save(persistent)) {
                 rrr::Log_warn("Failed to save initial config to RocksDB");
             } else {
-                rrr::Log_info("Saved initial config to RocksDB (version %lu)", persistent.version);
+                rrr::Log_info("Saved initial config to RocksDB (version {})", persistent.version);
             }
         } else {
             rrr::Log_warn("No transport configuration available for first boot");
@@ -70,7 +70,7 @@ bool init_config_node() {
         auto stored_config = g_config_store->load();
         if (stored_config.is_some()) {
             janus::PersistentConfig persistent = stored_config.unwrap();
-            rrr::Log_info("Loaded config version %lu from RocksDB", persistent.version);
+            rrr::Log_info("Loaded config version {} from RocksDB", persistent.version);
 
             // Convert to transport config if not already set
             if (benchConfig.getConfig() == nullptr) {
@@ -91,7 +91,7 @@ bool init_config_node() {
             auto policy_opt = g_config_store->load_sharding_policy();
             if (policy_opt.is_some()) {
                 janus::ShardingPolicySet policy = policy_opt.unwrap();
-                rrr::Log_info("Loaded sharding policy version %lu with %zu tables from RocksDB",
+                rrr::Log_info("Loaded sharding policy version {} with {} tables from RocksDB",
                               policy.version, policy.table_count());
                 // Initialize global sharding policy cache
                 janus::get_sharding_policy_cache().set_policy(std::move(policy));
@@ -116,14 +116,14 @@ bool init_config_node() {
 
     // @unsafe { RPC server start }
     if (g_config_rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
-        rrr::Log_warn("Failed to start ConfigService RPC server on %s", bind_addr.c_str());
+        rrr::Log_warn("Failed to start ConfigService RPC server on {}", bind_addr.c_str());
         delete g_config_rpc_server;
         g_config_rpc_server = nullptr;
         g_config_poll_thread = rusty::None;
         return false;
     }
 
-    rrr::Log_info("ConfigService RPC server started on %s", bind_addr.c_str());
+    rrr::Log_info("ConfigService RPC server started on {}", bind_addr.c_str());
     return true;
 }
 
@@ -142,7 +142,7 @@ bool fetch_config_from_cnode() {
         return true;
     }
 
-    rrr::Log_info("Fetching configuration from c-node at %s", c_node_addr.c_str());
+    rrr::Log_info("Fetching configuration from c-node at {}", c_node_addr.c_str());
 
     // @unsafe { network client creation }
     janus::ConfigClient client(c_node_addr);
@@ -151,7 +151,7 @@ bool fetch_config_from_cnode() {
 
     // @unsafe { network connect }
     if (!client.connect()) {
-        rrr::Log_warn("Failed to connect to c-node at %s", c_node_addr.c_str());
+        rrr::Log_warn("Failed to connect to c-node at {}", c_node_addr.c_str());
         return false;
     }
 
@@ -164,7 +164,7 @@ bool fetch_config_from_cnode() {
     }
 
     janus::PersistentConfig persistent = config_opt.unwrap();
-    rrr::Log_info("Fetched config version %lu from c-node", persistent.version);
+    rrr::Log_info("Fetched config version {} from c-node", persistent.version);
 
     // Convert to transport config
     // @unsafe { memory allocation }
@@ -178,7 +178,7 @@ bool fetch_config_from_cnode() {
     benchConfig.setConfig(transport_opt.unwrap());
     benchConfig.setNshards(benchConfig.getConfig()->nshards);
 
-    rrr::Log_info("Applied configuration from c-node (nshards=%d)", benchConfig.getConfig()->nshards);
+    rrr::Log_info("Applied configuration from c-node (nshards={})", benchConfig.getConfig()->nshards);
 
     // @unsafe { network disconnect }
     client.disconnect();
@@ -201,7 +201,7 @@ bool fetch_sharding_policy_from_cnode() {
         return true;
     }
 
-    rrr::Log_info("Fetching sharding policy from c-node at %s", c_node_addr.c_str());
+    rrr::Log_info("Fetching sharding policy from c-node at {}", c_node_addr.c_str());
 
     // @unsafe { network client creation }
     janus::ConfigClient client(c_node_addr);
@@ -210,7 +210,7 @@ bool fetch_sharding_policy_from_cnode() {
 
     // @unsafe { network connect }
     if (!client.connect()) {
-        rrr::Log_warn("Failed to connect to c-node at %s", c_node_addr.c_str());
+        rrr::Log_warn("Failed to connect to c-node at {}", c_node_addr.c_str());
         return false;
     }
 
@@ -238,7 +238,7 @@ bool fetch_sharding_policy_from_cnode() {
     }
 
     janus::ShardingPolicySet policy = policy_opt.unwrap();
-    rrr::Log_info("Fetched sharding policy version %lu with %zu tables from c-node",
+    rrr::Log_info("Fetched sharding policy version {} with {} tables from c-node",
                   policy.version, policy.table_count());
 
     // Initialize global sharding policy cache

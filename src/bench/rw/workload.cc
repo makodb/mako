@@ -57,13 +57,13 @@ RwWorkload::RwWorkload(Config *config) : Workload(config) {
   double seconds_since_epoch = time_since_epoch.count();
   // rand_gen_.seed((int)std::time(0) + (uint64_t)pthread_self());
   rand_gen_.seed((uint64_t)(seconds_since_epoch * 10000000000) + (uint64_t)pthread_self());
-  // Log_info("seed %d %d %d %.10f", (int)std::time(0), (uint64_t)pthread_self(), (int)std::time(0) + (uint64_t)pthread_self(), seconds_since_epoch);
-  Log_info("seed %llu %llu %llu", (uint64_t)(seconds_since_epoch * 10000000000), (uint64_t)pthread_self(), (uint64_t)(seconds_since_epoch * 10000000000) + (uint64_t)pthread_self());
+  // Log_info("seed {} {} {} {:.10f}", (int)std::time(0), (uint64_t)pthread_self(), (int)std::time(0) + (uint64_t)pthread_self(), seconds_since_epoch);
+  Log_info("seed {} {} {}", (uint64_t)(seconds_since_epoch * 10000000000), (uint64_t)pthread_self(), (uint64_t)(seconds_since_epoch * 10000000000) + (uint64_t)pthread_self());
 }
 
 void RwWorkload::GetTxRequest(TxRequest* req, uint32_t cid) {
   req->n_try_ = n_try_;
-  // Log_info("Read Weights %.3f Write Weights %.3f", txn_weights_["read"], txn_weights_["write"]);
+  // Log_info("Read Weights {:.3f} Write Weights {:.3f}", txn_weights_["read"], txn_weights_["write"]);
   std::vector<double> weights = {txn_weights_["read"], txn_weights_["write"]};
   int32_t key, value;
   switch (RandomGenerator::weighted_select(weights)) {
@@ -110,7 +110,7 @@ int32_t RwWorkload::GetId(uint32_t cid) {
     static ZipfDist d(theta, key_range);
     id = d(rand_gen_);
   } else if (fix_id_ == -1) {
-    // Log_info("[Jetpack] id range is (0, %d)", key_range - 1);
+    // Log_info("[Jetpack] id range is (0, {})", key_range - 1);
     id = RandomGenerator::rand(0, key_range - 1);
   } else {
     auto it = this->key_ids_.find(cid);
@@ -120,7 +120,7 @@ int32_t RwWorkload::GetId(uint32_t cid) {
       id = (id<0) ? -1*id : id;
       id %= rw_benchmark_para_.n_table_;
       key_ids_[cid] = id;
-      Log_info("coordinator %d using fixed id of %d", cid, id);
+      Log_info("coordinator {} using fixed id of {}", cid, id);
     } else {
       id = it->second;
     }

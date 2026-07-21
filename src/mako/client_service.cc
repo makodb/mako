@@ -52,7 +52,7 @@ void MakoClientService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> r
             HandleDelete(std::move(req), sconn);
             break;
         default:
-            Log_warn("MakoClientService: Unknown RPC ID %d", rpc_id);
+            Log_warn("MakoClientService: Unknown RPC ID {}", rpc_id);
             // Send error response
             auto sconn_opt = sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -78,7 +78,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
 
     rrr::i32 status = ErrorCode::SUCCESS;
 
-    Log_debug("MakoClientService::HandleBeginTxn: client_id=%ld, counter=%u, txn_id=%lu",
+    Log_debug("MakoClientService::HandleBeginTxn: client_id={}, counter={}, txn_id={}",
               client_id, counter, txn_id);
 
     // Send response
@@ -102,7 +102,7 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
     // Commit transaction through ShardReceiver (removes from tracking)
     rrr::i32 status = receiver_->CommitClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleCommit: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleCommit: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
@@ -124,7 +124,7 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
     // Rollback transaction through ShardReceiver (aborts and removes from tracking)
     rrr::i32 status = receiver_->RollbackClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleRollback: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleRollback: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
@@ -156,7 +156,7 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
     auto it = receiver_->GetOpenTables().find(table_id);
     if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandlePut: table %d not found", table_id);
+        Log_warn("MakoClientService::HandlePut: table {} not found", table_id);
     } else {
         try {
             // Perform the put operation using shard_put (no txn handle needed)
@@ -167,7 +167,7 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
         }
     }
 
-    Log_debug("MakoClientService::HandlePut: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandlePut: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
@@ -199,7 +199,7 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
     auto it = receiver_->GetOpenTables().find(table_id);
     if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandleGet: table %d not found", table_id);
+        Log_warn("MakoClientService::HandleGet: table {} not found", table_id);
     } else {
         try {
             // Perform the get operation using shard_get (no txn handle needed)
@@ -213,7 +213,7 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
         }
     }
 
-    Log_debug("MakoClientService::HandleGet: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleGet: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
@@ -245,7 +245,7 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
     auto it = receiver_->GetOpenTables().find(table_id);
     if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
-        Log_warn("MakoClientService::HandleDelete: table %d not found", table_id);
+        Log_warn("MakoClientService::HandleDelete: table {} not found", table_id);
     } else {
         try {
             // Delete by putting empty value (consistent with ShardReceiver::HandleClientDeleteRequest)
@@ -257,7 +257,7 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
         }
     }
 
-    Log_debug("MakoClientService::HandleDelete: txn_id=%ld, table=%d, key_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleDelete: txn_id={}, table={}, key_len={}, status={}",
               txn_id, table_id, key.length(), status);
 
     // Send response

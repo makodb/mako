@@ -257,7 +257,7 @@ class TxnMgr: public NoCopy {
   virtual ~TxnMgr() {
 #ifdef CONFLICT_COUNT
     for (auto it : tables_)
-        Log::info("CONFLICT COUNT: Table: %10s,\tversion check: %5llu, read: %5llu\twrite: %5llu", it.first.c_str(), vc_conflict_count_[it.second], rl_conflict_count_[it.second], wl_conflict_count_[it.second]);
+        Log_info("CONFLICT COUNT: Table: {:10},\tversion check: {:5}, read: {:5}\twrite: {:5}", it.first.c_str(), vc_conflict_count_[it.second], rl_conflict_count_[it.second], wl_conflict_count_[it.second]);
 #endif
   }
   virtual symbol_t rtti() const = 0;

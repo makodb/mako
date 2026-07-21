@@ -346,7 +346,7 @@ class RaftServer : public TxLogServer {
       }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
       siteid_t prev_vote_for = vote_for_;
-      Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
+      Log_info("[RAFT_VOTE] server {} (loc {}) vote={} candidate={} can_term={} cur_term={} prev_vote_for={} is_leader={} lst_idx={} lst_term={}",
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
 
@@ -373,7 +373,7 @@ class RaftServer : public TxLogServer {
           vote_for_ = can_id ;
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
+          Log_info("[RAFT_VOTE] server {} recorded vote_for={} at term={}", site_id_, vote_for_, currentTerm);
 #endif
           // Reset timeout
           resetTimer("granted vote");
@@ -486,7 +486,7 @@ class RaftServer : public TxLogServer {
       last_heartbeat_time_ = Time::now(false);
       // Log only important timer resets (elections, votes), not routine heartbeats
       if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
-        Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",
+        Log_info("[TIMER_RESET] Site {}: reset timer ({}) - prev_hb_time={} new_hb_time={} delta={}",
                  site_id_, why, prev_time, last_heartbeat_time_, last_heartbeat_time_ - prev_time);
       }
     }
@@ -507,7 +507,7 @@ class RaftServer : public TxLogServer {
   void PersistState(uint64_t term, siteid_t voted_for, const char* reason = "unspecified") {
     if (!log_storage_ || !log_storage_->is_open()) return;
     PersistTermAndVoteToLogStorage();
-    Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
+    Log_debug("[RAFT-PERSISTENCE] Persisted: term={} votedFor={} ({})",
               term, voted_for, reason);
   }
 
@@ -515,7 +515,7 @@ class RaftServer : public TxLogServer {
   void PersistLogEntry(slotid_t slot_id, const RaftData& entry, const char* reason = "unspecified") {
     if (!log_storage_ || !log_storage_->is_open()) return;
     PersistLogEntryToLogStorage(slot_id, entry);
-    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
+    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot={} ({})", slot_id, reason);
   }
 
   // @unsafe - Uses LogStorage for persistence
@@ -715,7 +715,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - map access and shared_ptr mutation
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < min_active_slot_ && id != 0) {
-      Log_info("[RAFT_LOG] expanding min_active_slot_ from %lu to %lu", min_active_slot_, id);
+      Log_info("[RAFT_LOG] expanding min_active_slot_ from {} to {}", min_active_slot_, id);
       min_active_slot_ = id;
     }
     auto& sp_instance = raft_logs_[id];
@@ -1119,13 +1119,13 @@ class RaftServer : public TxLogServer {
     preferred_leader_site_id_ = site_id;
 
     if (old_preferred != site_id) {
-      Log_info("[LEADERSHIP-TRANSFER] Site %d: Preferred leader set to %d",
+      Log_info("[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
                site_id_, site_id);
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
     if (!AmIPreferredLeader() && is_leader_ && looping_) {
-      Log_info("[LEADERSHIP-TRANSFER] Site %d: I'm non-preferred leader, starting transfer monitoring",
+      Log_info("[LEADERSHIP-TRANSFER] Site {}: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
     }

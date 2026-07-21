@@ -90,8 +90,8 @@ SimpleRWCommand::SimpleRWCommand(const SimpleCommand& cmd) {
 
 
 string SimpleRWCommand::cmd_to_string() {
-  //Log_info("[copilot+] enter cmd_to_string of %p", (void*)(this));
-  //Log_info("[copilot+] cmd_type=%d", type_);
+  //Log_info("[copilot+] enter cmd_to_string of {}", (void*)(this));
+  //Log_info("[copilot+] cmd_type={}", type_);
   if (RW_BENCHMARK_NOOP == type_)
     return string("NoOp k=" + to_string(key_));
   else if (RW_BENCHMARK_R_TXN == type_)
@@ -225,10 +225,10 @@ bool SimpleRWCommand::Conflict(const Command& cmd1, const Command& cmd2) {
   SimpleRWCommand parsed_cmd1 = SimpleRWCommand(cmd1);
   SimpleRWCommand parsed_cmd2 = SimpleRWCommand(cmd2);
   if (parsed_cmd1.key_ != parsed_cmd2.key_) {
-    // Log_info("Not Conflict %d with %d", parsed_cmd1.key_, parsed_cmd2.key_);
+    // Log_info("Not Conflict {} with {}", parsed_cmd1.key_, parsed_cmd2.key_);
     return false;
   }
-  // Log_info("Conflict if %d or %d", parsed_cmd1.IsWrite(), parsed_cmd2.IsWrite());
+  // Log_info("Conflict if {} or {}", parsed_cmd1.IsWrite(), parsed_cmd2.IsWrite());
   return parsed_cmd1.IsWrite() || parsed_cmd2.IsWrite();
 }
 
@@ -246,7 +246,7 @@ void KeyDistribution::Print() {
   sort(sort_vec_.begin(), sort_vec_.end());
   int cnt = 0;
   for (auto it = sort_vec_.begin(); it != sort_vec_.end() && cnt <= 100; it++, cnt++) {
-    Log_info("[KeyDistribution] key = %d occur = %d pct= %.2f", it->second, -it->first, -it->first * 100.0 / sum);
+    Log_info("[KeyDistribution] key = {} occur = {} pct= {:.2f}", it->second, -it->first, -it->first * 100.0 / sum);
   }
 }
 

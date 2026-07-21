@@ -78,7 +78,7 @@ bool SchedulerClassic::DispatchPiece(Tx& tx,
     }
   }
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of dispatch: %d", end.tv_nsec-begin.tv_nsec);*/
+	Log_info("time of dispatch: {}", end.tv_nsec-begin.tv_nsec);*/
 //  tx.inuse = false;
   return true;
 }
@@ -88,7 +88,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
                                 const janus::Command& cmd_env,
                                 TxnOutput& ret_output) {
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second);
+  Log_info("cmd<{}, {}> entered SchedulerClassic::Dispatch", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second);
 #endif
 
   const auto vec_piece_data = marshallable_cast<VecPieceData>(cmd_env);
@@ -99,7 +99,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
   auto tx = dynamic_pointer_cast<TxClassic>(GetTx(cmd_id));
   verify(tx != nullptr);
 //  MergeCommands(tx.cmd_, cmd);
-  Log_debug("%d: received dispatch for tx id: %" PRIx64, site_id_, tx->tid_);
+  Log_debug("{}: received dispatch for tx id: %" PRIx64, site_id_, tx->tid_);
 //  verify(partition_id_ == piece_data.partition_id_);
   // pre-proces
   // TODO separate pre-process and process/commit
@@ -140,7 +140,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
     }
   }
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of dispatch2: %d", end.tv_nsec-begin.tv_nsec);*/
+	Log_info("time of dispatch2: {}", end.tv_nsec-begin.tv_nsec);*/
   // TODO reimplement this.
   if (tx->fully_dispatched_->value_.get() == 0) {
     tx->fully_dispatched_->set(1);
@@ -164,7 +164,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		null_cmd = true;
 		return false;
 	}*/
-  Log_debug("%s: at site %d, tx: %"
+  Log_debug("{}: at site {}, tx: %"
                 PRIx64, __FUNCTION__, this->site_id_, tx_id);
   if (Config::GetConfig()->IsReplicated()) {
     // fill the payload on a LOCAL, then freeze it into a shared Arc —
@@ -179,14 +179,14 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		
 		struct timespec begin, end;
 		//clock_gettime(CLOCK_MONOTONIC, &begin);
-    //Log_info("This is dep_id: %d", dep_id);
+    //Log_info("This is dep_id: {}", dep_id);
     // here, we need to let the paxos coordinator know what request we are working with
     // thsi could be the transaction id or we can add a new id
     auto coo = CreateRepCoord(dep_id.id);
 		
 		/*clock_gettime(CLOCK_MONOTONIC, &end);
-		Log_info("time of prepare on server: %d", end.tv_nsec-begin.tv_nsec);*/
-    //Log_info("The locale id: %d", coo->loc_id_);
+		Log_info("time of prepare on server: {}", end.tv_nsec-begin.tv_nsec);*/
+    //Log_info("The locale id: {}", coo->loc_id_);
     coo->Submit(std::move(sp_prepare_cmd));
     sp_tx->prepare_result->wait();
 		slow_ = coo->slow_;
@@ -235,7 +235,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 															 struct DepId dep_id,
 															 int commit_or_abort) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("%s: at site %d, tx: %" PRIx64,
+  Log_debug("{}: at site {}, tx: %" PRIx64,
             __FUNCTION__, this->site_id_, tx_id);
   Log_debug("Coordinator invokes Submit to submit a request to a specific protocol");
   // auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
@@ -249,7 +249,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
   //always true
 #ifdef FULL_LOG_DEBUG
   // GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("cmd<%d, %d> entered SchedulerClassic::OnCommit, Config::GetConfig()->IsReplicated()=%d",
+  Log_info("cmd<{}, {}> entered SchedulerClassic::OnCommit, Config::GetConfig()->IsReplicated()={}",
     SimpleRWCommand::GetCmdID(sp_tx->cmd_).first, SimpleRWCommand::GetCmdID(sp_tx->cmd_).second, Config::GetConfig()->IsReplicated());
 #endif
   if (Config::GetConfig()->IsReplicated()) {
@@ -327,7 +327,7 @@ void SchedulerClassic::DoAbort(Tx& tx_box) {
 int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto tx_id = tpc_commit_cmd.tx_id_;
-  // Log_info("[EXECUTION] CommitReplicated called for tx_id: %lu (This is actual execution)", tx_id);
+  // Log_info("[EXECUTION] CommitReplicated called for tx_id: {} (This is actual execution)", tx_id);
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
   /**
    * In Copilot, the same cmd commits twice, one in pilot log, another
@@ -353,7 +353,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
     }
   }
   if (commit_or_abort == SUCCESS) {
-    // Log_info("[SUCCESS] Scheduler received SUCCESS for tx_id: %lu", tx_id);
+    // Log_info("[SUCCESS] Scheduler received SUCCESS for tx_id: {}", tx_id);
     sp_tx->committed_ = true;
     DoCommit(*sp_tx);
     // Track recovered transactions
@@ -361,21 +361,21 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
       transactions_recovered_++;
     }
   } else if (commit_or_abort == REJECT) {
-    Log_info("[REJECT] Scheduler received REJECT for tx_id: %lu", tx_id);
+    Log_info("[REJECT] Scheduler received REJECT for tx_id: {}", tx_id);
     sp_tx->aborted_ = true;
     DoAbort(*sp_tx);
   } else if (commit_or_abort == WRONG_LEADER) {
     // Handle WRONG_LEADER case - don't commit or abort, just return the error
-    Log_info("[WRONG_LEADER] Scheduler received WRONG_LEADER for tx_id: %lu", tx_id);
+    Log_info("[WRONG_LEADER] Scheduler received WRONG_LEADER for tx_id: {}", tx_id);
     sp_tx->aborted_ = true;  // Mark as aborted to clean up resources
     // The view information is in tpc_commit_cmd.sp_view_data_
     // It will be propagated to client through the coordinator
     if (tpc_commit_cmd.sp_view_data_.is_some()) {
-      Log_info("[WRONG_LEADER] View data available in scheduler: %s",
+      Log_info("[WRONG_LEADER] View data available in scheduler: {}",
                tpc_commit_cmd.sp_view_data_.as_ref().unwrap()->ToString().c_str());
       sp_tx->sp_view_data_ = tpc_commit_cmd.sp_view_data_;
     } else {
-      Log_info("[WRONG_LEADER] No view data available in scheduler for tx_id: %lu", tx_id);
+      Log_info("[WRONG_LEADER] No view data available in scheduler for tx_id: {}", tx_id);
     }
   } else {
     verify(0);

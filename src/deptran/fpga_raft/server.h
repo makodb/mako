@@ -76,7 +76,7 @@ class FpgaRaftServer : public TxLogServer {
   
 	void setIsLeader(bool isLeader)
   {
-    Log_debug("set loc_id %d is leader %d", loc_id_, isLeader) ;
+    Log_debug("set loc_id {} is leader {}", loc_id_, isLeader) ;
     is_leader_ = isLeader ;
     // removed
     // `witness_.set_belongs_to_leader(isLeader);` — see the
@@ -85,7 +85,7 @@ class FpgaRaftServer : public TxLogServer {
 
   void setIsFPGALeader(bool isLeader)
   {
-    Log_debug("set loc_id %d is fpga leader %d", loc_id_, isLeader) ;
+    Log_debug("set loc_id {} is fpga leader {}", loc_id_, isLeader) ;
     fpga_is_leader_ = isLeader ;
 
     if (isLeader) 
@@ -106,7 +106,7 @@ class FpgaRaftServer : public TxLogServer {
                             rusty::Function<void()> cb) {
       *vote_granted = vote ;
       *reply_term = currentTerm ;
-      Log_debug("loc %d vote decision %d, for can_id %d canterm %d curterm %d isleader %d lst_log_idx %d lst_log_term %d", 
+      Log_debug("loc {} vote decision {}, for can_id {} canterm {} curterm {} isleader {} lst_log_idx {} lst_log_term {}", 
             loc_id_, vote, can_id, can_term, currentTerm, is_leader_, lst_log_idx, lst_log_term );
                     
       if( can_term > currentTerm)
@@ -217,7 +217,7 @@ class FpgaRaftServer : public TxLogServer {
 			// //clock_gettime(CLOCK_MONOTONIC, &begin);
       // de->wait();
 			//clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
+			//Log_info("Time of Write: {}", end.tv_nsec - begin.tv_nsec);
     } else {
 			int value = -1;
 			int value_;
@@ -226,7 +226,7 @@ class FpgaRaftServer : public TxLogServer {
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
       // de->wait();
 			//clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
+			//Log_info("Time of Write: {}", end.tv_nsec - begin.tv_nsec);
     }
     *term = currentTerm ;
   }

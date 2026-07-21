@@ -298,10 +298,10 @@ void RaftLabTest::Cleanup(void) {
         Assert2(ret != -1, "waited too long for %d server(s) to commit index %ld", n, index); \
         Assert2(ret != -2, "term moved on before index %ld committed by %d server(s)", index, n)
 #define DoAgreeAndAssertIndex(cmd, n, index) { \
-        /* Log_info("DoAgreeAndAssertIndex: Starting agreement for command %d with %d servers, expected index %ld", cmd, n, index); */ \
+        /* Log_info("DoAgreeAndAssertIndex: Starting agreement for command {} with {} servers, expected index {}", cmd, n, index); */ \
         auto r = config_->DoAgreement(cmd, n, false); \
         auto ind = index; \
-        /* Log_info("DoAgreeAndAssertIndex: DoAgreement returned %ld for command %d", r, cmd); */ \
+        /* Log_info("DoAgreeAndAssertIndex: DoAgreement returned {} for command {}", r, cmd); */ \
         Assert2(r > 0, "failed to reach agreement for command %d among %d servers, expected commit index>0, got %" PRId64, cmd, n, r); \
         Assert2(r == ind, "agreement index incorrect. got %ld, expected %ld", r, ind); \
       }
@@ -318,7 +318,7 @@ int RaftLabTest::testPersistence(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 12: Leader elected: %d", leader);
+  Log_info("TEST 12: Leader elected: {}", leader);
 
   // Commit some entries
   Log_info("TEST 12: Committing initial entries");
@@ -329,31 +329,31 @@ int RaftLabTest::testPersistence(void) {
 
   // Pick a follower to kill and restart
   siteid_t victim = config_->getNextServerId(leader, 1);
-  Log_info("TEST 12: Killing follower %d", victim);
+  Log_info("TEST 12: Killing follower {}", victim);
 
   // Get state before killing
   auto victim_server = config_->GetServer(victim);
   uint64_t term_before = victim_server->currentTerm;
   uint64_t last_log_before = victim_server->lastLogIndex;
-  Log_info("TEST 12: Before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
+  Log_info("TEST 12: Before kill - term={}, lastLogIndex={}", term_before, last_log_before);
 
   // Kill the server
   config_->Kill(victim);
-  Log_info("TEST 12: Server %d killed", victim);
+  Log_info("TEST 12: Server {} killed", victim);
 
   // Sleep to ensure it's really gone
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Commit more entries with remaining servers
-  Log_info("TEST 12: Committing entries with %d servers", NSERVERS - 1);
+  Log_info("TEST 12: Committing entries with {} servers", NSERVERS - 1);
   DoAgreeAndAssertIndex(104, NSERVERS - 1, index_++);
   DoAgreeAndAssertIndex(105, NSERVERS - 1, index_++);
   Log_info("TEST 12: Committed 2 more entries");
 
   // Restart the killed server
-  Log_info("TEST 12: Restarting server %d", victim);
+  Log_info("TEST 12: Restarting server {}", victim);
   config_->Restart(victim);
-  Log_info("TEST 12: Server %d restarted", victim);
+  Log_info("TEST 12: Server {} restarted", victim);
 
   // Give it time to catch up
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -364,7 +364,7 @@ int RaftLabTest::testPersistence(void) {
   victim_server = config_->GetServer(victim);
   uint64_t term_after = victim_server->currentTerm;
   uint64_t last_log_after = victim_server->lastLogIndex;
-  Log_info("TEST 12: After restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
+  Log_info("TEST 12: After restart - term={}, lastLogIndex={}", term_after, last_log_after);
 
   // Term should be at least what it was before (may be higher if elections occurred)
   Assert2(term_after >= term_before,
@@ -379,40 +379,40 @@ int RaftLabTest::testPersistence(void) {
   Log_info("TEST 12: State recovered correctly");
 
   // Commit with all servers to verify restarted server works
-  Log_info("TEST 12: Committing with all %d servers", NSERVERS);
+  Log_info("TEST 12: Committing with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(106, NSERVERS);
   Log_info("TEST 12: Final commit successful");
 
   // Now test killing and restarting the leader
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 12: Testing leader kill - current leader is %d", leader);
+  Log_info("TEST 12: Testing leader kill - current leader is {}", leader);
 
   // Get leader state before killing
   auto leader_server = config_->GetServer(leader);
   term_before = leader_server->currentTerm;
   last_log_before = leader_server->lastLogIndex;
-  Log_info("TEST 12: Leader before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
+  Log_info("TEST 12: Leader before kill - term={}, lastLogIndex={}", term_before, last_log_before);
 
   // Kill the leader
   config_->Kill(leader);
-  Log_info("TEST 12: Leader %d killed", leader);
+  Log_info("TEST 12: Leader {} killed", leader);
 
   // Wait for new leader election
   Fiber::sleep(ELECTIONTIMEOUT);
   int new_leader = config_->OneLeader();
   AssertOneLeader(new_leader);
   AssertReElection(new_leader, leader);
-  Log_info("TEST 12: New leader elected: %d", new_leader);
+  Log_info("TEST 12: New leader elected: {}", new_leader);
 
   // Commit entries with new leader
   DoAgreeAndAssertIndex(107, NSERVERS - 1, index_++);
   Log_info("TEST 12: Committed entry with new leader");
 
   // Restart the old leader
-  Log_info("TEST 12: Restarting old leader %d", leader);
+  Log_info("TEST 12: Restarting old leader {}", leader);
   config_->Restart(leader);
-  Log_info("TEST 12: Old leader %d restarted", leader);
+  Log_info("TEST 12: Old leader {} restarted", leader);
 
   // Give it time to catch up
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -421,7 +421,7 @@ int RaftLabTest::testPersistence(void) {
   leader_server = config_->GetServer(leader);
   term_after = leader_server->currentTerm;
   last_log_after = leader_server->lastLogIndex;
-  Log_info("TEST 12: Old leader after restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
+  Log_info("TEST 12: Old leader after restart - term={}, lastLogIndex={}", term_after, last_log_after);
 
   Assert2(term_after >= term_before,
           "old leader term decreased after restart: was %lu, now %lu",
@@ -442,7 +442,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 13: Leader elected: %d", leader);
+  Log_info("TEST 13: Leader elected: {}", leader);
 
   // Commit some entries
   Log_info("TEST 13: Committing initial entries");
@@ -454,7 +454,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   // Pick two followers to kill
   siteid_t victim1 = config_->getNextServerId(leader, 1);
   siteid_t victim2 = config_->getNextServerId(leader, 2);
-  Log_info("TEST 13: Killing two followers: %d and %d", victim1, victim2);
+  Log_info("TEST 13: Killing two followers: {} and {}", victim1, victim2);
 
   // Get state before killing
   auto victim1_server = config_->GetServer(victim1);
@@ -463,36 +463,36 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   uint64_t term_before2 = victim2_server->currentTerm;
   uint64_t last_log_before1 = victim1_server->lastLogIndex;
   uint64_t last_log_before2 = victim2_server->lastLogIndex;
-  Log_info("TEST 13: Victim1 before kill - term=%lu, lastLogIndex=%lu", term_before1, last_log_before1);
-  Log_info("TEST 13: Victim2 before kill - term=%lu, lastLogIndex=%lu", term_before2, last_log_before2);
+  Log_info("TEST 13: Victim1 before kill - term={}, lastLogIndex={}", term_before1, last_log_before1);
+  Log_info("TEST 13: Victim2 before kill - term={}, lastLogIndex={}", term_before2, last_log_before2);
 
   // Kill both servers
   config_->Kill(victim1);
-  Log_info("TEST 13: Server %d killed", victim1);
+  Log_info("TEST 13: Server {} killed", victim1);
   config_->Kill(victim2);
-  Log_info("TEST 13: Server %d killed", victim2);
+  Log_info("TEST 13: Server {} killed", victim2);
 
   // Sleep to ensure they're really gone
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // We still have quorum (3 out of 5), commit more entries
-  Log_info("TEST 13: Committing entries with %d servers", NSERVERS - 2);
+  Log_info("TEST 13: Committing entries with {} servers", NSERVERS - 2);
   DoAgreeAndAssertIndex(1304, NSERVERS - 2, index_++);
   DoAgreeAndAssertIndex(1305, NSERVERS - 2, index_++);
   Log_info("TEST 13: Committed 2 more entries with reduced cluster");
 
   // Restart victim1 first
-  Log_info("TEST 13: Restarting server %d", victim1);
+  Log_info("TEST 13: Restarting server {}", victim1);
   config_->Restart(victim1);
-  Log_info("TEST 13: Server %d restarted", victim1);
+  Log_info("TEST 13: Server {} restarted", victim1);
 
   // Give it time to catch up
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Restart victim2
-  Log_info("TEST 13: Restarting server %d", victim2);
+  Log_info("TEST 13: Restarting server {}", victim2);
   config_->Restart(victim2);
-  Log_info("TEST 13: Server %d restarted", victim2);
+  Log_info("TEST 13: Server {} restarted", victim2);
 
   // Give both time to catch up
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -506,8 +506,8 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   uint64_t term_after2 = victim2_server->currentTerm;
   uint64_t last_log_after1 = victim1_server->lastLogIndex;
   uint64_t last_log_after2 = victim2_server->lastLogIndex;
-  Log_info("TEST 13: Victim1 after restart - term=%lu, lastLogIndex=%lu", term_after1, last_log_after1);
-  Log_info("TEST 13: Victim2 after restart - term=%lu, lastLogIndex=%lu", term_after2, last_log_after2);
+  Log_info("TEST 13: Victim1 after restart - term={}, lastLogIndex={}", term_after1, last_log_after1);
+  Log_info("TEST 13: Victim2 after restart - term={}, lastLogIndex={}", term_after2, last_log_after2);
 
   // Term should be at least what it was before
   Assert2(term_after1 >= term_before1,
@@ -528,14 +528,14 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Log_info("TEST 13: State recovered correctly for both servers");
 
   // Commit with all servers to verify both restarted servers work
-  Log_info("TEST 13: Committing with all %d servers", NSERVERS);
+  Log_info("TEST 13: Committing with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(1306, NSERVERS);
   Log_info("TEST 13: Final commit successful with all servers");
 
   // Verify leader is still stable
   int final_leader = config_->OneLeader();
   AssertOneLeader(final_leader);
-  Log_info("TEST 13: Leader after all restarts: %d", final_leader);
+  Log_info("TEST 13: Leader after all restarts: {}", final_leader);
 
   Passed2();
 }
@@ -547,7 +547,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 14: Leader elected: %d", leader);
+  Log_info("TEST 14: Leader elected: {}", leader);
 
   // Commit some entries
   Log_info("TEST 14: Committing initial entries");
@@ -559,7 +559,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   // Pick one follower to kill along with the leader
   siteid_t victim_follower = config_->getNextServerId(leader, 1);
   siteid_t victim_leader = leader;
-  Log_info("TEST 14: Killing leader %d and follower %d", victim_leader, victim_follower);
+  Log_info("TEST 14: Killing leader {} and follower {}", victim_leader, victim_follower);
 
   // Get state before killing
   auto leader_server = config_->GetServer(victim_leader);
@@ -568,14 +568,14 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   uint64_t term_before_follower = follower_server->currentTerm;
   uint64_t last_log_before_leader = leader_server->lastLogIndex;
   uint64_t last_log_before_follower = follower_server->lastLogIndex;
-  Log_info("TEST 14: Leader before kill - term=%lu, lastLogIndex=%lu", term_before_leader, last_log_before_leader);
-  Log_info("TEST 14: Follower before kill - term=%lu, lastLogIndex=%lu", term_before_follower, last_log_before_follower);
+  Log_info("TEST 14: Leader before kill - term={}, lastLogIndex={}", term_before_leader, last_log_before_leader);
+  Log_info("TEST 14: Follower before kill - term={}, lastLogIndex={}", term_before_follower, last_log_before_follower);
 
   // Kill both servers (leader first, then follower)
   config_->Kill(victim_leader);
-  Log_info("TEST 14: Leader %d killed", victim_leader);
+  Log_info("TEST 14: Leader {} killed", victim_leader);
   config_->Kill(victim_follower);
-  Log_info("TEST 14: Follower %d killed", victim_follower);
+  Log_info("TEST 14: Follower {} killed", victim_follower);
 
   // Wait for new leader election among remaining 3 servers
   Log_info("TEST 14: Waiting for new leader election");
@@ -585,26 +585,26 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   AssertOneLeader(new_leader);
   Assert2(new_leader != victim_leader, "new leader should not be the killed leader");
   Assert2(new_leader != victim_follower, "new leader should not be the killed follower");
-  Log_info("TEST 14: New leader elected: %d", new_leader);
+  Log_info("TEST 14: New leader elected: {}", new_leader);
 
   // We still have quorum (3 out of 5), commit more entries
-  Log_info("TEST 14: Committing entries with %d servers", NSERVERS - 2);
+  Log_info("TEST 14: Committing entries with {} servers", NSERVERS - 2);
   DoAgreeAndAssertIndex(1404, NSERVERS - 2, index_++);
   DoAgreeAndAssertIndex(1405, NSERVERS - 2, index_++);
   Log_info("TEST 14: Committed 2 more entries with reduced cluster");
 
   // Restart the follower first
-  Log_info("TEST 14: Restarting follower %d", victim_follower);
+  Log_info("TEST 14: Restarting follower {}", victim_follower);
   config_->Restart(victim_follower);
-  Log_info("TEST 14: Follower %d restarted", victim_follower);
+  Log_info("TEST 14: Follower {} restarted", victim_follower);
 
   // Give it time to catch up
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Restart the old leader
-  Log_info("TEST 14: Restarting old leader %d", victim_leader);
+  Log_info("TEST 14: Restarting old leader {}", victim_leader);
   config_->Restart(victim_leader);
-  Log_info("TEST 14: Old leader %d restarted", victim_leader);
+  Log_info("TEST 14: Old leader {} restarted", victim_leader);
 
   // Give both time to catch up
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -618,8 +618,8 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   uint64_t term_after_follower = follower_server->currentTerm;
   uint64_t last_log_after_leader = leader_server->lastLogIndex;
   uint64_t last_log_after_follower = follower_server->lastLogIndex;
-  Log_info("TEST 14: Old leader after restart - term=%lu, lastLogIndex=%lu", term_after_leader, last_log_after_leader);
-  Log_info("TEST 14: Follower after restart - term=%lu, lastLogIndex=%lu", term_after_follower, last_log_after_follower);
+  Log_info("TEST 14: Old leader after restart - term={}, lastLogIndex={}", term_after_leader, last_log_after_leader);
+  Log_info("TEST 14: Follower after restart - term={}, lastLogIndex={}", term_after_follower, last_log_after_follower);
 
   // Term should be at least what it was before (may be higher due to new election)
   Assert2(term_after_leader >= term_before_leader,
@@ -640,14 +640,14 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   Log_info("TEST 14: State recovered correctly for both servers");
 
   // Commit with all servers to verify both restarted servers work
-  Log_info("TEST 14: Committing with all %d servers", NSERVERS);
+  Log_info("TEST 14: Committing with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(1406, NSERVERS);
   Log_info("TEST 14: Final commit successful with all servers");
 
   // Verify we have a stable leader
   int final_leader = config_->OneLeader();
   AssertOneLeader(final_leader);
-  Log_info("TEST 14: Leader after all restarts: %d", final_leader);
+  Log_info("TEST 14: Leader after all restarts: {}", final_leader);
 
   Passed2();
 }
@@ -659,7 +659,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 15: Initial leader elected: %d", leader);
+  Log_info("TEST 15: Initial leader elected: {}", leader);
 
   // Commit initial entries
   Log_info("TEST 15: Committing initial entries");
@@ -690,7 +690,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   int cmd_base = 1510;
 
   for (int round = 1; round <= NUM_ROUNDS; round++) {
-    Log_info("TEST 15: ===== ROUND %d =====", round);
+    Log_info("TEST 15: ===== ROUND {} =====", round);
 
     // Kill 2 random servers (maintain quorum with 3 remaining)
     Log_info("TEST 15: Phase 1 - Killing 2 random servers");
@@ -703,7 +703,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     alive_servers.erase(victim2);
     dead_servers.insert(victim2);
 
-    Log_info("TEST 15: Round %d - Killing servers %d and %d", round, victim1, victim2);
+    Log_info("TEST 15: Round {} - Killing servers {} and {}", round, victim1, victim2);
     config_->Kill(victim1);
     config_->Kill(victim2);
 
@@ -714,10 +714,10 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     leader = config_->OneLeader();
     AssertOneLeader(leader);
     Assert2(alive_servers.count(leader) > 0, "Leader %d should be among alive servers", leader);
-    Log_info("TEST 15: Round %d - Leader after kills: %d", round, leader);
+    Log_info("TEST 15: Round {} - Leader after kills: {}", round, leader);
 
     // Commit with 3 servers (quorum)
-    Log_info("TEST 15: Round %d - Committing with %zu alive servers", round, alive_servers.size());
+    Log_info("TEST 15: Round {} - Committing with {} alive servers", round, alive_servers.size());
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
 
     // Restart one of the dead servers
@@ -727,7 +727,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     dead_servers.erase(restart1);
     alive_servers.insert(restart1);
 
-    Log_info("TEST 15: Round %d - Restarting server %d", round, restart1);
+    Log_info("TEST 15: Round {} - Restarting server {}", round, restart1);
     config_->Restart(restart1);
 
     // Wait for it to catch up
@@ -736,7 +736,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     // Verify leader and commit
     leader = config_->OneLeader();
     AssertOneLeader(leader);
-    Log_info("TEST 15: Round %d - Leader after restart1: %d", round, leader);
+    Log_info("TEST 15: Round {} - Leader after restart1: {}", round, leader);
 
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
 
@@ -762,7 +762,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     alive_servers.erase(victim3);
     dead_servers.insert(victim3);
 
-    Log_info("TEST 15: Round %d - Killing server %d (was leader: %s)",
+    Log_info("TEST 15: Round {} - Killing server {} (was leader: {})",
              round, victim3, victim3 == leader ? "yes" : "no");
     config_->Kill(victim3);
 
@@ -771,7 +771,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
 
     leader = config_->OneLeader();
     AssertOneLeader(leader);
-    Log_info("TEST 15: Round %d - Leader after kill3: %d", round, leader);
+    Log_info("TEST 15: Round {} - Leader after kill3: {}", round, leader);
 
     // Commit with remaining servers
     DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
@@ -781,7 +781,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
 
     std::vector<siteid_t> to_restart(dead_servers.begin(), dead_servers.end());
     for (siteid_t svr : to_restart) {
-      Log_info("TEST 15: Round %d - Restarting server %d", round, svr);
+      Log_info("TEST 15: Round {} - Restarting server {}", round, svr);
       config_->Restart(svr);
       dead_servers.erase(svr);
       alive_servers.insert(svr);
@@ -796,7 +796,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     // Verify all servers are working
     leader = config_->OneLeader();
     AssertOneLeader(leader);
-    Log_info("TEST 15: Round %d - Leader after all restarts: %d", round, leader);
+    Log_info("TEST 15: Round {} - Leader after all restarts: {}", round, leader);
 
     Assert2(alive_servers.size() == NSERVERS,
             "Expected %d alive servers, got %zu", NSERVERS, alive_servers.size());
@@ -804,14 +804,14 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
             "Expected 0 dead servers, got %zu", dead_servers.size());
 
     // Final commit with all servers
-    Log_info("TEST 15: Round %d - Final commit with all %d servers", round, NSERVERS);
+    Log_info("TEST 15: Round {} - Final commit with all {} servers", round, NSERVERS);
     DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
 
-    Log_info("TEST 15: ===== ROUND %d COMPLETE =====", round);
+    Log_info("TEST 15: ===== ROUND {} COMPLETE =====", round);
   }
 
   // Final verification
-  Log_info("TEST 15: Final verification after %d rounds", NUM_ROUNDS);
+  Log_info("TEST 15: Final verification after {} rounds", NUM_ROUNDS);
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
@@ -819,7 +819,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   // One more commit to verify everything works
   DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
 
-  Log_info("TEST 15: All %d rounds completed successfully!", NUM_ROUNDS);
+  Log_info("TEST 15: All {} rounds completed successfully!", NUM_ROUNDS);
 
   Passed2();
 }
@@ -831,7 +831,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 16: Initial leader elected: %d", leader);
+  Log_info("TEST 16: Initial leader elected: {}", leader);
 
   // Commit initial entries to ensure cluster is stable
   Log_info("TEST 16: Committing initial entries");
@@ -864,15 +864,15 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   Assert2(found_killed, "Could not find server to kill");
   Assert2(partitioned_server != killed_server, "Partitioned and killed server must be different");
 
-  Log_info("TEST 16: Will partition server %d and kill/restart server %d",
+  Log_info("TEST 16: Will partition server {} and kill/restart server {}",
            partitioned_server, killed_server);
 
   // Step 1: Partition server A
-  Log_info("TEST 16: Step 1 - Partitioning server %d", partitioned_server);
+  Log_info("TEST 16: Step 1 - Partitioning server {}", partitioned_server);
   config_->Disconnect(partitioned_server);
 
   // Step 2: Kill server B
-  Log_info("TEST 16: Step 2 - Killing server %d", killed_server);
+  Log_info("TEST 16: Step 2 - Killing server {}", killed_server);
   config_->Kill(killed_server);
 
   // Wait for potential leader re-election (if we killed/partitioned the leader)
@@ -881,14 +881,14 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   // Verify cluster still works with 3 servers (quorum)
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after partition+kill: %d", leader);
+  Log_info("TEST 16: Leader after partition+kill: {}", leader);
 
   // Commit with 3 servers
   Log_info("TEST 16: Committing with 3 servers");
   DoAgreeAndAssertIndex(1603, 3, index_++);
 
   // Step 3: Restart server B (while A is still partitioned)
-  Log_info("TEST 16: Step 3 - Restarting server %d (while %d is still partitioned)",
+  Log_info("TEST 16: Step 3 - Restarting server {} (while {} is still partitioned)",
            killed_server, partitioned_server);
   config_->Restart(killed_server);
 
@@ -898,7 +898,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   // Verify cluster works with 4 servers
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after restart: %d", leader);
+  Log_info("TEST 16: Leader after restart: {}", leader);
 
   // Commit with 4 servers
   Log_info("TEST 16: Committing with 4 servers");
@@ -907,7 +907,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   // Step 4: Heal partition (reconnect server A)
   // This is the critical test: A was partitioned when B restarted
   // A's connection to B should be stale, but B's retry mechanism should fix it
-  Log_info("TEST 16: Step 4 - Healing partition (reconnecting server %d)", partitioned_server);
+  Log_info("TEST 16: Step 4 - Healing partition (reconnecting server {})", partitioned_server);
   config_->Reconnect(partitioned_server);
 
   // Wait for server A to catch up and for NotifyRestart retry to work
@@ -917,11 +917,11 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   // Verify all 5 servers are working
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 16: Leader after partition heal: %d", leader);
+  Log_info("TEST 16: Leader after partition heal: {}", leader);
 
   // Step 5: Final commit with all 5 servers
   // This verifies that A can communicate with B (the restarted server)
-  Log_info("TEST 16: Step 5 - Final commit with all %d servers", NSERVERS);
+  Log_info("TEST 16: Step 5 - Final commit with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(1605, NSERVERS);
 
   // Additional verification: commit a few more entries
@@ -941,7 +941,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Initial leader elected: %d", leader);
+  Log_info("TEST 17: Initial leader elected: {}", leader);
 
   // Commit initial entries to ensure cluster is stable
   Log_info("TEST 17: Committing initial entries");
@@ -970,20 +970,20 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   }
 
   Assert2(found_count >= 3, "Could not find 3 non-leader servers");
-  Log_info("TEST 17: Server A (partition first): %d", server_A);
-  Log_info("TEST 17: Server B (kill/restart): %d", server_B);
-  Log_info("TEST 17: Server C (partition second): %d", server_C);
+  Log_info("TEST 17: Server A (partition first): {}", server_A);
+  Log_info("TEST 17: Server B (kill/restart): {}", server_B);
+  Log_info("TEST 17: Server C (partition second): {}", server_C);
 
   // ========================================
   // T1: Partition A → Healthy: {B,C,D,E} = 4
   // ========================================
-  Log_info("TEST 17: Step 1 - Partitioning server A (%d)", server_A);
+  Log_info("TEST 17: Step 1 - Partitioning server A ({})", server_A);
   config_->Disconnect(server_A);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after partitioning A: %d", leader);
+  Log_info("TEST 17: Leader after partitioning A: {}", leader);
 
   // Commit with 4 servers
   Log_info("TEST 17: Committing with 4 servers (A partitioned)");
@@ -992,13 +992,13 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   // ========================================
   // T2: Kill B → Healthy: {C,D,E} = 3
   // ========================================
-  Log_info("TEST 17: Step 2 - Killing server B (%d)", server_B);
+  Log_info("TEST 17: Step 2 - Killing server B ({})", server_B);
   config_->Kill(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after killing B: %d", leader);
+  Log_info("TEST 17: Leader after killing B: {}", leader);
 
   // Commit with 3 servers
   Log_info("TEST 17: Committing with 3 servers (A partitioned, B dead)");
@@ -1007,14 +1007,14 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   // ========================================
   // T3: Restart B → B sends NotifyRestart, A is PENDING
   // ========================================
-  Log_info("TEST 17: Step 3 - Restarting server B (%d) while A (%d) is still partitioned",
+  Log_info("TEST 17: Step 3 - Restarting server B ({}) while A ({}) is still partitioned",
            server_B, server_A);
   config_->Restart(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after restarting B: %d", leader);
+  Log_info("TEST 17: Leader after restarting B: {}", leader);
 
   // Commit with 4 servers (B is back, A still partitioned)
   Log_info("TEST 17: Committing with 4 servers (A partitioned, B restarted)");
@@ -1023,14 +1023,14 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   // ========================================
   // T4: Partition C → Healthy: {B,D,E} = 3 (A and C both isolated)
   // ========================================
-  Log_info("TEST 17: Step 4 - Partitioning server C (%d) while A (%d) is still partitioned",
+  Log_info("TEST 17: Step 4 - Partitioning server C ({}) while A ({}) is still partitioned",
            server_C, server_A);
   config_->Disconnect(server_C);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after partitioning C: %d", leader);
+  Log_info("TEST 17: Leader after partitioning C: {}", leader);
 
   // Commit with 3 servers (A and C partitioned)
   Log_info("TEST 17: Committing with 3 servers (A and C partitioned)");
@@ -1039,7 +1039,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   // ========================================
   // T5: Heal A → A has stale connection to B, B's retry fixes it
   // ========================================
-  Log_info("TEST 17: Step 5 - Healing partition for server A (%d)", server_A);
+  Log_info("TEST 17: Step 5 - Healing partition for server A ({})", server_A);
   Log_info("TEST 17: A was partitioned when B restarted, so A has stale connection to B");
   config_->Reconnect(server_A);
 
@@ -1049,7 +1049,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after healing A: %d", leader);
+  Log_info("TEST 17: Leader after healing A: {}", leader);
 
   // Commit with 4 servers (A is back, C still partitioned)
   Log_info("TEST 17: Committing with 4 servers (A healed, C still partitioned)");
@@ -1058,7 +1058,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   // ========================================
   // T6: Heal C → C has stale connection to B, B's retry fixes it
   // ========================================
-  Log_info("TEST 17: Step 6 - Healing partition for server C (%d)", server_C);
+  Log_info("TEST 17: Step 6 - Healing partition for server C ({})", server_C);
   Log_info("TEST 17: C was partitioned when B restarted, so C has stale connection to B");
   config_->Reconnect(server_C);
 
@@ -1068,12 +1068,12 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 17: Leader after healing C: %d", leader);
+  Log_info("TEST 17: Leader after healing C: {}", leader);
 
   // ========================================
   // T7: Verify all 5 servers work
   // ========================================
-  Log_info("TEST 17: Step 7 - Final verification with all %d servers", NSERVERS);
+  Log_info("TEST 17: Step 7 - Final verification with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(1708, NSERVERS);
 
   // Additional commits to verify stability
@@ -1093,7 +1093,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Initial leader elected: %d", leader);
+  Log_info("TEST 18: Initial leader elected: {}", leader);
 
   // Commit initial entries
   Log_info("TEST 18: Committing initial entries");
@@ -1122,46 +1122,46 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   }
 
   Assert2(found_count >= 3, "Could not find 3 non-leader servers");
-  Log_info("TEST 18: Server A (partition): %d", server_A);
-  Log_info("TEST 18: Server B (multiple restarts): %d", server_B);
-  Log_info("TEST 18: Server C (single restart): %d", server_C);
+  Log_info("TEST 18: Server A (partition): {}", server_A);
+  Log_info("TEST 18: Server B (multiple restarts): {}", server_B);
+  Log_info("TEST 18: Server C (single restart): {}", server_C);
 
   // ========================================
   // T1: Partition A → Healthy: {B,C,D,E} = 4
   // ========================================
-  Log_info("TEST 18: Step 1 - Partitioning server A (%d)", server_A);
+  Log_info("TEST 18: Step 1 - Partitioning server A ({})", server_A);
   config_->Disconnect(server_A);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after partitioning A: %d", leader);
+  Log_info("TEST 18: Leader after partitioning A: {}", leader);
 
   DoAgreeAndAssertIndex(1803, 4, index_++);
 
   // ========================================
   // T2: Kill B → Healthy: {C,D,E} = 3
   // ========================================
-  Log_info("TEST 18: Step 2 - Killing server B (%d) [first time]", server_B);
+  Log_info("TEST 18: Step 2 - Killing server B ({}) [first time]", server_B);
   config_->Kill(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing B: %d", leader);
+  Log_info("TEST 18: Leader after killing B: {}", leader);
 
   DoAgreeAndAssertIndex(1804, 3, index_++);
 
   // ========================================
   // T3: Restart B → B sends NotifyRestart, A is PENDING
   // ========================================
-  Log_info("TEST 18: Step 3 - Restarting server B (%d) [first time]", server_B);
+  Log_info("TEST 18: Step 3 - Restarting server B ({}) [first time]", server_B);
   config_->Restart(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting B [first time]: %d", leader);
+  Log_info("TEST 18: Leader after restarting B [first time]: {}", leader);
 
   DoAgreeAndAssertIndex(1805, 4, index_++);
 
@@ -1169,33 +1169,33 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   // T4: Kill B again → Healthy: {C,D,E} = 3
   //     B's retry state is lost!
   // ========================================
-  Log_info("TEST 18: Step 4 - Killing server B (%d) [second time] - retry state will be lost!", server_B);
+  Log_info("TEST 18: Step 4 - Killing server B ({}) [second time] - retry state will be lost!", server_B);
   config_->Kill(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing B [second time]: %d", leader);
+  Log_info("TEST 18: Leader after killing B [second time]: {}", leader);
 
   DoAgreeAndAssertIndex(1806, 3, index_++);
 
   // ========================================
   // T5: Restart B again → B sends NotifyRestart again, A still PENDING
   // ========================================
-  Log_info("TEST 18: Step 5 - Restarting server B (%d) [second time]", server_B);
+  Log_info("TEST 18: Step 5 - Restarting server B ({}) [second time]", server_B);
   config_->Restart(server_B);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting B [second time]: %d", leader);
+  Log_info("TEST 18: Leader after restarting B [second time]: {}", leader);
 
   DoAgreeAndAssertIndex(1807, 4, index_++);
 
   // ========================================
   // T6: Heal A → A receives NotifyRestart from B, fixes stale connection
   // ========================================
-  Log_info("TEST 18: Step 6 - Healing partition for server A (%d)", server_A);
+  Log_info("TEST 18: Step 6 - Healing partition for server A ({})", server_A);
   Log_info("TEST 18: A was partitioned through TWO restart cycles of B");
   config_->Reconnect(server_A);
 
@@ -1205,7 +1205,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after healing A: %d", leader);
+  Log_info("TEST 18: Leader after healing A: {}", leader);
 
   // Verify all 5 servers work
   Log_info("TEST 18: Verifying all 5 servers work after A healed");
@@ -1214,31 +1214,31 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   // ========================================
   // T7: Kill C → Healthy: {A,B,D,E} = 4
   // ========================================
-  Log_info("TEST 18: Step 7 - Killing server C (%d)", server_C);
+  Log_info("TEST 18: Step 7 - Killing server C ({})", server_C);
   config_->Kill(server_C);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after killing C: %d", leader);
+  Log_info("TEST 18: Leader after killing C: {}", leader);
 
   DoAgreeAndAssertIndex(1809, 4, index_++);
 
   // ========================================
   // T8: Restart C → C notifies all (all respond since everyone is connected)
   // ========================================
-  Log_info("TEST 18: Step 8 - Restarting server C (%d)", server_C);
+  Log_info("TEST 18: Step 8 - Restarting server C ({})", server_C);
   config_->Restart(server_C);
 
   Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 18: Leader after restarting C: %d", leader);
+  Log_info("TEST 18: Leader after restarting C: {}", leader);
 
   // ========================================
   // T9: Verify all 5 servers work
   // ========================================
-  Log_info("TEST 18: Step 9 - Final verification with all %d servers", NSERVERS);
+  Log_info("TEST 18: Step 9 - Final verification with all {} servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(1810, NSERVERS);
 
   // Additional commits to verify stability
@@ -1290,12 +1290,12 @@ int RaftLabTest::testInitialElection(void) {
   
   // Log carryover context after test 1
   // Log_info("=== CARRYOVER CONTEXT AFTER TEST 1 (testInitialElection) ===");
-  // Log_info("Current leader: %d", leader);
-  // Log_info("Current term: %ld", term);
-  // Log_info("init_rpcs_ value: %ld", init_rpcs_);
-  // Log_info("index_ value: %ld", index_);
-  // Log_info("All servers connected: %s", config_->NDisconnected() == 0 ? "true" : "false");
-  // Log_info("Network reliable: %s", !config_->IsUnreliable() ? "true" : "false");
+  // Log_info("Current leader: {}", leader);
+  // Log_info("Current term: {}", term);
+  // Log_info("init_rpcs_ value: {}", init_rpcs_);
+  // Log_info("index_ value: {}", index_);
+  // Log_info("All servers connected: {}", config_->NDisconnected() == 0 ? "true" : "false");
+  // Log_info("Network reliable: {}", !config_->IsUnreliable() ? "true" : "false");
   // Log_info("==========================================================");
   
   Passed2();
@@ -1308,7 +1308,7 @@ int RaftLabTest::testReElection(void) {
   // find current leader
   // Log_info("TEST 2: Finding current leader");
   int leader = config_->OneLeader();
-  // Log_info("TEST 2: Current leader is %d", leader);
+  // Log_info("TEST 2: Current leader is {}", leader);
   
   // Check if OneLeader returned a valid leader
   if (leader == -1) {
@@ -1320,15 +1320,15 @@ int RaftLabTest::testReElection(void) {
   AssertOneLeader(leader);
   
   // disconnect leader - make sure a new one is elected
-  // Log_info("TEST 2: Disconnecting old leader %d", leader);
+  // Log_info("TEST 2: Disconnecting old leader {}", leader);
   config_->Disconnect(leader);
   int oldLeader = leader;
-  // Log_info("TEST 2: Old leader %d disconnected, sleeping for election timeout", oldLeader);
+  // Log_info("TEST 2: Old leader {} disconnected, sleeping for election timeout", oldLeader);
   Fiber::sleep(ELECTIONTIMEOUT);
   
   // Log_info("TEST 2: Finding new leader after old leader disconnected");
   leader = config_->OneLeader();
-  // Log_info("TEST 2: New leader is %d", leader);
+  // Log_info("TEST 2: New leader is {}", leader);
   
   // Check if OneLeader returned a valid leader
   if (leader == -1) {
@@ -1341,7 +1341,7 @@ int RaftLabTest::testReElection(void) {
   AssertReElection(leader, oldLeader);
   
   // reconnect old leader - should not disturb new leader
-  // Log_info("TEST 2: Reconnecting old leader %d", oldLeader);
+  // Log_info("TEST 2: Reconnecting old leader {}", oldLeader);
   config_->Reconnect(oldLeader);
   // Log_info("TEST 2: Old leader reconnected, sleeping for election timeout");
   Fiber::sleep(ELECTIONTIMEOUT);
@@ -1349,17 +1349,17 @@ int RaftLabTest::testReElection(void) {
   
   // no quorum -> no leader
   // Log_info("TEST 2: Disconnecting more servers to break quorum");
-  // Log_info("TEST 2: Current leader is %d", leader);
+  // Log_info("TEST 2: Current leader is {}", leader);
   
   siteid_t next1 = config_->getNextServerId(leader, 1);
-  // Log_info("TEST 2: Next server 1 offset from leader %d is %d", leader, next1);
+  // Log_info("TEST 2: Next server 1 offset from leader {} is {}", leader, next1);
   config_->Disconnect(next1);
   
   siteid_t next2 = config_->getNextServerId(leader, 2);
-  // Log_info("TEST 2: Next server 2 offset from leader %d is %d", leader, next2);
+  // Log_info("TEST 2: Next server 2 offset from leader {} is {}", leader, next2);
   config_->Disconnect(next2);
   
-  // Log_info("TEST 2: Disconnecting leader %d", leader);
+  // Log_info("TEST 2: Disconnecting leader {}", leader);
   config_->Disconnect(leader);
   
   // Log_info("TEST 2: Checking for no leader condition");
@@ -1368,7 +1368,7 @@ int RaftLabTest::testReElection(void) {
   // quorum restored
   // Log_info("TEST 2: Reconnecting a server to restore quorum");
   siteid_t reconnect_server = config_->getNextServerId(leader, 2);
-  // Log_info("TEST 2: Reconnecting server %d", reconnect_server);
+  // Log_info("TEST 2: Reconnecting server {}", reconnect_server);
   config_->Reconnect(reconnect_server);
   Fiber::sleep(ELECTIONTIMEOUT);
   AssertOneLeader(config_->OneLeader());
@@ -1376,10 +1376,10 @@ int RaftLabTest::testReElection(void) {
   // rejoin all servers
   // Log_info("TEST 2: Rejoining all servers");
   siteid_t rejoin1 = config_->getNextServerId(leader, 1);
-  // Log_info("TEST 2: Rejoining server %d", rejoin1);
+  // Log_info("TEST 2: Rejoining server {}", rejoin1);
   config_->Reconnect(rejoin1);
   
-  // Log_info("TEST 2: Rejoining leader %d", leader);
+  // Log_info("TEST 2: Rejoining leader {}", leader);
   config_->Reconnect(leader);
   Fiber::sleep(ELECTIONTIMEOUT);
   AssertOneLeader(config_->OneLeader());
@@ -1388,12 +1388,12 @@ int RaftLabTest::testReElection(void) {
   // Log_info("=== CARRYOVER CONTEXT AFTER TEST 2 (testReElection) ===");
   // int final_leader = config_->OneLeader();
   // uint64_t final_term = config_->OneTerm();
-  // Log_info("Current leader: %d", final_leader);
-  // Log_info("Current term: %ld", final_term);
-  // Log_info("init_rpcs_ value: %ld", init_rpcs_);
-  // Log_info("index_ value: %ld", index_);
-  // Log_info("All servers connected: %s", config_->NDisconnected() == 0 ? "true" : "false");
-  // Log_info("Network reliable: %s", !config_->IsUnreliable() ? "true" : "false");
+  // Log_info("Current leader: {}", final_leader);
+  // Log_info("Current term: {}", final_term);
+  // Log_info("init_rpcs_ value: {}", init_rpcs_);
+  // Log_info("index_ value: {}", index_);
+  // Log_info("All servers connected: {}", config_->NDisconnected() == 0 ? "true" : "false");
+  // Log_info("Network reliable: {}", !config_->IsUnreliable() ? "true" : "false");
   // Log_info("==========================================================");
   
   Passed2();
@@ -1406,12 +1406,12 @@ int RaftLabTest::testBasicAgree(void) {
   // Log_info("=== CARRYOVER CONTEXT AT START OF TEST 3 (testBasicAgree) ===");
   int current_leader = config_->OneLeader();
   uint64_t current_term = config_->OneTerm();
-  // Log_info("Current leader: %d", current_leader);
-  // Log_info("Current term: %ld", current_term);
-  // Log_info("init_rpcs_ value: %ld", init_rpcs_);
-  // Log_info("index_ value: %ld", index_);
-  // Log_info("All servers connected: %s", config_->NDisconnected() == 0 ? "true" : "false");
-  // Log_info("Network reliable: %s", !config_->IsUnreliable() ? "true" : "false");
+  // Log_info("Current leader: {}", current_leader);
+  // Log_info("Current term: {}", current_term);
+  // Log_info("init_rpcs_ value: {}", init_rpcs_);
+  // Log_info("index_ value: {}", index_);
+  // Log_info("All servers connected: {}", config_->NDisconnected() == 0 ? "true" : "false");
+  // Log_info("Network reliable: {}", !config_->IsUnreliable() ? "true" : "false");
   // Log_info("=============================================================");
   
   for (int i = 1; i <= 3; i++) {
@@ -1420,11 +1420,11 @@ int RaftLabTest::testBasicAgree(void) {
     // complete 1 agreement and make sure its index is as expected
     int temp_index = index_;
     int command_value = (int)(temp_index + 300);
-    // Log_info("TEST 3: About to test agreement for command %d (iteration %d/3)", command_value, i);
-    // Log_info("Starting Agreement for command %d", command_value);
+    // Log_info("TEST 3: About to test agreement for command {} (iteration {}/3)", command_value, i);
+    // Log_info("Starting Agreement for command {}", command_value);
     DoAgreeAndAssertIndex(command_value, NSERVERS, index_);
     index_++;
-    // Log_info("Agreement for command %d completed", command_value);
+    // Log_info("Agreement for command {} completed", command_value);
   }
   Passed2();
 }
@@ -1673,7 +1673,7 @@ int RaftLabTest::testCount(void) {
   };
 
   // initial election RPC count
-  Log_info("TEST 9: init_rpcs_ observed = %ld", init_rpcs_);
+  Log_info("TEST 9: init_rpcs_ observed = {}", init_rpcs_);
   // Ceiling raised from 40 to 70 to accommodate Mako-specific RPC traffic
   // (VoteDurable, AppendEntriesDurable, TimeoutNow, NotifyRestart) that the
   // upstream MIT 6.824 reference implementation did not emit. Observed
@@ -1909,7 +1909,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
   // Leader should not determine commitment using log entries from previous terms.
 
   for (int again = 0; again < 10; again++) {
-    Log_info("TEST 19: Attempt %d", again + 1);
+    Log_info("TEST 19: Attempt {}", again + 1);
 
     // 1. Find initial leader (S1) and commit an entry
     auto leader1 = config_->OneLeader();
@@ -1924,7 +1924,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     AssertWaitNoError(r, index1);
     AssertWaitNoTimeout(r, index1, NSERVERS);
     index_ = index1;
-    Log_info("TEST 19: Initial entry committed at index %ld, term %ld", index1, term1);
+    Log_info("TEST 19: Initial entry committed at index {}, term {}", index1, term1);
 
     // 2. Kill 3 followers, leaving S1 + 1 follower (S2)
     //    S2 is getNextServerId(leader1, 4) to match original Figure 8 structure
@@ -1933,7 +1933,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     siteid_t killed2 = config_->getNextServerId(leader1, 2);
     siteid_t killed3 = config_->getNextServerId(leader1, 3);
 
-    Log_info("TEST 19: Killing 3 followers: %d, %d, %d (keeping leader %d and follower %d)",
+    Log_info("TEST 19: Killing 3 followers: {}, {}, {} (keeping leader {} and follower {})",
              killed1, killed2, killed3, leader1, follower_s2);
     config_->Kill(killed1);
     config_->Kill(killed2);
@@ -1949,7 +1949,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
       Fiber::sleep(ELECTIONTIMEOUT);
       continue;
     }
-    Log_info("TEST 19: Started C1 (1901) at index %ld, term %ld - should NOT be committed", index1, term1);
+    Log_info("TEST 19: Started C1 (1901) at index {}, term {} - should NOT be committed", index1, term1);
     Fiber::sleep(ELECTIONTIMEOUT);
 
     // C1 is at index1 for S1 and S2, but NOT committed (only 2 servers)
@@ -1957,7 +1957,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Log_info("TEST 19: Verified C1 is not committed (only on 2 servers)");
 
     // 4. Kill S1 and S2, restart the other 3 to elect new leader S3
-    Log_info("TEST 19: Killing S1 (%d) and S2 (%d), restarting other 3", leader1, follower_s2);
+    Log_info("TEST 19: Killing S1 ({}) and S2 ({}), restarting other 3", leader1, follower_s2);
     config_->Kill(leader1);
     config_->Kill(follower_s2);
     config_->Restart(killed1);
@@ -1968,10 +1968,10 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Fiber::sleep(ELECTIONTIMEOUT);
     auto leader2 = config_->OneLeader();
     AssertOneLeader(leader2);
-    Log_info("TEST 19: New leader S3 elected: %d", leader2);
+    Log_info("TEST 19: New leader S3 elected: {}", leader2);
 
     // 6. Restart S1 and S2 - they recover from disk with C1 in their logs
-    Log_info("TEST 19: Restarting S1 (%d) and S2 (%d) - they should recover C1 from disk",
+    Log_info("TEST 19: Restarting S1 ({}) and S2 ({}) - they should recover C1 from disk",
              leader1, follower_s2);
     config_->Restart(leader1);
     config_->Restart(follower_s2);
@@ -1980,12 +1980,12 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     // S3 should still be leader
     int current_leader = config_->OneLeader();
     AssertOneLeader(current_leader);
-    Log_info("TEST 19: Current leader after S1/S2 restart: %d", current_leader);
+    Log_info("TEST 19: Current leader after S1/S2 restart: {}", current_leader);
 
     // 7. Kill all except S3, have S3 start C2 at the same index as C1
     //    We know exactly which servers exist: leader1, follower_s2, killed1, killed2, killed3
     //    One of killed1/killed2/killed3 is now leader2, so we kill the others
-    Log_info("TEST 19: Isolating leader S3 (%d) by killing all others", leader2);
+    Log_info("TEST 19: Isolating leader S3 ({}) by killing all others", leader2);
 
     // Kill using explicit server IDs we tracked, not getServerIdByIndex
     std::vector<siteid_t> all_servers = {
@@ -1997,7 +1997,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     std::vector<siteid_t> killed_in_step7;
     for (siteid_t svr : all_servers) {
       if (svr != leader2) {
-        Log_info("TEST 19: Step 7 - Killing server %d", svr);
+        Log_info("TEST 19: Step 7 - Killing server {}", svr);
         config_->Kill(svr);
         killed_in_step7.push_back(svr);
       }
@@ -2014,7 +2014,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     }
 
     // C2 is at the same index as C1, but in a higher term
-    Log_info("TEST 19: Started C2 (1902) at index %ld, term %ld", index2, term2);
+    Log_info("TEST 19: Started C2 (1902) at index {}, term {}", index2, term2);
     Assert2(index2 == index1, "Start() returned index %ld (%ld expected)", index2, index1);
     Assert2(term2 > term1, "Start() returned term %ld (expected > %ld)", term2, term1);
     Fiber::sleep(ELECTIONTIMEOUT);
@@ -2023,7 +2023,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
 
     // 8. Kill S3, restart S1 (has C1), S2 (has C1), and one other
     //    S1 or S2 should become leader because they have C1 (longer log)
-    Log_info("TEST 19: Killing S3 (%d), restarting S1, S2, and one other", leader2);
+    Log_info("TEST 19: Killing S3 ({}), restarting S1, S2, and one other", leader2);
     config_->Kill(leader2);
     config_->Restart(leader1);      // S1 has C1
     config_->Restart(follower_s2);  // S2 has C1
@@ -2035,7 +2035,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
       if (svr != leader2) {
         config_->Restart(svr);
         third_server = svr;
-        Log_info("TEST 19: Also restarted server %d as third member", svr);
+        Log_info("TEST 19: Also restarted server {} as third member", svr);
         break;
       }
     }
@@ -2043,12 +2043,12 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Fiber::sleep(ELECTIONTIMEOUT);
     auto leader3 = config_->OneLeader();
     AssertOneLeader(leader3);
-    Log_info("TEST 19: New leader after S3 killed: %d", leader3);
+    Log_info("TEST 19: New leader after S3 killed: {}", leader3);
 
     // Leader3 should ideally be S1 or S2 (they have longer logs with C1)
     // But if not, we retry
     if (leader3 != leader1 && leader3 != follower_s2) {
-      Log_info("TEST 19: Leader %d is not S1 or S2, retrying (1/3 chance)", leader3);
+      Log_info("TEST 19: Leader {} is not S1 or S2, retrying (1/3 chance)", leader3);
       // Restart remaining servers for cleanup using explicit IDs
       config_->Restart(leader2);
       for (siteid_t svr : {killed1, killed2, killed3}) {
@@ -2070,13 +2070,13 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Log_info("TEST 19: Committing new entry in current term to trigger C1 commit");
     auto new_index = config_->DoAgreement(1903, NSERVERS - 2, false);
     Assert2(new_index > index1, "failed to reach agreement, got index %ld", new_index);
-    Log_info("TEST 19: New entry committed at index %ld", new_index);
+    Log_info("TEST 19: New entry committed at index {}", new_index);
 
     // 11. Now C1 SHOULD be committed (indirectly, by the new commit in current term)
     AssertNCommitted(index1, NSERVERS - 2);
     Assert2(config_->ServerCommitted(leader3, index1, 1901),
             "value 1901 not committed at index %ld when it should be", index1);
-    Log_info("TEST 19: Verified C1 (1901) is now committed at index %ld", index1);
+    Log_info("TEST 19: Verified C1 (1901) is now committed at index {}", index1);
 
     success = true;
 
@@ -2124,7 +2124,7 @@ int RaftLabTest::testSpeculativeLeaderElection(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SPEC-TEST] Leader elected: index=%d, site_id=%d", leader, leader_id);
+  Log_info("[SPEC-TEST] Leader elected: index={}, site_id={}", leader, leader_id);
 
   // Check initial speculative state
   // Note: By the time we check, VoteDurable messages may have already arrived
@@ -2134,7 +2134,7 @@ int RaftLabTest::testSpeculativeLeaderElection(void) {
   size_t specVoters = config_->GetSpecVotersCount(leader_id);
   size_t durableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Leader %d: specVoters=%zu, durableVoters=%zu",
+  Log_info("[SPEC-TEST] Leader {}: specVoters={}, durableVoters={}",
            leader_id, specVoters, durableVoters);
 
   // Spec voters should be at least quorum (we won election)
@@ -2149,7 +2149,7 @@ int RaftLabTest::testSpeculativeLeaderElection(void) {
   bool secured = config_->IsSecuredLeader(leader_id);
   durableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] After waiting: secured=%d, durableVoters=%zu",
+  Log_info("[SPEC-TEST] After waiting: secured={}, durableVoters={}",
            secured, durableVoters);
 
   // With no crashes, we expect durable voters to reach quorum
@@ -2186,7 +2186,7 @@ int RaftLabTest::testSpecCommitIndexAdvances(void) {
   uint64_t initialSpecCommit = config_->GetSpecCommitIndex(leader_id);
   uint64_t initialSecuredLog = config_->GetSecuredLogIndex(leader_id);
 
-  Log_info("[SPEC-TEST] Initial state: specCommitIndex=%lu, securedLogIndex=%lu",
+  Log_info("[SPEC-TEST] Initial state: specCommitIndex={}, securedLogIndex={}",
            initialSpecCommit, initialSecuredLog);
 
   // Submit an entry
@@ -2196,7 +2196,7 @@ int RaftLabTest::testSpecCommitIndexAdvances(void) {
   bool ok = config_->Start(leader_id, cmd, &index, &term);
   Assert2(ok, "Failed to submit command to leader");
 
-  Log_info("[SPEC-TEST] Submitted command %d at index %lu, term %lu", cmd, index, term);
+  Log_info("[SPEC-TEST] Submitted command {} at index {}, term {}", cmd, index, term);
 
   // Wait a short time for memory acks to arrive
   Fiber::sleep(200000);  // 200ms
@@ -2204,7 +2204,7 @@ int RaftLabTest::testSpecCommitIndexAdvances(void) {
   // Check specCommitIndex advanced
   uint64_t newSpecCommit = config_->GetSpecCommitIndex(leader_id);
 
-  Log_info("[SPEC-TEST] After waiting: specCommitIndex=%lu (was %lu)",
+  Log_info("[SPEC-TEST] After waiting: specCommitIndex={} (was {})",
            newSpecCommit, initialSpecCommit);
 
   // specCommitIndex should have advanced (at least to our submitted entry)
@@ -2218,7 +2218,7 @@ int RaftLabTest::testSpecCommitIndexAdvances(void) {
   bool secured = config_->IsSecuredLeader(leader_id);
   uint64_t newSecuredLog = config_->GetSecuredLogIndex(leader_id);
 
-  Log_info("[SPEC-TEST] After more waiting: secured=%d, securedLogIndex=%lu (was %lu)",
+  Log_info("[SPEC-TEST] After more waiting: secured={}, securedLogIndex={} (was {})",
            secured, newSecuredLog, initialSecuredLog);
 
   if (secured) {
@@ -2260,7 +2260,7 @@ int RaftLabTest::testSpeculativeInvariantsHold(void) {
     bool ok = config_->Start(leader_id, cmd, &index, &term);
     Assert2(ok, "Failed to submit command %d to leader", cmd);
 
-    Log_info("[SPEC-TEST] Submitted command %d at index %lu", cmd, index);
+    Log_info("[SPEC-TEST] Submitted command {} at index {}", cmd, index);
 
     // Verify invariants immediately
     Assert2(config_->VerifySpecInvariants(leader_id),
@@ -2279,7 +2279,7 @@ int RaftLabTest::testSpeculativeInvariantsHold(void) {
   uint64_t specCommit = config_->GetSpecCommitIndex(leader_id);
   uint64_t lastLog = config_->GetServer(leader_id)->GetLastLogIndex();
 
-  Log_info("[SPEC-TEST] Final state: securedLogIndex=%lu, specCommitIndex=%lu, lastLogIndex=%lu",
+  Log_info("[SPEC-TEST] Final state: securedLogIndex={}, specCommitIndex={}, lastLogIndex={}",
            securedLog, specCommit, lastLog);
 
   Assert2(securedLog <= specCommit, "securedLogIndex (%lu) > specCommitIndex (%lu)",
@@ -2321,7 +2321,7 @@ int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
   size_t initialDurableVoters = config_->GetDurableVotersCount(leader_id);
   size_t initialSpecVoters = config_->GetSpecVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Initial state: secured=%d, specVoters=%zu, durableVoters=%zu",
+  Log_info("[SPEC-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
            secured, initialSpecVoters, initialDurableVoters);
 
   Assert2(secured, "Leader should be secured before test continues");
@@ -2336,7 +2336,7 @@ int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
   // Wait for commit
   int result = config_->Wait(index, NSERVERS, term);
   AssertWaitNoError(result, index);
-  Log_info("[SPEC-TEST] Initial command committed at index %lu", index);
+  Log_info("[SPEC-TEST] Initial command committed at index {}", index);
 
   // Now disconnect one follower to simulate losing a speculative voter
   // (but keep majority for quorum)
@@ -2349,7 +2349,7 @@ int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
     }
   }
 
-  Log_info("[SPEC-TEST] Disconnecting follower %d to lose spec voter", disconnected_follower);
+  Log_info("[SPEC-TEST] Disconnecting follower {} to lose spec voter", disconnected_follower);
   config_->Disconnect(disconnected_follower);
 
   // Wait a bit for the disconnect to take effect
@@ -2362,7 +2362,7 @@ int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
 
   // Leader should still be secured (disconnect doesn't invalidate secured status)
   secured = config_->IsSecuredLeader(leader_id);
-  Log_info("[SPEC-TEST] After disconnect: secured=%d", secured);
+  Log_info("[SPEC-TEST] After disconnect: secured={}", secured);
 
   // The leader should still be able to commit with remaining quorum
   cmd = 301;
@@ -2372,7 +2372,7 @@ int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
   // Wait for commit with NSERVERS-1 (we disconnected 1)
   result = config_->Wait(index, NSERVERS - 1, term);
   AssertWaitNoError(result, index);
-  Log_info("[SPEC-TEST] Command committed after disconnect at index %lu", index);
+  Log_info("[SPEC-TEST] Command committed after disconnect at index {}", index);
 
   // Verify invariants
   Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
@@ -2413,11 +2413,11 @@ int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
 
   bool secured = config_->IsSecuredLeader(leader_id);
 
-  Log_info("[SPEC-TEST] Initial secured status: %d", secured);
+  Log_info("[SPEC-TEST] Initial secured status: {}", secured);
   Assert2(secured, "Leader should be secured for this test");
 
   uint64_t initialSecuredLog = config_->GetSecuredLogIndex(leader_id);
-  Log_info("[SPEC-TEST] Initial securedLogIndex: %lu", initialSecuredLog);
+  Log_info("[SPEC-TEST] Initial securedLogIndex: {}", initialSecuredLog);
 
   // Submit multiple entries
   for (int i = 0; i < 5; i++) {
@@ -2428,7 +2428,7 @@ int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
     bool ok = config_->Start(leader_id, cmd, &index, &term);
     Assert2(ok, "Failed to submit command %d", cmd);
 
-    Log_info("[SPEC-TEST] Submitted command %d at index %lu", cmd, index);
+    Log_info("[SPEC-TEST] Submitted command {} at index {}", cmd, index);
   }
 
   // Wait for durable commits
@@ -2437,7 +2437,7 @@ int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
   uint64_t finalSecuredLog = config_->GetSecuredLogIndex(leader_id);
   uint64_t finalSpecCommit = config_->GetSpecCommitIndex(leader_id);
 
-  Log_info("[SPEC-TEST] Final state: securedLogIndex=%lu, specCommitIndex=%lu",
+  Log_info("[SPEC-TEST] Final state: securedLogIndex={}, specCommitIndex={}",
            finalSecuredLog, finalSpecCommit);
 
   // Since leader is secured, securedLogIndex should have advanced
@@ -2490,7 +2490,7 @@ int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
   size_t initialSpecVoters = config_->GetSpecVotersCount(leader_id);
   size_t initialDurableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Initial state: secured=%d, specVoters=%zu, durableVoters=%zu",
+  Log_info("[SPEC-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
            secured, initialSpecVoters, initialDurableVoters);
 
   Assert2(secured, "Leader should be secured before test continues");
@@ -2515,7 +2515,7 @@ int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
     }
   }
 
-  Log_info("[SPEC-TEST] Killing and restarting follower %d", follower_to_restart);
+  Log_info("[SPEC-TEST] Killing and restarting follower {}", follower_to_restart);
 
   // Kill the follower
   config_->Kill(follower_to_restart);
@@ -2543,7 +2543,7 @@ int RaftLabTest::testRestartRemovesFromSpecVoters(void) {
   secured = config_->IsSecuredLeader(leader_id);
   size_t finalDurableVoters = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] After restart: secured=%d, durableVoters=%zu",
+  Log_info("[SPEC-TEST] After restart: secured={}, durableVoters={}",
            secured, finalDurableVoters);
 
   // Durable voters should not be affected by restart
@@ -2598,7 +2598,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   Fiber::sleep(500000);  // 500ms
 
   bool secured = config_->IsSecuredLeader(leader_id);
-  Log_info("[SPEC-TEST] Leader %d secured status: %d", leader_id, secured);
+  Log_info("[SPEC-TEST] Leader {} secured status: {}", leader_id, secured);
 
   // Since the leader is likely secured, we test that it continues to work
   // even when followers are killed (secured leader doesn't step down on
@@ -2611,7 +2611,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
     if (svr != leader_id) {
       config_->Kill(svr);
       killed_followers.push_back(svr);
-      Log_info("[SPEC-TEST] Killed follower %d", svr);
+      Log_info("[SPEC-TEST] Killed follower {}", svr);
     }
   }
 
@@ -2628,7 +2628,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   } else {
     // Unsecured leader may have stepped down
     // Either outcome is acceptable based on timing
-    Log_info("[SPEC-TEST] Leader status after kills: current_leader=%d (original=%d)",
+    Log_info("[SPEC-TEST] Leader status after kills: current_leader={} (original={})",
              current_leader, leader);
   }
 
@@ -2649,7 +2649,7 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   // Restart killed followers
   for (siteid_t svr : killed_followers) {
     config_->Restart(svr);
-    Log_info("[SPEC-TEST] Restarted follower %d", svr);
+    Log_info("[SPEC-TEST] Restarted follower {}", svr);
   }
 
   // Wait for cluster to stabilize
@@ -2703,7 +2703,7 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
   }
 
   uint64_t securedLogBefore = config_->GetSecuredLogIndex(leader_id);
-  Log_info("[SPEC-TEST] securedLogIndex before restart: %lu", securedLogBefore);
+  Log_info("[SPEC-TEST] securedLogIndex before restart: {}", securedLogBefore);
 
   // Submit more entries
   uint64_t newIndex = 0;
@@ -2716,7 +2716,7 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
 
   // Check memory acks before restart
   size_t memAcksBefore = config_->GetMemoryAckCount(leader_id, newIndex);
-  Log_info("[SPEC-TEST] Memory acks for index %lu before restart: %zu",
+  Log_info("[SPEC-TEST] Memory acks for index {} before restart: {}",
            newIndex, memAcksBefore);
 
   // Pick a follower to restart
@@ -2729,7 +2729,7 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
     }
   }
 
-  Log_info("[SPEC-TEST] Killing and restarting follower %d", follower_to_restart);
+  Log_info("[SPEC-TEST] Killing and restarting follower {}", follower_to_restart);
 
   // Kill and restart the follower
   config_->Kill(follower_to_restart);
@@ -2751,7 +2751,7 @@ int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
     result = config_->Wait(newIndex, NSERVERS, newTerm);
   }
 
-  Log_info("[SPEC-TEST] Entry at index %lu committed", newIndex);
+  Log_info("[SPEC-TEST] Entry at index {} committed", newIndex);
 
   // Verify invariants
   Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
@@ -2787,7 +2787,7 @@ int RaftLabTest::testRestartDoesNotAffectDurableVoters(void) {
   bool secured = config_->IsSecuredLeader(leader_id);
   size_t durableVotersBefore = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] Initial state: secured=%d, durableVoters=%zu",
+  Log_info("[SPEC-TEST] Initial state: secured={}, durableVoters={}",
            secured, durableVotersBefore);
 
   Assert2(secured, "Leader should be secured for this test");
@@ -2812,7 +2812,7 @@ int RaftLabTest::testRestartDoesNotAffectDurableVoters(void) {
     }
   }
 
-  Log_info("[SPEC-TEST] Killing and restarting follower %d", follower_to_restart);
+  Log_info("[SPEC-TEST] Killing and restarting follower {}", follower_to_restart);
 
   // Kill and restart
   config_->Kill(follower_to_restart);
@@ -2831,7 +2831,7 @@ int RaftLabTest::testRestartDoesNotAffectDurableVoters(void) {
   secured = config_->IsSecuredLeader(leader_id);
   size_t durableVotersAfter = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SPEC-TEST] After restart: secured=%d, durableVoters=%zu",
+  Log_info("[SPEC-TEST] After restart: secured={}, durableVoters={}",
            secured, durableVotersAfter);
 
   // Leader should still be secured
@@ -2882,7 +2882,7 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   Assert2(leader1 >= 0, "No leader elected");
 
   siteid_t leader1_id = config_->getServerIdByIndex(leader1);
-  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader1, leader1_id);
+  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader1, leader1_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -2902,7 +2902,7 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
     index_ = index;
   }
 
-  Log_info("[SPEC-TEST] Baseline established, index=%lu", index_);
+  Log_info("[SPEC-TEST] Baseline established, index={}", index_);
 
   // Submit a new entry that will be speculatively committed
   int specCmd = 950;
@@ -2911,7 +2911,7 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   bool ok = config_->Start(leader1_id, specCmd, &specIndex, &specTerm);
   Assert2(ok, "Failed to submit speculative command");
 
-  Log_info("[SPEC-TEST] Submitted speculative entry %d at index %lu term %lu",
+  Log_info("[SPEC-TEST] Submitted speculative entry {} at index {} term {}",
            specCmd, specIndex, specTerm);
 
   // Wait for memory quorum (but not necessarily durable quorum)
@@ -2919,7 +2919,7 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   Fiber::sleep(300000);  // 300ms - should be enough for memory replication
 
   // Now crash the leader
-  Log_info("[SPEC-TEST] Crashing leader %d", leader1_id);
+  Log_info("[SPEC-TEST] Crashing leader {}", leader1_id);
   config_->Kill(leader1_id);
 
   // Wait for new election
@@ -2932,13 +2932,13 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   siteid_t leader2_id = config_->getServerIdByIndex(leader2);
   Assert2(leader2_id != leader1_id, "Same leader elected (should be different)");
 
-  Log_info("[SPEC-TEST] New leader: %d (site %d)", leader2, leader2_id);
+  Log_info("[SPEC-TEST] New leader: {} (site {})", leader2, leader2_id);
 
   // Wait for new leader to become secured
   Fiber::sleep(500000);
 
   secured = config_->IsSecuredLeader(leader2_id);
-  Log_info("[SPEC-TEST] New leader secured: %d", secured);
+  Log_info("[SPEC-TEST] New leader secured: {}", secured);
 
   // Now commit a new entry with the new leader to trigger commit of any
   // previous entries (including our speculative entry if it survived)
@@ -2948,17 +2948,17 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   ok = config_->Start(leader2_id, newCmd, &newIndex, &newTerm);
   Assert2(ok, "Failed to submit command to new leader");
 
-  Log_info("[SPEC-TEST] Submitted new entry %d at index %lu term %lu",
+  Log_info("[SPEC-TEST] Submitted new entry {} at index {} term {}",
            newCmd, newIndex, newTerm);
 
   // Wait for the entry to commit with the remaining servers
   int result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
   AssertWaitNoError(result, newIndex);
 
-  Log_info("[SPEC-TEST] New entry committed at index %lu", newIndex);
+  Log_info("[SPEC-TEST] New entry committed at index {}", newIndex);
 
   // Now restart the crashed leader
-  Log_info("[SPEC-TEST] Restarting crashed leader %d", leader1_id);
+  Log_info("[SPEC-TEST] Restarting crashed leader {}", leader1_id);
   config_->Restart(leader1_id);
 
   // Wait for it to catch up
@@ -2966,7 +2966,7 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
 
   // Verify all servers agree on the committed entries
   int nCommitted = config_->NCommitted(newIndex);
-  Log_info("[SPEC-TEST] Number of servers with entry at index %lu: %d",
+  Log_info("[SPEC-TEST] Number of servers with entry at index {}: {}",
            newIndex, nCommitted);
 
   // Check if the speculative entry survived
@@ -3020,11 +3020,11 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Check initial specVoters count
   size_t specVotersBefore = config_->GetSpecVotersCount(leader_id);
-  Log_info("[SPEC-TEST] Initial specVoters count: %zu", specVotersBefore);
+  Log_info("[SPEC-TEST] Initial specVoters count: {}", specVotersBefore);
 
   // In a normal election, leader should have spec quorum from all servers
   Assert2(specVotersBefore >= 3, "Leader should have spec quorum");
@@ -3039,7 +3039,7 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
   AssertWaitNoError(result, index);
   index_ = index;
 
-  Log_info("[SPEC-TEST] Baseline committed at index %lu", index);
+  Log_info("[SPEC-TEST] Baseline committed at index {}", index);
 
   // Pick a follower to simulate crash before VoteDurable
   siteid_t follower_to_crash = 0;
@@ -3051,7 +3051,7 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
     }
   }
 
-  Log_info("[SPEC-TEST] Simulating crash of follower %d before VoteDurable fsync",
+  Log_info("[SPEC-TEST] Simulating crash of follower {} before VoteDurable fsync",
            follower_to_crash);
 
   // Kill the follower (simulating crash before vote was durably persisted)
@@ -3074,14 +3074,14 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
     current_leader = config_->OneLeader();
   }
 
-  Log_info("[SPEC-TEST] Current leader after restart: %d", current_leader);
+  Log_info("[SPEC-TEST] Current leader after restart: {}", current_leader);
 
   // Check specVoters count after restart
   size_t specVotersAfter = 0;
   if (current_leader >= 0) {
     siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
     specVotersAfter = config_->GetSpecVotersCount(current_leader_id);
-    Log_info("[SPEC-TEST] SpecVoters after restart: %zu (leader %d)",
+    Log_info("[SPEC-TEST] SpecVoters after restart: {} (leader {})",
              specVotersAfter, current_leader_id);
   }
 
@@ -3096,9 +3096,9 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
     if (ok) {
       result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
       if (result >= 0) {
-        Log_info("[SPEC-TEST] New entry committed after restart at index %lu", newIndex);
+        Log_info("[SPEC-TEST] New entry committed after restart at index {}", newIndex);
       } else {
-        Log_info("[SPEC-TEST] Entry pending commit (result=%d)", result);
+        Log_info("[SPEC-TEST] Entry pending commit (result={})", result);
       }
     }
   }
@@ -3121,7 +3121,7 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
   result = config_->Wait(finalIndex, NSERVERS, finalTerm);
   AssertWaitNoError(result, finalIndex);
 
-  Log_info("[SPEC-TEST] Final entry committed with all servers at index %lu", finalIndex);
+  Log_info("[SPEC-TEST] Final entry committed with all servers at index {}", finalIndex);
 
   // Verify invariants
   Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
@@ -3159,13 +3159,13 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   Assert2(leader1 >= 0, "No leader elected");
 
   siteid_t leader1_id = config_->getServerIdByIndex(leader1);
-  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader1, leader1_id);
+  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader1, leader1_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
 
   bool secured = config_->IsSecuredLeader(leader1_id);
-  Log_info("[SPEC-TEST] Leader secured: %d", secured);
+  Log_info("[SPEC-TEST] Leader secured: {}", secured);
   Assert2(secured, "Leader should be secured");
 
   // Commit some entries to establish state
@@ -3180,7 +3180,7 @@ int RaftLabTest::testDoubleVotePrevention(void) {
     index_ = index;
   }
 
-  Log_info("[SPEC-TEST] Committed 3 entries, last index=%lu", index_);
+  Log_info("[SPEC-TEST] Committed 3 entries, last index={}", index_);
 
   // Collect followers
   std::vector<siteid_t> followers;
@@ -3219,7 +3219,7 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   Assert2(leader2 >= 0, "Should have a leader after recovery");
 
   siteid_t leader2_id = config_->getServerIdByIndex(leader2);
-  Log_info("[SPEC-TEST] Leader after restarts: %d (site %d)", leader2, leader2_id);
+  Log_info("[SPEC-TEST] Leader after restarts: {} (site {})", leader2, leader2_id);
 
   // The key safety property: no conflicting durable commits
   // We verify this by checking that the system can commit new entries
@@ -3250,12 +3250,12 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   }
 
   if (result >= 0) {
-    Log_info("[SPEC-TEST] New entry committed at index %lu", newIndex);
+    Log_info("[SPEC-TEST] New entry committed at index {}", newIndex);
   } else {
     // Even if not all servers have it yet, at least verify
     // a quorum committed it
     int committed = config_->NCommitted(newIndex);
-    Log_info("[SPEC-TEST] Committed on %d servers", committed);
+    Log_info("[SPEC-TEST] Committed on {} servers", committed);
     Assert2(committed >= 3, "At least quorum should have committed");
   }
 
@@ -3276,7 +3276,7 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   result = config_->Wait(finalIndex, NSERVERS, finalTerm);
   AssertWaitNoError(result, finalIndex);
 
-  Log_info("[SPEC-TEST] Final entry committed with all servers at index %lu", finalIndex);
+  Log_info("[SPEC-TEST] Final entry committed with all servers at index {}", finalIndex);
 
   // Verify invariants on leader
   Assert2(config_->VerifySpecInvariants(current_leader_id), "Invariants violated");
@@ -3313,7 +3313,7 @@ int RaftLabTest::testRapidRestarts(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3333,7 +3333,7 @@ int RaftLabTest::testRapidRestarts(void) {
     index_ = index;
   }
 
-  Log_info("[SPEC-TEST] Baseline committed, last index=%lu", index_);
+  Log_info("[SPEC-TEST] Baseline committed, last index={}", index_);
 
   // Collect followers
   std::vector<siteid_t> followers;
@@ -3348,13 +3348,13 @@ int RaftLabTest::testRapidRestarts(void) {
   int num_restarts = 8;  // Total number of restarts
   int restart_delay_ms = 200;  // Delay between restarts
 
-  Log_info("[SPEC-TEST] Starting %d rapid restarts...", num_restarts);
+  Log_info("[SPEC-TEST] Starting {} rapid restarts...", num_restarts);
 
   for (int r = 0; r < num_restarts; r++) {
     // Pick follower to restart (cycle through)
     siteid_t follower_to_restart = followers[r % followers.size()];
 
-    Log_info("[SPEC-TEST] Restart %d: killing follower %d", r + 1, follower_to_restart);
+    Log_info("[SPEC-TEST] Restart {}: killing follower {}", r + 1, follower_to_restart);
     config_->Kill(follower_to_restart);
 
     // Brief delay
@@ -3375,7 +3375,7 @@ int RaftLabTest::testRapidRestarts(void) {
         // Don't wait for full quorum during chaos, just verify it started
         Fiber::sleep(100000);  // 100ms
         int committed = config_->NCommitted(index);
-        Log_info("[SPEC-TEST] Restart %d: entry %d started, committed on %d servers",
+        Log_info("[SPEC-TEST] Restart {}: entry {} started, committed on {} servers",
                  r + 1, cmd, committed);
         index_ = index;
       }
@@ -3395,7 +3395,7 @@ int RaftLabTest::testRapidRestarts(void) {
   Assert2(final_leader >= 0, "Should have leader after stabilization");
 
   siteid_t final_leader_id = config_->getServerIdByIndex(final_leader);
-  Log_info("[SPEC-TEST] Leader after chaos: %d (site %d)", final_leader, final_leader_id);
+  Log_info("[SPEC-TEST] Leader after chaos: {} (site {})", final_leader, final_leader_id);
 
   // Commit final entries to verify full recovery
   for (int i = 0; i < 3; i++) {
@@ -3423,10 +3423,10 @@ int RaftLabTest::testRapidRestarts(void) {
     }
 
     if (result >= 0) {
-      Log_info("[SPEC-TEST] Final entry %d committed at index %lu", cmd, index);
+      Log_info("[SPEC-TEST] Final entry {} committed at index {}", cmd, index);
     } else {
       int committed = config_->NCommitted(index);
-      Log_info("[SPEC-TEST] Final entry %d: committed on %d servers", cmd, committed);
+      Log_info("[SPEC-TEST] Final entry {}: committed on {} servers", cmd, committed);
       Assert2(committed >= 3, "At least quorum should have committed");
     }
     index_ = index;
@@ -3468,7 +3468,7 @@ int RaftLabTest::testConcurrentElections(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[SPEC-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3488,7 +3488,7 @@ int RaftLabTest::testConcurrentElections(void) {
     index_ = index;
   }
 
-  Log_info("[SPEC-TEST] Baseline committed, last index=%lu", index_);
+  Log_info("[SPEC-TEST] Baseline committed, last index={}", index_);
 
   // Force multiple elections by killing leaders
   int num_elections = 4;
@@ -3503,7 +3503,7 @@ int RaftLabTest::testConcurrentElections(void) {
     Assert2(current_leader >= 0, "Should have leader before kill");
 
     siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
-    Log_info("[SPEC-TEST] Election %d: killing leader %d (site %d)",
+    Log_info("[SPEC-TEST] Election {}: killing leader {} (site {})",
              e + 1, current_leader, current_leader_id);
 
     // Kill the leader
@@ -3523,14 +3523,14 @@ int RaftLabTest::testConcurrentElections(void) {
     siteid_t new_leader_id = config_->getServerIdByIndex(new_leader);
     Assert2(new_leader_id != current_leader_id, "New leader should be different");
 
-    Log_info("[SPEC-TEST] Election %d: new leader %d (site %d)",
+    Log_info("[SPEC-TEST] Election {}: new leader {} (site {})",
              e + 1, new_leader, new_leader_id);
 
     // Wait for new leader to become secured
     Fiber::sleep(500000);
 
     secured = config_->IsSecuredLeader(new_leader_id);
-    Log_info("[SPEC-TEST] Election %d: new leader secured=%d", e + 1, secured);
+    Log_info("[SPEC-TEST] Election {}: new leader secured={}", e + 1, secured);
 
     // Commit an entry with new leader
     int cmd = 3100 + e;
@@ -3544,17 +3544,17 @@ int RaftLabTest::testConcurrentElections(void) {
     if (result < 0) {
       Fiber::sleep(ELECTIONTIMEOUT);
       int committed = config_->NCommitted(index);
-      Log_info("[SPEC-TEST] Election %d: entry %d committed on %d servers",
+      Log_info("[SPEC-TEST] Election {}: entry {} committed on {} servers",
                e + 1, cmd, committed);
       Assert2(committed >= 3, "At least quorum should have committed");
     } else {
-      Log_info("[SPEC-TEST] Election %d: entry %d committed at index %lu",
+      Log_info("[SPEC-TEST] Election {}: entry {} committed at index {}",
                e + 1, cmd, index);
     }
     index_ = index;
 
     // Restart the killed leader
-    Log_info("[SPEC-TEST] Election %d: restarting killed leader %d",
+    Log_info("[SPEC-TEST] Election {}: restarting killed leader {}",
              e + 1, current_leader_id);
     config_->Restart(current_leader_id);
 
@@ -3572,7 +3572,7 @@ int RaftLabTest::testConcurrentElections(void) {
   Assert2(final_leader >= 0, "Should have leader after stabilization");
 
   siteid_t final_leader_id = config_->getServerIdByIndex(final_leader);
-  Log_info("[SPEC-TEST] Final leader: %d (site %d)", final_leader, final_leader_id);
+  Log_info("[SPEC-TEST] Final leader: {} (site {})", final_leader, final_leader_id);
 
   // Commit final entries with all servers
   for (int i = 0; i < 2; i++) {
@@ -3599,7 +3599,7 @@ int RaftLabTest::testConcurrentElections(void) {
     }
     AssertWaitNoError(result, index);
 
-    Log_info("[SPEC-TEST] Final entry %d committed at index %lu", cmd, index);
+    Log_info("[SPEC-TEST] Final entry {} committed at index {}", cmd, index);
     index_ = index;
   }
 
@@ -3637,7 +3637,7 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3654,7 +3654,7 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      Log_info("[CALLBACK-TEST] Received notification: status=%d", static_cast<int>(status));
+      Log_info("[CALLBACK-TEST] Received notification: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
         gotSpeculative = true;
@@ -3664,13 +3664,13 @@ int RaftLabTest::testSpeculativeCommitNotification(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command %d at index %lu", cmd, index);
+  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
 
   // Wait for the entry to be speculatively committed (memory quorum)
   Fiber::sleep(500000);  // 500ms - should be enough for memory replication
 
   // Verify we got SPECULATIVE notification
-  Log_info("[CALLBACK-TEST] Spec notifications: %d, Durable: %d",
+  Log_info("[CALLBACK-TEST] Spec notifications: {}, Durable: {}",
            specNotifications.load(), durableNotifications.load());
 
   Assert2(gotSpeculative.load(), "Should have received SPECULATIVE notification");
@@ -3700,7 +3700,7 @@ int RaftLabTest::testDurableCommitNotification(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3720,7 +3720,7 @@ int RaftLabTest::testDurableCommitNotification(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      Log_info("[CALLBACK-TEST] Received notification: status=%d", static_cast<int>(status));
+      Log_info("[CALLBACK-TEST] Received notification: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
       } else if (status == CommitStatus::DURABLE) {
@@ -3730,14 +3730,14 @@ int RaftLabTest::testDurableCommitNotification(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command %d at index %lu", cmd, index);
+  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
 
   // Wait for the entry to be durably committed (disk quorum with secured leader)
   // This requires fsync to complete on majority
   Fiber::sleep(1000000);  // 1s - should be enough for durable commit
 
   // Verify we got DURABLE notification
-  Log_info("[CALLBACK-TEST] Spec notifications: %d, Durable: %d",
+  Log_info("[CALLBACK-TEST] Spec notifications: {}, Durable: {}",
            specNotifications.load(), durableNotifications.load());
 
   Assert2(gotDurable.load(), "Should have received DURABLE notification");
@@ -3767,7 +3767,7 @@ int RaftLabTest::testNotificationOrdering(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3788,7 +3788,7 @@ int RaftLabTest::testNotificationOrdering(void) {
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
       int order = callCount++;
-      Log_info("[CALLBACK-TEST] Notification #%d: status=%d", order, static_cast<int>(status));
+      Log_info("[CALLBACK-TEST] Notification #{}: status={}", order, static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specOrder = order;
       } else if (status == CommitStatus::DURABLE) {
@@ -3797,13 +3797,13 @@ int RaftLabTest::testNotificationOrdering(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command %d at index %lu", cmd, index);
+  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
 
   // Wait for both notifications
   Fiber::sleep(1000000);  // 1s
 
   // Verify ordering
-  Log_info("[CALLBACK-TEST] Spec order: %d, Durable order: %d",
+  Log_info("[CALLBACK-TEST] Spec order: {}, Durable order: {}",
            specOrder.load(), durableOrder.load());
 
   // SPECULATIVE should come first (if both arrived)
@@ -3849,7 +3849,7 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[CALLBACK-TEST] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[CALLBACK-TEST] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured first (so we have a baseline)
   Fiber::sleep(500000);
@@ -3866,7 +3866,7 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      Log_info("[CALLBACK-TEST] Received notification: status=%d", static_cast<int>(status));
+      Log_info("[CALLBACK-TEST] Received notification: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
       } else if (status == CommitStatus::DURABLE) {
@@ -3877,7 +3877,7 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command %d at index %lu", cmd, index);
+  Log_info("[CALLBACK-TEST] Submitted command {} at index {}", cmd, index);
 
   // Let it commit (we're testing the infrastructure, not a specific scenario)
   Fiber::sleep(500000);
@@ -3892,7 +3892,7 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
 
   ok = config_->StartWithCallback(leader_id, cmd2, &index2, &term2,
     [&](CommitStatus status) {
-      Log_info("[CALLBACK-TEST] Entry 2 notification: status=%d", static_cast<int>(status));
+      Log_info("[CALLBACK-TEST] Entry 2 notification: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         cmd2Spec++;
       } else if (status == CommitStatus::ROLLEDBACK) {
@@ -3901,7 +3901,7 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
     });
 
   Assert2(ok, "Failed to submit second command with callback");
-  Log_info("[CALLBACK-TEST] Submitted command2 %d at index %lu", cmd2, index2);
+  Log_info("[CALLBACK-TEST] Submitted command2 {} at index {}", cmd2, index2);
 
   // Crash majority of followers to force leadership change
   Log_info("[CALLBACK-TEST] Crashing majority of followers");
@@ -3923,9 +3923,9 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Log results
-  Log_info("[CALLBACK-TEST] Results: spec=%d durable=%d rollback=%d",
+  Log_info("[CALLBACK-TEST] Results: spec={} durable={} rollback={}",
            specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
-  Log_info("[CALLBACK-TEST] Entry2 results: spec=%d rollback=%d",
+  Log_info("[CALLBACK-TEST] Entry2 results: spec={} rollback={}",
            cmd2Spec.load(), cmd2Rollback.load());
 
   // Restart killed followers
@@ -3979,7 +3979,7 @@ int RaftLabTest::testFullCommitPath(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[FULL-PATH-TEST] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[FULL-PATH-TEST] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -3998,12 +3998,12 @@ int RaftLabTest::testFullCommitPath(void) {
   uint64_t index = 0;
   uint64_t term = 0;
 
-  Log_info("[FULL-PATH-TEST] Submitting command %d with callback", cmd);
+  Log_info("[FULL-PATH-TEST] Submitting command {} with callback", cmd);
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
       uint64_t now = Time::now(false);
-      Log_info("[FULL-PATH-TEST] Callback received: status=%d time=%lu",
+      Log_info("[FULL-PATH-TEST] Callback received: status={} time={}",
                static_cast<int>(status), now);
       if (status == CommitStatus::SPECULATIVE) {
         gotSpeculative = true;
@@ -4015,18 +4015,18 @@ int RaftLabTest::testFullCommitPath(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[FULL-PATH-TEST] Submitted command %d at index %lu term %lu", cmd, index, term);
+  Log_info("[FULL-PATH-TEST] Submitted command {} at index {} term {}", cmd, index, term);
 
   // Step 2: Wait for SPECULATIVE (memory quorum)
   // Should be very fast
   Fiber::sleep(200000);  // 200ms
-  Log_info("[FULL-PATH-TEST] After 200ms: spec=%d durable=%d",
+  Log_info("[FULL-PATH-TEST] After 200ms: spec={} durable={}",
            gotSpeculative.load(), gotDurable.load());
 
   // Step 3: Wait for DURABLE (disk quorum with secured leader)
   // This requires fsync to complete
   Fiber::sleep(1000000);  // 1s total
-  Log_info("[FULL-PATH-TEST] After 1s: spec=%d durable=%d",
+  Log_info("[FULL-PATH-TEST] After 1s: spec={} durable={}",
            gotSpeculative.load(), gotDurable.load());
 
   // Step 4: Verify both notifications received
@@ -4037,7 +4037,7 @@ int RaftLabTest::testFullCommitPath(void) {
   if (specTime.load() > 0 && durableTime.load() > 0) {
     Assert2(specTime.load() <= durableTime.load(),
             "SPECULATIVE should come before or at DURABLE");
-    Log_info("[FULL-PATH-TEST] Spec time: %lu, Durable time: %lu, delta: %lu us",
+    Log_info("[FULL-PATH-TEST] Spec time: {}, Durable time: {}, delta: {} us",
              specTime.load(), durableTime.load(), durableTime.load() - specTime.load());
   }
 
@@ -4069,11 +4069,11 @@ int RaftLabTest::testFullCommitPath(void) {
   }
   Assert2(new_leader >= 0, "Should have leader after restart");
 
-  Log_info("[FULL-PATH-TEST] New leader after restart: %d", new_leader);
+  Log_info("[FULL-PATH-TEST] New leader after restart: {}", new_leader);
 
   // Check if entry is committed on servers
   int nCommitted = config_->NCommitted(index);
-  Log_info("[FULL-PATH-TEST] Servers with entry at index %lu: %d", index, nCommitted);
+  Log_info("[FULL-PATH-TEST] Servers with entry at index {}: {}", index, nCommitted);
 
   // The entry should be committed on all servers (it was durably committed)
   Assert2(nCommitted >= 3, "Entry should be committed on majority after restart");
@@ -4090,7 +4090,7 @@ int RaftLabTest::testFullCommitPath(void) {
   int result = config_->Wait(finalIndex, NSERVERS, finalTerm);
   AssertWaitNoError(result, finalIndex);
 
-  Log_info("[FULL-PATH-TEST] Final entry committed at index %lu", finalIndex);
+  Log_info("[FULL-PATH-TEST] Final entry committed at index {}", finalIndex);
   Log_info("[FULL-PATH-TEST] Full commit path test PASSED!");
 
   Passed2();
@@ -4120,7 +4120,7 @@ int RaftLabTest::testSecuredStepDownPartialRollback(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[PARTIAL-ROLLBACK] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[PARTIAL-ROLLBACK] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -4139,7 +4139,7 @@ int RaftLabTest::testSecuredStepDownPartialRollback(void) {
 
   bool ok = config_->StartWithCallback(leader_id, durableCmd, &durableIndex, &durableTerm,
     [&](CommitStatus status) {
-      Log_info("[PARTIAL-ROLLBACK] Durable entry callback: status=%d", static_cast<int>(status));
+      Log_info("[PARTIAL-ROLLBACK] Durable entry callback: status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         durableGotSpec = true;
       } else if (status == CommitStatus::DURABLE) {
@@ -4150,7 +4150,7 @@ int RaftLabTest::testSecuredStepDownPartialRollback(void) {
     });
 
   Assert2(ok, "Failed to submit durable command");
-  Log_info("[PARTIAL-ROLLBACK] Submitted durable entry at index %lu", durableIndex);
+  Log_info("[PARTIAL-ROLLBACK] Submitted durable entry at index {}", durableIndex);
 
   // Wait for this entry to become durably committed
   Fiber::sleep(500000);
@@ -4161,26 +4161,26 @@ int RaftLabTest::testSecuredStepDownPartialRollback(void) {
 
   // Get current securedLogIndex
   uint64_t securedLog = config_->GetSecuredLogIndex(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] securedLogIndex: %lu, durableIndex: %lu", securedLog, durableIndex);
+  Log_info("[PARTIAL-ROLLBACK] securedLogIndex: {}, durableIndex: {}", securedLog, durableIndex);
   Assert2(durableIndex <= securedLog, "Durable entry should be at or below securedLogIndex");
 
   // Force step-down by disconnecting leader and forcing new election
   config_->Disconnect(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] Disconnected leader %d to force new election", leader_id);
+  Log_info("[PARTIAL-ROLLBACK] Disconnected leader {} to force new election", leader_id);
 
   // Wait for new election
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Reconnect old leader so it can receive higher term and step down
   config_->Reconnect(leader_id);
-  Log_info("[PARTIAL-ROLLBACK] Reconnected old leader %d", leader_id);
+  Log_info("[PARTIAL-ROLLBACK] Reconnected old leader {}", leader_id);
 
   // Wait for old leader to see higher term and step down
   Fiber::sleep(ELECTIONTIMEOUT);
 
   // Check results
   Log_info("[PARTIAL-ROLLBACK] Results:");
-  Log_info("  Durable entry (index %lu): spec=%d durable=%d rollback=%d",
+  Log_info("  Durable entry (index {}): spec={} durable={} rollback={}",
            durableIndex, durableGotSpec.load(), durableGotDurable.load(), durableGotRollback.load());
 
   // Verify: durable entry should NOT have received ROLLEDBACK
@@ -4196,7 +4196,7 @@ int RaftLabTest::testSecuredStepDownPartialRollback(void) {
   }
   Assert2(new_leader >= 0, "Should have leader after test");
 
-  Log_info("[PARTIAL-ROLLBACK] New leader: %d", new_leader);
+  Log_info("[PARTIAL-ROLLBACK] New leader: {}", new_leader);
   Log_info("[PARTIAL-ROLLBACK] Partial rollback test PASSED!");
 
   Passed2();
@@ -4226,12 +4226,12 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[OVERWRITE-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[OVERWRITE-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Commit some baseline entries to establish a shared log prefix
   DoAgreeAndAssertIndex(5000, NSERVERS, index_++);
   DoAgreeAndAssertIndex(5001, NSERVERS, index_++);
-  Log_info("[OVERWRITE-TEST] Baseline entries committed at indices %lu, %lu", index_ - 2, index_ - 1);
+  Log_info("[OVERWRITE-TEST] Baseline entries committed at indices {}, {}", index_ - 2, index_ - 1);
 
   // Identify servers: leader + 2 followers in "crash group", 2 followers survive
   std::vector<siteid_t> crash_group;  // Will lose speculative entry
@@ -4262,13 +4262,13 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
     }
   }
 
-  Log_info("[OVERWRITE-TEST] Crash group: %d, %d, %d", crash_group[0], crash_group[1], crash_group[2]);
-  Log_info("[OVERWRITE-TEST] Survivors: %d, %d", survivors[0], survivors[1]);
+  Log_info("[OVERWRITE-TEST] Crash group: {}, {}, {}", crash_group[0], crash_group[1], crash_group[2]);
+  Log_info("[OVERWRITE-TEST] Survivors: {}, {}", survivors[0], survivors[1]);
 
   // Step 1: Disconnect survivors so they don't receive the speculative entry
   for (siteid_t svr : survivors) {
     config_->Disconnect(svr);
-    Log_info("[OVERWRITE-TEST] Disconnected survivor %d", svr);
+    Log_info("[OVERWRITE-TEST] Disconnected survivor {}", svr);
   }
 
   // Step 2: Submit entry X to leader (only crash_group will receive it)
@@ -4279,7 +4279,7 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
 
   bool ok = config_->Start(leader_id, cmdX, &indexX, &termX);
   Assert2(ok, "Failed to submit command X");
-  Log_info("[OVERWRITE-TEST] Submitted X (cmd=%d) at index %lu term %lu", cmdX, indexX, termX);
+  Log_info("[OVERWRITE-TEST] Submitted X (cmd={}) at index {} term {}", cmdX, indexX, termX);
 
   // Wait a short time for X to propagate to crash_group (but not enough for durable commit)
   Fiber::sleep(100000);  // 100ms
@@ -4288,20 +4288,20 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
   for (siteid_t svr : crash_group) {
     auto server = config_->GetServer(svr);
     uint64_t lastLog = server->lastLogIndex;
-    Log_info("[OVERWRITE-TEST] Server %d lastLogIndex=%lu", svr, lastLog);
+    Log_info("[OVERWRITE-TEST] Server {} lastLogIndex={}", svr, lastLog);
   }
 
   // Step 3: Kill all servers in crash group (simulates crash before durability)
   Log_info("[OVERWRITE-TEST] Killing crash group");
   for (siteid_t svr : crash_group) {
     config_->Kill(svr);
-    Log_info("[OVERWRITE-TEST] Killed server %d", svr);
+    Log_info("[OVERWRITE-TEST] Killed server {}", svr);
   }
 
   // Step 4: Reconnect survivors
   for (siteid_t svr : survivors) {
     config_->Reconnect(svr);
-    Log_info("[OVERWRITE-TEST] Reconnected survivor %d", svr);
+    Log_info("[OVERWRITE-TEST] Reconnected survivor {}", svr);
   }
 
   // Step 5: Restart crash_group followers (but NOT the original leader)
@@ -4310,7 +4310,7 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
 
   for (size_t i = 1; i < crash_group.size(); i++) {  // Skip index 0 (leader)
     config_->Restart(crash_group[i]);
-    Log_info("[OVERWRITE-TEST] Restarted server %d", crash_group[i]);
+    Log_info("[OVERWRITE-TEST] Restarted server {}", crash_group[i]);
   }
 
   // Wait for election
@@ -4334,7 +4334,7 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
 
   Assert2(new_leader >= 0, "Should have leader after recovery");
   siteid_t new_leader_id = config_->getServerIdByIndex(new_leader);
-  Log_info("[OVERWRITE-TEST] New leader: %d (site %d)", new_leader, new_leader_id);
+  Log_info("[OVERWRITE-TEST] New leader: {} (site {})", new_leader, new_leader_id);
 
   // Step 7: Submit entry Y at the same logical index
   int cmdY = 5003;
@@ -4343,7 +4343,7 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
 
   ok = config_->Start(new_leader_id, cmdY, &indexY, &termY);
   Assert2(ok, "Failed to submit command Y");
-  Log_info("[OVERWRITE-TEST] Submitted Y (cmd=%d) at index %lu term %lu", cmdY, indexY, termY);
+  Log_info("[OVERWRITE-TEST] Submitted Y (cmd={}) at index {} term {}", cmdY, indexY, termY);
 
   // Wait for Y to commit
   int nAlive = 4;  // survivors + restarted followers (maybe 5 if we restarted leader)
@@ -4361,19 +4361,19 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
       nAlive++;
     }
   }
-  Log_info("[OVERWRITE-TEST] Number of alive servers: %d", nAlive);
+  Log_info("[OVERWRITE-TEST] Number of alive servers: {}", nAlive);
 
   int result = config_->Wait(indexY, nAlive >= 3 ? 3 : nAlive, termY);
   AssertWaitNoError(result, indexY);
   AssertWaitNoTimeout(result, indexY, nAlive >= 3 ? 3 : nAlive);
 
-  Log_info("[OVERWRITE-TEST] Y committed at index %lu", indexY);
+  Log_info("[OVERWRITE-TEST] Y committed at index {}", indexY);
 
   // Step 8: Verify system state
   // - If indexY == indexX, Y overwrote X's index (speculative entry lost)
   // - If indexY > indexX, the system may have preserved some entries
 
-  Log_info("[OVERWRITE-TEST] Entry X was at index %lu, entry Y is at index %lu", indexX, indexY);
+  Log_info("[OVERWRITE-TEST] Entry X was at index {}, entry Y is at index {}", indexX, indexY);
 
   if (indexY == indexX) {
     Log_info("[OVERWRITE-TEST] Y committed at same index as X - speculative entry overwritten!");
@@ -4390,7 +4390,7 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
   int committed = config_->DoAgreement(finalCmd, nAlive >= 3 ? 3 : nAlive, true);
   Assert2(committed > 0, "Failed to commit final entry");
 
-  Log_info("[OVERWRITE-TEST] Final entry committed at index %d", committed);
+  Log_info("[OVERWRITE-TEST] Final entry committed at index {}", committed);
   Log_info("[OVERWRITE-TEST] Speculative entries overwrite test PASSED!");
 
   Passed2();
@@ -4418,7 +4418,7 @@ int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[DURABLE-QUORUM-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[DURABLE-QUORUM-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Commit entries to establish secured leadership
   // This ensures fsyncs complete and leader becomes secured
@@ -4438,12 +4438,12 @@ int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
 
   // Check leader is secured (has durable quorum)
   bool isSecured = config_->IsSecuredLeader(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] Leader securedLeader=%d", isSecured);
+  Log_info("[DURABLE-QUORUM-TEST] Leader securedLeader={}", isSecured);
 
   // Get specVoters and durableVoters counts
   size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
   size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] Before restarts: specVoters=%zu, durableVoters=%zu",
+  Log_info("[DURABLE-QUORUM-TEST] Before restarts: specVoters={}, durableVoters={}",
            specVotersCount, durableVotersCount);
 
   Assert2(isSecured, "Leader should be secured after commits with fsync");
@@ -4461,7 +4461,7 @@ int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
   Assert2(followers.size() >= 2, "Need at least 2 followers");
 
   // Restart 2 followers - this triggers notifyRestart which removes from specVoters
-  Log_info("[DURABLE-QUORUM-TEST] Restarting followers %d and %d",
+  Log_info("[DURABLE-QUORUM-TEST] Restarting followers {} and {}",
            followers[0], followers[1]);
 
   config_->Restart(followers[0]);
@@ -4474,14 +4474,14 @@ int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
 
   // Check if leader is still leader
   current_leader = config_->OneLeader();
-  Log_info("[DURABLE-QUORUM-TEST] Leader after restarts: %d (expected %d)",
+  Log_info("[DURABLE-QUORUM-TEST] Leader after restarts: {} (expected {})",
            current_leader, leader);
 
   // Get updated counts
   specVotersCount = config_->GetSpecVotersCount(leader_id);
   durableVotersCount = config_->GetDurableVotersCount(leader_id);
   isSecured = config_->IsSecuredLeader(leader_id);
-  Log_info("[DURABLE-QUORUM-TEST] After restarts: specVoters=%zu, durableVoters=%zu, secured=%d",
+  Log_info("[DURABLE-QUORUM-TEST] After restarts: specVoters={}, durableVoters={}, secured={}",
            specVotersCount, durableVotersCount, isSecured);
 
   // Key assertion: Leader should still be leader because durableVoters >= quorum
@@ -4520,7 +4520,7 @@ int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[SECURED-VIA-DURABLE-TEST] Initial leader: %d (site %d)", leader, leader_id);
+  Log_info("[SECURED-VIA-DURABLE-TEST] Initial leader: {} (site {})", leader, leader_id);
 
   // Commit entries to establish stable system and ensure durable quorum
   DoAgreeAndAssertIndex(6100, NSERVERS, index_++);
@@ -4533,7 +4533,7 @@ int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
   size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
   size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
 
-  Log_info("[SECURED-VIA-DURABLE-TEST] Initial state: secured=%d, specVoters=%zu, durableVoters=%zu",
+  Log_info("[SECURED-VIA-DURABLE-TEST] Initial state: secured={}, specVoters={}, durableVoters={}",
            isSecured, specVotersCount, durableVotersCount);
 
   // For this test to be meaningful, we need to verify the Phase 6 logic works
@@ -4551,7 +4551,7 @@ int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
   // Restart all followers one by one
   // Each restart removes from specVoters but durableVoters stays intact
   for (size_t i = 0; i < followers.size(); i++) {
-    Log_info("[SECURED-VIA-DURABLE-TEST] Restarting follower %d (%zu/%zu)",
+    Log_info("[SECURED-VIA-DURABLE-TEST] Restarting follower {} ({}/{})",
              followers[i], i + 1, followers.size());
     config_->Restart(followers[i]);
     Fiber::sleep(200000);  // 200ms between restarts
@@ -4565,10 +4565,10 @@ int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
         isSecured = config_->IsSecuredLeader(leader_id);
         specVotersCount = config_->GetSpecVotersCount(leader_id);
         durableVotersCount = config_->GetDurableVotersCount(leader_id);
-        Log_info("[SECURED-VIA-DURABLE-TEST] After restart %zu: secured=%d, specVoters=%zu, durableVoters=%zu",
+        Log_info("[SECURED-VIA-DURABLE-TEST] After restart {}: secured={}, specVoters={}, durableVoters={}",
                  i + 1, isSecured, specVotersCount, durableVotersCount);
       } else {
-        Log_info("[SECURED-VIA-DURABLE-TEST] Leader changed to %d (site %d)",
+        Log_info("[SECURED-VIA-DURABLE-TEST] Leader changed to {} (site {})",
                  current_leader, curr_leader_id);
       }
     }
@@ -4781,7 +4781,7 @@ int RaftLabTest::testSnapshotManagerListing(void) {
 
   // Prune: keep only snapshots at or after index 40
   size_t pruned = mgr.PruneSnapshots(40);
-  Log_info("[SNAPSHOT-LIST-TEST] Pruned %zu snapshots", pruned);
+  Log_info("[SNAPSHOT-LIST-TEST] Pruned {} snapshots", pruned);
 
   // Verify remaining snapshots
   snapshots = mgr.ListSnapshots();
@@ -5221,7 +5221,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   // Verify leader has taken a snapshot and compacted
   uint64_t leader_snap_idx = leader_server->GetSnapshotIndex();
   uint64_t leader_min_active = leader_server->min_active_slot_;
-  Log_info("[HB-SNAP-TEST] Leader snapshot index=%lu, min_active_slot=%lu",
+  Log_info("[HB-SNAP-TEST] Leader snapshot index={}, min_active_slot={}",
            leader_snap_idx, leader_min_active);
 
   // If snapshot wasn't automatically triggered, force it
@@ -5229,7 +5229,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
     leader_server->CreateSnapshot();
     leader_snap_idx = leader_server->GetSnapshotIndex();
     leader_min_active = leader_server->min_active_slot_;
-    Log_info("[HB-SNAP-TEST] After forced snapshot: index=%lu, min_active_slot=%lu",
+    Log_info("[HB-SNAP-TEST] After forced snapshot: index={}, min_active_slot={}",
              leader_snap_idx, leader_min_active);
   }
 
@@ -5268,7 +5268,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
     std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
     leader_server->next_index_[follower_site_id] = 1;  // Far behind
     leader_server->match_index_[follower_site_id] = 0;
-    Log_info("[HB-SNAP-TEST] Set leader's next_index[%d]=%d, min_active_slot=%lu",
+    Log_info("[HB-SNAP-TEST] Set leader's next_index[{}]={}, min_active_slot={}",
              follower_site_id, 1, leader_min_active);
   }
 
@@ -5289,7 +5289,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
     final_match_index = leader_server->match_index_[follower_site_id];
   }
 
-  Log_info("[HB-SNAP-TEST] After heartbeat: next_index[%d]=%lu, match_index[%d]=%lu",
+  Log_info("[HB-SNAP-TEST] After heartbeat: next_index[{}]={}, match_index[{}]={}",
            follower_site_id, final_next_index, follower_site_id, final_match_index);
 
   // The leader should have updated next_index to snap_index + 1
@@ -5301,7 +5301,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
 
   // Verify the follower received and applied the snapshot
   uint64_t follower_snap_after = follower_server->GetSnapshotIndex();
-  Log_info("[HB-SNAP-TEST] Follower snapshot index: before=%lu, after=%lu",
+  Log_info("[HB-SNAP-TEST] Follower snapshot index: before={}, after={}",
            follower_snap_before, follower_snap_after);
   Assert2(follower_snap_after >= leader_snap_idx,
           "Follower snapshot index should be >= %lu after InstallSnapshot, got %lu",
@@ -5338,7 +5338,7 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 61: Leader elected: %d", leader);
+  Log_info("TEST 61: Leader elected: {}", leader);
 
   // Commit some entries
   Log_info("TEST 61: Committing entries");
@@ -5358,7 +5358,7 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
   uint64_t mem_secured = leader_server->securedLogIndex_;
   uint64_t mem_last = leader_server->lastLogIndex;
 
-  Log_info("TEST 61: In-memory values - specCommitIndex=%lu securedLogIndex=%lu lastLogIndex=%lu",
+  Log_info("TEST 61: In-memory values - specCommitIndex={} securedLogIndex={} lastLogIndex={}",
            mem_spec, mem_secured, mem_last);
 
   // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
@@ -5377,7 +5377,7 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
 
     if (spec_str.is_some()) {
       uint64_t persisted_spec = std::stoull(spec_str.unwrap());
-      Log_info("TEST 61: Persisted specCommitIndex=%lu, in-memory=%lu",
+      Log_info("TEST 61: Persisted specCommitIndex={}, in-memory={}",
                persisted_spec, mem_spec);
       Assert2(persisted_spec == mem_spec,
               "persisted specCommitIndex (%lu) != in-memory (%lu)",
@@ -5388,7 +5388,7 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
 
     if (secured_str.is_some()) {
       uint64_t persisted_secured = std::stoull(secured_str.unwrap());
-      Log_info("TEST 61: Persisted securedLogIndex=%lu, in-memory=%lu",
+      Log_info("TEST 61: Persisted securedLogIndex={}, in-memory={}",
                persisted_secured, mem_secured);
       Assert2(persisted_secured == mem_secured,
               "persisted securedLogIndex (%lu) != in-memory (%lu)",
@@ -5416,7 +5416,7 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 62: Leader elected: %d", leader);
+  Log_info("TEST 62: Leader elected: {}", leader);
 
   // Commit some entries
   Log_info("TEST 62: Committing entries");
@@ -5437,25 +5437,25 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
   uint64_t secured_before = victim_server->securedLogIndex_;
   uint64_t commit_before = victim_server->commitIndex;
   uint64_t last_log_before = victim_server->lastLogIndex;
-  Log_info("TEST 62: Before kill - server %d: specCommitIndex=%lu securedLogIndex=%lu "
-           "commitIndex=%lu lastLogIndex=%lu",
+  Log_info("TEST 62: Before kill - server {}: specCommitIndex={} securedLogIndex={} "
+           "commitIndex={} lastLogIndex={}",
            victim, spec_before, secured_before, commit_before, last_log_before);
 
   // Kill the server
-  Log_info("TEST 62: Killing server %d", victim);
+  Log_info("TEST 62: Killing server {}", victim);
   config_->Kill(victim);
 
   // Wait for it to be gone
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Commit more entries with remaining servers
-  Log_info("TEST 62: Committing with %d servers while %d is down", NSERVERS - 1, victim);
+  Log_info("TEST 62: Committing with {} servers while {} is down", NSERVERS - 1, victim);
   DoAgreeAndAssertIndex(304, NSERVERS - 1, index_++);
   DoAgreeAndAssertIndex(305, NSERVERS - 1, index_++);
   Log_info("TEST 62: Committed 2 more entries");
 
   // Restart the killed server
-  Log_info("TEST 62: Restarting server %d", victim);
+  Log_info("TEST 62: Restarting server {}", victim);
   config_->Restart(victim);
 
   // Give it time to catch up
@@ -5467,8 +5467,8 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
   uint64_t secured_after = victim_server->securedLogIndex_;
   uint64_t commit_after = victim_server->commitIndex;
   uint64_t last_log_after = victim_server->lastLogIndex;
-  Log_info("TEST 62: After restart - server %d: specCommitIndex=%lu securedLogIndex=%lu "
-           "commitIndex=%lu lastLogIndex=%lu",
+  Log_info("TEST 62: After restart - server {}: specCommitIndex={} securedLogIndex={} "
+           "commitIndex={} lastLogIndex={}",
            victim, spec_after, secured_after, commit_after, last_log_after);
 
   // After restart and catching up, the log should have all entries
@@ -5493,7 +5493,7 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
           spec_after, last_log_after);
 
   // Verify the cluster still works
-  Log_info("TEST 62: Committing with all %d servers to verify cluster health", NSERVERS);
+  Log_info("TEST 62: Committing with all {} servers to verify cluster health", NSERVERS);
   DoAgreeAndAssertWaitSuccess(306, NSERVERS);
   Log_info("TEST 62: Final commit successful");
 
@@ -5525,7 +5525,7 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[ROLLBACK-UNSECURED] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[ROLLBACK-UNSECURED] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured so we have a stable baseline
   Fiber::sleep(500000);
@@ -5542,7 +5542,7 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      Log_info("[ROLLBACK-UNSECURED] Callback status=%d", static_cast<int>(status));
+      Log_info("[ROLLBACK-UNSECURED] Callback status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
       } else if (status == CommitStatus::DURABLE) {
@@ -5553,7 +5553,7 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[ROLLBACK-UNSECURED] Submitted command %d at index %lu", cmd, index);
+  Log_info("[ROLLBACK-UNSECURED] Submitted command {} at index {}", cmd, index);
 
   // Let entry get speculatively committed
   Fiber::sleep(300000);
@@ -5569,7 +5569,7 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
 
   ok = config_->StartWithCallback(leader_id, cmd2, &index2, &term2,
     [&](CommitStatus status) {
-      Log_info("[ROLLBACK-UNSECURED] Entry 2 status=%d", static_cast<int>(status));
+      Log_info("[ROLLBACK-UNSECURED] Entry 2 status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         cmd2Spec++;
       } else if (status == CommitStatus::ROLLEDBACK) {
@@ -5578,7 +5578,7 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
     });
 
   Assert2(ok, "Failed to submit second command");
-  Log_info("[ROLLBACK-UNSECURED] Submitted command2 %d at index %lu", cmd2, index2);
+  Log_info("[ROLLBACK-UNSECURED] Submitted command2 {} at index {}", cmd2, index2);
 
   // Crash majority of followers to force leader step-down
   std::vector<siteid_t> followers;
@@ -5599,9 +5599,9 @@ int RaftLabTest::testRollbackOnUnsecuredFailure(void) {
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Log results
-  Log_info("[ROLLBACK-UNSECURED] Results: spec=%d durable=%d rollback=%d",
+  Log_info("[ROLLBACK-UNSECURED] Results: spec={} durable={} rollback={}",
            specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
-  Log_info("[ROLLBACK-UNSECURED] Entry2: spec=%d rollback=%d",
+  Log_info("[ROLLBACK-UNSECURED] Entry2: spec={} rollback={}",
            cmd2Spec.load(), cmd2Rollback.load());
 
   // Verify: at least first entry should have been speculatively committed
@@ -5651,7 +5651,7 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   Assert2(leader >= 0, "No leader elected");
 
   siteid_t leader_id = config_->getServerIdByIndex(leader);
-  Log_info("[ROLLBACK-HIGHERTERM] Leader: %d (site %d)", leader, leader_id);
+  Log_info("[ROLLBACK-HIGHERTERM] Leader: {} (site {})", leader, leader_id);
 
   // Wait for leader to become secured
   Fiber::sleep(500000);
@@ -5668,7 +5668,7 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
 
   bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
     [&](CommitStatus status) {
-      Log_info("[ROLLBACK-HIGHERTERM] Callback status=%d", static_cast<int>(status));
+      Log_info("[ROLLBACK-HIGHERTERM] Callback status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         specNotifications++;
       } else if (status == CommitStatus::DURABLE) {
@@ -5679,7 +5679,7 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
     });
 
   Assert2(ok, "Failed to submit command with callback");
-  Log_info("[ROLLBACK-HIGHERTERM] Submitted command %d at index %lu", cmd, index);
+  Log_info("[ROLLBACK-HIGHERTERM] Submitted command {} at index {}", cmd, index);
 
   // Wait for entry to commit
   Fiber::sleep(500000);
@@ -5695,7 +5695,7 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
 
   ok = config_->StartWithCallback(leader_id, cmd2, &index2, &term2,
     [&](CommitStatus status) {
-      Log_info("[ROLLBACK-HIGHERTERM] Entry 2 status=%d", static_cast<int>(status));
+      Log_info("[ROLLBACK-HIGHERTERM] Entry 2 status={}", static_cast<int>(status));
       if (status == CommitStatus::SPECULATIVE) {
         cmd2Spec++;
       } else if (status == CommitStatus::DURABLE) {
@@ -5706,29 +5706,29 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
     });
 
   Assert2(ok, "Failed to submit second command");
-  Log_info("[ROLLBACK-HIGHERTERM] Submitted command2 %d at index %lu", cmd2, index2);
+  Log_info("[ROLLBACK-HIGHERTERM] Submitted command2 {} at index {}", cmd2, index2);
 
   // Let entry get speculatively committed but don't wait too long
   Fiber::sleep(200000);
 
   // Disconnect (not kill) the leader - it will see higher term when reconnected
   config_->Disconnect(leader_id);
-  Log_info("[ROLLBACK-HIGHERTERM] Disconnected leader %d", leader_id);
+  Log_info("[ROLLBACK-HIGHERTERM] Disconnected leader {}", leader_id);
 
   // Wait for new election on the majority side
   Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Reconnect old leader so it receives higher term and steps down via HigherTerm
   config_->Reconnect(leader_id);
-  Log_info("[ROLLBACK-HIGHERTERM] Reconnected old leader %d", leader_id);
+  Log_info("[ROLLBACK-HIGHERTERM] Reconnected old leader {}", leader_id);
 
   // Wait for old leader to see higher term and step down
   Fiber::sleep(ELECTIONTIMEOUT);
 
   // Log results
-  Log_info("[ROLLBACK-HIGHERTERM] Entry1: spec=%d durable=%d rollback=%d",
+  Log_info("[ROLLBACK-HIGHERTERM] Entry1: spec={} durable={} rollback={}",
            specNotifications.load(), durableNotifications.load(), rollbackNotifications.load());
-  Log_info("[ROLLBACK-HIGHERTERM] Entry2: spec=%d durable=%d rollback=%d",
+  Log_info("[ROLLBACK-HIGHERTERM] Entry2: spec={} durable={} rollback={}",
            cmd2Spec.load(), cmd2Durable.load(), cmd2Rollback.load());
 
   // The key assertion: HigherTerm should NOT generate ROLLEDBACK notifications
@@ -5774,7 +5774,7 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 65: Leader elected: %d", leader);
+  Log_info("TEST 65: Leader elected: {}", leader);
 
   // Pick a follower
   siteid_t follower_id = config_->getNextServerId(leader, 1);
@@ -5808,18 +5808,18 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   // Verify snapshot was created on follower
   uint64_t snap_idx = follower_server->GetSnapshotIndex();
   uint64_t snap_term = follower_server->GetSnapshotTerm();
-  Log_info("TEST 65: Follower %d snapshot: index=%lu term=%lu", follower_id, snap_idx, snap_term);
+  Log_info("TEST 65: Follower {} snapshot: index={} term={}", follower_id, snap_idx, snap_term);
   Assert2(snap_idx > 0, "Snapshot should have been created on follower, got index=%lu", snap_idx);
 
   // Record pre-kill state
   uint64_t exec_before = follower_server->executeIndex;
   uint64_t commit_before = follower_server->commitIndex;
   uint64_t last_log_before = follower_server->lastLogIndex;
-  Log_info("TEST 65: Before kill - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu min_active_slot_=%lu",
+  Log_info("TEST 65: Before kill - executeIndex={} commitIndex={} lastLogIndex={} min_active_slot_={}",
            exec_before, commit_before, last_log_before, follower_server->min_active_slot_);
 
   // Kill the follower
-  Log_info("TEST 65: Killing follower %d", follower_id);
+  Log_info("TEST 65: Killing follower {}", follower_id);
   config_->Kill(follower_id);
   Fiber::sleep(ELECTIONTIMEOUT / 2);
 
@@ -5829,7 +5829,7 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1);  // @unsafe
 
   // Restart the follower - Setup() will call InitializeSnapshotManager()
-  Log_info("TEST 65: Restarting follower %d", follower_id);
+  Log_info("TEST 65: Restarting follower {}", follower_id);
   config_->Restart(follower_id);
   Fiber::sleep(ELECTIONTIMEOUT);
 
@@ -5847,8 +5847,8 @@ int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
   uint64_t min_slot_after = follower_server->min_active_slot_;
   uint64_t snap_idx_after = follower_server->GetSnapshotIndex();
 
-  Log_info("TEST 65: After restart - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
-           "min_active_slot_=%lu snapidx=%lu",
+  Log_info("TEST 65: After restart - executeIndex={} commitIndex={} lastLogIndex={} "
+           "min_active_slot_={} snapidx={}",
            exec_after, commit_after, last_log_after, min_slot_after, snap_idx_after);
 
   // Verify state reflects snapshot
@@ -5905,7 +5905,7 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 66: Leader elected: %d", leader);
+  Log_info("TEST 66: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -5930,7 +5930,7 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   Fiber::sleep(2000000);
 
   uint64_t snap_idx = server->GetSnapshotIndex();
-  Log_info("TEST 66: Snapshot created at index %lu", snap_idx);
+  Log_info("TEST 66: Snapshot created at index {}", snap_idx);
   Assert2(snap_idx > 0, "Snapshot should have been created");
 
   // Commit MORE entries so that executeIndex/commitIndex are ahead of snapshot
@@ -5948,8 +5948,8 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   uint64_t commit_before = server->commitIndex;
   uint64_t last_log_before = server->lastLogIndex;
   uint64_t min_slot_before = server->min_active_slot_;
-  Log_info("TEST 66: Before re-init - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
-           "min_active_slot_=%lu snap_idx=%lu",
+  Log_info("TEST 66: Before re-init - executeIndex={} commitIndex={} lastLogIndex={} "
+           "min_active_slot_={} snap_idx={}",
            exec_before, commit_before, last_log_before, min_slot_before, snap_idx);
 
   Assert2(exec_before > snap_idx,
@@ -5971,8 +5971,8 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   uint64_t commit_after = server->commitIndex;
   uint64_t last_log_after = server->lastLogIndex;
   uint64_t min_slot_after = server->min_active_slot_;
-  Log_info("TEST 66: After re-init - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
-           "min_active_slot_=%lu",
+  Log_info("TEST 66: After re-init - executeIndex={} commitIndex={} lastLogIndex={} "
+           "min_active_slot_={}",
            exec_after, commit_after, last_log_after, min_slot_after);
 
   Assert2(exec_after >= exec_before,
@@ -6010,7 +6010,7 @@ int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 67: Leader elected: %d", leader);
+  Log_info("TEST 67: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6020,7 +6020,7 @@ int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
   Assert2(default_interval == HEARTBEAT_INTERVAL,
           "Default heartbeat interval should be %d, got %lu",
           HEARTBEAT_INTERVAL, default_interval);
-  Log_info("TEST 67: Default heartbeat interval verified: %lu us", default_interval);
+  Log_info("TEST 67: Default heartbeat interval verified: {} us", default_interval);
 
   // 2. Set interval to a new value via SetHeartbeatInterval()
   uint64_t new_interval = 200000;  // 200ms
@@ -6031,7 +6031,7 @@ int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
   Assert2(retrieved == new_interval,
           "Heartbeat interval should be %lu after set, got %lu",
           new_interval, retrieved);
-  Log_info("TEST 67: Heartbeat interval updated to %lu us", retrieved);
+  Log_info("TEST 67: Heartbeat interval updated to {} us", retrieved);
 
   // 4. Set on all servers and verify
   for (int i = 0; i < NSERVERS; i++) {
@@ -6048,7 +6048,7 @@ int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
   // 5. Verify the cluster still works (commit an entry)
   uint64_t idx = config_->DoAgreement(6700, NSERVERS, true);
   Assert2(idx > 0, "DoAgreement should succeed after changing heartbeat interval");
-  Log_info("TEST 67: Agreement reached at index %lu with modified interval", idx);
+  Log_info("TEST 67: Agreement reached at index {} with modified interval", idx);
 
   // 6. Restore original interval
   for (int i = 0; i < NSERVERS; i++) {
@@ -6073,7 +6073,7 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 68: Leader elected: %d", leader);
+  Log_info("TEST 68: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6082,7 +6082,7 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
   uint64_t default_window = server->GetLogRetentionWindow();
   Assert2(default_window == 5000,
           "Default log retention window should be 5000, got %lu", default_window);
-  Log_info("TEST 68: Default log retention window verified: %lu", default_window);
+  Log_info("TEST 68: Default log retention window verified: {}", default_window);
 
   // 2. Set window to a smaller value via SetLogRetentionWindow()
   uint64_t new_window = 20;
@@ -6093,7 +6093,7 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
   Assert2(retrieved == new_window,
           "Log retention window should be %lu after set, got %lu",
           new_window, retrieved);
-  Log_info("TEST 68: Log retention window updated to %lu", retrieved);
+  Log_info("TEST 68: Log retention window updated to {}", retrieved);
 
   // 4. Set on all servers and verify
   for (int i = 0; i < NSERVERS; i++) {
@@ -6105,7 +6105,7 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
               i, new_window, s->GetLogRetentionWindow());
     }
   }
-  Log_info("TEST 68: All servers updated to window=%lu", new_window);
+  Log_info("TEST 68: All servers updated to window={}", new_window);
 
   // 5. Commit enough entries to trigger cleanup
   // With window=20, committing 40 entries should trigger cleanup
@@ -6118,7 +6118,7 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
   // 6. Verify the cluster still works after cleanup
   uint64_t final_idx = config_->DoAgreement(6899, NSERVERS, true);
   Assert2(final_idx > 0, "DoAgreement should succeed after log cleanup");
-  Log_info("TEST 68: Agreement reached at index %lu after cleanup", final_idx);
+  Log_info("TEST 68: Agreement reached at index {} after cleanup", final_idx);
 
   // 7. Restore default window
   for (int i = 0; i < NSERVERS; i++) {
@@ -6146,7 +6146,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 69: Leader elected: %d", leader);
+  Log_info("TEST 69: Leader elected: {}", leader);
 
   // Set up snapshot managers on ALL servers with low threshold
   // @unsafe { filesystem and shared_ptr usage }
@@ -6175,7 +6175,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
     }
   }
   Assert2(follower >= 0, "No follower found");
-  Log_info("TEST 69: Disconnecting follower %d", follower);
+  Log_info("TEST 69: Disconnecting follower {}", follower);
 
   // Disconnect the follower
   config_->Disconnect(follower);
@@ -6205,7 +6205,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   }
   uint64_t leader_min_active = leader_server->min_active_slot_;
 
-  Log_info("TEST 69: Leader snapshot index=%lu, min_active_slot=%lu",
+  Log_info("TEST 69: Leader snapshot index={}, min_active_slot={}",
            leader_snap_idx, leader_min_active);
   Assert2(leader_snap_idx > 0,
           "Leader should have created a snapshot, got snapidx=%lu", leader_snap_idx);
@@ -6214,7 +6214,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
           leader_min_active);
 
   // Reconnect the follower
-  Log_info("TEST 69: Reconnecting follower %d", follower);
+  Log_info("TEST 69: Reconnecting follower {}", follower);
   config_->Reconnect(follower);
 
   // Wait for heartbeat rounds to trigger InstallSnapshot to the follower
@@ -6225,7 +6225,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   Assert2(follower_server != nullptr, "Follower server should not be null after reconnect");
 
   uint64_t follower_snap_idx = follower_server->GetSnapshotIndex();
-  Log_info("TEST 69: Follower snapshot index=%lu (leader=%lu)",
+  Log_info("TEST 69: Follower snapshot index={} (leader={})",
            follower_snap_idx, leader_snap_idx);
   Assert2(follower_snap_idx >= leader_snap_idx,
           "Follower snapidx_ should match leader's (%lu), got %lu",
@@ -6235,7 +6235,7 @@ int RaftLabTest::testLongPartitionRecovery(void) {
   uint64_t new_idx = config_->DoAgreement(6999, NSERVERS, true);
   Assert2(new_idx > 0,
           "DoAgreement should succeed with all 5 nodes after partition recovery");
-  Log_info("TEST 69: Full cluster agreement reached at index %lu", new_idx);
+  Log_info("TEST 69: Full cluster agreement reached at index {}", new_idx);
 
   // Restore original snapshot managers and settings
   // @unsafe { filesystem cleanup }
@@ -6270,7 +6270,7 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 70: Initial leader: %d", leader);
+  Log_info("TEST 70: Initial leader: {}", leader);
 
   // Commit a few entries to establish state
   for (int i = 1; i <= 3; i++) {
@@ -6288,7 +6288,7 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
     }
   }
   Assert2(target >= 0, "No non-leader server found");
-  Log_info("TEST 70: Transfer target (will crash): %d", target);
+  Log_info("TEST 70: Transfer target (will crash): {}", target);
 
   auto target_server = config_->GetServer(target);
   Assert2(target_server != nullptr, "Target server should not be null");
@@ -6310,11 +6310,11 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
       leader_server->site_id_,
       &follower_term,
       &success);
-  Log_info("TEST 70: Sent TimeoutNow to target %d, success=%d", target, (int)success);
+  Log_info("TEST 70: Sent TimeoutNow to target {}, success={}", target, (int)success);
 
   // Immediately kill the target before it can win the election
   config_->Kill(target);
-  Log_info("TEST 70: Killed target %d", target);
+  Log_info("TEST 70: Killed target {}", target);
 
   // Wait for election timeout so remaining servers can elect a new leader
   Fiber::sleep(ELECTIONTIMEOUT * 2);
@@ -6324,13 +6324,13 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   Assert2(new_leader >= 0, "A leader should emerge after target crashed");
   Assert2(new_leader != target,
           "New leader (%d) should not be the killed target (%d)", new_leader, target);
-  Log_info("TEST 70: New leader elected: %d", new_leader);
+  Log_info("TEST 70: New leader elected: {}", new_leader);
 
   // Verify the cluster can still commit entries with 4 remaining nodes
   uint64_t idx = config_->DoAgreement(7010, NSERVERS - 1, true);
   Assert2(idx > 0,
           "DoAgreement should succeed with %d nodes after target crash", NSERVERS - 1);
-  Log_info("TEST 70: Agreement reached at index %lu with 4 nodes", idx);
+  Log_info("TEST 70: Agreement reached at index {} with 4 nodes", idx);
 
   // Restart the killed target so cleanup (NDisconnected check) passes
   config_->Restart(target);
@@ -6340,7 +6340,7 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
   uint64_t final_idx = config_->DoAgreement(7020, NSERVERS, true);
   Assert2(final_idx > 0,
           "DoAgreement should succeed with all %d nodes restored", NSERVERS);
-  Log_info("TEST 70: Full cluster agreement at index %lu", final_idx);
+  Log_info("TEST 70: Full cluster agreement at index {}", final_idx);
 
   Log_info("TEST 70: Leadership transfer timeout PASSED!");
   Passed2();
@@ -6386,7 +6386,7 @@ int RaftLabTest::testDurableAckLoss(void) {
   uint64_t securedBefore = config_->GetSecuredLogIndex(leader_id);
   uint64_t specCommitBefore = config_->GetSpecCommitIndex(leader_id);
 
-  Log_info("TEST 71: Before new entries: securedLogIndex=%lu, specCommitIndex=%lu",
+  Log_info("TEST 71: Before new entries: securedLogIndex={}, specCommitIndex={}",
            securedBefore, specCommitBefore);
 
   // Submit more entries - these should get memory acks (advancing specCommitIndex_)
@@ -6398,7 +6398,7 @@ int RaftLabTest::testDurableAckLoss(void) {
     uint64_t term = 0;
     bool ok = config_->Start(leader_id, 7110 + i, &index, &term);
     Assert2(ok, "Failed to submit command %d to leader", 7110 + i);
-    Log_info("TEST 71: Submitted command %d at index %lu", 7110 + i, index);
+    Log_info("TEST 71: Submitted command {} at index {}", 7110 + i, index);
   }
 
   // Wait for memory acks to arrive (short wait - enough for memory, may not be
@@ -6411,7 +6411,7 @@ int RaftLabTest::testDurableAckLoss(void) {
   uint64_t specCommitAfter = config_->GetSpecCommitIndex(leader_id);
   uint64_t securedAfter = config_->GetSecuredLogIndex(leader_id);
 
-  Log_info("TEST 71: After new entries: securedLogIndex=%lu, specCommitIndex=%lu",
+  Log_info("TEST 71: After new entries: securedLogIndex={}, specCommitIndex={}",
            securedAfter, specCommitAfter);
 
   // specCommitIndex should have advanced beyond the "before" value
@@ -6426,7 +6426,7 @@ int RaftLabTest::testDurableAckLoss(void) {
 
   uint64_t lastLog = server->GetLastLogIndex();
 
-  Log_info("TEST 71: Invariant check: securedLogIndex=%lu <= specCommitIndex=%lu <= lastLogIndex=%lu",
+  Log_info("TEST 71: Invariant check: securedLogIndex={} <= specCommitIndex={} <= lastLogIndex={}",
            securedAfter, specCommitAfter, lastLog);
 
   Assert2(securedAfter <= specCommitAfter,
@@ -6487,7 +6487,7 @@ int RaftLabTest::testHighFrequencyApply(void) {
   uint64_t first_index = 0;
   uint64_t last_index = 0;
 
-  Log_info("TEST 72: Submitting %d entries rapidly to leader %d", NUM_ENTRIES, leader);
+  Log_info("TEST 72: Submitting {} entries rapidly to leader {}", NUM_ENTRIES, leader);
 
   // @unsafe { Start calls into Raft }
   for (int i = 0; i < NUM_ENTRIES; i++) {
@@ -6499,7 +6499,7 @@ int RaftLabTest::testHighFrequencyApply(void) {
     last_index = index;
   }
 
-  Log_info("TEST 72: All %d entries submitted (indices %lu to %lu)",
+  Log_info("TEST 72: All {} entries submitted (indices {} to {})",
            NUM_ENTRIES, first_index, last_index);
   Assert2(last_index - first_index + 1 == (uint64_t)NUM_ENTRIES,
           "Expected %d consecutive indices, got range %lu-%lu",
@@ -6524,7 +6524,7 @@ int RaftLabTest::testHighFrequencyApply(void) {
   Assert2(result >= 0,
           "Failed waiting for last index %lu to commit (result=%d)", last_index, result);
 
-  Log_info("TEST 72: All entries committed through index %lu", last_index);
+  Log_info("TEST 72: All entries committed through index {}", last_index);
 
   // Verify no entries were dropped: check that NCommitted returns NSERVERS
   // for several entries spanning the range
@@ -6573,7 +6573,7 @@ int RaftLabTest::testAddServerBasic(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 73: Leader elected: %d", leader);
+  Log_info("TEST 73: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6583,13 +6583,13 @@ int RaftLabTest::testAddServerBasic(void) {
   size_t initial_size = initial_config.size();
   Assert2(initial_size == NSERVERS,
           "Initial config size should be %d, got %zu", NSERVERS, initial_size);
-  Log_info("TEST 73: Initial config size verified: %zu", initial_size);
+  Log_info("TEST 73: Initial config size verified: {}", initial_size);
 
   // 2. Verify initial quorum size
   size_t initial_quorum = server->GetQuorumSize();
   Assert2(initial_quorum == (NSERVERS / 2 + 1),
           "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
-  Log_info("TEST 73: Initial quorum size verified: %zu", initial_quorum);
+  Log_info("TEST 73: Initial quorum size verified: {}", initial_quorum);
 
   // 3. Directly add a new server to current_config_ (simulating OnAddServer)
   siteid_t new_server_id = 9999;
@@ -6601,14 +6601,14 @@ int RaftLabTest::testAddServerBasic(void) {
     server->config_change_pending_ = true;
     server->pending_config_index_ = server->lastLogIndex;
   }
-  Log_info("TEST 73: Added server %d to config", new_server_id);
+  Log_info("TEST 73: Added server {} to config", new_server_id);
 
   // 4. Verify config grew by 1
   auto& updated_config = server->GetCurrentConfig();
   Assert2(updated_config.size() == initial_size + 1,
           "Config size should be %zu after add, got %zu",
           initial_size + 1, updated_config.size());
-  Log_info("TEST 73: Config size after add: %zu", updated_config.size());
+  Log_info("TEST 73: Config size after add: {}", updated_config.size());
 
   // 5. Verify new server is in config
   Assert2(updated_config.count(new_server_id) > 0,
@@ -6619,7 +6619,7 @@ int RaftLabTest::testAddServerBasic(void) {
   Assert2(new_quorum == (initial_size + 1) / 2 + 1,
           "Quorum should be %zu after add, got %zu",
           (initial_size + 1) / 2 + 1, new_quorum);
-  Log_info("TEST 73: Quorum after add: %zu", new_quorum);
+  Log_info("TEST 73: Quorum after add: {}", new_quorum);
 
   // 7. Verify config_change_pending_ flag is set
   Assert2(server->config_change_pending_,
@@ -6635,7 +6635,7 @@ int RaftLabTest::testAddServerBasic(void) {
 
   uint64_t idx = config_->DoAgreement(7300, NSERVERS, true);
   Assert2(idx > 0, "DoAgreement should succeed after restoring config");
-  Log_info("TEST 73: Agreement reached at index %lu", idx);
+  Log_info("TEST 73: Agreement reached at index {}", idx);
 
   Log_info("TEST 73: AddServer basic PASSED!");
   Passed2();
@@ -6653,7 +6653,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 74: Leader elected: %d", leader);
+  Log_info("TEST 74: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6670,7 +6670,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   Assert2(size_before == NSERVERS + 1,
           "Config should be %d after adding fake server, got %zu",
           NSERVERS + 1, size_before);
-  Log_info("TEST 74: Config size before remove: %zu", size_before);
+  Log_info("TEST 74: Config size before remove: {}", size_before);
 
   // Remove the extra server
   {
@@ -6681,7 +6681,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
     server->config_change_pending_ = true;
     server->pending_config_index_ = server->lastLogIndex;
   }
-  Log_info("TEST 74: Removed server %d from config", extra_server_id);
+  Log_info("TEST 74: Removed server {} from config", extra_server_id);
 
   // Verify config shrunk by 1
   Assert2(server->GetCurrentConfig().size() == size_before - 1,
@@ -6697,7 +6697,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   Assert2(server->GetQuorumSize() == expected_quorum,
           "Quorum should be %zu after remove, got %zu",
           expected_quorum, server->GetQuorumSize());
-  Log_info("TEST 74: Quorum after remove: %zu", server->GetQuorumSize());
+  Log_info("TEST 74: Quorum after remove: {}", server->GetQuorumSize());
 
   // Clear pending and verify cluster still works
   server->config_change_pending_ = false;
@@ -6721,7 +6721,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 75: Leader elected: %d", leader);
+  Log_info("TEST 75: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6778,7 +6778,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   Assert2(follower != nullptr, "Follower should not be null");
   Assert2(!follower->IsLeader(),
           "Non-leader server should not be leader");
-  Log_info("TEST 75: Non-leader correctly identified (server %d)", non_leader);
+  Log_info("TEST 75: Non-leader correctly identified (server {})", non_leader);
 
   // 6. Verify all servers have correct initial config size
   for (int i = 0; i < NSERVERS; i++) {
@@ -6812,7 +6812,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 76: Leader elected: %d", leader);
+  Log_info("TEST 76: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -6822,7 +6822,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Assert2(idx1 > 0, "First agreement should succeed");
   uint64_t idx2 = config_->DoAgreement(7602, NSERVERS, true);
   Assert2(idx2 > 0, "Second agreement should succeed");
-  Log_info("TEST 76: Committed entries at indices %lu and %lu", idx1, idx2);
+  Log_info("TEST 76: Committed entries at indices {} and {}", idx1, idx2);
 
   // 2. Record initial state
   size_t initial_config_size = server->GetCurrentConfig().size();
@@ -6830,7 +6830,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "Initial config size should be %d, got %zu", NSERVERS, initial_config_size);
   Assert2(server->GetLearners().empty(),
           "No learners initially");
-  Log_info("TEST 76: Initial config size=%zu, learners=%zu",
+  Log_info("TEST 76: Initial config size={}, learners={}",
            initial_config_size, server->GetLearners().size());
 
   // 3. Add a fake server as learner via direct manipulation (simulating OnAddServer)
@@ -6852,7 +6852,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
     server->match_index_[new_server_id] = 0;
   }
-  Log_info("TEST 76: Added server %d as learner", new_server_id);
+  Log_info("TEST 76: Added server {} as learner", new_server_id);
 
   // 4. Verify the server is in learners_ but NOT in current_config_
   Assert2(server->IsLearner(new_server_id),
@@ -6863,7 +6863,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "Config size should be unchanged while server is learner");
   Assert2(server->config_change_pending_,
           "config_change_pending_ should be true");
-  Log_info("TEST 76: Verified learner state - learner=%d, in_config=%d",
+  Log_info("TEST 76: Verified learner state - learner={}, in_config={}",
            server->IsLearner(new_server_id),
            (int)(server->GetCurrentConfig().count(new_server_id) > 0));
 
@@ -6872,7 +6872,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Assert2(quorum_with_learner == (initial_config_size / 2 + 1),
           "Quorum should not change while server is learner: expected %zu, got %zu",
           initial_config_size / 2 + 1, quorum_with_learner);
-  Log_info("TEST 76: Quorum unchanged at %zu (learner not counted)", quorum_with_learner);
+  Log_info("TEST 76: Quorum unchanged at {} (learner not counted)", quorum_with_learner);
 
   // 6. CheckAndPromoteLearners should NOT promote yet (match_index_ = 0, far behind)
   {
@@ -6892,7 +6892,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
     uint64_t leader_last = server->lastLogIndex;
     Assert2(leader_last > 0, "Leader should have log entries");
     server->match_index_[new_server_id] = leader_last;  // Fully caught up
-    Log_info("TEST 76: Set match_index[%d] = %lu (lastLogIndex=%lu)",
+    Log_info("TEST 76: Set match_index[{}] = {} (lastLogIndex={})",
              new_server_id, leader_last, leader_last);
   }
 
@@ -6911,7 +6911,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "Config size should have grown by 1 after promotion");
   Assert2(!server->config_change_pending_,
           "config_change_pending_ should be false after promotion");
-  Log_info("TEST 76: Promoted! config_size=%zu, quorum=%zu",
+  Log_info("TEST 76: Promoted! config_size={}, quorum={}",
            server->GetCurrentConfig().size(), server->GetQuorumSize());
 
   // 10. Verify quorum updated after promotion
@@ -6919,7 +6919,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   Assert2(new_quorum == (initial_config_size + 1) / 2 + 1,
           "Quorum should update after promotion: expected %zu, got %zu",
           (initial_config_size + 1) / 2 + 1, new_quorum);
-  Log_info("TEST 76: Quorum updated to %zu", new_quorum);
+  Log_info("TEST 76: Quorum updated to {}", new_quorum);
 
   // 11. Test threshold behavior: add another learner, set it just within threshold
   siteid_t new_server_id2 = 9999;
@@ -6936,7 +6936,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
     } else {
       server->match_index_[new_server_id2] = 0;  // Close enough for small logs
     }
-    Log_info("TEST 76: Added second learner %d, match_index=%lu, threshold=%lu, lastLogIndex=%lu",
+    Log_info("TEST 76: Added second learner {}, match_index={}, threshold={}, lastLogIndex={}",
              new_server_id2, server->match_index_[new_server_id2], threshold, leader_last);
   }
 
@@ -6968,7 +6968,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
       // If log is too short, skip this sub-test
       server->match_index_[new_server_id3] = 0;
     }
-    Log_info("TEST 76: Added third learner %d, match_index=%lu, threshold=%lu, lastLogIndex=%lu",
+    Log_info("TEST 76: Added third learner {}, match_index={}, threshold={}, lastLogIndex={}",
              new_server_id3, server->match_index_[new_server_id3], threshold, leader_last);
   }
 
@@ -7005,7 +7005,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
   // Verify cluster still works
   uint64_t idx3 = config_->DoAgreement(7603, NSERVERS, true);
   Assert2(idx3 > 0, "DoAgreement should succeed after cleanup");
-  Log_info("TEST 76: Agreement reached at index %lu after cleanup", idx3);
+  Log_info("TEST 76: Agreement reached at index {} after cleanup", idx3);
 
   Log_info("TEST 76: New server catch-up PASSED!");
   Passed2();
@@ -7025,7 +7025,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 77: Leader elected: %d", leader);
+  Log_info("TEST 77: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -7093,7 +7093,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   Assert2(actual_quorum == expected_quorum,
           "Quorum should be %zu for 6-server config, got %zu",
           expected_quorum, actual_quorum);
-  Log_info("TEST 77: Promoted! config_size=%zu, quorum=%zu",
+  Log_info("TEST 77: Promoted! config_size={}, quorum={}",
            server->GetCurrentConfig().size(), actual_quorum);
 
   // Cleanup
@@ -7126,7 +7126,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 78: Leader elected: %d", leader);
+  Log_info("TEST 78: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -7135,7 +7135,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   size_t initial_quorum = server->GetQuorumSize();
   Assert2(initial_quorum == (NSERVERS / 2 + 1),
           "Initial quorum should be %d, got %zu", NSERVERS / 2 + 1, initial_quorum);
-  Log_info("TEST 78: Initial config size=%d, quorum=%zu", NSERVERS, initial_quorum);
+  Log_info("TEST 78: Initial config size={}, quorum={}", NSERVERS, initial_quorum);
 
   // 2. Add two fake servers so we can remove one and still have enough real servers
   siteid_t fake1 = 8001;
@@ -7150,7 +7150,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   Assert2(size_with_extras == NSERVERS + 2,
           "Config should be %d after adding fakes, got %zu", NSERVERS + 2, size_with_extras);
   size_t quorum_with_extras = server->GetQuorumSize();
-  Log_info("TEST 78: After adding 2 fake servers: size=%zu, quorum=%zu",
+  Log_info("TEST 78: After adding 2 fake servers: size={}, quorum={}",
            size_with_extras, quorum_with_extras);
 
   // 3. Remove fake1 via config manipulation (simulating OnRemoveServer)
@@ -7175,7 +7175,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   Assert2(quorum_after_remove < quorum_with_extras,
           "Quorum should shrink: was %zu, now %zu",
           quorum_with_extras, quorum_after_remove);
-  Log_info("TEST 78: After remove: size=%zu, quorum=%zu (was %zu)",
+  Log_info("TEST 78: After remove: size={}, quorum={} (was {})",
            size_after_remove, quorum_after_remove, quorum_with_extras);
 
   // 6. Verify cluster can still commit entries
@@ -7189,7 +7189,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
   uint64_t idx = config_->DoAgreement(7800, NSERVERS, true);
   Assert2(idx > 0, "DoAgreement should succeed after removing server");
-  Log_info("TEST 78: Agreement reached at index %lu after restore", idx);
+  Log_info("TEST 78: Agreement reached at index {} after restore", idx);
 
   Log_info("TEST 78: RemoveServer quorum shrinks PASSED!");
   Passed2();
@@ -7207,7 +7207,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 79: Leader elected: %d", leader);
+  Log_info("TEST 79: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -7255,7 +7255,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   // 5. Verify quorum was never affected by learner
   Assert2(server->GetQuorumSize() == (NSERVERS / 2 + 1),
           "Quorum should be %d (learner doesn't count)", NSERVERS / 2 + 1);
-  Log_info("TEST 79: Quorum unchanged at %zu, learner correctly excluded",
+  Log_info("TEST 79: Quorum unchanged at {}, learner correctly excluded",
            server->GetQuorumSize());
 
   // Cleanup
@@ -7285,7 +7285,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 80: Leader elected: %d", leader);
+  Log_info("TEST 80: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -7302,12 +7302,12 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   }
   Assert2(server->config_change_pending_,
           "Leader should have config_change_pending_=true");
-  Log_info("TEST 80: Set config_change_pending=true on leader %d", leader);
+  Log_info("TEST 80: Set config_change_pending=true on leader {}", leader);
 
   // 2. Disconnect the leader to trigger re-election
   // @unsafe { Disconnect manipulates network state }
   config_->Disconnect(leader);
-  Log_info("TEST 80: Disconnected leader %d", leader);
+  Log_info("TEST 80: Disconnected leader {}", leader);
 
   // 3. Wait for new election
   // @unsafe { election wait }
@@ -7315,7 +7315,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   int new_leader = config_->OneLeader();
   Assert2(new_leader >= 0, "New leader should be elected");
   Assert2(new_leader != leader, "New leader should be different from old leader");
-  Log_info("TEST 80: New leader elected: %d", new_leader);
+  Log_info("TEST 80: New leader elected: {}", new_leader);
 
   // 4. Verify new leader does NOT have config_change_pending
   auto new_server = config_->GetServer(new_leader);
@@ -7332,7 +7332,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
   uint64_t idx = config_->DoAgreement(8000, NSERVERS - 1, true);
   Assert2(idx > 0, "DoAgreement should succeed with new leader");
-  Log_info("TEST 80: Agreement reached at index %lu with new leader", idx);
+  Log_info("TEST 80: Agreement reached at index {} with new leader", idx);
 
   // 7. Reconnect old leader
   // @unsafe { Reconnect manipulates network state }
@@ -7368,7 +7368,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 81: Leader elected: %d", leader);
+  Log_info("TEST 81: Leader elected: {}", leader);
 
   auto server = config_->GetServer(leader);
   Assert2(server != nullptr, "Server should not be null");
@@ -8030,14 +8030,14 @@ int RaftLabTest::testReplicatedDBSnapshot(void) {
   // Create snapshot
   std::string snapshot_blob = rdb->CreateStateMachineSnapshot();
   Assert2(!snapshot_blob.empty(), "Snapshot blob should be non-empty");
-  Log_info("TEST 88: Snapshot blob size = %zu bytes", snapshot_blob.size());
+  Log_info("TEST 88: Snapshot blob size = {} bytes", snapshot_blob.size());
 
   // Verify the blob has a compression header byte followed by data
   Assert2(snapshot_blob.size() >= 1, "Blob should have at least 1 byte (compression header)");
   uint8_t compression_byte = static_cast<uint8_t>(snapshot_blob[0]);
   Assert2(compression_byte == 0 || compression_byte == 1,
           "Compression header should be 0 (uncompressed) or 1 (LZ4), got %u", compression_byte);
-  Log_info("TEST 88: Snapshot compression byte = %u", compression_byte);
+  Log_info("TEST 88: Snapshot compression byte = {}", compression_byte);
 
   // Load snapshot back into the same ReplicatedDB (simulates recovery)
   rdb->LoadStateMachineSnapshot(snapshot_blob);
@@ -8140,7 +8140,7 @@ int RaftLabTest::testReplicatedDBSnapshotTransfer(void) {
   // Create snapshot on leader
   std::string snapshot_blob = leader_rdb->CreateStateMachineSnapshot();
   Assert2(!snapshot_blob.empty(), "Leader snapshot blob should be non-empty");
-  Log_info("TEST 89: Leader snapshot blob size = %zu bytes", snapshot_blob.size());
+  Log_info("TEST 89: Leader snapshot blob size = {} bytes", snapshot_blob.size());
 
   // Create a follower ReplicatedDB (empty initially)
   auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
@@ -8421,7 +8421,7 @@ int RaftLabTest::testReplicatedDBSnapshotCompression(void) {
   uint32_t orig_size = 0;
   std::memcpy(&orig_size, compressed_blob.data() + 1, sizeof(orig_size));
   Assert2(orig_size > 0, "Original size should be > 0, got %u", orig_size);
-  Log_info("TEST 91: Compressed blob: %zu bytes, original: %u bytes (ratio: %.1f%%)",
+  Log_info("TEST 91: Compressed blob: {} bytes, original: {} bytes (ratio: {:.1f}%)",
            compressed_blob.size(), orig_size,
            100.0 * static_cast<double>(compressed_blob.size()) / static_cast<double>(orig_size));
 
@@ -9581,7 +9581,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
 
   // Step 5: Kill the follower - destroy the ReplicatedDB first
   follower_rdb.reset();
-  Log_info("TEST 101: Killing follower %d", follower_victim);
+  Log_info("TEST 101: Killing follower {}", follower_victim);
   config_->Kill(follower_victim);
 
   // Wait for the kill to take effect
@@ -9604,7 +9604,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
   Log_info("TEST 101: Leader verified all 4 keys");
 
   // Step 7: Restart the follower
-  Log_info("TEST 101: Restarting follower %d", follower_victim);
+  Log_info("TEST 101: Restarting follower {}", follower_victim);
   config_->Restart(follower_victim);
 
   // Step 8: Wait for Raft to replicate missed entries to the restarted follower
@@ -9659,7 +9659,7 @@ int RaftLabTest::testReplicatedDBCrashRecovery(void) {
 
   uint64_t agree_idx = config_->DoAgreement(10101, NSERVERS, true);
   Assert2(agree_idx > 0, "Cluster should still commit with all 5 nodes after recovery");
-  Log_info("TEST 101: Cluster committed with all 5 nodes, index=%lu", agree_idx);
+  Log_info("TEST 101: Cluster committed with all 5 nodes, index={}", agree_idx);
 
   // Cleanup
   leader_rdb.reset();

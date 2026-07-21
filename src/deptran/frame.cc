@@ -279,8 +279,8 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
       break;
   }
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of CreateTx on server: %d", end.tv_nsec-begin.tv_nsec);*/
-  Log_debug("exit CreateTx, Tx address=%p", sp_tx.get());
+	Log_info("time of CreateTx on server: {}", end.tv_nsec-begin.tv_nsec);*/
+  Log_debug("exit CreateTx, Tx address={}", (void*)sp_tx.get());
   return sp_tx;
 }
 
@@ -303,7 +303,7 @@ Executor* Frame::CreateExecutor(cmdid_t cmd_id, TxLogServer* sched) {
 }
 
 TxLogServer* Frame::CreateScheduler() {
-  Log_info("enter CreateScheduler, mode=%d", Config::GetConfig()->tx_proto_);
+  Log_info("enter CreateScheduler, mode={}", Config::GetConfig()->tx_proto_);
   auto mode = Config::GetConfig()->tx_proto_;
   TxLogServer *sch = nullptr;
   if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {

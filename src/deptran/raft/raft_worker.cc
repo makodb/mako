@@ -146,7 +146,7 @@ void RaftWorker::SetupService() {
   // Start RPC server
   int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
-    Log_fatal("Raft server launch failed at %s", bind_addr.c_str());
+    Log_fatal("Raft server launch failed at {}", bind_addr.c_str());
   }
 }
 
@@ -235,13 +235,13 @@ void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] shutting down poll threads");
   if (svr_poll_thread_worker_.is_some()) {
     auto& poll_thread = svr_poll_thread_worker_.as_ref().unwrap();
-    Log_info("[RAFT-WORKER-SHUTDOWN] calling shutdown on svr_poll_thread_worker_=%p", poll_thread.get());
+    Log_info("[RAFT-WORKER-SHUTDOWN] calling shutdown on svr_poll_thread_worker_={}", (void*)poll_thread.get());
     poll_thread->shutdown();
     Log_info("[RAFT-WORKER-SHUTDOWN] svr_poll_thread_worker_ shutdown returned");
   }
   if (svr_hb_poll_thread_worker_g.is_some()) {
     auto& poll_thread = svr_hb_poll_thread_worker_g.as_ref().unwrap();
-    Log_info("[RAFT-WORKER-SHUTDOWN] calling shutdown on svr_hb_poll_thread_worker_g=%p", poll_thread.get());
+    Log_info("[RAFT-WORKER-SHUTDOWN] calling shutdown on svr_hb_poll_thread_worker_g={}", (void*)poll_thread.get());
     poll_thread->shutdown();
     Log_info("[RAFT-WORKER-SHUTDOWN] svr_hb_poll_thread_worker_g shutdown returned");
   }
@@ -406,7 +406,7 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     mut_cmd.cmd_ = std::move(vpd);
   }
 
-  Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id=%lu with %d bytes (Mako/test payload)",
+  Log_debug("[RAFT-LOG-CMD] Created TpcCommitCommand tx_id={} with {} bytes (Mako/test payload)",
             tx_id, length);
 
   return tpc_cmd;
@@ -414,7 +414,7 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
 
 // @unsafe - external calls marked @external [safe], pointer ops are bounded
 void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
-  // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id=%d length=%d", par_id, length);
+  // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id={} length={}", par_id, length);
 
   // Do not pre-check leadership here. RaftServer::Start() performs the
   // authoritative leadership check under server lock; pre-checking can race.
@@ -522,7 +522,7 @@ void RaftWorker::register_leader_callback_par_id_return(
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {
-    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d",
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition {}",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
   }
@@ -537,7 +537,7 @@ void RaftWorker::register_leader_callback_par_id_return(
                                            std::placeholders::_2));
   }
 
-  Log_info("[RAFT-CALLBACK] Registered leader callback for partition %d",
+  Log_info("[RAFT-CALLBACK] Registered leader callback for partition {}",
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
@@ -550,7 +550,7 @@ void RaftWorker::register_follower_callback_par_id_return(
 
   // Guard against accessing scheduler during shutdown
   if (!rep_sched_) {
-    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d",
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition {}",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
   }
@@ -564,7 +564,7 @@ void RaftWorker::register_follower_callback_par_id_return(
                                            std::placeholders::_2));
   }
 
-  Log_info("[RAFT-CALLBACK] Registered follower callback for partition %d",
+  Log_info("[RAFT-CALLBACK] Registered follower callback for partition {}",
            site_info_ ? site_info_->partition_id_ : -1);
 }
 
@@ -614,22 +614,22 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
           const std::string& payload = first_val.get_str();
           log = payload.c_str();
           len = static_cast<int>(payload.size());
-          Log_debug("[RAFT-CALLBACK] Extracted log from VecPieceData (tx_id=%lu): len=%d",
+          Log_debug("[RAFT-CALLBACK] Extracted log from VecPieceData (tx_id={}): len={}",
                     tpc_cmd.unwrap()->tx_id_, len);
         } else {
-          Log_error("[RAFT-CALLBACK] VecPieceData value is not STR type for slot %d", slot_id);
+          Log_error("[RAFT-CALLBACK] VecPieceData value is not STR type for slot {}", slot_id);
           return status;
         }
       } else {
-        Log_error("[RAFT-CALLBACK] VecPieceData SimpleCommand has no values for slot %d", slot_id);
+        Log_error("[RAFT-CALLBACK] VecPieceData SimpleCommand has no values for slot {}", slot_id);
         return status;
       }
     } else {
-      Log_error("[RAFT-CALLBACK] TpcCommitCommand.cmd_ is not VecPieceData for slot %d", slot_id);
+      Log_error("[RAFT-CALLBACK] TpcCommitCommand.cmd_ is not VecPieceData for slot {}", slot_id);
       return status;
     }
   } else {
-    Log_error("[RAFT-CALLBACK] Command is not TpcCommitCommand for partition %d, slot %d",
+    Log_error("[RAFT-CALLBACK] Command is not TpcCommitCommand for partition {}, slot {}",
               site_info_ ? site_info_->partition_id_ : -1, slot_id);
     return status;
   }
@@ -660,12 +660,12 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   }
 
   if (!active_callback_ptr) {
-    Log_error("[RAFT-CALLBACK] No %s callback registered for partition %d",
+    Log_error("[RAFT-CALLBACK] No {} callback registered for partition {}",
               am_leader ? "leader" : "follower", par_id);
     return status;
   }
 
-  Log_debug("[RAFT-CALLBACK] Applying log at slot %d par_id %d using %s callback",
+  Log_debug("[RAFT-CALLBACK] Applying log at slot {} par_id {} using {} callback",
             slot_id, par_id, am_leader ? "LEADER" : "FOLLOWER");
 
   auto& un_replay_queue = un_replay_logs_by_partition_[par_id];
@@ -684,7 +684,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
                                            static_cast<const char*>(dest)));
   }
 
-  Log_debug("Raft applied log at slot %d: status=%d, timestamp=%u, role=%s, par_id=%d",
+  Log_debug("Raft applied log at slot {}: status={}, timestamp={}, role={}, par_id={}",
             slot_id, status, timestamp, am_leader ? "leader" : "follower", par_id);
 
   return status;
@@ -697,7 +697,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
   leader_callbacks_by_partition_[par_id] = cb;
 
   if (!rep_sched_) {
-    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d", par_id);
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition {}", par_id);
     return;
   }
 
@@ -709,7 +709,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
                                            std::placeholders::_2));
   }
 
-  Log_info("[SINGLE-RAFT] Registered leader callback for partition %d", par_id);
+  Log_info("[SINGLE-RAFT] Registered leader callback for partition {}", par_id);
 }
 
 // @unsafe
@@ -717,7 +717,7 @@ void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, water
   follower_callbacks_by_partition_[par_id] = cb;
 
   if (!rep_sched_) {
-    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d", par_id);
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition {}", par_id);
     return;
   }
 
@@ -729,7 +729,7 @@ void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, water
                                            std::placeholders::_2));
   }
 
-  Log_info("[SINGLE-RAFT] Registered follower callback for partition %d", par_id);
+  Log_info("[SINGLE-RAFT] Registered follower callback for partition {}", par_id);
 }
 
 // @unsafe

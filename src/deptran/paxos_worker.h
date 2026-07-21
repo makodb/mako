@@ -22,7 +22,7 @@ namespace janus {
 	inline void read_log(const char* log, int length, const char* custom){
 		uint32_t cid = 0;
 		memcpy(&cid, log, sizeof(uint32_t));
-		Log_info("commit id %ld and length %d from %s", cid, length, custom);
+		Log_info("commit id {} and length {} from {}", cid, length, custom);
 	}
 
 	// removed `class SubmitPool` (~120 LOC) —
@@ -514,7 +514,7 @@ public:
 
   int set_epoch(int val = -1){
     if(val == -1){
-      //Log_info("XXXXX current default epoch %d", cur_epoch);
+      //Log_info("XXXXX current default epoch {}", cur_epoch);
       return ++cur_epoch;
     } else{
       cur_epoch = val;
@@ -541,7 +541,7 @@ public:
 
   void set_leader(int val){
     //if(val != 0)
-//	Log_info("Leader being set %d", val);
+//	Log_info("Leader being set {}", val);
     leader_id = val;
   }
 

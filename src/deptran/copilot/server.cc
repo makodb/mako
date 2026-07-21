@@ -31,7 +31,7 @@ CopilotServer::CopilotServer(Frame* frame) : log_infos_(2) {
 
 shared_ptr<CopilotData> CopilotServer::GetInstance(slotid_t slot, uint8_t is_pilot) {
   if (slot < log_infos_[is_pilot].min_active_slot && slot != 0) {
-    Log_debug("server %d get freed ins %s %lu", id_, toString(is_pilot), slot);
+    Log_debug("server {} get freed ins {} {}", id_, toString(is_pilot), slot);
     return nullptr;  // never re-create freed slot
   }
   auto& sp_instance = log_infos_[is_pilot].logs[slot];
@@ -69,7 +69,7 @@ std::pair<slotid_t, uint64_t> CopilotServer::PickInitSlotAndDep() {
     assigned_slot = 0;
   }
 
-  Log_debug("server %d assigned %s : %lu -> %lu", id_, toString(isPilot_),
+  Log_debug("server {} assigned {} : {} -> {}", id_, toString(isPilot_),
             assigned_slot, init_dep);
 
   return { assigned_slot, init_dep };
@@ -101,13 +101,13 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
   if (GET_STATUS(ins->status) < Status::FAST_ACCEPTED)
     return false;
   if (GET_STATUS(ins->status) == Status::EXECUTED) {
-    Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
+    Log_debug("server {}: eliminate {} entry {} status {:x}", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
     return true;
   }
   if (likely(cmd.kind_ == TpcBatchCommand::static_kind())) {
     // check if cmd committed in tx scheduler, which virtually means cmd is executed
     if (allCmdComitted(cmd)) {
-      Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
+      Log_debug("server {}: eliminate {} entry {} status {:x}", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
        ins->status = Status::EXECUTED;
        if (ins->cmit_evt.value_ < 1)
          ins->cmit_evt.set(1);
@@ -119,7 +119,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     }
   } else if (cmd.kind_ == TpcNoopCommand::static_kind()) {
     // I don't think this case is possible
-    Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
+    Log_debug("server {}: eliminate {} entry {} status {:x}", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
      ins->status = Status::EXECUTED;
      if (ins->cmit_evt.value_ < 1)
          ins->cmit_evt.set(1);
@@ -163,11 +163,11 @@ void CopilotServer::WaitForPingPong() {
    */
   int time_to_wait = PINGPONG_TIMEOUT_US;
   while (WillWait(time_to_wait)) {
-    // Log_info("server %d blocked", id_);
-    // Log_info("%dus to wait", time_to_wait);
+    // Log_info("server {} blocked", id_);
+    // Log_info("{}us to wait", time_to_wait);
     if (pingpong_event_.wait_until_gte(1, time_to_wait)) {
       n_timeout++;
-      // Log_info("server %d ping pong timeout %lld", id_, n_timeout);
+      // Log_info("server {} ping pong timeout {}", id_, n_timeout);
       break;
     }
   }
@@ -184,7 +184,7 @@ bool CopilotServer::WillWait(int &time_to_wait) const {
    * after which pingpong_event_ must wait and yield.
    */
   auto now = Time::now(true);
-  // Log_info("last %lld, now %lld", last_ready_time_, now);
+  // Log_info("last {}, now {}", last_ready_time_, now);
   if (now >= last_ready_time_ + PINGPONG_TIMEOUT_US) {
     return false;
   } else {
@@ -248,7 +248,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
 
 finish:
   Log_debug(
-      "server %d [PREPARE    ] %s : %lu -> %lu status %x ballot %ld",
+      "server {} [PREPARE    ] {} : {} -> {} status {:x} ballot {}",
       id_, toString(is_pilot), slot, *dep, *status, *max_ballot);
   WAN_WAIT;
   cb();
@@ -265,13 +265,13 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
                                  rusty::Function<void()> cb) {
   // TODO: deal with ballot
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("server %d [FAST_ACCEPT] %s : %lu -> %lu", id_,
+  Log_debug("server {} [FAST_ACCEPT] {} : {} -> {}", id_,
             toString(is_pilot), slot, dep);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
+  Log_info("cmd<{}, {}> entered site {} CopilotServer::OnFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
 
   auto ins = GetInstance(slot, is_pilot);
@@ -293,7 +293,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   if (likely(dep != 0)) {
     for (slotid_t j = dep + 1; j <= log_info.max_accepted_slot; j++) {
       // if (!logs[j])
-      //   Log_fatal("slot %lu max acpt %lu", j, log_info.max_accepted_slot);
+      //   Log_fatal("slot {} max acpt {}", j, log_info.max_accepted_slot);
       // auto dep_id = logs[j]->dep_id;
       auto it = logs.find(j);
       if (unlikely(it == logs.end()))
@@ -310,14 +310,14 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
          * //TODO: definition on "latest"
          */
 #ifdef FULL_LOG_DEBUG
-        Log_info("cmd<%d, %d> entered site %d for j(%d) dep_id(%d)<slot(%d) thus set suggest_dep(%d) log_info.max_accepted_slot(%d)",
+        Log_info("cmd<{}, {}> entered site {} for j({}) dep_id({})<slot({}) thus set suggest_dep({}) log_info.max_accepted_slot({})",
           SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_, j, dep_id, slot, suggest_dep, log_info.max_accepted_slot);
 #endif
-        // Log_info("loc_id_=%d isPilot_=%d slot=%d j=%d dep_id=%d, dep_id!=0 && dep_id<slot suggest_dep(%d->%d)", loc_id_, isPilot_, slot, j, dep_id, suggest_dep, log_info.max_accepted_slot);
+        // Log_info("loc_id_={} isPilot_={} slot={} j={} dep_id={}, dep_id!=0 && dep_id<slot suggest_dep({}->{})", loc_id_, isPilot_, slot, j, dep_id, suggest_dep, log_info.max_accepted_slot);
         suggest_dep = log_info.max_accepted_slot;
         Log_debug(
-            "copilot server %d find imcompatiable dependence for %s : "
-            "%lu -> %lu. suggest dep: %lu",
+            "copilot server {} find imcompatiable dependence for {} : "
+            "{} -> {}. suggest dep: {}",
             id_, toString(is_pilot), slot, dep, suggest_dep);
         break;
       }
@@ -344,7 +344,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[2-] [tx=%d] Before on FastAccept cb() %.3f", marshallable_cast<TpcBatchCommand>(cmd_env).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[2-] [tx={}] Before on FastAccept cb() {:.3f}", marshallable_cast<TpcBatchCommand>(cmd_env).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
@@ -365,7 +365,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
                              ballot_t* max_ballot,
                              rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("server %d [ACCEPT     ] %s : %lu -> %lu", id_, toString(is_pilot), slot, dep);
+  Log_debug("server {} [ACCEPT     ] {} : {} -> {}", id_, toString(is_pilot), slot, dep);
 
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnAccept is_pilot=" + std::to_string(is_pilot) +
@@ -406,7 +406,7 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
   // Print("loc_id_ = " + std::to_string(loc_id_) + " Start OnCommit is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
-  Log_debug("server %d [COMMIT     ] %s : %ld -> %ld", id_, toString(is_pilot), slot, dep);
+  Log_debug("server {} [COMMIT     ] {} : {} -> {}", id_, toString(is_pilot), slot, dep);
   auto ins = GetInstance(slot, is_pilot);
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
   if (!ins)
@@ -483,7 +483,7 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
   log_info.min_active_slot = i;
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnCommit is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
-  // Log_info("server %d [COMMIT     ] %s : %ld -> %ld finish", id_, toString(is_pilot), slot, dep);
+  // Log_info("server {} [COMMIT     ] {} : {} -> {} finish", id_, toString(is_pilot), slot, dep);
 }
 
 void CopilotServer::Print(std::string log) {
@@ -493,25 +493,25 @@ void CopilotServer::Print(std::string log) {
   oss << "isPilot_ " << isPilot_ << " ";
   // Log_info("222");
   for (int ispilot = 0; ispilot < 2; ispilot++) {
-    // Log_info("333 %d", ispilot);
+    // Log_info("333 {}", ispilot);
     oss << "\n[";
     if (ispilot)
       oss << " (ispilot) ";
     else
       oss << " (iscopilot) ";
-    // Log_info("444 size %d", log_infos_[ispilot].logs.size());
+    // Log_info("444 size {}", log_infos_[ispilot].logs.size());
     for (auto const& entry : log_infos_[ispilot].logs) {
         auto const& key      = entry.first;
         auto const& data_ptr = entry.second;
-        // Log_info("555 %d", key);
+        // Log_info("555 {}", key);
         // if (data_ptr->cmd != nullptr) {
-        //   Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
+        //   Log_info("cmd_type {}", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
         //   SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
         // } else {
         //   Log_info("nullptr");
         // }
         
-        // Log_info("666 %d", key);
+        // Log_info("666 {}", key);
         // key is the map’s slotid_t; data_ptr is shared_ptr<CopilotData>
         oss 
           << " is_pilot=" << static_cast<int>(data_ptr->is_pilot)  // uint8_t → int for printing
@@ -519,7 +519,7 @@ void CopilotServer::Print(std::string log) {
           << " slot_id=" << data_ptr->slot_id;
 
         if (data_ptr->cmd.has_value()) {
-          // Log_info("cmd_type %d", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
+          // Log_info("cmd_type {}", data_ptr->cmd->kind_ == TpcBatchCommand::static_kind());
           SimpleRWCommand parsed_cmd = SimpleRWCommand(data_ptr->cmd);
           oss << " cmd_id=<" << parsed_cmd.cmd_id_.first << ", " << parsed_cmd.cmd_id_.second << "> ";
         } else {
@@ -535,7 +535,7 @@ void CopilotServer::Print(std::string log) {
     oss << "] ";
   }
   // Log_info("777");
-  Log_info("Copilot Server Status: %s\n", oss.str().c_str());
+  Log_info("Copilot Server Status: {}\n", oss.str().c_str());
 }
 
 void CopilotServer::Print() {
@@ -561,7 +561,7 @@ void CopilotServer::setIsCopilot(bool isCopilot) {
 }
 
 inline void CopilotServer::updateMaxExecSlot(shared_ptr<CopilotData>& ins) {
-  Log_debug("server %d [EXECUTE    ] %s : %lu -> %lu", id_, toString(ins->is_pilot), ins->slot_id, ins->dep_id);
+  Log_debug("server {} [EXECUTE    ] {} : {} -> {}", id_, toString(ins->is_pilot), ins->slot_id, ins->dep_id);
   auto& log_info = log_infos_[ins->is_pilot];
   slotid_t i;
   for (i = log_info.max_executed_slot + 1; i <= ins->slot_id; i++) {
@@ -570,7 +570,7 @@ inline void CopilotServer::updateMaxExecSlot(shared_ptr<CopilotData>& ins) {
       break;
   }
   log_info.max_executed_slot = i - 1;
-  Log_debug("server %d [max EXECUTE] %s : + %lu", id_, toString(ins->is_pilot), i - 1);
+  Log_debug("server {} [max EXECUTE] {} : + {}", id_, toString(ins->is_pilot), i - 1);
 }
 
 void CopilotServer::updateMaxAcptSlot(CopilotLogInfo& log_info, slotid_t slot) {
@@ -616,7 +616,7 @@ bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
   if (likely(ins->cmd.has_value())) {
     if (likely(ins->cmd.kind_ != TpcNoopCommand::static_kind())) {
       // WAN_WAIT
-      // Log_info("loc_id %d execute cmd <%d, %d>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
+      // Log_info("loc_id {} execute cmd <{}, {}>", loc_id_, SimpleRWCommand::GetCmdID(ins->cmd).first, SimpleRWCommand::GetCmdID(ins->cmd).second);
       RuleWitnessGC(ins->cmd);
       app_next_(ins->slot_id, ins->cmd);
     }
@@ -624,7 +624,7 @@ bool CopilotServer::executeCmd(shared_ptr<CopilotData>& ins) {
     updateMaxExecSlot(ins);
     return true;
   } else {
-    Log_warn("server %d execute %s empty cmd %ld, status %x",
+    Log_warn("server {} execute {} empty cmd {}, status {:x}",
       id_, toString(ins->is_pilot), ins->slot_id, ins->status);
     verify(0);
     return false;
@@ -654,7 +654,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
     return true;
   
   auto p = ins->is_pilot;
-  Log_debug("server %d execute %s : %ld from %ld", id_, toString(ins->is_pilot), ins->slot_id, log_infos_[p].max_executed_slot + 1);
+  Log_debug("server {} execute {} : {} from {}", id_, toString(ins->is_pilot), ins->slot_id, log_infos_[p].max_executed_slot + 1);
   for (auto i = log_infos_[p].max_executed_slot + 1; i <= ins->slot_id; i++) {
     auto w = GetInstance(i, p);
     auto dep = GetInstance(w->dep_id, REVERSE(p));
@@ -774,7 +774,7 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
   ins->low = *index;
   *index = *index + 1;
   stack_.push(ins);
-  Log_debug("SCC %s : %lu -> %lu (%d, %d)", toString(ins->is_pilot), ins->slot_id, ins->dep_id, ins->dfn, ins->low);
+  Log_debug("SCC {} : {} -> {} ({}, {})", toString(ins->is_pilot), ins->slot_id, ins->dep_id, ins->dfn, ins->low);
 
   std::vector<uint8_t> order = ins->is_pilot ? std::vector<uint8_t>{YES, NO}
                                              : std::vector<uint8_t>{NO, YES};
@@ -789,7 +789,7 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
 
       if (w->status < Status::COMMITED) {
         // TODO: this cmd has not been committed, wait or return?
-        Log_debug("%d, unCOMMITTED cmd %s : %lu -> %lu", id_, toString(w->is_pilot), w->slot_id, w->dep_id);
+        Log_debug("{}, unCOMMITTED cmd {} : {} -> {}", id_, toString(w->is_pilot), w->slot_id, w->dep_id);
         ins->dfn = 0;
         return false;
       }
@@ -922,7 +922,7 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
   *index = *index + 1;
   stack_.push(ins);
   verify(ins);
-  // Log_debug("SCC %s : %lu -> %lu (%d, %d)", toString(ins->is_pilot), ins->slot_id, ins->dep_id, ins->dfn, ins->low);
+  // Log_debug("SCC {} : {} -> {} ({}, {})", toString(ins->is_pilot), ins->slot_id, ins->dep_id, ins->dfn, ins->low);
 
 
   std::vector<uint8_t> order = ins->is_pilot ? std::vector<uint8_t>{YES, NO}
@@ -981,9 +981,9 @@ bool CopilotServer::strongConnect(shared_ptr<CopilotData>& ins, int* index) {
 bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_env) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   if (!(isPilot_ || isCopilot_)) return false;
-  // Log_info("[Begin] isPilot_ %d isCopilot_ %d from %d to %d", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
+  // Log_info("[Begin] isPilot_ {} isCopilot_ {} from {} to {}", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
   for (slotid_t id = log_infos_[isPilot_].max_executed_slot + 1; id <= log_infos_[isPilot_].max_active_slot; id++) {
-    // Log_info("id=%d", id);
+    // Log_info("id={}", id);
     shared_ptr<CopilotData> ins = GetInstance(id, isPilot_);
     if (ins && ins->cmd.has_value()) {
       // Copilots use batch cmds in copilot instance
@@ -999,7 +999,7 @@ bool CopilotServer::ConflictWithOriginalUnexecutedLog(const janus::Command& cmd_
     }
       
   }
-  // Log_info("[End] isPilot_ %d isCopilot_ %d from %d to %d", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
+  // Log_info("[End] isPilot_ {} isCopilot_ {} from {} to {}", isPilot_, isCopilot_, log_infos_[isPilot_].max_executed_slot + 1, log_infos_[isPilot_].max_active_slot);
   return false;
 }
 #endif

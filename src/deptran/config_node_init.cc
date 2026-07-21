@@ -26,7 +26,7 @@ bool init_config_node() {
     }
 
     // @unsafe { logging I/O }
-    Log_info("Initializing config node at %s", settings.config_db_path().c_str());
+    Log_info("Initializing config node at {}", settings.config_db_path().c_str());
 
     // Create and open ConfigStore
     // @unsafe { new operator }
@@ -34,7 +34,7 @@ bool init_config_node() {
     // @unsafe { RocksDB I/O }
     if (!g_config_store->open()) {
         // @unsafe { logging I/O }
-        Log_warn("Failed to open ConfigStore at %s", settings.config_db_path().c_str());
+        Log_warn("Failed to open ConfigStore at {}", settings.config_db_path().c_str());
         delete g_config_store;
         g_config_store = nullptr;
         return false;
@@ -57,7 +57,7 @@ bool init_config_node() {
         auto stored_config = g_config_store->load();
         if (stored_config.is_some()) {
             PersistentConfig persistent = stored_config.unwrap();
-            Log_info("Loaded config version %lu from RocksDB", persistent.version);
+            Log_info("Loaded config version {} from RocksDB", persistent.version);
             // Config application will be done by caller
         } else {
             Log_warn("Failed to load config from RocksDB on reboot");
@@ -69,7 +69,7 @@ bool init_config_node() {
             auto policy_opt = g_config_store->load_sharding_policy();
             if (policy_opt.is_some()) {
                 ShardingPolicySet policy = policy_opt.unwrap();
-                Log_info("Loaded sharding policy version %lu with %zu tables from RocksDB",
+                Log_info("Loaded sharding policy version {} with {} tables from RocksDB",
                          policy.version, policy.table_count());
                 // Initialize global sharding policy cache
                 get_sharding_policy_cache().set_policy(std::move(policy));
@@ -94,14 +94,14 @@ bool init_config_node() {
 
     // @unsafe { RPC server start }
     if (g_config_rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
-        Log_warn("Failed to start ConfigService RPC server on %s", bind_addr.c_str());
+        Log_warn("Failed to start ConfigService RPC server on {}", bind_addr.c_str());
         delete g_config_rpc_server;
         g_config_rpc_server = nullptr;
         g_config_poll_thread = rusty::None;
         return false;
     }
 
-    Log_info("ConfigService RPC server started on %s", bind_addr.c_str());
+    Log_info("ConfigService RPC server started on {}", bind_addr.c_str());
     return true;
 }
 
@@ -114,7 +114,7 @@ bool fetch_config_from_cnode() {
         return false;  // No c-node address specified
     }
 
-    Log_info("Fetching configuration from c-node at %s", c_node_addr.c_str());
+    Log_info("Fetching configuration from c-node at {}", c_node_addr.c_str());
 
     // @unsafe { network client creation }
     ConfigClient client(c_node_addr);
@@ -123,7 +123,7 @@ bool fetch_config_from_cnode() {
 
     // @unsafe { network connect }
     if (!client.connect()) {
-        Log_warn("Failed to connect to c-node at %s", c_node_addr.c_str());
+        Log_warn("Failed to connect to c-node at {}", c_node_addr.c_str());
         return false;
     }
 
@@ -136,7 +136,7 @@ bool fetch_config_from_cnode() {
     }
 
     PersistentConfig persistent = config_opt.unwrap();
-    Log_info("Fetched config version %lu from c-node", persistent.version);
+    Log_info("Fetched config version {} from c-node", persistent.version);
 
     // Config application will be done by caller
     // @unsafe { network disconnect }
@@ -160,7 +160,7 @@ bool fetch_sharding_policy_from_cnode() {
         return true;
     }
 
-    Log_info("Fetching sharding policy from c-node at %s", c_node_addr.c_str());
+    Log_info("Fetching sharding policy from c-node at {}", c_node_addr.c_str());
 
     // @unsafe { network client creation }
     ConfigClient client(c_node_addr);
@@ -169,7 +169,7 @@ bool fetch_sharding_policy_from_cnode() {
 
     // @unsafe { network connect }
     if (!client.connect()) {
-        Log_warn("Failed to connect to c-node at %s", c_node_addr.c_str());
+        Log_warn("Failed to connect to c-node at {}", c_node_addr.c_str());
         return false;
     }
 
@@ -197,7 +197,7 @@ bool fetch_sharding_policy_from_cnode() {
     }
 
     ShardingPolicySet policy = policy_opt.unwrap();
-    Log_info("Fetched sharding policy version %lu with %zu tables from c-node",
+    Log_info("Fetched sharding policy version {} with {} tables from c-node",
              policy.version, policy.table_count());
 
     // Initialize global sharding policy cache

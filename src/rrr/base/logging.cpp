@@ -1,6 +1,5 @@
 module;
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,71 +41,54 @@ public:
     // @safe - Atomic<int>::store (@safe).
     static void set_level(int level);
 
-    // @unsafe - variadic entry points: va_list capture + render kernel,
-    // then dispatch into the DSL `log_line`.
-    static void log(int level, int line, const char* file, const char* fmt, ...);
-
-    static void fatal(int line, const char* file, const char* fmt, ...);
-    static void error(int line, const char* file, const char* fmt, ...);
-    static void warn(int line, const char* file, const char* fmt, ...);
-    static void info(int line, const char* file, const char* fmt, ...);
-    static void debug(int line, const char* file, const char* fmt, ...);
-
-    static void fatal(const char* fmt, ...);
-    static void error(const char* fmt, ...);
-    static void warn(const char* fmt, ...);
-    static void info(const char* fmt, ...);
-    static void debug(const char* fmt, ...);
-
     // Internal plumbing shared with the DSL core (public so the
     // namespace-scope kernels/DSL below can reach the statics).
     static int  level_now();
     static void sink_write(const std::string& line);
 };
 
+// forward decl so the format templates below can call the DSL log_line.
+void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg);
+
+// @safe - std::format-based logging. The format string is compile-time
+// checked (std::format_string), args are type-safe, and non-fatal levels
+// only format when enabled. No varargs, no vsnprintf — the printf-era
+// va_list surface is gone. (line=0/file=nullptr preserves the prior
+// behavior; the Log_* helpers never captured call-site __LINE__.)
 template <typename... Args>
-// @safe - printf-style logging shim; format string is a literal at every
-// call site we control, the variadic args are forwarded by value/reference.
-// No memory operations escape to callers.
-inline void Log_debug(const char* fmt, Args&&... args) {
-    // @unsafe { Log::debug is @unsafe (variadic render). }
-    { Log::debug(fmt, std::forward<Args>(args)...); }
+inline void Log_debug(std::format_string<Args...> fmt, Args&&... args) {
+    if (Log::DEBUG <= Log::level_now())
+        log_line(Log::DEBUG, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
 }
 
 template <typename... Args>
-// @safe - see Log_debug above.
-inline void Log_info(const char* fmt, Args&&... args) {
-    // @unsafe { Log::info is @unsafe. }
-    { Log::info(fmt, std::forward<Args>(args)...); }
+inline void Log_info(std::format_string<Args...> fmt, Args&&... args) {
+    if (Log::INFO <= Log::level_now())
+        log_line(Log::INFO, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
 }
 
 template <typename... Args>
-// @safe - see Log_debug above.
-inline void Log_warn(const char* fmt, Args&&... args) {
-    // @unsafe { Log::warn is @unsafe. }
-    { Log::warn(fmt, std::forward<Args>(args)...); }
+inline void Log_warn(std::format_string<Args...> fmt, Args&&... args) {
+    if (Log::WARN <= Log::level_now())
+        log_line(Log::WARN, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
 }
 
 template <typename... Args>
-// @safe - see Log_debug above.
-inline void Log_error(const char* fmt, Args&&... args) {
-    // @unsafe { Log::error is @unsafe. }
-    { Log::error(fmt, std::forward<Args>(args)...); }
+inline void Log_error(std::format_string<Args...> fmt, Args&&... args) {
+    if (Log::ERROR <= Log::level_now())
+        log_line(Log::ERROR, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
 }
 
+// @safe - fatal always formats, emits, then aborts.
 template <typename... Args>
-// @safe - printf-style logging shim; aborts via Log::fatal.
-inline void Log_fatal(const char* fmt, Args&&... args) {
-    // @unsafe { Log::fatal is @unsafe (variadic + abort). }
-    { Log::fatal(fmt, std::forward<Args>(args)...); }
+inline void Log_fatal(std::format_string<Args...> fmt, Args&&... args) {
+    log_line(Log::FATAL, 0, nullptr, std::format(fmt, std::forward<Args>(args)...));
+    ::abort();
 }
 
 // ---------------------------------------------------------------------------
 // Micro-kernels: the irreducible C surface (each a few lines, each @unsafe).
 // ---------------------------------------------------------------------------
-
-// @unsafe - va_list + BOUNDED vsnprintf render into a std::string.
-std::string log_render_v(const char* fmt, va_list args);
 
 // @unsafe - raw pointer scan; returns an owned copy (no pointer into
 // the input escapes, unlike the pre-reshape basename). Takes int8_t*
@@ -185,16 +167,6 @@ void Log::sink_write(const std::string& line) {
     (*stm_s) << line << std::endl;
 }
 
-// @unsafe - va_list + bounded vsnprintf.
-std::string log_render_v(const char* fmt, va_list args) {
-    char buf[1000];
-    int n = vsnprintf(buf, sizeof(buf), fmt, args);
-    if (n < 0) {
-        return std::string("<log format error>");
-    }
-    return std::string(buf);
-}
-
 // @unsafe - raw pointer scan; returns an owned copy.
 std::string log_basename(const int8_t* fpath) {
     if (fpath == nullptr) {
@@ -219,98 +191,6 @@ std::string log_level_tag(int level) {
     std::string tag(1, (level >= 0 && level <= 4) ? indicator[level] : '?');
     tag.append(" ");
     return tag;
-}
-
-// --- variadic entry points: capture va_list, render once, dispatch. ---
-
-void Log::log(int level, int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(level, line, reinterpret_cast<const int8_t*>(file), msg);
-}
-
-void Log::fatal(int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::FATAL, line, reinterpret_cast<const int8_t*>(file), msg);
-    abort();
-}
-
-void Log::error(int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::ERROR, line, reinterpret_cast<const int8_t*>(file), msg);
-}
-
-void Log::warn(int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::WARN, line, reinterpret_cast<const int8_t*>(file), msg);
-}
-
-void Log::info(int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::INFO, line, reinterpret_cast<const int8_t*>(file), msg);
-}
-
-void Log::debug(int line, const char* file, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::DEBUG, line, reinterpret_cast<const int8_t*>(file), msg);
-}
-
-void Log::fatal(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::FATAL, 0, nullptr, msg);
-    abort();
-}
-
-void Log::error(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::ERROR, 0, nullptr, msg);
-}
-
-void Log::warn(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::WARN, 0, nullptr, msg);
-}
-
-void Log::info(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::INFO, 0, nullptr, msg);
-}
-
-void Log::debug(const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    std::string msg = log_render_v(fmt, args);
-    va_end(args);
-    log_line(Log::DEBUG, 0, nullptr, msg);
 }
 
 } // namespace rrr

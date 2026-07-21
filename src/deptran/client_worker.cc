@@ -62,12 +62,12 @@ void ClientWorker::ForwardRequestDone(Coordinator* coo,
     free_coordinators_.push_back(coo);
   } else if (!have_more_time) {
     Log_debug("times up. stop.");
-    Log_debug("n_concurrent_ = %d", n_concurrent_);
+    Log_debug("n_concurrent_ = {}", n_concurrent_);
     n_concurrent_--;
     if (n_concurrent_ == 0) {
       Log_debug("all coordinators finished... signal done");
     } else {
-      Log_debug("waiting for %d more coordinators to finish", n_concurrent_);
+      Log_debug("waiting for {} more coordinators to finish", n_concurrent_);
     }
   }
 
@@ -80,14 +80,14 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
 
   // Jetpack: Handle WRONG_LEADER response for Raft
   if (txn_reply.res_ == WRONG_LEADER) {
-    Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x%lx", txn_reply.tx_id_);
+    Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x{:x}", txn_reply.tx_id_);
     if (txn_reply.sp_view_data_.is_some()) {
       const auto& view_data = *txn_reply.sp_view_data_.as_ref().unwrap();
-      Log_info("[CLIENT_VIEW] Extracted view data from response: %s",
+      Log_info("[CLIENT_VIEW] Extracted view data from response: {}",
                view_data.ToString().c_str());
       commo_->UpdatePartitionView(view_data.partition_id_, view_data);
     } else {
-      Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x%lx", txn_reply.tx_id_);
+      Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x{:x}", txn_reply.tx_id_);
     }
   }
 
@@ -98,7 +98,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
 
   bool have_more_time = timer_->elapsed() < duration;
   Log_debug("received callback from tx_id %" PRIx64, txn_reply.tx_id_);
-  Log_debug("elapsed: %2.2f; duration: %d", timer_->elapsed(), duration);
+  Log_debug("elapsed: {:2.2f}; duration: {}", timer_->elapsed(), duration);
   if (have_more_time && config_->client_type_ == Config::Open) {
     std::lock_guard<std::mutex> lock(coordinator_mutex);
     free_coordinators_.push_back(coo);
@@ -109,7 +109,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
     });
   } else if (!have_more_time) {
     Log_debug("times up. stop.");
-    Log_debug("n_concurrent_ = %d", n_concurrent_);
+    Log_debug("n_concurrent_ = {}", n_concurrent_);
     if (coo->offset_ == 0) {
       *failover_server_quit_ = true;
     }
@@ -119,7 +119,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
     if (n_concurrent_ == 0) {
       Log_debug("all coordinators finished... signal done");
     } else {
-      Log_debug("waiting for %d more coordinators to finish", n_concurrent_);
+      Log_debug("waiting for {} more coordinators to finish", n_concurrent_);
       Log_debug("transactions they are processing:");
       for (auto c : created_coordinators_) {
         if (c->ongoing_tx_id_ > 0) {
@@ -172,10 +172,10 @@ Coordinator* ClientWorker::CreateFailCtrlCoordinator() {
   coo->commo_ = commo_;
   coo->forward_status_ = forward_requests_to_leader_ ? FORWARD_TO_LEADER : NONE;
   coo->offset_ = offset_id;
-  Log_debug("coordinator %d created at site %d: forward %d",
+  Log_debug("coordinator {} created at site {}: forward {}",
             coo->coo_id_,
             this->my_site_.id,
-            coo->forward_status_);
+            (int)coo->forward_status_);
   return coo;
 }
 
@@ -198,10 +198,10 @@ Coordinator* ClientWorker::CreateCoordinator(uint16_t offset_id) {
   coo->forward_status_ = forward_requests_to_leader_ ? FORWARD_TO_LEADER : NONE;
   coo->offset_ = offset_id;
   coo->client_worker_ = this;
-  Log_debug("coordinator %d created at site %d: forward %d",
+  Log_debug("coordinator {} created at site {}: forward {}",
             coo->coo_id_,
             this->my_site_.id,
-            coo->forward_status_);
+            (int)coo->forward_status_);
   created_coordinators_.push_back(coo);
   n_pause_concurrent_[coo_id] = false;
   return coo;
@@ -209,7 +209,7 @@ Coordinator* ClientWorker::CreateCoordinator(uint16_t offset_id) {
 
 void ClientWorker::Work() {
   auto work_start_time = std::chrono::steady_clock::now();
-  Log_debug("%s: %d", __FUNCTION__, this->cli_id_);
+  Log_debug("{}: {}", __FUNCTION__, this->cli_id_);
   txn_reg_ = std::make_shared<TxnRegistry>();
   verify(config_ != nullptr);
   Workload* workload = Workload::CreateWorkload(config_);
@@ -245,7 +245,7 @@ void ClientWorker::Work() {
         }
         Pause(idx);
         *failover_trigger_ = true;
-        Log_info("server %d paused for failover test", idx);
+        Log_info("server {} paused for failover test", idx);
         auto s = Reactor::create_sp_event<NeverEvent>();
         s->wait_timeout(stop_int);
         while (*failover_trigger_) {
@@ -254,7 +254,7 @@ void ClientWorker::Work() {
           if (*failover_server_quit_) return;
         }
         Resume(idx);
-        Log_info("server %d resumed for failover test", idx);
+        Log_info("server {} resumed for failover test", idx);
         idx = cur_leader_;
       }
     }));
@@ -287,7 +287,7 @@ void ClientWorker::Work() {
         while (true) {
           auto n_undone_tx = n_tx_issued_ - sp_n_tx_done_.value_;
           if (n_undone_tx % 1000 == 0) {
-            Log_debug("unfinished tx %d", n_undone_tx);
+            Log_debug("unfinished tx {}", n_undone_tx);
           }
           if (config_->client_max_undone_ > 0
               && n_undone_tx > config_->client_max_undone_) {
@@ -304,7 +304,7 @@ void ClientWorker::Work() {
         coo->sp_ev_commit_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
         coo->sp_ev_done_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
 
-        Log_debug("Dispatching request for %d", n_tx);
+        Log_debug("Dispatching request for {}", n_tx);
         this->outbound++;
 
         bool first = true;
@@ -314,11 +314,11 @@ void ClientWorker::Work() {
             coo->commo_->total_ = this->outbound;
             coo->commo_->qe->n_voted_yes_.set(this->outbound);
             coo->commo_->count_lock_.unlock();
-            Log_info("is it ready: %d", coo->commo_->qe->is_ready());
+            Log_info("is it ready: {}", coo->commo_->qe->is_ready());
             coo->commo_->qe->test();
             first = false;
           }
-          Log_info("total: %d", coo->commo_->total_);
+          Log_info("total: {}", coo->commo_->total_);
           auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
           t->wait();
         }
@@ -390,8 +390,8 @@ void ClientWorker::Work() {
       break;
     }
     prev_done = (int) sp_n_tx_done_.value_;
-    Log_info("wait for finish... n_ceased_clients: %d,"
-              "n_issued: %d, n_done: %d, n_created_coordinator: %d, client_id: %d",
+    Log_info("wait for finish... n_ceased_clients: {},"
+              "n_issued: {}, n_done: {}, n_created_coordinator: {}, client_id: {}",
               (int) n_ceased_client_.value_, (int) n_tx_issued_,
               (int) sp_n_tx_done_.value_, (int) created_coordinators_.size(), cli_id_);
     sleep(5);
@@ -401,7 +401,7 @@ void ClientWorker::Work() {
     *failover_server_quit_ = true;
   }
 
-  Log_info("Finish:\nTotal: %u, Commit: %u, Attempts: %u, Running for %u, Throughput: %.2f, Client_id: %d\n",
+  Log_info("Finish:\nTotal: {}, Commit: {}, Attempts: {}, Running for {}, Throughput: {:.2f}, Client_id: {}\n",
            num_txn.load(),
            success.load(),
            num_try.load(),
@@ -413,7 +413,7 @@ void ClientWorker::Work() {
   fflush(stdout);
 
   if (client_status_.is_some()) {
-    Log_info("%s: wait_for_shutdown at client %d", __FUNCTION__, cli_id_);
+    Log_info("{}: wait_for_shutdown at client {}", __FUNCTION__, cli_id_);
     client_status_.as_ref().unwrap()->wait_for_shutdown();
   }
   delete timer_;
@@ -443,7 +443,7 @@ void ClientWorker::AcceptForwardedRequest(TxRequest request,
         }
         done_cv.notify_one();
       };
-  Log_debug("%s: running forwarded request at site %d", f, my_site_.id);
+  Log_debug("{}: running forwarded request at site {}", f, my_site_.id);
   coo->concurrent = n_concurrent_;
   coo->DoTxAsync(request);
 
@@ -474,7 +474,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       }
     }
 
-    Log_debug("client worker start dispatch request pause: %d with cur leader %d",
+    Log_debug("client worker start dispatch request pause: {} with cur leader {}",
         coo->coo_id_, cur_leader_);
     if (coo->offset_ == 0) {
       failover_trigger_loc = true;
@@ -498,7 +498,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       }
     }
     n_pause_concurrent_[coo->coo_id_] = false;
-    Log_debug("client worker end dispatch request pause: %d with cur leader %d",
+    Log_debug("client worker end dispatch request pause: {} with cur leader {}",
         coo->coo_id_, cur_leader_);
   }
 }
@@ -506,7 +506,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
 void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
   const char* f = __FUNCTION__;
   std::function<void()> task = [=]() {
-    Log_debug("%s: %d", f, cli_id_);
+    Log_debug("{}: {}", f, cli_id_);
     TxRequest *req = new TxRequest;
     {
       std::lock_guard<std::mutex> lock(this->request_gen_mutex);
@@ -521,14 +521,14 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
     req->callback_ = [coo, req, this] (TxReply& reply) {
       // Jetpack: Handle WRONG_LEADER response for Raft
       if (reply.res_ == WRONG_LEADER) {
-        Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x%lx", reply.tx_id_);
+        Log_info("[CLIENT_VIEW] Received WRONG_LEADER response for tx_id: 0x{:x}", reply.tx_id_);
         if (reply.sp_view_data_.is_some()) {
           const auto& view_data = *reply.sp_view_data_.as_ref().unwrap();
-          Log_info("[CLIENT_VIEW] Extracted view data from response: %s",
+          Log_info("[CLIENT_VIEW] Extracted view data from response: {}",
                    view_data.ToString().c_str());
           commo_->UpdatePartitionView(view_data.partition_id_, view_data);
         } else {
-          Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x%lx", reply.tx_id_);
+          Log_info("[CLIENT_VIEW] No view data in WRONG_LEADER response for tx_id: 0x{:x}", reply.tx_id_);
         }
       }
 
@@ -547,8 +547,8 @@ void ClientWorker::SearchLeader(Coordinator* coo) {
   parid_t par_id = 0;
   coo->SetNewLeader(par_id, failover_server_idx_);
   cur_leader_ = *failover_server_idx_;
-  Log_debug("client %d set cur_leader_ %d failover_server_idx_ %d", cli_id_, cur_leader_,
-      *failover_server_idx_);
+  Log_debug("client {} set cur_leader_ {} failover_server_idx_ {}", cli_id_, cur_leader_,
+      (unsigned)*failover_server_idx_);
 }
 
 // Merged constructor: Jetpack failover params + mako-dev PollThread type
@@ -576,7 +576,7 @@ ClientWorker::ClientWorker(
     failover_server_quit_(failover_server_quit),
     failover_server_idx_(failover_server_idx),
     total_throughput_(total_throughput) {
-  Log_info("[Jetpack] launch ClientWorker %d site_info is id=%d locale_id=%d name=%s proc_name=%s host=%s port=%d n_thread=%d partition_id_=%d",
+  Log_info("[Jetpack] launch ClientWorker {} site_info is id={} locale_id={} name={} proc_name={} host={} port={} n_thread={} partition_id_={}",
            id, site_info.id, site_info.locale_id, site_info.name.c_str(), site_info.proc_name.c_str(),
            site_info.host.c_str(), site_info.port, site_info.n_thread, site_info.partition_id_);
   // Merged: Use mako-dev's Option<Arc<PollThread>> pattern
@@ -601,14 +601,14 @@ ClientWorker::ClientWorker(
   forward_requests_to_leader_ =
       ((config->replica_proto_ == MODE_RAFT || config->replica_proto_ == MODE_FPGA_RAFT) && site_info.locale_id != 0) ? true :
                                                                                false;
-  Log_debug("client %d created; forward %d",
+  Log_debug("client {} created; forward {}",
             cli_id_,
             forward_requests_to_leader_);
 }
 
 void ClientWorker::Pause(locid_t locid) {
 #ifdef FAILOVER_DEBUG
-  Log_info("!!!!!!!!!!!!!! ClientWorker::Pause %d", locid);
+  Log_info("!!!!!!!!!!!!!! ClientWorker::Pause {}", locid);
 #endif
   fail_ctrl_coo_->FailoverPauseSocketOut(0, locid);
 }

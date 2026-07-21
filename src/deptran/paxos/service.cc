@@ -93,7 +93,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
   auto seconds = chrono::duration_cast<chrono::seconds>(start-midn);
 
   auto start_ = chrono::duration_cast<chrono::microseconds>(start-midn-hours-minutes).count();
-  //Log_info("Duration of RPC is: %d", start_-time);
+  //Log_info("Duration of RPC is: {}", start_-time);
 
   auto coro = Fiber::create_run([&] () {
     sched_->OnAccept(slot,
@@ -108,8 +108,8 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 
   auto end = chrono::system_clock::now();
   auto duration = chrono::duration_cast<chrono::microseconds>(end-start);
-  //Log_info("Duration of Accept() at Follower's side is: %d", duration.count());
-  //Log_info("coro id on service side: %d", coro->id);
+  //Log_info("Duration of Accept() at Follower's side is: {}", duration.count());
+  //Log_info("coro id on service side: {}", coro->id);
 }
 
 void MultiPaxosServiceImpl::Decide(const uint64_t& slot,

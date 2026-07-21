@@ -140,7 +140,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> entered site %d CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
+  Log_info("cmd<{}, {}> entered site {} CopilotCommo::BroadcastFastAccept", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, loc_id_);
 #endif
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -170,7 +170,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         rrr::deserialize_from(fu->get_reply(), b, sgst_dep);
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
+  Log_info("cmd<{}, {}> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
 #endif
         e->FeedResponse(ok, sgst_dep == dep);
         if (ok) {
@@ -185,7 +185,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1-] [tx=%d] async_FastAccept called by Submit %.3f", marshallable_cast<TpcBatchCommand>(cmd_env).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[1-] [tx={}] async_FastAccept called by Submit {:.3f}", marshallable_cast<TpcBatchCommand>(cmd_env).unwrap()->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
       CopilotProxy::RpcFastAcceptRequest req;
       req.is_pilot = is_pilot;

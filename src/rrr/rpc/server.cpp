@@ -904,7 +904,7 @@ inline uint64_t server_generate_instance_id() {
     if (id == 0) {
         id = 1;
     }
-    Log_debug("Server: generated instance_id=%lu", id);
+    Log_debug("Server: generated instance_id={}", id);
     return id;
 }
 
@@ -968,7 +968,7 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
         Log_debug("Server::drain: already past the draining phases");
         return server_atomic_load_int(pending) == 0;
     }
-    Log_info("Server::drain: transitioning to DRAINING, pending=%d",
+    Log_info("Server::drain: transitioning to DRAINING, pending={}",
              server_atomic_load_int(pending));
     phase.set(ShutdownPhase::DRAINING);
     let start_us = rusty::sys::time::clock_monotonic_us();
@@ -976,7 +976,7 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     while server_atomic_load_int(pending) > 0 {
         let elapsed_us = rusty::sys::time::clock_monotonic_us() - start_us;
         if elapsed_us >= timeout_us {
-            Log_warn("Server::drain: timeout after %lu ms, pending=%d",
+            Log_warn("Server::drain: timeout after {} ms, pending={}",
                      timeout_ms, server_atomic_load_int(pending));
             return false;
         }
@@ -986,21 +986,21 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     true
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=0181760d6f5b09b090a3d2f1a836487608e70139a49d03bc06f8e9f852572dd4*/
+/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=8d707e5e9c97cee76c4b56dc00050cbd39f40e07524d0051dfe6397a96426d9d*/
 bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
     const auto current_phase = phase.get();
     if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::RUNNING)) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::STOP_ACCEPTING))) {
         Log_debug("Server::drain: already past the draining phases");
         return server_atomic_load_int(pending) == 0;
     }
-    Log_info("Server::drain: transitioning to DRAINING, pending=%d", server_atomic_load_int(pending));
+    Log_info("Server::drain: transitioning to DRAINING, pending={}", server_atomic_load_int(pending));
     phase.set(rusty::clone(rusty::clone(ShutdownPhase::DRAINING)));
     const auto start_us = rusty::sys::time::clock_monotonic_us();
     const auto timeout_us = rusty::detail::deref_if_pointer_like(timeout_ms) * 1000;
     while (server_atomic_load_int(pending) > 0) {
         const auto elapsed_us = rusty::sys::time::clock_monotonic_us() - rusty::detail::deref_if_pointer_like(start_us);
         if (rusty::detail::deref_if_pointer_like(elapsed_us) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
-            Log_warn("Server::drain: timeout after %lu ms, pending=%d", std::move(timeout_ms), server_atomic_load_int(pending));
+            Log_warn("Server::drain: timeout after {} ms, pending={}", std::move(timeout_ms), server_atomic_load_int(pending));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
@@ -1019,7 +1019,7 @@ inline void server_run_shutdown_hooks(
         try {
             hook();
         } catch (const std::exception& e) {
-            Log_error("Server::graceful_shutdown: hook threw exception: %s", e.what());
+            Log_error("Server::graceful_shutdown: hook threw exception: {}", e.what());
         } catch (...) {
             Log_error("Server::graceful_shutdown: hook threw unknown exception");
         }
@@ -1051,7 +1051,7 @@ inline int32_t server_get_bound_port_impl(
     }
     auto colon = local.rfind(':');
     if (colon == std::string::npos) {
-        Log_error("Server::get_bound_port: malformed local_address %s",
+        Log_error("Server::get_bound_port: malformed local_address {}",
                   local.c_str());
         return -1;
     }
@@ -1059,7 +1059,7 @@ inline int32_t server_get_bound_port_impl(
         int port = std::stoi(local.substr(colon + 1));
         return port;
     } catch (const std::exception&) {
-        Log_error("Server::get_bound_port: failed to parse port from %s",
+        Log_error("Server::get_bound_port: failed to parse port from {}",
                   local.c_str());
         return -1;
     }
@@ -1591,7 +1591,7 @@ static void stat_server_batching(size_t batch) {
             g_stat_server_batching[i] = 0;
         }
         double avg = double(sum) / sum_count;
-        Log::info("* SERVER BATCHING: min=%d avg=%.1lf max=%d", min, avg, max);
+        Log_info("* SERVER BATCHING: min={} avg={:.1f} max={}", min, avg, max);
         g_stat_server_batching_report_time = now;
     }
 }
@@ -1614,7 +1614,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
             it.second.first.reset(0);
             it.second.second.next(count);
             i64 cumulative = it.second.second.peek_next();
-            Log::info("* RPC COUNT: id=%#08x count=%ld cumulative=%ld", counted_rpc_id, count, cumulative);
+            Log_info("* RPC COUNT: id={:#08x} count={} cumulative={}", counted_rpc_id, count, cumulative);
         }
         g_stat_server_rpc_counting_report_time = now;
     }
@@ -1700,9 +1700,9 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
         auto sconn_opt = weak_self.upgrade();
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
-        Log_warn("rrr::ServerConnection: channel error %s: %.*s",
+        Log_warn("rrr::ServerConnection: channel error {}: {}",
                  channel_error_to_string(err),
-                 static_cast<int>(message.size()), message.data());
+                 std::string_view(message.data(), message.size()));
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
         sconn_close(*mut_sconn);
     });
@@ -1795,7 +1795,7 @@ void sconn_decode_request_and_dispatch(
             }
         }
         if (!surpress_warning) {
-            Log_warn("rrr::ServerConnection: no handler for rpc_id = %d "
+            Log_warn("rrr::ServerConnection: no handler for rpc_id = {} "
                      "(channel-mode dispatch)", rpc_id);
         }
         sconn_reply(self, req, ENOENT, ServerReplyFn{});
@@ -1875,7 +1875,7 @@ int sconn_run_async(const ServerConnection& self, ServerRunAsyncFn f) {
 void sconn_close(ServerConnection& self) {
     if (self.status_ == ServerConnStatus::CONNECTED) {
         self.status_ = ServerConnStatus::CLOSED;
-        Log_debug("server@%s close ServerConnection",
+        Log_debug("server@{} close ServerConnection",
                   self.ctx_->addr.c_str());
         // Tear down the channel proxy. Idempotent per channel-layer contract.
         // @unsafe { rusty::Mutex::lock + Box::get + virtual dispatch }
@@ -1983,7 +1983,7 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
         }
         if (listener_opt.is_none()) {
             Log_error("rrr::Server::start: factory->make_listener() returned a "
-                      "null proxy (factory backend=%s)",
+                      "null proxy (factory backend={})",
                       "unknown");
             self.ctx_field = rusty::None;
             return -1;
@@ -2009,14 +2009,14 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
             }
         });
         listener->set_on_error([](ChannelError err, std::string_view msg) {
-            Log_warn("rrr::Server: channel listener error %s: %.*s",
+            Log_warn("rrr::Server: channel listener error {}: {}",
                      channel_error_to_string(err),
-                     static_cast<int>(msg.size()), msg.data());
+                     std::string_view(msg.data(), msg.size()));
         });
 
         ChannelError listen_err = listener->listen(std::string_view(bind_addr));
         if (listen_err != ChannelError::None) {
-            Log_error("rrr::Server::start: channel listener failed to bind %s: %s",
+            Log_error("rrr::Server::start: channel listener failed to bind {}: {}",
                       bind_addr, channel_error_to_string(listen_err));
             self.ctx_field = rusty::None;
             return -1;

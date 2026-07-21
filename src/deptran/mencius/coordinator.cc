@@ -18,11 +18,11 @@ void CoordinatorMencius::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <{}, {}> arrive svr {} Submit: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   if (!IsLeader(slot_id_)) {
     //change back to fatal
-    Log_info("i am not the leader; site %d; locale %d, slot_id:%d",
+    Log_info("i am not the leader; site {}; locale {}, slot_id:{}",
               frame_->site_info_->id, loc_id_, slot_id_);
     verify(0);
   }
@@ -59,15 +59,15 @@ void CoordinatorMencius::Suggest() {
   commo()->svr_workers_g = svr_workers_g;
   auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_);
   sp_quorum->q().id_.set(dep_id_);
-	//Log_info("current coroutine's dep_id: %d", Fiber::current_fiber()->dep_id_);
-  //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
+	//Log_info("current coroutine's dep_id: {}", Fiber::current_fiber()->dep_id_);
+  //Log_info("Suggest(): dep_id:{}, slot_id:{}, site: {}", dep_id_, slot_id_, frame_->site_info_->id);
 
   sp_quorum->wait();
   // auto end = chrono::system_clock::now();
   // auto duration = chrono::duration_cast<chrono::microseconds>(end-start);
   //auto duration_ready = chrono::duration_cast<chrono::microseconds>(end-sp_quorum->ready_time);
-  //Log_info("Duration of Wait() in Suggest() is: %d", duration.count());
-  //Log_info("Duration after Ready to end of Wait() is: %d", duration_ready.count());
+  //Log_info("Duration of Wait() in Suggest() is: {}", duration.count());
+  //Log_info("Duration after Ready to end of Wait() is: {}", duration_ready.count());
   sp_quorum->log();
   if (sp_quorum->yes()) {
     committed_ = true;
@@ -87,7 +87,7 @@ void CoordinatorMencius::Suggest() {
 void CoordinatorMencius::Commit() {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   commit_callback_();
-  Log_debug("mencius broadcast commit for partition: %d, slot %d",
+  Log_debug("mencius broadcast commit for partition: {}, slot {}",
             (int) par_id_, (int) slot_id_);
   commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
@@ -97,7 +97,7 @@ void CoordinatorMencius::Commit() {
 void CoordinatorMencius::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
-  //Log_info("Current phase is %d", current_phase);
+  //Log_info("Current phase is {}", current_phase);
   phase_++;
   switch (current_phase) {
     case Phase::INIT_END:
@@ -110,7 +110,7 @@ void CoordinatorMencius::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
-        Log_info("The local id is %d", this->loc_id_);
+        Log_info("The local id is {}", this->loc_id_);
         //Next steps: Find the leader, call submit, wait for the reply
       }
     case Phase::SUGGEST:

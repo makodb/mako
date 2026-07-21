@@ -198,9 +198,9 @@ class Witness {
       pair<int32_t, int32_t> cmd_id = SimpleRWCommand::GetCmdID(cmd_);
       uint64_t cmd_id_combined = SimpleRWCommand::GetCombinedCmdID(cmd_);
       if (operation_ == 0) {
-        Log_info("Log %.2f size %d suc %d key %" PRId32 " push_back %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key %" PRId32 " push_back %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else if (operation_ == 1) {
-        Log_info("Log %.2f size %d suc %d key %" PRId32 " remove %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key %" PRId32 " remove %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else {
         verify(0);
       }
@@ -287,7 +287,7 @@ class RecentAverage {
     return filled_once_;
   }
   double ave() {
-    // Log_info("RecentAverage ave %d %d", filled_once_, pointer_);
+    // Log_info("RecentAverage ave {} {}", filled_once_, pointer_);
     verify(filled_once_ || pointer_ > 0);
     return filled_once_ ? sum / size_ : sum / pointer_;
   }
@@ -581,7 +581,7 @@ class TxLogServer {
   // SimpleRWCommand which still takes the legacy shape.
   void ApplyToDatabase(const janus::Command& cmd) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
-    // Log_info("Apply Write %d key %d value %d", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
+    // Log_info("Apply Write {} key {} value {}", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
     if (parsed_cmd.IsWrite()) {
       database_[parsed_cmd.key_] = parsed_cmd.value_;
       database_operation_count_++;
@@ -589,7 +589,7 @@ class TxLogServer {
   }
 
   uint32_t ChecksumXor() {
-    Log_info("database_operation_count_ %d", database_operation_count_);
+    Log_info("database_operation_count_ {}", database_operation_count_);
     uint32_t checksum = 0;
     for (const auto& kv : database_) {
         checksum ^= static_cast<uint32_t>(kv.first);

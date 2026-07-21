@@ -52,7 +52,7 @@ bool ConfigWatcher::Poll() {
 
     last_version_ = current_version;
     // @unsafe { Log_info is not borrow-checked }
-    Log_info("[CONFIG-WATCHER] Config updated to version %lu", current_version);
+    Log_info("[CONFIG-WATCHER] Config updated to version {}", current_version);
 
     // Invoke callback if set
     if (update_callback_) {

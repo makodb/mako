@@ -20,7 +20,7 @@ FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_w
 
 void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
 																			 uint64_t logIndex) {
-	//Log_info("heartbeat for log index: %d", logIndex);
+	//Log_info("heartbeat for log index: {}", logIndex);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   for (auto& p : proxies) {
@@ -40,7 +40,7 @@ void FpgaRaftCommo::BroadcastHeartbeat(parid_t par_id,
       rrr::deserialize_from(fu->get_reply(), index);
 			this->matchedIndex[follower_id] = index;
 			
-			//Log_info("follower_index for %d: %d and leader_index: %d", follower_id, index, logIndex);
+			//Log_info("follower_index for {}: {} and leader_index: {}", follower_id, index, logIndex);
 			
     };
 
@@ -75,7 +75,7 @@ void FpgaRaftCommo::SendHeartbeat(parid_t par_id,
 		di.str = "dep";
 		di.id = -1;
 		
-		//Log_info("heartbeat2 for log index: %d", logIndex);
+		//Log_info("heartbeat2 for log index: {}", logIndex);
     FpgaRaftProxy::RpcHeartbeatRequest req{};
     req.leaderPrevLogIndex = logIndex;
     req.dep_id = di;
@@ -113,7 +113,7 @@ void FpgaRaftCommo::SendAppendEntriesAgain(siteid_t site_id,
 		di.str = "dep";
 		di.id = -1;
 
-		Log_info("heartbeat2 for log index: %d", prevLogIndex);
+		Log_info("heartbeat2 for log index: {}", prevLogIndex);
     FpgaRaftProxy::RpcAppendEntriesRequest req{};
     req.slot = slot_id;
     req.ballot = ballot;
@@ -177,7 +177,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
     }
 	if (p.first == leader_site_id) {
         // fix the 1c1s1p bug
-        // Log_info("leader_site_id %d", leader_site_id);
+        // Log_info("leader_site_id {}", leader_site_id);
         e->FeedResponse(true, prevLogIndex + 1, ip);
         continue;
     }
@@ -201,9 +201,9 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
 			struct timespec end;
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
 			this->outbound--;
-			//Log_info("reply from server: %s and is_ready: %d", ip.c_str(), e->is_ready());
+			//Log_info("reply from server: {} and is_ready: {}", ip.c_str(), e->is_ready());
 			clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("time of reply on server %d: %ld", follower_id, (end.tv_sec - begin.tv_sec)*1000000000 + end.tv_nsec - begin.tv_nsec);
+			//Log_info("time of reply on server {}: {}", follower_id, (end.tv_sec - begin.tv_sec)*1000000000 + end.tv_nsec - begin.tv_nsec);
 			
       bool y = ((accept == 1) && (isLeader) && (currentTerm == term));
       e->FeedResponse(y, index, ip);

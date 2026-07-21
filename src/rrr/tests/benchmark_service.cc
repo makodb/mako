@@ -71,7 +71,7 @@ BenchmarkService::fast_nop(const RpcFastNopRequest& req) {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
-        Log_info("%d nop requests", cnt);
+        Log_info("{} nop requests", cnt);
     }
     return rusty::Result<RpcFastNopResponse, i32>::Ok(RpcFastNopResponse{});
 }
@@ -110,7 +110,7 @@ BenchmarkService::nop(const RpcNopRequest& req) {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
-        Log_info("%d nop requests", cnt);
+        Log_info("{} nop requests", cnt);
     }
     return rusty::Result<RpcNopResponse, i32>::Ok(RpcNopResponse{});
 }
@@ -120,7 +120,7 @@ BenchmarkService::async_nop(const RpcAsyncNopRequest& req) {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
-        Log_info("%d async_nop requests", cnt);
+        Log_info("{} async_nop requests", cnt);
     }
     co_return rusty::Result<RpcAsyncNopResponse, i32>::Ok(RpcAsyncNopResponse{});
 }

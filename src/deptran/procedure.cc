@@ -169,7 +169,7 @@ vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
 }
 
 ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
-  // Log_info("n_pieces_dispatched_ %d n_pieces_dispatchable_ %d n_pieces_all_ %d", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
+  // Log_info("n_pieces_dispatched_ {} n_pieces_dispatchable_ {} n_pieces_all_ {}", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
   // n_pieces_dispatched_ = 0; // [JetPack TODO] remove this
   verify(n_pieces_dispatched_ <= n_pieces_dispatchable_); // [JetPack TODO] recover this to <
   verify(n_pieces_dispatched_ <= n_pieces_all_); // [JetPack TODO] recover this to <
@@ -201,7 +201,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       map_piece_data_[pi] = piece_data;
       ready_pieces_data[piece_data->partition_id_].push_back(piece_data);
       partition_ids_.insert(piece_data->partition_id_);
-      Log_debug("getting piece data piece id: %d", pi);
+      Log_debug("getting piece data piece id: {}", pi);
       verify(status_[pi] == INIT);
       status_[pi] = DISPATCHED;
       verify(type_ == type());
@@ -241,7 +241,7 @@ bool TxData::OutputReady() {
 void TxData::Merge(innid_t inn_id, map<int32_t, Value>& output) {
   verify(outputs_.find(inn_id) == outputs_.end());
   n_pieces_dispatch_acked_++;
-  // Log_info("n_pieces_all_=%d n_pieces_dispatchable_=%d", n_pieces_all_, n_pieces_dispatchable_);
+  // Log_info("n_pieces_all_={} n_pieces_dispatchable_={}", n_pieces_all_, n_pieces_dispatchable_);
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
@@ -261,14 +261,14 @@ bool TxData::HasMoreUnsentPiece() {
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
-  //Log_info("dispatch record: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
+  //Log_info("dispatch record: {}, {}", n_pieces_dispatchable_, n_pieces_dispatched_);
   if (n_pieces_dispatchable_ == n_pieces_dispatched_) {
     verify(n_pieces_all_ == n_pieces_dispatched_ ||
            n_pieces_dispatch_acked_ < n_pieces_dispatched_);
     return false;
   } else {
     verify(n_pieces_dispatchable_ > n_pieces_dispatched_);
-    //Log_info("dispatch record 2: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
+    //Log_info("dispatch record 2: {}, {}", n_pieces_dispatchable_, n_pieces_dispatched_);
     return true;
   }
 }

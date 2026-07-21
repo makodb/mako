@@ -23,7 +23,7 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
                             rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("multi-paxos scheduler receives prepare for slot_id: %llx",
+  Log_debug("multi-paxos scheduler receives prepare for slot_id: {:x}",
             slot_id);
   auto instance = GetInstance(slot_id);
   verify(ballot != instance->max_ballot_seen_);
@@ -53,7 +53,7 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
                            uint64_t* coro_id,
                            rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  //Log_info("multi-paxos scheduler accept for slot_id: %llx", slot_id);
+  //Log_info("multi-paxos scheduler accept for slot_id: {:x}", slot_id);
   auto instance = GetInstance(slot_id);
   
   //TODO: might need to optimize this. we can vote yes on duplicates at least for now
@@ -82,7 +82,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
                            const ballot_t ballot,
                            const janus::Command& cmd) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
+  Log_debug("multi-paxos scheduler decide for slot: {:x}", slot_id);
   auto instance = GetInstance(slot_id);
   // cmd is Command; PaxosData::committed_cmd_ is Command;
   // direct copy.
@@ -108,7 +108,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
     // app_next_ takes Command directly.
     if (next_instance->committed_cmd_.has_value()) {
       app_next_(slot_id,next_instance->committed_cmd_);
-      Log_info("apply multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+      Log_info("apply multi-paxos par:{} loc:{} executed slot {:x} now", partition_id_, loc_id_, id);
       max_executed_slot_++;
       n_commit_++;
     } else {
@@ -166,14 +166,14 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
         bp_cmd.cmds.push_back(std::move(shrd_ptr));
       }
     }
-    //Log_info("The partition %d, sync commit is %d; max executed-committed slot is [%d-%d] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
+    //Log_info("The partition {}, sync commit is {}; max executed-committed slot is [{}-{}] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd.unwrap()->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
       if(!inst->committed_cmd_.has_value()){
         ret_cmd.missing_slots[i].push_back(j);
       }
     }
-    //Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
+    //Log_info("The partition {} has missing slots size {}", i, ret_cmd->missing_slots[i].size());
     ret_cmd.sync_data.push_back(rusty::Arc<janus::Command>::make(
         rusty::Arc<BulkPaxosCmd>::make(std::move(bp_cmd))));
     ps->mtx_.unlock();
@@ -211,7 +211,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
 
-  //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
+  //Log_info("multi-paxos scheduler accept for slot: {}, par_id: {}", cur_slot, partition_id_);
   for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
       slotid_t slot_id = bcmd.unwrap()->slots[i];
       ballot_t ballot_id = bcmd.unwrap()->ballots[i];
@@ -238,7 +238,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         // es->set_leader(req_leader);
         // es->state_unlock();
         auto instance = GetInstance(slot_id);
-        //Log_info("InAccept insert an instance, par_id:%d, epoch:%d, slot_id:%d",partition_id_, cur_epoch, slot_id);
+        //Log_info("InAccept insert an instance, par_id:{}, epoch:{}, slot_id:{}",partition_id_, cur_epoch, slot_id);
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
@@ -253,7 +253,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   // batch persist all accepted entries
   PersistLogEntries(entries_to_persist);
   if(req_leader != 0)
-	Log_debug("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
+	Log_debug("multi-paxos scheduler accept for slot: {}, par_id: {}", cur_slot, partition_id_);
   cb();
 }
 
@@ -264,14 +264,14 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
-  //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
+  //Log_info("multi-paxos scheduler decide for slot: {}", bcmd->slots.size());
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd.is_some());
   *valid = 1;
   ballot_t cur_b = bcmd.unwrap()->ballots[0];
   slotid_t cur_slot = bcmd.unwrap()->slots[0];
-  //Log_info("multi-paxos scheduler decide for slot: %ld", cur_slot);
+  //Log_info("multi-paxos scheduler decide for slot: {}", cur_slot);
   int req_leader = bcmd.unwrap()->leader_id;
   //es->state_lock();
   mtx_.lock();
@@ -340,14 +340,14 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
     return;
   }
   //mtx_.lock();
-  //Log_info("The commit batch size is %d", bcmd->slots.size());
+  //Log_info("The commit batch size is {}", bcmd->slots.size());
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       //break;
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_.has_value()) {
           //app_next_(*next_instance->committed_cmd_);
 	        commit_exec.push_back(std::make_pair(id,next_instance));
-	        //Log_info("multi-paxos par:%d loc:%d executed slot %lld now", partition_id_, loc_id_, id);
+	        //Log_info("multi-paxos par:{} loc:{} executed slot {} now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
       } else {
@@ -355,7 +355,7 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
       }
    }
   //mtx_.unlock();
-  //Log_info("Committing %d", commit_exec.size());
+  //Log_info("Committing {}", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
       //auto x = new PaxosData();
       app_next_(commit_exec[i].first,commit_exec[i].second->committed_cmd_);
@@ -426,7 +426,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
 
         auto instance = GetInstance(slot_id);
         if (instance->max_ballot_accepted_ != ballot_id){
-          Log_info("max_ballot_accepted_: %d, recevied: %d", instance->max_ballot_accepted_, ballot_id);
+          Log_info("max_ballot_accepted_: {}, recevied: {}", instance->max_ballot_accepted_, ballot_id);
         }
         //verify(instance->max_ballot_accepted_ == ballot_id); //todo: for correctness, if a new commit comes, sync accept.
         instance->max_ballot_seen_ = ballot_id;
@@ -454,7 +454,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
           max_executed_slot_++;
           n_commit_++;
       }else{
-        //Log_info("wait for the id:%d, par_id:%d, max:%d", id, partition_id_, max_committed_slot_);
+        //Log_info("wait for the id:{}, par_id:{}, max:{}", id, partition_id_, max_committed_slot_);
         // if (max_committed_slot_ - tmpx>20){
         //   max_executed_slot_++;
         //   n_commit_++;
@@ -475,7 +475,7 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
                                     const ballot_t& ballot,
                                     const janus::Command& cmd,
                                     rusty::Function<void()> cb) {
-  //Log_info("received slot:%d",slot);
+  //Log_info("received slot:{}",slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   // app_next_ takes janus::Command directly.
@@ -586,21 +586,21 @@ bool PaxosServer::RecoverFromStorage() {
   auto epoch_opt = log_storage_->get_metadata(META_EPOCH);  // @unsafe
   if (epoch_opt.is_some()) {
     cur_epoch = std::stoull(epoch_opt.unwrap());
-    Log_info("Paxos recovery: cur_epoch = %lu", cur_epoch);
+    Log_info("Paxos recovery: cur_epoch = {}", cur_epoch);
   }
 
   // Recover max_committed_slot
   auto max_committed_opt = log_storage_->get_metadata(META_MAX_COMMITTED);  // @unsafe
   if (max_committed_opt.is_some()) {
     max_committed_slot_ = std::stoull(max_committed_opt.unwrap());
-    Log_info("Paxos recovery: max_committed_slot = %lu", max_committed_slot_);
+    Log_info("Paxos recovery: max_committed_slot = {}", max_committed_slot_);
   }
 
   // Recover max_executed_slot
   auto max_executed_opt = log_storage_->get_metadata(META_MAX_EXECUTED);  // @unsafe
   if (max_executed_opt.is_some()) {
     max_executed_slot_ = std::stoull(max_executed_opt.unwrap());
-    Log_info("Paxos recovery: max_executed_slot = %lu", max_executed_slot_);
+    Log_info("Paxos recovery: max_executed_slot = {}", max_executed_slot_);
   }
 
   // Recover log entries
@@ -629,7 +629,7 @@ bool PaxosServer::RecoverFromStorage() {
       }
     }
 
-    Log_info("Paxos recovery: recovered %lu log entries (slots %lu to %lu)",
+    Log_info("Paxos recovery: recovered {} log entries (slots {} to {})",
              entries.size(), first_index, last_index);
   }
 
@@ -644,7 +644,7 @@ bool PaxosServer::RecoverFromStorage() {
 // @unsafe - Calls app_next_ callback
 void PaxosServer::ReplayCommittedEntries() {
   if (!app_next_) {
-    Log_warn("[PAXOS-REPLAY] Site par %d loc %d: No app_next_ callback, skipping replay",
+    Log_warn("[PAXOS-REPLAY] Site par {} loc {}: No app_next_ callback, skipping replay",
              partition_id_, loc_id_);
     return;
   }
@@ -655,12 +655,12 @@ void PaxosServer::ReplayCommittedEntries() {
   slotid_t end = max_committed_slot_;
 
   if (start > end) {
-    Log_info("[PAXOS-REPLAY] Site par %d loc %d: No entries to replay (max_executed=%lu >= max_committed=%lu)",
+    Log_info("[PAXOS-REPLAY] Site par {} loc {}: No entries to replay (max_executed={} >= max_committed={})",
              partition_id_, loc_id_, max_executed_slot_, max_committed_slot_);
     return;
   }
 
-  Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replaying entries %lu..%lu",
+  Log_info("[PAXOS-REPLAY] Site par {} loc {}: Replaying entries {}..{}",
            partition_id_, loc_id_, start, end);
 
   size_t replayed = 0;
@@ -671,19 +671,19 @@ void PaxosServer::ReplayCommittedEntries() {
       max_executed_slot_ = id;
       replayed++;
     } else {
-      Log_warn("[PAXOS-REPLAY] Site par %d loc %d: Missing committed entry at slot %lu, stopping replay",
+      Log_warn("[PAXOS-REPLAY] Site par {} loc {}: Missing committed entry at slot {}, stopping replay",
                partition_id_, loc_id_, id);
       break;
     }
   }
 
-  Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replayed %zu entries, max_executed now %lu",
+  Log_info("[PAXOS-REPLAY] Site par {} loc {}: Replayed {} entries, max_executed now {}",
            partition_id_, loc_id_, replayed, max_executed_slot_);
 
   // Log uncommitted entries status
   size_t uncommitted = GetUncommittedCount();
   if (uncommitted > 0) {
-    Log_info("[PAXOS-RECOVERY] Site par %d loc %d: %zu uncommitted entries (max_accepted=%lu, max_committed=%lu) - will be resolved by consensus",
+    Log_info("[PAXOS-RECOVERY] Site par {} loc {}: {} uncommitted entries (max_accepted={}, max_committed={}) - will be resolved by consensus",
              partition_id_, loc_id_, uncommitted, max_accepted_slot_, max_committed_slot_);
   }
 }
@@ -701,14 +701,14 @@ size_t PaxosServer::CompactLog(slotid_t up_to_index) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   if (!log_storage_) {
-    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: No log storage, skipping compaction",
+    Log_debug("[PAXOS-COMPACT] Site par {} loc {}: No log storage, skipping compaction",
               partition_id_, loc_id_);
     return 0;
   }
 
   // Safety check: don't compact beyond committed index
   if (up_to_index > max_committed_slot_) {
-    Log_warn("[PAXOS-COMPACT] Site par %d loc %d: Cannot compact beyond max_committed (%lu > %lu)",
+    Log_warn("[PAXOS-COMPACT] Site par {} loc {}: Cannot compact beyond max_committed ({} > {})",
              partition_id_, loc_id_, up_to_index, max_committed_slot_);
     up_to_index = max_committed_slot_;
   }
@@ -716,14 +716,14 @@ size_t PaxosServer::CompactLog(slotid_t up_to_index) {
   // Get current first slot
   slotid_t first_slot = log_storage_->get_first_index();
   if (first_slot == 0 || log_storage_->empty()) {
-    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: Log is empty, nothing to compact",
+    Log_debug("[PAXOS-COMPACT] Site par {} loc {}: Log is empty, nothing to compact",
               partition_id_, loc_id_);
     return 0;
   }
 
   // Nothing to compact if up_to_index is before first slot
   if (up_to_index < first_slot) {
-    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: up_to_index %lu < first_slot %lu, nothing to compact",
+    Log_debug("[PAXOS-COMPACT] Site par {} loc {}: up_to_index {} < first_slot {}, nothing to compact",
               partition_id_, loc_id_, up_to_index, first_slot);
     return 0;
   }
@@ -731,7 +731,7 @@ size_t PaxosServer::CompactLog(slotid_t up_to_index) {
   // Remove entries from storage
   size_t to_remove = up_to_index - first_slot + 1;
   if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
-    Log_info("[PAXOS-COMPACT] Site par %d loc %d: Compacted %zu entries [%lu..%lu]",
+    Log_info("[PAXOS-COMPACT] Site par {} loc {}: Compacted {} entries [{}..{}]",
              partition_id_, loc_id_, to_remove, first_slot, up_to_index);
 
     // Also remove from in-memory logs
@@ -746,7 +746,7 @@ size_t PaxosServer::CompactLog(slotid_t up_to_index) {
 
     return to_remove;
   } else {
-    Log_error("[PAXOS-COMPACT] Site par %d loc %d: Failed to compact log entries",
+    Log_error("[PAXOS-COMPACT] Site par {} loc {}: Failed to compact log entries",
               partition_id_, loc_id_);
     return 0;
   }

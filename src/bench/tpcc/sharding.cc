@@ -41,13 +41,13 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
           if (tb_info_ptr->columns[col_index].values != NULL)
             tb_info_ptr->columns[col_index].values->push_back(key_value);
           row_data.push_back(key_value);
-          //Log_debug("%s (primary): %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
+          //Log_debug("{} (primary): {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
           //std::cerr << tb_info_ptr->columns[col_index].name << "(primary):" << row_data.back() << "; ";
         }
         else if (tb_info_ptr->columns[col_index].foreign != NULL) {
           // TODO (ycui) use RandomGenerator
-          Log_fatal("Table %s shouldn't have a foreign key!",
-                    TPCC_TB_WAREHOUSE);
+          Log_fatal("Table {} shouldn't have a foreign key!",
+                    (const char*)TPCC_TB_WAREHOUSE);
           verify(0);
         }
         else {
@@ -125,14 +125,14 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
     // TODO (ycui) add a vector in tb_info_t to record used values for key.
     verify(tb_info_ptr->num_records % num_foreign_row == 0
                || tb_info_ptr->num_records < num_foreign_row);
-    //Log_debug("foreign row: %llu, this row: %llu", num_foreign_row, tb_info_ptr->num_records);
+    //Log_debug("foreign row: {}, this row: {}", num_foreign_row, tb_info_ptr->num_records);
     num_self_primary = tb_info_ptr->num_records / num_foreign_row;
     Value
         key_value = value_get_zero(tb_info_ptr->columns[self_primary_col].type);
     Value max_key = value_get_n(tb_info_ptr->columns[self_primary_col].type,
                                 num_self_primary);
     std::vector<Value> row_data;
-    //Log_debug("Begin primary key: %s, Max primary key: %s", to_string(key_value).c_str(), to_string(max_key).c_str());
+    //Log_debug("Begin primary key: {}, Max primary key: {}", to_string(key_value).c_str(), to_string(max_key).c_str());
 
 
     for (; key_value < max_key || num_self_primary == 0; ++key_value) {
@@ -152,7 +152,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
               if (tb_info_ptr->columns[col_index].values != NULL) {
                 tb_info_ptr->columns[col_index].values->push_back(key_value);
               }
-              //Log_debug("%s (primary): %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
+              //Log_debug("{} (primary): {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
             }
               // primary key and foreign key
             else if (tb_info_ptr->columns[col_index].foreign != NULL) {
@@ -162,7 +162,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
               else
                 v_buf =
                     (*tb_info_ptr->columns[col_index].foreign->values)[prim_foreign_index[col_index].first];
-              //Log_debug("%s (primary, foreign): %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
+              //Log_debug("{} (primary, foreign): {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
               row_data.push_back(v_buf);
             }
             else { // primary key
@@ -172,7 +172,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
                 tb_info_ptr->columns[col_index].values->push_back(key_value);
                 record_key = false;
               }
-              //Log_debug("%s (primary): %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
+              //Log_debug("{} (primary): {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(key_value).c_str());
             }
           }
           else if (tb_info_ptr->columns[col_index].foreign != NULL) {
@@ -211,7 +211,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
               v_buf = value_get_n(tb_info_ptr->columns[col_index].type,
                                   RandomGenerator::rand(0, n - 1));
             row_data.push_back(v_buf);
-            //Log_debug("%s (foreign): %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
+            //Log_debug("{} (foreign): {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
           }
           else {
             Value v_buf = random_value(tb_info_ptr->columns[col_index].type);
@@ -225,7 +225,7 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
                   Value(RandomGenerator::int2str_n(key_value.get_i32() % 1000,
                                                    3));
             row_data.push_back(v_buf);
-            //Log_debug("%s: %s", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
+            //Log_debug("{}: {}", tb_info_ptr->columns[col_index].name.c_str(), to_string(v_buf).c_str());
           }
         }
         if (col_index == tb_info_ptr->columns.size()) {
@@ -233,14 +233,14 @@ int TpccSharding::PopulateTable(tb_info_t *tb_info_ptr, parid_t par_id) {
           //std::string buf;
           //for (int i = 0; i < tb_info_ptr->columns.size(); i++)
           //    buf.append(tb_info_ptr->columns[i].name).append(":").append(to_string(row_data[i])).append("; ");
-          //rrr::Log::info("%s", buf.c_str());
+          //rrr::Log_info("{}", buf.c_str());
 
           mdb::Row *r = frame_->CreateRow(schema, row_data);
           table_ptr->insert(r);
           if (tb_info_ptr->tb_name == TPCC_TB_STOCK && par_id == 1 ) {
             auto item_id = row_data[0].get_i32();
             if (item_id == 9999)
-              Log_debug("debug point here. %d", item_id);
+              Log_debug("debug point here. {}", item_id);
           }
 
           //

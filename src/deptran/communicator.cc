@@ -93,20 +93,20 @@ Communicator::Communicator(rusty::Option<rusty::Arc<PollThread>> poll_thread_wor
 void Communicator::ConnectClientLeaders() {
   auto config = Config::GetConfig();
   if (config->forwarding_enabled_) {
-    Log_info("%s: connect to client sites", __FUNCTION__);
+    Log_info("{}: connect to client sites", __FUNCTION__);
     auto client_leaders = config->SitesByLocaleId(0, Config::CLIENT);
     for (Config::SiteInfo leader_site_info : client_leaders) {
       verify(leader_site_info.locale_id == 0);
-      Log_info("client @ leader %d", leader_site_info.id);
+      Log_info("client @ leader {}", leader_site_info.id);
       auto result = ConnectToClientSite(leader_site_info,
                                         std::chrono::milliseconds
                                             (CONNECT_TIMEOUT_MS));
       verify(result.first == SUCCESS);
       verify(result.second != nullptr);
-      Log_info("connected to client leader site: %d, %d, %p",
+      Log_info("connected to client leader site: {}, {}, {}",
                leader_site_info.id,
                leader_site_info.locale_id,
-               result.second);
+               (void*)result.second);
       client_leaders_.push_back(std::make_pair(leader_site_info.id,
                                                result.second));
     }
@@ -153,7 +153,7 @@ Communicator::~Communicator() {
 bool Communicator::EnsureClientConnected(siteid_t site_id) {
   auto it = rpc_clients_.find(site_id);
   if (it == rpc_clients_.end()) {
-    Log_error("Communicator: no client for site %ld", site_id);
+    Log_error("Communicator: no client for site {}", site_id);
     return false;
   }
 
@@ -168,20 +168,20 @@ bool Communicator::EnsureClientConnected(siteid_t site_id) {
   auto state = client->connection_state();
   if (state == rrr::ConnectionState::FAILED ||
       state == rrr::ConnectionState::DISCONNECTED) {
-    Log_info("Communicator: site %ld in state %s, attempting reconnect",
+    Log_info("Communicator: site {} in state {}, attempting reconnect",
              site_id, rrr::connection_state_to_string(state));
 
     if (client->try_reconnect_if_needed()) {
-      Log_info("Communicator: reconnected to site %ld successfully", site_id);
+      Log_info("Communicator: reconnected to site {} successfully", site_id);
       return true;
     } else {
-      Log_warn("Communicator: reconnect to site %ld failed", site_id);
+      Log_warn("Communicator: reconnect to site {} failed", site_id);
       return false;
     }
   }
 
   // CONNECTING or other transient state - can't help immediately
-  Log_debug("Communicator: site %ld in transient state %s",
+  Log_debug("Communicator: site {} in transient state {}",
             site_id, rrr::connection_state_to_string(state));
   return false;
 }
@@ -288,7 +288,7 @@ Communicator::LeaderProxyForPartition(parid_t par_id, int idx) const {
           return site.locale_id == 0;
         });
     if (proxy_it == partition_proxies.end()) {
-      Log_fatal("could not find leader for partition %d", par_id);
+      Log_fatal("could not find leader for partition {}", par_id);
     } else {
       leader_cache[par_id] = *proxy_it;
     }
@@ -309,13 +309,13 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   double elapsed;
   int attempt = 0;
   do {
-    Log_debug("connect to client site: %s (attempt %d)", addr, attempt++);
+    Log_debug("connect to client site: {} (attempt {})", addr, attempt++);
     auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
       ClientControlProxy* rpc_proxy = new ClientControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
-      Log_debug("connect to client site: %s success!", addr);
+      Log_debug("connect to client site: {} success!", addr);
       return std::make_pair(SUCCESS, rpc_proxy);
     } else {
       std::this_thread::sleep_for(std::chrono::milliseconds(CONNECT_SLEEP_MS));
@@ -324,7 +324,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
     elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
         .count();
   } while (elapsed < timeout.count());
-  Log_info("timeout connecting to client %s", addr);
+  Log_info("timeout connecting to client {}", addr);
   rpc_cli->close();
   // Arc handles cleanup automatically
   return std::make_pair(FAILURE, nullptr);
@@ -339,7 +339,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   double elapsed;
   int attempt = 0;
   do {
-    Log_debug("connect to site: %s (attempt %d)", addr.c_str(), attempt++);
+    Log_debug("connect to site: {} (attempt {})", addr.c_str(), attempt++);
     auto connect_result = rpc_cli->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false);
     if (connect_result == SUCCESS) {
       // Arc::get() returns const T*, but proxy doesn't mutate client
@@ -359,7 +359,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
         Reactor::clients_.get(host_key).unwrap().push(std::move(conn_proxy));
       }
-      Log_info("connect to site: %s success!", addr.c_str());
+      Log_info("connect to site: {} success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);
     } else {
       std::this_thread::sleep_for(std::chrono::milliseconds(CONNECT_SLEEP_MS));
@@ -368,14 +368,14 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
     elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
         .count();
   } while (elapsed < timeout.count());
-  Log_info("timeout connecting to %s", addr.c_str());
+  Log_info("timeout connecting to {}", addr.c_str());
   rpc_cli->close();
   // Arc handles cleanup automatically
   return std::make_pair(FAILURE, nullptr);
 }
 
 bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
-  Log_info("[RECONNECT] Attempting to reconnect to site %d for partition %d", site_id, par_id);
+  Log_info("[RECONNECT] Attempting to reconnect to site {} for partition {}", site_id, par_id);
 
   auto config = Config::GetConfig();
   Config::SiteInfo* site_info = nullptr;
@@ -389,14 +389,14 @@ bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
   }
 
   if (!site_info) {
-    Log_error("[RECONNECT] Could not find site info for site %d", site_id);
+    Log_error("[RECONNECT] Could not find site info for site {}", site_id);
     return false;
   }
 
   // Close old connection if exists
   auto old_client_it = rpc_clients_.find(site_id);
   if (old_client_it != rpc_clients_.end()) {
-    Log_info("[RECONNECT] Closing old connection to site %d", site_id);
+    Log_info("[RECONNECT] Closing old connection to site {}", site_id);
     old_client_it->second->close();
     rpc_clients_.erase(old_client_it);
   }
@@ -412,20 +412,20 @@ bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
   // Create new connection
   auto result = ConnectToSite(*site_info, std::chrono::milliseconds(CONNECT_TIMEOUT_MS));
   if (result.first != SUCCESS) {
-    Log_error("[RECONNECT] Failed to reconnect to site %d", site_id);
+    Log_error("[RECONNECT] Failed to reconnect to site {}", site_id);
     return false;
   }
 
   ClassicProxy* new_proxy = result.second;
-  Log_info("[RECONNECT] Successfully reconnected to site %d, new proxy=%p", site_id, new_proxy);
+  Log_info("[RECONNECT] Successfully reconnected to site {}, new proxy={}", site_id, (void*)new_proxy);
 
   // Update rpc_par_proxies_ with new proxy
   auto par_it = rpc_par_proxies_.find(par_id);
   if (par_it != rpc_par_proxies_.end()) {
     for (auto& pair : par_it->second) {
       if (pair.first == site_id) {
-        Log_info("[RECONNECT] Updating proxy in rpc_par_proxies_ for site %d: old=%p new=%p",
-                 site_id, pair.second, new_proxy);
+        Log_info("[RECONNECT] Updating proxy in rpc_par_proxies_ for site {}: old={} new={}",
+                 site_id, (void*)pair.second, (void*)new_proxy);
         pair.second = new_proxy;
         break;
       }
@@ -549,7 +549,7 @@ void Communicator::BroadcastDispatch(
   }
   
   SetLeaderCache(par_id, pair_leader_proxy);
-  Log_debug("send dispatch to site %ld, par %d",
+  Log_debug("send dispatch to site {}, par {}",
             pair_leader_proxy.first, par_id);
   auto proxy = pair_leader_proxy.second;
   // Fill-then-wrap: build the payload locally, wrap once complete.
@@ -568,12 +568,12 @@ void Communicator::BroadcastDispatch(
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C-] BroadcastDispatch at Communicator %.3f", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[Jetpack] [C-] BroadcastDispatch at Communicator {:.3f}", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 
   WAN_WAIT;
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> before async_Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
+  Log_info("[Jetpack] cmd<{}, {}> before async_Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 #ifdef LATENCY_LOG_DEBUG
   Log_info("!!!!!!!! Before proxy->async_Dispatch(cmd_id, di, md, fuattr);");
@@ -608,7 +608,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
   std::unordered_set<int> leaders{};
   auto src_coroid = e->get_fiber_id();
   coo->coro_id_ = src_coroid;
-  Log_info("The size of cmds_by_par is %d", cmds_by_par.size());
+  Log_info("The size of cmds_by_par is {}", cmds_by_par.size());
 
   for(auto& pair: cmds_by_par){
     bool first = false;
@@ -689,7 +689,7 @@ rusty::Arc<IntEvent> Communicator::BroadcastDispatch(
 	  			}
       };
     
-    Log_debug("send dispatch to site %ld",
+    Log_debug("send dispatch to site {}",
               pair_leader_proxy.first);
     auto proxy = pair_leader_proxy.second;
     // Fill-then-wrap: build the payload locally, wrap once complete.
@@ -814,7 +814,7 @@ Communicator::SendPrepare(Coordinator* coo,
     };
     
     ClassicProxy* proxy = LeaderProxyForPartition(partition_id).second;
-    Log_debug("SendPrepare to %ld sites gid:%ld, tid:%ld\n",
+    Log_debug("SendPrepare to {} sites gid:{}, tid:{}\n",
               sids.size(),
               partition_id,
               tid);
@@ -870,7 +870,7 @@ Communicator::SendPrepare(Coordinator* coo,
   // ClassicProxy* proxy = LeaderProxyForPartition(gid).second;
   auto pair_proxies = PilotProxyForPartition(gid);
   verify(pair_proxies.size() == 2);
-  Log_debug("SendPrepare to %ld sites gid:%ld, tid:%ld\n",
+  Log_debug("SendPrepare to {} sites gid:{}, tid:{}\n",
             sids.size(),
             gid,
             tid);
@@ -882,10 +882,10 @@ void Communicator::___LogSent(parid_t pid, txnid_t tid) {
   auto value = std::make_pair(pid, tid);
   auto it = phase_three_sent_.find(value);
   if (it != phase_three_sent_.end()) {
-    Log_fatal("phase 3 sent exists: %d %x", it->first, it->second);
+    Log_fatal("phase 3 sent exists: {} {:x}", it->first, it->second);
   } else {
     phase_three_sent_.insert(value);
-    Log_debug("phase 3 sent: pid: %d; tid: %x", value.first, value.second);
+    Log_debug("phase 3 sent: pid: {}; tid: {:x}", value.first, value.second);
   }
 }
 
@@ -937,7 +937,7 @@ Communicator::SendCommit(Coordinator* coo,
         const auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data.is_some()) {
           cmd->reply_.sp_view_data_ = sp_view_data;
-          Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id=%lu: %s",
+          Log_info("[VIEW_PROPAGATE] Received view data in Commit response for tx_id={}: {}",
                    tid, sp_view_data.unwrap()->ToString().c_str());
         }
       }
@@ -962,7 +962,7 @@ Communicator::SendCommit(Coordinator* coo,
 		di.str = "dep";
 		di.id = Communicator::global_id++;
     ClassicProxy* proxy = LeaderProxyForPartition(rp).second;
-    Log_debug("SendCommit to %ld tid:%ld\n", rp, tid);
+    Log_debug("SendCommit to {} tid:{}\n", rp, tid);
     ClassicProxy::RpcCommitRequest commit_req;
     commit_req.tid = tid;
     commit_req.dep_id = di;
@@ -1009,7 +1009,7 @@ Communicator::SendCommit(Coordinator* coo,
   auto proxy_pair = LeaderProxyForPartition(pid);
   ClassicProxy* proxy = proxy_pair.second;
   SetLeaderCache(pid, proxy_pair);
-  Log_debug("SendCommit to %ld tid:%ld\n", pid, tid);
+  Log_debug("SendCommit to {} tid:{}\n", pid, tid);
   Future::safe_release(proxy->async_Commit(tid, 0, fuattr));
 }*/
 
@@ -1058,7 +1058,7 @@ Communicator::SendAbort(Coordinator* coo,
         const auto sp_view_data = marshallable_cast<ViewData>(view_md);
         if (sp_view_data.is_some()) {
           cmd->reply_.sp_view_data_ = sp_view_data;
-          Log_info("[VIEW_PROPAGATE] Received view data in Abort response for tx_id=%lu: %s",
+          Log_info("[VIEW_PROPAGATE] Received view data in Abort response for tx_id={}: {}",
                    tid, sp_view_data.unwrap()->ToString().c_str());
         }
       }
@@ -1082,7 +1082,7 @@ Communicator::SendAbort(Coordinator* coo,
     di.str = "dep";
     di.id = Communicator::global_id++;
     ClassicProxy* proxy = LeaderProxyForPartition(rp).second;
-    Log_debug("SendAbort to %ld tid:%ld\n", rp, tid);
+    Log_debug("SendAbort to {} tid:{}\n", rp, tid);
     ClassicProxy::RpcAbortRequest abort_req;
     abort_req.tid = tid;
     abort_req.dep_id = di;
@@ -1125,7 +1125,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   FutureAttr fuattr;
   fuattr.callback = [](rusty::Arc<Future>) {};
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
-  Log_debug("SendAbort to %ld tid:%ld\n", pid, tid);
+  Log_debug("SendAbort to {} tid:{}\n", pid, tid);
   ClassicProxy::RpcEarlyAbortRequest early_abort_req;
   early_abort_req.tid = tid;
   auto early_abort_result = proxy->async_EarlyAbort(early_abort_req, fuattr);
@@ -1143,7 +1143,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
   fuattr.callback = [callback](rusty::Arc<Future>) { callback(); };
   // ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   auto pair_proxies = PilotProxyForPartition(pid);
-  Log_debug("SendAbort to %ld tid:%ld\n", pid, tid);
+  Log_debug("SendAbort to {} tid:{}\n", pid, tid);
   for (auto& p : pair_proxies)
     Future::safe_release(p.second->async_Abort(tid, fuattr));
 }*/
@@ -1197,13 +1197,13 @@ void Communicator::SendForwardTxnRequest(
     TxRequest& req,
     Coordinator* coo,
     std::function<void(const TxReply&)> callback) {
-  Log_info("%s: %d, %d", __FUNCTION__, coo->coo_id_, coo->par_id_);
+  Log_info("{}: {}, {}", __FUNCTION__, coo->coo_id_, coo->par_id_);
   verify(client_leaders_.size() > 0);
   auto idx = rrr::RandomGenerator::rand(0, client_leaders_.size() - 1);
   auto p = client_leaders_[idx];
   auto leader_site_id = p.first;
   auto leader_proxy = p.second;
-  Log_debug("%s: send to client site %d", __FUNCTION__, leader_site_id);
+  Log_debug("{}: send to client site {}", __FUNCTION__, leader_site_id);
   TxDispatchRequest dispatch_request;
   dispatch_request.id = coo->coo_id_;
   for (size_t i = 0; i < req.input_.size(); i++) {
@@ -1370,7 +1370,7 @@ void Communicator::SetNewLeaderProxy(parid_t par_id, locid_t loc_id) {
         });
      verify (proxy_it != partition_proxies.end()) ;
      leader_cache_[par_id] = *proxy_it;*/
-  Log_debug("set leader proxy for partition %d is %d", par_id, loc_id);
+  Log_debug("set leader proxy for partition {} is {}", par_id, loc_id);
 }
 
 void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
@@ -1387,7 +1387,7 @@ void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,
   };
   fuattr.callback = cb;
   ClassicProxy* proxy = LeaderProxyForPartition(gid).second;
-  Log_debug("SendEmptyCmd to %ld sites gid:%ld\n", sids.size(), gid);
+  Log_debug("SendEmptyCmd to {} sites gid:{}\n", sids.size(), gid);
   ClassicProxy::RpcSimpleCmdRequest req;
   req.cmd = cmd;
   auto simple_cmd_result = proxy->async_SimpleCmd(req, fuattr);
@@ -1485,10 +1485,10 @@ shared_ptr<JetpackPullIdSetQuorumEvent> Communicator::JetpackBroadcastPullIdSet(
 
 shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(parid_t par_id, locid_t loc_id, 
                                                                         const std::vector<key_t>& keys, epoch_t jepoch, epoch_t oepoch) {
-  // Log_info("[JETPACK-DEBUG] JetpackBroadcastPullCmd called with par_id=%d, loc_id=%d, key=%d", par_id, loc_id, key);
+  // Log_info("[JETPACK-DEBUG] JetpackBroadcastPullCmd called with par_id={}, loc_id={}, key={}", par_id, loc_id, key);
   
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  // Log_info("[JETPACK-DEBUG] Partition size n=%d", n);
+  // Log_info("[JETPACK-DEBUG] Partition size n={}", n);
   
   auto e = std::make_shared<JetpackPullCmdQuorumEvent>(n, n/2+1, keys);
   // if (!e) {
@@ -1496,11 +1496,11 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
   // }
   
   // if (rpc_par_proxies_.find(par_id) == rpc_par_proxies_.end()) {
-  //   Log_info("[JETPACK-DEBUG] ERROR: No proxies found for partition %d!", par_id);
+  //   Log_info("[JETPACK-DEBUG] ERROR: No proxies found for partition {}!", par_id);
   // }
   
   auto proxies = rpc_par_proxies_[par_id];
-  // Log_info("[JETPACK-DEBUG] Found %zu proxies for partition %d", proxies.size(), par_id);
+  // Log_info("[JETPACK-DEBUG] Found {} proxies for partition {}", proxies.size(), par_id);
 
   vector<rusty::Arc<Future>> fus;
   // Fill-then-wrap: build the payload locally, wrap once complete.
@@ -1525,9 +1525,9 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
     // }
     auto proxy = (ClassicProxy*) p.second;
     // if (!proxy) {
-    //   Log_info("[JETPACK-DEBUG] ERROR: Proxy is NULL for site %d!", p.first);
+    //   Log_info("[JETPACK-DEBUG] ERROR: Proxy is NULL for site {}!", p.first);
     // }
-    // Log_info("[JETPACK-DEBUG] Sending JetpackPullCmd to site %d", p.first);
+    // Log_info("[JETPACK-DEBUG] Sending JetpackPullCmd to site {}", p.first);
     
     FutureAttr fuattr;
     fuattr.callback = [e](rusty::Arc<Future> fu) {
@@ -1556,7 +1556,7 @@ shared_ptr<JetpackPullCmdQuorumEvent> Communicator::JetpackBroadcastPullCmd(pari
       fus.push_back(fu_result.unwrap().raw_future());
     }
   }
-  // Log_info("[JETPACK-DEBUG] JetpackBroadcastPullCmd returning event with %zu futures", fus.size());
+  // Log_info("[JETPACK-DEBUG] JetpackBroadcastPullCmd returning event with {} futures", fus.size());
   return e;
 }
 
@@ -1564,7 +1564,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
                                                                epoch_t jepoch, epoch_t oepoch,
                                                                int sid, int rid,
                                                                const std::vector<std::pair<key_t, janus::Command>>& cmds) {
-  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id=%d, loc_id=%d, sid=%d, rid=%d",
+  // Log_info("[JETPACK-DEBUG] JetpackBroadcastRecordCmd called: par_id={}, loc_id={}, sid={}, rid={}",
   //          par_id, loc_id, sid, rid);
 
   int n = Config::GetConfig()->GetPartitionSize(par_id);
@@ -1580,7 +1580,7 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
   }
   janus::Command cmd_deputy = rusty::Arc<KeyCmdBatchData>::make(std::move(batch_data));
   
-  // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to %zu sites, need %d votes", proxies.size(), n/2+1);
+  // Log_info("[JETPACK-DEBUG] Broadcasting RecordCmd to {} sites, need {} votes", proxies.size(), n/2+1);
   
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
@@ -1594,15 +1594,15 @@ rusty::Arc<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
     FutureAttr fuattr;
     fuattr.callback = [e, p](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        // Log_info("[JETPACK-DEBUG] RecordCmd error from site %d: error_code=%d",
+        // Log_info("[JETPACK-DEBUG] RecordCmd error from site {}: error_code={}",
         //          p.first, fu->get_error_code());
         e->vote_no();  // Vote no on error to prevent hanging
         return;
       }
-      // Log_info("[JETPACK-DEBUG] RecordCmd success from site %d", p.first);
+      // Log_info("[JETPACK-DEBUG] RecordCmd success from site {}", p.first);
       e->vote_yes();
     };
-    // Log_info("[JETPACK-DEBUG] Sending RecordCmd to site %d", p.first);
+    // Log_info("[JETPACK-DEBUG] Sending RecordCmd to site {}", p.first);
     ClassicProxy::RpcJetpackRecordCmdRequest req;
     req.jepoch = jepoch;
     req.oepoch = oepoch;
@@ -1812,10 +1812,10 @@ void Communicator::UpdatePartitionView(parid_t partition_id, const ViewData& vie
   auto it = partition_views_.find(partition_id);
   if (it != partition_views_.end()) {
     const View& prev_view = it->second;
-    Log_info("[VIEW_DEBUG] partition %d view update %s -> %s", partition_id,
+    Log_info("[VIEW_DEBUG] partition {} view update {} -> {}", partition_id,
              prev_view.ToString().c_str(), view.ToString().c_str());
   } else {
-    Log_info("[VIEW_DEBUG] partition %d initial view %s", partition_id, view.ToString().c_str());
+    Log_info("[VIEW_DEBUG] partition {} initial view {}", partition_id, view.ToString().c_str());
   }
   if (it != partition_views_.end()) {
     // Only update if the new view is newer

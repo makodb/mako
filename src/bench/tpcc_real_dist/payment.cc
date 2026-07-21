@@ -91,7 +91,7 @@ void TpccRdWorkload::RegPayment() {
        DF_NO,
        PROC {
          verify(cmd.input.size() == 2);
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_0);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_0);
          i32 oi = 0;
          mdb::Row *row_warehouse =
              tx.Query(tx.GetTable(TPCC_TB_WAREHOUSE),
@@ -129,7 +129,7 @@ void TpccRdWorkload::RegPayment() {
        {TPCC_TB_DISTRICT, {TPCC_VAR_D_ID, TPCC_VAR_W_ID}}, // s
        DF_NO,
        PROC {
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_1);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_1);
          Value buf;
          mdb::MultiBlob mb(2);
          mb[0] = cmd.input[TPCC_VAR_D_ID].get_blob();
@@ -170,7 +170,7 @@ void TpccRdWorkload::RegPayment() {
        DF_REAL,
        PROC {
          verify(cmd.input.size() == 3);
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_2);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_2);
 
          Value buf(0.0);
          mdb::Row *r = NULL;
@@ -200,7 +200,7 @@ void TpccRdWorkload::RegPayment() {
        DF_NO,
        PROC {
          verify(cmd.input.size() == 3);
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_3);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_3);
 
          mdb::MultiBlob mbl(3), mbh(3);
          mbl[0] = cmd.input[TPCC_VAR_C_D_ID].get_blob();
@@ -235,7 +235,7 @@ void TpccRdWorkload::RegPayment() {
              it_mid = it;
            }
          }
-         Log_debug("w_id: %d, d_id: %d, c_last: %s, num customer: %d",
+         Log_debug("w_id: {}, d_id: {}, c_last: {}, num customer: {}",
                    cmd.input[TPCC_VAR_C_W_ID].get_i32(),
                    cmd.input[TPCC_VAR_C_D_ID].get_i32(),
                    cmd.input[TPCC_VAR_C_LAST].get_str().c_str(),
@@ -257,7 +257,7 @@ void TpccRdWorkload::RegPayment() {
        DF_REAL,
        PROC {
          verify(cmd.input.size() == 6);
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_4);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_4);
          mdb::Row *r = NULL;
          mdb::MultiBlob mb(3);
          //cell_locator_t cl(TPCC_TB_CUSTOMER, 3);
@@ -372,7 +372,7 @@ void TpccRdWorkload::RegPayment() {
        DF_REAL,
        PROC {
          verify(cmd.input.size() == 9);
-         Log_debug("TPCC_PAYMENT, piece: %d", TPCC_PAYMENT_5);
+         Log_debug("TPCC_PAYMENT, piece: {}", TPCC_PAYMENT_5);
 
          mdb::Txn *txn = tx.mdb_txn();
          mdb::Table *tbl = txn->get_table(TPCC_TB_HISTORY);

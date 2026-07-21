@@ -112,9 +112,9 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
   verify(0);
   return 0;
 /**
-//  Log_info("on preaccept: %llx par: %d", txn_id, (int)partition_id_);
+//  Log_info("on preaccept: {:x} par: {}", txn_id, (int)partition_id_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on pre-accept graph size: %d", graph.size());
+//    Log_info("on pre-accept graph size: {}", graph.size());
   verify(txn_id > 0);
   verify(cmds[0].root_id_ == txn_id);
   if (graph) {
@@ -184,7 +184,7 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 //                             TxnOutput *output) {
 //  std::lock_guard<std::recursive_mutex> lock(mtx_);
 ////  if (RandomGenerator::rand(1, 2000) <= 1)
-////    Log_info("on commit graph size: %d", graph.size());
+////    Log_info("on commit graph size: {}", graph.size());
 //  int ret = SUCCESS;
 //  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
 //  dtxn->need_validation_ = need_validation;
@@ -194,7 +194,7 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 //  if (dtxn->HasLogApplyStarted()) {
 //    ret = SUCCESS; // TODO no return output?
 //  } else {
-////    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+////    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 ////    dtxn->commit_request_received_ = true;
 //    if (!sp_graph) {
 //      // quick path without graph, no contention.

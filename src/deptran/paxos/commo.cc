@@ -79,7 +79,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
 
-  // Log_info("ForwardToLearner: par_id=%d, slot=%lu, n=%d, proxies.size=%zu, batch_idx=%d",
+  // Log_info("ForwardToLearner: par_id={}, slot={}, n={}, proxies.size={}, batch_idx={}",
   //          par_id, slot, n, proxies.size(), cur_batch_idx);
 
   //auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1,1);
@@ -87,7 +87,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     int site_role = Config::GetConfig()->SiteById(p.first).role;
-    Log_debug("ForwardToLearner: site_id=%d, role=%d", p.first, site_role);
+    Log_debug("ForwardToLearner: site_id={}, role={}", p.first, site_role);
     if (site_role!=2) continue;
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
@@ -105,7 +105,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         //e->FeedResponse(1);
 	      };
 	     janus::Command md(cmd);
-	     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
+	     //Log_info("ForwardToLearner: SENDING to learner site_id={}, slot={}", p.first, slot);
        MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
        req.par_id = par_id;
        req.slot = slot;
@@ -257,7 +257,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  //Log_info("cur_batch_idx:%d",cur_batch_idx);
+  //Log_info("cur_batch_idx:{}",cur_batch_idx);
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
@@ -274,7 +274,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       rrr::deserialize_from(fu->get_reply(), ballot, valid);
        // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
-        Log_debug("Accept invalid response received from %d site", st);
+        Log_debug("Accept invalid response received from {} site", st);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };

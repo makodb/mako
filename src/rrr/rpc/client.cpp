@@ -1111,7 +1111,7 @@ inline const int8_t* str_as_i8(const std::string& s) {
 // in a non-void method is miscodegen'd with a spurious return-type qualifier
 // (`int32_t::Log_error`), so the I/O is isolated in these void helpers instead.
 inline void log_connect_bad_state(ConnectionState state) {
-  Log_error("rrr::ClientConnection: cannot connect from state %s",
+  Log_error("rrr::ClientConnection: cannot connect from state {}",
             connection_state_to_string(state));
 }
 inline void log_connect_no_factory() {
@@ -1529,7 +1529,7 @@ impl ClientConnection {
             if !(*conn).connected() {
                 return;
             }
-            unsafe { Log_warn("rrr::ClientConnection: heartbeat timeout for %s", (*conn).host().c_str()); }
+            unsafe { Log_warn("rrr::ClientConnection: heartbeat timeout for {}", (*conn).host().c_str()); }
             (*conn).handle_error();
         });
     }
@@ -1676,7 +1676,7 @@ impl ClientConnection {
         let old_id = self.server_instance_id_.get();
         self.server_instance_id_.set(new_id);
         if old_id != 0u64 && old_id != new_id {
-            unsafe { Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id); }
+            unsafe { Log_info("Server restart detected: old_id={} new_id={}", old_id, new_id); }
             let cb_ref = self.on_server_restart_.borrow_mut();
             if *cb_ref {
                 (*cb_ref)(old_id, new_id);
@@ -1750,7 +1750,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=7374447f739966e878723701a9e8766ab237bfdcfba4d8152b2081f822f80d49*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=b338705e4e71f4945ccde7890bff92ef91f11414decb59897cc7e9cd6af133fd*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2194,7 +2194,7 @@ if (rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(conn))).conne
 }
 // @unsafe
 {
-    Log_warn("rrr::ClientConnection: heartbeat timeout for %s", ((rusty::detail::deref_if_pointer_like(conn))).host().c_str());
+    Log_warn("rrr::ClientConnection: heartbeat timeout for {}", ((rusty::detail::deref_if_pointer_like(conn))).host().c_str());
 }
 ((rusty::detail::deref_if_pointer_like(conn))).handle_error();
 });
@@ -2411,7 +2411,7 @@ bool ClientConnection::check_server_instance(uint64_t new_id) const {
     if ((rusty::detail::deref_if_pointer_like(old_id) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(old_id) != rusty::detail::deref_if_pointer_like(new_id))) {
         // @unsafe
         {
-            Log_info("Server restart detected: old_id=%lu new_id=%lu", std::move(old_id), std::move(new_id));
+            Log_info("Server restart detected: old_id={} new_id={}", std::move(old_id), std::move(new_id));
         }
         auto cb_ref = this->on_server_restart_.borrow_mut();
         if (*cb_ref) {
@@ -3977,7 +3977,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
 
   // Can only reconnect from FAILED or DISCONNECTED state
   if (!self.state_machine_.can_connect()) {
-    Log_error("rrr::ClientConnection: cannot reconnect from state %s",
+    Log_error("rrr::ClientConnection: cannot reconnect from state {}",
               connection_state_to_string(self.state_machine_.state()));
     return complete_callback(EINVAL);
   }
@@ -4000,7 +4000,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
     self.invoke_reconnected_callback(success);
 
     if (success) {
-      Log_info("rrr::ClientConnection: reconnected to %s", self.reconnect_address_.get().c_str());
+      Log_info("rrr::ClientConnection: reconnected to {}", self.reconnect_address_.get().c_str());
 
       // Record reconnection in metrics
       self.metrics_.record_reconnect();
@@ -4014,10 +4014,10 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
       return complete_callback(0);
     } else {
       if (result == ECANCELED) {
-        Log_debug("rrr::ClientConnection: reconnect cancelled for %s",
+        Log_debug("rrr::ClientConnection: reconnect cancelled for {}",
                   self.reconnect_address_.get().c_str());
       } else {
-        Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
+        Log_error("rrr::ClientConnection: reconnection failed to {}: {}",
                   self.reconnect_address_.get().c_str(), result);
       }
       return complete_callback(result);
@@ -4083,7 +4083,7 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
       return complete_reconnect(false, EINVAL);
     }
 
-    Log_debug("rrr::ClientConnection: reconnect retry #%u to %s",
+    Log_debug("rrr::ClientConnection: reconnect retry #{} to {}",
               calc.retry_count(), self.reconnect_address_.get().c_str());
     result = reconnect_once();
     if (result == 0) {
@@ -4512,7 +4512,7 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
     if (result.error != ChannelError::None || result.connection.is_none()) {
       const auto err_str = std::string("factory connect failed: ")
           + channel_error_to_string(result.error);
-      Log_error("rrr::ClientConnection: %s (addr=%s)", err_str.c_str(), addr);
+      Log_error("rrr::ClientConnection: {} (addr={})", err_str.c_str(), addr);
       self.state_machine_.transition_to(ConnectionState::FAILED);
       // Map the channel error onto an errno-shaped value the legacy
       // call sites expect.
@@ -5192,21 +5192,21 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
       // Try to reconnect failed/disconnected clients
       auto state = client->connection_state();
       if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
-        Log_info("ClientPool: client to %s in state %s, attempting reconnect",
+        Log_info("ClientPool: client to {} in state {}, attempting reconnect",
                  addr.c_str(), connection_state_to_string(state));
         if (client->try_reconnect_if_needed()) {
-          Log_info("ClientPool: reconnected to %s successfully", addr.c_str());
+          Log_info("ClientPool: reconnected to {} successfully", addr.c_str());
           sp_cl = rusty::Some(client.clone());
           break;
         } else {
-          Log_warn("ClientPool: reconnect to %s failed", addr.c_str());
+          Log_warn("ClientPool: reconnect to {} failed", addr.c_str());
         }
       }
     }
 
     // If no healthy client found after trying reconnects, recreate all connections
     if (sp_cl.is_none()) {
-      Log_info("ClientPool: all clients to %s failed, recreating connections", addr.c_str());
+      Log_info("ClientPool: all clients to {} failed, recreating connections", addr.c_str());
       // Close old connections
       for (auto& client : clients) {
         client->close();
@@ -5219,7 +5219,7 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
         auto client = Client::create(self.poll_thread_worker_.as_ref().unwrap().clone());
         client->set_client_mode(true);
         if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
-          Log_warn("ClientPool: failed to create new connection to %s", addr.c_str());
+          Log_warn("ClientPool: failed to create new connection to {}", addr.c_str());
           ok = false;
           break;
         }

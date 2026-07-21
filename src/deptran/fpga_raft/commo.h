@@ -84,7 +84,7 @@ class FpgaRaftAcceptQuorumEvent: public QuorumEventWrapper {
       vote_no();
     }
     /*Log_debug("multi-paxos comm accept event, "
-              "yes vote: %d, no vote: %d",
+              "yes vote: {}, no vote: {}",
               n_voted_yes_.get(), n_voted_no_.get());*/
   }
 };
@@ -104,7 +104,7 @@ class FpgaRaftAppendQuorumEvent: public QuorumEventWrapper {
             vote_no();
         }
         /*Log_debug("fpga-raft comm accept event, "
-                  "yes vote: %d, no vote: %d, min index: %d",
+                  "yes vote: {}, no vote: {}, min index: {}",
                   n_voted_yes_.get(), n_voted_no_.get(), minIndex);*/
     }
 };

@@ -67,7 +67,7 @@ void TpccWorkload::RegNewOrder() {
           mdb::MultiBlob mb(2);
           mb[0] = cmd.input[TPCC_VAR_D_ID].get_blob();
           mb[1] = cmd.input[TPCC_VAR_W_ID].get_blob();
-          Log_debug("new order d_id: %x w_id: %x",
+          Log_debug("new order d_id: {:x} w_id: {:x}",
                     cmd.input[TPCC_VAR_D_ID].get_i32(),
                     cmd.input[TPCC_VAR_W_ID].get_i32());
           mdb::Row *row_district = tx.Query(
@@ -104,7 +104,7 @@ void TpccWorkload::RegNewOrder() {
 //       DF_REAL,
 //       PROC {
 //         verify(cmd.input.size() >= 1);
-//         Log::debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_1);
+//         Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_1);
          mdb::Row *row_warehouse = tx.Query(
              tx.GetTable(TPCC_TB_WAREHOUSE),
              cmd.input[TPCC_VAR_W_ID].get_blob(),
@@ -125,7 +125,7 @@ void TpccWorkload::RegNewOrder() {
 //       DF_REAL,
 //       PROC {
 //         verify(cmd.input.size() >= 3);
-//         Log::debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_2);
+//         Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_2);
 
          mb = mdb::MultiBlob(3);
          mb[0] = cmd.input.at(TPCC_VAR_C_ID).get_blob();
@@ -155,7 +155,7 @@ void TpccWorkload::RegNewOrder() {
 //       DF_FAKE,
 //       PROC {
 //         verify(cmd.input.size() >= 6);
-//         Log::debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_3);
+//         Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_3);
          int32_t oi = 0;
          mdb::Table *tbl = tx.GetTable(TPCC_TB_ORDER);
 
@@ -202,7 +202,7 @@ void TpccWorkload::RegNewOrder() {
 //       DF_FAKE,
 //       PROC {
 //         verify(cmd.input.size() >= 3);
-//         Log_debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_4);
+//         Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_4);
 
          mdb::Table *new_order_tbl = tx.GetTable(TPCC_TB_NEW_ORDER);
 
@@ -233,7 +233,7 @@ void TpccWorkload::RegNewOrder() {
          DF_NO,
          LPROC {
            verify(cmd.input.size() >= 1);
-           Log_debug("TPCC_NEW_ORDER, piece: %d",
+           Log_debug("TPCC_NEW_ORDER, piece: {}",
                      TPCC_NEW_ORDER_RI(i));
            auto tbl_item = tx.GetTable(TPCC_TB_ITEM);
            mdb::Row *row_item =
@@ -268,14 +268,14 @@ void TpccWorkload::RegNewOrder() {
          DF_NO,
          LPROC {
            verify(cmd.input.size() >= 3);
-           Log_debug("TPCC_NEW_ORDER, piece: %d",
+           Log_debug("TPCC_NEW_ORDER, piece: {}",
                      TPCC_NEW_ORDER_RS(i));
            mdb::MultiBlob mb(2);
            mb[0] = cmd.input[TPCC_VAR_I_ID(i)].get_blob();
            mb[1] = cmd.input[TPCC_VAR_S_W_ID(i)].get_blob();
            int32_t w_id = cmd.input[TPCC_VAR_S_W_ID(i)].get_i32();
            int32_t i_id = cmd.input[TPCC_VAR_I_ID(i)].get_i32();
-           Log_debug("new order read stock. item_id: %x, s_w_id: %x",
+           Log_debug("new order read stock. item_id: {:x}, s_w_id: {:x}",
                      i_id,
                      w_id);
            auto tbl_stock = tx.GetTable(TPCC_TB_STOCK);
@@ -311,7 +311,7 @@ void TpccWorkload::RegNewOrder() {
          DF_REAL,
          LPROC {
            verify(cmd.input.size() >= 4);
-           Log_debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_WS(i));
+           Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_WS(i));
            mdb::Row *r = NULL;
            mdb::MultiBlob mb(2);
            mb[0] = cmd.input[TPCC_VAR_I_ID(i)].get_blob();
@@ -371,7 +371,7 @@ void TpccWorkload::RegNewOrder() {
          DF_FAKE,
          LPROC {
            verify(cmd.input.size() >= 9);
-           Log_debug("TPCC_NEW_ORDER, piece: %d", TPCC_NEW_ORDER_WOL(i));
+           Log_debug("TPCC_NEW_ORDER, piece: {}", TPCC_NEW_ORDER_WOL(i));
 
            mdb::Table *tbl = tx.GetTable(TPCC_TB_ORDER_LINE);
            mdb::Row *r = NULL;

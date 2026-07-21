@@ -99,7 +99,7 @@ static i64 total_req_count() {
 }
 
 static void signal_handler(int sig) {
-    Log_info("caught signal %d, stopping server now", sig);
+    Log_info("caught signal {}, stopping server now", sig);
     should_stop = true;
     Pthread_mutex_lock(&g_stop_mutex);
     Pthread_cond_signal(&g_stop_cond);
@@ -114,7 +114,7 @@ static void* stat_proc(void*) {
         i64 cnt = total_req_count();
         if (last_cnt != 0) {
             long int qps = cnt - last_cnt;
-            Log_info("qps: %ld", cnt - last_cnt);
+            Log_info("qps: {}", cnt - last_cnt);
             summary.push_back(qps);
         }
         last_cnt = cnt;
@@ -128,7 +128,7 @@ static void* stat_proc(void*) {
     if (summary.empty()) {
         Log_info("avg qps: 0.00");
     } else {
-        Log_info("avg qps: %2.2f", ((float)sum)/summary.size());
+        Log_info("avg qps: {:2.2f}", ((float)sum)/summary.size());
     }
     return nullptr;
 }
@@ -342,7 +342,7 @@ int main(int argc, char **argv) {
         case 'm': {
             BenchRpcMode parsed_mode;
             if (!parse_rpc_mode(optarg, &parsed_mode)) {
-                Log_error("invalid rpc mode '%s' (expected: fast|fiber|defer|async|fast_vec)", optarg);
+                Log_error("invalid rpc mode '{}' (expected: fast|fiber|defer|async|fast_vec)", optarg);
                 exit(1);
             }
             rpc_mode = parsed_mode;
@@ -389,20 +389,20 @@ int main(int argc, char **argv) {
 
     verify(is_server || is_client);
     if (is_server) {
-        Log_info("server will start at     %s", svr_addr);
+        Log_info("server will start at     {}", svr_addr);
     } else {
-        Log_info("client will connect to   %s", svr_addr);
+        Log_info("client will connect to   {}", svr_addr);
     }
-    Log_info("packet byte size:        %d", byte_size);
-    Log_info("epoll instances:         %d", epoll_instances);
-    Log_info("fast reqeust:            %s", fast_requests ? "true" : "false");
-    Log_info("rpc mode:                %s", rpc_mode_name(rpc_mode));
-    Log_info("await mode:              %s", await_mode ? "true" : "false");
-    Log_info("running seconds:         %d", seconds);
-    Log_info("outgoing requests:       %d", outgoing_requests);
-    Log_info("client threads:          %d", client_threads);
-    Log_info("worker threads:          %d", worker_threads);
-    Log_info("vector size:             %d", rpc_bench_vector_size);
+    Log_info("packet byte size:        {}", byte_size);
+    Log_info("epoll instances:         {}", epoll_instances);
+    Log_info("fast reqeust:            {}", fast_requests ? "true" : "false");
+    Log_info("rpc mode:                {}", rpc_mode_name(rpc_mode));
+    Log_info("await mode:              {}", await_mode ? "true" : "false");
+    Log_info("running seconds:         {}", seconds);
+    Log_info("outgoing requests:       {}", outgoing_requests);
+    Log_info("client threads:          {}", client_threads);
+    Log_info("worker threads:          {}", worker_threads);
+    Log_info("vector size:             {}", rpc_bench_vector_size);
 
     request_str = string(byte_size, 'x');
     if (is_server) {

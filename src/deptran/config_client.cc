@@ -45,12 +45,12 @@ bool ConfigClient::try_connect() {
             proxy_ = rusty::Some(proxy);
         }
         // @unsafe { logging I/O }
-        Log_info("ConfigClient: Connected to c-node at %s", c_node_addr_.c_str());
+        Log_info("ConfigClient: Connected to c-node at {}", c_node_addr_.c_str());
         return true;
     }
 
     // @unsafe { logging I/O }
-    Log_warn("ConfigClient: Failed to connect to c-node at %s (error: %d)",
+    Log_warn("ConfigClient: Failed to connect to c-node at {} (error: {})",
              c_node_addr_.c_str(), result);
     return false;
 }
@@ -70,7 +70,7 @@ bool ConfigClient::connect() {
         retries++;
         if (retries < max_retries) {
             // @unsafe { logging I/O }
-            Log_info("ConfigClient: Retrying connection (%u/%u) in %u ms...",
+            Log_info("ConfigClient: Retrying connection ({}/{}) in {} ms...",
                      retries, max_retries, delay_ms);
             // @unsafe { thread sleep }
             std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
@@ -81,7 +81,7 @@ bool ConfigClient::connect() {
     }
 
     // @unsafe { logging I/O }
-    Log_error("ConfigClient: Failed to connect after %u retries", max_retries);
+    Log_error("ConfigClient: Failed to connect after {} retries", max_retries);
     return false;
 }
 
@@ -134,7 +134,7 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetConfig RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: GetConfig RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     auto response = result.unwrap();
@@ -156,7 +156,7 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
     rrr::Deserialize_::deserialize(config, __rar__);
 
     // @unsafe { logging I/O }
-    Log_info("ConfigClient: Fetched configuration version %lu with %zu sites",
+    Log_info("ConfigClient: Fetched configuration version {} with {} sites",
              config.version, config.sites.size());
 
     return rusty::Some(std::move(config));
@@ -178,7 +178,7 @@ rusty::Option<uint64_t> ConfigClient::fetch_version() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetConfigVersion RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: GetConfigVersion RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     version = result.unwrap().version;
@@ -202,7 +202,7 @@ rusty::Option<bool> ConfigClient::has_config() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: HasConfig RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: HasConfig RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     has_config_result = result.unwrap().has_config;
@@ -235,7 +235,7 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetShardingPolicy RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: GetShardingPolicy RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     auto response = result.unwrap();
@@ -257,7 +257,7 @@ rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
     rrr::Deserialize_::deserialize(policy, __rar__);
 
     // @unsafe { logging I/O }
-    Log_info("ConfigClient: Fetched sharding policy version %lu with %zu tables",
+    Log_info("ConfigClient: Fetched sharding policy version {} with {} tables",
              policy.version, policy.table_count());
 
     return rusty::Some(std::move(policy));
@@ -279,7 +279,7 @@ rusty::Option<uint64_t> ConfigClient::fetch_sharding_version() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: GetShardingPolicyVersion RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: GetShardingPolicyVersion RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     version = result.unwrap().version;
@@ -303,7 +303,7 @@ rusty::Option<bool> ConfigClient::has_sharding_policy() {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: HasShardingPolicy RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: HasShardingPolicy RPC failed with error {}", result.unwrap_err());
         return rusty::None;
     }
     has_policy_result = result.unwrap().has_policy;
@@ -336,7 +336,7 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
 
     if (result.is_err()) {
         // @unsafe { logging I/O }
-        Log_warn("ConfigClient: SetShardingPolicy RPC failed with error %d", result.unwrap_err());
+        Log_warn("ConfigClient: SetShardingPolicy RPC failed with error {}", result.unwrap_err());
         return false;
     }
     success = result.unwrap().success;
@@ -348,7 +348,7 @@ bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
     }
 
     // @unsafe { logging I/O }
-    Log_info("ConfigClient: Set sharding policy version %lu with %zu tables",
+    Log_info("ConfigClient: Set sharding policy version {} with {} tables",
              policy.version, policy.table_count());
     return true;
 }

@@ -55,7 +55,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
     for (auto &it : txn->ver_check_read_) {
       Row *row = it.first.row;
       auto *v_row = (VersionedRow *) row;
-      Log_debug("r_lock row: %llx", row);
+      Log_debug("r_lock row: {}", (void*)row);
       if (!v_row->rlock_row_by(txn->id())) {
 #ifdef CONFLICT_COUNT
         const Table *tbl = v_row->get_table();
@@ -82,7 +82,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
     for (auto &it : txn->updates_) {
       Row *row = it.first;
       auto v_row = (VersionedRow *) row;
-      Log_debug("w_lock row: %llx", row);
+      Log_debug("w_lock row: {}", (void*)row);
       if (!v_row->wlock_row_by(txn->id())) {
 #ifdef CONFLICT_COUNT
         const Table *tbl = v_row->get_table();
@@ -105,7 +105,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
       }
       insert_into_map(txn->locks_, row, -1);
     }
-    Log_debug("txn: %llx occ locks succeed.", (int64_t)tx_id);
+    Log_debug("txn: {:x} occ locks succeed.", (int64_t)tx_id);
     txn->__debug_abort_ = 0;
     txn->verified_ = true;
   }

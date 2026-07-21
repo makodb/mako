@@ -40,7 +40,7 @@ void JanusCommo::SendDispatch(vector<TxPieceData>& cmd,
       };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(cmd[0].PartitionId()).second;
-  Log_debug("dispatch to %ld", cmd[0].PartitionId());
+  Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
 //  verify(cmd.root_type_ > 0);
   ClassicProxy::RpcJanusDispatchRequest req;

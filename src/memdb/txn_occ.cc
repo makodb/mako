@@ -62,7 +62,7 @@ bool TxnOCC::__DebugVersionCheck() {
         Row* r = row_col.row;
         int c = row_col.col_id;
         uint64_t iii = id();
-        Log_debug("Txnid %lx, Table Name %s, col_id %d",
+        Log_debug("Txnid {:x}, Table Name {}, col_id {}",
                   iii, r->get_table()->Name().c_str(), c);
         verify(ver_read >= ver_write);
       }

@@ -75,7 +75,7 @@ Coordinator *FpgaRaftFrame::CreateCoordinator(cooid_t coo_id,
   coo->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
   coo->loc_id_ = this->site_info_->locale_id;
   verify(coo->n_replica_ != 0); // TODO
-  Log_debug("create new fpga raft coord, coo_id: %d", (int) coo->coo_id_);
+  Log_debug("create new fpga raft coord, coo_id: {}", (int) coo->coo_id_);
   return coo;
 }
 
@@ -88,7 +88,7 @@ TxLogServer *FpgaRaftFrame::CreateScheduler() {
   {
     verify(0) ;
   }
-  Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id);
+  Log_debug("create new fpga raft sched loc: {}", this->site_info_->locale_id);
   return sch_ ;
 }
 

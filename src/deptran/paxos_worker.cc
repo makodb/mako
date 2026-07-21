@@ -75,13 +75,13 @@ void PaxosWorker::SetupBase() {
 int PaxosWorker::Next(int slot_id, janus::Command md) {
   int status=-1;
   // if (site_info_->proc_name.compare("learner")==0){
-  //   Log_info("receive a slot_id:%d",slot_id);
+  //   Log_info("receive a slot_id:{}",slot_id);
   // }
   const auto sp_log_entry = marshallable_cast<LogEntry>(md);
   verify(sp_log_entry.is_some());
   int len = sp_log_entry.unwrap()->length;
 
-  //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
+  //Log_info("apply a log, par_id:{}, epoch:{}, slot_id:{}, len:{},",site_info_->partition_id_, cur_epoch, slot_id, len);
   if (md.kind_ == LogEntry::static_kind()) {
     if (this->callback_par_id_return_ != nullptr) {
       // forward the cmd to the learner
@@ -97,7 +97,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
                                          cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
                                          md,
                                          [](uint64_t slot, ballot_t ballot) {
-                                           //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
+                                           //Log_info("received a ack from the learner, slot: {}, ballot: {}", slot, ballot);
                                          });
         }
       }
@@ -108,8 +108,8 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
       if(sp_log_entry.unwrap()->length == 0){
 	      Log_info("Recieved a zero length log");
       }
-      //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
-      //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
+      //Log_info("Paxos commit a log, par_id:{}, len: {}, epoch:{}, slot_id:{}",site_info_->partition_id_, len, cur_epoch, slot_id);
+      //Log_info("in Next, partition_id: {}, id: {}, proc_name: {}, role: {}, slot: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
          const char *log = sp_log_entry.unwrap()->log_entry.c_str() ;
          
@@ -121,10 +121,10 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
                                                     un_replay_logs_);
          status = encoded_value % 10;  // Extract status from last digit
          uint32_t timestamp = encoded_value / 10;  // Extract timestamp
-         //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
-         //Log_info("received a message: %d, status: %d, timestamp: %u", sp_log_entry->length, status, timestamp);
+         //Log_info("XXXXX: partition_id: {}, id: {}, proc_name: {}, role: {}", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
+         //Log_info("received a message: {}, status: {}, timestamp: {}", sp_log_entry->length, status, timestamp);
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
-         //Log_info("par_id: %d, append a log into un_replay_logs, size: %lld, status: %d, first[0]: %llu, received: %d", 
+         //Log_info("par_id: {}, append a log into un_replay_logs, size: {}, status: {}, first[0]: {}, received: {}", 
          //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry->length);
          if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL) {
              char *dest = (char *)malloc(len) ;
@@ -134,7 +134,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
          } else if (status == janus::PaxosStatus::STATUS_INIT) {
              std::cout << "this should never happen!!!" << std::endl;
          } else if (status == janus::PaxosStatus::STATUS_NOOPS) {
-            Log_info("update the no-ops, par_id:%d, slot_id:%d",site_info_->partition_id_, slot_id);
+            Log_info("update the no-ops, par_id:{}, slot_id:{}",site_info_->partition_id_, slot_id);
             noops_received=true;
          }
       } else {
@@ -150,7 +150,7 @@ int PaxosWorker::Next(int slot_id, janus::Command md) {
   }
 
   if (n_current >= n_tot) {
-    //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
+    //Log_info("Current pair id {} loc id {} n_current and n_tot and accept size is {} {}", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
     finish_cond.notify_all();
   }
   return status;
@@ -168,7 +168,7 @@ void PaxosWorker::SetupService() {
     auto services = rep_frame_->CreateRpcServices(site_info_->id,
                                                    rep_sched_,
                                                    svr_poll_thread_worker_.as_ref().unwrap());
-    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d",
+    Log_info("[service]loc_id: {}, name: {}, proc: {}, id: {}",
       site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
     for (auto& svc : services) {
       rpc_server_->reg_service_proxy(std::move(svc));
@@ -176,7 +176,7 @@ void PaxosWorker::SetupService() {
   }
 
   // start rpc server
-  Log_debug("starting server at %s", bind_addr.c_str());
+  Log_debug("starting server at {}", bind_addr.c_str());
   std::cout << "starting server at " << bind_addr.c_str() << std::endl;
   int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
@@ -184,7 +184,7 @@ void PaxosWorker::SetupService() {
     std::cout << "server launch failed.\n";
   }
 
-  Log_info("Server %s ready at %s",
+  Log_info("Server {} ready at {}",
            site_info_->name.c_str(),
            bind_addr.c_str());
 }
@@ -218,10 +218,10 @@ void PaxosWorker::SetupHeartbeat() {
                           std::to_string(port);
   hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str()));
   if (hb_rpc_server_ != nullptr) {
-    // Log_info("notify ready to control script for %s", bind_addr.c_str());
+    // Log_info("notify ready to control script for {}", bind_addr.c_str());
     server_status_.as_ref().unwrap()->set_ready();
   }
-  Log_info("heartbeat setup for %s on %s",
+  Log_info("heartbeat setup for {} on {}",
            site_info_->name.c_str(), addr_port.c_str());
 }
 
@@ -239,14 +239,14 @@ void PaxosWorker::WaitForShutdown() {
 
     // removed `for_each_service(...) { if
     // (auto* s = dynamic_cast<DepTranServiceImpl*>(...)) { auto&
-    // recorder = s->recorder_; if (recorder) { Log::info(...) } } }`
+    // recorder = s->recorder_; if (recorder) { Log_info(...) } } }`
     // block — `Service::recorder_` field is always nullptr (now
     // gone); the `if (recorder)` branch was unreachable.
   }
 }
 
 void PaxosWorker::ShutDown() {
-  Log_info("site %s shutting down, n_current: %d, n_tot: %d", site_info_->name.c_str(), (int)n_current, (int)n_tot);
+  Log_info("site {} shutting down, n_current: {}, n_tot: {}", site_info_->name.c_str(), (int)n_current, (int)n_tot);
   verify(rpc_server_ != nullptr);
   // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
@@ -343,7 +343,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
         }
       }
     }
-    Log_info("Responses size is %d", responses.size());
+    Log_info("Responses size is {}", responses.size());
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->missing_slots.size(); j++){
         auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
@@ -352,7 +352,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
           // PaxosData::committed_cmd_ is Command;
           // direct copy via Command's copy ctor.
           if(inst->committed_cmd_.has_value()){
-	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
+	    //Log_info("The slots are for partition {} slot {}", j, responses[i]->missing_slots[j][k]);
             commited_slots.insert_or_assign(make_pair(j, responses[i]->missing_slots[j][k]), rusty::Arc<janus::Command>::make(inst->committed_cmd_));
           }
         }
@@ -376,7 +376,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     for(int i = 0; i < pxs_workers_g.size(); i++){
       if(sync_cmds[i].ballots.size() == 0)
         continue;
-      //Log_info("Should receive some uncommitted slots here %d", i);
+      //Log_info("Should receive some uncommitted slots here {}", i);
       //for(int kk = 0; kk < sync_cmds[i]->slots.size(); kk++)
       //      std::cout << sync_cmds[i]->slots[kk] << " ";
       //std::cout << std::endl;
@@ -407,7 +407,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
 // sweep as the other dead Broadcast* paths.
 
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
-  //Log_info("current batch cnt %d", cnt);
+  //Log_info("current batch cnt {}", cnt);
   PaxosWorker::coo_queue.enqueue(coord);
 }
 
@@ -426,14 +426,14 @@ void* PaxosWorker::StartReadAccept(void* arg){
     int cnt = pw->deq_from_coo(current);
     if(cnt <= 0)continue;
     std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
-    //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
+    //Log_debug("Pushing coordinators for bulk accept coordinators here having size {} {} {} {}", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&pw, sub]() {
       pw->BulkSubmit(sub);
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
     pw->GetPollThread()->add(arc_job_base);
     sent += cnt;
-    if(sent % 2 == 0)Log_info("Total submits %d", sent);
+    if(sent % 2 == 0)Log_info("Total submits {}", sent);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   pthread_exit(nullptr);
@@ -462,12 +462,12 @@ void PaxosWorker::WaitForNoops() {
 void PaxosWorker::WaitForSubmit() {
   /*while(true){
 	sleep(1);
-        Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+        Log_info("wait for task, amount: {} - n_tot: {}, n_current: {}", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
   }*/
   {
     std::unique_lock<std::mutex> lock(finish_mutex);
     while (n_current < n_tot) {
-      Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+      Log_info("wait for task, amount: {} - n_tot: {}, n_current: {}", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
       finish_cond.wait(lock);
     }
   }
@@ -499,7 +499,7 @@ PaxosWorker::PaxosWorker() {
 }
 
 PaxosWorker::~PaxosWorker() {
-  Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
+  Log_info("Ending worker with n_tot {} and n_current {}", (int)n_tot, (int)n_current);
   stop_flag = true;
   // removed `stop_replay_flag = true;` —
   // the field went away with the dead `StartReplayRead`.

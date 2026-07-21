@@ -1576,7 +1576,7 @@ class Reactor {
   }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.size()=%zu",
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
               all_events_.borrow()->len(), fibers_.borrow()->size());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
@@ -2359,8 +2359,8 @@ void event_wait_impl(const W& self, uint64_t timeout) {
     if (timeout > 0) {
       auto now = Time::now(true);
       self.state_.wakeup_time_.set(now + timeout);
-      //Log_info("WAITING: %p", get_self().get());
-      // Log_info("wake up %lld, now %lld", wakeup_time_, now);
+      //Log_info("WAITING: {}", get_self().get());
+      // Log_info("wake up {}, now {}", wakeup_time_, now);
       reactor_rc->timeout_events_.borrow_mut()->push_back(self.get_self().unwrap());
     }
     // TODO optimize timeout_events, sort by wakeup time.
@@ -2753,7 +2753,7 @@ inline void stackless_profile_report_periodic() {
   size_t max_slots = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
 
   double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
-  Log_info("[async-prof] reg_calls=%llu avg_scan=%.2f reuse=%llu new=%llu max_slots=%zu poll_calls=%llu poll_ready=%llu enqueue_calls=%llu",
+  Log_info("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
            static_cast<unsigned long long>(reg_calls),
            avg_scan,
            static_cast<unsigned long long>(reg_reuse),
@@ -2952,7 +2952,7 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
       auto fiber = rusty::Rc<Fiber>::make(std::move(func));
       n_created_fibers_.set(n_created_fibers_.get() + 1);
       if (n_created_fibers_.get() % 1024 == 0) {
-        Log_debug("created %d, busy %d, idle %d fibers on server %d, recent %s:%lld",
+        Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
                  (int)n_created_fibers_.get(),
                  (int)n_busy_fibers_.get(),
                  (int)n_idle_fibers_.get(),
@@ -2989,7 +2989,7 @@ void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
   bool inserted = fibers_guard->insert(fiber.clone()).second;
   if (!inserted) {
     Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
-    Log_error("[DEBUG] fibers_ size: %zu, REUSING_FIBER: %d", fibers_guard->size(), REUSING_FIBER);
+    Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", fibers_guard->size(), REUSING_FIBER);
   }
   verify(inserted);
   verify(fibers_guard->size() > 0);
@@ -3445,7 +3445,7 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
 }
 
 void Reactor::display_waiting_ev() const {
-  Log_info("waiting_events_: %zu, composite_events_: %zu",
+  Log_info("waiting_events_: {}, composite_events_: {}",
            waiting_events_.borrow()->len(), composite_events_.borrow()->len());
 }
 
@@ -3974,15 +3974,15 @@ rusty::Arc<PollThread> pollthread_create() {
 #if RUSTYCPP_RUST
 fn pollthread_drop(pt: &PollThread) {
     let tid: i64 = unsafe { syscall(SYS_gettid) };
-    Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", tid as i32);
+    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", tid as i32);
     pt.shutdown();
     Log_debug("[PollThread::~PollThread] Destructor complete");
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=a3cda4e8dffa04471eb9883286fa2ee278bbe61448ff515b7e719f0ab6d9fbf1*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=7e16d65337680fee3f4e12decbc58faaf2f1a2143c44a83a053a8644c330056c*/
 void pollthread_drop(const PollThread& pt) {
     const int64_t tid = syscall(SYS_gettid);
-    Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", static_cast<int32_t>(tid));
+    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", static_cast<int32_t>(tid));
     pt.shutdown();
     Log_debug("[PollThread::~PollThread] Destructor complete");
 }
@@ -3990,7 +3990,7 @@ void pollthread_drop(const PollThread& pt) {
 
 void pollthread_shutdown(const PollThread& self) {
   pid_t main_tid = syscall(SYS_gettid);
-  Log_debug("[PollThread::shutdown] Called from TID=%d", (int)main_tid);
+  Log_debug("[PollThread::shutdown] Called from TID={}", (int)main_tid);
   if (self.shutdown_called_.swap(true)) {
     Log_debug("[PollThread::shutdown] Already called, returning");
     return;  // Already called

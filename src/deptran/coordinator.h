@@ -179,11 +179,11 @@ class Coordinator {
     }
 
     void output() {
-      Log::info("SERV_TCH: %lu, TXN_CNT: %lu, MEAN_SERV_TCH_PER_TXN: %lf",
+      Log_info("SERV_TCH: {}, TXN_CNT: {}, MEAN_SERV_TCH_PER_TXN: {:f}",
                 n_serv_tch, n_txn, ((double)n_serv_tch) / n_txn);
 
       for (auto& it : piece_cnt) {
-        Log::info("\tPIECE: %d, PIECE_CNT: %lu, MEAN_PIECE_PER_TXN: %lf",
+        Log_info("\tPIECE: {}, PIECE_CNT: {}, MEAN_PIECE_PER_TXN: {:f}",
                   it.first, it.second, ((double)it.second) / n_txn);
       }
     }

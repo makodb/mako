@@ -29,7 +29,7 @@ FpgaRaftServer::FpgaRaftServer(Frame * frame) {
 
 void FpgaRaftServer::Setup() {
   SimpleRWCommand::SetZeroTime();
-  Log_info("Raft svr %d SetZeroTime", loc_id_);
+  Log_info("Raft svr {} SetZeroTime", loc_id_);
 	if (heartbeat_ && !FpgaRaftServer::looping && IsLeader()) {
 		Log_info("starting loop at server");
 		FpgaRaftServer::looping = true;
@@ -67,7 +67,7 @@ void* FpgaRaftServer::HeartbeatLoop(void* args) {
 		auto matcheds = hb_loop_args->commo->matchedIndex;
 		for (auto it = matcheds.begin(); it != matcheds.end(); it++) {
 			if (prevLogIndex > it->second + 10000 && cmd.has_value()) {
-				Log_info("leader_id: %d vs follower_id for %d: %d", prevLogIndex, it->first, it->second);
+				Log_info("leader_id: {} vs follower_id for {}: {}", prevLogIndex, it->first, it->second);
 				//hb_loop_args->commo->SendHeartbeat(partition_id, it->first, prevLogIndex);
 				hb_loop_args->commo->SendAppendEntriesAgain(it->first,
 																				partition_id,
@@ -95,9 +95,9 @@ FpgaRaftServer::~FpgaRaftServer() {
 		}
     
 		stop_ = true ;
-    Log_info("site par %d, loc %d: prepare %d, accept %d, commit %d", partition_id_, loc_id_, n_prepare_, n_accept_, 
+    Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}", partition_id_, loc_id_, n_prepare_, n_accept_, 
     n_commit_);
-    // Log_info("site par %d, loc %d: client2follower 50pct: %.2f 90pct: %.2f 99pct: %.2f", partition_id_, loc_id_, client2follower_.pct50(), client2follower_.pct90(), client2follower_.pct99());
+    // Log_info("site par {}, loc {}: client2follower 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", partition_id_, loc_id_, client2follower_.pct50(), client2follower_.pct90(), client2follower_.pct99());
 }
 
 void FpgaRaftServer::RequestVote2FPGA() {
@@ -110,12 +110,12 @@ void FpgaRaftServer::RequestVote2FPGA() {
 
   if(paused_) {
       resetTimer() ;
-      Log_debug("fpga raft server %d request vote to fpga rejected due to paused", loc_id );
+      Log_debug("fpga raft server {} request vote to fpga rejected due to paused", loc_id );
       // req_voting_ = false ;
       return ;
   }
 
-  Log_debug("fpga raft server %d in request vote to fpga", loc_id );
+  Log_debug("fpga raft server {} in request vote to fpga", loc_id );
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
@@ -138,17 +138,17 @@ void FpgaRaftServer::RequestVote2FPGA() {
   if (sp_quorum->yes()) {
     // become a leader
     setIsFPGALeader(true) ;
-    Log_debug("vote accepted %d curterm %d", loc_id, currentTerm);
+    Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
   } else if (sp_quorum->no()) {
     // become a follower
-    Log_debug("vote rejected %d", loc_id);
+    Log_debug("vote rejected {}", loc_id);
     setIsFPGALeader(false) ;
     //reset cur term if new term is higher
     ballot_t new_term = sp_quorum->Term() ;
     currentTerm = new_term > currentTerm? new_term : currentTerm ;
   } else {
     // TODO process timeout.
-    Log_debug("vote timeout %d", loc_id);
+    Log_debug("vote timeout {}", loc_id);
   }
   req_voting_ = false ;
 }
@@ -162,7 +162,7 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
                             rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("fpga raft receives vote from candidate: %llx", can_id);
+  Log_debug("fpga raft receives vote from candidate: {:x}", can_id);
 
   uint64_t cur_term = currentTerm ;
   if( can_term < cur_term)
@@ -192,7 +192,7 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
     curlstterm = log->term ;
   }
 
-  Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
+  Log_debug("vote for lstoff {}, curlstterm {}, curlstidx {}", lstoff, curlstterm, curlstidx  );
 
 
   // TODO del only for test
@@ -220,13 +220,13 @@ bool FpgaRaftServer::RequestVote() {
 
 
   if(paused_) {
-      Log_debug("fpga raft server %d request vote rejected due to paused", loc_id );
+      Log_debug("fpga raft server {} request vote rejected due to paused", loc_id );
       resetTimer() ;
       // req_voting_ = false ;
       return false;
   }
 
-  Log_debug("fpga raft server %d in request vote", loc_id );
+  Log_debug("fpga raft server {} in request vote", loc_id );
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
@@ -265,19 +265,19 @@ bool FpgaRaftServer::RequestVote() {
     if(IsLeader())
     {
 	  	//for(int i = 0; i < 100; i++) Log_info("wait wait wait");
-      Log_debug("vote accepted %d curterm %d", loc_id, currentTerm);
+      Log_debug("vote accepted {} curterm {}", loc_id, currentTerm);
   		req_voting_ = false ;
 			return true;
     }
     else
     {
-      Log_debug("fpga vote rejected %d curterm %d, do rollback", loc_id, currentTerm);
+      Log_debug("fpga vote rejected {} curterm {}, do rollback", loc_id, currentTerm);
       setIsLeader(false) ;
     	return false;
 		}
   } else if (sp_quorum->no()) {
     // become a follower
-    Log_debug("vote rejected %d", loc_id);
+    Log_debug("vote rejected {}", loc_id);
     setIsLeader(false) ;
     //reset cur term if new term is higher
     ballot_t new_term = sp_quorum->Term() ;
@@ -286,7 +286,7 @@ bool FpgaRaftServer::RequestVote() {
 		return false;
   } else {
     // TODO process timeout.
-    Log_debug("vote timeout %d", loc_id);
+    Log_debug("vote timeout {}", loc_id);
   	req_voting_ = false ;
 		return false;
   }
@@ -301,7 +301,7 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
                             rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("fpga raft receives vote from candidate: %llx", can_id);
+  Log_debug("fpga raft receives vote from candidate: {:x}", can_id);
 
   setIsFPGALeader(false) ;
 
@@ -335,7 +335,7 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
     curlstterm = log->term ;
   }
 
-  Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
+  Log_debug("vote for lstoff {}, curlstterm {}, curlstidx {}", lstoff, curlstterm, curlstidx  );
 
 
   // TODO del only for test
@@ -399,15 +399,15 @@ void FpgaRaftServer::StartTimer()
                                      uint64_t *followerLastLogIndex,
                                      rusty::Function<void()> cb) {
 #ifdef LATENCY_LOG_DEBUG
-        Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+        Log_info("Time of cmd <{}, {}> arrive svr {} OnAppendEntries: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
-        // Log_info("OnAppendEntries svr %d", loc_id_);
+        // Log_info("OnAppendEntries svr {}", loc_id_);
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         // StartTimer() ; xxx: need to uncomment
         // client2follower_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
         
         Log_debug("fpga-raft scheduler on append entries for "
-                "slot_id: %llx, loc: %d, PrevLogIndex: %d",
+                "slot_id: {:x}, loc: {}, PrevLogIndex: {}",
                 slot_id, this->loc_id_, leaderPrevLogIndex);
         if ((leaderCurrentTerm >= this->currentTerm) &&
                 (leaderPrevLogIndex <= this->lastLogIndex)
@@ -415,13 +415,13 @@ void FpgaRaftServer::StartTimer()
             //resetTimer() ;
             if (leaderCurrentTerm > this->currentTerm) {
                 currentTerm = leaderCurrentTerm;
-                Log_debug("server %d, set to be follower", loc_id_ ) ;
+                Log_debug("server {}, set to be follower", loc_id_ ) ;
                 setIsLeader(false) ;
             }
 
 						//this means that this is a retry of a previous one for a simulation
 						/*if (slot_id == 100000000 || leaderPrevLogIndex + 1 < lastLogIndex) {
-							for (int i = 0; i < 1000000; i++) Log_info("Dropping this AE message: %d %d", leaderPrevLogIndex, lastLogIndex);
+							for (int i = 0; i < 1000000; i++) Log_info("Dropping this AE message: {} {}", leaderPrevLogIndex, lastLogIndex);
 							//verify(0);
 							*followerAppendOK = 0;
 							cb();
@@ -476,7 +476,7 @@ void FpgaRaftServer::StartTimer()
             }
         }
         else {
-            Log_debug("reject append loc: %d, leader term %d last idx %d, server term: %d last idx: %d",
+            Log_debug("reject append loc: {}, leader term {} last idx {}, server term: {} last idx: {}",
                 this->loc_id_, leaderCurrentTerm, leaderPrevLogIndex, currentTerm, lastLogIndex);          
             *followerAppendOK = 0;
         }
@@ -497,7 +497,7 @@ void FpgaRaftServer::StartTimer()
                               const ballot_t ballot,
                               const janus::Command& cmd) {
 #ifdef LATENCY_LOG_DEBUG
-    Log_info("Time of cmd <%d, %d> arrive svr %d OnCommit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    Log_info("Time of cmd <{}, {}> arrive svr {} OnCommit: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     // Log_info("OnCommit");
@@ -516,11 +516,11 @@ void FpgaRaftServer::StartTimer()
         // boundary for RuleWitnessGC + GetCmdID (still take
         // shared_ptr<Marshallable>).  app_next_ takes Command.
         if (next_instance->log_.has_value()) {
-            Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+            Log_debug("fpga-raft par:{} loc:{} executed slot {:x} now", partition_id_, loc_id_, id);
             // WAN_WAIT
             RuleWitnessGC(next_instance->log_);
 #ifdef LATENCY_LOG_DEBUG
-            Log_info("Time of cmd <%d, %d> arrive svr %d app_next: %.2fms", SimpleRWCommand::GetCmdID(next_instance->log_).first, SimpleRWCommand::GetCmdID(next_instance->log_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+            Log_info("Time of cmd <{}, {}> arrive svr {} app_next: {:.2f}ms", SimpleRWCommand::GetCmdID(next_instance->log_).first, SimpleRWCommand::GetCmdID(next_instance->log_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
             app_next_(id, next_instance->log_);
             executeIndex++;
@@ -537,12 +537,12 @@ void FpgaRaftServer::StartTimer()
     min_active_slot_ = i;
 
 		/*clock_gettime(CLOCK_MONOTONIC, &end);
-		Log_info("time of decide on server: %d", (end.tv_sec - begin.tv_sec)*1000000000 + end.tv_nsec - begin.tv_nsec);*/
+		Log_info("time of decide on server: {}", (end.tv_sec - begin.tv_sec)*1000000000 + end.tv_nsec - begin.tv_nsec);*/
   }
   void FpgaRaftServer::SpCommit(const uint64_t cmt_idx) {
       verify(0) ; // TODO delete it
       std::lock_guard<std::recursive_mutex> lock(mtx_);
-      Log_debug("fpga raft spcommit for index: %lx for server %d", cmt_idx, loc_id_);
+      Log_debug("fpga raft spcommit for index: {:x} for server {}", cmt_idx, loc_id_);
       verify(cmt_idx != 0 ) ;
       if (cmt_idx < commitIndex) {
           return ;
@@ -558,7 +558,7 @@ void FpgaRaftServer::StartTimer()
               // WAN_WAIT
               RuleWitnessGC(next_instance->log_);
               app_next_(id, next_instance->log_);
-              Log_debug("fpga-raft par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+              Log_debug("fpga-raft par:{} loc:{} executed slot {:x} now", partition_id_, loc_id_, id);
               executeIndex++;
           } else {
               break;

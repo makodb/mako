@@ -14,7 +14,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 								   struct DepId dep_id,
 								   int commit_or_abort) {
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
-	Log_debug("%s: at site %d, tx: %" PRIx64,
+	Log_debug("{}: at site {}, tx: %" PRIx64,
             __FUNCTION__, this->site_id_, tx_id);
 	auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
 	// TODO maybe change inuse to an event?
@@ -35,7 +35,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 #ifdef COPILOT_TIME_DEBUG
 	struct timeval tp;
 	gettimeofday(&tp, NULL);
-	Log_info("[0/start] [tx=%d] before submit %.3f", tx_id, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+	Log_info("[0/start] [tx={}] before submit {:.3f}", tx_id, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 		bool enable_pingpong_batching = false;
 		if (enable_pingpong_batching) {
@@ -52,7 +52,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 				in_waiting_ = false;
 
 				// after = Time::now(true);
-				// Log_info("wait %lld", after - before);
+				// Log_info("wait {}", after - before);
 				
 				// batch assembled on a LOCAL, then frozen into a shared Arc
 				// (AddCmds needs mutable access; Arc payloads are const-view).
@@ -65,7 +65,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 				submit_++;
 				total_ += batch_cmd->Size();
 				if (submit_ % 1000 == 0)
-					Log_info("avg batch size %f", (double)total_/submit_);
+					Log_info("avg batch size {:f}", (double)total_/submit_);
 				shared_ptr<Coordinator> coo{CreateRepCoord(dep_id.id)};
 				coo->Submit(std::move(batch_cmd));
 			}
@@ -85,7 +85,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 #ifdef COPILOT_TIME_DEBUG
 	struct timeval tp;
     gettimeofday(&tp, NULL);
-    Log_info("[end] [tx=%d] after commit_result wait %.3f", tx_id, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+    Log_info("[end] [tx={}] after commit_result wait {:.3f}", tx_id, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 	} else {
 		if (commit_or_abort == SUCCESS) {

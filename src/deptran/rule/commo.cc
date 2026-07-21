@@ -66,10 +66,10 @@ CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
             return site.locale_id == leader_id;
           });
       if (proxy_it == partition_proxies.end()) {
-        Log_fatal("could not find leader for partition %d", par_id);
+        Log_fatal("could not find leader for partition {}", par_id);
       } else {
         cache.push_back(*proxy_it);
-        Log_debug("leader site for partition %d is %d", par_id, proxy_it->first);
+        Log_debug("leader site for partition {} is {}", par_id, proxy_it->first);
       }
       verify(proxy_it->second != nullptr);
     }
@@ -92,7 +92,7 @@ CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
 //                      return site.locale_id == replica_id;
 //                    });
 //   if (proxy_pair == partition_proxies.end())
-//     Log_fatal("couldn't find replica %d for partition %d", replica_id, par_id);
+//     Log_fatal("couldn't find replica {} for partition {}", replica_id, par_id);
 //   verify(proxy_pair->second);
 //   return *proxy_pair;
 // }

@@ -240,7 +240,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
       auto it = partition_.begin();
       std::advance(it, i);
       uint32_t id = *(partition_.begin());
-      Log::debug("random a related server, id: %x", id);
+      Log_debug("random a related server, id: {:x}", id);
       return id;
     }
 

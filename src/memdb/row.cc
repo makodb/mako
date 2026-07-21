@@ -105,7 +105,7 @@ Value Row::get_column(int column_id) const {
         v = Value(std::string(b.data, b.len));
         break;
     default:
-        Log::fatal("unexpected value type %d", info->type);
+        rrr::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -158,7 +158,7 @@ blob Row::get_blob(int column_id) const {
         }
         break;
     default:
-        Log::fatal("unexpected value type %d", info->type);
+        rrr::Log_fatal("unexpected value type {}", (int)info->type);
         verify(0);
         break;
     }
@@ -254,7 +254,7 @@ void Row::update(int column_id, const Value& v) {
         this->update(column_id, v.get_str());
         break;
     default:
-        Log::fatal("unexpected value type %d", v.get_kind());
+        rrr::Log_fatal("unexpected value type {}", (int)v.get_kind());
         verify(0);
         break;
     }
@@ -303,7 +303,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
             var_part_size += it->get_str().size();
             break;
         default:
-            Log::fatal("unexpected value type %d", it->get_kind());
+            rrr::Log_fatal("unexpected value type {}", (int)it->get_kind());
             verify(0);
             break;
         }
@@ -323,7 +323,7 @@ Row* Row::create(Row* raw_row, const Schema* schema, const std::vector<const Val
         case Value::STR:
             break;
         default:
-            Log::fatal("unexpected value type %d", schema->col_info_[i].type);
+            rrr::Log_fatal("unexpected value type {}", (int)schema->col_info_[i].type);
             verify(0);
             break;
         }

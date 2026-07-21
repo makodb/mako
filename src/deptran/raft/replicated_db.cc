@@ -149,7 +149,7 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
   db_ = rocksdb_open(options_, db_path_.c_str(), &err);
   if (err != nullptr || db_ == nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Failed to open %s: %s",
+    Log_error("[ReplicatedDB] Failed to open {}: {}",
               db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
     db_ = nullptr;
     return;
@@ -166,7 +166,7 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
         [this](const std::string& snap_data) { LoadStateMachineSnapshot(snap_data); });
   }
 
-  Log_info("[ReplicatedDB] Opened database at %s, last_applied_index=%lu",
+  Log_info("[ReplicatedDB] Opened database at {}, last_applied_index={}",
            db_path_.c_str(), last_applied_index_);
 }
 
@@ -283,7 +283,7 @@ bool ReplicatedDB::Get(const std::string& key, std::string* value) {
                                 &value_len, &err);
   if (err != nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Get error for key '%s': %s",
+    Log_error("[ReplicatedDB] Get error for key '{}': {}",
               key.c_str(), err_str.c_str());
     return false;
   }
@@ -334,7 +334,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
 
   const auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
   if (db_cmd.is_none()) {
-    Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index %lu", index);
+    Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index {}", index);
     last_applied_index_ = index;
     PersistLastAppliedIndex();
     return;
@@ -358,13 +358,13 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
             ApplyDelete(op.key);
             break;
           default:
-            Log_error("[ReplicatedDB] Unknown batch sub-operation %d", static_cast<int>(op.op));
+            Log_error("[ReplicatedDB] Unknown batch sub-operation {}", static_cast<int>(op.op));
             break;
         }
       }
       break;
     default:
-      Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
+      Log_error("[ReplicatedDB] Unknown operation {} at index {}",
                 static_cast<int>(db_cmd.unwrap()->op_), index);
       break;
   }
@@ -382,7 +382,7 @@ void ReplicatedDB::ApplyPut(const std::string& key, const std::string& value) {
               value.data(), value.size(), &err);
   if (err != nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] ApplyPut error for key '%s': %s",
+    Log_error("[ReplicatedDB] ApplyPut error for key '{}': {}",
               key.c_str(), err_str.c_str());
   }
 }
@@ -394,7 +394,7 @@ void ReplicatedDB::ApplyDelete(const std::string& key) {
                  key.data(), key.size(), &err);
   if (err != nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] ApplyDelete error for key '%s': %s",
+    Log_error("[ReplicatedDB] ApplyDelete error for key '{}': {}",
               key.c_str(), err_str.c_str());
   }
 }
@@ -408,7 +408,7 @@ void ReplicatedDB::PersistLastAppliedIndex() {
               idx_str.data(), idx_str.size(), &err);
   if (err != nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Failed to persist last_applied_index: %s", err_str.c_str());
+    Log_error("[ReplicatedDB] Failed to persist last_applied_index: {}", err_str.c_str());
   }
 }
 
@@ -433,7 +433,7 @@ void ReplicatedDB::LoadLastAppliedIndex() {
   try {
     last_applied_index_ = std::stoull(value);
   } catch (...) {
-    Log_error("[ReplicatedDB] Failed to parse last_applied_index from '%s'", value.c_str());
+    Log_error("[ReplicatedDB] Failed to parse last_applied_index from '{}'", value.c_str());
     last_applied_index_ = 0;
   }
 }
@@ -471,7 +471,7 @@ bool ReplicatedDB::OpenDB() {
   db_ = rocksdb_open(options_, db_path_.c_str(), &err);
   if (err != nullptr || db_ == nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Failed to reopen %s: %s",
+    Log_error("[ReplicatedDB] Failed to reopen {}: {}",
               db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
     db_ = nullptr;
     return false;
@@ -503,7 +503,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   rocksdb_checkpoint_t* cp = rocksdb_checkpoint_object_create(db_, &err);
   if (err != nullptr || cp == nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Failed to create checkpoint object: %s", err_str.c_str());
+    Log_error("[ReplicatedDB] Failed to create checkpoint object: {}", err_str.c_str());
     return "";
   }
 
@@ -515,7 +515,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
 
   if (err != nullptr) {
     std::string err_str = take_rocksdb_error(&err);
-    Log_error("[ReplicatedDB] Failed to create checkpoint at %s: %s",
+    Log_error("[ReplicatedDB] Failed to create checkpoint at {}: {}",
               cp_dir.c_str(), err_str.c_str());
     return "";
   }
@@ -524,7 +524,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   // @unsafe { directory and file I/O }
   DIR* dir = opendir(cp_dir.c_str());
   if (!dir) {
-    Log_error("[ReplicatedDB] Failed to open checkpoint dir %s", cp_dir.c_str());
+    Log_error("[ReplicatedDB] Failed to open checkpoint dir {}", cp_dir.c_str());
     return "";
   }
 
@@ -550,7 +550,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
     // Get file size
     struct stat st;
     if (stat(filepath.c_str(), &st) != 0) {
-      Log_error("[ReplicatedDB] Failed to stat %s", filepath.c_str());
+      Log_error("[ReplicatedDB] Failed to stat {}", filepath.c_str());
       // Clean up and return empty
       for (const auto& f : filenames) {
         std::string p = cp_dir + "/" + f;
@@ -572,7 +572,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
     // Read file contents
     std::ifstream ifs(filepath, std::ios::binary);
     if (!ifs) {
-      Log_error("[ReplicatedDB] Failed to read checkpoint file %s", filepath.c_str());
+      Log_error("[ReplicatedDB] Failed to read checkpoint file {}", filepath.c_str());
       for (const auto& f : filenames) {
         std::string p = cp_dir + "/" + f;
         unlink(p.c_str());
@@ -592,7 +592,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   }
   rmdir(cp_dir.c_str());
 
-  Log_info("[ReplicatedDB] Created snapshot: %u files, %zu bytes raw",
+  Log_info("[ReplicatedDB] Created snapshot: {} files, {} bytes raw",
            num_files, blob.size());
 
   // 4. Compress the blob with LZ4 if enabled
@@ -614,7 +614,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
       std::memcpy(result.data() + 1, &orig_size, sizeof(orig_size));
       std::memcpy(result.data() + 1 + sizeof(uint32_t),
                   compressed.data(), compressed_size);
-      Log_info("[ReplicatedDB] Snapshot compressed: %zu -> %zu bytes (%.1f%%)",
+      Log_info("[ReplicatedDB] Snapshot compressed: {} -> {} bytes ({:.1f}%)",
                raw_size, result.size(),
                100.0 * static_cast<double>(result.size()) / static_cast<double>(raw_size));
     } else {
@@ -629,7 +629,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
     result.resize(1 + blob.size());
     result[0] = static_cast<char>(SNAPSHOT_UNCOMPRESSED);
     std::memcpy(result.data() + 1, blob.data(), blob.size());
-    Log_info("[ReplicatedDB] Snapshot stored uncompressed: %zu bytes", result.size());
+    Log_info("[ReplicatedDB] Snapshot stored uncompressed: {} bytes", result.size());
   }
 
   return result;
@@ -671,16 +671,16 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
         static_cast<int>(data.size() - 1 - sizeof(uint32_t)),
         static_cast<int>(orig_size));
     if (decompressed < 0) {
-      Log_error("[ReplicatedDB] LZ4 decompression failed (code %d)", decompressed);
+      Log_error("[ReplicatedDB] LZ4 decompression failed (code {})", decompressed);
       return;
     }
-    Log_info("[ReplicatedDB] Snapshot decompressed: %zu -> %u bytes",
+    Log_info("[ReplicatedDB] Snapshot decompressed: {} -> {} bytes",
              data.size(), orig_size);
   } else if (compression == SNAPSHOT_UNCOMPRESSED) {
     // Uncompressed: header(1) + raw blob
     blob = data.substr(1);
   } else {
-    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: unknown compression byte 0x%02x",
+    Log_error("[ReplicatedDB] LoadStateMachineSnapshot: unknown compression byte 0x{:02x}",
               compression);
     return;
   }
@@ -705,7 +705,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
 
   for (uint32_t i = 0; i < num_files; i++) {
     if (offset + sizeof(uint32_t) > blob.size()) {
-      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name_len", i);
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name_len", i);
       return;
     }
     uint32_t name_len = 0;
@@ -713,14 +713,14 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     offset += sizeof(name_len);
 
     if (offset + name_len > blob.size()) {
-      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u name", i);
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} name", i);
       return;
     }
     std::string name(blob.data() + offset, name_len);
     offset += name_len;
 
     if (offset + sizeof(uint64_t) > blob.size()) {
-      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u size", i);
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} size", i);
       return;
     }
     uint64_t file_size = 0;
@@ -728,7 +728,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     offset += sizeof(file_size);
 
     if (offset + file_size > blob.size()) {
-      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file %u data", i);
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: truncated at file {} data", i);
       return;
     }
     std::string contents(blob.data() + offset, file_size);
@@ -747,7 +747,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     char* err = nullptr;
     rocksdb_destroy_db(destroy_opts, db_path_.c_str(), &err);
     if (err) {
-      Log_warn("[ReplicatedDB] destroy_db warning: %s", err);
+      Log_warn("[ReplicatedDB] destroy_db warning: {}", err);
       rocksdb_free(err);
     }
     rocksdb_options_destroy(destroy_opts);
@@ -763,7 +763,7 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
     std::string filepath = db_path_ + "/" + fe.name;
     std::ofstream ofs(filepath, std::ios::binary);
     if (!ofs) {
-      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: failed to write %s", filepath.c_str());
+      Log_error("[ReplicatedDB] LoadStateMachineSnapshot: failed to write {}", filepath.c_str());
       return;
     }
     ofs.write(fe.contents.data(), fe.contents.size());
@@ -778,6 +778,6 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   // 6. Reload last_applied_index_ from the snapshot's RocksDB metadata
   LoadLastAppliedIndex();
 
-  Log_info("[ReplicatedDB] Loaded snapshot: %u files, last_applied_index=%lu",
+  Log_info("[ReplicatedDB] Loaded snapshot: {} files, last_applied_index={}",
            num_files, last_applied_index_);
 }

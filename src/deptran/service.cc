@@ -258,17 +258,17 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   // usleep(20000);
 
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("!!!!!!!!!!!!! cmd %d enter ClassicServiceImpl::Dispatch (after client RPC) at loc_id %d", cmd_id, dtxn_sched()->loc_id_);
+  Log_info("!!!!!!!!!!!!! cmd {} enter ClassicServiceImpl::Dispatch (after client RPC) at loc_id {}", cmd_id, dtxn_sched()->loc_id_);
 #endif
 
 #ifdef FULL_LOG_DEBUG
-  Log_info("[Jetpack] cmd<%d, %d> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
+  Log_info("[Jetpack] cmd<{}, {}> entered ClassicServiceImpl::Dispatch", SimpleRWCommand::GetCmdID(md).first, SimpleRWCommand::GetCmdID(md).second);
 #endif
 
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[Jetpack] [C+] Received Dispatch %.3f", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
+  Log_info("[Jetpack] [C+] Received Dispatch {:.3f}", tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 
   Log_debug("The server side receives a message from the client worker");
@@ -440,7 +440,7 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   auto sched = (SchedulerClassic*) dtxn_sched_;
   bool null_cmd = false;
   bool ret = sched->OnPrepare(tid, sids, dep_id, null_cmd);
-  //Log_info("slow1: %d", sched->slow_);
+  //Log_info("slow1: {}", sched->slow_);
   *slow = sched->slow_;
   *res = ret ? SUCCESS : REJECT;
   if(null_cmd) *res = REPEAT;
@@ -450,7 +450,7 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   }
   defer.reply();
   //auto coro = Fiber::create_run(func);
-  //Log_info("coro id on service side: %d", coro->id);
+  //Log_info("coro id on service side: {}", coro->id);
 // TODO move the stat to somewhere else.
 #ifdef PIECE_COUNT
   std::map<piece_count_key_t, uint64_t>::iterator pc_it;
@@ -459,11 +459,11 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   else
       piece_count_prepare_success_++;
   if (piece_count_timer_.elapsed() >= 5.0) {
-      Log::info("PIECE_COUNT: txn served: %u", piece_count_tid_.size());
-      Log::info("PIECE_COUNT: prepare success: %llu, failed: %llu",
+      Log_info("PIECE_COUNT: txn served: {}", piece_count_tid_.size());
+      Log_info("PIECE_COUNT: prepare success: {}, failed: {}",
         piece_count_prepare_success_, piece_count_prepare_fail_);
       for (pc_it = piece_count_.begin(); pc_it != piece_count_.end(); pc_it++)
-          Log::info("PIECE_COUNT: t_type: %d, p_type: %d, started: %llu",
+          Log_info("PIECE_COUNT: t_type: {}, p_type: {}, started: {}",
             pc_it->first.t_type, pc_it->first.p_type, pc_it->second);
       piece_count_timer_.start();
   }
@@ -485,7 +485,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
   *profile = {result[0], result[1], result[2], result[3]};
   //*profile = {0.0, 0.0, 0.0, 0.0};
-  //Log_info("slow2: %d", sched->slow_);
+  //Log_info("slow2: {}", sched->slow_);
   *slow = sched->slow_;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
@@ -494,7 +494,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
 
   if (ret == WRONG_LEADER) {
     *res = WRONG_LEADER;
-    Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: %lu", tid);
+    Log_info("[WRONG_LEADER] ServiceImpl::Commit returning WRONG_LEADER for tx_id: {}", tid);
     // removed the
     // `dynamic_cast<TxData*>(sp_tx->cmd_.inner_marshallable().get())`
     // escape hatch.  After L10f-1, TxData no longer inherits
@@ -524,13 +524,13 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
 															 Profiling* profile,
                                janus::Command* view_data,
                                rrr::DeferredReply defer) {
-  Log_debug("get abort_txn: tid: %ld", tid);
+  Log_debug("get abort_txn: tid: {}", tid);
   //std::lock_guard<std::mutex> guard(mtx_);
   auto sched = (SchedulerClassic*) dtxn_sched_;
   sched->OnCommit(tid, dep_id, REJECT);
   auto result = rrr::CPUInfo::cpu_stat();  // cpu_stat() returns rusty::Vec<double>
   *profile = {result[0], result[1], result[2]};
-  Log_info("slow3: %d", sched->slow_);
+  Log_info("slow3: {}", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;
   auto coro_opt = Fiber::current_fiber();
@@ -550,7 +550,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
 void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
                                     rrr::i32* res,
                                     rrr::DeferredReply defer) {
-  Log_debug("get abort_txn: tid: %ld", tid);
+  Log_debug("get abort_txn: tid: {}", tid);
 //  std::lock_guard<std::mutex> guard(mtx_);
 //  const auto& func = [tid, res, defer, this]() {
   auto sched = (SchedulerClassic*) dtxn_sched_;

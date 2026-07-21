@@ -113,7 +113,7 @@ void set_epoch(int v) {
 
 void check_current_path() {
     auto path = std::filesystem::current_path();
-    Log_info("PWD : %s", path.string().c_str());
+    Log_info("PWD : {}", path.string().c_str());
 }
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
@@ -123,7 +123,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
         int thread_index = i++;
         auto site_info_for_thread = site_info;
         service_setup_ths.push_back(std::thread([site_info_for_thread, thread_index]() mutable {
-            Log_info("launching site: %x, bind address %s",
+            Log_info("launching site: {:x}, bind address {}",
                      site_info_for_thread.id,
                      site_info_for_thread.GetBindAddress().c_str());
             auto& worker = pxs_workers_g[thread_index];
@@ -146,7 +146,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
             auto& worker = pxs_workers_g[thread_index];
             worker->SetupCommo();
             worker->InitQueueRead();
-            Log_info("site %d launched!", (int)site_info_for_thread.id);
+            Log_info("site {} launched!", (int)site_info_for_thread.id);
         }));
     }
 
@@ -174,7 +174,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
-  //Log_info("invoke add_log_without_queue:len:%d, par_id:%d",len,par_id);
+  //Log_info("invoke add_log_without_queue:len:{}, par_id:{}",len,par_id);
   for (auto& worker : pxs_workers_g) {  // submit a transaction
     if (worker->site_info_->partition_id_ == par_id){
         // for the same partition, protect it with mutex
@@ -233,7 +233,7 @@ int get_outstanding_logs(uint32_t par_id) {
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;
     check_current_path();
-    Log_info("starting process %ld", getpid());
+    Log_info("starting process {}", getpid());
 
     int ret = Config::CreateConfig(argc, argv);
     if (ret != SUCCESS) {
@@ -242,19 +242,19 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     }
 
     auto server_infos = Config::GetConfig()->GetMyServers();
-    Log_info("server_infos, number of sites: %d, proc_name: %s", server_infos.size(), Config::GetConfig()->proc_name_.c_str());
+    Log_info("server_infos, number of sites: {}, proc_name: {}", server_infos.size(), Config::GetConfig()->proc_name_.c_str());
     for (int i = server_infos.size()-1; i >=0; i--) {
       retVector.push_back(Config::GetConfig()->SiteById(server_infos[i].id).name) ;
       PaxosWorker* worker = new PaxosWorker();
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
       pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
-      Log_info("partition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
+      Log_info("partition id of each Paxos group is {}, site-name: {}, site-id: {}", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
     reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
-    Log_info("running machine-id: %d", es->machine_id);
+    Log_info("running machine-id: {}", es->machine_id);
     return retVector;
 }
 
@@ -392,7 +392,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
     // Check if this worker is the leader for this partition
     if(!worker->is_leader){
       if(es->machine_id != 0)
-        Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
+        Log_info("Did not find to be leader, len: {},par_id:{}",len,par_id);
       return;
     }
 
@@ -402,7 +402,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   }
 
   // If we get here, no worker found for this partition
-  Log_error("add_log_to_nc: no worker found for par_id %d", par_id);
+  Log_error("add_log_to_nc: no worker found for par_id {}", par_id);
 }
 
 // removed `void* PollSubQNc(void*)` — body
@@ -529,9 +529,9 @@ void stuff_todo_learner_upgrade(){
   vector<thread> threads;
   //usleep(40*1000);
   for(int i=0; i<pxs_workers_g.size(); i++) {
-    Log_info("wait for noops: %d", i);
+    Log_info("wait for noops: {}", i);
     pxs_workers_g[i]->WaitForNoops();
-    Log_info("wait for noops(DONE),par_id: %d", i);
+    Log_info("wait for noops(DONE),par_id: {}", i);
   }
 }
 
@@ -563,7 +563,7 @@ void* heartbeatBackground(void* arg) {
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
   std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
-  Log_info("start a heartbeatBackground, addr:%s",addr_port.c_str());
+  Log_info("start a heartbeatBackground, addr:{}",addr_port.c_str());
   while (rpc_cli->connect(reinterpret_cast<const int8_t*>(addr_port.c_str()), true)!=0) {
      usleep(100 * 1000); // retry to connect
   }
@@ -597,14 +597,14 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
     WAN_WAIT_TIME(5); // 5ms is far enough within the same datacenter, otherwise, several seconds across data-center
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
-     Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
+     Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);
      time_t end = time (NULL);
      if (end - st > 35) {
        Log_info("Let's stop it automatically without failover!!!");
        std::quick_exit( EXIT_SUCCESS );
      }
 
-     Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
+     Log_info("trigger an new leader: {:f} ms, {} sec", duration2.count()/1000.0/1000.0, (int)(end - st));
 
      // collapsed `if (is_fail_new_impl) {...}
      // else {...}` (the constant was hard-coded `true`); the dead else
@@ -682,22 +682,22 @@ void add_log(const char* log, int len, uint32_t par_id){
 
 
 void worker_info_stats(size_t nthreads) {
-    Log_info("# of paxos_workers is %d", pxs_workers_g.size());
+    Log_info("# of paxos_workers is {}", pxs_workers_g.size());
 
     for (size_t par_id=0; par_id<nthreads; par_id++) {
-      Log_info("par_id %d", par_id);
+      Log_info("par_id {}", par_id);
       size_t wIdx = 0;
       for (auto& worker : pxs_workers_g) {
           if (worker->IsLeader(par_id)) {
-              Log_info("    work_index: %d, par_id: %d - IsLeader", wIdx, par_id);
+              Log_info("    work_index: {}, par_id: {} - IsLeader", wIdx, par_id);
           } else {
-              Log_info("    work_index: %d, par_id: %d - Is not Leader", wIdx, par_id);
+              Log_info("    work_index: {}, par_id: {} - Is not Leader", wIdx, par_id);
           };
 
           if (worker->IsPartition(par_id)) {
-              Log_info("    work_index: %d, par_id: %d - IsPartition", wIdx, par_id);
+              Log_info("    work_index: {}, par_id: {} - IsPartition", wIdx, par_id);
           } else {
-              Log_info("    work_index: %d, par_id: %d - Is not Partition", wIdx, par_id);
+              Log_info("    work_index: {}, par_id: {} - Is not Partition", wIdx, par_id);
           };
           wIdx += 1 ;
       }
@@ -706,7 +706,7 @@ void worker_info_stats(size_t nthreads) {
 
 void wait_for_submit(uint32_t par_id) {
     int total_submits = 0;
-    //Log_info("The number of completed submits %ld", (int)submit_queue.size_approx());
+    //Log_info("The number of completed submits {}", (int)submit_queue.size_approx());
  
     for (auto& worker : pxs_workers_g) {
         if(!worker->IsPartition(par_id))
@@ -724,7 +724,7 @@ void wait_for_submit(uint32_t par_id) {
 	      // dropped `replay_queue.size_approx()`
 	      // from this Log_info — `replay_queue` field went away with
 	      // the dead `AddReplayEntry` / `StartReplayRead` pair.
-	      Log_info("The number of completed submits n_current: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, par_id, (int)worker->n_tot);
+	      Log_info("The number of completed submits n_current: {} par_id: {} submit_tot: {}", (int)worker->n_current, par_id, (int)worker->n_tot);
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
@@ -732,13 +732,13 @@ void wait_for_submit(uint32_t par_id) {
         if (!worker->IsPartition(par_id)) continue;
 	      // dropped `replay_queue.size_approx()`
 	      // from this Log_info too.
-	      Log_info("Par_id %ld [partition], the number of completed submits %ld", par_id, (int)worker->n_current);
+	      Log_info("Par_id {} [partition], the number of completed submits {}", par_id, (int)worker->n_current);
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
 }
 void pre_shutdown_step(){
-    Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
+    Log_info("shutdown Server Control Service after task finish total submit {}", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
             worker->hb_rpc_server_->do_shutdown();

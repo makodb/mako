@@ -541,7 +541,7 @@ CPUInfo cpuinfo_new() {
     const auto mem_info = rusty::sys::process::sysinfo();
     // `mem_info.total_ram_bytes` is already scaled by mem_unit.
     info.total_mem = static_cast<long long>(mem_info.total_ram_bytes / 1024);
-    Log_debug("total amount of ram is: %lld", info.total_mem);
+    Log_debug("total amount of ram is: {}", info.total_mem);
 
     info.page_size = rusty::sys::process::sysconf(_SC_PAGE_SIZE) / 1024;
 
@@ -567,7 +567,7 @@ CPUInfo cpuinfo_new() {
 
 // @unsafe - Log_debug varargs shim for the DSL delta method.
 void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
-    Log_debug("ticks: %d -> %d", last_ticks, ticks);
+    Log_debug("ticks: {} -> {}", last_ticks, ticks);
 }
 
 // @safe - Rust-idiomatic singleton accessor.

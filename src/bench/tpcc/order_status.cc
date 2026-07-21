@@ -122,7 +122,7 @@ void TpccWorkload::RegOrderStatus() {
        DF_NO,
        PROC {
          verify(cmd.input.size() >= 3);
-         Log_debug("TPCC_ORDER_STATUS, piece: %d", TPCC_ORDER_STATUS_0);
+         Log_debug("TPCC_ORDER_STATUS, piece: {}", TPCC_ORDER_STATUS_0);
 
          mdb::MultiBlob mbl(3), mbh(3);
          mbl[0] = cmd.input[TPCC_VAR_D_ID].get_blob();
@@ -157,7 +157,7 @@ void TpccWorkload::RegOrderStatus() {
              it_mid = it;
            }
          }
-         Log_debug("w_id: %d, d_id: %d, c_last: %s, num customer: %d",
+         Log_debug("w_id: {}, d_id: {}, c_last: {}, num customer: {}",
                    cmd.input[TPCC_VAR_W_ID].get_i32(),
                    cmd.input[TPCC_VAR_D_ID].get_i32(),
                    cmd.input[TPCC_VAR_C_LAST].get_str().c_str(),
@@ -178,7 +178,7 @@ void TpccWorkload::RegOrderStatus() {
        {TPCC_TB_CUSTOMER, {TPCC_VAR_W_ID}}, // s
        DF_NO,
        PROC {
-         Log_debug("TPCC_ORDER_STATUS, piece: %d", TPCC_ORDER_STATUS_1);
+         Log_debug("TPCC_ORDER_STATUS, piece: {}", TPCC_ORDER_STATUS_1);
          verify(cmd.input.size() >= 3);
 
          mdb::Table *tbl = tx.GetTable(TPCC_TB_CUSTOMER);
@@ -220,7 +220,7 @@ void TpccWorkload::RegOrderStatus() {
        {TPCC_TB_ORDER, {TPCC_VAR_W_ID}},
        DF_NO,
        PROC {
-         Log_debug("TPCC_ORDER_STATUS, piece: %d", TPCC_ORDER_STATUS_2);
+         Log_debug("TPCC_ORDER_STATUS, piece: {}", TPCC_ORDER_STATUS_2);
          verify(cmd.input.size() >= 3);
 
          mdb::MultiBlob mb_0(3);
@@ -252,7 +252,7 @@ void TpccWorkload::RegOrderStatus() {
                           TPCC_COL_ORDER_O_CARRIER_ID,
                           &output[TPCC_VAR_O_CARRIER_ID],
                           TXN_BYPASS); // output[2] ==> o_carrier_id
-//        Log::debug("piece: %d, o_id: %d", TPCC_ORDER_STATUS_2, output[0].get_i32());
+//        Log_debug("piece: {}, o_id: {}", TPCC_ORDER_STATUS_2, output[0].get_i32());
          *res = SUCCESS;
        }
   );
@@ -265,10 +265,10 @@ void TpccWorkload::RegOrderStatus() {
        {TPCC_TB_ORDER_LINE, {TPCC_VAR_W_ID}}, // s
        DF_NO,
        PROC {
-         Log_debug("TPCC_ORDER_STATUS, piece: %d", TPCC_ORDER_STATUS_3);
+         Log_debug("TPCC_ORDER_STATUS, piece: {}", TPCC_ORDER_STATUS_3);
          verify(cmd.input.size() >= 3);
          mdb::MultiBlob mbl(4), mbh(4);
-         Log_debug("ol_d_id: %d, ol_w_id: %d, ol_o_id: %d",
+         Log_debug("ol_d_id: {}, ol_w_id: {}, ol_o_id: {}",
                    cmd.input[TPCC_VAR_O_ID].get_i32(),
                    cmd.input[TPCC_VAR_D_ID].get_i32(),
                    cmd.input[TPCC_VAR_W_ID].get_i32());
@@ -305,7 +305,7 @@ void TpccWorkload::RegOrderStatus() {
          column_locks.reserve(5 * row_list.size());
 
          int i = 0;
-         Log_debug("row_list size: %u", row_list.size());
+         Log_debug("row_list size: {}", row_list.size());
 
          i = 0;
          i32 oi = 0;

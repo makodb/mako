@@ -65,14 +65,14 @@ void CoordinatorRule::GotoNextPhase() {
         // static int printed_times = 0;
         // std::vector<double> cpu_info = rrr::CPUInfo::per_cpu_stat();
         // if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000) {
-        //   Log_info("cpu_info %d %.6f %.6f %.6f %.6f", cpu_info.size(), cpu_info[0], cpu_info[1], cpu_info[2], cpu_info[3]);
+        //   Log_info("cpu_info {} {:.6f} {:.6f} {:.6f} {:.6f}", cpu_info.size(), cpu_info[0], cpu_info[1], cpu_info[2], cpu_info[3]);
         //   // printed_times++;
         // }
         // go_to_fastpath_ = true;
         // go_to_fastpath_ = Config::GetConfig()->replica_proto_ != MODE_MENCIUS || cpu_info[1] < 0.9;
         // go_to_fastpath_ = client_worker_->one_armed_bandit_.ConsultAttempt();
         go_to_fastpath_ = client_worker_->go_to_jetpack_fastpath_cnt_ < 10 || (client_worker_->cli2cli_[6+cmd_is_write_].count() > 0 && client_worker_->cli2cli_[6+cmd_is_write_].recent_100_ave() < std::min(client_worker_->cli2cli_[8+cmd_is_write_].recent_100_ave(), 500.0)) || client_worker_->one_armed_bandit_.ConsultAttempt();
-        // Log_info("client_worker_->go_to_jetpack_fastpath_cnt_ %d %d %.2f %.2f %d", client_worker_->go_to_jetpack_fastpath_cnt_, client_worker_->cli2cli_[6+cmd_is_write_].count(), client_worker_->cli2cli_[6+cmd_is_write_].recent_100_ave(), client_worker_->cli2cli_[8+cmd_is_write_].recent_100_ave(), client_worker_->one_armed_bandit_.ConsultAttempt());
+        // Log_info("client_worker_->go_to_jetpack_fastpath_cnt_ {} {} {:.2f} {:.2f} {}", client_worker_->go_to_jetpack_fastpath_cnt_, client_worker_->cli2cli_[6+cmd_is_write_].count(), client_worker_->cli2cli_[6+cmd_is_write_].recent_100_ave(), client_worker_->cli2cli_[8+cmd_is_write_].recent_100_ave(), client_worker_->one_armed_bandit_.ConsultAttempt());
       } else {
         verify(0);
       }
@@ -117,7 +117,7 @@ void CoordinatorRule::GotoNextPhase() {
         // verify(phase_ % n_phase == Phase::WAITING_ORIGIN);
         phase_++;
         verify(phase_ % n_phase == Phase::INIT_END);
-        // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d current_phase=%d [before dispatch end] fast_path_success_=%d dispatch_ack_=%d", coo_id_, thread_id_, cmd_ver_, current_phase, fast_path_success_, dispatch_ack_);
+        // Log_info("CoordinatorRule coo_id={} thread_id={} cmd_ver_={} current_phase={} [before dispatch end] fast_path_success_={} dispatch_ack_={}", coo_id_, thread_id_, cmd_ver_, current_phase, fast_path_success_, dispatch_ack_);
         client_worker_->one_armed_bandit_.Record(fast_path_success_); // record succee only when efficient fast path success
         if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
           verify(!(fast_path_success_ && dispatch_ack_));
@@ -136,13 +136,13 @@ void CoordinatorRule::GotoNextPhase() {
       } else {
         verify(phase_ % n_phase == Phase::WAITING_ORIGIN);
         client_worker_->one_armed_bandit_.RecordFail(); // record fail since fast path fail
-        // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d current_phase=%d [before into WAITING_ORIGIN] fast_path_success_=%d dispatch_ack_=%d", coo_id_, thread_id_, cmd_ver_, current_phase, fast_path_success_, dispatch_ack_);
+        // Log_info("CoordinatorRule coo_id={} thread_id={} cmd_ver_={} current_phase={} [before into WAITING_ORIGIN] fast_path_success_={} dispatch_ack_={}", coo_id_, thread_id_, cmd_ver_, current_phase, fast_path_success_, dispatch_ack_);
       }
       break;
     case Phase::WAITING_ORIGIN:
       committed_ = true;
       verify(phase_ % n_phase == Phase::INIT_END);
-      // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d current_phase=%d [before WAITING_ORIGIN end]", coo_id_, thread_id_, cmd_ver_, current_phase);
+      // Log_info("CoordinatorRule coo_id={} thread_id={} cmd_ver_={} current_phase={} [before WAITING_ORIGIN end]", coo_id_, thread_id_, cmd_ver_, current_phase);
       if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
         client_worker_->cli2cli_[4].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
         client_worker_->cli2cli_[5].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);
@@ -186,7 +186,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
     sp_vpd_ = sp_vpd;
 #ifdef MONGODB_DEBUG
     janus::Command sp_vpd_marshaled{sp_vpd_};
-    Log_info("%.2f BroadcastRuleSpeculativeExecute <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
+    Log_info("{:.2f} BroadcastRuleSpeculativeExecute <{}, {}>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
     e = ((CommunicatorRule *)commo())->BroadcastRuleSpeculativeExecute(sp_vec_piece);
     // e = commo()->BroadcastRuleSpeculativeExecute(sp_vec_piece);
@@ -194,7 +194,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
   e->wait();
 #ifdef MONGODB_DEBUG
   janus::Command sp_vpd_marshaled{sp_vpd_};
-  Log_info("%.2f BroadcastRuleSpeculativeExecute after wait <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
+  Log_info("{:.2f} BroadcastRuleSpeculativeExecute after wait <{}, {}>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_marshaled).first, SimpleRWCommand::GetCmdID(sp_vpd_marshaled).second);
 #endif
   if (dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
     client_worker_->cli2cli_[0].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time_);

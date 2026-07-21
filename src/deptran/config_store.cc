@@ -100,21 +100,21 @@ bool ConfigStore::open() {
     if (err != nullptr) {
         std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
-        Log_error("ConfigStore: Failed to open database at %s: %s",
+        Log_error("ConfigStore: Failed to open database at {}: {}",
                   db_path_.c_str(), err_str.c_str());
         db_ = nullptr;
         return false;
     }
     if (db_ == nullptr) {
         // @unsafe { logging I/O }
-        Log_error("ConfigStore: Failed to open database at %s (null handle)",
+        Log_error("ConfigStore: Failed to open database at {} (null handle)",
                   db_path_.c_str());
         return false;
     }
 
     is_open_.set(true);
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Opened database at %s", db_path_.c_str());
+    Log_info("ConfigStore: Opened database at {}", db_path_.c_str());
     return true;
 }
 
@@ -132,7 +132,7 @@ void ConfigStore::close() {
 
     is_open_.set(false);
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Closed database at %s", db_path_.c_str());
+    Log_info("ConfigStore: Closed database at {}", db_path_.c_str());
 }
 
 // @unsafe - RocksDB I/O
@@ -216,13 +216,13 @@ bool ConfigStore::save(const PersistentConfig& config) {
     if (err != nullptr) {
         std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
-        Log_error("ConfigStore: Failed to save configuration: %s",
+        Log_error("ConfigStore: Failed to save configuration: {}",
                   err_str.c_str());
         return false;
     }
 
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Saved configuration version %lu", config.version);
+    Log_info("ConfigStore: Saved configuration version {}", config.version);
     return true;
 }
 
@@ -246,7 +246,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         if (err != nullptr) {
             std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read version: %s", err_str.c_str());
+            Log_error("ConfigStore: Failed to read version: {}", err_str.c_str());
             return rusty::None;
         }
         if (value_ptr == nullptr) {
@@ -277,7 +277,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         if (err != nullptr) {
             std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read sites: %s", err_str.c_str());
+            Log_error("ConfigStore: Failed to read sites: {}", err_str.c_str());
             return rusty::None;
         }
         if (value_ptr == nullptr) {
@@ -307,7 +307,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         if (err != nullptr) {
             std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read replica groups: %s", err_str.c_str());
+            Log_error("ConfigStore: Failed to read replica groups: {}", err_str.c_str());
             return rusty::None;
         }
         if (value_ptr == nullptr) {
@@ -337,7 +337,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         if (err != nullptr) {
             std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read settings: %s", err_str.c_str());
+            Log_error("ConfigStore: Failed to read settings: {}", err_str.c_str());
             return rusty::None;
         }
         if (value_ptr == nullptr) {
@@ -353,7 +353,7 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
     }
 
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Loaded configuration version %lu with %zu sites and %zu replica groups",
+    Log_info("ConfigStore: Loaded configuration version {} with {} sites and {} replica groups",
              config.version, config.sites.size(), config.replica_groups.size());
 
     return rusty::Some(std::move(config));
@@ -463,13 +463,13 @@ bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
     if (err != nullptr) {
         std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
-        Log_error("ConfigStore: Failed to save sharding policy: %s",
+        Log_error("ConfigStore: Failed to save sharding policy: {}",
                   err_str.c_str());
         return false;
     }
 
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Saved sharding policy version %lu with %zu tables",
+    Log_info("ConfigStore: Saved sharding policy version {} with {} tables",
              policy.version, policy.table_count());
     return true;
 }
@@ -491,7 +491,7 @@ rusty::Option<ShardingPolicySet> ConfigStore::load_sharding_policy() {
     if (err != nullptr) {
         std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
-        Log_error("ConfigStore: Failed to read sharding policy: %s",
+        Log_error("ConfigStore: Failed to read sharding policy: {}",
                   err_str.c_str());
         return rusty::None;
     }
@@ -510,7 +510,7 @@ rusty::Option<ShardingPolicySet> ConfigStore::load_sharding_policy() {
     rrr::Deserialize_::deserialize(policy, __rar__);
 
     // @unsafe { logging I/O }
-    Log_info("ConfigStore: Loaded sharding policy version %lu with %zu tables",
+    Log_info("ConfigStore: Loaded sharding policy version {} with {} tables",
              policy.version, policy.table_count());
 
     return rusty::Some(std::move(policy));
