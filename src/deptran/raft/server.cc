@@ -703,6 +703,7 @@ bool JetpackRecoveryEnabled() {
 RaftServer::RaftServer(Frame * frame)
   : tuning_core_(RaftServerTuningCore::new_(10000, HEARTBEAT_INTERVAL, 5000)),
     leadership_core_(RaftServerLeadershipCore::new_(INVALID_SITEID)),
+    membership_core_(RaftServerMembershipCore::new_()),
     timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
@@ -3622,7 +3623,7 @@ void RaftServer::OnAddServer(const uint64_t term,
   }
 
   // Check if a config change is already pending
-  if (config_change_pending_) {
+  if (membership_core_.config_change_pending()) {
     // @unsafe
     {
       *success = false;
@@ -3657,12 +3658,12 @@ void RaftServer::OnAddServer(const uint64_t term,
 
   // Add server as a learner first. It will receive log entries via HeartbeatLoop
   // (through next_index_/match_index_) but will NOT count towards quorum.
-  // Once caught up (match_index_ within catchup_threshold_ of lastLogIndex),
+  // Once caught up (match_index_ within catch-up threshold of lastLogIndex),
   // CheckAndPromoteLearners() will promote it to a full member.
   auto sid = static_cast<siteid_t>(new_server_id);
   learners_.insert(sid);
-  config_change_pending_ = true;
-  pending_config_index_ = lastLogIndex;  // Track where this change happened
+  membership_core_.set_config_change_pending(true);
+  membership_core_.set_pending_config_index(lastLogIndex);  // Track where this change happened
 
   // Initialize replication state so HeartbeatLoop sends entries to this learner
   if (next_index_.find(sid) == next_index_.end()) {
@@ -3689,7 +3690,7 @@ void RaftServer::PromoteLearner(siteid_t id) {
   // Must be called with mtx_ held
   learners_.erase(id);
   current_config_.insert(id);
-  config_change_pending_ = false;
+  membership_core_.set_config_change_pending(false);
   Log_info("[RAFT-CONFIG] Promoted learner %d to full member "
            "(config size=%zu, quorum=%zu, learners=%zu)",
            id, current_config_.size(), GetQuorumSize(), learners_.size());
@@ -3706,9 +3707,9 @@ void RaftServer::CheckAndPromoteLearners() {
   for (auto learner_id : learners_) {
     auto it = match_index_.find(learner_id);
     if (it != match_index_.end() && lastLogIndex > 0) {
-      // Learner is caught up if within catchup_threshold_ of leader's log
+      // Learner is caught up if within the configured threshold of leader's log
       if (it->second >= lastLogIndex ||
-          (lastLogIndex - it->second) <= catchup_threshold_) {
+          (lastLogIndex - it->second) <= membership_core_.catchup_threshold()) {
         to_promote.push_back(learner_id);
       }
     }
@@ -3743,7 +3744,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
   }
 
   // Check if a config change is already pending
-  if (config_change_pending_) {
+  if (membership_core_.config_change_pending()) {
     // @unsafe
     {
       *success = false;
@@ -3782,8 +3783,8 @@ void RaftServer::OnRemoveServer(const uint64_t term,
 
   // Apply config change immediately
   current_config_.erase(static_cast<siteid_t>(server_id));
-  config_change_pending_ = true;
-  pending_config_index_ = lastLogIndex;  // Track where this change happened
+  membership_core_.set_config_change_pending(true);
+  membership_core_.set_pending_config_index(lastLogIndex);  // Track where this change happened
 
   // @unsafe
   {

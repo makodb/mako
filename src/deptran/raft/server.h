@@ -668,6 +668,101 @@ inline void RaftServerLeadershipCore::set_startup_timestamp(uint64_t timestamp) 
 }
 /*RUSTYCPP:GEN-END id=server.leadership_core*/
 
+#if RUSTYCPP_RUST
+pub struct RaftServerMembershipCore {
+    config_change_pending_: rusty::Cell<bool>,
+    pending_config_index_: rusty::Cell<u64>,
+    catchup_threshold_: rusty::Cell<u64>,
+}
+
+impl RaftServerMembershipCore {
+    // @safe
+    fn new() -> RaftServerMembershipCore {
+        RaftServerMembershipCore {
+            config_change_pending_: rusty::Cell::<bool>::new_(false),
+            pending_config_index_: rusty::Cell::<u64>::new_(0),
+            catchup_threshold_: rusty::Cell::<u64>::new_(100),
+        }
+    }
+
+    // @safe
+    fn config_change_pending(&self) -> bool {
+        self.config_change_pending_.get()
+    }
+
+    // @safe
+    fn set_config_change_pending(&mut self, value: bool) {
+        self.config_change_pending_.set(value)
+    }
+
+    // @safe
+    fn pending_config_index(&self) -> u64 {
+        self.pending_config_index_.get()
+    }
+
+    // @safe
+    fn set_pending_config_index(&mut self, index: u64) {
+        self.pending_config_index_.set(index)
+    }
+
+    // @safe
+    fn catchup_threshold(&self) -> u64 {
+        self.catchup_threshold_.get()
+    }
+
+    // @safe
+    fn set_catchup_threshold(&mut self, threshold: u64) {
+        self.catchup_threshold_.set(threshold)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.membership_core version=1 rust_sha256=668d91d4bd4141bd6b48fe2703c5ea34de8598e2855b075b0fe7dd3b3eb5ec70*/
+struct RaftServerMembershipCore;
+
+struct RaftServerMembershipCore {
+    rusty::Cell<bool> config_change_pending_;
+    rusty::Cell<uint64_t> pending_config_index_;
+    rusty::Cell<uint64_t> catchup_threshold_;
+
+    static RaftServerMembershipCore new_();
+    bool config_change_pending() const;
+    void set_config_change_pending(bool value);
+    uint64_t pending_config_index() const;
+    void set_pending_config_index(uint64_t index);
+    uint64_t catchup_threshold() const;
+    void set_catchup_threshold(uint64_t threshold);
+};
+
+
+inline RaftServerMembershipCore RaftServerMembershipCore::new_() {
+    return RaftServerMembershipCore{.config_change_pending_ = rusty::Cell<bool>::new_(false), .pending_config_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .catchup_threshold_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(100))};
+}
+
+inline bool RaftServerMembershipCore::config_change_pending() const {
+    return this->config_change_pending_.get();
+}
+
+inline void RaftServerMembershipCore::set_config_change_pending(bool value) {
+    this->config_change_pending_.set(std::move(value));
+}
+
+inline uint64_t RaftServerMembershipCore::pending_config_index() const {
+    return this->pending_config_index_.get();
+}
+
+inline void RaftServerMembershipCore::set_pending_config_index(uint64_t index) {
+    this->pending_config_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerMembershipCore::catchup_threshold() const {
+    return this->catchup_threshold_.get();
+}
+
+inline void RaftServerMembershipCore::set_catchup_threshold(uint64_t threshold) {
+    this->catchup_threshold_.set(std::move(threshold));
+}
+/*RUSTYCPP:GEN-END id=server.membership_core*/
+
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
 // threading/atomics, storage, callbacks, and consensus orchestration remain
@@ -857,8 +952,7 @@ class RaftServer : public TxLogServer {
   // All quorum calculations should use current_config_.size() instead of the
   // static Config::GetConfig()->GetPartitionSize().
   std::set<siteid_t> current_config_;          // Active replica set (site IDs)
-  bool config_change_pending_ = false;         // True when a config entry is in-flight
-  uint64_t pending_config_index_ = 0;          // Log index of pending config entry
+  RaftServerMembershipCore membership_core_;
 
   // ============================================================================
   // LEARNER / NEW SERVER CATCH-UP TRACKING
@@ -869,7 +963,6 @@ class RaftServer : public TxLogServer {
   // Once a learner's match_index_ is within catchup_threshold_ of the
   // leader's lastLogIndex, it is promoted to a full member in current_config_.
   std::set<siteid_t> learners_;               // Servers being caught up (not yet in quorum)
-  uint64_t catchup_threshold_ = 100;          // Entries within lastLogIndex to consider "caught up"
 
   // @safe - simple comparison of member fields
   bool AmIPreferredLeader() const {

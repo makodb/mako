@@ -6578,8 +6578,8 @@ int RaftLabTest::testAddServerBasic(void) {
     Assert2(server->current_config_.count(new_server_id) == 0,
             "Server %d should not already be in config", new_server_id);
     server->current_config_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
   Log_info("TEST 73: Added server %d to config", new_server_id);
 
@@ -6601,16 +6601,16 @@ int RaftLabTest::testAddServerBasic(void) {
           (initial_size + 1) / 2 + 1, new_quorum);
   Log_info("TEST 73: Quorum after add: %zu", new_quorum);
 
-  // 7. Verify config_change_pending_ flag is set
-  Assert2(server->config_change_pending_,
-          "config_change_pending_ should be true after add");
+  // 7. Verify pending config-change flag is set
+  Assert2(server->membership_core_.config_change_pending(),
+          "config change should be pending after add");
 
   // 8. Cluster should still work (the extra server is fake, doesn't affect real quorum)
   // Reset config to original to not break subsequent operations
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->current_config_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   uint64_t idx = config_->DoAgreement(7300, NSERVERS, true);
@@ -6643,7 +6643,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->current_config_.insert(extra_server_id);
-    server->config_change_pending_ = false;  // Clear so we can do remove
+    server->membership_core_.set_config_change_pending(false);  // Clear so we can do remove
   }
 
   size_t size_before = server->GetCurrentConfig().size();
@@ -6658,8 +6658,8 @@ int RaftLabTest::testRemoveServerBasic(void) {
     Assert2(server->current_config_.count(extra_server_id) > 0,
             "Extra server should be in config before remove");
     server->current_config_.erase(extra_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
   Log_info("TEST 74: Removed server %d from config", extra_server_id);
 
@@ -6680,7 +6680,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
   Log_info("TEST 74: Quorum after remove: %zu", server->GetQuorumSize());
 
   // Clear pending and verify cluster still works
-  server->config_change_pending_ = false;
+  server->membership_core_.set_config_change_pending(false);
 
   uint64_t idx = config_->DoAgreement(7400, NSERVERS, true);
   Assert2(idx > 0, "DoAgreement should succeed after RemoveServer");
@@ -6692,7 +6692,7 @@ int RaftLabTest::testRemoveServerBasic(void) {
 // ============================================================================
 // Test 75: testRejectDuplicateConfigChange
 // ============================================================================
-// Verify that config_change_pending_ prevents concurrent config changes,
+// Verify that pending config-change state prevents concurrent config changes,
 // and test leader-only validation.
 int RaftLabTest::testRejectDuplicateConfigChange(void) {
   Init2(75, "Reject duplicate config change");
@@ -6710,37 +6710,37 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->current_config_.insert(static_cast<siteid_t>(7777));
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
   Log_info("TEST 75: First config change simulated (pending=true)");
 
   // 2. Verify pending flag blocks further changes
-  Assert2(server->config_change_pending_,
-          "config_change_pending_ should be true");
+  Assert2(server->membership_core_.config_change_pending(),
+          "config change should be pending");
 
   // 3. A second change should detect pending flag
   // (In the real RPC handler, OnAddServer checks and rejects)
   // Here we verify the flag mechanism works
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(server->config_change_pending_,
+    Assert2(server->membership_core_.config_change_pending(),
             "Cannot add second server while pending");
   }
   Log_info("TEST 75: Pending flag correctly blocks second change");
 
   // 4. Clear pending flag (simulating commit) and verify changes work again
-  server->config_change_pending_ = false;
+  server->membership_core_.set_config_change_pending(false);
 
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!server->membership_core_.config_change_pending(),
             "Pending flag should be cleared");
     // Now a new change should be allowed
     server->current_config_.erase(static_cast<siteid_t>(7777));
-    server->config_change_pending_ = true;
+    server->membership_core_.set_config_change_pending(true);
   }
-  Assert2(server->config_change_pending_,
+  Assert2(server->membership_core_.config_change_pending(),
           "Pending flag should be set after new change");
   Log_info("TEST 75: Config change succeeded after clearing pending flag");
 
@@ -6772,7 +6772,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   Log_info("TEST 75: All servers have correct initial config size");
 
   // Cleanup: clear pending flag on leader
-  server->config_change_pending_ = false;
+  server->membership_core_.set_config_change_pending(false);
 
   Log_info("TEST 75: Reject duplicate config change PASSED!");
   Passed2();
@@ -6783,7 +6783,7 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
 // ============================================================================
 // Verify that AddServer adds a new server as a learner (not directly to
 // current_config_), and that CheckAndPromoteLearners promotes the learner
-// to full member once its match_index_ is within catchup_threshold_.
+// to full member once its match_index_ is within the catch-up threshold.
 // @unsafe - Accesses internal server state via friend class
 int RaftLabTest::testNewServerCatchUp(void) {
   Init2(76, "New server catch-up (learner tracking and promotion)");
@@ -6825,8 +6825,8 @@ int RaftLabTest::testNewServerCatchUp(void) {
 
     // Add as learner (mimicking what OnAddServer now does)
     server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
 
     // Initialize replication state
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
@@ -6841,8 +6841,8 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "New server should NOT be in current_config_ yet");
   Assert2(server->GetCurrentConfig().size() == initial_config_size,
           "Config size should be unchanged while server is learner");
-  Assert2(server->config_change_pending_,
-          "config_change_pending_ should be true");
+  Assert2(server->membership_core_.config_change_pending(),
+          "config change should be pending");
   Log_info("TEST 76: Verified learner state - learner=%d, in_config=%d",
            server->IsLearner(new_server_id),
            (int)(server->GetCurrentConfig().count(new_server_id) > 0));
@@ -6889,8 +6889,8 @@ int RaftLabTest::testNewServerCatchUp(void) {
           "Server should be in current_config_ after promotion");
   Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
           "Config size should have grown by 1 after promotion");
-  Assert2(!server->config_change_pending_,
-          "config_change_pending_ should be false after promotion");
+  Assert2(!server->membership_core_.config_change_pending(),
+          "config change should not be pending after promotion");
   Log_info("TEST 76: Promoted! config_size=%zu, quorum=%zu",
            server->GetCurrentConfig().size(), server->GetQuorumSize());
 
@@ -6906,10 +6906,10 @@ int RaftLabTest::testNewServerCatchUp(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->learners_.insert(new_server_id2);
-    server->config_change_pending_ = true;
+    server->membership_core_.set_config_change_pending(true);
     server->next_index_[new_server_id2] = server->lastLogIndex + 1;
     // Set match_index just at the threshold boundary
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = server->membership_core_.catchup_threshold();
     uint64_t leader_last = server->lastLogIndex;
     if (leader_last > threshold) {
       server->match_index_[new_server_id2] = leader_last - threshold;  // Exactly at threshold
@@ -6936,11 +6936,11 @@ int RaftLabTest::testNewServerCatchUp(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->learners_.insert(new_server_id3);
-    server->config_change_pending_ = true;
+    server->membership_core_.set_config_change_pending(true);
     server->next_index_[new_server_id3] = server->lastLogIndex + 1;
     // Commit more entries to make the gap large
     // We just set match_index far behind
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = server->membership_core_.catchup_threshold();
     uint64_t leader_last = server->lastLogIndex;
     if (leader_last > threshold + 10) {
       server->match_index_[new_server_id3] = leader_last - threshold - 10;  // Beyond threshold
@@ -6954,7 +6954,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
 
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    uint64_t threshold = server->catchup_threshold_;
+    uint64_t threshold = server->membership_core_.catchup_threshold();
     uint64_t leader_last = server->lastLogIndex;
     // Only check if the gap is actually beyond threshold
     if (leader_last > threshold + 10) {
@@ -6979,7 +6979,7 @@ int RaftLabTest::testNewServerCatchUp(void) {
     server->next_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id2);
     server->next_index_.erase(new_server_id3);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   // Verify cluster still works
@@ -7031,8 +7031,8 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
     server->match_index_[new_server_id] = 0;
   }
@@ -7082,7 +7082,7 @@ int RaftLabTest::testAddServerReceivesLogs(void) {
     server->current_config_.erase(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   // @unsafe { DoAgreement calls into non-borrow-checked RPC layer }
@@ -7137,8 +7137,8 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->current_config_.erase(fake1);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
   }
 
   // 4. Verify config shrinks
@@ -7159,7 +7159,7 @@ int RaftLabTest::testRemoveServerQuorumShrinks(void) {
            size_after_remove, quorum_after_remove, quorum_with_extras);
 
   // 6. Verify cluster can still commit entries
-  server->config_change_pending_ = false;
+  server->membership_core_.set_config_change_pending(false);
   // Remove fake2 to restore config
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
@@ -7205,8 +7205,8 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->learners_.insert(new_server_id);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[new_server_id] = server->lastLogIndex + 1;
     server->match_index_[new_server_id] = 0;
   }
@@ -7244,7 +7244,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
     server->learners_.erase(new_server_id);
     server->match_index_.erase(new_server_id);
     server->next_index_.erase(new_server_id);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   Log_info("TEST 79: AddServer during active workload PASSED!");
@@ -7255,7 +7255,7 @@ int RaftLabTest::testAddServerDuringActiveWorkload(void) {
 // Test 80: testLeaderFailureDuringConfigChange
 // ============================================================================
 // Verify that if the leader fails while a config change is pending, the new
-// leader does not inherit the pending state (config_change_pending_ is local
+// leader does not inherit the pending state (config-change state is local
 // to each server and resets on new elections).
 // @unsafe - Accesses internal server state via friend class
 int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
@@ -7275,13 +7275,13 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     server->learners_.insert(fake_server);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[fake_server] = server->lastLogIndex + 1;
     server->match_index_[fake_server] = 0;
   }
-  Assert2(server->config_change_pending_,
-          "Leader should have config_change_pending_=true");
+  Assert2(server->membership_core_.config_change_pending(),
+          "Leader should have a pending config change");
   Log_info("TEST 80: Set config_change_pending=true on leader %d", leader);
 
   // 2. Disconnect the leader to trigger re-election
@@ -7300,9 +7300,9 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
   // 4. Verify new leader does NOT have config_change_pending
   auto new_server = config_->GetServer(new_leader);
   Assert2(new_server != nullptr, "New leader server should not be null");
-  Assert2(!new_server->config_change_pending_,
-          "New leader should NOT have config_change_pending_=true");
-  Log_info("TEST 80: New leader has config_change_pending_=false (correct)");
+  Assert2(!new_server->membership_core_.config_change_pending(),
+          "New leader should NOT have a pending config change");
+  Log_info("TEST 80: New leader has no pending config change (correct)");
 
   // 5. Verify the new leader does not have the fake server as learner
   Assert2(!new_server->IsLearner(fake_server),
@@ -7326,7 +7326,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
     server->learners_.erase(fake_server);
     server->match_index_.erase(fake_server);
     server->next_index_.erase(fake_server);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   Log_info("TEST 80: Leader failure during config change PASSED!");
@@ -7337,7 +7337,7 @@ int RaftLabTest::testLeaderFailureDuringConfigChange(void) {
 // Test 81: testCannotAddTwoServersSimultaneously
 // ============================================================================
 // Verify that when one config change is pending, a second add is rejected.
-// This tests the serialization of membership changes via config_change_pending_.
+// This tests the serialization of membership changes via pending config-change state.
 // While Test 75 tests the pending flag mechanism, this test explicitly simulates
 // two sequential OnAddServer-like operations and verifies the second fails.
 // @unsafe - Accesses internal server state via friend class
@@ -7357,16 +7357,16 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   siteid_t server1 = 995;
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!server->membership_core_.config_change_pending(),
             "No config change should be pending initially");
     server->learners_.insert(server1);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[server1] = server->lastLogIndex + 1;
     server->match_index_[server1] = 0;
   }
-  Assert2(server->config_change_pending_,
-          "config_change_pending_ should be true after first add");
+  Assert2(server->membership_core_.config_change_pending(),
+          "config change should be pending after first add");
   Assert2(server->IsLearner(server1),
           "Server 995 should be a learner");
   Log_info("TEST 81: First AddServer (995) succeeded, pending=true");
@@ -7376,9 +7376,9 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
     // Simulate OnAddServer rejection logic: check pending flag first
-    bool rejected = server->config_change_pending_;
+    bool rejected = server->membership_core_.config_change_pending();
     Assert2(rejected,
-            "Second AddServer should be rejected (config_change_pending_=true)");
+            "Second AddServer should be rejected while config change is pending");
     // Do NOT add server2 since the change is rejected
   }
   Assert2(!server->IsLearner(server2),
@@ -7397,25 +7397,25 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
           "Server 995 should be promoted");
   Assert2(server->GetCurrentConfig().count(server1) > 0,
           "Server 995 should be in current_config_");
-  Assert2(!server->config_change_pending_,
-          "config_change_pending_ should be false after promotion");
+  Assert2(!server->membership_core_.config_change_pending(),
+          "config change should not be pending after promotion");
   Log_info("TEST 81: First change completed, server 995 promoted");
 
   // 4. Now adding server 994 should succeed
   {
     std::lock_guard<std::recursive_mutex> lock(server->mtx_);
-    Assert2(!server->config_change_pending_,
+    Assert2(!server->membership_core_.config_change_pending(),
             "Pending should be false, allowing new config change");
     server->learners_.insert(server2);
-    server->config_change_pending_ = true;
-    server->pending_config_index_ = server->lastLogIndex;
+    server->membership_core_.set_config_change_pending(true);
+    server->membership_core_.set_pending_config_index(server->lastLogIndex);
     server->next_index_[server2] = server->lastLogIndex + 1;
     server->match_index_[server2] = 0;
   }
   Assert2(server->IsLearner(server2),
           "Server 994 should now be a learner");
-  Assert2(server->config_change_pending_,
-          "config_change_pending_ should be true for second change");
+  Assert2(server->membership_core_.config_change_pending(),
+          "config change should be pending for second change");
   Log_info("TEST 81: Second AddServer (994) now succeeded after first completed");
 
   // Cleanup
@@ -7427,7 +7427,7 @@ int RaftLabTest::testCannotAddTwoServersSimultaneously(void) {
     server->match_index_.erase(server2);
     server->next_index_.erase(server1);
     server->next_index_.erase(server2);
-    server->config_change_pending_ = false;
+    server->membership_core_.set_config_change_pending(false);
   }
 
   // Verify cluster still works
