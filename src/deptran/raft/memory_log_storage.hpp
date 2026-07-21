@@ -566,7 +566,7 @@ public:
     InMemoryLogStorage() {}
 
     // @safe - Destructor
-    ~InMemoryLogStorage() override {
+    ~InMemoryLogStorage() noexcept override {
         close();
     }
 
@@ -623,7 +623,7 @@ public:
     }
 
     // @safe - Thread-safe term query
-    rusty::Option<ballot_t> get_term(slotid_t slot_id) const override {
+    rusty::Option<int64_t> get_term(uint64_t slot_id) const override {
         return core_.get_term(slot_id);
     }
 

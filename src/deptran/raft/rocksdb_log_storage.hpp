@@ -1252,7 +1252,7 @@ public:
         : core_(db_path) {}
 
     // @unsafe - Destroys RocksDB state.
-    ~RocksDBLogStorage() override {
+    ~RocksDBLogStorage() noexcept override {
         core_.Destroy();
     }
 
@@ -1292,7 +1292,7 @@ public:
         return core_.get_last_index();
     }
 
-    rusty::Option<ballot_t> get_term(slotid_t slot_id) const override {
+    rusty::Option<int64_t> get_term(uint64_t slot_id) const override {
         return core_.get_term(slot_id);
     }
 
