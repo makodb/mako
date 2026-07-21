@@ -174,7 +174,7 @@ void RaftServer::PersistTermAndVoteToLogStorage() {
   // @unsafe
   {
   log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_core_.vote_for())));
   log_storage_->sync();
   }
 }
@@ -187,7 +187,7 @@ void RaftServer::PersistVoteToLogStorage() {
 
   // @unsafe
   {
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_core_.vote_for())));
   log_storage_->sync();
   }
 }
@@ -287,7 +287,7 @@ bool RaftServer::RecoverFromStorage() {
   auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);
   if (vote_opt.is_some()) {
     int64_t vote_val = std::stoll(vote_opt.unwrap());
-    vote_for_ = static_cast<siteid_t>(vote_val);
+    vote_core_.set_vote_for(static_cast<siteid_t>(vote_val));
   }
 
   // Recover commitIndex
@@ -345,7 +345,7 @@ bool RaftServer::RecoverFromStorage() {
 
   Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu "
            "commitIndex=%lu specCommitIndex=%lu securedLogIndex=%lu entries=%zu",
-           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex,
+           site_id_, currentTerm, vote_core_.vote_for(), lastLogIndex, commitIndex,
            speculative_core_.spec_commit_index(), speculative_core_.secured_log_index(), raft_logs_.size());
 
   return true;
@@ -705,6 +705,7 @@ RaftServer::RaftServer(Frame * frame)
     leadership_core_(RaftServerLeadershipCore::new_(INVALID_SITEID)),
     membership_core_(RaftServerMembershipCore::new_()),
     speculative_core_(RaftServerSpeculativeCore::new_()),
+    vote_core_(RaftServerVoteCore::new_(INVALID_SITEID)),
     timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
@@ -1127,17 +1128,17 @@ bool RaftServer::IsDisconnected() {
 // @safe - read-only leader hint lookup
 siteid_t RaftServer::GetLeaderHint() const {
   // Note: mtx_ is recursive_mutex, but this is const - callers should hold lock
-  // or accept a slightly stale value. current_leader_id_ is set under lock in
+  // or accept a slightly stale value. Current leader id is set under lock in
   // setIsLeader() and OnAppendEntries(), so reads are safe for hint purposes.
-  if (is_leader_) {
+  if (vote_core_.is_leader()) {
     return site_id_;
   }
-  return current_leader_id_;
+  return vote_core_.current_leader_id();
 }
 
 // @unsafe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
-  bool prev_is_leader = is_leader_;
+  bool prev_is_leader = vote_core_.is_leader();
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_STATE] setIsLeader invoked site %d (loc %d) term %lu: prev_is_leader=%d new_is_leader=%d",
            site_id_, frame_->site_info_->locale_id, currentTerm, prev_is_leader, isLeader);
@@ -1175,18 +1176,19 @@ void RaftServer::setIsLeader(bool isLeader) {
   }
 
 
-  // This 2 lines MUST put BEFORE is_leader_ = isLeader ! otherwise they will become 0, and new view will without leader
+  // These lines MUST run before set_is_leader(isLeader), otherwise the
+  // transition helpers see no change and the new view will have no leader.
   bool become_new_leader = server_leadership_transition_to_leader(
-      isLeader, is_leader_);
+      isLeader, vote_core_.is_leader());
   bool become_new_follower = server_leadership_transition_to_follower(
-      isLeader, is_leader_);
+      isLeader, vote_core_.is_leader());
 
   // Update the leader state after view handling
-  is_leader_ = isLeader;
+  vote_core_.set_is_leader(isLeader);
 
   // Track current leader identity for GetLeaderHint()
   if (isLeader) {
-    current_leader_id_ = site_id_;
+    vote_core_.set_current_leader_id(site_id_);
   }
 
   // Only log on actual transitions, not no-op calls
@@ -2051,13 +2053,13 @@ bool RaftServer::RequestVote() {
   {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     prev_term = currentTerm;
-    prev_vote_for = vote_for_;
+    prev_vote_for = vote_core_.vote_for();
     auto prev_local_term = currentTerm;
     currentTerm++ ;
-    vote_for_ = site_id_;  // Vote for ourselves when starting election
+    vote_core_.set_vote_for(site_id_);  // Vote for ourselves when starting election
 
     // CRITICAL: Persist term and vote BEFORE sending RequestVote RPCs
-    PersistState(currentTerm, vote_for_, "RequestVote: starting election");
+    PersistState(currentTerm, vote_core_.vote_for(), "RequestVote: starting election");
 
     LogTermChange("starting election", prev_local_term, currentTerm);
     // PersistState() already called above - no need for duplicate persistence
@@ -2154,7 +2156,7 @@ bool RaftServer::RequestVote() {
         JetpackRecoveryEntry(); // Trigger Jetpack recovery on new leader election
       }
 #endif
-  		req_voting_ = false ;
+      vote_core_.set_req_voting(false);
 			return true;
     } else {
       Log_debug("vote rejected %d curterm %d, do rollback", loc_id, currentTerm);
@@ -2174,14 +2176,14 @@ bool RaftServer::RequestVote() {
     if (new_term > currentTerm) {
       auto prev_local_term = currentTerm;
       currentTerm = new_term;
-      vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+      vote_core_.set_vote_for(INVALID_SITEID);  // Reset vote when advancing to new term
 
       // CRITICAL: Persist term after observing higher term from election responses
-      PersistState(currentTerm, vote_for_, "RequestVote: observed higher term");
+      PersistState(currentTerm, vote_core_.vote_for(), "RequestVote: observed higher term");
 
       LogTermChange("observed higher term from RequestVote replies", prev_local_term, currentTerm);
     }
-  	req_voting_ = false ;
+    vote_core_.set_req_voting(false);
 		return false;
   } else {
     Log_debug("vote timeout %d", loc_id);
@@ -2189,7 +2191,7 @@ bool RaftServer::RequestVote() {
     Log_info("[RAFT_ELECTION] server %d election timed out term %lu (yes=%d no=%d)",
              site_id_, term, sp_quorum->n_voted_yes_, sp_quorum->n_voted_no_);
 #endif
-  	req_voting_ = false ;
+    vote_core_.set_req_voting(false);
 		return false;
   }
 }
@@ -2218,17 +2220,17 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // @unsafe
   {
   if (server_vote_is_already_granted_to_other(
-          can_term, cur_term, vote_for_, can_id))
+          can_term, cur_term, vote_core_.vote_for(), can_id))
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
-              site_id_, can_id, vote_for_, cur_term);
+              site_id_, can_id, vote_core_.vote_for(), cur_term);
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
     return ;
   }
   }
 
   // If we already voted for this same candidate in this term, vote YES again (idempotent)
-  if (server_vote_is_idempotent(can_term, cur_term, vote_for_, can_id))
+  if (server_vote_is_idempotent(can_term, cur_term, vote_core_.vote_for(), can_id))
   {
     Log_debug("site %d vote YES for %d (already voted for them in term %lu, idempotent)",
               site_id_, can_id, cur_term);
@@ -2284,7 +2286,7 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
   }
 
   // Only process if we're the leader
-  if (!is_leader_) {
+  if (!vote_core_.is_leader()) {
     Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - not leader",
               site_id_, voter_id);
     *acknowledged = false;
@@ -2327,7 +2329,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
   }
 
   // Only process if we're the leader
-  if (!is_leader_) {
+  if (!vote_core_.is_leader()) {
     Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - not leader",
               site_id_, follower_id);
     *acknowledged = false;
@@ -2424,14 +2426,14 @@ void RaftServer::StartElectionTimer() {
                  site_id_, time_elapsed, election_timeout);
 
         // ask to vote
-        req_voting_ = true ;
+        vote_core_.set_req_voting(true );
         Log_info("[ELECTION_START] Site %d: TRIGGERING REQUESTVOTE - time_elapsed=%lu > timeout=%lu last_hb=%lu current_term=%lu vote_for=%d",
-                 site_id_, time_elapsed, election_timeout, last_heartbeat_time_, currentTerm, vote_for_);
+                 site_id_, time_elapsed, election_timeout, last_heartbeat_time_, currentTerm, vote_core_.vote_for());
         // CRITICAL: Check stop_ before calling RequestVote() to prevent
         // calling through collapsed vtable after object destruction
         if (stop_) return;
         RequestVote() ;
-        while(req_voting_) {
+        while(vote_core_.req_voting()) {
           Fiber::sleep(wait_int_);
           if(stop_) return ;
         }
@@ -2533,16 +2535,16 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   // while the leader is trying to repair their log via backtracking
   if (term_ok) {
       // Track the leader's identity for GetLeaderHint()
-      current_leader_id_ = leaderSiteId;
+      vote_core_.set_current_leader_id(leaderSiteId);
       // @unsafe
       { resetTimer("AppendEntries from current-term leader"); }
       if (server_observed_higher_term(leaderCurrentTerm, this->currentTerm)) {
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
-          vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+          vote_core_.set_vote_for(INVALID_SITEID);  // Reset vote when advancing to new term
 
           // CRITICAL: Persist term before accepting any entries from new leader
-          PersistState(currentTerm, vote_for_, "OnAppendEntries: new leader term");
+          PersistState(currentTerm, vote_core_.vote_for(), "OnAppendEntries: new leader term");
 
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
@@ -2827,13 +2829,13 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
     currentTerm = leaderTerm;
     // @unsafe
     {
-    vote_for_ = INVALID_SITEID;  // Reset vote for new term
+    vote_core_.set_vote_for(INVALID_SITEID);  // Reset vote for new term
     }
 
     // CRITICAL: Persist term before responding to TimeoutNow
-    PersistState(currentTerm, vote_for_, "OnTimeoutNow: leader higher term");
+    PersistState(currentTerm, vote_core_.vote_for(), "OnTimeoutNow: leader higher term");
 
-    if (is_leader_) {
+    if (vote_core_.is_leader()) {
       setIsLeader(false);  // Step down from leadership
     }
 
@@ -2844,7 +2846,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   // Edge Case 2: Already leader
   // ============================================================================
-  if (is_leader_) {
+  if (vote_core_.is_leader()) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - already leader in term %lu",
              site_id_, leaderSiteId, currentTerm);
     *success = true;  // Success = already leader (goal achieved)
@@ -2854,7 +2856,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   // Edge Case 3: Currently candidate (already in election)
   // ============================================================================
-  if (req_voting_) {
+  if (vote_core_.req_voting()) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - already requesting votes (term=%lu)",
              site_id_, leaderSiteId, currentTerm);
     *success = true;  // Success = already trying to become leader
@@ -2935,17 +2937,17 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
     currentTerm = term;
     // @unsafe
     {
-    vote_for_ = INVALID_SITEID;
+    vote_core_.set_vote_for(INVALID_SITEID);
     }
     setIsLeader(false);
-    PersistState(currentTerm, vote_for_, "OnInstallSnapshot: leader higher term");
+    PersistState(currentTerm, vote_core_.vote_for(), "OnInstallSnapshot: leader higher term");
     LogTermChange("InstallSnapshot carried newer term", prev_term, currentTerm, leader_id);
     // @unsafe
     { *term_out = currentTerm; }
   }
 
   // Track the leader's identity for GetLeaderHint()
-  current_leader_id_ = static_cast<siteid_t>(leader_id);
+  vote_core_.set_current_leader_id(static_cast<siteid_t>(leader_id));
 
   // Reset election timer (legitimate leader contact)
   resetTimer("received InstallSnapshot");
@@ -3095,7 +3097,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
         }
 
         // Check if we're still leader
-        if (!is_leader_) {
+        if (!vote_core_.is_leader()) {
           Log_info("[LEADERSHIP-TRANSFER] Site %d: No longer leader, exiting monitor", site_id_);
           break;
         }
@@ -3146,7 +3148,7 @@ bool RaftServer::ShouldTransferLeadership() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Must be leader
-  if (!is_leader_) {
+  if (!vote_core_.is_leader()) {
     return false;
   }
 
@@ -3304,7 +3306,7 @@ void RaftServer::InitiateLeadershipTransfer() {
 void RaftServer::ResetSpeculativeState() {
   // Note: caller must hold mtx_ lock
 
-  if (is_leader_) {
+  if (vote_core_.is_leader()) {
     // On becoming leader: initialize with self votes
     specVoters_.clear();
     specVoters_.insert(site_id_);  // voted for self
@@ -3382,7 +3384,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Only process if we're the leader
-  if (!is_leader_) {
+  if (!vote_core_.is_leader()) {
     Log_debug("[SPEC-RAFT] Site %d: Ignoring peer restart from %d - not leader",
               site_id_, restarted_site_id);
     return;
@@ -3424,7 +3426,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
 
   // Check if we need to become secured or step down
   // Relaxed invariant - durableVoters and specVoters are independent after crashes
-  if (!speculative_core_.secured_leader() && is_leader_) {
+  if (!speculative_core_.secured_leader() && vote_core_.is_leader()) {
     size_t quorum = GetQuorumSize();
 
     // NEW: Check if durable quorum is sufficient for secured status
@@ -3609,7 +3611,7 @@ void RaftServer::OnAddServer(const uint64_t term,
 
   // @unsafe
   {
-    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+    *leader_hint = (vote_core_.current_leader_id() != INVALID_SITEID) ? vote_core_.current_leader_id() : 0;
   }
 
   // Check if this server is the leader
@@ -3730,7 +3732,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
 
   // @unsafe
   {
-    *leader_hint = (current_leader_id_ != INVALID_SITEID) ? current_leader_id_ : 0;
+    *leader_hint = (vote_core_.current_leader_id() != INVALID_SITEID) ? vote_core_.current_leader_id() : 0;
   }
 
   // Check if this server is the leader

@@ -904,6 +904,147 @@ inline void RaftServerSpeculativeCore::set_last_durable_notified_index(uint64_t 
 }
 /*RUSTYCPP:GEN-END id=server.8*/
 
+#if RUSTYCPP_RUST
+pub struct RaftServerVoteCore {
+    vote_for_: rusty::Cell<i32>,
+    init_: rusty::Cell<bool>,
+    is_leader_: rusty::Cell<bool>,
+    current_leader_id_: rusty::Cell<i32>,
+    req_voting_: rusty::Cell<bool>,
+}
+
+impl RaftServerVoteCore {
+    // @safe
+    fn new(invalid_site_id: i32) -> RaftServerVoteCore {
+        RaftServerVoteCore {
+            vote_for_: rusty::Cell::<i32>::new_(invalid_site_id),
+            init_: rusty::Cell::<bool>::new_(false),
+            is_leader_: rusty::Cell::<bool>::new_(false),
+            current_leader_id_: rusty::Cell::<i32>::new_(invalid_site_id),
+            req_voting_: rusty::Cell::<bool>::new_(false),
+        }
+    }
+
+    // @safe
+    fn vote_for(&self) -> i32 {
+        self.vote_for_.get()
+    }
+
+    // @safe
+    fn set_vote_for(&mut self, site_id: i32) {
+        self.vote_for_.set(site_id)
+    }
+
+    // @safe
+    fn init(&self) -> bool {
+        self.init_.get()
+    }
+
+    // @safe
+    fn set_init(&mut self, value: bool) {
+        self.init_.set(value)
+    }
+
+    // @safe
+    fn is_leader(&self) -> bool {
+        self.is_leader_.get()
+    }
+
+    // @safe
+    fn set_is_leader(&mut self, value: bool) {
+        self.is_leader_.set(value)
+    }
+
+    // @safe
+    fn current_leader_id(&self) -> i32 {
+        self.current_leader_id_.get()
+    }
+
+    // @safe
+    fn set_current_leader_id(&mut self, site_id: i32) {
+        self.current_leader_id_.set(site_id)
+    }
+
+    // @safe
+    fn req_voting(&self) -> bool {
+        self.req_voting_.get()
+    }
+
+    // @safe
+    fn set_req_voting(&mut self, value: bool) {
+        self.req_voting_.set(value)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.9 version=1 rust_sha256=9b89d13c04efbd18786e17742749966fd681744d35855db0ab74b66b21732eeb*/
+struct RaftServerVoteCore;
+
+struct RaftServerVoteCore {
+    rusty::Cell<int32_t> vote_for_;
+    rusty::Cell<bool> init_;
+    rusty::Cell<bool> is_leader_;
+    rusty::Cell<int32_t> current_leader_id_;
+    rusty::Cell<bool> req_voting_;
+
+    static RaftServerVoteCore new_(int32_t invalid_site_id);
+    int32_t vote_for() const;
+    void set_vote_for(int32_t site_id);
+    bool init() const;
+    void set_init(bool value);
+    bool is_leader() const;
+    void set_is_leader(bool value);
+    int32_t current_leader_id() const;
+    void set_current_leader_id(int32_t site_id);
+    bool req_voting() const;
+    void set_req_voting(bool value);
+};
+
+
+inline RaftServerVoteCore RaftServerVoteCore::new_(int32_t invalid_site_id) {
+    return RaftServerVoteCore{.vote_for_ = rusty::Cell<int32_t>::new_(std::move(invalid_site_id)), .init_ = rusty::Cell<bool>::new_(false), .is_leader_ = rusty::Cell<bool>::new_(false), .current_leader_id_ = rusty::Cell<int32_t>::new_(std::move(invalid_site_id)), .req_voting_ = rusty::Cell<bool>::new_(false)};
+}
+
+inline int32_t RaftServerVoteCore::vote_for() const {
+    return this->vote_for_.get();
+}
+
+inline void RaftServerVoteCore::set_vote_for(int32_t site_id) {
+    this->vote_for_.set(std::move(site_id));
+}
+
+inline bool RaftServerVoteCore::init() const {
+    return this->init_.get();
+}
+
+inline void RaftServerVoteCore::set_init(bool value) {
+    this->init_.set(std::move(value));
+}
+
+inline bool RaftServerVoteCore::is_leader() const {
+    return this->is_leader_.get();
+}
+
+inline void RaftServerVoteCore::set_is_leader(bool value) {
+    this->is_leader_.set(std::move(value));
+}
+
+inline int32_t RaftServerVoteCore::current_leader_id() const {
+    return this->current_leader_id_.get();
+}
+
+inline void RaftServerVoteCore::set_current_leader_id(int32_t site_id) {
+    this->current_leader_id_.set(std::move(site_id));
+}
+
+inline bool RaftServerVoteCore::req_voting() const {
+    return this->req_voting_.get();
+}
+
+inline void RaftServerVoteCore::set_req_voting(bool value) {
+    this->req_voting_.set(std::move(value));
+}
+/*RUSTYCPP:GEN-END id=server.9*/
+
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
 // threading/atomics, storage, callbacks, and consensus orchestration remain
@@ -981,15 +1122,11 @@ class RaftServer : public TxLogServer {
   // @safe - logging calls wrapped in @unsafe blocks in implementation
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   bool stop_ = false ;
-  siteid_t vote_for_ = INVALID_SITEID ;
-  bool init_ = false ;
-  bool is_leader_ = false ;
-  siteid_t current_leader_id_ = INVALID_SITEID ;  // Last known leader (self if leader, sender of AppendEntries otherwise)
+  RaftServerVoteCore vote_core_;
   slotid_t snapidx_ = 0 ;
   ballot_t snapterm_ = 0 ;
   int32_t wait_int_ = 100000 ;
   bool disconnected_ = false;
-  bool req_voting_ = false ;
   bool in_applying_logs_ = false ;
   // @unsafe - cross-thread apply signal; keep atomic semantics.
   std::atomic<bool> apply_pending_{false};  // Tracks if new work arrived while applying logs
@@ -1139,9 +1276,9 @@ class RaftServer : public TxLogServer {
         *reply_term = currentTerm ;
       }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-      siteid_t prev_vote_for = vote_for_;
+      siteid_t prev_vote_for = vote_core_.vote_for();
       Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
-               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
+               site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, vote_core_.is_leader(), lst_log_idx, lst_log_term);
 #endif
 
       if( can_term > currentTerm)
@@ -1152,22 +1289,22 @@ class RaftServer : public TxLogServer {
           currentTerm = can_term ;
           // @unsafe
           {
-            vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+            vote_core_.set_vote_for(INVALID_SITEID);  // Reset vote when advancing to new term
           }
 
           // SPECULATIVE: Still persist term change synchronously for correctness
           // (term changes must be durable before we can proceed)
-          PersistState(currentTerm, vote_for_, "doVote: observed higher term");
+          PersistState(currentTerm, vote_core_.vote_for(), "doVote: observed higher term");
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
       }
 
       if(vote)
       {
           setIsLeader(false) ;
-          vote_for_ = can_id ;
+          vote_core_.set_vote_for(can_id );
 
 #ifdef RAFT_LEADER_ELECTION_DEBUG
-          Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
+          Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_core_.vote_for(), currentTerm);
 #endif
           // Reset timeout
           resetTimer("granted vote");
@@ -1375,7 +1512,7 @@ class RaftServer : public TxLogServer {
     if (!looping_) {
       return false;
     }
-    return is_leader_ ;
+    return vote_core_.is_leader() ;
   }
   
   // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
@@ -1552,7 +1689,7 @@ class RaftServer : public TxLogServer {
 
   /**
    * Recover state from persistent storage.
-   * Restores currentTerm, vote_for_, commitIndex, and log entries.
+   * Restores currentTerm, vote-for state, commitIndex, and log entries.
    * Should be called during initialization if storage is available.
    * @return true if recovery succeeded or storage is not set, false on error
    */
@@ -1920,7 +2057,7 @@ class RaftServer : public TxLogServer {
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
-    if (!AmIPreferredLeader() && is_leader_ && looping_) {
+    if (!AmIPreferredLeader() && vote_core_.is_leader() && looping_) {
       Log_info("[LEADERSHIP-TRANSFER] Site %d: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
@@ -1940,7 +2077,7 @@ class RaftServer : public TxLogServer {
    * Get the last known leader's site_id for client redirection.
    * @return Leader site_id, or INVALID_SITEID if unknown
    */
-  // @safe - read-only access to current_leader_id_ under lock
+  // @safe - read-only access to current leader id under lock
   siteid_t GetLeaderHint() const;
 
   /**
