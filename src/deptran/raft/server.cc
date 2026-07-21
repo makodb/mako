@@ -435,7 +435,7 @@ void RaftServer::InitializeSnapshotManager() {
   const char* interval_str = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");  // @unsafe
   if (interval_str && interval_str[0] != '\0') {
     snap_config.snapshot_interval = std::stoull(interval_str);
-    snapshot_threshold_ = snap_config.snapshot_interval;
+    tuning_core_.set_snapshot_threshold(snap_config.snapshot_interval);
   }
 
   // Create the FileSnapshotManager
@@ -701,7 +701,8 @@ bool JetpackRecoveryEnabled() {
 
 // @unsafe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
-  : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
+  : tuning_core_(RaftServerTuningCore::new_(10000, HEARTBEAT_INTERVAL, 5000)),
+    timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
 #ifdef RAFT_TEST_CORO
@@ -862,12 +863,12 @@ void RaftServer::StartApplyThread() {
         // Cheap unlocked pre-check so the hot path stays lock-free when
         // we're far from the threshold or have no manager configured.
         if (snapshot_manager_ && server_snapshot_is_due(
-                snapidx_, executeIndex, snapshot_threshold_)) {
+                snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
           // Re-check under the lock: CreateSnapshot mutates snapidx_ and
           // raft_logs_ via CompactLog.
           if (snapshot_manager_ && server_snapshot_is_due(
-                  snapidx_, executeIndex, snapshot_threshold_)) {
+                  snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
             CreateSnapshot();
           }
         }
@@ -967,8 +968,9 @@ void RaftServer::Setup() {
   {
     const char* hb_str = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
     if (hb_str && hb_str[0] != '\0') {
-      heartbeat_interval_us_ = std::stoull(hb_str);
-      Log_info("[RAFT] Heartbeat interval set to %lu us from env", heartbeat_interval_us_);
+      tuning_core_.set_heartbeat_interval_us(std::stoull(hb_str));
+      Log_info("[RAFT] Heartbeat interval set to %lu us from env",
+               tuning_core_.heartbeat_interval_us());
     }
   }
 
@@ -978,8 +980,9 @@ void RaftServer::Setup() {
     const char* lrw_str = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW");
     if (lrw_str && lrw_str[0] != '\0') {
       uint64_t val = std::stoull(lrw_str);
-      log_retention_window_ = (val > 0) ? val : 1;
-      Log_info("[RAFT] Log retention window set to %lu from env", log_retention_window_);
+      tuning_core_.set_log_retention_window(val);
+      Log_info("[RAFT] Log retention window set to %lu from env",
+               tuning_core_.log_retention_window());
     }
   }
 
@@ -1383,12 +1386,15 @@ void RaftServer::applyLogs() {
 
   // Check if we should take a snapshot
   if (snapshot_manager_ && server_snapshot_is_due(
-          snapidx_, executeIndex, snapshot_threshold_)) {
+          snapidx_, executeIndex, tuning_core_.snapshot_threshold())) {
     CreateSnapshot();
   }
 
   // Cleanup old commands to prevent memory buildup.
-  slotid_t cutoff = (executeIndex > log_retention_window_) ? executeIndex - log_retention_window_ : 0;
+  uint64_t log_retention_window = tuning_core_.log_retention_window();
+  slotid_t cutoff = (executeIndex > log_retention_window)
+                        ? executeIndex - log_retention_window
+                        : 0;
   // Coordinate with snapshots: don't compact beyond what the latest snapshot covers
   if (snapidx_ > 0 && cutoff > snapidx_) {
     cutoff = snapidx_;
@@ -1477,7 +1483,7 @@ void RaftServer::HeartbeatLoop() {
         ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
         ready_for_replication_->set(0);
       }
-      ready_for_replication_->wait(heartbeat_interval_us_);
+      ready_for_replication_->wait(tuning_core_.heartbeat_interval_us());
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
@@ -2390,7 +2396,9 @@ void RaftServer::StartElectionTimer() {
       uint64_t election_timeout = GetElectionTimeout();
 
       // Sleep for a portion of the timeout before checking
-      Fiber::sleep(RandomGenerator::rand(heartbeat_interval_us_ * 2, heartbeat_interval_us_ * 4));
+      uint64_t heartbeat_interval_us = tuning_core_.heartbeat_interval_us();
+      Fiber::sleep(RandomGenerator::rand(heartbeat_interval_us * 2,
+                                         heartbeat_interval_us * 4));
 
       // Retry NotifyRestart for any PENDING peers
       // This handles the case where a peer was partitioned when we restarted

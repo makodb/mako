@@ -8,6 +8,7 @@
 #include <deque>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -419,6 +420,110 @@ struct KeyValue {
 #define HEARTBEAT_INTERVAL 5000
 #endif
 
+#if RUSTYCPP_RUST
+pub struct RaftServerTuningCore {
+    snapshot_threshold_: rusty::Cell<u64>,
+    heartbeat_interval_us_: rusty::Cell<u64>,
+    log_retention_window_: rusty::Cell<u64>,
+}
+
+impl RaftServerTuningCore {
+    // @safe
+    fn new(snapshot_threshold: u64,
+           heartbeat_interval_us: u64,
+           log_retention_window: u64) -> RaftServerTuningCore {
+        RaftServerTuningCore {
+            snapshot_threshold_: rusty::Cell::<u64>::new_(snapshot_threshold),
+            heartbeat_interval_us_: rusty::Cell::<u64>::new_(heartbeat_interval_us),
+            log_retention_window_: rusty::Cell::<u64>::new_(log_retention_window),
+        }
+    }
+
+    // @safe
+    fn snapshot_threshold(&self) -> u64 {
+        self.snapshot_threshold_.get()
+    }
+
+    // @safe
+    fn set_snapshot_threshold(&mut self, value: u64) {
+        self.snapshot_threshold_.set(value)
+    }
+
+    // @safe
+    fn heartbeat_interval_us(&self) -> u64 {
+        self.heartbeat_interval_us_.get()
+    }
+
+    // @safe
+    fn set_heartbeat_interval_us(&mut self, value: u64) {
+        self.heartbeat_interval_us_.set(value)
+    }
+
+    // @safe
+    fn log_retention_window(&self) -> u64 {
+        self.log_retention_window_.get()
+    }
+
+    // @safe
+    fn set_log_retention_window(&mut self, value: u64) {
+        if value > 0 {
+            self.log_retention_window_.set(value)
+        } else {
+            self.log_retention_window_.set(1)
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.tuning_core version=1 rust_sha256=40c0db522565bc12f46be992fa3cb36781213528778be653292489659121332f*/
+struct RaftServerTuningCore;
+
+struct RaftServerTuningCore {
+    rusty::Cell<uint64_t> snapshot_threshold_;
+    rusty::Cell<uint64_t> heartbeat_interval_us_;
+    rusty::Cell<uint64_t> log_retention_window_;
+
+    static RaftServerTuningCore new_(uint64_t snapshot_threshold, uint64_t heartbeat_interval_us, uint64_t log_retention_window);
+    uint64_t snapshot_threshold() const;
+    void set_snapshot_threshold(uint64_t value);
+    uint64_t heartbeat_interval_us() const;
+    void set_heartbeat_interval_us(uint64_t value);
+    uint64_t log_retention_window() const;
+    void set_log_retention_window(uint64_t value);
+};
+
+
+inline RaftServerTuningCore RaftServerTuningCore::new_(uint64_t snapshot_threshold, uint64_t heartbeat_interval_us, uint64_t log_retention_window) {
+    return RaftServerTuningCore{.snapshot_threshold_ = rusty::Cell<uint64_t>::new_(std::move(snapshot_threshold)), .heartbeat_interval_us_ = rusty::Cell<uint64_t>::new_(std::move(heartbeat_interval_us)), .log_retention_window_ = rusty::Cell<uint64_t>::new_(std::move(log_retention_window))};
+}
+
+inline uint64_t RaftServerTuningCore::snapshot_threshold() const {
+    return this->snapshot_threshold_.get();
+}
+
+inline void RaftServerTuningCore::set_snapshot_threshold(uint64_t value) {
+    this->snapshot_threshold_.set(std::move(value));
+}
+
+inline uint64_t RaftServerTuningCore::heartbeat_interval_us() const {
+    return this->heartbeat_interval_us_.get();
+}
+
+inline void RaftServerTuningCore::set_heartbeat_interval_us(uint64_t value) {
+    this->heartbeat_interval_us_.set(std::move(value));
+}
+
+inline uint64_t RaftServerTuningCore::log_retention_window() const {
+    return this->log_retention_window_.get();
+}
+
+inline void RaftServerTuningCore::set_log_retention_window(uint64_t value) {
+    if (rusty::detail::deref_if_pointer_like(value) > 0) {
+        this->log_retention_window_.set(std::move(value));
+    } else {
+        this->log_retention_window_.set(static_cast<uint64_t>(1));
+    }
+}
+/*RUSTYCPP:GEN-END id=server.tuning_core*/
 
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
@@ -442,7 +547,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - optional shared snapshot backend; polymorphic and file/RocksDB
   // backed implementations remain outside early DSL migration.
   std::shared_ptr<janus::raft::SnapshotManager> snapshot_manager_;
-  uint64_t snapshot_threshold_ = 10000;  // Entries between snapshots (configurable)
+  RaftServerTuningCore tuning_core_;
 
   // State machine snapshot callbacks (set by ReplicatedDB or other state machines)
   // @safe - stores move-only RustyCpp callbacks for later invocation
@@ -521,8 +626,6 @@ class RaftServer : public TxLogServer {
   bool looping_ = false;
   bool heartbeat_ = true;
   bool heartbeat_setup_ = false;
-  uint64_t heartbeat_interval_us_ = HEARTBEAT_INTERVAL;  // Runtime-configurable heartbeat interval (microseconds)
-  uint64_t log_retention_window_ = 5000;  // Configurable log retention window (entries to keep after compaction)
 	enum { STOPPED, RUNNING } status_;
 	rusty::Function<void(bool)> leader_change_cb_;
 
@@ -932,10 +1035,10 @@ class RaftServer : public TxLogServer {
   }
 
   // @safe - returns POD field
-  uint64_t GetHeartbeatInterval() const { return heartbeat_interval_us_; }
+  uint64_t GetHeartbeatInterval() const { return tuning_core_.heartbeat_interval_us(); }
 
   // @safe - sets POD field
-  void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
+  void SetHeartbeatInterval(uint64_t micros) { tuning_core_.set_heartbeat_interval_us(micros); }
 
   // @unsafe - Implements ReadIndex protocol for linearizable reads.
   // Returns true if this server is confirmed leader and safe to serve reads.
@@ -943,10 +1046,10 @@ class RaftServer : public TxLogServer {
   bool ReadIndex(uint64_t timeout_us = 5000000);
 
   // @safe - returns POD field
-  uint64_t GetLogRetentionWindow() const { return log_retention_window_; }
+  uint64_t GetLogRetentionWindow() const { return tuning_core_.log_retention_window(); }
 
   // @safe - sets POD field (minimum 1 to avoid division by zero)
-  void SetLogRetentionWindow(uint64_t window) { log_retention_window_ = (window > 0) ? window : 1; }
+  void SetLogRetentionWindow(uint64_t window) { tuning_core_.set_log_retention_window(window); }
 
   // @unsafe - external calls plus output pointer writes and shared_ptr ops
   // take janus::Command;
@@ -1188,7 +1291,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - sets POD field
   void SetSnapshotThreshold(uint64_t threshold) {
-    snapshot_threshold_ = threshold;
+    tuning_core_.set_snapshot_threshold(threshold);
   }
 
   /**
@@ -1197,7 +1300,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - reads POD field
   uint64_t GetSnapshotThreshold() const {
-    return snapshot_threshold_;
+    return tuning_core_.snapshot_threshold();
   }
 
   // ============================================================================
