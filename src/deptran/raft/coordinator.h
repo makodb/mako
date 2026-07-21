@@ -153,7 +153,8 @@ class CoordinatorRaft : public Coordinator {
   // @unsafe - C-style cast on borrowed Coordinator::commo_ pointer. The
   // communicator is owned by RaftFrame, not this coordinator.
   RaftCommo *commo() {
-    // TODO fix this.
+    // Coordinator stores the legacy base pointer; RaftFrame guarantees that
+    // this instance is the RaftCommo implementation for Raft coordinators.
     verify(commo_ != nullptr);
     // @unsafe
     { return (RaftCommo *) commo_; }
