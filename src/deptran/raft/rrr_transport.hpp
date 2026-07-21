@@ -34,6 +34,154 @@
 namespace janus {
 namespace raft {
 
+// @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
+inline void rrr_transport_send_vote_durable_cpp(RaftCommo* commo,
+                                                siteid_t candidate,
+                                                parid_t par,
+                                                VoteDurableReq req) {
+  // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+  {
+    commo->SendVoteDurable(candidate, par, req.term, req.voter_id);
+  }
+}
+
+// @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
+inline void rrr_transport_send_append_entries_durable_cpp(
+    RaftCommo* commo,
+    siteid_t leader,
+    parid_t par,
+    AppendEntriesDurableReq req) {
+  // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+  {
+    commo->SendAppendEntriesDurable(
+        leader, par, req.term, req.follower_id, req.last_log_index);
+  }
+}
+
+// @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
+inline void rrr_transport_send_notify_restart_cpp(RaftCommo* commo,
+                                                  siteid_t self,
+                                                  parid_t par) {
+  // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
+  {
+    commo->SendNotifyRestart(self, par);
+  }
+}
+
+// @unsafe - bridges synchronous TransportBase API to RaftCommo's async
+// rusty::Function callback API using shared reply slot + IntEvent.
+inline AppendEntriesReply rrr_transport_send_append_entries_cpp(
+    RaftCommo* commo,
+    siteid_t dst,
+    parid_t par,
+    AppendEntriesReq req) {
+  auto slot  = std::make_shared<AppendEntriesReply>();
+  auto ready = Reactor::create_sp_event<IntEvent>();
+  commo->SendAppendEntriesCb(
+      dst, par, req.slot, req.ballot,
+      /*isLeader=*/true,
+      req.leader_site_id, req.leader_current_term,
+      req.leader_prev_log_index, req.leader_prev_log_term,
+      req.leader_commit_index, req.cmd, req.leader_next_log_term,
+      /*trigger_election_now=*/false,
+      [slot, ready](siteid_t, AppendEntriesReply r) {
+        *slot = std::move(r);
+        ready->set(1);
+      });
+  ready->wait();  // yields fiber until reply arrives or timeout
+  return *slot;
+}
+
+// @unsafe - bridges synchronous TransportBase API to RaftCommo's async
+// rusty::Function callback API using shared reply slot + IntEvent.
+inline EmptyAppendEntriesReply rrr_transport_send_empty_append_entries_cpp(
+    RaftCommo* commo,
+    siteid_t dst,
+    parid_t par,
+    EmptyAppendEntriesReq req) {
+  auto slot  = std::make_shared<AppendEntriesReply>();
+  auto ready = Reactor::create_sp_event<IntEvent>();
+  commo->SendAppendEntriesCb(
+      dst, par, req.slot, req.ballot,
+      /*isLeader=*/true,
+      req.leader_site_id, req.leader_current_term,
+      req.leader_prev_log_index, req.leader_prev_log_term,
+      req.leader_commit_index, janus::Command{}, /*cmdLogTerm=*/0,
+      req.trigger_election_now,
+      [slot, ready](siteid_t, AppendEntriesReply r) {
+        *slot = std::move(r);
+        ready->set(1);
+      });
+  ready->wait();
+  EmptyAppendEntriesReply out{};
+  out.follower_append_ok = slot->follower_append_ok;
+  out.follower_current_term = slot->follower_current_term;
+  out.follower_last_log_index = slot->follower_last_log_index;
+  out.follower_ack_type = slot->follower_ack_type;
+  return out;
+}
+
+// @unsafe - bridges per-peer send_vote onto BroadcastVoteCb fanout.
+// BroadcastVoteCb uses rusty::Function and may fire once per peer reply;
+// this adapter filters on `from == dst` and wakes this call's IntEvent.
+inline VoteReply rrr_transport_send_vote_cpp(RaftCommo* commo,
+                                             siteid_t dst,
+                                             parid_t par,
+                                             VoteReq req) {
+  auto slot  = std::make_shared<VoteReply>();
+  auto ready = Reactor::create_sp_event<IntEvent>();
+  commo->BroadcastVoteCb(
+      par, req.last_log_idx, req.last_log_term,
+      req.candidate_site_id, req.current_term,
+      [slot, ready, dst](siteid_t from, VoteReply r) {
+        if (from == dst) {
+          *slot = std::move(r);
+          ready->set(1);
+        }
+      });
+  ready->wait();
+  return *slot;
+}
+
+// @unsafe - bridges synchronous TransportBase API to SendTimeoutNow's
+// rusty::Function callback using shared reply slot + IntEvent.
+inline TimeoutNowReply rrr_transport_send_timeout_now_cpp(RaftCommo* commo,
+                                                          siteid_t dst,
+                                                          parid_t par,
+                                                          TimeoutNowReq req) {
+  auto slot  = std::make_shared<TimeoutNowReply>();
+  auto ready = Reactor::create_sp_event<IntEvent>();
+  commo->SendTimeoutNow(
+      dst, par, req.leader_term, req.leader_site_id,
+      [slot, ready](bool success, uint64_t follower_term) {
+        slot->success = success;
+        slot->follower_term = follower_term;
+        ready->set(1);
+      });
+  ready->wait();
+  return *slot;
+}
+
+// @unsafe - bridges synchronous TransportBase API to SendInstallSnapshot's
+// rusty::Function callback using shared reply slot + IntEvent.
+inline InstallSnapshotReply rrr_transport_send_install_snapshot_cpp(
+    RaftCommo* commo,
+    siteid_t dst,
+    parid_t par,
+    InstallSnapshotReq req) {
+  auto slot  = std::make_shared<InstallSnapshotReply>();
+  auto ready = Reactor::create_sp_event<IntEvent>();
+  commo->SendInstallSnapshot(
+      dst, par, req.term, req.leader_id,
+      req.last_included_index, req.last_included_term, req.data,
+      [slot, ready](uint64_t follower_term) {
+        slot->term_out = follower_term;
+        ready->set(1);
+      });
+  ready->wait();
+  return *slot;
+}
+
 class RrrTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
@@ -49,27 +197,18 @@ class RrrTransportAdapter : public TransportBase {
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
-    {
-      commo_->SendVoteDurable(candidate, par_, req.term, req.voter_id);
-    }
+    rrr_transport_send_vote_durable_cpp(commo_, candidate, par_, std::move(req));
   }
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
-    {
-      commo_->SendAppendEntriesDurable(
-          leader, par_, req.term, req.follower_id, req.last_log_index);
-    }
+    rrr_transport_send_append_entries_durable_cpp(commo_, leader, par_,
+                                                  std::move(req));
   }
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_notify_restart(siteid_t self, parid_t par) override {
-    // @unsafe - enters RaftCommo rrr/RaftProxy RPC boundary.
-    {
-      commo_->SendNotifyRestart(self, par);
-    }
+    rrr_transport_send_notify_restart_cpp(commo_, self, par);
   }
   // ------------------------------------------------------------------
   // Reply-expecting RPCs — fiber-synchronous.
@@ -82,98 +221,36 @@ class RrrTransportAdapter : public TransportBase {
   // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
   // rusty::Function callback API using shared reply slot + IntEvent.
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
-    auto slot  = std::make_shared<AppendEntriesReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
-    commo_->SendAppendEntriesCb(
-        dst, par_, req.slot, req.ballot,
-        /*isLeader=*/true,
-        req.leader_site_id, req.leader_current_term,
-        req.leader_prev_log_index, req.leader_prev_log_term,
-        req.leader_commit_index, req.cmd, req.leader_next_log_term,
-        /*trigger_election_now=*/false,
-        [slot, ready](siteid_t, AppendEntriesReply r) {
-          *slot = std::move(r);
-          ready->set(1);
-        });
-    ready->wait();  // yields fiber until reply arrives or timeout
-    return *slot;
+    return rrr_transport_send_append_entries_cpp(commo_, dst, par_,
+                                                 std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
   // rusty::Function callback API using shared reply slot + IntEvent.
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
-    auto slot  = std::make_shared<AppendEntriesReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
-    commo_->SendAppendEntriesCb(
-        dst, par_, req.slot, req.ballot,
-        /*isLeader=*/true,
-        req.leader_site_id, req.leader_current_term,
-        req.leader_prev_log_index, req.leader_prev_log_term,
-        req.leader_commit_index, janus::Command{}, /*cmdLogTerm=*/0,
-        req.trigger_election_now,
-        [slot, ready](siteid_t, AppendEntriesReply r) {
-          *slot = std::move(r);
-          ready->set(1);
-        });
-    ready->wait();
-    EmptyAppendEntriesReply out{};
-    out.follower_append_ok = slot->follower_append_ok;
-    out.follower_current_term = slot->follower_current_term;
-    out.follower_last_log_index = slot->follower_last_log_index;
-    out.follower_ack_type = slot->follower_ack_type;
-    return out;
+    return rrr_transport_send_empty_append_entries_cpp(commo_, dst, par_,
+                                                       std::move(req));
   }
 
   // @unsafe - bridges per-peer send_vote onto BroadcastVoteCb fanout.
   // BroadcastVoteCb uses rusty::Function and may fire once per peer reply;
   // this adapter filters on `from == dst` and wakes this call's IntEvent.
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
-    auto slot  = std::make_shared<VoteReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
-    commo_->BroadcastVoteCb(
-        par_, req.last_log_idx, req.last_log_term,
-        req.candidate_site_id, req.current_term,
-        [slot, ready, dst](siteid_t from, VoteReply r) {
-          if (from == dst) {
-            *slot = std::move(r);
-            ready->set(1);
-          }
-        });
-    ready->wait();
-    return *slot;
+    return rrr_transport_send_vote_cpp(commo_, dst, par_, std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to SendTimeoutNow's
   // rusty::Function callback using shared reply slot + IntEvent.
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    auto slot  = std::make_shared<TimeoutNowReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
-    commo_->SendTimeoutNow(
-        dst, par_, req.leader_term, req.leader_site_id,
-        [slot, ready](bool success, uint64_t follower_term) {
-          slot->success = success;
-          slot->follower_term = follower_term;
-          ready->set(1);
-        });
-    ready->wait();
-    return *slot;
+    return rrr_transport_send_timeout_now_cpp(commo_, dst, par_, std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to SendInstallSnapshot's
   // rusty::Function callback using shared reply slot + IntEvent.
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
-    auto slot  = std::make_shared<InstallSnapshotReply>();
-    auto ready = Reactor::create_sp_event<IntEvent>();
-    commo_->SendInstallSnapshot(
-        dst, par_, req.term, req.leader_id,
-        req.last_included_index, req.last_included_term, req.data,
-        [slot, ready](uint64_t follower_term) {
-          slot->term_out = follower_term;
-          ready->set(1);
-        });
-    ready->wait();
-    return *slot;
+    return rrr_transport_send_install_snapshot_cpp(commo_, dst, par_,
+                                                   std::move(req));
   }
 
  private:
