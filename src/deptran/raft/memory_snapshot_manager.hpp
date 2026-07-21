@@ -737,12 +737,12 @@ class MemorySnapshotManager : public SnapshotManager {
   // @unsafe - returned writer owns itself but borrows this manager's payload,
   // metadata, flag, and mutex. Do not let the writer outlive the manager.
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
-      slotid_t last_index, ballot_t last_term) override {
+      uint64_t last_index, int64_t last_term) override {
     return core_.BeginSnapshot(&mtx_, last_index, last_term);
   }
 
   // @unsafe - memcpy into internal buffer under mutex
-  bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
+  bool TakeSnapshot(uint64_t last_index, int64_t last_term,
                     const char* data, size_t size) override {
     std::lock_guard<std::mutex> lk(mtx_);
     return core_.TakeSnapshot(last_index, last_term, data, size);

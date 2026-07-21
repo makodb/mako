@@ -1161,13 +1161,13 @@ class FileSnapshotManager : public SnapshotManager {
   // @unsafe - Returns an owned writer. The writer owns path strings and later
   // owns any temp-file cleanup for this snapshot.
   std::unique_ptr<SnapshotWriter> BeginSnapshot(
-      slotid_t last_index, ballot_t last_term) override {
+      uint64_t last_index, int64_t last_term) override {
     std::lock_guard<std::mutex> lock(mutex_);
     return core_.BeginSnapshot(last_index, last_term);
   }
 
   // @unsafe - Creates and finalizes snapshot
-  bool TakeSnapshot(slotid_t last_index, ballot_t last_term,
+  bool TakeSnapshot(uint64_t last_index, int64_t last_term,
                     const char* data, size_t size) override {
     return core_.TakeSnapshot(last_index, last_term, data, size);
   }
