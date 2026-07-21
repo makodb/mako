@@ -56,7 +56,6 @@ pub struct DummyDispatcherCore {
 
 impl DummyDispatcherCore {
     // @safe
-    #[cpp_ctor]
     fn new(self_site: u16) -> DummyDispatcherCore {
         DummyDispatcherCore {
             self_: self_site,
@@ -135,13 +134,13 @@ impl DummyDispatcherCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_node.dummy_dispatcher_core version=1 rust_sha256=3d36dd28ed5954a025b28f2a612dd4ee954ed00f4971c22b7e658608594d9e81*/
+/*RUSTYCPP:GEN-BEGIN id=raft_node.dummy_dispatcher_core version=1 rust_sha256=007abf3dd95e2a16974e50914d9863580efa2a33a3b950c795288d0396af58f2*/
 struct DummyDispatcherCore;
 
 struct DummyDispatcherCore {
     uint16_t self_;
 
-    DummyDispatcherCore(uint16_t self_site);
+    static DummyDispatcherCore new_(uint16_t self_site);
     VoteReply handle_vote(VoteReq req) const;
     VoteDurableReply handle_vote_durable(VoteDurableReq _req) const;
     AppendEntriesReply handle_append_entries(AppendEntriesReq _req) const;
@@ -154,9 +153,9 @@ struct DummyDispatcherCore {
 };
 
 
-DummyDispatcherCore::DummyDispatcherCore(uint16_t self_site)
-    : self_(self_site)
-{}
+DummyDispatcherCore DummyDispatcherCore::new_(uint16_t self_site) {
+    return DummyDispatcherCore{.self_ = std::move(self_site)};
+}
 
 VoteReply DummyDispatcherCore::handle_vote(VoteReq req) const {
     return VoteReply{.max_ballot = std::move(req.current_term), .vote_granted = true};
@@ -198,7 +197,8 @@ uint16_t DummyDispatcherCore::self_site_id() const {
 class DummyDispatcher : public DispatcherBase {
  public:
   // @safe
-  explicit DummyDispatcher(siteid_t self) : core_(self) {}
+  explicit DummyDispatcher(siteid_t self)
+      : core_(DummyDispatcherCore::new_(self)) {}
 
   VoteReply handle_vote(VoteReq req) override {
     return core_.handle_vote(std::move(req));
