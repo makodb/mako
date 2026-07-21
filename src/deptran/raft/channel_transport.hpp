@@ -35,6 +35,7 @@
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/sync/mpsc.hpp>
 
@@ -132,7 +133,7 @@ struct ChannelFaults {
 };
 
 
-inline bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
+bool ChannelFaults::is_dropped(uint16_t from, uint16_t to) const {
     return channel_faults_is_dropped((*this), std::move(from), std::move(to));
 }
 /*RUSTYCPP:GEN-END id=channel_transport.faults*/
@@ -159,20 +160,20 @@ pub fn channel_envelope_matches_destination(envelope_to: u16,
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel_transport.small_helpers version=1 rust_sha256=79f5eaf4cbb3e6137d5ee633b66a7a7ee99d2db35066a1c67b0df7e0cfc45173*/
-inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
-inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
-inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
+bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to);
+bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition);
+bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site);
 
-inline bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
-    return drop_from == from && drop_to == to;
+bool channel_faults_drop_matches(uint16_t drop_from, uint16_t drop_to, uint16_t from, uint16_t to) {
+    return (rusty::detail::deref_if_pointer_like(drop_from) == rusty::detail::deref_if_pointer_like(from)) && (rusty::detail::deref_if_pointer_like(drop_to) == rusty::detail::deref_if_pointer_like(to));
 }
 
-inline bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
-    return from_partition != to_partition;
+bool channel_faults_partitions_block(int32_t from_partition, int32_t to_partition) {
+    return rusty::detail::deref_if_pointer_like(from_partition) != rusty::detail::deref_if_pointer_like(to_partition);
 }
 
-inline bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
-    return envelope_to == site;
+bool channel_envelope_matches_destination(uint16_t envelope_to, uint16_t site) {
+    return rusty::detail::deref_if_pointer_like(envelope_to) == rusty::detail::deref_if_pointer_like(site);
 }
 /*RUSTYCPP:GEN-END id=channel_transport.small_helpers*/
 
@@ -402,14 +403,198 @@ inline void channel_transport_send_notify_restart_cpp(ChannelSwitchboard* sw,
   sw->send(std::move(env));
 }
 
+#if RUSTYCPP_RUST
+pub struct ChannelTransportAdapterCore {
+    sw_: *mut ChannelSwitchboard,
+    self_: u16,
+    par_: u32,
+}
+
+impl ChannelTransportAdapterCore {
+    // @unsafe - Stores a non-owning switchboard pointer.
+    #[cpp_ctor]
+    fn new(sw: *mut ChannelSwitchboard, self_site: u16, par: u32)
+        -> ChannelTransportAdapterCore {
+        ChannelTransportAdapterCore {
+            sw_: sw,
+            self_: self_site,
+            par_: par,
+        }
+    }
+
+    // @safe
+    fn self_site_id(&self) -> u16 {
+        self.self_
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_append_entries(&mut self, dst: u16, req: AppendEntriesReq)
+        -> AppendEntriesReply {
+        unsafe {
+            channel_transport_send_append_entries_cpp(self.sw_, self.self_, dst,
+                                                      self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_empty_append_entries(&mut self, dst: u16, req: EmptyAppendEntriesReq)
+        -> EmptyAppendEntriesReply {
+        unsafe {
+            channel_transport_send_empty_append_entries_cpp(self.sw_, self.self_,
+                                                            dst, self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_vote(&mut self, dst: u16, req: VoteReq) -> VoteReply {
+        unsafe {
+            channel_transport_send_vote_cpp(self.sw_, self.self_, dst,
+                                            self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_timeout_now(&mut self, dst: u16, req: TimeoutNowReq) -> TimeoutNowReply {
+        unsafe {
+            channel_transport_send_timeout_now_cpp(self.sw_, self.self_, dst,
+                                                   self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_install_snapshot(&mut self, dst: u16, req: InstallSnapshotReq)
+        -> InstallSnapshotReply {
+        unsafe {
+            channel_transport_send_install_snapshot_cpp(self.sw_, self.self_,
+                                                        dst, self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_vote_durable(&mut self, candidate: u16, req: VoteDurableReq) {
+        unsafe {
+            channel_transport_send_vote_durable_cpp(self.sw_, self.self_,
+                                                    candidate, self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_append_entries_durable(&mut self, leader: u16,
+                                   req: AppendEntriesDurableReq) {
+        unsafe {
+            channel_transport_send_append_entries_durable_cpp(self.sw_,
+                                                              self.self_,
+                                                              leader,
+                                                              self.par_,
+                                                              req)
+        }
+    }
+
+    // @unsafe - Delegates to C++ mpsc bridge.
+    fn send_notify_restart(&mut self, dst: u16, par: u32) {
+        unsafe {
+            channel_transport_send_notify_restart_cpp(self.sw_, self.self_, dst,
+                                                      par)
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.4 version=1 rust_sha256=cfeb681c3bae7b9acefb0c0e94e9c621a4b53f3f52ae211f3eda61c8d8351ebb*/
+struct ChannelTransportAdapterCore;
+
+struct ChannelTransportAdapterCore {
+    ChannelSwitchboard* sw_;
+    uint16_t self_;
+    uint32_t par_;
+
+    ChannelTransportAdapterCore(ChannelSwitchboard* sw, uint16_t self_site, uint32_t par);
+    uint16_t self_site_id() const;
+    AppendEntriesReply send_append_entries(uint16_t dst, AppendEntriesReq req);
+    EmptyAppendEntriesReply send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req);
+    VoteReply send_vote(uint16_t dst, VoteReq req);
+    TimeoutNowReply send_timeout_now(uint16_t dst, TimeoutNowReq req);
+    InstallSnapshotReply send_install_snapshot(uint16_t dst, InstallSnapshotReq req);
+    void send_vote_durable(uint16_t candidate, VoteDurableReq req);
+    void send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req);
+    void send_notify_restart(uint16_t dst, uint32_t par);
+};
+
+
+ChannelTransportAdapterCore::ChannelTransportAdapterCore(ChannelSwitchboard* sw, uint16_t self_site, uint32_t par)
+    : sw_(sw)
+    , self_(self_site)
+    , par_(par)
+{}
+
+uint16_t ChannelTransportAdapterCore::self_site_id() const {
+    return this->self_;
+}
+
+AppendEntriesReply ChannelTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
+    // @unsafe
+    {
+        return channel_transport_send_append_entries_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+EmptyAppendEntriesReply ChannelTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
+    // @unsafe
+    {
+        return channel_transport_send_empty_append_entries_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+VoteReply ChannelTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
+    // @unsafe
+    {
+        return channel_transport_send_vote_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+TimeoutNowReply ChannelTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
+    // @unsafe
+    {
+        return channel_transport_send_timeout_now_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+InstallSnapshotReply ChannelTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
+    // @unsafe
+    {
+        return channel_transport_send_install_snapshot_cpp(this->sw_, this->self_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+void ChannelTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
+    // @unsafe
+    {
+        channel_transport_send_vote_durable_cpp(this->sw_, this->self_, std::move(candidate), this->par_, std::move(req));
+    }
+}
+
+void ChannelTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
+    // @unsafe
+    {
+        channel_transport_send_append_entries_durable_cpp(this->sw_, this->self_, std::move(leader), this->par_, std::move(req));
+    }
+}
+
+void ChannelTransportAdapterCore::send_notify_restart(uint16_t dst, uint32_t par) {
+    // @unsafe
+    {
+        channel_transport_send_notify_restart_cpp(this->sw_, this->self_, std::move(dst), std::move(par));
+    }
+}
+/*RUSTYCPP:GEN-END id=channel_transport.4*/
+
 class ChannelTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning switchboard pointer }
   ChannelTransportAdapter(ChannelSwitchboard* sw, siteid_t self, parid_t par)
-      : sw_(sw), self_(self), par_(par) {}
+      : core_(sw, self, par) {}
 
   // @safe
-  siteid_t self_site_id() const override { return self_; }
+  siteid_t self_site_id() const override { return core_.self_site_id(); }
 
   // ------------------------------------------------------------------
   // Reply-expecting RPCs.
@@ -431,32 +616,28 @@ class ChannelTransportAdapter : public TransportBase {
 
   // @unsafe { mpsc bridge }
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
-    return channel_transport_send_append_entries_cpp(sw_, self_, dst, par_,
-                                                     std::move(req));
+    return core_.send_append_entries(dst, std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
-    return channel_transport_send_empty_append_entries_cpp(sw_, self_, dst, par_,
-                                                           std::move(req));
+    return core_.send_empty_append_entries(dst, std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
-    return channel_transport_send_vote_cpp(sw_, self_, dst, par_, std::move(req));
+    return core_.send_vote(dst, std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    return channel_transport_send_timeout_now_cpp(sw_, self_, dst, par_,
-                                                  std::move(req));
+    return core_.send_timeout_now(dst, std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
-    return channel_transport_send_install_snapshot_cpp(sw_, self_, dst, par_,
-                                                       std::move(req));
+    return core_.send_install_snapshot(dst, std::move(req));
   }
 
   // ------------------------------------------------------------------
@@ -465,25 +646,21 @@ class ChannelTransportAdapter : public TransportBase {
 
   // @safe
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    channel_transport_send_vote_durable_cpp(sw_, self_, candidate, par_,
-                                            std::move(req));
+    core_.send_vote_durable(candidate, std::move(req));
   }
 
   // @safe
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    channel_transport_send_append_entries_durable_cpp(sw_, self_, leader, par_,
-                                                      std::move(req));
+    core_.send_append_entries_durable(leader, std::move(req));
   }
 
   // @safe
-  void send_notify_restart(siteid_t dst, parid_t /*par*/) override {
-    channel_transport_send_notify_restart_cpp(sw_, self_, dst, par_);
+  void send_notify_restart(siteid_t dst, parid_t par) override {
+    core_.send_notify_restart(dst, par);
   }
 
  private:
-  ChannelSwitchboard* sw_{nullptr};
-  siteid_t            self_{0};
-  parid_t             par_{0};
+  ChannelTransportAdapterCore core_;
 };
 
 // @safe - factory produces a TransportProxy backed by the channel adapter.
