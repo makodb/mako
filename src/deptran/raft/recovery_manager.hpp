@@ -21,7 +21,7 @@
 #include <utility>
 
 #include <rusty/cell.hpp>
-#include <rusty/rusty.hpp>
+#include <rusty/move.hpp>
 #include <rusty/slice.hpp>
 
 #include "log_storage.hpp"

@@ -55,7 +55,7 @@ bool CoordinatorRaft::IsFPGALeader() {
 void CoordinatorRaft::Submit(const janus::Command& cmd_env,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
-  if (!IsLeader()) {
+  if (coordinator_raft_should_handle_wrong_leader(IsLeader())) {
     // verify(0);
     auto config = Config::GetConfig();
     // @unsafe
@@ -67,7 +67,8 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
     }
 
     // Handle WRONG_LEADER case
-    if (cmd_env.kind_ == TpcCommitCommand::static_kind()) {
+    if (coordinator_raft_command_kind_matches(
+            cmd_env.kind_, TpcCommitCommand::static_kind())) {
       auto tpc_cmd = marshallable_cast<TpcCommitCommand>(cmd_env);
       if (tpc_cmd) {
         // Set WRONG_LEADER error code
@@ -85,7 +86,7 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
         }
 
         // If view is empty or stale, use current server state to construct view
-        if (current_view.IsEmpty()) {
+        if (coordinator_raft_should_create_fallback_view(current_view.IsEmpty())) {
           // For Raft, we need to determine who the current leader is
           // This might need to be tracked separately or obtained from Raft state
           // @unsafe
@@ -143,7 +144,7 @@ void CoordinatorRaft::AppendEntries() {
     {
     ok = this->svr_->Start(cmd_, &index, &term);
     }
-    verify(ok);
+    verify(coordinator_raft_append_succeeded(ok));
     // @unsafe
     {
     std::lock_guard<std::recursive_mutex> lock(svr_->ready_for_replication_mtx_);
@@ -153,9 +154,10 @@ void CoordinatorRaft::AppendEntries() {
 
     // @unsafe
     {
-    while (this->svr_->commitIndex < index) {
+    while (coordinator_raft_should_wait_for_commit(this->svr_->commitIndex,
+                                                   index)) {
       Reactor::create_sp_event<TimeoutEvent>(1000)->wait();
-      if (this->svr_->currentTerm != term) {
+      if (coordinator_raft_term_changed(this->svr_->currentTerm, term)) {
         Log_info("Term changed during AppendEntries: expected %lu, got %lu. Leader changed.",
                  term, this->svr_->currentTerm);
         // The command may or may not be committed by the new leader
@@ -220,7 +222,7 @@ void CoordinatorRaft::GotoNextPhase() {
     case Phase::ACCEPT:
       verify(coordinator_raft_phase_is_commit(
           coordinator_raft_phase_value(phase_, n_phase)));
-      if (committed_) {
+      if (coordinator_raft_should_learn(committed_)) {
         LeaderLearn();
       } else {
         // verify(0);

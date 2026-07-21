@@ -5,6 +5,7 @@
 #include "../frame.h"
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/slice.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -44,13 +45,49 @@ pub fn coordinator_raft_phase_is_commit(phase: i32) -> bool {
 pub fn coordinator_raft_majority_count(n_replica: u32) -> u32 {
     (n_replica / 2) + 1
 }
+
+pub fn coordinator_raft_should_handle_wrong_leader(is_leader: bool) -> bool {
+    !is_leader
+}
+
+pub fn coordinator_raft_command_kind_matches(kind: i32, expected_kind: i32) -> bool {
+    kind == expected_kind
+}
+
+pub fn coordinator_raft_should_create_fallback_view(view_is_empty: bool) -> bool {
+    view_is_empty
+}
+
+pub fn coordinator_raft_should_wait_for_commit(commit_index: u64,
+                                               target_index: u64) -> bool {
+    commit_index < target_index
+}
+
+pub fn coordinator_raft_term_changed(current_term: u64, expected_term: u64) -> bool {
+    current_term != expected_term
+}
+
+pub fn coordinator_raft_append_succeeded(start_ok: bool) -> bool {
+    start_ok
+}
+
+pub fn coordinator_raft_should_learn(committed: bool) -> bool {
+    committed
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=coordinator.1 version=1 rust_sha256=db86be189ce372c2ac19ed914ec6d050a6bd9cee73e201ecd6d08d0f79da48fa*/
+/*RUSTYCPP:GEN-BEGIN id=coordinator.1 version=1 rust_sha256=8600e136755f979884b97c3a4bfcaaf6baddfadae1b1ba6f79a61707c396e3e3*/
 inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase);
 inline bool coordinator_raft_phase_is_prepare(int32_t phase);
 inline bool coordinator_raft_phase_is_accept(int32_t phase);
 inline bool coordinator_raft_phase_is_commit(int32_t phase);
 inline uint32_t coordinator_raft_majority_count(uint32_t n_replica);
+inline bool coordinator_raft_should_handle_wrong_leader(bool is_leader);
+inline bool coordinator_raft_command_kind_matches(int32_t kind, int32_t expected_kind);
+inline bool coordinator_raft_should_create_fallback_view(bool view_is_empty);
+inline bool coordinator_raft_should_wait_for_commit(uint64_t commit_index, uint64_t target_index);
+inline bool coordinator_raft_term_changed(uint64_t current_term, uint64_t expected_term);
+inline bool coordinator_raft_append_succeeded(bool start_ok);
+inline bool coordinator_raft_should_learn(bool committed);
 
 inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase) {
     return phase % n_phase;
@@ -70,6 +107,34 @@ inline bool coordinator_raft_phase_is_commit(int32_t phase) {
 
 inline uint32_t coordinator_raft_majority_count(uint32_t n_replica) {
     return (n_replica / 2) + 1;
+}
+
+inline bool coordinator_raft_should_handle_wrong_leader(bool is_leader) {
+    return !is_leader;
+}
+
+inline bool coordinator_raft_command_kind_matches(int32_t kind, int32_t expected_kind) {
+    return kind == expected_kind;
+}
+
+inline bool coordinator_raft_should_create_fallback_view(bool view_is_empty) {
+    return std::move(view_is_empty);
+}
+
+inline bool coordinator_raft_should_wait_for_commit(uint64_t commit_index, uint64_t target_index) {
+    return rusty::detail::deref_if_pointer_like(commit_index) < rusty::detail::deref_if_pointer_like(target_index);
+}
+
+inline bool coordinator_raft_term_changed(uint64_t current_term, uint64_t expected_term) {
+    return rusty::detail::deref_if_pointer_like(current_term) != rusty::detail::deref_if_pointer_like(expected_term);
+}
+
+inline bool coordinator_raft_append_succeeded(bool start_ok) {
+    return std::move(start_ok);
+}
+
+inline bool coordinator_raft_should_learn(bool committed) {
+    return std::move(committed);
 }
 /*RUSTYCPP:GEN-END id=coordinator.1*/
 
