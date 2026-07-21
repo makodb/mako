@@ -182,14 +182,192 @@ inline InstallSnapshotReply rrr_transport_send_install_snapshot_cpp(
   return *slot;
 }
 
+#if RUSTYCPP_RUST
+pub struct RrrTransportAdapterCore {
+    commo_: *mut RaftCommo,
+    self_: u16,
+    par_: u32,
+}
+
+impl RrrTransportAdapterCore {
+    // @unsafe - Stores a non-owning RaftCommo pointer.
+    #[cpp_ctor]
+    fn new(commo: *mut RaftCommo, self_site: u16, par: u32)
+        -> RrrTransportAdapterCore {
+        RrrTransportAdapterCore {
+            commo_: commo,
+            self_: self_site,
+            par_: par,
+        }
+    }
+
+    // @safe
+    fn self_site_id(&self) -> u16 {
+        self.self_
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_vote_durable(&mut self, candidate: u16, req: VoteDurableReq) {
+        unsafe {
+            rrr_transport_send_vote_durable_cpp(self.commo_, candidate,
+                                                self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_append_entries_durable(&mut self, leader: u16,
+                                   req: AppendEntriesDurableReq) {
+        unsafe {
+            rrr_transport_send_append_entries_durable_cpp(self.commo_, leader,
+                                                          self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_notify_restart(&mut self, self_site: u16, par: u32) {
+        unsafe {
+            rrr_transport_send_notify_restart_cpp(self.commo_, self_site, par)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_append_entries(&mut self, dst: u16, req: AppendEntriesReq)
+        -> AppendEntriesReply {
+        unsafe {
+            rrr_transport_send_append_entries_cpp(self.commo_, dst,
+                                                  self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_empty_append_entries(&mut self, dst: u16, req: EmptyAppendEntriesReq)
+        -> EmptyAppendEntriesReply {
+        unsafe {
+            rrr_transport_send_empty_append_entries_cpp(self.commo_, dst,
+                                                        self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_vote(&mut self, dst: u16, req: VoteReq) -> VoteReply {
+        unsafe {
+            rrr_transport_send_vote_cpp(self.commo_, dst, self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_timeout_now(&mut self, dst: u16, req: TimeoutNowReq) -> TimeoutNowReply {
+        unsafe {
+            rrr_transport_send_timeout_now_cpp(self.commo_, dst, self.par_, req)
+        }
+    }
+
+    // @unsafe - Delegates to RaftCommo RPC boundary.
+    fn send_install_snapshot(&mut self, dst: u16, req: InstallSnapshotReq)
+        -> InstallSnapshotReply {
+        unsafe {
+            rrr_transport_send_install_snapshot_cpp(self.commo_, dst,
+                                                    self.par_, req)
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rrr_transport.1 version=1 rust_sha256=add4d426b21a3fa3638bdbbe1b84ba477fc1a562fcaaa9f272cca9a3d371881b*/
+struct RrrTransportAdapterCore;
+
+struct RrrTransportAdapterCore {
+    RaftCommo* commo_;
+    uint16_t self_;
+    uint32_t par_;
+
+    RrrTransportAdapterCore(RaftCommo* commo, uint16_t self_site, uint32_t par);
+    uint16_t self_site_id() const;
+    void send_vote_durable(uint16_t candidate, VoteDurableReq req);
+    void send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req);
+    void send_notify_restart(uint16_t self_site, uint32_t par);
+    AppendEntriesReply send_append_entries(uint16_t dst, AppendEntriesReq req);
+    EmptyAppendEntriesReply send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req);
+    VoteReply send_vote(uint16_t dst, VoteReq req);
+    TimeoutNowReply send_timeout_now(uint16_t dst, TimeoutNowReq req);
+    InstallSnapshotReply send_install_snapshot(uint16_t dst, InstallSnapshotReq req);
+};
+
+
+inline RrrTransportAdapterCore::RrrTransportAdapterCore(RaftCommo* commo, uint16_t self_site, uint32_t par)
+    : commo_(commo)
+    , self_(self_site)
+    , par_(par)
+{}
+
+inline uint16_t RrrTransportAdapterCore::self_site_id() const {
+    return this->self_;
+}
+
+inline void RrrTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
+    // @unsafe
+    {
+        rrr_transport_send_vote_durable_cpp(this->commo_, std::move(candidate), this->par_, std::move(req));
+    }
+}
+
+inline void RrrTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
+    // @unsafe
+    {
+        rrr_transport_send_append_entries_durable_cpp(this->commo_, std::move(leader), this->par_, std::move(req));
+    }
+}
+
+inline void RrrTransportAdapterCore::send_notify_restart(uint16_t self_site, uint32_t par) {
+    // @unsafe
+    {
+        rrr_transport_send_notify_restart_cpp(this->commo_, std::move(self_site), std::move(par));
+    }
+}
+
+inline AppendEntriesReply RrrTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
+    // @unsafe
+    {
+        return rrr_transport_send_append_entries_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+inline EmptyAppendEntriesReply RrrTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
+    // @unsafe
+    {
+        return rrr_transport_send_empty_append_entries_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+inline VoteReply RrrTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
+    // @unsafe
+    {
+        return rrr_transport_send_vote_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+inline TimeoutNowReply RrrTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
+    // @unsafe
+    {
+        return rrr_transport_send_timeout_now_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
+    }
+}
+
+inline InstallSnapshotReply RrrTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
+    // @unsafe
+    {
+        return rrr_transport_send_install_snapshot_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
+    }
+}
+/*RUSTYCPP:GEN-END id=rrr_transport.1*/
+
 class RrrTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
   RrrTransportAdapter(RaftCommo* commo, siteid_t self, parid_t par)
-      : commo_(commo), self_(self), par_(par) {}
+      : core_(commo, self, par) {}
 
   // @safe - identity read
-  siteid_t self_site_id() const override { return self_; }
+  siteid_t self_site_id() const override { return core_.self_site_id(); }
 
   // ------------------------------------------------------------------
   // Fire-and-forget RPCs — forwarded directly.
@@ -197,18 +375,17 @@ class RrrTransportAdapter : public TransportBase {
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    rrr_transport_send_vote_durable_cpp(commo_, candidate, par_, std::move(req));
+    core_.send_vote_durable(candidate, std::move(req));
   }
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    rrr_transport_send_append_entries_durable_cpp(commo_, leader, par_,
-                                                  std::move(req));
+    core_.send_append_entries_durable(leader, std::move(req));
   }
 
   // @safe - thin wrapper; unsafe work is isolated to the RaftCommo RPC call.
   void send_notify_restart(siteid_t self, parid_t par) override {
-    rrr_transport_send_notify_restart_cpp(commo_, self, par);
+    core_.send_notify_restart(self, par);
   }
   // ------------------------------------------------------------------
   // Reply-expecting RPCs — fiber-synchronous.
@@ -221,43 +398,37 @@ class RrrTransportAdapter : public TransportBase {
   // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
   // rusty::Function callback API using shared reply slot + IntEvent.
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
-    return rrr_transport_send_append_entries_cpp(commo_, dst, par_,
-                                                 std::move(req));
+    return core_.send_append_entries(dst, std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to RaftCommo's async
   // rusty::Function callback API using shared reply slot + IntEvent.
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
-    return rrr_transport_send_empty_append_entries_cpp(commo_, dst, par_,
-                                                       std::move(req));
+    return core_.send_empty_append_entries(dst, std::move(req));
   }
 
   // @unsafe - bridges per-peer send_vote onto BroadcastVoteCb fanout.
   // BroadcastVoteCb uses rusty::Function and may fire once per peer reply;
   // this adapter filters on `from == dst` and wakes this call's IntEvent.
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
-    return rrr_transport_send_vote_cpp(commo_, dst, par_, std::move(req));
+    return core_.send_vote(dst, std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to SendTimeoutNow's
   // rusty::Function callback using shared reply slot + IntEvent.
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    return rrr_transport_send_timeout_now_cpp(commo_, dst, par_, std::move(req));
+    return core_.send_timeout_now(dst, std::move(req));
   }
 
   // @unsafe - bridges synchronous TransportBase API to SendInstallSnapshot's
   // rusty::Function callback using shared reply slot + IntEvent.
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
-    return rrr_transport_send_install_snapshot_cpp(commo_, dst, par_,
-                                                   std::move(req));
+    return core_.send_install_snapshot(dst, std::move(req));
   }
 
  private:
-  // @unsafe - non-owning pointer. RaftServer owns RaftCommo and must outlive this adapter.
-  RaftCommo* commo_{nullptr};
-  siteid_t   self_{0};
-  parid_t    par_{0};
+  RrrTransportAdapterCore core_;
 };
 
 // @unsafe { factory takes a non-owning RaftCommo* }
