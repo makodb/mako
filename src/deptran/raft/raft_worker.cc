@@ -187,7 +187,8 @@ bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_st
 /*RUSTYCPP:GEN-END id=raft_worker.small_helpers*/
 
 // @safe
-RaftWorker::RaftWorker() = default;
+RaftWorker::RaftWorker()
+    : state_core_(RaftWorkerStateCore::new_()) {}
 
 // @unsafe - cleanup operations are bounded
 RaftWorker::~RaftWorker() {
@@ -513,7 +514,7 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
 
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
-    batch_limit_ = raft_worker_batch_limit(batch_size);
+    state_core_.set_batch_limit(raft_worker_batch_limit(batch_size));
     submit_queue_.push_back(std::move(entry));
   }
   submit_cv_.notify_one();
@@ -892,7 +893,7 @@ void RaftWorker::SubmitLoop() {
       break;
     }
 
-    int limit = raft_worker_batch_limit(batch_limit_);
+    int limit = raft_worker_batch_limit(state_core_.batch_limit());
     std::vector<RaftWorkerPendingLog> batch;
     batch.reserve(limit);
     while (raft_worker_submit_loop_should_take(

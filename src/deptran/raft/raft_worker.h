@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <thread>
+#include <rusty/cell.hpp>
 #include <rusty/function.hpp>
 
 // @external: {
@@ -75,6 +76,55 @@ struct RaftWorkerPendingLog {
 };
 /*RUSTYCPP:GEN-END id=raft_worker.1*/
 
+#if RUSTYCPP_RUST
+pub struct RaftWorkerStateCore {
+    batch_limit_: rusty::Cell<i32>,
+}
+
+impl RaftWorkerStateCore {
+    // @safe
+    fn new() -> RaftWorkerStateCore {
+        RaftWorkerStateCore {
+            batch_limit_: rusty::Cell::<i32>::new_(1),
+        }
+    }
+
+    // @safe
+    fn batch_limit(&self) -> i32 {
+        self.batch_limit_.get()
+    }
+
+    // @safe
+    fn set_batch_limit(&mut self, value: i32) {
+        self.batch_limit_.set(value)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.2 version=1 rust_sha256=cf6382551fb179a8fbb3502fdc27418fe1ba577877aff77422ad463d204afc58*/
+struct RaftWorkerStateCore;
+
+struct RaftWorkerStateCore {
+    rusty::Cell<int32_t> batch_limit_;
+
+    static RaftWorkerStateCore new_();
+    int32_t batch_limit() const;
+    void set_batch_limit(int32_t value);
+};
+
+
+RaftWorkerStateCore RaftWorkerStateCore::new_() {
+    return RaftWorkerStateCore{.batch_limit_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(1))};
+}
+
+int32_t RaftWorkerStateCore::batch_limit() const {
+    return this->batch_limit_.get();
+}
+
+void RaftWorkerStateCore::set_batch_limit(int32_t value) {
+    this->batch_limit_.set(std::move(value));
+}
+/*RUSTYCPP:GEN-END id=raft_worker.2*/
+
 // @unsafe - Part 1 migration boundary. This worker still owns thread
 // coordination state and raw protocol/RPC handles; keep the ownership map below
 // accurate before converting any field to Box/Arc/Option or moving to DSL.
@@ -109,7 +159,7 @@ private:
   std::atomic<bool> submit_thread_stop_{false};
   bool submit_thread_started_{false};
   std::thread submit_thread_;
-  int batch_limit_ = 1;
+  RaftWorkerStateCore state_core_;
 
 public:
   // Statistics
