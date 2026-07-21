@@ -1416,15 +1416,24 @@ void RaftServer::applyLogs() {
 // This struct holds context for each pending AppendEntries RPC.
 // Used to send RPCs in parallel and process responses without blocking.
 // The response field uses shared_ptr to ensure memory validity when callback fires.
+#if RUSTYCPP_RUST
+pub struct RaftServerPendingAppendEntries {
+    follower_id: u16,
+    response: shared_ptr<AppendEntriesResponse>,
+    cmd: janus::Command,
+    sent_term: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2330c507bdff9d2dcd6a069109d0706cd736c8288ab280277a3ea2f899e6896e*/
+struct RaftServerPendingAppendEntries;
+
 struct RaftServerPendingAppendEntries {
-  siteid_t follower_id;
-  shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
-  // migrated from
-  // `shared_ptr<Marshallable>` to `janus::Command`.  Empty Command
-  // (has_value() == false) signals heartbeat.
-  janus::Command cmd;
-  uint64_t sent_term;  // term when RPC was sent
+    uint16_t follower_id;
+    shared_ptr<AppendEntriesResponse> response;
+    janus::Command cmd;
+    uint64_t sent_term;
 };
+/*RUSTYCPP:GEN-END id=server.1*/
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
 // Runs in a detached fiber that captures `this`; do not convert until the
