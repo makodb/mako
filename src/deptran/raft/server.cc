@@ -159,10 +159,6 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
   return max_entries;
 }
 
-bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
-  return preferred_leader_site_id != INVALID_SITEID;
-}
-
 }  // namespace
 
 // ============================================================================
@@ -741,7 +737,7 @@ uint64_t RaftServer::GetElectionTimeout() {
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
   bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
 
-  if (!IsPreferredLeaderConfigured(preferred_leader_site_id_)) {
+  if (!server_preferred_leader_is_configured(preferred_leader_site_id_)) {
     // Traditional Raft behavior when no preferred leader is configured.
     return GetNonPreferredSteadyElectionTimeoutUs();
   }

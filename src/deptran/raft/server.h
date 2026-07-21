@@ -140,10 +140,15 @@ pub fn server_log_index_at_or_below(index: u64, boundary: u64) -> bool {
 pub fn server_log_index_above(index: u64, boundary: u64) -> bool {
     index > boundary
 }
+
+pub fn server_preferred_leader_is_configured(preferred_leader_site_id: i32) -> bool {
+    preferred_leader_site_id != -1
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=a7f26520868ac9a1f57dade3a490a26a358b5d0b06244dc129f38e4802522dce*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=69954edc979c9b8ab23df506ea407b1742aa19292f50bd7002bb34ecb19337e9*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
+inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
 
 inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
     return reason == StepDownReason::UnsecuredFailure;
@@ -167,6 +172,10 @@ inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary) {
 
 inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
     return index > boundary;
+}
+
+inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id) {
+    return rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != -1;
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 
