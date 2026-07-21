@@ -2191,7 +2191,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   Log_debug("raft receives vote from candidate: %llx", can_id);
 
   uint64_t cur_term = currentTerm ;
-  if( can_term < cur_term)
+  if(server_vote_term_is_stale(can_term, cur_term))
   {
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false) ;
     return ;
@@ -2203,7 +2203,8 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // and allows voting if we haven't voted yet in this term
   // @unsafe
   {
-  if( can_term == cur_term && vote_for_ != INVALID_SITEID && vote_for_ != can_id )
+  if (server_vote_is_already_granted_to_other(
+          can_term, cur_term, vote_for_, can_id))
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
               site_id_, can_id, vote_for_, cur_term);
@@ -2213,7 +2214,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   }
 
   // If we already voted for this same candidate in this term, vote YES again (idempotent)
-  if( can_term == cur_term && vote_for_ == can_id )
+  if (server_vote_is_idempotent(can_term, cur_term, vote_for_, can_id))
   {
     Log_debug("site %d vote YES for %d (already voted for them in term %lu, idempotent)",
               site_id_, can_id, cur_term);
@@ -2239,7 +2240,8 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // TODO del only for test
   verify(lstoff == lastLogIndex ) ;
 
-  if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
+  if (server_candidate_log_is_at_least(
+          lst_log_term, curlstterm, lst_log_idx, curlstidx))
   {
     Log_debug("site %d vote for request vote from %d, lastidx %d, lastterm %d", site_id_, can_id, curlstidx, curlstterm);
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true) ;

@@ -144,11 +144,41 @@ pub fn server_log_index_above(index: u64, boundary: u64) -> bool {
 pub fn server_preferred_leader_is_configured(preferred_leader_site_id: i32) -> bool {
     preferred_leader_site_id != -1
 }
+
+pub fn server_vote_term_is_stale(candidate_term: u64, current_term: u64) -> bool {
+    candidate_term < current_term
+}
+
+pub fn server_vote_is_already_granted_to_other(candidate_term: u64,
+                                                current_term: u64,
+                                                voted_for: i32,
+                                                candidate_id: i32) -> bool {
+    candidate_term == current_term && voted_for != -1 && voted_for != candidate_id
+}
+
+pub fn server_vote_is_idempotent(candidate_term: u64,
+                                 current_term: u64,
+                                 voted_for: i32,
+                                 candidate_id: i32) -> bool {
+    candidate_term == current_term && voted_for == candidate_id
+}
+
+pub fn server_candidate_log_is_at_least(candidate_term: u64,
+                                        current_term: u64,
+                                        candidate_index: u64,
+                                        current_index: u64) -> bool {
+    candidate_term > current_term ||
+        (candidate_term == current_term && candidate_index >= current_index)
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=69954edc979c9b8ab23df506ea407b1742aa19292f50bd7002bb34ecb19337e9*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=34155f0fa2a5162926debe84e9f2ee015c4ae22ee9140bacd7ffc28ebb926e98*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
+inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
+inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
+inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
+inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index);
 
 inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
     return reason == StepDownReason::UnsecuredFailure;
@@ -176,6 +206,22 @@ inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
 
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id) {
     return rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != -1;
+}
+
+inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
+    return rusty::detail::deref_if_pointer_like(candidate_term) < rusty::detail::deref_if_pointer_like(current_term);
+}
+
+inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id) {
+    return ((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) != -1)) && (rusty::detail::deref_if_pointer_like(voted_for) != rusty::detail::deref_if_pointer_like(candidate_id));
+}
+
+inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(voted_for) == rusty::detail::deref_if_pointer_like(candidate_id));
+}
+
+inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index) {
+    return (rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(current_term)) || (((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(candidate_index) >= rusty::detail::deref_if_pointer_like(current_index))));
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 
