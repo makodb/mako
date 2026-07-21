@@ -17,7 +17,7 @@
 #include "lib/message.h"
 #include "lib/helper_queue.h"
 #include "thread.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 #include <inttypes.h>
 

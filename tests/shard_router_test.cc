@@ -4,10 +4,9 @@
  */
 
 #include "gtest/gtest.h"
-#include "mako/lib/shard_router.h"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
 #include "mako/lib/table_registry.h"
-#include "deptran/sharding_policy_cache.h"
-#include "deptran/sharding_policy_builder.h"
+#include "sharding_policy_test_util.h"  // janus::make_table_policy / make_policy_set
 
 namespace mako {
 
@@ -16,11 +15,16 @@ protected:
     void SetUp() override {
         // Clear registries before each test
         get_table_registry().clear();
+        // Empty the process-global ClusterConfig so routing uses the
+        // legacy ShardingPolicyCache path (shard_count 0 disables the
+        // ClusterConfig branch). The ClusterConfig routing test opts in
+        // explicitly by populating it.
+        janus::get_cluster_config().set_shard_count(0);
     }
 
     void TearDown() override {
-        // Clear registries after each test
         get_table_registry().clear();
+        janus::get_cluster_config().set_shard_count(0);
     }
 };
 
@@ -129,18 +133,12 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicy) {
 
     // Create and set policy: 10 warehouses across 2 shards
     // w_id 0-4 → shard 0, w_id 5-9 → shard 1
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .table("DISTRICT")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-            .defaultShard(0)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::by_field(0),
+                                 {{0, 5, 0}, {5, 10, 1}}, 0),
+        janus::make_table_policy("DISTRICT", janus::KeyExtractor::by_field(0),
+                                 {{0, 5, 0}, {5, 10, 1}}, 0),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -172,14 +170,10 @@ TEST_F(ShardRouterTest, ComputeShardWithPolicyKeyValue) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Create and set policy
-    auto policy = janus::ShardingPolicyBuilder(3)
-        .table("STOCK")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-            .addRange(10, 20, 1)
-            .addRange(20, 30, 2)
-            .defaultShard(0)
-        .build();
+    auto policy = janus::make_policy_set(3, {
+        janus::make_table_policy("STOCK", janus::KeyExtractor::by_field(0),
+                                 {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}, 0),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -200,12 +194,10 @@ TEST_F(ShardRouterTest, ComputeShardUnknownTableFallsBack) {
     registry.register_table(1, "UNKNOWN_TABLE");
 
     // Create policy for WAREHOUSE only
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("WAREHOUSE")
-            .shardByField(0)
-            .addRange(0, 5, 0)
-            .addRange(5, 10, 1)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("WAREHOUSE", janus::KeyExtractor::by_field(0),
+                                 {{0, 5, 0}, {5, 10, 1}}),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -218,11 +210,10 @@ TEST_F(ShardRouterTest, HasPolicyRouting) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Set policy with a unique table name for this test
-    auto policy = janus::ShardingPolicyBuilder(2)
-        .table("HAS_POLICY_TEST_TABLE")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = janus::make_policy_set(2, {
+        janus::make_table_policy("HAS_POLICY_TEST_TABLE", janus::KeyExtractor::by_field(0),
+                                 {{0, 10, 0}}),
+    });
 
     policy_cache.set_policy(policy);
 
@@ -234,15 +225,66 @@ TEST_F(ShardRouterTest, GetPolicyNumShards) {
     auto& policy_cache = janus::get_sharding_policy_cache();
 
     // Set policy with 4 shards
-    auto policy = janus::ShardingPolicyBuilder(4)
-        .table("TEST")
-            .shardByField(0)
-            .addRange(0, 10, 0)
-        .build();
+    auto policy = janus::make_policy_set(4, {
+        janus::make_table_policy("TEST", janus::KeyExtractor::by_field(0),
+                                 {{0, 10, 0}}),
+    });
 
     policy_cache.set_policy(policy);
 
     EXPECT_EQ(4, get_policy_num_shards());
+}
+
+// =============================================================================
+// Routing consults the process-global ClusterConfig when populated
+// =============================================================================
+
+TEST_F(ShardRouterTest, ComputeShardConsultsClusterConfigWhenPopulated) {
+    get_table_registry().register_table(1, "WAREHOUSE");
+
+    auto& cc = janus::get_cluster_config();
+    cc.set_shard_count(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
+
+    // With ClusterConfig populated, compute_shard_for_key routes through
+    // it (hash-mod default here — no per-table policy). Stable + in range.
+    const int a = compute_shard_for_key(1, "warehouse/42");
+    const int b = compute_shard_for_key(1, "warehouse/42");
+    EXPECT_EQ(a, b);
+    EXPECT_GE(a, 0);
+    EXPECT_LT(a, 2);
+}
+
+TEST_F(ShardRouterTest, ComputeShardFollowsDeadShardReplacementViaClusterConfig) {
+    get_table_registry().register_table(1, "WAREHOUSE");
+
+    auto& cc = janus::get_cluster_config();
+    cc.set_shard_count(2);
+    janus::ShardInfo s0; s0.id = 0; s0.status = "active"; cc.update_shard(0, s0);
+    janus::ShardInfo s1; s1.id = 1; s1.status = "active"; cc.update_shard(1, s1);
+
+    // Find a key that routes to shard 1.
+    std::string probe;
+    for (int i = 0; i < 64; ++i) {
+        const std::string k = "k" + std::to_string(i);
+        if (compute_shard_for_key(1, k) == 1) { probe = k; break; }
+    }
+    ASSERT_FALSE(probe.empty());
+
+    // Kill shard 1 -> taker 0. The router must reroute the probe key.
+    janus::ShardInfo dead; dead.id = 1; dead.status = "dead"; dead.replacement = 0;
+    cc.update_shard(1, dead);
+    EXPECT_EQ(compute_shard_for_key(1, probe), 0);
+}
+
+TEST_F(ShardRouterTest, EmptyClusterConfigFallsBackToLegacyPath) {
+    // With an empty ClusterConfig (shard_count 0), routing must use the
+    // legacy table-ID fallback, unchanged from before this wiring.
+    // Table 1 with no policy -> (1-1)/NUM_TABLES_PER_SHARD == 0.
+    EXPECT_EQ(0u, janus::get_cluster_config().get_shard_count());
+    EXPECT_EQ(compute_shard_for_key(1, "anykey"),
+              (1 - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD);
 }
 
 }  // namespace mako

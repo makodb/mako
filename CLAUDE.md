@@ -150,7 +150,44 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 
 ### RustyCpp Safety Requirements (MANDATORY)
 
-**CRITICAL: All new C++ code MUST be written to be rusty-safe.** This is not optional. Follow these requirements for every new file, function, or modification.
+#### Inline-Rust DSL first (default for new code)
+
+**New code SHOULD be authored in the inline-Rust DSL, not hand-written
+C++.** The DSL is the `#if RUSTYCPP_RUST pub trait/struct ... #endif`
+source block plus the generated `/*RUSTYCPP:GEN-BEGIN ... GEN-END*/`
+C++ the compiler sees, regenerated with `scripts/regen_storage_dsl.sh`
+(never bare `inline-rust --rewrite`). Add each DSL file to that script's
+FILES list so the `--check` drift guard covers it. See
+[docs/storage-interface.md](docs/storage-interface.md) for the mechanics,
+lowering rules, and gotchas; `src/cluster/kv_store.h` (a trait) and
+`src/cluster/sharding_policy.h` (copyable value types) are worked
+examples.
+
+**Plain C++ is for bridging, not for new logic.** Reach for hand-written
+C++ only when:
+ - you are calling *old code that has not been converted* (convert at the
+   edge, isolate it, annotate `@unsafe`); or
+ - the operation is one the DSL genuinely cannot express, kept as a
+   small `@unsafe` C++ *kernel* that the DSL body calls — the same "DSL
+   owns the shape, C++ owns the surgery" split the storage headers use.
+   Legitimate kernels: raw-pointer/iterator surgery, `std::map`/RCU/
+   allocator internals, threading, and third-party APIs (rocksdb, lz4,
+   yaml-cpp, the rrr wire types).
+
+What fits the DSL cleanly: interfaces (`pub trait`), copyable value
+types (`pub struct` + **inherent** `impl` — inherent stays a copyable
+aggregate; only `#[cpp_inherit] impl Trait for X` is move-only), and
+method bodies that are plain control flow. Known limits to design around,
+not fight: no default field initializers (use `fn new`/factory functions
+and switch call sites — note C++20 paren-aggregate-init compiles but
+misfills, so this is mandatory, not cosmetic), and struct fields whose
+names are Rust keywords (e.g. `type`) must be renamed or that type stays
+C++.
+
+Everything below still applies — to the C++ that remains (bridges,
+kernels, and not-yet-converted files):
+
+**CRITICAL: All C++ code MUST be written to be rusty-safe.** This is not optional. Follow these requirements for every new file, function, or modification.
 
 **Refactor as you go.** When touching a file, if you see std constructs
 in the surrounding blast radius of your change that have direct rusty

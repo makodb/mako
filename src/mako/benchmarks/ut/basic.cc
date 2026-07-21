@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include "benchmarks/common.h"
 #include "util.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 using namespace std;

@@ -10581,402 +10581,98 @@ public:
     }
 };
 
-class ConfigServiceService {
+class ConfigKvServiceService {
 public:
     // Typed request/response scaffolding generated from RPC signature lists.
-    struct RpcGetConfigRequest {
-        uint64_t client_version;
+    struct RpcReadConfigKeyRequest {
+        std::string key;
     };
-    friend inline void serialize(const RpcGetConfigRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.client_version, ar);
+    friend inline void serialize(const RpcReadConfigKeyRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.key, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetConfigRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.client_version, ar);
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReadConfigKeyRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcReadConfigKeyRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.key, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetConfigRequest& o) { deserialize(o, ar); return ar; }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReadConfigKeyRequest& o) { deserialize(o, ar); return ar; }
 
-    struct RpcGetConfigResponse {
-        uint64_t current_version;
-        rrr::i32 has_update;
-        std::string config_data;
+    struct RpcReadConfigKeyResponse {
+        rrr::i32 found;
+        std::string value;
     };
-    friend inline void serialize(const RpcGetConfigResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.current_version, ar);
-        rrr::Serialize_::serialize(o.has_update, ar);
-        rrr::Serialize_::serialize(o.config_data, ar);
+    friend inline void serialize(const RpcReadConfigKeyResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.found, ar);
+        rrr::Serialize_::serialize(o.value, ar);
     }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetConfigResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.current_version, ar);
-        rrr::Deserialize_::deserialize(o.has_update, ar);
-        rrr::Deserialize_::deserialize(o.config_data, ar);
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcReadConfigKeyResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcReadConfigKeyResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.found, ar);
+        rrr::Deserialize_::deserialize(o.value, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetConfigResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetConfigVersionRequest {
-    };
-    friend inline void serialize(const RpcGetConfigVersionRequest& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigVersionRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetConfigVersionRequest& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetConfigVersionRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetConfigVersionResponse {
-        uint64_t version;
-    };
-    friend inline void serialize(const RpcGetConfigVersionResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.version, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetConfigVersionResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetConfigVersionResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.version, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetConfigVersionResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcHasConfigRequest {
-    };
-    friend inline void serialize(const RpcHasConfigRequest& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasConfigRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcHasConfigRequest& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHasConfigRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcHasConfigResponse {
-        rrr::i32 has_config;
-    };
-    friend inline void serialize(const RpcHasConfigResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.has_config, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasConfigResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcHasConfigResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.has_config, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHasConfigResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcSetShardingPolicyRequest {
-        std::string policy_data;
-    };
-    friend inline void serialize(const RpcSetShardingPolicyRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.policy_data, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSetShardingPolicyRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcSetShardingPolicyRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.policy_data, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSetShardingPolicyRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcSetShardingPolicyResponse {
-        rrr::i32 success;
-    };
-    friend inline void serialize(const RpcSetShardingPolicyResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.success, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcSetShardingPolicyResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcSetShardingPolicyResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.success, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcSetShardingPolicyResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetShardingPolicyRequest {
-        uint64_t client_version;
-    };
-    friend inline void serialize(const RpcGetShardingPolicyRequest& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.client_version, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetShardingPolicyRequest& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.client_version, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetShardingPolicyRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetShardingPolicyResponse {
-        uint64_t current_version;
-        rrr::i32 has_update;
-        std::string policy_data;
-    };
-    friend inline void serialize(const RpcGetShardingPolicyResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.current_version, ar);
-        rrr::Serialize_::serialize(o.has_update, ar);
-        rrr::Serialize_::serialize(o.policy_data, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetShardingPolicyResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.current_version, ar);
-        rrr::Deserialize_::deserialize(o.has_update, ar);
-        rrr::Deserialize_::deserialize(o.policy_data, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetShardingPolicyResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetShardingPolicyVersionRequest {
-    };
-    friend inline void serialize(const RpcGetShardingPolicyVersionRequest& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyVersionRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetShardingPolicyVersionRequest& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetShardingPolicyVersionRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcGetShardingPolicyVersionResponse {
-        uint64_t version;
-    };
-    friend inline void serialize(const RpcGetShardingPolicyVersionResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.version, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcGetShardingPolicyVersionResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcGetShardingPolicyVersionResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.version, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcGetShardingPolicyVersionResponse& o) { deserialize(o, ar); return ar; }
-
-    struct RpcHasShardingPolicyRequest {
-    };
-    friend inline void serialize(const RpcHasShardingPolicyRequest& o, rrr::BinaryWriteArchive& ar) {
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasShardingPolicyRequest& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcHasShardingPolicyRequest& o, rrr::BinaryReadArchive& ar) {
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHasShardingPolicyRequest& o) { deserialize(o, ar); return ar; }
-
-    struct RpcHasShardingPolicyResponse {
-        rrr::i32 has_policy;
-    };
-    friend inline void serialize(const RpcHasShardingPolicyResponse& o, rrr::BinaryWriteArchive& ar) {
-        rrr::Serialize_::serialize(o.has_policy, ar);
-    }
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcHasShardingPolicyResponse& o) { serialize(o, ar); return ar; }
-    friend inline void deserialize(RpcHasShardingPolicyResponse& o, rrr::BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(o.has_policy, ar);
-    }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcHasShardingPolicyResponse& o) { deserialize(o, ar); return ar; }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcReadConfigKeyResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
-        GETCONFIG = 0x6a73203c,
-        GETCONFIGVERSION = 0x5fafb6e5,
-        HASCONFIG = 0x1049f52e,
-        SETSHARDINGPOLICY = 0x14f5087e,
-        GETSHARDINGPOLICY = 0x1797df5f,
-        GETSHARDINGPOLICYVERSION = 0x5696fa63,
-        HASSHARDINGPOLICY = 0x265a5080,
+        READCONFIGKEY = 0x5a5886fc,
     };
     // Registers RPC IDs with server using service index
     // @unsafe - calls rrr::Server::reg_rpc / unreg (not borrow-checked)
     int __reg_to__(rrr::Server& svr, size_t svc_index) {
         int ret = 0;
-        if ((ret = svr.reg_rpc(GETCONFIG, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(GETCONFIGVERSION, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(HASCONFIG, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(SETSHARDINGPOLICY, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(GETSHARDINGPOLICY, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(GETSHARDINGPOLICYVERSION, svc_index)) != 0) {
-            goto err;
-        }
-        if ((ret = svr.reg_rpc(HASSHARDINGPOLICY, svc_index)) != 0) {
+        if ((ret = svr.reg_rpc(READCONFIGKEY, svc_index)) != 0) {
             goto err;
         }
         return 0;
     err:
-        svr.unreg(GETCONFIG);
-        svr.unreg(GETCONFIGVERSION);
-        svr.unreg(HASCONFIG);
-        svr.unreg(SETSHARDINGPOLICY);
-        svr.unreg(GETSHARDINGPOLICY);
-        svr.unreg(GETSHARDINGPOLICYVERSION);
-        svr.unreg(HASSHARDINGPOLICY);
+        svr.unreg(READCONFIGKEY);
         return ret;
     }
     // @safe - Dispatch for RPC requests
     void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         switch (rpc_id) {
-        case GETCONFIG: __GetConfig__wrapper__(std::move(req), weak_sconn); break;
-        case GETCONFIGVERSION: __GetConfigVersion__wrapper__(std::move(req), weak_sconn); break;
-        case HASCONFIG: __HasConfig__wrapper__(std::move(req), weak_sconn); break;
-        case SETSHARDINGPOLICY: __SetShardingPolicy__wrapper__(std::move(req), weak_sconn); break;
-        case GETSHARDINGPOLICY: __GetShardingPolicy__wrapper__(std::move(req), weak_sconn); break;
-        case GETSHARDINGPOLICYVERSION: __GetShardingPolicyVersion__wrapper__(std::move(req), weak_sconn); break;
-        case HASSHARDINGPOLICY: __HasShardingPolicy__wrapper__(std::move(req), weak_sconn); break;
+        case READCONFIGKEY: __ReadConfigKey__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
         }
     }
     // typed service signatures
     // @safe
-    virtual void GetConfig(const RpcGetConfigRequest& req, RpcGetConfigResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void GetConfigVersion(const RpcGetConfigVersionRequest& req, RpcGetConfigVersionResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void HasConfig(const RpcHasConfigRequest& req, RpcHasConfigResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void SetShardingPolicy(const RpcSetShardingPolicyRequest& req, RpcSetShardingPolicyResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void GetShardingPolicy(const RpcGetShardingPolicyRequest& req, RpcGetShardingPolicyResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest& req, RpcGetShardingPolicyVersionResponse& resp, rrr::DeferredReply defer) = 0;
-    // @safe
-    virtual void HasShardingPolicy(const RpcHasShardingPolicyRequest& req, RpcHasShardingPolicyResponse& resp, rrr::DeferredReply defer) = 0;
+    virtual void ReadConfigKey(const RpcReadConfigKeyRequest& req, RpcReadConfigKeyResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __GetConfig__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    void __ReadConfigKey__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         // @unsafe
         {
-            RpcGetConfigRequest __typed_req__;
+            RpcReadConfigKeyRequest __typed_req__;
             rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.client_version, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcGetConfigResponse>();
+            rrr::Deserialize_::deserialize(__typed_req__.key, __req_ar__);
+            auto __typed_resp__ = std::make_shared<RpcReadConfigKeyResponse>();
             auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->current_version, m);
-                    rrr::Serialize_::serialize(__typed_resp__->has_update, m);
-                    rrr::Serialize_::serialize(__typed_resp__->config_data, m);
+                    rrr::Serialize_::serialize(__typed_resp__->found, m);
+                    rrr::Serialize_::serialize(__typed_resp__->value, m);
                 },
                 []() {});
-            this->GetConfig(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __GetConfigVersion__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcGetConfigVersionRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcGetConfigVersionResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->version, m);
-                },
-                []() {});
-            this->GetConfigVersion(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __HasConfig__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcHasConfigRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcHasConfigResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->has_config, m);
-                },
-                []() {});
-            this->HasConfig(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __SetShardingPolicy__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcSetShardingPolicyRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.policy_data, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcSetShardingPolicyResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->success, m);
-                },
-                []() {});
-            this->SetShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __GetShardingPolicy__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcGetShardingPolicyRequest __typed_req__;
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
-            rrr::Deserialize_::deserialize(__typed_req__.client_version, __req_ar__);
-            auto __typed_resp__ = std::make_shared<RpcGetShardingPolicyResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->current_version, m);
-                    rrr::Serialize_::serialize(__typed_resp__->has_update, m);
-                    rrr::Serialize_::serialize(__typed_resp__->policy_data, m);
-                },
-                []() {});
-            this->GetShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __GetShardingPolicyVersion__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcGetShardingPolicyVersionRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcGetShardingPolicyVersionResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->version, m);
-                },
-                []() {});
-            this->GetShardingPolicyVersion(__typed_req__, *__typed_resp__, std::move(__defer__));
-        }
-    }
-    // @safe
-    void __HasShardingPolicy__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        // @unsafe
-        {
-            RpcHasShardingPolicyRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcHasShardingPolicyResponse>();
-            auto __defer__ = rrr::DeferredReply::new_(
-                std::move(req),
-                weak_sconn,
-                [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    rrr::Serialize_::serialize(__typed_resp__->has_policy, m);
-                },
-                []() {});
-            this->HasShardingPolicy(__typed_req__, *__typed_resp__, std::move(__defer__));
+            this->ReadConfigKey(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
     }
 };
 
-class ConfigServiceProxy {
+class ConfigKvServiceProxy {
 protected:
     rrr::Client* __cl__;
 public:
-    ConfigServiceProxy(rrr::Client* cl): __cl__(cl) { }
+    ConfigKvServiceProxy(rrr::Client* cl): __cl__(cl) { }
     // Alias typed request/response structs from the sibling Service class.
-    using RpcGetConfigRequest = ConfigServiceService::RpcGetConfigRequest;
-    using RpcGetConfigResponse = ConfigServiceService::RpcGetConfigResponse;
-    using RpcGetConfigVersionRequest = ConfigServiceService::RpcGetConfigVersionRequest;
-    using RpcGetConfigVersionResponse = ConfigServiceService::RpcGetConfigVersionResponse;
-    using RpcHasConfigRequest = ConfigServiceService::RpcHasConfigRequest;
-    using RpcHasConfigResponse = ConfigServiceService::RpcHasConfigResponse;
-    using RpcSetShardingPolicyRequest = ConfigServiceService::RpcSetShardingPolicyRequest;
-    using RpcSetShardingPolicyResponse = ConfigServiceService::RpcSetShardingPolicyResponse;
-    using RpcGetShardingPolicyRequest = ConfigServiceService::RpcGetShardingPolicyRequest;
-    using RpcGetShardingPolicyResponse = ConfigServiceService::RpcGetShardingPolicyResponse;
-    using RpcGetShardingPolicyVersionRequest = ConfigServiceService::RpcGetShardingPolicyVersionRequest;
-    using RpcGetShardingPolicyVersionResponse = ConfigServiceService::RpcGetShardingPolicyVersionResponse;
-    using RpcHasShardingPolicyRequest = ConfigServiceService::RpcHasShardingPolicyRequest;
-    using RpcHasShardingPolicyResponse = ConfigServiceService::RpcHasShardingPolicyResponse;
-    class GetConfigTypedFuture {
+    using RpcReadConfigKeyRequest = ConfigKvServiceService::RpcReadConfigKeyRequest;
+    using RpcReadConfigKeyResponse = ConfigKvServiceService::RpcReadConfigKeyResponse;
+    class ReadConfigKeyTypedFuture {
     private:
         rusty::Arc<rrr::Future> __fu__;
     public:
-        explicit GetConfigTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
+        explicit ReadConfigKeyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
         bool ready() const {
             return __fu__->ready();
         }
@@ -10989,343 +10685,38 @@ public:
         rusty::Arc<rrr::Future> raw_future() const {
             return __fu__;
         }
-        rusty::Result<RpcGetConfigResponse, rrr::i32> resolve() const {
+        rusty::Result<RpcReadConfigKeyResponse, rrr::i32> resolve() const {
             rrr::i32 __ret__ = __fu__->get_error_code();
             if (__ret__ != 0) {
-                return rusty::Result<RpcGetConfigResponse, rrr::i32>::Err(__ret__);
+                return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Err(__ret__);
             }
-            RpcGetConfigResponse __typed_resp__;
+            RpcReadConfigKeyResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
             rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.current_version, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.has_update, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.config_data, __reply_ar__);
-            return rusty::Result<RpcGetConfigResponse, rrr::i32>::Ok(__typed_resp__);
+            rrr::Deserialize_::deserialize(__typed_resp__.found, __reply_ar__);
+            rrr::Deserialize_::deserialize(__typed_resp__.value, __reply_ar__);
+            return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
             return rrr::make_typed_future_awaitable(*this);
         }
     };
-    rusty::Result<GetConfigTypedFuture, rrr::i32> async_GetConfig(const RpcGetConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIG, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.client_version, __m__);
+    rusty::Result<ReadConfigKeyTypedFuture, rrr::i32> async_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(ConfigKvServiceService::READCONFIGKEY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
+            rrr::Serialize_::serialize(req.key, __m__);
         });
         if (__fu_result__.is_err()) {
-            return rusty::Result<GetConfigTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
+            return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
-        return rusty::Result<GetConfigTypedFuture, rrr::i32>::Ok(GetConfigTypedFuture(__fu_result__.unwrap()));
+        return rusty::Result<ReadConfigKeyTypedFuture, rrr::i32>::Ok(ReadConfigKeyTypedFuture(__fu_result__.unwrap()));
     }
-    rrr::TypedFutureResultAwaiter<GetConfigTypedFuture> await_GetConfig(const RpcGetConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_GetConfig(req, __fu_attr__));
+    rrr::TypedFutureResultAwaiter<ReadConfigKeyTypedFuture> await_ReadConfigKey(const RpcReadConfigKeyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        return rrr::make_typed_future_result_awaitable(this->async_ReadConfigKey(req, __fu_attr__));
     }
-    rusty::Result<RpcGetConfigResponse, rrr::i32> GetConfig(const RpcGetConfigRequest& req) {
-        auto __typed_fu_result__ = this->async_GetConfig(req);
+    rusty::Result<RpcReadConfigKeyResponse, rrr::i32> ReadConfigKey(const RpcReadConfigKeyRequest& req) {
+        auto __typed_fu_result__ = this->async_ReadConfigKey(req);
         if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcGetConfigResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class GetConfigVersionTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit GetConfigVersionTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcGetConfigVersionResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcGetConfigVersionResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcGetConfigVersionResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.version, __reply_ar__);
-            return rusty::Result<RpcGetConfigVersionResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<GetConfigVersionTypedFuture, rrr::i32> async_GetConfigVersion(const RpcGetConfigVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETCONFIGVERSION, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
-        if (__fu_result__.is_err()) {
-            return rusty::Result<GetConfigVersionTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        (void)req;
-        return rusty::Result<GetConfigVersionTypedFuture, rrr::i32>::Ok(GetConfigVersionTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<GetConfigVersionTypedFuture> await_GetConfigVersion(const RpcGetConfigVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_GetConfigVersion(req, __fu_attr__));
-    }
-    rusty::Result<RpcGetConfigVersionResponse, rrr::i32> GetConfigVersion(const RpcGetConfigVersionRequest& req) {
-        auto __typed_fu_result__ = this->async_GetConfigVersion(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcGetConfigVersionResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class HasConfigTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit HasConfigTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcHasConfigResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcHasConfigResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcHasConfigResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.has_config, __reply_ar__);
-            return rusty::Result<RpcHasConfigResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<HasConfigTypedFuture, rrr::i32> async_HasConfig(const RpcHasConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::HASCONFIG, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
-        if (__fu_result__.is_err()) {
-            return rusty::Result<HasConfigTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        (void)req;
-        return rusty::Result<HasConfigTypedFuture, rrr::i32>::Ok(HasConfigTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<HasConfigTypedFuture> await_HasConfig(const RpcHasConfigRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_HasConfig(req, __fu_attr__));
-    }
-    rusty::Result<RpcHasConfigResponse, rrr::i32> HasConfig(const RpcHasConfigRequest& req) {
-        auto __typed_fu_result__ = this->async_HasConfig(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcHasConfigResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class SetShardingPolicyTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit SetShardingPolicyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcSetShardingPolicyResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcSetShardingPolicyResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcSetShardingPolicyResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.success, __reply_ar__);
-            return rusty::Result<RpcSetShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<SetShardingPolicyTypedFuture, rrr::i32> async_SetShardingPolicy(const RpcSetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::SETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.policy_data, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<SetShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<SetShardingPolicyTypedFuture, rrr::i32>::Ok(SetShardingPolicyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<SetShardingPolicyTypedFuture> await_SetShardingPolicy(const RpcSetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_SetShardingPolicy(req, __fu_attr__));
-    }
-    rusty::Result<RpcSetShardingPolicyResponse, rrr::i32> SetShardingPolicy(const RpcSetShardingPolicyRequest& req) {
-        auto __typed_fu_result__ = this->async_SetShardingPolicy(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcSetShardingPolicyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class GetShardingPolicyTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit GetShardingPolicyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcGetShardingPolicyResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcGetShardingPolicyResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcGetShardingPolicyResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.current_version, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.has_update, __reply_ar__);
-            rrr::Deserialize_::deserialize(__typed_resp__.policy_data, __reply_ar__);
-            return rusty::Result<RpcGetShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<GetShardingPolicyTypedFuture, rrr::i32> async_GetShardingPolicy(const RpcGetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICY, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            rrr::Serialize_::serialize(req.client_version, __m__);
-        });
-        if (__fu_result__.is_err()) {
-            return rusty::Result<GetShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        return rusty::Result<GetShardingPolicyTypedFuture, rrr::i32>::Ok(GetShardingPolicyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<GetShardingPolicyTypedFuture> await_GetShardingPolicy(const RpcGetShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_GetShardingPolicy(req, __fu_attr__));
-    }
-    rusty::Result<RpcGetShardingPolicyResponse, rrr::i32> GetShardingPolicy(const RpcGetShardingPolicyRequest& req) {
-        auto __typed_fu_result__ = this->async_GetShardingPolicy(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcGetShardingPolicyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class GetShardingPolicyVersionTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit GetShardingPolicyVersionTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcGetShardingPolicyVersionResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.version, __reply_ar__);
-            return rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<GetShardingPolicyVersionTypedFuture, rrr::i32> async_GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::GETSHARDINGPOLICYVERSION, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
-        if (__fu_result__.is_err()) {
-            return rusty::Result<GetShardingPolicyVersionTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        (void)req;
-        return rusty::Result<GetShardingPolicyVersionTypedFuture, rrr::i32>::Ok(GetShardingPolicyVersionTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<GetShardingPolicyVersionTypedFuture> await_GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_GetShardingPolicyVersion(req, __fu_attr__));
-    }
-    rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32> GetShardingPolicyVersion(const RpcGetShardingPolicyVersionRequest& req) {
-        auto __typed_fu_result__ = this->async_GetShardingPolicyVersion(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcGetShardingPolicyVersionResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
-        }
-        return __typed_fu_result__.unwrap().resolve();
-    }
-    class HasShardingPolicyTypedFuture {
-    private:
-        rusty::Arc<rrr::Future> __fu__;
-    public:
-        explicit HasShardingPolicyTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }
-        bool ready() const {
-            return __fu__->ready();
-        }
-        void wait() const {
-            __fu__->wait();
-        }
-        rrr::i32 get_error_code() const {
-            return __fu__->get_error_code();
-        }
-        rusty::Arc<rrr::Future> raw_future() const {
-            return __fu__;
-        }
-        rusty::Result<RpcHasShardingPolicyResponse, rrr::i32> resolve() const {
-            rrr::i32 __ret__ = __fu__->get_error_code();
-            if (__ret__ != 0) {
-                return rusty::Result<RpcHasShardingPolicyResponse, rrr::i32>::Err(__ret__);
-            }
-            RpcHasShardingPolicyResponse __typed_resp__;
-            auto __reply_guard__ = __fu__->get_reply();
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
-            rrr::Deserialize_::deserialize(__typed_resp__.has_policy, __reply_ar__);
-            return rusty::Result<RpcHasShardingPolicyResponse, rrr::i32>::Ok(__typed_resp__);
-        }
-        auto operator co_await() const {
-            return rrr::make_typed_future_awaitable(*this);
-        }
-    };
-    rusty::Result<HasShardingPolicyTypedFuture, rrr::i32> async_HasShardingPolicy(const RpcHasShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->request(ConfigServiceService::HASSHARDINGPOLICY, __fu_attr__, [](rrr::BinaryWriteArchive&) {});
-        if (__fu_result__.is_err()) {
-            return rusty::Result<HasShardingPolicyTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
-        }
-        (void)req;
-        return rusty::Result<HasShardingPolicyTypedFuture, rrr::i32>::Ok(HasShardingPolicyTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::TypedFutureResultAwaiter<HasShardingPolicyTypedFuture> await_HasShardingPolicy(const RpcHasShardingPolicyRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return rrr::make_typed_future_result_awaitable(this->async_HasShardingPolicy(req, __fu_attr__));
-    }
-    rusty::Result<RpcHasShardingPolicyResponse, rrr::i32> HasShardingPolicy(const RpcHasShardingPolicyRequest& req) {
-        auto __typed_fu_result__ = this->async_HasShardingPolicy(req);
-        if (__typed_fu_result__.is_err()) {
-            return rusty::Result<RpcHasShardingPolicyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
+            return rusty::Result<RpcReadConfigKeyResponse, rrr::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }

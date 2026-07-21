@@ -41,11 +41,11 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "bench.h"
 #include "tpcc.h"
 #include "lib/server.h"
-#include "benchmarks/sto/Interface.hh"
-#include "benchmarks/sto/Transaction.hh"
+#include "sto/Interface.hh"
+#include "sto/Transaction.hh"
 #include "common.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/multiversion.hh"
+#include "sto/multiversion.hh"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_sharding.h"
@@ -607,7 +607,7 @@ string tpcc_worker_mixin::NameTokens[] =
 STATIC_COUNTER_DECL(scopedperf::tsc_ctr, tpcc_txn, tpcc_txn_cg)
 
 template <typename KeyType, typename ValueType>
-class generic_scan_callback: public abstract_ordered_index::scan_callback {
+class generic_scan_callback: public oi_scan_callback {
 public:
   generic_scan_callback()
   { 
@@ -895,7 +895,7 @@ protected:
       for (uint i = 1; i <= NumWarehouses(); i++) {
         const warehouse::key k(i);
         warehouse::value v;
-        tbl_warehouse(i)->insert(txn, Encode(k), Encode(obj_buf, v));
+        tx_insert(tbl_warehouse(i), txn, Encode(k), Encode(obj_buf, v));
       }
       ALWAYS_ERROR(db->commit_txn(txn));
 
@@ -908,7 +908,7 @@ protected:
           customer::value v;
           v.c_payment_cnt = 10000 * 10000;
           v.c_delivery_cnt = 0;
-          tbl_customer(w_id)->insert(txn_1, Encode(k), Encode(obj_buf, v));
+          tx_insert(tbl_customer(w_id), txn_1, Encode(k), Encode(obj_buf, v));
           ALWAYS_ERROR(db->commit_txn(txn_1));
         }
     } catch (abstract_db::abstract_abort_exception &ex) {
@@ -937,7 +937,7 @@ protected:
           const item_micro::key k(i);
           item_micro::value v;
           v.i_name.assign(i_name);
-          tbl_item(1)->insert(txn, EncodeK(k), Encode(obj_buf, v));
+          tx_insert(tbl_item(1), txn, EncodeK(k), Encode(obj_buf, v));
         }
         Notice("[load] micro-benchmark insert: [%d,%d]",batchid * batchsize + keystart, rend);
         if (db->commit_txn(txn))
@@ -990,7 +990,7 @@ protected:
         const size_t sz = Size(v);
         warehouse_total_sz += sz;
         n_warehouses++;
-        tbl_warehouse(i)->insert(txn, Encode(k), Encode(obj_buf, v));
+        tx_insert(tbl_warehouse(i), txn, Encode(k), Encode(obj_buf, v));
 
         warehouses.push_back(v);
       }
@@ -1003,7 +1003,7 @@ protected:
         // TODO: for the decoder, it should get all the timestamps as well
         // let's use fetch_and_add!!!!
         //   but the problem here is add more code to obtain the fetch_and_add
-        ALWAYS_ERROR(tbl_warehouse(i)->get(txn, Encode(k), warehouse_v));
+        ALWAYS_ERROR(tx_get(tbl_warehouse(i), txn, Encode(k), warehouse_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return;}
         warehouse::value warehouse_temp;
@@ -1069,7 +1069,7 @@ protected:
         checker::SanityCheckItem(&k, &v);
         const size_t sz = Size(v);
         total_sz += sz;
-        tbl_item(1)->insert(txn, EncodeK(k), Encode(obj_buf, v)); // this table is shared, so any partition is OK
+        tx_insert(tbl_item(1), txn, EncodeK(k), Encode(obj_buf, v)); // this table is shared, so any partition is OK
 
         if (bsize != -1 && !(i % bsize)) {
           ALWAYS_ERROR(db->commit_txn(txn));
@@ -1168,8 +1168,8 @@ protected:
             const size_t sz = Size(v);
             stock_total_sz += sz;
             n_stocks++;
-            tbl_stock(w)->insert(txn, EncodeK(k), Encode(obj_buf, v));
-            tbl_stock_data(w)->insert(txn, EncodeK(k_data), Encode(obj_buf1, v_data));
+            tx_insert(tbl_stock(w), txn, EncodeK(k), Encode(obj_buf, v));
+            tx_insert(tbl_stock_data(w), txn, EncodeK(k_data), Encode(obj_buf1, v_data));
           }
           if (db->commit_txn(txn)) {
             b++;
@@ -1246,7 +1246,7 @@ protected:
           const size_t sz = Size(v);
           district_total_sz += sz;
           n_districts++;
-          tbl_district(w)->insert(txn, Encode(k), Encode(obj_buf, v));
+          tx_insert(tbl_district(w), txn, Encode(k), Encode(obj_buf, v));
 
           if (bsize != -1 && !((cnt + 1) % bsize)) {
             ALWAYS_ERROR(db->commit_txn(txn));
@@ -1355,13 +1355,13 @@ protected:
               checker::SanityCheckCustomer(&k, &v);
               const size_t sz = Size(v);
               total_sz += sz;
-              tbl_customer(w)->insert(txn, EncodeK(k), Encode(obj_buf, v));
-              tbl_customer(w)->insert(txn, EncodeK(k_balance), Encode(obj_buf, v_balance));
+              tx_insert(tbl_customer(w), txn, EncodeK(k), Encode(obj_buf, v));
+              tx_insert(tbl_customer(w), txn, EncodeK(k_balance), Encode(obj_buf, v_balance));
 
               const customer_data::key k_data(w, d+100, c);
               customer_data::value v_data;
               v_data.c_data.assign(RandomStr(r, RandomNumber(r, 100, 300)));
-              tbl_customer(w)->insert(txn, EncodeK(k_data), Encode(obj_buf, v_data));
+              tx_insert(tbl_customer(w), txn, EncodeK(k_data), Encode(obj_buf, v_data));
 
               // customer name index
               const customer_name_idx::key k_idx(k.c_w_id, k.c_d_id, v.c_last.str(true), v.c_first.str(true));
@@ -1369,7 +1369,7 @@ protected:
               // index structure is:
               // (c_w_id, c_d_id, c_last, c_first) -> (c_id)
 
-              tbl_customer_name_idx(w)->insert(txn, Encode(k_idx), Encode(obj_buf, v_idx));
+              tx_insert(tbl_customer_name_idx(w), txn, Encode(k_idx), Encode(obj_buf, v_idx));
 
               history::key k_hist;
               k_hist.h_c_id = c;
@@ -1383,7 +1383,7 @@ protected:
               v_hist.h_amount = 10;
               v_hist.h_data.assign(RandomStr(r, RandomNumber(r, 10, 24)));
 
-              tbl_history(w)->insert(txn, EncodeK(k_hist), Encode(obj_buf, v_hist));
+              tx_insert(tbl_history(w), txn, EncodeK(k_hist), Encode(obj_buf, v_hist));
             }
             if (db->commit_txn(txn)) {
               batch++;
@@ -1483,12 +1483,12 @@ protected:
             const size_t sz = Size(v_oo);
             oorder_total_sz += sz;
             n_oorders++;
-            tbl_oorder(w)->insert(txn, EncodeK(k_oo), Encode(obj_buf, v_oo));
+            tx_insert(tbl_oorder(w), txn, EncodeK(k_oo), Encode(obj_buf, v_oo));
 
             const oorder_c_id_idx::key k_oo_idx(k_oo.o_w_id, k_oo.o_d_id, v_oo.o_c_id, k_oo.o_id);
             const oorder_c_id_idx::value v_oo_idx(0);
 
-            tbl_oorder_c_id_idx(w)->insert(txn, Encode(k_oo_idx), Encode(obj_buf, v_oo_idx));
+            tx_insert(tbl_oorder_c_id_idx(w), txn, Encode(k_oo_idx), Encode(obj_buf, v_oo_idx));
 
             if (c >= 2101) {
               const new_order::key k_no(w, d, c);
@@ -1498,7 +1498,7 @@ protected:
               const size_t sz = Size(v_no);
               new_order_total_sz += sz;
               n_new_orders++;
-              tbl_new_order(w)->insert(txn, Encode(k_no), Encode(obj_buf, v_no));
+              tx_insert(tbl_new_order(w), txn, Encode(k_no), Encode(obj_buf, v_no));
             }
 
             for (uint l = 1; l <= uint(v_oo.o_ol_cnt); l++) {
@@ -1524,7 +1524,7 @@ protected:
               const size_t sz = Size(v_ol);
               order_line_total_sz += sz;
               n_order_lines++;
-              tbl_order_line(w)->insert(txn, Encode(k_ol), Encode(obj_buf, v_ol));
+              tx_insert(tbl_order_line(w), txn, Encode(k_ol), Encode(obj_buf, v_ol));
             }
             if (db->commit_txn(txn)) {
               c++;
@@ -1575,7 +1575,7 @@ void tpcc_worker::scan_entire_warehouses(int w_id) {
     // arena.reset();
     // void *txn_0 = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
     // generic_scan_callback<warehouse::key, warehouse::value> calloc_0;
-    // tbl_warehouse(w_id)->scan(txn_0, startKey, &endKey, calloc_0);
+    // tx_scan(tbl_warehouse(w_id), txn_0, startKey, &endKey, calloc_0);
     // ALWAYS_ERROR(db->commit_txn(txn_0));
     // calloc_0.print_warehouse_info();
 
@@ -1587,7 +1587,7 @@ void tpcc_worker::scan_entire_warehouses(int w_id) {
     arena.reset();
     void *txn_1 = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
     generic_scan_callback<customer::key, customer::value> calloc_1;
-    tbl_customer(w_id)->scan(txn_1, startKey_1, &endKey_1, calloc_1);
+    tx_scan(tbl_customer(w_id), txn_1, startKey_1, &endKey_1, calloc_1);
     int64_t a = calloc_1.print_customer_info();
     ALWAYS_ERROR(db->commit_txn(txn_1));
 
@@ -1597,7 +1597,7 @@ void tpcc_worker::scan_entire_warehouses(int w_id) {
     char WE_2 = static_cast<char>(255);
     std::string endKey_2(1, WE_2);
     generic_scan_callback<oorder::key, oorder::value> calloc_2;
-    tbl_oorder(w_id)->scan(txn_1, startKey_2, &endKey_2, calloc_2);
+    tx_scan(tbl_oorder(w_id), txn_1, startKey_2, &endKey_2, calloc_2);
     ALWAYS_ERROR(db->commit_txn(txn_1));
     int64_t b = calloc_2.print_oorder_info();
 
@@ -1636,30 +1636,30 @@ tpcc_worker::txn_new_order_simple() {
         {
           scoped_str_arena s_arena(arena);
           customer::key k_c(warehouse_id, 1, c_id);
-          ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+          ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,is_remote?1:0);}
           customer::value v_c_temp;
           const customer::value *v_c = Decode(obj_v, v_c_temp);
           customer::value v_c_new(*v_c);
           v_c_new.c_payment_cnt -= 10;
-          tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new));
+          tx_put(tbl_customer(warehouse_id), txn, Encode(str(), k_c), Encode(str(), v_c_new));
           const oorder::key k_oo(warehouse_id, 1, oorder_id);
           oorder::value v_oo_new;
           v_oo_new.o_c_id = 10;
           v_oo_new.o_carrier_id = c_id;
-          tbl_oorder(warehouse_id)->insert(txn, Encode(k_oo), Encode(str(), v_oo_new));
+          tx_insert(tbl_oorder(warehouse_id), txn, Encode(k_oo), Encode(str(), v_oo_new));
 
           if (remote_warehouse_id > 0 && !WarehouseInShard(remote_warehouse_id, BenchmarkConfig::getInstance().getShardIndex()) && (c_id == 4||c_id == 5)) {
             customer::key r_k_c(WarehouseGlobal2Local(remote_warehouse_id), 1, c_id);
             //Warning("[DEBUG]client tries to get, w_id:%d,d:%d,c_id:%d,oorder_id:%d,len of obj_v(garbage):%d",WarehouseGlobal2Local(remote_warehouse_id), 1, c_id,oorder_id,obj_v.size());
-            ALWAYS_ERROR(remote_tbl_customer(remote_warehouse_id)->get(txn, Encode(obj_key0, r_k_c), obj_v));
+            ALWAYS_ERROR(tx_get(remote_tbl_customer(remote_warehouse_id), txn, Encode(obj_key0, r_k_c), obj_v));
             customer::value r_v_c_temp;
             //Warning("# of obj_v:%d,r_v_c_temp:%d,(w:%d,d:%d,o:%d)",obj_v.size(),Size(r_v_c_temp),WarehouseGlobal2Local(remote_warehouse_id), 1, c_id);
             const customer::value *r_v_c = Decode(obj_v, r_v_c_temp);
             customer::value r_v_c_new(*r_v_c);
             r_v_c_new.c_delivery_cnt = r_v_c_new.c_delivery_cnt + 1;
-            remote_tbl_customer(remote_warehouse_id)->put(txn, EncodeK(str(), r_k_c), Encode(str(), r_v_c_new));
+            tx_put(remote_tbl_customer(remote_warehouse_id), txn, EncodeK(str(), r_k_c), Encode(str(), r_v_c_new));
             is_remote=true;
           }
         }
@@ -1690,17 +1690,17 @@ tpcc_worker::txn_new_order_simple() {
         try {
           scoped_str_arena s_arena(arena);
           customer::key k_c(warehouse_id, 1, c_id);
-          ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+          ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(is_remote,0);}
           customer::value v_c_temp;
           const customer::value *v_c = Decode(obj_v, v_c_temp);
           customer::value v_c_new(*v_c);
           v_c_new.c_payment_cnt += 10;
-          tbl_customer(warehouse_id)->put(txn, Encode(str(), k_c), Encode(str(), v_c_new)); 
+          tx_put(tbl_customer(warehouse_id), txn, Encode(str(), k_c), Encode(str(), v_c_new)); 
 
           const oorder::key k_oo(warehouse_id, 1, oorder_id);
-          tbl_oorder(warehouse_id)->remove(txn, Encode(str(), k_oo));
+          tx_remove(tbl_oorder(warehouse_id), txn, Encode(str(), k_oo));
 
           bool ret = db->commit_txn(txn);
           if (!ret) {
@@ -1742,7 +1742,7 @@ tpcc_worker::txn_new_order_simple() {
     arena.reset();
     void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
     const oorder::key k_oo(warehouse_id, 1, ids.at(i));
-    bool tag = tbl_oorder(warehouse_id)->get(txn, EncodeK(obj_key0, k_oo), obj_v);
+    bool tag = tx_get(tbl_oorder(warehouse_id), txn, EncodeK(obj_key0, k_oo), obj_v);
     std::vector<string> allVersion = MultiVersionValue::getAllVersion<oorder::value>(obj_v);
     std::cout << std::endl;
     int counter=0;
@@ -1782,7 +1782,7 @@ tpcc_worker::txn_new_order_simple() {
       const oorder::key k_oo(warehouse_id, 1, oorder_id);
       oorder::value v_oo_new;
       v_oo_new.o_c_id = 1;
-      tbl_oorder(warehouse_id)->insert(txn, Encode(k_oo), Encode(str(), v_oo_new));
+      tx_insert(tbl_oorder(warehouse_id), txn, Encode(k_oo), Encode(str(), v_oo_new));
       bool ret = db->commit_txn(txn);
       if (!ret){
         Warning("fail to insert oorder_id:%d",oorder_id);
@@ -1797,7 +1797,7 @@ tpcc_worker::txn_new_order_simple() {
     arena.reset();
     void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
     const oorder::key k_oo(warehouse_id, 1, oorder_id);
-    tbl_oorder(warehouse_id)->remove(txn, Encode(str(), k_oo));
+    tx_remove(tbl_oorder(warehouse_id), txn, Encode(str(), k_oo));
     bool ret = db->commit_txn(txn);
     if (!ret){
       Warning("fail to remove oorder_id:%d",oorder_id);
@@ -1810,7 +1810,7 @@ tpcc_worker::txn_new_order_simple() {
     void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
     {
       const oorder::key k_oo(warehouse_id, 1, oorder_id);
-      bool tag = tbl_oorder(warehouse_id)->get(txn, EncodeK(obj_key0, k_oo), obj_v);
+      bool tag = tx_get(tbl_oorder(warehouse_id), txn, EncodeK(obj_key0, k_oo), obj_v);
       std::vector<string> allVersion = MultiVersionValue::getAllVersion<oorder::value>(obj_v);
       std::cout << std::endl;
       int counter=0;
@@ -1839,7 +1839,7 @@ tpcc_worker::txn_new_order_simple() {
     const oorder::key k_no_0(warehouse_id, 1, 3);
     const oorder::key k_no_1(warehouse_id, 1, 7);
     generic_scan_callback<oorder::key, oorder::value> calloc;
-    tbl_oorder(warehouse_id)->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), calloc, s_arena.get());
+    tx_scan(tbl_oorder(warehouse_id), txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), calloc, s_arena.get());
     ALWAYS_ERROR(db->commit_txn(txn));
     int64_t b = calloc.print_oorder_info();
     std::cout << " count: " << b << std::endl;
@@ -1876,14 +1876,14 @@ tpcc_worker::txn_new_order_micro_drtm() {
 
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
         {  // optimistic replication
           item_micro::value v_c_temp;
           const item_micro::value *v_c = Decode(obj_v, v_c_temp);
           item_micro::value v_c_new(*v_c);
           string tt=intToString2(getCurrentTimeMillis2()%100000000);
           v_c_new.i_name.assign(tt.c_str());
-          remote_tbl_item(remote_warehouse_id)->put(txn, Encode(str(), k), Encode(str(), v_c_new));
+          tx_put(remote_tbl_item(remote_warehouse_id), txn, Encode(str(), k), Encode(str(), v_c_new));
           if (strncmp(v_c_new.i_name.data(), "cccccccc", 8) != 0){
             long long ts = std::stoll(std::string(v_c_new.i_name.data(),0,8));
             long long et = getCurrentTimeMillis2()%100000000;
@@ -1893,7 +1893,7 @@ tpcc_worker::txn_new_order_micro_drtm() {
           }
         } 
       } else {
-        ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
         {
@@ -1902,7 +1902,7 @@ tpcc_worker::txn_new_order_micro_drtm() {
           item_micro::value v_c_new(*v_c);
           string tt=intToString2(getCurrentTimeMillis2()%100000000);
           v_c_new.i_name.assign(tt.c_str());
-          tbl_item(1)->put(txn, Encode(str(), k), Encode(str(), v_c_new));
+          tx_put(tbl_item(1), txn, Encode(str(), k), Encode(str(), v_c_new));
         }
       }
     }
@@ -1945,13 +1945,13 @@ tpcc_worker::txn_new_order_micro() {
       v.i_name.assign(new_i_name);
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
-        remote_tbl_item(remote_warehouse_id)->put(txn, Encode(str(), k), Encode(str(), v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
+        tx_put(remote_tbl_item(remote_warehouse_id), txn, Encode(str(), k), Encode(str(), v));
       } else {
-        ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
-        tbl_item(1)->put(txn, Encode(str(), k), Encode(str(), v));
+        tx_put(tbl_item(1), txn, Encode(str(), k), Encode(str(), v));
       }
     }
     if (likely(db->commit_txn(txn)))
@@ -1994,17 +1994,17 @@ tpcc_worker::txn_new_order_micro_mega()
       v.i_name.assign(new_i_name);
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
-        remote_tbl_item(remote_warehouse_id)->put(txn, Encode(str(), k), Encode(str(), v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
+        tx_put(remote_tbl_item(remote_warehouse_id), txn, Encode(str(), k), Encode(str(), v));
       } else {
         for (int i=0; i<batch_size; i++) {
           uint64_t bkey = (key + i) % nkeys;
           const item_micro::key bk(bkey);
           item_micro::value bv;
-          ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(bk), obj_v));
+          ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(bk), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(isRemote,0);}
-          tbl_item(1)->put(txn, Encode(str(), bk), Encode(str(), bv));
+          tx_put(tbl_item(1), txn, Encode(str(), bk), Encode(str(), bv));
         }
       }
     }
@@ -2103,20 +2103,20 @@ tpcc_worker::txn_new_order_mega()
 
     for (int i=0;i<batch_size;i++){
         const customer::key k_c(warehouse_id, districtID, customerID+i>3000?customerID+i-3000:customerID+i);
-        ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     }
 
     // for warehouse_id and districtID, just do once
     const warehouse::key k_w(warehouse_id);
-    ALWAYS_ERROR(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
 
 
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tbl_district(warehouse_id)->get(txn, Encode(obj_key0, k_d), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
 
@@ -2127,7 +2127,7 @@ tpcc_worker::txn_new_order_mega()
         const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
         const new_order::value v_no;
         const size_t new_order_sz = Size(v_no);
-        tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k_no), Encode(str(), v_no));
+        tx_insert(tbl_new_order(warehouse_id), txn, Encode(str(), k_no), Encode(str(), v_no));
         ret += new_order_sz;
 
         // always enable fast-gen
@@ -2140,13 +2140,13 @@ tpcc_worker::txn_new_order_mega()
         v_oo.o_entry_d = GetCurrentTimeMillis();
 
         const size_t oorder_sz = Size(v_oo);
-        tbl_oorder(warehouse_id)->insert(txn, EncodeK(str(), k_oo), Encode(str(), v_oo));
+        tx_insert(tbl_oorder(warehouse_id), txn, EncodeK(str(), k_oo), Encode(str(), v_oo));
         ret += oorder_sz;
 
         const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
         const oorder_c_id_idx::value v_oo_idx(0);
 
-        tbl_oorder_c_id_idx(warehouse_id)->insert(txn, Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
+        tx_insert(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
     }
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
@@ -2158,7 +2158,7 @@ tpcc_worker::txn_new_order_mega()
       for (int i=0;i<batch_size;i++){
         ol_i_id = base_ol_i_id+i>100000?base_ol_i_id+i-100000:base_ol_i_id+i;
         const item::key k_i(ol_i_id);
-        ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(obj_key0, k_i), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
         item::value v_i_temp;
@@ -2168,7 +2168,7 @@ tpcc_worker::txn_new_order_mega()
         // local operations, for remote operations, we do it outside this for-loop
         if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())){
           const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), ol_i_id);
-          ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->get(txn, EncodeK(obj_key0, k_s), obj_v));
+          ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_get(txn, EncodeK(obj_key0, k_s), obj_v, std::string::npos));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     
@@ -2184,7 +2184,7 @@ tpcc_worker::txn_new_order_mega()
           v_s_new.s_ytd += ol_quantity;
           v_s_new.s_remote_cnt += (ol_supply_w_id == WarehouseLocal2Global(warehouse_id)) ? 0 : 1;
     
-          tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
+          tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
         } 
           const order_line::key k_ol(warehouse_id, districtID, no_o_ids[i], ol_number);
           order_line::value v_ol;
@@ -2195,7 +2195,7 @@ tpcc_worker::txn_new_order_mega()
           v_ol.ol_quantity = int8_t(ol_quantity);
     
           const size_t order_line_sz = Size(v_ol);
-          tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), v_ol));
+          tx_insert(tbl_order_line(warehouse_id), txn, Encode(str(), k_ol), Encode(str(), v_ol));
           ret += order_line_sz;
       }
     
@@ -2203,7 +2203,7 @@ tpcc_worker::txn_new_order_mega()
       // using batch operations: implement batch-operations
       if (!WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
         const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), base_ol_i_id);
-        remote_tbl_stock(ol_supply_w_id)->get(txn, EncodeK(obj_key0, k_s), obj_v);
+        tx_get(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(obj_key0, k_s), obj_v);
         //std::cout<<"send base:"<<base_ol_i_id<<", tid:"<<TThread::getGlobalPartitionID()<<", v-len:"<<obj_v.length()<< std::endl;
     
         // batch-read
@@ -2224,7 +2224,7 @@ tpcc_worker::txn_new_order_mega()
         stock::value v_s_new(*v_s); 
         // why obj_v not work? it would be ok as value doesn't matter!
         // batch-write
-        remote_tbl_stock(ol_supply_w_id)->put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new)); 
+        tx_put(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(str(), k_s), Encode(str(), v_s_new)); 
       }
     
     } // END of loop items
@@ -2386,7 +2386,7 @@ tpcc_worker::txn_new_order()
   try {
     ssize_t ret = 0;
     const customer::key k_c(warehouse_id, districtID, customerID);
-    ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     customer::value v_c_temp;
@@ -2394,7 +2394,7 @@ tpcc_worker::txn_new_order()
     checker::SanityCheckCustomer(&k_c, v_c);
 
     const warehouse::key k_w(warehouse_id);
-    ALWAYS_ERROR(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     warehouse::value v_w_temp;
@@ -2402,7 +2402,7 @@ tpcc_worker::txn_new_order()
     checker::SanityCheckWarehouse(&k_w, v_w);
 
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tbl_district(warehouse_id)->get(txn, Encode(obj_key0, k_d), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     district::value v_d_temp;
@@ -2415,13 +2415,13 @@ tpcc_worker::txn_new_order()
     const new_order::key k_no(warehouse_id, districtID, my_next_o_id);
     const new_order::value v_no;
     const size_t new_order_sz = Size(v_no);
-    tbl_new_order(warehouse_id)->insert(txn, Encode(str(), k_no), Encode(str(), v_no));
+    tx_insert(tbl_new_order(warehouse_id), txn, Encode(str(), k_no), Encode(str(), v_no));
     ret += new_order_sz;
 
     if (!g_new_order_fast_id_gen) {
       district::value v_d_new(*v_d);
       v_d_new.d_next_o_id++;
-      tbl_district(warehouse_id)->put(txn, Encode(str(), k_d), Encode(str(), v_d_new));
+      tx_put(tbl_district(warehouse_id), txn, Encode(str(), k_d), Encode(str(), v_d_new));
     }
 
     const oorder::key k_oo(warehouse_id, districtID, k_no.no_o_id);
@@ -2433,13 +2433,13 @@ tpcc_worker::txn_new_order()
     v_oo.o_entry_d = GetCurrentTimeMillis();
 
     const size_t oorder_sz = Size(v_oo);
-    tbl_oorder(warehouse_id)->insert(txn, EncodeK(str(), k_oo), Encode(str(), v_oo));
+    tx_insert(tbl_oorder(warehouse_id), txn, EncodeK(str(), k_oo), Encode(str(), v_oo));
     ret += oorder_sz;
 
     const oorder_c_id_idx::key k_oo_idx(warehouse_id, districtID, customerID, k_no.no_o_id);
     const oorder_c_id_idx::value v_oo_idx(0);
 
-    tbl_oorder_c_id_idx(warehouse_id)->insert(txn, Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
+    tx_insert(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(str(), k_oo_idx), Encode(str(), v_oo_idx));
 
     for (uint ol_number = 1; ol_number <= numItems; ol_number++) {
       const uint ol_supply_w_id = supplierWarehouseIDs[ol_number - 1];
@@ -2447,7 +2447,7 @@ tpcc_worker::txn_new_order()
       const uint ol_quantity = orderQuantities[ol_number - 1];
 
       const item::key k_i(ol_i_id);
-      ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(obj_key0, k_i), obj_v));
+      ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(obj_key0, k_i), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
       if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       item::value v_i_temp;
@@ -2455,11 +2455,11 @@ tpcc_worker::txn_new_order()
       checker::SanityCheckItem(&k_i, v_i);
       const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), ol_i_id);
       if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->get(txn, EncodeK(obj_key0, k_s), obj_v));
+        ALWAYS_ERROR(tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_get(txn, EncodeK(obj_key0, k_s), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_new_order_failed+=1;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
-        bool ret=remote_tbl_stock(ol_supply_w_id)->get(txn, EncodeK(obj_key0, k_s), obj_v);
+        bool ret=tx_get(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(obj_key0, k_s), obj_v);
         // if (is_sampling_remote_calls && rand() % sampling_number == 0)
         //   sampling_remote_calls.push_back(tmp);
         ALWAYS_ERROR(ret);
@@ -2476,9 +2476,9 @@ tpcc_worker::txn_new_order()
       v_s_new.s_ytd += ol_quantity;
       v_s_new.s_remote_cnt += (ol_supply_w_id == WarehouseLocal2Global(warehouse_id)) ? 0 : 1;
       if (WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
+        tbl_stock(WarehouseGlobal2Local(ol_supply_w_id))->tx_put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
       } else {
-        remote_tbl_stock(ol_supply_w_id)->put(txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
+        tx_put(remote_tbl_stock(ol_supply_w_id), txn, EncodeK(str(), k_s), Encode(str(), v_s_new));
         // if (is_sampling_remote_calls && rand() % sampling_number == 0)
         //   sampling_remote_calls.push_back(tmp);
       }
@@ -2491,7 +2491,7 @@ tpcc_worker::txn_new_order()
       v_ol.ol_quantity = int8_t(ol_quantity);
 
       const size_t order_line_sz = Size(v_ol);
-      tbl_order_line(warehouse_id)->insert(txn, Encode(str(), k_ol), Encode(str(), v_ol));
+      tx_insert(tbl_order_line(warehouse_id), txn, Encode(str(), k_ol), Encode(str(), v_ol));
       ret += order_line_sz;
     }
 
@@ -2513,7 +2513,7 @@ tpcc_worker::txn_new_order()
 #endif
 }
 
-class new_order_scan_callback : public abstract_ordered_index::scan_callback {
+class new_order_scan_callback : public oi_scan_callback {
 public:
   new_order_scan_callback() : k_no(0) {}
   virtual bool invoke(
@@ -2580,7 +2580,7 @@ tpcc_worker::txn_delivery()
       new_order_scan_callback new_order_c;
       {
         ANON_REGION("DeliverNewOrderScan:", &delivery_probe0_cg);
-        tbl_new_order(warehouse_id)->scan(txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
+        tx_scan(tbl_new_order(warehouse_id), txn, Encode(obj_key0, k_no_0), &Encode(obj_key1, k_no_1), new_order_c, s_arena.get());
       }
 
       const new_order::key *k_no = new_order_c.get_key();
@@ -2589,7 +2589,7 @@ tpcc_worker::txn_delivery()
       last_no_o_ids[d - 1] = k_no->no_o_id + 1; // XXX: update last seen
 
       const oorder::key k_oo(warehouse_id, d, k_no->no_o_id);
-      if (unlikely(!tbl_oorder(warehouse_id)->get(txn, EncodeK(obj_key0, k_oo), obj_v))) {
+      if (unlikely(!tx_get(tbl_oorder(warehouse_id), txn, EncodeK(obj_key0, k_oo), obj_v))) {
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
         // even if we read the new order entry, there's no guarantee
@@ -2610,7 +2610,7 @@ tpcc_worker::txn_delivery()
       const order_line::key k_oo_1(warehouse_id, d, k_no->no_o_id, numeric_limits<int32_t>::max());
 
       // XXX(stephentu): mutable scans would help here
-      tbl_order_line(warehouse_id)->scan(txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c, s_arena.get());
+      tx_scan(tbl_order_line(warehouse_id), txn, Encode(obj_key0, k_oo_0), &Encode(obj_key1, k_oo_1), c, s_arena.get());
       float sum = 0.0;
       for (size_t i = 0; i < c.size(); i++) {
         order_line::value v_ol_temp;
@@ -2626,33 +2626,33 @@ tpcc_worker::txn_delivery()
         order_line::value v_ol_new(*v_ol);
         v_ol_new.ol_delivery_d = ts;
         INVARIANT(s_arena.get()->manages(c.values[i].first));
-        tbl_order_line(warehouse_id)->put(txn, *c.values[i].first, Encode(str(), v_ol_new));
+        tx_put(tbl_order_line(warehouse_id), txn, *c.values[i].first, Encode(str(), v_ol_new));
       }
 
       // delete new order
-      tbl_new_order(warehouse_id)->remove(txn, Encode(str(), *k_no));
+      tx_remove(tbl_new_order(warehouse_id), txn, Encode(str(), *k_no));
       ret -= 0 /*new_order_c.get_value_size()*/;
 
       // update oorder
       oorder::value v_oo_new(*v_oo);
       v_oo_new.o_carrier_id = o_carrier_id;
-      tbl_oorder(warehouse_id)->put(txn, EncodeK(str(), k_oo), Encode(str(), v_oo_new));
+      tx_put(tbl_oorder(warehouse_id), txn, EncodeK(str(), k_oo), Encode(str(), v_oo_new));
 
       const uint c_id = v_oo->o_c_id;
       const float ol_total = sum;
 
       // const customer::key k_c(warehouse_id, d, c_id);
-      // ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+      // ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
       // if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
 
       // customer::value v_c_temp;
       // const customer::value *v_c = Decode(obj_v, v_c_temp);
       // customer::value v_c_new(*v_c);
       // v_c_new.c_balance += ol_total;
-      // tbl_customer(warehouse_id)->put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
+      // tx_put(tbl_customer(warehouse_id), txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
 
       const customer::key k_c_new(warehouse_id, d + 200, c_id);
-      ALWAYS_ASSERT(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c_new), obj_v));
+      ALWAYS_ASSERT(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c_new), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
       if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
 
@@ -2660,7 +2660,7 @@ tpcc_worker::txn_delivery()
       const customer_balance::value *v_c_b = Decode(obj_v, v_c_b_temp);
       customer_balance::value v_c_b_new(*v_c_b);
       v_c_b_new.c_balance += ol_total;
-      tbl_customer(warehouse_id)->put(txn, EncodeK(str(), k_c_new), Encode(str(), v_c_b_new));
+      tx_put(tbl_customer(warehouse_id), txn, EncodeK(str(), k_c_new), Encode(str(), v_c_b_new));
     }
     //measure_txn_counters(txn, "txn_delivery");
     if (likely(db->commit_txn(txn)))
@@ -2703,7 +2703,7 @@ tpcc_worker::txn_payment_micro_drtm() {
       v.i_name.assign(tt1.c_str());
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
         { // optimistic replication
           item_micro::value v_c_temp;
           const item_micro::value *v_c = Decode(obj_v, v_c_temp);
@@ -2717,7 +2717,7 @@ tpcc_worker::txn_payment_micro_drtm() {
           }
         }
       } else {
-        ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       }
@@ -2761,12 +2761,12 @@ tpcc_worker::txn_payment_micro_mega() {
       v.i_name.assign(new_i_name);
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
       } else {
         for (int i=0; i<batch_size; i++) {
           uint64_t bkey = (key + i) % nkeys; 
           const item_micro::key bk(bkey);
-          ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(bk), obj_v));
+          ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(bk), obj_v));
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
         }
@@ -2810,9 +2810,9 @@ tpcc_worker::txn_payment_micro() {
       v.i_name.assign(new_i_name);
       if (isRemote&&!first) {
         first=true;
-        ALWAYS_ERROR(remote_tbl_item(remote_warehouse_id)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_item(remote_warehouse_id), txn, EncodeK(k), obj_v));
       } else {
-        ALWAYS_ERROR(tbl_item(1)->get(txn, EncodeK(k), obj_v));
+        ALWAYS_ERROR(tx_get(tbl_item(1), txn, EncodeK(k), obj_v));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       }
@@ -2930,7 +2930,7 @@ if (TThread::get_is_micro()) {
     ssize_t ret = 0;
 
     const warehouse::key k_w(warehouse_id);
-    ALWAYS_ERROR(tbl_warehouse(warehouse_id)->get(txn, Encode(obj_key0, k_w), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_warehouse(warehouse_id), txn, Encode(obj_key0, k_w), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     warehouse::value v_w_temp;
@@ -2939,10 +2939,10 @@ if (TThread::get_is_micro()) {
 
     warehouse::value v_w_new(*v_w);
     v_w_new.w_ytd += paymentAmount;
-    tbl_warehouse(warehouse_id)->put(txn, Encode(str(), k_w), Encode(str(), v_w_new));
+    tx_put(tbl_warehouse(warehouse_id), txn, Encode(str(), k_w), Encode(str(), v_w_new));
 
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tbl_district(warehouse_id)->get(txn, Encode(obj_key0, k_d), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
     district::value v_d_temp;
@@ -2951,7 +2951,7 @@ if (TThread::get_is_micro()) {
 
     district::value v_d_new(*v_d);
     v_d_new.d_ytd += paymentAmount;
-    tbl_district(warehouse_id)->put(txn, Encode(str(), k_d), Encode(str(), v_d_new));
+    tx_put(tbl_district(warehouse_id), txn, Encode(str(), k_d), Encode(str(), v_d_new));
 
     customer::key k_c;
     customer::value v_c;
@@ -2981,7 +2981,7 @@ if (TThread::get_is_micro()) {
       // this huge c_data might cause so many ISSUES - on real machines
       // NO need to worry about at this moment
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID))->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
+        tbl_customer_name_idx(WarehouseGlobal2Local(customerWarehouseID))->tx_scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
         ALWAYS_ERROR(c.size() > 0);
         INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
         int index = c.size() / 2;
@@ -2991,7 +2991,7 @@ if (TThread::get_is_micro()) {
         const customer_name_idx::value *v_c_idx = Decode(*c.values[index].second, v_c_idx_temp);
         k_c.c_id = v_c_idx->c_id;
       } else {
-        remote_tbl_customer_name_idx(customerWarehouseID)->scanRemoteOne(txn, Encode(obj_key0, k_c_idx_0), Encode(obj_key1, k_c_idx_1), obj_v);
+        remote_tbl_customer_name_idx(customerWarehouseID)->tx_scan_remote_one(txn, Encode(obj_key0, k_c_idx_0), Encode(obj_key1, k_c_idx_1), obj_v);
         customer_name_idx::value v_c_idx_temp;
         const customer_name_idx::value *v_c_idx = Decode(obj_v, v_c_idx_temp);
         k_c.c_id = v_c_idx->c_id;
@@ -3001,11 +3001,11 @@ if (TThread::get_is_micro()) {
       k_c.c_d_id = customerDistrictID;
       
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
-        ALWAYS_ERROR(remote_tbl_customer(customerWarehouseID)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
       }
 
       Decode(obj_v, v_c);
@@ -3017,11 +3017,11 @@ if (TThread::get_is_micro()) {
       k_c.c_id = customerID;
       
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
-        ALWAYS_ERROR(remote_tbl_customer(customerWarehouseID)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
       }
       Decode(obj_v, v_c);
     } /*40% END*/
@@ -3033,9 +3033,9 @@ if (TThread::get_is_micro()) {
     v_c_new.c_payment_cnt++;
 
     if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-      tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
+      tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
     } else {
-      remote_tbl_customer(customerWarehouseID)->put(txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
+      tx_put(remote_tbl_customer(customerWarehouseID), txn, EncodeK(str(), k_c), Encode(str(), v_c_new));
     }
     const history::key k_h(k_c.c_d_id, k_c.c_w_id, k_c.c_id, districtID, warehouse_id, ts);
     history::value v_h;
@@ -3048,7 +3048,7 @@ if (TThread::get_is_micro()) {
     v_h.h_data.resize_junk(min(static_cast<size_t>(n), v_h.h_data.max_size()));
 
     const size_t history_sz = Size(v_h);
-    tbl_history(warehouse_id)->insert(txn, EncodeK(str(), k_h), Encode(str(), v_h));
+    tx_insert(tbl_history(warehouse_id), txn, EncodeK(str(), k_h), Encode(str(), v_h));
     ret += history_sz;
 
     if (strncmp(v_c.c_credit.data(), "BC", 2) == 0) {
@@ -3056,11 +3056,11 @@ if (TThread::get_is_micro()) {
       customer_data::value v_c_data;
 
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_get(txn, EncodeK(obj_key0, k_c), obj_v, std::string::npos));
         if(TThread::transget_without_stable){TThread::transget_without_stable=false;counter_payment_failed+=1;}
         if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,isRemote?1:0);}
       } else {
-        ALWAYS_ERROR(remote_tbl_customer(customerWarehouseID)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+        ALWAYS_ERROR(tx_get(remote_tbl_customer(customerWarehouseID), txn, EncodeK(obj_key0, k_c), obj_v));
       }
       Decode(obj_v, v_c_data);
       customer_data::value v_c_data_new(v_c_data);
@@ -3087,9 +3087,9 @@ if (TThread::get_is_micro()) {
       NDB_MEMCPY((void *) v_c_data_new.c_data.data(), &buf[0], v_c_data_new.c_data.size());
 
       if (WarehouseInShard(customerWarehouseID, BenchmarkConfig::getInstance().getShardIndex())) {
-        tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->put(txn, EncodeK(str(), k_c), Encode(str(), v_c_data_new));
+        tbl_customer(WarehouseGlobal2Local(customerWarehouseID))->tx_put(txn, EncodeK(str(), k_c), Encode(str(), v_c_data_new));
       } else {
-        remote_tbl_customer(customerWarehouseID)->put(txn, EncodeK(str(), k_c), Encode(str(), v_c_data_new));
+        tx_put(remote_tbl_customer(customerWarehouseID), txn, EncodeK(str(), k_c), Encode(str(), v_c_data_new));
       }
     }
 
@@ -3107,7 +3107,7 @@ if (TThread::get_is_micro()) {
   return txn_result(false, 0 + (isRemote?1:0));
 }
 
-class order_line_nop_callback : public abstract_ordered_index::scan_callback {
+class order_line_nop_callback : public oi_scan_callback {
 public:
   order_line_nop_callback() : n(0) {}
   virtual bool invoke(
@@ -3180,7 +3180,7 @@ tpcc_worker::txn_order_status()
       k_c_idx_1.c_first.assign(ones);
 
       static_limit_callback<NMaxCustomerIdxScanElems> c(s_arena.get(), true); // probably a safe bet for now
-      tbl_customer_name_idx(warehouse_id)->scan(txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
+      tx_scan(tbl_customer_name_idx(warehouse_id), txn, Encode(obj_key0, k_c_idx_0), &Encode(obj_key1, k_c_idx_1), c, s_arena.get());
       ALWAYS_ERROR(c.size() > 0);
       INVARIANT(c.size() < NMaxCustomerIdxScanElems); // we should detect this
       int index = c.size() / 2;
@@ -3194,7 +3194,7 @@ tpcc_worker::txn_order_status()
       k_c.c_w_id = warehouse_id;
       k_c.c_d_id = districtID;
       k_c.c_id = v_c_idx->c_id;
-      ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+      ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
       if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
       Decode(obj_v, v_c);
@@ -3205,7 +3205,7 @@ tpcc_worker::txn_order_status()
       k_c.c_w_id = warehouse_id;
       k_c.c_d_id = districtID;
       k_c.c_id = customerID;
-      ALWAYS_ERROR(tbl_customer(warehouse_id)->get(txn, EncodeK(obj_key0, k_c), obj_v));
+      ALWAYS_ERROR(tx_get(tbl_customer(warehouse_id), txn, EncodeK(obj_key0, k_c), obj_v));
       if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
       if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
       Decode(obj_v, v_c);
@@ -3228,13 +3228,13 @@ tpcc_worker::txn_order_status()
       const oorder_c_id_idx::key k_oo_idx_1(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
       {
         ANON_REGION("OrderStatusOOrderScan:", &order_status_probe0_cg);
-        tbl_oorder_c_id_idx(warehouse_id)->scan(txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
+        tx_scan(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(obj_key0, k_oo_idx_0), &Encode(obj_key1, k_oo_idx_1), c_oorder, s_arena.get());
       }
       ALWAYS_ERROR(c_oorder.size());
     } else {
       latest_key_callback c_oorder(*newest_o_c_id, 1);
       const oorder_c_id_idx::key k_oo_idx_hi(warehouse_id, districtID, k_c.c_id, numeric_limits<int32_t>::max());
-      tbl_oorder_c_id_idx(warehouse_id)->rscan(txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder, s_arena.get());
+      tx_rscan(tbl_oorder_c_id_idx(warehouse_id), txn, Encode(obj_key0, k_oo_idx_hi), nullptr, c_oorder, s_arena.get());
       ALWAYS_ERROR(c_oorder.size() == 1);
     }
 
@@ -3245,7 +3245,7 @@ tpcc_worker::txn_order_status()
     order_line_nop_callback c_order_line;
     const order_line::key k_ol_0(warehouse_id, districtID, o_id, 0);
     const order_line::key k_ol_1(warehouse_id, districtID, o_id, numeric_limits<int32_t>::max());
-    tbl_order_line(warehouse_id)->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line, s_arena.get());
+    tx_scan(tbl_order_line(warehouse_id), txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c_order_line, s_arena.get());
     ALWAYS_ERROR(c_order_line.n >= 5 && c_order_line.n <= 15);
 
     //measure_txn_counters(txn, "txn_order_status");
@@ -3261,7 +3261,7 @@ tpcc_worker::txn_order_status()
 
 
 
-class order_line_scan_callback : public abstract_ordered_index::scan_callback {
+class order_line_scan_callback : public oi_scan_callback {
 public:
   order_line_scan_callback() : n(0) {}
   virtual bool invoke(
@@ -3307,7 +3307,7 @@ tpcc_worker::txn_stock_level()
   //    void *txn = db->new_txn(BenchmarkConfig::getInstance().getTxnFlags(), arena, txn_buf(), abstract_db::HINT_DEFAULT);
   //    const stock::key k_s(warehouse_id, i);
   //    const size_t nbytesread = serializer<int16_t, true>::max_nbytes();
-  //    auto ret=tbl_stock(warehouse_id)->get(txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
+  //    auto ret=tx_get(tbl_stock(warehouse_id), txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
   //    if (!ret){
   //      cnt++;
   //      //Warning("# can't find i-id:%d",i);
@@ -3339,7 +3339,7 @@ tpcc_worker::txn_stock_level()
   // locking is un-necessary (since we can just read from some old snapshot)
   try {
     const district::key k_d(warehouse_id, districtID);
-    ALWAYS_ERROR(tbl_district(warehouse_id)->get(txn, Encode(obj_key0, k_d), obj_v));
+    ALWAYS_ERROR(tx_get(tbl_district(warehouse_id), txn, Encode(obj_key0, k_d), obj_v));
     if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
     if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
     district::value v_d_temp;
@@ -3357,7 +3357,7 @@ tpcc_worker::txn_stock_level()
     const order_line::key k_ol_1(warehouse_id, districtID, cur_next_o_id, 0);
     {
       ANON_REGION("StockLevelOrderLineScan:", &stock_level_probe0_cg);
-      tbl_order_line(warehouse_id)->scan(txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
+      tx_scan(tbl_order_line(warehouse_id), txn, Encode(obj_key0, k_ol_0), &Encode(obj_key1, k_ol_1), c, s_arena.get());
     }
     {
       small_unordered_map<uint, bool, 512> s_i_ids_distinct;
@@ -3370,7 +3370,7 @@ tpcc_worker::txn_stock_level()
         INVARIANT(p.first >= 1 && p.first <= NumItems());
         {
           ANON_REGION("StockLevelLoopJoinGet:", &stock_level_probe2_cg);
-          auto ret=tbl_stock(warehouse_id)->get(txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
+          auto ret=tx_get(tbl_stock(warehouse_id), txn, EncodeK(obj_key0, k_s), obj_v, nbytesread);
           if(TThread::transget_without_stable){TThread::transget_without_stable=false;}
           if(TThread::transget_without_throw){TThread::transget_without_throw=false;db->abort_txn_local(txn);return txn_result(false,0);}
           if(!ret){ 

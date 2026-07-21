@@ -2337,6 +2337,31 @@ ConnectResult tcp_factory_connect(const TcpFactory& self, std::string_view addr)
         }
     }
 
+    // TCP self-connect guard. Connecting over loopback to a port inside
+    // the kernel's ephemeral range while no listener is bound yet can
+    // have the kernel pick source port == destination port, and TCP
+    // simultaneous-open then ESTABLISHes the socket to itself. The
+    // phantom connection (a) exchanges frames with itself and (b) squats
+    // the server's listen port, so the later bind() dies EADDRINUSE even
+    // under SO_REUSEADDR. A real peer connection can never have an
+    // identical local and remote endpoint, so refuse it; reporting
+    // ConnectionRefused makes callers retry exactly like a not-yet-up
+    // server, and the retry draws a fresh source port.
+    {
+        sockaddr_in local_sa;
+        socklen_t local_len = sizeof(local_sa);
+        // @unsafe — system call
+        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&local_sa),
+                          &local_len) == 0 &&
+            local_len == sizeof(local_sa) &&
+            local_sa.sin_port == sa.sin_port &&
+            local_sa.sin_addr.s_addr == sa.sin_addr.s_addr) {
+            ::close(fd);
+            return ConnectResult{rusty::None,
+                                 ChannelError::ConnectionRefused};
+        }
+    }
+
     // Build the TcpConnection and register its pollable proxy with
     // the poll thread before returning. The channel proxy keeps one
     // Arc; the pollable proxy keeps another, so the connection

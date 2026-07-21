@@ -304,35 +304,11 @@ class RaftLabTest {
   // Test snapshot compression (LZ4) and backward-compatible decompression
   int testReplicatedDBSnapshotCompression(void);
 
-  // ===========================================================================
-  // CONFIG MANAGER TESTS
-  // ===========================================================================
-  // Integration tests for ConfigManager on top of ReplicatedDB
-
-  // Test basic ConfigManager operations: set/get shard count, replicas, version increments
-  int testConfigManagerBasic(void);
-
-  // Test shard lifecycle: AddShard, verify config, RemoveShard, verify removal
-  int testConfigManagerShardLifecycle(void);
-
-  // Test epoch management: get initial epoch, advance twice, verify
-  int testConfigManagerEpoch(void);
-
-  // ClusterConfig tests
-
-  // Test hash-based key routing: same key always maps to same shard, keys distribute across shards
-  int testClusterConfigRouting(void);
-
-  // Test loading ClusterConfig from ConfigManager: set up shards via ConfigManager, load into ClusterConfig, verify
-  int testClusterConfigLoadFromConfigManager(void);
-
-  // ConfigWatcher tests
-
-  // Test that ConfigWatcher detects version changes and updates ClusterConfig
-  int testConfigWatcherDetectsChanges(void);
-
-  // Test that ConfigWatcher invokes callback on update and not when nothing changed
-  int testConfigWatcherCallback(void);
+  // NOTE: The old ConfigManager / ClusterConfig / ConfigWatcher
+  // integration tests (Tests 92-98, which built a ConfigManager on top
+  // of a ReplicatedDB) were removed when ConfigManager migrated to
+  // Mako's unified FullOrderedIndex storage interface. That component
+  // is now covered standalone by tests/config_manager_test.cc.
 
   // Test 99: LinearizableGet on leader succeeds; fails on follower
   int testLinearizableGet(void);

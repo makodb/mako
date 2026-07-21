@@ -70,7 +70,14 @@ import random
 import socket
 import sys
 
-OFFSETS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+# Probe CONTIGUOUS per-shard windows, not spot offsets: dbtest binds
+# base+id for id in [0, ~warehouses+5+num_erpc) within each shard
+# block (blocks at +0, +100, +1000, ... per the config layout). CI
+# died on base+6 — a mid-window port a spot-offset probe never
+# checked, squatted by a leftover listener from an earlier suite.
+WINDOW = 40  # ports probed per shard block; covers ids with slack
+BLOCK_STARTS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+OFFSETS = [b + i for b in BLOCK_STARTS for i in range(WINDOW)]
 BASE_MIN = int(sys.argv[1])
 BASE_MAX = int(sys.argv[2])
 
@@ -142,8 +149,14 @@ make_simple_txn_rep_config() {
 #   shard i ports = base + i*1000 + cluster*100 + partition
 # where cluster ∈ {0=localhost, 1=p1, 2=p2, 3=learner} and partition ∈ [0, nthreads).
 # Probe leader port of each cluster on each shard (so 4 * nshards bind attempts).
-# Keeps the range out of the simpleTransaction band (20000-31699) and clear of
-# the Linux default ephemeral range (32768+).
+# Keeps the range out of the simpleTransaction band (20000-31699). NOTE: unlike
+# that band, this one sits INSIDE the Linux default ephemeral range
+# (32768-60999) — it cannot fit below 32768 because the +10000 heartbeat ports
+# would land in the simpleTransaction band. Bind-probing only proves a port is
+# free at PICK time; a later outbound connect() can still steal it as its
+# source port. In CI the container reserves these bands from the ephemeral
+# allocator (net.ipv4.ip_local_reserved_ports, see .github/workflows/ci.yml);
+# elsewhere the rrr self-connect guard removes the worst failure mode.
 pick_paxos_replication_port_base() {
     local nshards="${1:-2}"
     local nthreads="${2:-3}"

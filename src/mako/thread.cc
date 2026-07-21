@@ -3,6 +3,7 @@
 #include "macros.h"
 #include "thread.h"
 #include "lib/fasttransport.h"
+#include "benchmarks/benchmark_config.h"
 
 import std;
 
@@ -13,7 +14,14 @@ static constexpr size_t kThreadStackBytes = 8u * 1024u * 1024u;
 
 // @unsafe - pthread trampoline; raw pointer cast
 static void *ndb_thread_trampoline(void *arg) {
-  static_cast<ndb_thread *>(arg)->run();
+  auto *self = static_cast<ndb_thread *>(arg);
+  // Inherit the spawner's explicit shard binding (multi-shard
+  // single-process: without this, workers race on the shared global
+  // shard index and two shards' workers bind identical client ports).
+  if (self->inherited_shard_index() >= 0) {
+    BenchmarkConfig::setThreadLocalShardIndex(self->inherited_shard_index());
+  }
+  self->run();
   return nullptr;
 }
 
@@ -36,6 +44,7 @@ ndb_thread::~ndb_thread()
 void
 ndb_thread::start()
 {
+  inherited_shard_index_ = BenchmarkConfig::getThreadLocalShardIndex();
   thd_ = start_with_stack(this);
   if (daemon_)
     pthread_detach(thd_);
@@ -45,6 +54,7 @@ ndb_thread::start()
 void
 ndb_thread::startBind(int core_id)
 {
+  inherited_shard_index_ = BenchmarkConfig::getThreadLocalShardIndex();
   thd_ = start_with_stack(this);
 #if defined(__APPLE__)
   (void)core_id;

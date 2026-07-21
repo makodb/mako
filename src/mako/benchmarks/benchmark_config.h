@@ -24,7 +24,8 @@ enum {
 
 // Forward declarations
 class abstract_db;
-class abstract_ordered_index;
+class FullOrderedIndex;
+using abstract_ordered_index = FullOrderedIndex;
 
 // Per-shard state for multi-shard mode
 struct ShardContext {
@@ -137,12 +138,6 @@ class BenchmarkConfig {
       std::string nfs_sync_dir_{defaultNfsSyncDir()};  // Shared directory for sync files
       int nfs_sync_timeout_sec_{60};                 // Timeout for waiting for other shards
 
-      // Config node settings (for centralized configuration)
-      bool is_config_node_{false};                   // True if this node is a c-node
-      std::string config_node_addr_;                 // Address of c-node (host:port) for clients
-      std::string config_db_path_{"/tmp/mako_config_db"};  // RocksDB path for c-node
-      int config_port_{8888};                        // RPC port for ConfigService
-
   public:
       // Delete copy/move constructors
       BenchmarkConfig(const BenchmarkConfig&) = delete;
@@ -217,6 +212,13 @@ class BenchmarkConfig {
       // Set thread-local shard index for multi-shard mode
       // Call with -1 to clear and revert to global shardIndex_
       static void setThreadLocalShardIndex(int idx) { tl_shard_index_ = idx; }
+      // Raw thread-local value (-1 when unset). Used by ndb_thread to
+      // INHERIT the spawner's shard binding: in single-process
+      // multi-shard mode, worker threads spawned by a shard-runner
+      // must not fall back to the shared global shardIndex_ (a race —
+      // both shards' workers would derive the same client ports and
+      // EADDRINUSE-panic; see shard2SingleProcess CI flake).
+      static int getThreadLocalShardIndex() { return tl_shard_index_; }
       static void clearThreadLocalShardIndex() { tl_shard_index_ = -1; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
@@ -295,16 +297,6 @@ class BenchmarkConfig {
       void setNfsSyncDir(const std::string& dir) { nfs_sync_dir_ = dir; }
       int getNfsSyncTimeoutSec() const { return nfs_sync_timeout_sec_; }
       void setNfsSyncTimeoutSec(int sec) { nfs_sync_timeout_sec_ = sec; }
-
-      // Config node getters and setters
-      bool isConfigNode() const { return is_config_node_; }
-      void setIsConfigNode(bool v) { is_config_node_ = v; }
-      const std::string& getConfigNodeAddr() const { return config_node_addr_; }
-      void setConfigNodeAddr(const std::string& addr) { config_node_addr_ = addr; }
-      const std::string& getConfigDbPath() const { return config_db_path_; }
-      void setConfigDbPath(const std::string& path) { config_db_path_ = path; }
-      int getConfigPort() const { return config_port_; }
-      void setConfigPort(int port) { config_port_ = port; }
 
       // NFS-based multi-shard barrier methods
       // Works for both single-process and distributed deployments

@@ -234,6 +234,26 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
         completed++;
     };
 
+    // Epoch advancement threads (one per context). Spawned before the
+    // workers, and do-while so each context sees at least one increment
+    // even when a loaded scheduler runs the short-lived workers to
+    // completion (setting stop) before these threads first run.
+    std::atomic<bool> stop{false};
+
+    auto epoch1 = rusty::thread::spawn([this, &stop]() {
+        do {
+            ctx1_->increment_epoch(2);
+            rusty::thread::sleep(std::chrono::milliseconds(5));
+        } while (!stop.load());
+    });
+
+    auto epoch2 = rusty::thread::spawn([this, &stop]() {
+        do {
+            ctx2_->increment_epoch(2);
+            rusty::thread::sleep(std::chrono::milliseconds(5));
+        } while (!stop.load());
+    });
+
     // Spawn threads for ctx1
     auto threads1 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS_PER_CTX);
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
@@ -249,23 +269,6 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
             rcu_worker(ctx2_, 4000 + i, ctx2_completed, OPS_PER_THREAD);
         }));
     }
-
-    // Epoch advancement threads (one per context)
-    std::atomic<bool> stop{false};
-
-    auto epoch1 = rusty::thread::spawn([this, &stop]() {
-        while (!stop.load()) {
-            ctx1_->increment_epoch(2);
-            rusty::thread::sleep(std::chrono::milliseconds(5));
-        }
-    });
-
-    auto epoch2 = rusty::thread::spawn([this, &stop]() {
-        while (!stop.load()) {
-            ctx2_->increment_epoch(2);
-            rusty::thread::sleep(std::chrono::milliseconds(5));
-        }
-    });
 
     // Wait for workers
     for (auto& t : threads1) { auto _ = t.join(); }

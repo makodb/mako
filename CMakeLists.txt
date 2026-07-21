@@ -16,23 +16,104 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# Default to clang toolchain unless caller explicitly chooses otherwise.
+# Mako pins its compiler to Clang 21 specifically. Different minor
+# versions of clang 21 are fine (21.0 .. 21.x), but anything else is
+# rejected — see the explicit version check after project() below.
+# The reason for pinning rather than "21 or newer":
+#   * Clang 22's libc++ moved __hash_memory out of line, which leaks
+#     into hashing-heavy link surfaces and breaks every gtest-based
+#     binary on this codebase.
+#   * Clang 20 and earlier lack alias-template CTAD support that
+#     rusty-cpp's platform::threading aliases depend on.
+#   * CI standardizes on clang-21 (apt.llvm.org noble repo).
+#
+# To install on Ubuntu:
+#     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 21
+#     sudo apt install -y clang-21 libc++-21-dev libc++abi-21-dev
+#
+# If the caller pre-set CMAKE_CXX_COMPILER (e.g. `cmake -DCMAKE_CXX_COMPILER=...`),
+# respect that — but still gate it on the version check below.
+# Search hints for the brew llvm@21 keg. Brew on macOS / Linuxbrew
+# doesn't symlink versioned names (clang++-21) — it only installs
+# `clang` / `clang++` inside the keg, which points at clang-21. So
+# we add the keg's bin dir as an explicit HINT, and accept both
+# `clang++-21` (apt.llvm.org convention) and `clang++` from inside
+# the llvm@21 keg.
+set(MAKO_CLANG21_HINTS
+    /home/linuxbrew/.linuxbrew/opt/llvm@21/bin
+    $ENV{HOMEBREW_PREFIX}/opt/llvm@21/bin
+    /opt/homebrew/opt/llvm@21/bin
+    /usr/local/opt/llvm@21/bin
+)
+# Many users have a per-user brew root under their home dir.
+if(DEFINED ENV{HOME})
+    list(APPEND MAKO_CLANG21_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@21/bin)
+endif()
+
 if(NOT DEFINED CMAKE_C_COMPILER)
-    set(CMAKE_C_COMPILER "clang" CACHE STRING "C compiler")
+    find_program(MAKO_CLANG_21 NAMES clang-21 clang HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANG_21)
+        find_program(MAKO_CLANG_21 NAMES clang-21)
+    endif()
+    if(NOT MAKO_CLANG_21)
+        message(FATAL_ERROR
+            "Mako requires Clang 21 (could not find `clang-21` on PATH or in "
+            "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
+            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
+            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-21 to cmake. "
+            "See the comment at CMakeLists.txt:19 for the rationale.")
+    endif()
+    set(CMAKE_C_COMPILER "${MAKO_CLANG_21}" CACHE STRING "C compiler")
 endif()
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    set(CMAKE_CXX_COMPILER "clang++" CACHE STRING "C++ compiler")
+    find_program(MAKO_CLANGXX_21 NAMES clang++-21 clang++ HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANGXX_21)
+        find_program(MAKO_CLANGXX_21 NAMES clang++-21)
+    endif()
+    if(NOT MAKO_CLANGXX_21)
+        message(FATAL_ERROR
+            "Mako requires Clang 21 (could not find `clang++-21` on PATH or in "
+            "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
+            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
+            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-21 to cmake. "
+            "See the comment at CMakeLists.txt:19 for the rationale.")
+    endif()
+    set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_21}" CACHE STRING "C++ compiler")
 endif()
 
 # Enable compile_commands.json generation for language servers (clangd, etc.)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Brew's llvm@21 keg on Linux does NOT auto-add its own lib/ to the
+# linker's search path. Headers from the keg's libc++ inline-reference
+# symbols (e.g. std::__1::__hash_memory) that the system's apt
+# /usr/lib/x86_64-linux-gnu/libc++.so (from llvm-19) doesn't export, so
+# `clang++ -stdlib=libc++ -lc++` resolves to the wrong libc++ and the
+# link fails on hash-table code (gtest, rusty::HashMap, etc.).
+#
+# Workaround: if the selected clang lives inside a Homebrew keg, add
+# the keg's lib/ to the linker search path with an rpath so binaries
+# can find the right libc++ at runtime too. apt.llvm.org installs are
+# unaffected — clang-21 there ships in /usr/bin and uses the matching
+# /usr/lib/llvm-21/lib/libc++.so via its built-in search.
+get_filename_component(MAKO_CLANG_BINDIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+get_filename_component(MAKO_CLANG_ROOT "${MAKO_CLANG_BINDIR}" DIRECTORY)
+set(MAKO_BREW_LIBCXX_FLAGS "")
+if(EXISTS "${MAKO_CLANG_ROOT}/lib/libc++.so")
+    # Match brew/linuxbrew (path contains `Cellar/llvm` or `opt/llvm`).
+    if(MAKO_CLANG_ROOT MATCHES "(Cellar|opt)/llvm")
+        set(MAKO_BREW_LIBCXX_FLAGS
+            "-L${MAKO_CLANG_ROOT}/lib -Wl,-rpath,${MAKO_CLANG_ROOT}/lib")
+        message(STATUS "Using Homebrew libc++ from ${MAKO_CLANG_ROOT}/lib")
+    endif()
+endif()
+
 # Force libc++ at toolchain-detect time (before project()). CMake's
 # `import std;` machinery rejects libstdc++ and will refuse to create the
 # __CMAKE::CXX23 target unless libc++ is the detected standard library.
 set(CMAKE_CXX_FLAGS_INIT "-stdlib=libc++")
-set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++")
-set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "-stdlib=libc++ ${MAKO_BREW_LIBCXX_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ ${MAKO_BREW_LIBCXX_FLAGS}")
 
 project(mako)
 
@@ -225,20 +306,33 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 # rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Mako requires clang >= 21. Specifically, rusty-cpp's
-    # `platform::threading::scoped_lock` / `unique_lock` / `shared_lock`
-    # aliases rely on alias-template CTAD (C++20), which clang 18 (the
-    # default on Ubuntu 24.04 noble) rejects. Clang 19 fixes most cases
-    # but we standardize on 21 to match the CI image.
-    # To install: `apt install -y clang-21 libc++-21-dev libc++abi-21-dev`
-    # from the apt.llvm.org noble repo, or use the `mako-ci-ubuntu24` image.
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "21.0")
+    # Mako pins to Clang 21 specifically (not "21 or newer"). See the
+    # rationale in the comment at CMakeLists.txt:19. Accept any 21.x
+    # minor version; reject everything else.
+    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "21.0"
+        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0")
         message(FATAL_ERROR
-            "Mako requires Clang 21 or newer (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
-            "Older Clang lacks alias-template CTAD support that rusty-cpp's "
+            "Mako requires Clang 21 exactly (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
+            "Newer Clang (22+) ships a libc++ that moves __hash_memory out of line, "
+            "which breaks linking of gtest-based binaries against system libc++. "
+            "Older Clang (<21) lacks alias-template CTAD support that rusty-cpp's "
             "platform::threading aliases depend on. "
-            "Install clang-21 via apt.llvm.org (Ubuntu) or Homebrew (macOS).")
+            "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
     endif()
+else()
+    # Reject GCC, AppleClang, Intel, MSVC: the project's safety
+    # annotations, `import std;` integration, and rusty-cpp are all
+    # exercised only against Clang 21.
+    message(FATAL_ERROR
+        "Mako requires Clang 21 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+        "at ${CMAKE_CXX_COMPILER}). Other compilers are untested and unsupported. "
+        "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+endif()
+# The remaining libc++/codegen flags below run only after we've established
+# we are on Clang 21. The original `if (...Clang)` block continues to gate
+# them in case someone widens the supported compiler set later — but for
+# now the FATAL_ERROR above guarantees we never reach the else-branch.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
     # libc++ removed std::unary_function/binary_function (LWG3820, C++20);
     # some in-tree Masstree code still references them. Re-enable the old
@@ -851,17 +945,16 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/queue.cc"
   "${W}/benchmarks/tpcc.cc"
   "${W}/benchmarks/rpc_setup.cc"
-  #"${W}/benchmarks/config_node_init.cc"  # TODO: Enable when rrr/mako header conflicts are resolved
   #"${W}/benchmarks/tpcc_simple.cc"
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
-  "${W}/benchmarks/sto/Transaction.cc"
-  "${W}/benchmarks/sto/MassTrans.cc"
-  "${W}/benchmarks/sto/common.cc"
-  "${W}/benchmarks/sto/TRcu.cc"
-  "${W}/benchmarks/sto/Packer.cc"
-  "${W}/benchmarks/sto/ReplayDB.cc"
-  "${W}/benchmarks/sto/ThreadPool.cc"
+  "${W}/sto/Transaction.cc"
+  "${W}/sto/MassTrans.cc"
+  "${W}/sto/common.cc"
+  "${W}/sto/TRcu.cc"
+  "${W}/sto/Packer.cc"
+  "${W}/sto/ReplayDB.cc"
+  "${W}/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
@@ -879,10 +972,11 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/client.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/abstract_db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_service.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_proxy.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
 )
 
 set(MAKO_USING_FRAGILEC OFF)
@@ -895,7 +989,7 @@ if(MAKO_USING_FRAGILEC)
   # Exclude heavyweight benchmark modules that currently pull in unresolved
   # benchmark-config API surfaces and block `masstree_perf` builds.
   list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/(encstress|bid|queue|tpcc|rpc_setup|sync_util_init)\\.cc$")
-  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/sto/.*\\.cc$")
+  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/sto/.*\\.cc$")
 endif()
 
 # Benchmark flags
@@ -965,6 +1059,11 @@ file(GLOB_RECURSE DEPTRAN_CORE_SRC
     "src/deptran/*.cc"
     "src/deptran/*/*.cc"
 )
+# NOTE: src/cluster/*.cc are C++23 module units of the `cluster` module (owned
+# by the `cluster` target's FILE_SET below), NOT plain deptran sources.
+# Compiling them here would re-emit module units outside their fileset (same
+# reason rrr's .cpp are kept out of txlog_core). Downstream code reaches the
+# cluster component by `import cluster;` and linking the `cluster` target.
 # Exclude specific deptran files (standalone binaries / optional backends)
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
@@ -987,6 +1086,53 @@ set(TXLOG_HELPER_SRC
     src/deptran/raft_main_helper.cc
 )
 
+# ---------------------------------------------------------------------------
+# `cluster` — Mako's config/sharding metadata + control-plane component,
+# authored as a C++23 named module. src/cluster/*.h are module partition
+# interface units (NOT headers — never #included); src/cluster/cluster.ccm is
+# the primary interface unit re-exporting them; the two .cc are module
+# implementation units. Mirrors the `rrr` module library: consumers write
+# `import cluster;` and link this target. See src/cluster/cluster.ccm.
+set(CLUSTER_MODULE_INTERFACES
+    ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_builder.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_cache.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/config_manager.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_manager.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
+)
+# .h / .ccm module units are not auto-detected as C++ (only .cc/.cpp/.cxx are);
+# tell CMake they compile as C++ so the CXX_MODULES fileset schedules them.
+set_source_files_properties(${CLUSTER_MODULE_INTERFACES} PROPERTIES LANGUAGE CXX)
+# Module implementation units (module cluster;) — regular C++ sources.
+set(CLUSTER_MODULE_IMPLS
+    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.cc
+    ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.cc
+)
+add_library(cluster STATIC ${CLUSTER_MODULE_IMPLS})
+target_sources(cluster PUBLIC
+    FILE_SET cluster_modules TYPE CXX_MODULES FILES ${CLUSTER_MODULE_INTERFACES}
+)
+# cluster's module units include STL textually in their global module fragment
+# (not `import std;`), so opt out of the global CXX_MODULE_STD (std.pcm) default.
+set_target_properties(cluster PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_MODULE_STD OFF)
+# src/compat rusty shims must win over third-party/rusty-cpp (see rrr's note).
+target_include_directories(cluster BEFORE PUBLIC ${CMAKE_SOURCE_DIR}/src/compat)
+target_include_directories(cluster PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/mako          # shard_router.cc includes lib/table_registry.h
+    ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
+)
+target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
+target_link_libraries(cluster PUBLIC rrr pthread)
+
 # Build txlog in layers:
 #   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
 #   - txlog_bench: benchmark implementations from src/bench/*
@@ -1004,7 +1150,7 @@ add_dependencies(txlog_core_obj rcc_rpc_gen)
 # Pull in rrr's PUBLIC include dirs + module BMI paths so deptran/
 # memdb .cc files that `#include "rrr/rrr.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC rrr)
+target_link_libraries(txlog_core_obj PUBLIC rrr cluster)
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -1053,6 +1199,7 @@ add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
 target_link_libraries(txlog_core
     PUBLIC
     rrr
+    cluster
     yaml-cpp
     pthread
     rocksdb
@@ -1111,15 +1258,8 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
-#   - config_manager.cc: includes replicated_db.h which includes <rocksdb/c.h>
-#     third-party header that generates false positive violations from header code.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*config_manager\\.cc$")
-#   - cluster_config.cc: includes config_manager.h which transitively includes
-#     replicated_db.h / <rocksdb/c.h> third-party header.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*cluster_config\\.cc$")
-#   - config_watcher.cc: includes config_manager.h which transitively includes
-#     replicated_db.h / <rocksdb/c.h> third-party header.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*config_watcher\\.cc$")
+# Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
+# src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
@@ -1205,9 +1345,6 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
     # Files below excluded due to violations from included headers (not the .cc files themselves):
-    # src/deptran/config_client.cc          # 6 violations from RPC proxy headers
-    # src/deptran/config_service.cc         # 7 violations from sharding_policy.h, RPC base class
-    # src/deptran/config_store.cc           # 12 violations from RocksDB/Marshal headers
     # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
     # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
     # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
@@ -1309,8 +1446,8 @@ if(ENABLE_BORROW_CHECKING)
     #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/*.c"
     # )
     # file(GLOB_RECURSE STO_SRCS
-    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.cc"
-    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.c"
+    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/*.cc"
+    #     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/sto/*.c"
     # )
     set(MAKO_ROOT_SRCS "")
     set(STO_SRCS "")
@@ -1320,7 +1457,7 @@ if(ENABLE_BORROW_CHECKING)
     
     # Debug output
     list(LENGTH TARGET_BORROW_SRCS FILE_COUNT)
-    message(STATUS "Found ${FILE_COUNT} files to check in src/mako/ and benchmarks/sto/")
+    message(STATUS "Found ${FILE_COUNT} files to check in src/mako/ and sto/")
 
     foreach(SRC ${TARGET_BORROW_SRCS})
         get_filename_component(STEM ${SRC} NAME_WE)
@@ -1625,18 +1762,19 @@ if(BUILD_TESTS)
     target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
-    # Config Schema Serialization Tests
-    add_executable(test_config_schema tests/config_schema_test.cc)
-    target_include_directories(test_config_schema PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_config_schema PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_schema ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_config_schema COMMAND test_config_schema)
-
     # Sharding Policy Tests
-    add_executable(test_sharding_policy tests/sharding_policy_test.cc)
+    #
+    # The policy value types now serialize via their rrr Serializable
+    # save()/load() DSL methods (BinaryWriteArchive), so the old free-function
+    # rrr::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
+    # sharding_policy.h pulls in the rrr.serializable module directly, so this
+    # test just compiles the one source file.
+    add_executable(test_sharding_policy
+        tests/sharding_policy_test.cc
+    )
     target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_sharding_policy cluster ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
 
     # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
@@ -1667,42 +1805,92 @@ if(BUILD_TESTS)
     target_link_libraries(test_fiber rrr ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} pthread)
     add_test(NAME test_fiber COMMAND test_fiber)
 
-    # ConfigStore RocksDB Tests
-    add_executable(test_config_store tests/config_store_test.cc)
-    target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_config_store PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_store ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_store COMMAND test_config_store)
+    # ConfigKvService server-handler read-logic tests (Stage 3d). The
+    # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
+    # links the txlog stack (rrr); it exercises DoReadConfigKey over an
+    # InMemoryKvStore (no socket). The wire transport is CI-verified.
+    add_executable(test_config_kv_service tests/config_kv_service_test.cc)
+    target_include_directories(test_config_kv_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(test_config_kv_service PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_kv_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_config_kv_service COMMAND test_config_kv_service)
 
-    # ConfigService RPC Tests
-    # Note: Includes src/deptran for rcc_rpc.h dependencies (__dep__.h, rcc/tx.h, etc.)
-    add_executable(test_config_service tests/config_service_test.cc)
-    target_include_directories(test_config_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_service PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_service COMMAND test_config_service)
+    # ConfigManager standalone unit tests
+    #
+    # Truly standalone: links ONLY the three cluster .cc sources + gtest.
+    # ConfigManager talks to the cluster-owned KvStore port (get/put/
+    # remove, stdlib only), so this binary needs no storage engine, no
+    # masstree config, no CONFIG_H, no txlog_core / rrr / memdb / RocksDB.
+    # The mako binding (OrderedIndexKvStore) is verified separately by
+    # test_ordered_index_kv_store below.
+    add_executable(test_config_manager
+        tests/config_manager_test.cc
+    )
+    target_include_directories(test_config_manager PRIVATE
+        src
+        ${GTEST_INCLUDE_DIRS}
+    )
+    # The brew clang ships its own libc++ but does not add its lib dir
+    # to the linker search path automatically; do it explicitly so the
+    # gtest archive's `std::__hash_memory` reference resolves against
+    # the matching libc++ (system libc++ is older and lacks it).
+    get_filename_component(_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    get_filename_component(_CXX_COMPILER_ROOT "${_CXX_COMPILER_DIR}" DIRECTORY)
+    target_link_options(test_config_manager PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_config_manager
+        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    add_test(NAME test_config_manager COMMAND test_config_manager)
 
-    # ConfigClient Tests
-    # Note: Includes src/deptran for rcc_rpc.h dependencies
-    add_executable(test_config_client tests/config_client_test.cc)
-    target_include_directories(test_config_client PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_client PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_client ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_client COMMAND test_config_client)
+    # ShardManager control-plane test — stub Shards (in-memory KV stand-ins
+    # for masstree shards) driven through the REAL ConfigManager/ClusterConfig
+    # reconfiguration verbs (add/kill/remove). Pure cluster like
+    # test_config_manager: no storage engine, no RPC.
+    add_executable(test_shard_manager
+        tests/shard_manager_test.cc
+    )
+    target_include_directories(test_shard_manager PRIVATE
+        src
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_link_options(test_shard_manager PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_shard_manager
+        cluster rrr ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    add_test(NAME test_shard_manager COMMAND test_shard_manager)
 
-    # Config Node Failure Scenario Tests
-    add_executable(test_config_failure tests/config_failure_test.cc)
-    target_include_directories(test_config_failure PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_config_failure PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_failure ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_config_failure COMMAND test_config_failure)
-
-    # Sharding Policy Startup Tests
-    add_executable(test_sharding_startup src/rrr/tests/sharding_startup_test.cc)
-    target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
-    target_compile_options(test_sharding_startup PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_startup ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_sharding_startup COMMAND test_sharding_startup)
+    # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
+    # Unlike test_config_manager (pure cluster), this TU pulls the
+    # storage interface header + an in-memory FullOrderedIndex fake, so
+    # it needs src/mako on the include path plus the masstree-config /
+    # CONFIG_H plumbing that abstract_ordered_index.h transitively wants.
+    # It still links NO storage library (the interface is pure-virtual;
+    # the fake provides the vtable).
+    add_executable(test_ordered_index_kv_store
+        tests/ordered_index_kv_store_test.cc
+    )
+    target_include_directories(test_ordered_index_kv_store PRIVATE
+        src
+        src/mako
+        ${MASSTREE_CONFIG_INCLUDE_DIR}
+        ${CMAKE_BINARY_DIR}/generated
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_link_options(test_ordered_index_kv_store PRIVATE
+        "-L${_CXX_COMPILER_ROOT}/lib"
+        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
+    )
+    target_link_libraries(test_ordered_index_kv_store
+        cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
+    )
+    target_compile_definitions(test_ordered_index_kv_store PRIVATE CONFIG_H=\"${CONFIG_H}\")
+    add_test(NAME test_ordered_index_kv_store COMMAND test_ordered_index_kv_store)
 
     # RPC Tests
     add_executable(test_rpc src/rrr/tests/test_rpc.cc src/rrr/tests/benchmark_service.cc)
@@ -2545,6 +2733,80 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         pthread)
     add_test(NAME test_silo_multi_site_stress COMMAND test_silo_multi_site_stress)
+
+    # Test: non-transactional (Masstree-shape) API on MassTrans /
+    # abstract_ordered_index / mbta_sharded_ordered_index — the gating
+    # tests for docs/silo-masstree-api-unification.md.
+    add_executable(test_silo_nontxn_api tests/test_silo_nontxn_api.cc)
+    target_include_directories(test_silo_nontxn_api PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_silo_nontxn_api PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_silo_nontxn_api
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_silo_nontxn_api COMMAND test_silo_nontxn_api)
+
+    # Test: ConfigManager over a REAL mbta index (integration).
+    # Unlike test_config_manager (pure cluster, std::map fake), this
+    # drives ConfigManager / ClusterConfig through the OrderedIndexKvStore
+    # adapter onto a real Silo/STO mbta index, with the mbta static_init +
+    # thread_init bring-up. Validates the storage path the eventual dbtest
+    # bootstrap relies on. Links the mako storage lib + the three cluster
+    # .cc sources (ConfigManager/ClusterConfig/ConfigWatcher live there,
+    # not in the mako lib).
+    add_executable(test_config_manager_mbta
+        tests/config_manager_mbta_integration_test.cc
+    )
+    target_include_directories(test_config_manager_mbta PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_config_manager_mbta PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_manager_mbta
+        cluster mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_config_manager_mbta COMMAND test_config_manager_mbta)
+
+    # Test: the consolidated three-backend story — one TYPED_TEST body
+    # drives masstree_ordered_index / mbta_ordered_index /
+    # mbta_sharded_ordered_index through abstract_ordered_index*
+    # (docs/mako-nontxn-api-plan.md Phase 5, as revised: no separate
+    # KV vocabulary; backends are picked at construction).
+    add_executable(test_kv_backends tests/test_kv_backends.cc)
+    target_include_directories(test_kv_backends PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_kv_backends PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_kv_backends
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_kv_backends COMMAND test_kv_backends)
+
+    # Test: distributed (two-shards-in-one-process) non-txn API — the
+    # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
+    # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
+    # loopback fake transport.
+    add_executable(test_mako_nontxn_distributed tests/test_mako_nontxn_distributed.cc)
+    target_include_directories(test_mako_nontxn_distributed PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS}
+    )
+    target_compile_options(test_mako_nontxn_distributed PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_mako_nontxn_distributed
+        mako ${TEST_LINK_LIBS}
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
+        yaml-cpp rocksdb lz4 numa event_pthreads
+        pthread)
+    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
 
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it

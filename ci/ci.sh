@@ -29,7 +29,16 @@ check_for_hanging_processes() {
     # Count real dbtest processes for the current user.
     # Avoid matching parent shell command lines that only contain the word "dbtest".
     local hanging_pids
-    hanging_pids=$(ps -u "$user_name" -o pid=,comm= | awk '$2=="dbtest" {print $1}')
+    # Exclude zombies (state Z): they are already-dead orphans awaiting
+    # a reap by pid 1, hold no sockets, and cannot be killed — counting
+    # them produces perpetual false "hanging" errors that mask real
+    # leaks.
+    hanging_pids=$(ps -u "$user_name" -o pid=,stat=,comm= | awk '$3=="dbtest" && $2 !~ /Z/ {print $1}')
+    local zombie_count
+    zombie_count=$(ps -u "$user_name" -o stat=,comm= | awk '$2=="dbtest" && $1 ~ /Z/' | wc -l)
+    if [ "$zombie_count" -gt 0 ]; then
+        echo "Note: $zombie_count dbtest zombie(s) awaiting reap (harmless, no ports held)"
+    fi
     local hanging_count=0
     if [ -n "$hanging_pids" ]; then
         hanging_count=$(echo "$hanging_pids" | wc -l)
@@ -109,6 +118,26 @@ cleanup_processes() {
     pkill -9 -u "$user_name" -f "test_2shard_replication.sh" 2>/dev/null || true
     pkill -9 -u "$user_name" -f "test_1shard_replication.sh" 2>/dev/null || true
     pkill -9 -u "$user_name" -f "bash/shard.sh" 2>/dev/null || true
+
+    # Evict ANY of our processes still LISTENING in the test port
+    # ranges (20000-31699 shard/simpleTransaction band, 40000-64999
+    # paxos/raft band — randomized bases reach ~54535 and their +10000
+    # heartbeat ports ~64535). The kill-by-name list above cannot
+    # enumerate every server binary (e.g. leaked rrr test servers), and
+    # a single live squatter mid-range EADDRINUSE-panics a later suite —
+    # the port picker can only probe what is free at PICK time.
+    while read -r pid; do
+        [ -z "$pid" ] && continue
+        if is_ancestor_pid "$pid"; then continue; fi
+        echo "Killing leftover listener pid $pid ($(ps -o comm= -p "$pid" 2>/dev/null))"
+        kill -9 "$pid" 2>/dev/null || true
+    done < <(
+        ss -ltnpH 2>/dev/null | awk '
+            {
+                n = split($4, a, ":"); lp = a[n] + 0
+                if ((lp >= 20000 && lp <= 31699) || (lp >= 40000 && lp <= 64999)) print $0
+            }' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u
+    )
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 

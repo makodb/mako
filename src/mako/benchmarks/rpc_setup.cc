@@ -13,7 +13,7 @@
 #include "lib/fasttransport.h"
 #include "lib/server.h"
 #include "deptran/s_main.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 #include "spinbarrier.h"
 
 
@@ -93,7 +93,9 @@ void erpc_server(
     config->configFile,
     local_uri,
     cluster,
-    1, 12,
+    // Handler range is inclusive; 14-16 are the self-contained
+    // non-txn write ops (nontxnPut/Insert/Remove, common.h).
+    1, 17,
     0, // physPort
     0, // numa node
     running_shardIndex,
@@ -267,7 +269,7 @@ void mako::stop_erpc_server()
 // Client TCP Server for RemoteDB connections
 // ============================================================================
 
-#include "lib/client_tcp_server.h"
+#include "rocks_interface/client_tcp_server.h"
 
 import std;
 

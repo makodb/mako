@@ -546,43 +546,15 @@ abstract service ClientControl {
     defer DispatchTxn(TxDispatchRequest req | TxReply result);
 }
 
-// Configuration node service - serves cluster configuration to other nodes
-abstract service ConfigService {
-    // Get full configuration, checking version for caching
-    // If client_version matches server version, returns has_update=0 (no change)
-    // config_data is serialized PersistentConfig (empty string if no update needed)
-    defer GetConfig(uint64_t client_version |
-                    uint64_t current_version,
-                    i32 has_update,
-                    string config_data);
-
-    // Get just the config version (lightweight check)
-    defer GetConfigVersion( | uint64_t version);
-
-    // Check if config is available (returns 1 if config exists, 0 otherwise)
-    defer HasConfig( | i32 has_config);
-
-    // ==========================================================================
-    // Sharding Policy RPCs
-    // ==========================================================================
-
-    // Set the sharding policy (called by initializer at system startup)
-    // policy_data is serialized ShardingPolicySet
-    // Returns success=1 on success, 0 on failure
-    defer SetShardingPolicy(string policy_data | i32 success);
-
-    // Get sharding policy, checking version for caching
-    // If client_version matches server version, returns has_update=0 (no change)
-    // policy_data is serialized ShardingPolicySet (empty string if no update needed)
-    defer GetShardingPolicy(uint64_t client_version |
-                            uint64_t current_version,
-                            i32 has_update,
-                            string policy_data);
-
-    // Get just the sharding policy version (lightweight check)
-    defer GetShardingPolicyVersion( | uint64_t version);
-
-    // Check if sharding policy is available (returns 1 if policy exists, 0 otherwise)
-    defer HasShardingPolicy( | i32 has_policy);
+// Config key-value read service - lets a non-shard-0 node read a single
+// key from shard 0's __mako_config__ system table (via a KvStore-backed
+// handler, i.e. an OrderedIndexKvStore over shard 0's FullOrderedIndex).
+// This is the transport for RemoteKvStore's ReadFn: cluster metadata
+// lives on shard 0, everyone else discovers it by reading these keys.
+// Distinct from ConfigService (which serves the c-node's ConfigStore).
+abstract service ConfigKvService {
+    // Point read of one config key. found=1 with value on hit, found=0
+    // (empty value) on miss.
+    defer ReadConfigKey(string key | i32 found, string value);
 }
 %%

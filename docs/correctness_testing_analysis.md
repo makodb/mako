@@ -29,7 +29,7 @@ Workaround: Separate writes (MULTI/EXEC) from reads (auto-committed GET).
 
 ### Growing-Value Overwrite Bug (Found and Fixed)
 
-**File:** `src/mako/benchmarks/sto/MassTrans.hh`
+**File:** `src/mako/sto/MassTrans.hh`
 
 When a key was overwritten with a larger value crossing an allocation boundary,
 the Sto OCC transaction aborted due to a stale TransItem:

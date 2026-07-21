@@ -3,15 +3,19 @@
 #include "lib/server.h"
 #include "lib/common.h"
 #include "lib/transport_request_handle.h"
-#include "benchmarks/sto/Interface.hh"
+#include "sto/Interface.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
 #include "benchmarks/tpcc.h"
+// After bench.h so the textual std headers are already in (the
+// `import std;` below would otherwise make ticker.h/rcu.h's
+// unqualified lock_guard/allocator references ambiguous).
+#include "sto/Transaction.hh"
 #if defined(__i386__) || defined(__x86_64__)
 #include <x86intrin.h>
 #endif
 #include "deptran/s_main.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/sync_util.hh"
 
 import std;
 
@@ -39,7 +43,14 @@ namespace mako
 
         txn_obj_buf.reserve(str_arena::MinStrReserveLength);
         txn_obj_buf.resize(db->sizeof_txn_object(0));
-        db->shard_reset(); // initialize
+        // Establish the idle-participant invariant (txn in_progress
+        // and empty) — a mode-1 concept for helper threads serving 2PC
+        // RPCs. Standalone receivers (ClientTcpServer) are registered
+        // from mode-0 threads, where a lingering in_progress txn would
+        // trip the next one-op op's start_transaction assert.
+        if (TThread::mode() == 1) {
+            db->shard_reset(); // initialize
+        }
         obj_key0.reserve(128);
         obj_key1.reserve(128);
         obj_v.reserve(256);
@@ -61,6 +72,12 @@ namespace mako
         {
         case getReqType:
             HandleGetRequest(reqBuf, respBuf, respLen);
+            break;
+        case nontxnPutReqType:
+        case nontxnInsertReqType:
+        case nontxnRemoveReqType:
+        case nontxnGetReqType:
+            HandleNontxnWriteRequest(reqType, reqBuf, respBuf, respLen);
             break;
         case scanReqType:
             HandleScanRequest(reqBuf, respBuf, respLen);
@@ -431,7 +448,7 @@ namespace mako
                 item_micro::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v);
+                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),value_size);
                    offset = 0;
                 }
@@ -482,7 +499,7 @@ namespace mako
                 stock::key k_s_new(*k_s); 
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.s_i_id = base_ol_i_id + i;
-                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v);
+                   ret = open_tables_table_id[req->table_id]->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),mako::size_per_stock_value);
                    //offset += mako::size_per_stock_value;
                    offset = 0;
@@ -534,7 +551,7 @@ namespace mako
                 status = ErrorCode::ABORT;
             } else {
                 try {
-                    bool ret = it->second->shard_get(obj_key0, obj_v);
+                    bool ret = it->second->shard_get(obj_key0, obj_v, std::string::npos);
                     // abort here,
                     //  "not found a key" maybe a expected behavior
                     if (!ret){ // key not found or found but invalid
@@ -560,6 +577,150 @@ namespace mako
         //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,mako::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, obj_v.c_str(), obj_v.length());
 #endif
+    }
+
+    // Self-contained non-transactional write (put / insert / remove by
+    // reqType). Runs the op through the L3 non-txn API — an internal
+    // one-op OCC transaction on this shard, which replicates through
+    // the normal commit path (serialize_util) when replication is on.
+    // See docs/storage-interface.md.
+    //
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleNontxnWriteRequest(uint8_t reqType, char *reqBuf,
+                                                 char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<nontxn_write_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        const bool is_get = (reqType == nontxnGetReqType);
+        respLen = sizeof(client_kv_response_t) - max_value_length;
+        resp->req_nr = req->req_nr;
+        resp->vlen = 0;
+
+        // Local copies, not the obj_key0/obj_v members: ClientTcpServer
+        // workers may run this concurrently on several threads.
+        std::string key(req->key_and_value, req->klen);
+        std::string value(req->key_and_value + req->klen, req->vlen);
+        bool op_result = false;
+        std::string get_out;
+
+        int status = RunNontxnOp(reqType, req->table_id, key, value,
+                                 &op_result, &get_out);
+
+        resp->status = status;
+        if (status == ErrorCode::SUCCESS) {
+            if (is_get) {
+                // Value comes back with EXTRA_BITS already stripped by
+                // the L3 get — clients must NOT strip again.
+                ASSERT_LT(get_out.size(), max_value_length);
+                resp->vlen = get_out.size();
+                memcpy(resp->value, get_out.data(), get_out.size());
+                respLen += get_out.size();
+            } else {
+                resp->vlen = 1;
+                resp->value[0] = op_result ? 1 : 0;
+                respLen += 1;
+            }
+        }
+    }
+
+    // See the declaration in server.h for the contract.
+    // @unsafe - manipulates Sto thread-local transaction state
+    int ShardReceiver::RunNontxnOp(uint8_t opType, uint16_t table_id,
+                                   const std::string &key,
+                                   const std::string &value,
+                                   bool *op_result, std::string *get_out)
+    {
+        const bool is_get = (opType == nontxnGetReqType);
+
+        // Leader-only writes (plan decision D3): a follower accepting a
+        // non-txn write would apply it locally but never submit it to
+        // the replication log — silent divergence. Fail loudly instead.
+        // (Reads don't mutate, so gets are served regardless.)
+        if (!is_get &&
+            BenchmarkConfig::getInstance().getIsReplicated() &&
+            !BenchmarkConfig::getInstance().getLeaderConfig()) {
+            return ErrorCode::ERROR;
+        }
+
+        // The thread serving this op may hold a STAGED participant
+        // transaction (from 2PC handlers: BatchLock stages writes +
+        // locks; Validate/Install arrive as later RPCs). Running our
+        // one-op txn now would clobber that staged state. Note the
+        // idle-participant invariant: shard_reset() leaves helper
+        // threads' txns in_progress but EMPTY between 2PC transactions
+        // — that state is safe to borrow (restored below). Only a txn
+        // with staged items is busy.
+        if (TThread::txn && TThread::txn->has_staged_items()) {
+            return ErrorCode::SERVER_BUSY;
+        }
+
+        auto it = open_tables_table_id.find(table_id);
+        if (it == open_tables_table_id.end() || it->second == nullptr) {
+            return ErrorCode::ERROR;  // table not found
+        }
+
+        int status = ErrorCode::SUCCESS;
+
+        // Run the op as a clean mode-0 local commit: participant mode
+        // (1) never invokes try_commit (Transaction.cc:242), and
+        // leftover shard bits from earlier RPCs would trigger the
+        // remote 2PC phases inside try_commit. Save/restore the
+        // thread's coordination state around the op.
+        int saved_mode = TThread::mode();
+        unsigned saved_read_bits = TThread::readset_shard_bits;
+        unsigned saved_write_bits = TThread::writeset_shard_bits;
+        TThread::set_mode(0);
+        TThread::readset_shard_bits = 0;
+        TThread::writeset_shard_bits = 0;
+
+        // Close out the idle participant txn (in_progress but empty —
+        // guaranteed by the busy guard above) so the op's
+        // Sto::start_transaction passes its mode-0 assertion. Aborting
+        // an empty txn unwinds nothing.
+        if (TThread::txn && TThread::txn->in_progress()) {
+            TThread::txn->silent_abort();
+        }
+
+        try {
+            switch (opType) {
+            case nontxnPutReqType:
+                *op_result = it->second->put(key, value);
+                break;
+            case nontxnInsertReqType:
+                *op_result = it->second->insert(key, value);
+                break;
+            case nontxnRemoveReqType:
+                *op_result = it->second->remove(lcdf::Str(key));
+                break;
+            case nontxnGetReqType:
+                get_out->clear();
+                *op_result = it->second->get(lcdf::Str(key), *get_out, std::string::npos);
+                if (!*op_result)
+                    status = ErrorCode::ABORT;  // key not found
+                break;
+            default:
+                status = ErrorCode::ERROR;
+                break;
+            }
+        } catch (...) {
+            // The L3 non-txn ops retry OCC aborts internally; anything
+            // escaping here is unexpected — surface as an error.
+            status = ErrorCode::ERROR;
+        }
+
+        TThread::set_mode(saved_mode);
+        TThread::readset_shard_bits = saved_read_bits;
+        TThread::writeset_shard_bits = saved_write_bits;
+
+        // Helper threads (mode 1) expect the idle-participant
+        // invariant back: txn in_progress-and-empty (the state
+        // shard_reset establishes). Mode-0 threads (ClientTcpServer
+        // workers) must NOT get that: a lingering in_progress txn
+        // would trip the next op's mode-0 start_transaction assert.
+        if (saved_mode == 1) {
+            db->shard_reset();
+        }
+        return status;
     }
 
     // ============================================================================
@@ -741,22 +902,19 @@ namespace mako
             return;
         }
 
-        // Extract key and value from request
-        obj_key0.assign(req->key_and_value, req->klen);
-        obj_v.assign(req->key_and_value + req->klen, req->vlen);
+        // Extract key and value from request (local copies — several
+        // ClientTcpServer workers may run concurrently).
+        std::string key(req->key_and_value, req->klen);
+        std::string value(req->key_and_value + req->klen, req->vlen);
 
-        // Perform put operation
+        // Self-contained non-txn put (one-op OCC txn that commits and
+        // replicates) — NOT shard_put, which stages + locks a 2PC
+        // participant write that nothing here would ever commit,
+        // leaking the lock and never becoming visible or replicated.
         if (req->table_id > 0) {
-            auto it = open_tables_table_id.find(req->table_id);
-            if (it != open_tables_table_id.end() && it->second != nullptr) {
-                try {
-                    it->second->shard_put(obj_key0, obj_v);
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                    status = ErrorCode::ABORT;
-                }
-            } else {
-                status = ErrorCode::ERROR;  // Table not found
-            }
+            bool op_result = false;
+            status = RunNontxnOp(nontxnPutReqType, req->table_id,
+                                 key, value, &op_result, nullptr);
         }
 
         resp->req_nr = req->req_nr;
@@ -791,33 +949,28 @@ namespace mako
             return;
         }
 
-        // Extract key from request
-        obj_key0.assign(req->key_and_value, req->klen);
+        // Extract key from request (local copies — several
+        // ClientTcpServer workers may run concurrently).
+        std::string key(req->key_and_value, req->klen);
+        std::string get_out;
 
-        // Perform get operation
+        // Self-contained non-txn get — NOT shard_get, which stages a
+        // read-set item in this thread's participant txn that a
+        // decoupled client never cleans up. The value arrives with
+        // EXTRA_BITS already stripped by the L3 get.
         if (req->table_id > 0) {
-            auto it = open_tables_table_id.find(req->table_id);
-            if (it != open_tables_table_id.end() && it->second != nullptr) {
-                try {
-                    bool found = it->second->shard_get(obj_key0, obj_v);
-                    if (!found) {
-                        status = ErrorCode::ABORT;  // Key not found
-                    }
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                    status = ErrorCode::ABORT;
-                }
-            } else {
-                status = ErrorCode::ERROR;  // Table not found
-            }
+            bool op_result = false;
+            status = RunNontxnOp(nontxnGetReqType, req->table_id,
+                                 key, std::string(), &op_result, &get_out);
         }
 
         resp->req_nr = req->req_nr;
-        resp->vlen = static_cast<uint16_t>(obj_v.length());
+        resp->vlen = static_cast<uint16_t>(get_out.length());
         resp->status = status;
-        if (!obj_v.empty() && obj_v.length() <= max_value_length) {
-            memcpy(resp->value, obj_v.c_str(), obj_v.length());
+        if (!get_out.empty() && get_out.length() <= max_value_length) {
+            memcpy(resp->value, get_out.c_str(), get_out.length());
         }
-        respLen = sizeof(client_kv_response_t) - max_value_length + obj_v.length();
+        respLen = sizeof(client_kv_response_t) - max_value_length + get_out.length();
 
         Debug("HandleClientGetRequest: txn_id=%lu, table=%d, key_len=%d, val_len=%d, status=%d",
               req->txn_id, req->table_id, req->klen, resp->vlen, status);
@@ -846,23 +999,18 @@ namespace mako
             return;
         }
 
-        // Extract key from request
-        obj_key0.assign(req->key_and_value, req->klen);
+        // Extract key from request (local copy — several
+        // ClientTcpServer workers may run concurrently).
+        std::string key(req->key_and_value, req->klen);
 
-        // Perform delete operation (put empty value)
+        // Real non-txn remove — the old path "deleted" by staging a
+        // shard_put of an empty value that was never committed
+        // (neither a delete nor visible). Absent key is not an error
+        // here (blind-delete semantics, matching the txn'd handler).
         if (req->table_id > 0) {
-            auto it = open_tables_table_id.find(req->table_id);
-            if (it != open_tables_table_id.end() && it->second != nullptr) {
-                try {
-                    // Delete by putting empty value (or use shard_remove if available)
-                    obj_v.clear();
-                    it->second->shard_put(obj_key0, obj_v);
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                    status = ErrorCode::ABORT;
-                }
-            } else {
-                status = ErrorCode::ERROR;  // Table not found
-            }
+            bool op_result = false;
+            status = RunNontxnOp(nontxnRemoveReqType, req->table_id,
+                                 key, std::string(), &op_result, nullptr);
         }
 
         resp->req_nr = req->req_nr;

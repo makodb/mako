@@ -67,27 +67,6 @@ int get_shard_for_warehouse(int w_id);
 // Implementation in src/deptran/tpcc_sharding.cc
 void print_tpcc_sharding_policy(std::ostream& out = std::cout);
 
-/**
- * @brief Build TPC-C sharding policy and send it to the C-node.
- *
- * This function should be called by the initializer node (e.g., benchmark driver)
- * to configure the sharding policy on the C-node. The C-node will persist the
- * policy and serve it to data nodes.
- *
- * After successfully sending to the C-node, the policy is also initialized
- * in the local sharding policy cache.
- *
- * @param c_node_addr Address of the C-node in "host:port" format
- * @param num_warehouses_total Total number of warehouses across all shards
- * @param num_shards Number of shards
- * @return true if policy was sent successfully, false on error
- */
-// Implementation in src/deptran/tpcc_sharding.cc
-bool send_tpcc_sharding_policy_to_cnode(
-    const std::string& c_node_addr,
-    int num_warehouses_total,
-    int num_shards);
-
 }  // namespace mako
 
 #endif  // _MAKO_TPCC_SHARDING_H_

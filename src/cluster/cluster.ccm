@@ -1,0 +1,25 @@
+// Primary interface unit for the `cluster` module — Mako's config/sharding
+// metadata and control-plane component.
+//
+// Consumers write `import cluster;` to get the whole public surface. The
+// component is authored as module partitions (one per former header, still
+// `.h`-named but compiled as C++23 module units, NOT #included), each
+// re-exported here. This replaces the old `#include "cluster/<x>.h"` header
+// interface: there are no cluster headers to include anymore.
+//
+// See docs/storage-interface.md for the inline-Rust DSL mechanics; the
+// partitions keep their `#if RUSTYCPP_RUST` source + committed GEN blocks.
+export module cluster;
+
+export import :kv_store;
+export import :in_memory_kv_store;
+export import :sharding_policy;
+export import :sharding_policy_builder;
+export import :sharding_policy_cache;
+export import :shard;
+export import :config_manager;
+export import :cluster_config;
+export import :config_watcher;
+export import :shard_manager;
+export import :remote_kv_store;
+export import :shard_router;   // cluster<->mako routing bridge (namespace mako)

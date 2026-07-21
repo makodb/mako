@@ -9,8 +9,8 @@
 #include "lib/shardClient.h"
 #include "lib/configuration.h"
 #include "lib/common.h"
-#include "lib/shard_router.h"
-#include "benchmarks/sto/Interface.hh"
+import cluster;   // config/sharding metadata module (was #include "cluster/...")
+#include "sto/Interface.hh"
 
 import std;
 
@@ -240,6 +240,108 @@ namespace mako
             TThread::trans_nosend_abort |= (1 << dstShardIndex);
         }
         return ret;
+    }
+
+    // Reply parser for the non-txn write ops: status + the op's
+    // boolean result in value[0] (vlen==1) per the wire contract in
+    // common.h.
+    void ShardClient::NontxnWriteCallback(char *respBuf) {
+        auto *resp = reinterpret_cast<mako::client_kv_response_t *>(respBuf);
+        if (waiting != NULL) {
+            Promise *w = waiting;
+            waiting = NULL;
+            w->Reply(resp->status,
+                     std::string(resp->value, resp->vlen));
+        } else {
+            Debug("Waiting is null!");
+        }
+    }
+
+    // @unsafe - shared body; blocks on a Promise like remoteGet
+    int ShardClient::nontxnWrite(uint8_t reqType, int remote_table_id,
+                                 const std::string &key,
+                                 const std::string &value,
+                                 bool *op_result) {
+        int table_id = remote_table_id;
+        int dstShardIndex = compute_shard_for_key(table_id, key);
+
+        Promise promise(GET_TIMEOUT);
+        waiting = &promise;
+
+        client->SetNumResponseWaiting(1);
+
+        const int timeout = promise.GetTimeout();
+        uint16_t server_id = shardIndex*config.warehouses+par_id;
+
+        client->InvokeNontxnWrite(++tid,
+                    dstShardIndex,
+                    server_id,
+                    key,
+                    value,
+                    table_id,
+                    reqType,
+                    bind(&ShardClient::NontxnWriteCallback, this,
+                        placeholders::_1),
+                    bind(&ShardClient::GiveUpTimeout, this),
+                timeout);
+
+        std::string result_byte = promise.GetValue();
+        int ret = promise.GetReply();
+        if (op_result != nullptr) {
+            *op_result = (result_byte.size() == 1) && (result_byte[0] != 0);
+        }
+        return ret;
+    }
+
+    // Self-contained non-txn read: unlike remoteGet (getReqType), the
+    // server stages nothing in its participant txn, so no follow-up
+    // abort/commit is owed and no shard tracking bits are set here.
+    // Returns SUCCESS with the raw stored bytes in `value`, or ABORT
+    // when the key is absent.
+    // @unsafe - blocks on a Promise like remoteGet
+    int ShardClient::nontxnGet(int remote_table_id, const std::string &key,
+                               std::string &value) {
+        int table_id = remote_table_id;
+        int dstShardIndex = compute_shard_for_key(table_id, key);
+
+        Promise promise(GET_TIMEOUT);
+        waiting = &promise;
+
+        client->SetNumResponseWaiting(1);
+
+        const int timeout = promise.GetTimeout();
+        uint16_t server_id = shardIndex*config.warehouses+par_id;
+
+        client->InvokeNontxnWrite(++tid,
+                    dstShardIndex,
+                    server_id,
+                    key,
+                    std::string(),
+                    table_id,
+                    mako::nontxnGetReqType,
+                    bind(&ShardClient::NontxnWriteCallback, this,
+                        placeholders::_1),
+                    bind(&ShardClient::GiveUpTimeout, this),
+                timeout);
+
+        value = promise.GetValue();
+        return promise.GetReply();
+    }
+
+    int ShardClient::nontxnPut(int remote_table_id, const std::string &key,
+                               const std::string &value, bool *op_result) {
+        return nontxnWrite(mako::nontxnPutReqType, remote_table_id, key, value, op_result);
+    }
+
+    int ShardClient::nontxnInsert(int remote_table_id, const std::string &key,
+                                  const std::string &value, bool *op_result) {
+        return nontxnWrite(mako::nontxnInsertReqType, remote_table_id, key, value, op_result);
+    }
+
+    int ShardClient::nontxnRemove(int remote_table_id, const std::string &key,
+                                  bool *op_result) {
+        return nontxnWrite(mako::nontxnRemoveReqType, remote_table_id, key,
+                           std::string(), op_result);
     }
 
     int ShardClient::remoteBatchLock(

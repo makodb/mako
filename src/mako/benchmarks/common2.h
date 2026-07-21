@@ -14,8 +14,8 @@
 #include <algorithm>   // For std::copy
 #include <sstream>     // For istringstream
 #include "bench.h"
-#include "benchmarks/sto/ReplayDB.h"
-#include "benchmarks/sto/sync_util.hh"
+#include "sto/ReplayDB.h"
+#include "sto/sync_util.hh"
 #include <mutex>
 
 using namespace std;

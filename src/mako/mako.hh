@@ -23,8 +23,8 @@
 #include "util.h"
 
 #include "benchmarks/bench.h"
-#include "benchmarks/sto/sync_util.hh"
-#include "benchmarks/mbta_wrapper.hh"
+#include "sto/sync_util.hh"
+#include "storage/mbta_wrapper.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/common2.h"
 #include "benchmarks/benchmark_config.h"
@@ -33,41 +33,15 @@
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
 
+// Cluster-config runtime bootstrap (shard-0 config service + watcher).
+#include "cluster_bootstrap.h"
+
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
 #include "lib/multi_transport_manager.h"
 #include "lib/common.h"
 #include "lib/server.h"
 #include "lib/rust_wrapper.h"
-
-// Config node initialization stubs
-// NOTE: The full implementation is in config_node_init.cc but cannot be linked
-// due to include conflicts between rrr/deptran and mako lib headers.
-// TODO: Resolve header conflicts to enable full config node support in mako.
-namespace mako {
-    inline bool init_config_node() {
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        if (benchConfig.isConfigNode()) {
-            Notice("Config node mode requested but not yet fully integrated with mako");
-            // TODO: Implement proper config node initialization
-        }
-        return true;  // Return success to not block startup
-    }
-
-    inline bool fetch_config_from_cnode() {
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        if (!benchConfig.getConfigNodeAddr().empty()) {
-            Notice("Config node client mode requested but not yet fully integrated with mako");
-            // TODO: Implement proper config fetching
-        }
-        return false;  // Return false to indicate no config was fetched
-    }
-
-    inline void shutdown_config_node() {
-        // Stub - nothing to shutdown yet
-    }
-}
-
 
 // Initialize Rust wrapper: communicate with rust-based redis client
 /*
@@ -561,6 +535,60 @@ static void wait_for_termination()
     //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
   }
 
+  // Drain the replay backlog before tearing down. The loop above exits on
+  // the FIRST partition's END marker, but each partition replays
+  // synchronously inside its own delivery callback — the other partitions'
+  // batch tails may still be undelivered (on throttled CI runners,
+  // hundreds of batches), and watermark-parked entries drain on later
+  // deliveries. Also keep printing the counter: the CI harness reads
+  // "replay_batch:N" from this log, and going silent here made it
+  // snapshot a stale mid-lag value (the shard1Replication mako-dev flake).
+  // Exit once the counter stops advancing for a few seconds (drained or
+  // genuinely stuck) or the overall budget runs out.
+  int drain_stall_limit = 5;
+  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_STALL_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(env, &endptr, 10);
+    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 600) {
+      drain_stall_limit = static_cast<int>(parsed);
+    } else {
+      Warning("Invalid MAKO_FOLLOWER_DRAIN_STALL_SECONDS='%s'; using default %d",
+              env, drain_stall_limit);
+    }
+  }
+  int drain_max_seconds = 120;
+  if (const char* env = getenv("MAKO_FOLLOWER_DRAIN_MAX_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(env, &endptr, 10);
+    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 3600) {
+      drain_max_seconds = static_cast<int>(parsed);
+    } else {
+      Warning("Invalid MAKO_FOLLOWER_DRAIN_MAX_SECONDS='%s'; using default %d",
+              env, drain_max_seconds);
+    }
+  }
+  int last_replay_batch = benchConfig.getReplayBatch();
+  int drain_stall = 0;
+  for (int drain_time = 1; drain_time <= drain_max_seconds; drain_time++) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    int rb = benchConfig.getReplayBatch();
+    if (rb != last_replay_batch) {
+      last_replay_batch = rb;
+      drain_stall = 0;
+    } else {
+      drain_stall++;
+    }
+    Notice("%s draining replay backlog: %d/%zu ended, replay_batch:%d, stall:%ds, drain_time:%ds\n",
+           isLearner ? "learner" : "follower",
+           benchConfig.getEndReceived(), benchConfig.getNthreads(),
+           rb, drain_stall, drain_time);
+    if (drain_stall >= drain_stall_limit) {
+      Notice("%s replay drained: replay_batch:%d stable for %ds after %ds\n",
+             isLearner ? "learner" : "follower", rb, drain_stall, drain_time);
+      break;
+    }
+  }
+
   // Track and report latency if configured if tracked
   run_latency_tracking();
 }
@@ -841,17 +869,6 @@ static char** prepare_paxos_args(const vector<string>& paxos_config_file,
 static abstract_db * init_env() {
   auto& benchConfig = BenchmarkConfig::getInstance();
 
-  // Initialize config node if this is a c-node
-  // @unsafe { RocksDB and RPC I/O }
-  if (!mako::init_config_node()) {
-    Warning("Failed to initialize config node");
-    // Continue anyway - config node is optional
-  }
-
-  // Fetch config from c-node if specified and we don't have local config
-  // @unsafe { Network I/O }
-  mako::fetch_config_from_cnode();
-
   // Setup callbacks
   setup_sync_util_callbacks();
 
@@ -885,7 +902,13 @@ static abstract_db * init_env() {
 
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
-    
+
+    // Wire the cluster-config read path (shard-0 config service +
+    // per-node ConfigWatcher into the routing cache). No-op unless
+    // MAKO_CLUSTER_CONFIG=1 and the cluster has >1 shard.
+    // @unsafe { RPC I/O, storage index open, background thread }
+    janus::BootstrapClusterConfig(db);
+
 #ifndef DISABLE_DISK
     // Initialize RocksDB persistence layer ONLY on the leader
     // Followers and learners don't need RocksDB since they only replay, not generate logs
@@ -974,10 +997,6 @@ static void db_close() {
   // Cleanup and shutdown
   if (benchConfig.getIsReplicated())
     cleanup_and_shutdown();
-
-  // Shutdown config node if running
-  // @unsafe { RocksDB and RPC I/O }
-  mako::shutdown_config_node();
 }
 
 #endif
