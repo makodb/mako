@@ -28,10 +28,20 @@ static int volatile x_replicated_db =
 
 namespace janus {
 
+#if RUSTYCPP_RUST
+pub struct ReplicatedDBFileEntry {
+    name: std::string,
+    contents: std::string,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.1 version=1 rust_sha256=42b62c5a2a282f767c764d1425abc18fbe0678b2643b518e63f1f45c8552278f*/
+struct ReplicatedDBFileEntry;
+
 struct ReplicatedDBFileEntry {
-  std::string name;
-  std::string contents;
+    std::string name;
+    std::string contents;
 };
+/*RUSTYCPP:GEN-END id=replicated_db.1*/
 
 }  // namespace janus
 
