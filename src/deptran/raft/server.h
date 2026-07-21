@@ -763,6 +763,147 @@ inline void RaftServerMembershipCore::set_catchup_threshold(uint64_t threshold) 
 }
 /*RUSTYCPP:GEN-END id=server.membership_core*/
 
+#if RUSTYCPP_RUST
+pub struct RaftServerSpeculativeCore {
+    secured_leader_: rusty::Cell<bool>,
+    secured_log_index_: rusty::Cell<u64>,
+    spec_commit_index_: rusty::Cell<u64>,
+    last_spec_notified_index_: rusty::Cell<u64>,
+    last_durable_notified_index_: rusty::Cell<u64>,
+}
+
+impl RaftServerSpeculativeCore {
+    // @safe
+    fn new() -> RaftServerSpeculativeCore {
+        RaftServerSpeculativeCore {
+            secured_leader_: rusty::Cell::<bool>::new_(false),
+            secured_log_index_: rusty::Cell::<u64>::new_(0),
+            spec_commit_index_: rusty::Cell::<u64>::new_(0),
+            last_spec_notified_index_: rusty::Cell::<u64>::new_(0),
+            last_durable_notified_index_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn secured_leader(&self) -> bool {
+        self.secured_leader_.get()
+    }
+
+    // @safe
+    fn set_secured_leader(&mut self, value: bool) {
+        self.secured_leader_.set(value)
+    }
+
+    // @safe
+    fn secured_log_index(&self) -> u64 {
+        self.secured_log_index_.get()
+    }
+
+    // @safe
+    fn set_secured_log_index(&mut self, index: u64) {
+        self.secured_log_index_.set(index)
+    }
+
+    // @safe
+    fn spec_commit_index(&self) -> u64 {
+        self.spec_commit_index_.get()
+    }
+
+    // @safe
+    fn set_spec_commit_index(&mut self, index: u64) {
+        self.spec_commit_index_.set(index)
+    }
+
+    // @safe
+    fn last_spec_notified_index(&self) -> u64 {
+        self.last_spec_notified_index_.get()
+    }
+
+    // @safe
+    fn set_last_spec_notified_index(&mut self, index: u64) {
+        self.last_spec_notified_index_.set(index)
+    }
+
+    // @safe
+    fn last_durable_notified_index(&self) -> u64 {
+        self.last_durable_notified_index_.get()
+    }
+
+    // @safe
+    fn set_last_durable_notified_index(&mut self, index: u64) {
+        self.last_durable_notified_index_.set(index)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.8 version=1 rust_sha256=1d85cc3212e8c8a406d1dd5d33896aa131b4db53d8cc9cb3fcea09b0c2aad012*/
+struct RaftServerSpeculativeCore;
+
+struct RaftServerSpeculativeCore {
+    rusty::Cell<bool> secured_leader_;
+    rusty::Cell<uint64_t> secured_log_index_;
+    rusty::Cell<uint64_t> spec_commit_index_;
+    rusty::Cell<uint64_t> last_spec_notified_index_;
+    rusty::Cell<uint64_t> last_durable_notified_index_;
+
+    static RaftServerSpeculativeCore new_();
+    bool secured_leader() const;
+    void set_secured_leader(bool value);
+    uint64_t secured_log_index() const;
+    void set_secured_log_index(uint64_t index);
+    uint64_t spec_commit_index() const;
+    void set_spec_commit_index(uint64_t index);
+    uint64_t last_spec_notified_index() const;
+    void set_last_spec_notified_index(uint64_t index);
+    uint64_t last_durable_notified_index() const;
+    void set_last_durable_notified_index(uint64_t index);
+};
+
+
+inline RaftServerSpeculativeCore RaftServerSpeculativeCore::new_() {
+    return RaftServerSpeculativeCore{.secured_leader_ = rusty::Cell<bool>::new_(false), .secured_log_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .spec_commit_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_spec_notified_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .last_durable_notified_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline bool RaftServerSpeculativeCore::secured_leader() const {
+    return this->secured_leader_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_secured_leader(bool value) {
+    this->secured_leader_.set(std::move(value));
+}
+
+inline uint64_t RaftServerSpeculativeCore::secured_log_index() const {
+    return this->secured_log_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_secured_log_index(uint64_t index) {
+    this->secured_log_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::spec_commit_index() const {
+    return this->spec_commit_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_spec_commit_index(uint64_t index) {
+    this->spec_commit_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::last_spec_notified_index() const {
+    return this->last_spec_notified_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_last_spec_notified_index(uint64_t index) {
+    this->last_spec_notified_index_.set(std::move(index));
+}
+
+inline uint64_t RaftServerSpeculativeCore::last_durable_notified_index() const {
+    return this->last_durable_notified_index_.get();
+}
+
+inline void RaftServerSpeculativeCore::set_last_durable_notified_index(uint64_t index) {
+    this->last_durable_notified_index_.set(std::move(index));
+}
+/*RUSTYCPP:GEN-END id=server.8*/
+
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
 // threading/atomics, storage, callbacks, and consensus orchestration remain
@@ -894,18 +1035,13 @@ class RaftServer : public TxLogServer {
   // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
 
   // Leader security status - true when durable vote quorum achieved
-  // When securedLeader_ = true, a quorum has votedFor = me on disk,
+  // When secured, a quorum has votedFor = me on disk,
   // so no other candidate can win election in this term.
-  bool securedLeader_ = false;
+  RaftServerSpeculativeCore speculative_core_;
 
   // Vote tracking for current term (as candidate/leader)
   std::set<siteid_t> specVoters_;     // servers that have memory-voted for us
   std::set<siteid_t> durableVoters_;  // servers that have durably-voted for us
-
-  // Log commit tracking
-  // Invariant: securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
-  uint64_t securedLogIndex_ = 0;      // highest index with durable ack quorum
-  uint64_t specCommitIndex_ = 0;      // highest index with memory ack quorum
 
   // Acknowledgment tracking per log index
   // Key: log index, Value: set of nodes that have acked at that level
@@ -941,8 +1077,6 @@ class RaftServer : public TxLogServer {
   // or ROLLEDBACK (leader stepped down gracefully)
   // @safe - move-only callbacks stored by log index for later notification.
   std::map<uint64_t, rusty::Function<void(CommitStatus)>> pendingCallbacks_;
-  uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
-  uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
   // ============================================================================
   // MEMBERSHIP CONFIGURATION TRACKING
@@ -1557,7 +1691,7 @@ class RaftServer : public TxLogServer {
    * @param acknowledged - [OUT] true if vote was recorded
    * @param cb - Callback to invoke when handling complete
    */
-  // @unsafe - Modifies durableVoters_ and securedLeader_
+  // @unsafe - Modifies durableVoters_ and secured leader state
   void OnVoteDurable(const ballot_t& term,
                      const siteid_t& voter_id,
                      bool_t* acknowledged);
@@ -1593,7 +1727,7 @@ class RaftServer : public TxLogServer {
    * @param acknowledged - [OUT] true if ack was recorded
    * @param cb - Callback to invoke when handling complete
    */
-  // @unsafe - Modifies durableAcks_ and securedLogIndex_
+  // @unsafe - Modifies durableAcks_ and secured log index
   void OnAppendEntriesDurable(const ballot_t& term,
                               const siteid_t& follower_id,
                               const uint64_t& lastLogIndex,
@@ -1831,13 +1965,13 @@ class RaftServer : public TxLogServer {
 
   /**
    * Check if this leader has achieved secured status (durable vote quorum).
-   * When securedLeader_ = true, a quorum has votedFor = me on disk,
+   * When secured, a quorum has votedFor = me on disk,
    * so no other candidate can win election in this term.
    * @return true if leader has durable vote quorum
    */
   // @safe - Read-only accessor
   bool IsSecuredLeader() const {
-    return securedLeader_;
+    return speculative_core_.secured_leader();
   }
 
   /**
@@ -1846,7 +1980,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   uint64_t GetSpecCommitIndex() const {
-    return specCommitIndex_;
+    return speculative_core_.spec_commit_index();
   }
 
   /**
@@ -1856,7 +1990,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   uint64_t GetSecuredLogIndex() const {
-    return securedLogIndex_;
+    return speculative_core_.secured_log_index();
   }
 
   /**
@@ -2029,7 +2163,7 @@ class RaftServer : public TxLogServer {
    *
    * Behavior per reason:
    * - UnsecuredFailure: Rollback all entries in (commitIndex, lastLogIndex]
-   * - SecuredFailure: Rollback only unsecured entries in (securedLogIndex_, specCommitIndex_]
+   * - SecuredFailure: Rollback only unsecured entries in (securedLogIndex, specCommitIndex]
    * - HigherTerm: No automatic rollback (entries may still be valid under new leader)
    *
    * Always clears pendingCallbacks_ and resets notification tracking regardless of reason.

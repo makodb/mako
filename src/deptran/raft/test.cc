@@ -4086,7 +4086,7 @@ int RaftLabTest::testFullCommitPath(void) {
  *
  * Note: Full partial rollback testing (entries > securedLogIndex get ROLLEDBACK
  * while entries <= securedLogIndex don't) is covered by the implementation logic
- * in NotifyRollback() which filters by idx > securedLogIndex_. The complex
+ * in NotifyRollback() which filters by idx > securedLogIndex. The complex
  * timing-dependent scenario to create entries in (securedLogIndex, specCommitIndex]
  * that are pending during step-down is hard to orchestrate deterministically.
  */
@@ -5308,7 +5308,7 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
 
 // ============================================================================
 // Test 61: testSpecCommitIndexPersistence
-// Verifies that specCommitIndex_ and securedLogIndex_ are persisted to storage
+// Verifies that speculative and secured indexes are persisted to storage
 // ============================================================================
 // @unsafe - Uses test infrastructure and LogStorage API
 int RaftLabTest::testSpecCommitIndexPersistence(void) {
@@ -5334,8 +5334,8 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
   auto leader_server = config_->GetServer(leader);
   auto storage = leader_server->GetLogStorage();
 
-  uint64_t mem_spec = leader_server->specCommitIndex_;
-  uint64_t mem_secured = leader_server->securedLogIndex_;
+  uint64_t mem_spec = leader_server->speculative_core_.spec_commit_index();
+  uint64_t mem_secured = leader_server->speculative_core_.secured_log_index();
   uint64_t mem_last = leader_server->lastLogIndex;
 
   Log_info("TEST 61: In-memory values - specCommitIndex=%lu securedLogIndex=%lu lastLogIndex=%lu",
@@ -5386,7 +5386,7 @@ int RaftLabTest::testSpecCommitIndexPersistence(void) {
 
 // ============================================================================
 // Test 62: testSpecIndicesRecoveredOnRestart
-// Verifies specCommitIndex_ and securedLogIndex_ are recovered on restart
+// Verifies speculative and secured indexes are recovered on restart
 // ============================================================================
 // @unsafe - Uses test infrastructure, Kill/Restart, and LogStorage API
 int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
@@ -5413,8 +5413,8 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
   auto victim_server = config_->GetServer(victim);
 
   // Record the values before killing
-  uint64_t spec_before = victim_server->specCommitIndex_;
-  uint64_t secured_before = victim_server->securedLogIndex_;
+  uint64_t spec_before = victim_server->speculative_core_.spec_commit_index();
+  uint64_t secured_before = victim_server->speculative_core_.secured_log_index();
   uint64_t commit_before = victim_server->commitIndex;
   uint64_t last_log_before = victim_server->lastLogIndex;
   Log_info("TEST 62: Before kill - server %d: specCommitIndex=%lu securedLogIndex=%lu "
@@ -5443,8 +5443,8 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
 
   // Get the restarted server and check recovery
   victim_server = config_->GetServer(victim);
-  uint64_t spec_after = victim_server->specCommitIndex_;
-  uint64_t secured_after = victim_server->securedLogIndex_;
+  uint64_t spec_after = victim_server->speculative_core_.spec_commit_index();
+  uint64_t secured_after = victim_server->speculative_core_.secured_log_index();
   uint64_t commit_after = victim_server->commitIndex;
   uint64_t last_log_after = victim_server->lastLogIndex;
   Log_info("TEST 62: After restart - server %d: specCommitIndex=%lu securedLogIndex=%lu "
@@ -5462,7 +5462,7 @@ int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
           commit_before, commit_after);
 
   // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
-  // Note: On a follower after restart, specCommitIndex_ and securedLogIndex_ may be 0
+  // Note: On a follower after restart, speculative and secured indexes may be 0
   // (reset during ResetSpeculativeState for non-leaders), but the invariant must still hold.
   Assert2(secured_after <= spec_after,
           "invariant violation after restart: securedLogIndex (%lu) > specCommitIndex (%lu)",
@@ -6329,8 +6329,8 @@ int RaftLabTest::testLeadershipTransferTimeout(void) {
 // =============================================================================
 // Test 71: testDurableAckLoss
 // Leader receives memory acks from quorum but durable ack RPCs are lost.
-// Verify securedLogIndex_ doesn't advance while specCommitIndex_ does,
-// and the invariant securedLogIndex_ <= specCommitIndex_ <= lastLogIndex holds.
+// Verify securedLogIndex doesn't advance while specCommitIndex does,
+// and the invariant securedLogIndex <= specCommitIndex <= lastLogIndex holds.
 // =============================================================================
 
 // @unsafe - accesses Raft server state through test config helpers
@@ -6369,8 +6369,8 @@ int RaftLabTest::testDurableAckLoss(void) {
   Log_info("TEST 71: Before new entries: securedLogIndex=%lu, specCommitIndex=%lu",
            securedBefore, specCommitBefore);
 
-  // Submit more entries - these should get memory acks (advancing specCommitIndex_)
-  // In the test framework, securedLogIndex_ advancement depends on whether durable
+  // Submit more entries - these should get memory acks (advancing specCommitIndex)
+  // In the test framework, securedLogIndex advancement depends on whether durable
   // acks arrive. We verify the invariant regardless of whether they do or not.
   // @unsafe { Start calls into Raft }
   for (int i = 0; i < 5; i++) {

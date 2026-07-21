@@ -202,14 +202,14 @@ void RaftServer::PersistCommitIndexToLogStorage() {
   {
   log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));
   // Also persist speculative indices alongside commitIndex
-  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
-  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(speculative_core_.spec_commit_index()));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(speculative_core_.secured_log_index()));
   // Note: Don't sync for commitIndex - it can be recovered from logs
   }
 }
 
 // @unsafe - Uses LogStorage API
-// @unsafe - Persists specCommitIndex_ and securedLogIndex_ to storage
+// @unsafe - Persists speculative and secured indexes to storage
 void RaftServer::PersistSpeculativeIndicesToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
@@ -217,8 +217,8 @@ void RaftServer::PersistSpeculativeIndicesToLogStorage() {
 
   // @unsafe
   {
-  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
-  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(speculative_core_.spec_commit_index()));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(speculative_core_.secured_log_index()));
   // Note: Don't sync - these can be recovered conservatively from logs
   }
 }
@@ -299,15 +299,15 @@ bool RaftServer::RecoverFromStorage() {
   // Recover specCommitIndex
   auto spec_str = log_storage_->get_metadata(META_SPEC_COMMIT_INDEX);
   if (spec_str.is_some()) {
-    specCommitIndex_ = std::stoull(spec_str.unwrap());
-    Log_info("Recovered specCommitIndex=%lu", specCommitIndex_);
+    speculative_core_.set_spec_commit_index(std::stoull(spec_str.unwrap()));
+    Log_info("Recovered specCommitIndex=%lu", speculative_core_.spec_commit_index());
   }
 
   // Recover securedLogIndex
   auto secured_str = log_storage_->get_metadata(META_SECURED_LOG_INDEX);
   if (secured_str.is_some()) {
-    securedLogIndex_ = std::stoull(secured_str.unwrap());
-    Log_info("Recovered securedLogIndex=%lu", securedLogIndex_);
+    speculative_core_.set_secured_log_index(std::stoull(secured_str.unwrap()));
+    Log_info("Recovered securedLogIndex=%lu", speculative_core_.secured_log_index());
   }
   }
 
@@ -331,22 +331,22 @@ bool RaftServer::RecoverFromStorage() {
   }
 
   // Clamp speculative indices to maintain invariant:
-  // securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
-  if (specCommitIndex_ > lastLogIndex) {
+  // securedLogIndex <= specCommitIndex <= lastLogIndex
+  if (speculative_core_.spec_commit_index() > lastLogIndex) {
     Log_warn("[RAFT-RECOVERY] Clamping specCommitIndex %lu -> %lu (lastLogIndex)",
-             specCommitIndex_, lastLogIndex);
-    specCommitIndex_ = lastLogIndex;
+             speculative_core_.spec_commit_index(), lastLogIndex);
+    speculative_core_.set_spec_commit_index(lastLogIndex);
   }
-  if (securedLogIndex_ > specCommitIndex_) {
+  if (speculative_core_.secured_log_index() > speculative_core_.spec_commit_index()) {
     Log_warn("[RAFT-RECOVERY] Clamping securedLogIndex %lu -> %lu (specCommitIndex)",
-             securedLogIndex_, specCommitIndex_);
-    securedLogIndex_ = specCommitIndex_;
+             speculative_core_.secured_log_index(), speculative_core_.spec_commit_index());
+    speculative_core_.set_secured_log_index(speculative_core_.spec_commit_index());
   }
 
   Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu "
            "commitIndex=%lu specCommitIndex=%lu securedLogIndex=%lu entries=%zu",
            site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex,
-           specCommitIndex_, securedLogIndex_, raft_logs_.size());
+           speculative_core_.spec_commit_index(), speculative_core_.secured_log_index(), raft_logs_.size());
 
   return true;
 }
@@ -704,6 +704,7 @@ RaftServer::RaftServer(Frame * frame)
   : tuning_core_(RaftServerTuningCore::new_(10000, HEARTBEAT_INTERVAL, 5000)),
     leadership_core_(RaftServerLeadershipCore::new_(INVALID_SITEID)),
     membership_core_(RaftServerMembershipCore::new_()),
+    speculative_core_(RaftServerSpeculativeCore::new_()),
     timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
@@ -1897,8 +1898,8 @@ void RaftServer::HeartbeatLoop() {
 
         // Find the highest index with memory ack quorum
         // Leader's own entry counts as a memory ack
-        uint64_t newSpecCommitIndex = specCommitIndex_;
-        for (uint64_t idx = specCommitIndex_ + 1; idx <= lastLogIndex; ++idx) {
+        uint64_t newSpecCommitIndex = speculative_core_.spec_commit_index();
+        for (uint64_t idx = speculative_core_.spec_commit_index() + 1; idx <= lastLogIndex; ++idx) {
           // Check if we have quorum for this index
           auto it = memoryAcks_.find(idx);
           size_t ack_count = 0;
@@ -1920,20 +1921,20 @@ void RaftServer::HeartbeatLoop() {
           }
         }
 
-        if (newSpecCommitIndex > specCommitIndex_) {
-          uint64_t oldSpecCommitIndex = specCommitIndex_;
+        if (newSpecCommitIndex > speculative_core_.spec_commit_index()) {
+          uint64_t oldSpecCommitIndex = speculative_core_.spec_commit_index();
           Log_info("[SPEC-RAFT] Site %d: Advancing specCommitIndex %lu -> %lu",
-                   site_id_, specCommitIndex_, newSpecCommitIndex);
-          specCommitIndex_ = newSpecCommitIndex;
+                   site_id_, speculative_core_.spec_commit_index(), newSpecCommitIndex);
+          speculative_core_.set_spec_commit_index(newSpecCommitIndex);
 
           // Persist updated speculative indices
           PersistSpeculativeIndicesToLogStorage();
 
           // Notify clients with SPECULATIVE status for newly committed entries
-          if (lastSpecNotifiedIndex_ < newSpecCommitIndex) {
-            uint64_t notifyFrom = std::max(lastSpecNotifiedIndex_, oldSpecCommitIndex);
+          if (speculative_core_.last_spec_notified_index() < newSpecCommitIndex) {
+            uint64_t notifyFrom = std::max(speculative_core_.last_spec_notified_index(), oldSpecCommitIndex);
             NotifyCallbacks(notifyFrom, newSpecCommitIndex, CommitStatus::SPECULATIVE);
-            lastSpecNotifiedIndex_ = newSpecCommitIndex;
+            speculative_core_.set_last_spec_notified_index(newSpecCommitIndex);
           }
         }
 
@@ -2108,8 +2109,8 @@ bool RaftServer::RequestVote() {
     durableVoters_.insert(site_id_);
 
     // Reset commit indices
-    specCommitIndex_ = commitIndex;
-    securedLogIndex_ = commitIndex;
+    speculative_core_.set_spec_commit_index(commitIndex);
+    speculative_core_.set_secured_log_index(commitIndex);
 
     // Persist updated speculative indices
     PersistSpeculativeIndicesToLogStorage();
@@ -2119,7 +2120,7 @@ bool RaftServer::RequestVote() {
     durableAcks_.clear();
 
     // Start as unsecured leader until we receive VoteDurable from quorum
-    securedLeader_ = false;
+    speculative_core_.set_secured_leader(false);
 
     Log_info("[SPEC-RAFT] Site %d: Won election term %lu - specVoters=%zu durableVoters=%zu",
              site_id_, term, specVoters_.size(), durableVoters_.size());
@@ -2299,9 +2300,9 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
 
   // Check if we've achieved secured leader status
   size_t quorum = GetQuorumSize();
-  if (!securedLeader_ &&
+  if (!speculative_core_.secured_leader() &&
       raft::raft_quorum_count_reached(durableVoters_.size(), quorum)) {
-    securedLeader_ = true;
+    speculative_core_.set_secured_leader(true);
     Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
              site_id_, durableVoters_.size(), quorum);
   }
@@ -2345,12 +2346,12 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
 
   // Check if we can advance securedLogIndex
   // Only if we're a secured leader (have durable vote quorum)
-  if (securedLeader_) {
+  if (speculative_core_.secured_leader()) {
     size_t quorum = GetQuorumSize();
 
     // Find the highest index with durable ack quorum
-    uint64_t newSecuredIndex = securedLogIndex_;
-    for (uint64_t idx = securedLogIndex_ + 1; idx <= lastLogIndex && idx <= specCommitIndex_; ++idx) {
+    uint64_t newSecuredIndex = speculative_core_.secured_log_index();
+    for (uint64_t idx = speculative_core_.secured_log_index() + 1; idx <= lastLogIndex && idx <= speculative_core_.spec_commit_index(); ++idx) {
       auto it = durableAcks_.find(idx);
       if (it != durableAcks_.end() &&
           raft::raft_quorum_count_reached(it->second.size(), quorum)) {
@@ -2361,20 +2362,20 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
       }
     }
 
-    if (newSecuredIndex > securedLogIndex_) {
-      uint64_t oldSecuredLogIndex = securedLogIndex_;
+    if (newSecuredIndex > speculative_core_.secured_log_index()) {
+      uint64_t oldSecuredLogIndex = speculative_core_.secured_log_index();
       Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
-               site_id_, securedLogIndex_, newSecuredIndex);
-      securedLogIndex_ = newSecuredIndex;
+               site_id_, speculative_core_.secured_log_index(), newSecuredIndex);
+      speculative_core_.set_secured_log_index(newSecuredIndex);
 
       // Persist updated speculative indices
       PersistSpeculativeIndicesToLogStorage();
 
       // Notify clients with DURABLE status for newly secured entries
-      if (lastDurableNotifiedIndex_ < newSecuredIndex) {
-        uint64_t notifyFrom = std::max(lastDurableNotifiedIndex_, oldSecuredLogIndex);
+      if (speculative_core_.last_durable_notified_index() < newSecuredIndex) {
+        uint64_t notifyFrom = std::max(speculative_core_.last_durable_notified_index(), oldSecuredLogIndex);
         NotifyCallbacks(notifyFrom, newSecuredIndex, CommitStatus::DURABLE);
-        lastDurableNotifiedIndex_ = newSecuredIndex;
+        speculative_core_.set_last_durable_notified_index(newSecuredIndex);
       }
     }
   }
@@ -3311,22 +3312,22 @@ void RaftServer::ResetSpeculativeState() {
     durableVoters_.insert(site_id_);  // self vote is always durable
 
     // Reset commit indices to current commitIndex (from previous term)
-    securedLogIndex_ = commitIndex;
-    specCommitIndex_ = commitIndex;
+    speculative_core_.set_secured_log_index(commitIndex);
+    speculative_core_.set_spec_commit_index(commitIndex);
 
     // Leader starts unsecured until durable vote quorum is achieved
-    securedLeader_ = false;
+    speculative_core_.set_secured_leader(false);
 
     Log_info("[SPEC-RAFT] Site %d: Reset speculative state as new leader - "
              "specVoters={%d} durableVoters={%d} securedLogIndex=%lu specCommitIndex=%lu",
-             site_id_, site_id_, site_id_, securedLogIndex_, specCommitIndex_);
+             site_id_, site_id_, site_id_, speculative_core_.secured_log_index(), speculative_core_.spec_commit_index());
   } else {
     // On stepping down: clear all speculative state
     specVoters_.clear();
     durableVoters_.clear();
-    securedLogIndex_ = 0;
-    specCommitIndex_ = 0;
-    securedLeader_ = false;
+    speculative_core_.set_secured_log_index(0);
+    speculative_core_.set_spec_commit_index(0);
+    speculative_core_.set_secured_leader(false);
 
     Log_info("[SPEC-RAFT] Site %d: Cleared speculative state (stepped down)",
              site_id_);
@@ -3343,22 +3344,22 @@ void RaftServer::ResetSpeculativeState() {
   // Note: We don't clear pendingCallbacks_ here because:
   // - On becoming leader: there shouldn't be any pending callbacks yet
   // - On stepping down: NotifyRollback() handles clearing after notification
-  lastSpecNotifiedIndex_ = commitIndex;  // Don't re-notify already-committed entries
-  lastDurableNotifiedIndex_ = commitIndex;
+  speculative_core_.set_last_spec_notified_index(commitIndex);  // Don't re-notify already-committed entries
+  speculative_core_.set_last_durable_notified_index(commitIndex);
 }
 
 void RaftServer::VerifySpeculativeInvariants() const {
   // Invariant 1: securedLogIndex <= specCommitIndex <= lastLogIndex
-  if (securedLogIndex_ > specCommitIndex_) {
+  if (speculative_core_.secured_log_index() > speculative_core_.spec_commit_index()) {
     Log_error("[SPEC-RAFT] INVARIANT VIOLATION: securedLogIndex (%lu) > specCommitIndex (%lu)",
-              securedLogIndex_, specCommitIndex_);
-    verify(securedLogIndex_ <= specCommitIndex_);
+              speculative_core_.secured_log_index(), speculative_core_.spec_commit_index());
+    verify(speculative_core_.secured_log_index() <= speculative_core_.spec_commit_index());
   }
 
-  if (specCommitIndex_ > lastLogIndex) {
+  if (speculative_core_.spec_commit_index() > lastLogIndex) {
     Log_error("[SPEC-RAFT] INVARIANT VIOLATION: specCommitIndex (%lu) > lastLogIndex (%lu)",
-              specCommitIndex_, lastLogIndex);
-    verify(specCommitIndex_ <= lastLogIndex);
+              speculative_core_.spec_commit_index(), lastLogIndex);
+    verify(speculative_core_.spec_commit_index() <= lastLogIndex);
   }
 
   // Note: durableVoters ⊆ specVoters is NOT strictly enforced after crashes.
@@ -3370,7 +3371,7 @@ void RaftServer::VerifySpeculativeInvariants() const {
   // See docs/dev/phase6_relax_invariant_plan.md for full safety argument.
 
   Log_debug("[SPEC-RAFT] Site %d: Invariants OK - securedLogIndex=%lu specCommitIndex=%lu lastLogIndex=%lu",
-            site_id_, securedLogIndex_, specCommitIndex_, lastLogIndex);
+            site_id_, speculative_core_.secured_log_index(), speculative_core_.spec_commit_index(), lastLogIndex);
 }
 
 // ============================================================================
@@ -3403,7 +3404,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   size_t entries_affected = 0;
   for (auto& entry : memoryAcks_) {
     uint64_t idx = entry.first;
-    if (server_log_index_above(idx, securedLogIndex_)) {
+    if (server_log_index_above(idx, speculative_core_.secured_log_index())) {
       if (entry.second.erase(restarted_site_id) > 0) {
         entries_affected++;
       }
@@ -3423,7 +3424,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
 
   // Check if we need to become secured or step down
   // Relaxed invariant - durableVoters and specVoters are independent after crashes
-  if (!securedLeader_ && is_leader_) {
+  if (!speculative_core_.secured_leader() && is_leader_) {
     size_t quorum = GetQuorumSize();
 
     // NEW: Check if durable quorum is sufficient for secured status
@@ -3433,7 +3434,7 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
     if (raft::raft_quorum_count_reached(durable_vote_count, quorum)) {
       // We have durable quorum - become secured leader
       // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
-      securedLeader_ = true;
+      speculative_core_.set_secured_leader(true);
       Log_info("[SPEC-RAFT] Site %d: Became secured via durable quorum (%zu/%zu) "
                "despite spec quorum loss (specVoters=%zu)",
                site_id_, durable_vote_count, quorum, specVoters_.size());
@@ -3473,7 +3474,7 @@ void RaftServer::stepDown(StepDownReason reason) {
   Log_info("[SPEC-RAFT] Site %d: Stepping down as leader (reason=%s, term=%lu, "
            "securedLeader=%d, specVoters=%zu, durableVoters=%zu)",
            site_id_, StepDownReasonToString(reason), currentTerm,
-           securedLeader_, specVoters_.size(), durableVoters_.size());
+           speculative_core_.secured_leader(), specVoters_.size(), durableVoters_.size());
 
   // Reset speculative state
   // This clears specVoters_, durableVoters_, etc.
@@ -3502,14 +3503,14 @@ void RaftServer::RegisterCommitCallback(uint64_t index,
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // If already speculatively committed, invoke immediately
-  if (server_log_index_at_or_below(index, specCommitIndex_)) {
+  if (server_log_index_at_or_below(index, speculative_core_.spec_commit_index())) {
     Log_debug("[SPEC-CALLBACK] Index %lu already spec-committed, notifying SPECULATIVE",
               index);
     callback(CommitStatus::SPECULATIVE);
   }
 
   // If already durably committed, invoke immediately
-  if (securedLeader_ && server_log_index_at_or_below(index, securedLogIndex_)) {
+  if (speculative_core_.secured_leader() && server_log_index_at_or_below(index, speculative_core_.secured_log_index())) {
     Log_debug("[SPEC-CALLBACK] Index %lu already durable-committed, notifying DURABLE",
               index);
     callback(CommitStatus::DURABLE);
@@ -3549,7 +3550,7 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
   Log_info("[SPEC-CALLBACK] NotifyRollback reason=%s, pending=%zu, "
            "commitIndex=%lu, specCommitIndex=%lu, securedLogIndex=%lu, lastLogIndex=%lu",
            StepDownReasonToString(reason), pendingCallbacks_.size(),
-           commitIndex, specCommitIndex_, securedLogIndex_, lastLogIndex);
+           commitIndex, speculative_core_.spec_commit_index(), speculative_core_.secured_log_index(), lastLogIndex);
 
   if (server_step_down_reason_is_unsecured_failure(reason)) {
     // Lost speculative quorum while unsecured leader.
@@ -3560,11 +3561,11 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
     NotifyCallbacks(commitIndex, lastLogIndex, CommitStatus::ROLLEDBACK);  // @unsafe
   } else if (server_step_down_reason_is_secured_failure(reason)) {
     // Lost quorum but was secured leader. Only unsecured entries
-    // (above securedLogIndex_) are suspect -> rollback from
-    // securedLogIndex_ + 1 to specCommitIndex_.
+    // (above securedLogIndex) are suspect -> rollback from
+    // securedLogIndex + 1 to specCommitIndex.
     Log_info("[SPEC-CALLBACK] SecuredFailure: rolling back entries (%lu, %lu]",
-             securedLogIndex_, specCommitIndex_);
-    NotifyCallbacks(securedLogIndex_, specCommitIndex_, CommitStatus::ROLLEDBACK);  // @unsafe
+             speculative_core_.secured_log_index(), speculative_core_.spec_commit_index());
+    NotifyCallbacks(speculative_core_.secured_log_index(), speculative_core_.spec_commit_index(), CommitStatus::ROLLEDBACK);  // @unsafe
   } else if (server_step_down_reason_is_higher_term(reason)) {
     // Saw higher term from another server. Entries may still be
     // valid under the new leader - don't send rollback notifications.
@@ -3575,8 +3576,8 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
   pendingCallbacks_.clear();
 
   // Reset notification tracking
-  lastSpecNotifiedIndex_ = 0;
-  lastDurableNotifiedIndex_ = 0;
+  speculative_core_.set_last_spec_notified_index(0);
+  speculative_core_.set_last_durable_notified_index(0);
 }
 
 // ============================================================================
