@@ -12,6 +12,8 @@
 #include "../paxos/commo.h"   // PaxosStatus enum reused by Mako watermark callbacks
 #include "../classic/tpc_command.h"  // TpcCommitCommand for batch optimization
 #include "../procedure.h"            // VecPieceData and SimpleCommand
+#include <rusty/rusty.hpp>
+#include <rusty/slice.hpp>
 
 import std;
 
@@ -43,6 +45,146 @@ import std;
 // }
 
 namespace janus {
+
+// @safe - scalar queue/partition/callback decisions only. Thread creation,
+// condition variables, callback invocation, malloc/memcpy, and Raft submission
+// stay in the hand-written C++ worker body.
+#if RUSTYCPP_RUST
+pub fn raft_worker_should_start_submit_thread(started: bool) -> bool {
+    !started
+}
+
+pub fn raft_worker_should_stop_submit_thread(started: bool) -> bool {
+    started
+}
+
+pub fn raft_worker_should_enqueue(started: bool) -> bool {
+    started
+}
+
+pub fn raft_worker_batch_limit(batch_size: i32) -> i32 {
+    if batch_size < 1 {
+        1
+    } else {
+        batch_size
+    }
+}
+
+pub fn raft_worker_wait_for_submit(submitted: i32, total: i32) -> bool {
+    submitted < total
+}
+
+pub fn raft_worker_queue_has_work(queue_empty: bool) -> bool {
+    !queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_wake(stop_requested: bool,
+                                           queue_empty: bool) -> bool {
+    stop_requested || !queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_stop(stop_requested: bool,
+                                           queue_empty: bool) -> bool {
+    stop_requested && queue_empty
+}
+
+pub fn raft_worker_submit_loop_should_take(queue_empty: bool,
+                                           batch_size: i32,
+                                           limit: i32) -> bool {
+    !queue_empty && batch_size < limit
+}
+
+pub fn raft_worker_partition_matches(handles_all_partitions: bool,
+                                     worker_partition: u32,
+                                     requested_partition: u32) -> bool {
+    handles_all_partitions || worker_partition == requested_partition
+}
+
+pub fn raft_worker_can_register_callback(has_scheduler: bool) -> bool {
+    has_scheduler
+}
+
+pub fn raft_worker_has_command_payload(has_value: bool) -> bool {
+    has_value
+}
+
+pub fn raft_worker_should_buffer_unreplayed(status: i32,
+                                            safety_fail_status: i32,
+                                            len: i32) -> bool {
+    status == safety_fail_status && len > 0
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=38a1056e499e7c397a482a16347b3eef8e1c93ba32b42e6acd503ea02fcc4a31*/
+bool raft_worker_should_start_submit_thread(bool started);
+bool raft_worker_should_stop_submit_thread(bool started);
+bool raft_worker_should_enqueue(bool started);
+int32_t raft_worker_batch_limit(int32_t batch_size);
+bool raft_worker_wait_for_submit(int32_t submitted, int32_t total);
+bool raft_worker_queue_has_work(bool queue_empty);
+bool raft_worker_submit_loop_should_wake(bool stop_requested, bool queue_empty);
+bool raft_worker_submit_loop_should_stop(bool stop_requested, bool queue_empty);
+bool raft_worker_submit_loop_should_take(bool queue_empty, int32_t batch_size, int32_t limit);
+bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_partition, uint32_t requested_partition);
+bool raft_worker_can_register_callback(bool has_scheduler);
+bool raft_worker_has_command_payload(bool has_value);
+bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len);
+
+bool raft_worker_should_start_submit_thread(bool started) {
+    return !started;
+}
+
+bool raft_worker_should_stop_submit_thread(bool started) {
+    return std::move(started);
+}
+
+bool raft_worker_should_enqueue(bool started) {
+    return std::move(started);
+}
+
+int32_t raft_worker_batch_limit(int32_t batch_size) {
+    if (rusty::detail::deref_if_pointer_like(batch_size) < 1) {
+        return static_cast<int32_t>(1);
+    } else {
+        return std::move(batch_size);
+    }
+}
+
+bool raft_worker_wait_for_submit(int32_t submitted, int32_t total) {
+    return rusty::detail::deref_if_pointer_like(submitted) < rusty::detail::deref_if_pointer_like(total);
+}
+
+bool raft_worker_queue_has_work(bool queue_empty) {
+    return !queue_empty;
+}
+
+bool raft_worker_submit_loop_should_wake(bool stop_requested, bool queue_empty) {
+    return rusty::detail::deref_if_pointer_like(stop_requested) || !queue_empty;
+}
+
+bool raft_worker_submit_loop_should_stop(bool stop_requested, bool queue_empty) {
+    return rusty::detail::deref_if_pointer_like(stop_requested) && rusty::detail::deref_if_pointer_like(queue_empty);
+}
+
+bool raft_worker_submit_loop_should_take(bool queue_empty, int32_t batch_size, int32_t limit) {
+    return !queue_empty && (rusty::detail::deref_if_pointer_like(batch_size) < rusty::detail::deref_if_pointer_like(limit));
+}
+
+bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_partition, uint32_t requested_partition) {
+    return rusty::detail::deref_if_pointer_like(handles_all_partitions) || (rusty::detail::deref_if_pointer_like(worker_partition) == rusty::detail::deref_if_pointer_like(requested_partition));
+}
+
+bool raft_worker_can_register_callback(bool has_scheduler) {
+    return std::move(has_scheduler);
+}
+
+bool raft_worker_has_command_payload(bool has_value) {
+    return std::move(has_value);
+}
+
+bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len) {
+    return (rusty::detail::deref_if_pointer_like(status) == rusty::detail::deref_if_pointer_like(safety_fail_status)) && (rusty::detail::deref_if_pointer_like(len) > 0);
+}
+/*RUSTYCPP:GEN-END id=raft_worker.small_helpers*/
 
 // @safe
 RaftWorker::RaftWorker() = default;
@@ -268,12 +410,12 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
 
-  if (!handles_all_partitions_) {
+  if (!raft_worker_partition_matches(handles_all_partitions_,
+                                     rep_frame_->site_info_->partition_id_,
+                                     par_id)) {
     // @unsafe
     { // rep_frame_->site_info_-> pointer dereference chain
-      if (rep_frame_->site_info_->partition_id_ != par_id) {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -302,21 +444,20 @@ siteid_t RaftWorker::GetLeaderHint() {
 
 // @unsafe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
-  if (handles_all_partitions_) {
-    return true;
-  }
   // Multi-group mode: each worker owns exactly one partition.
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
   // @unsafe
   { // rep_frame_->site_info_-> pointer dereference chain
-    return rep_frame_->site_info_->partition_id_ == par_id;
+    return raft_worker_partition_matches(handles_all_partitions_,
+                                         rep_frame_->site_info_->partition_id_,
+                                         par_id);
   }
 }
 
 // @unsafe
 void RaftWorker::StartSubmitThread() {
-  if (submit_thread_started_) {
+  if (!raft_worker_should_start_submit_thread(submit_thread_started_)) {
     return;
   }
   submit_thread_stop_ = false;
@@ -329,7 +470,7 @@ void RaftWorker::StartSubmitThread() {
 
 // @unsafe
 void RaftWorker::StopSubmitThread() {
-  if (!submit_thread_started_) {
+  if (!raft_worker_should_stop_submit_thread(submit_thread_started_)) {
     return;
   }
   {
@@ -355,7 +496,7 @@ void RaftWorker::StopSubmitThread() {
 
 // @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
-  if (!submit_thread_started_) {
+  if (!raft_worker_should_enqueue(submit_thread_started_)) {
     // @unsafe
     { // const char* propagation to Submit
       Submit(log, len, par_id);
@@ -372,7 +513,7 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
 
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
-    batch_limit_ = std::max(batch_size, 1);
+    batch_limit_ = raft_worker_batch_limit(batch_size);
     submit_queue_.push_back(std::move(entry));
   }
   submit_cv_.notify_one();
@@ -452,7 +593,7 @@ void RaftWorker::WaitForSubmit() {
   std::unique_lock<std::mutex> lock(condition_mutex_);
   // Wait logic - can be enhanced with condition variable if needed
   // For now, simple busy wait
-  while (n_submit < tot_num) {
+  while (raft_worker_wait_for_submit(n_submit.load(), tot_num)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   lock.unlock();
@@ -460,7 +601,7 @@ void RaftWorker::WaitForSubmit() {
   while (true) {
     {
       std::lock_guard<std::mutex> qlock(submit_mutex_);
-      if (submit_queue_.empty()) {
+      if (!raft_worker_queue_has_work(submit_queue_.empty())) {
         break;
       }
     }
@@ -476,7 +617,7 @@ void RaftWorker::register_apply_callback(rusty::Function<void(const char*, int)>
   }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip apply callback registration");
     return;
   }
@@ -499,7 +640,7 @@ void RaftWorker::register_apply_callback_par_id(
   }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip apply callback registration");
     return;
   }
@@ -521,7 +662,7 @@ void RaftWorker::register_leader_callback_par_id_return(watermark_callback_t cb)
   }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
@@ -549,7 +690,7 @@ void RaftWorker::register_follower_callback_par_id_return(watermark_callback_t c
   }
 
   // Guard against accessing scheduler during shutdown
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d",
              site_info_ ? site_info_->partition_id_ : -1);
     return;
@@ -580,7 +721,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 
   // @unsafe
   { // null check on Command envelope
-    if (!md.has_value()) {
+    if (!raft_worker_has_command_payload(md.has_value())) {
       Log_error("Received null command in Next()");
       return status;
     }
@@ -673,7 +814,8 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   status = encoded_value % 10;
   uint32_t timestamp = encoded_value / 10;
 
-  if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL && len > 0) {
+  if (raft_worker_should_buffer_unreplayed(
+          status, janus::PaxosStatus::STATUS_SAFETY_FAIL, len)) {
       char* dest = static_cast<char*>(malloc(len));
       verify(dest != nullptr);
       memcpy(dest, log, len);
@@ -693,7 +835,7 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
 void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   leader_callbacks_by_partition_[par_id] = std::move(cb);
 
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d", par_id);
     return;
   }
@@ -713,7 +855,7 @@ void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, waterma
 void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
   follower_callbacks_by_partition_[par_id] = std::move(cb);
 
-  if (!rep_sched_) {
+  if (!raft_worker_can_register_callback(rep_sched_ != nullptr)) {
     Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d", par_id);
     return;
   }
@@ -736,22 +878,25 @@ void RaftWorker::SubmitLoop() {
     submit_cv_.wait(lock, [&] {
       // @unsafe
       { // operator bool on std::atomic<bool>
-        return submit_thread_stop_ || !submit_queue_.empty();
+        return raft_worker_submit_loop_should_wake(
+            submit_thread_stop_.load(), submit_queue_.empty());
       }
     });
     bool should_stop = false;
     // @unsafe
     { // operator bool on std::atomic<bool>
-      should_stop = submit_thread_stop_ && submit_queue_.empty();
+      should_stop = raft_worker_submit_loop_should_stop(
+          submit_thread_stop_.load(), submit_queue_.empty());
     }
     if (should_stop) {
       break;
     }
 
-    int limit = std::max(batch_limit_, 1);
+    int limit = raft_worker_batch_limit(batch_limit_);
     std::vector<RaftWorkerPendingLog> batch;
     batch.reserve(limit);
-    while (!submit_queue_.empty() && static_cast<int>(batch.size()) < limit) {
+    while (raft_worker_submit_loop_should_take(
+        submit_queue_.empty(), static_cast<int>(batch.size()), limit)) {
       batch.push_back(std::move(submit_queue_.front()));
       submit_queue_.pop_front();
     }
