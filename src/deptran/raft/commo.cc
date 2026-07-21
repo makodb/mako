@@ -61,7 +61,7 @@ namespace janus
     WAN_WAIT;
     for (auto &p : proxies)
     {
-      if (p.first != site_id)
+      if (!commo_proxy_is_target(p.first, site_id))
         continue;
       Log_debug("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
       auto follower_id = p.first;
@@ -75,7 +75,7 @@ namespace janus
       // returns without dangling response/event storage.
       fuattr.callback = [response, site_id](rusty::Arc<Future> fu)
       {
-        if (fu->get_error_code() != 0)
+        if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
           Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
@@ -87,7 +87,7 @@ namespace janus
         response->event->set(1);
       };
 
-      if (!cmd.has_value())
+      if (commo_should_send_empty_append_entries(cmd.has_value()))
       {
         // send a heartbeat AppendEntries
         Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld", site_id, prevLogIndex);
@@ -102,7 +102,7 @@ namespace janus
         req.trigger_election_now = false;
         auto f = proxy->async_EmptyAppendEntries(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -125,7 +125,7 @@ namespace janus
         req.leaderNextLogTerm = cmdLogTerm;
         auto f = proxy->async_AppendEntries(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -159,7 +159,7 @@ namespace janus
     WAN_WAIT;
     for (auto &p : proxies)
     {
-      if (p.first != site_id)
+      if (!commo_proxy_is_target(p.first, site_id))
         continue;
       auto follower_id = p.first;
       RaftProxy *proxy;
@@ -172,7 +172,7 @@ namespace janus
       // run after SendAppendEntries returns to the heartbeat loop.
       fuattr.callback = [res, cmd, site_id](rusty::Arc<Future> fu)
       {
-        if (fu->get_error_code() != 0)
+        if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
           Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
@@ -189,7 +189,7 @@ namespace janus
             res->ok, res->followerTerm, res->followerLastLogIndex);
       };
 
-      if (!cmd.has_value())
+      if (commo_should_send_empty_append_entries(cmd.has_value()))
       {
         // send a heartbeat AppendEntries
         Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld trigger_election=%d",
@@ -205,7 +205,7 @@ namespace janus
         req.trigger_election_now = trigger_election_now;
         auto f = proxy->async_EmptyAppendEntries(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -228,7 +228,7 @@ namespace janus
         req.leaderNextLogTerm = cmdLogTerm;
         auto f = proxy->async_AppendEntries(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -257,7 +257,7 @@ namespace janus
     for (auto &p : proxies)
     {
       auto site_id = p.first;
-      if (site_id == self_id)
+      if (commo_proxy_is_self(site_id, self_id))
       {
         continue;
       }
@@ -271,7 +271,7 @@ namespace janus
       // after BroadcastVote returns.
       fuattr.callback = [e, site_id](rusty::Arc<Future> fu)
       {
-        if (fu->get_error_code() != 0)
+        if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
           Log_debug("[VOTE_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
@@ -291,7 +291,7 @@ namespace janus
       req.cur_term = cur_term;
       auto f = proxy->async_Vote(req, fuattr);
       _RPC_COUNT();
-      if (f.is_ok())
+      if (commo_future_result_ok(f.is_ok()))
       {
         Future::safe_release(f.unwrap().raw_future());
       }
@@ -333,7 +333,7 @@ namespace janus
         std::make_shared<rusty::Function<void(bool, uint64_t)>>(std::move(callback));
 
     for (auto& p : proxies) {
-      if (p.first != site_id) {
+      if (!commo_proxy_is_target(p.first, site_id)) {
         continue;
       }
 
@@ -347,11 +347,11 @@ namespace janus
       FutureAttr fuattr;
 
       fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu) {
-        if (fu->get_error_code() != 0) {
+        if (commo_future_failed(fu->get_error_code())) {
           Log_debug("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - network error (code=%d)",
                     fu->get_error_code());
 
-          if (*callback_ptr) {
+          if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
             (*callback_ptr)(false, 0);
           }
           return;
@@ -366,7 +366,7 @@ namespace janus
         Log_info("[TIMEOUT-NOW-RPC] TimeoutNow RPC completed: success=%d, follower_term=%lu",
                 (int)success, follower_term);
 
-        if (*callback_ptr) {
+        if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
           (*callback_ptr)(success, follower_term);
         }
       };
@@ -381,7 +381,7 @@ namespace janus
       auto f = proxy->async_TimeoutNow(req, fuattr);
       _RPC_COUNT();
 
-      if (f.is_ok()) {
+      if (commo_future_result_ok(f.is_ok())) {
         Future::safe_release(f.unwrap().raw_future());
       }
 
@@ -391,7 +391,7 @@ namespace janus
     Log_warn("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - site %d not found in proxies",
             site_id);
 
-    if (*callback_ptr) {
+    if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
       (*callback_ptr)(false, 0);
     }
   }
@@ -422,7 +422,7 @@ namespace janus
       RaftProxy *proxy = nullptr;
       for (auto &p : proxies)
       {
-        if (p.first == candidate_id)
+        if (commo_proxy_is_target(p.first, candidate_id))
         {
           // @unsafe
           {
@@ -440,7 +440,7 @@ namespace janus
       FutureAttr fuattr;
       fuattr.callback = [candidate_id, term, voter_id](rusty::Arc<Future> fu)
       {
-        if (fu->get_error_code() != 0)
+        if (commo_future_failed(fu->get_error_code()))
         {
           Log_debug("[SPEC-RAFT] VoteDurable RPC to %d failed with error %d",
                     candidate_id, fu->get_error_code());
@@ -459,7 +459,7 @@ namespace janus
       req.voter_id = voter_id;
       auto f = proxy->async_VoteDurable(req, fuattr);
       _RPC_COUNT();
-      if (f.is_ok())
+      if (commo_future_result_ok(f.is_ok()))
       {
         Future::safe_release(f.unwrap().raw_future());
       }
@@ -489,7 +489,7 @@ namespace janus
       RaftProxy *proxy = nullptr;
       for (auto &p : proxies)
       {
-        if (p.first == leader_id)
+        if (commo_proxy_is_target(p.first, leader_id))
         {
           // @unsafe
           {
@@ -510,7 +510,7 @@ namespace janus
       // RaftCommo lifetime.
       fuattr.callback = [leader_id, term, follower_id, lastLogIndex](rusty::Arc<Future> fu)
       {
-        if (fu->get_error_code() != 0)
+        if (commo_future_failed(fu->get_error_code()))
         {
           Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d failed with error %d",
                     leader_id, fu->get_error_code());
@@ -530,7 +530,7 @@ namespace janus
       req.lastLogIndex = lastLogIndex;
       auto f = proxy->async_AppendEntriesDurable(req, fuattr);
       _RPC_COUNT();
-      if (f.is_ok())
+      if (commo_future_result_ok(f.is_ok()))
       {
         Future::safe_release(f.unwrap().raw_future());
       }
@@ -571,7 +571,7 @@ namespace janus
         notify_restart_status_.clear();
         for (auto &p : proxies)
         {
-          if (p.first != self_id)
+          if (commo_should_track_notify_restart_peer(p.first, self_id))
           {
             notify_restart_status_[p.first] = NotifyRestartStatus::PENDING;
           }
@@ -581,7 +581,7 @@ namespace janus
       for (auto &p : proxies)
       {
         auto site_id = p.first;
-        if (site_id == self_id)
+        if (commo_proxy_is_self(site_id, self_id))
         {
           continue; // Don't notify self
         }
@@ -597,7 +597,7 @@ namespace janus
         // protected by notify_restart_mtx_, but lifetime is still manual.
         fuattr.callback = [this, site_id](rusty::Arc<Future> fu)
         {
-          if (fu->get_error_code() != 0)
+          if (commo_future_failed(fu->get_error_code()))
           {
             // Error/timeout - keep PENDING for retry
             Log_warn("[NOTIFY-RESTART] Failed to notify site %d - error code %d (will retry)",
@@ -631,7 +631,7 @@ namespace janus
         req.restartedSiteId = self_id;
         auto f = proxy->async_NotifyRestart(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -673,7 +673,7 @@ namespace janus
         RaftProxy *proxy = nullptr;
         for (auto &p : proxies)
         {
-          if (p.first == site_id)
+          if (commo_proxy_is_target(p.first, site_id))
           {
             proxy = (RaftProxy *)p.second;
             break;
@@ -691,7 +691,7 @@ namespace janus
         // they capture `this` and must finish before RaftCommo destruction.
         fuattr.callback = [this, site_id](rusty::Arc<Future> fu)
         {
-          if (fu->get_error_code() != 0)
+          if (commo_future_failed(fu->get_error_code()))
           {
             Log_warn("[NOTIFY-RESTART] Retry failed for site %d - error code %d (will retry again)",
                      site_id, fu->get_error_code());
@@ -721,7 +721,7 @@ namespace janus
         req.restartedSiteId = self_site_id_;
         auto f = proxy->async_NotifyRestart(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -793,7 +793,7 @@ namespace janus
       // Find the target proxy
       for (auto &p : proxies)
       {
-        if (p.first != site_id)
+        if (!commo_proxy_is_target(p.first, site_id))
         {
           continue;
         }
@@ -810,11 +810,11 @@ namespace janus
         // Captures only copyable values/shared ownership.
         fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu)
         {
-          if (fu->get_error_code() != 0)
+          if (commo_future_failed(fu->get_error_code()))
           {
             Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site %d - error code %d",
                       site_id, fu->get_error_code());
-            if (*callback_ptr)
+            if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
             {
               (*callback_ptr)(0);
             }
@@ -827,7 +827,7 @@ namespace janus
           Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site %d: term=%lu",
                    site_id, follower_term);
 
-          if (*callback_ptr)
+          if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
           {
             (*callback_ptr)(follower_term);
           }
@@ -844,7 +844,7 @@ namespace janus
         req.data = data;
         auto f = proxy->async_InstallSnapshot(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }
@@ -855,7 +855,7 @@ namespace janus
       // Target not found in proxy list
       Log_warn("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot - site %d not found in proxies",
                site_id);
-      if (*callback_ptr)
+      if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
       {
         (*callback_ptr)(0);
       }
@@ -893,7 +893,7 @@ namespace janus
 
       for (auto &p : proxies)
       {
-        if (p.first != site_id)
+        if (!commo_proxy_is_target(p.first, site_id))
           continue;
         auto follower_id = p.first;
         RaftProxy *proxy;
@@ -910,7 +910,7 @@ namespace janus
         // @unsafe - callback is invoked by the legacy RPC runtime after this function returns.
         fuattr.callback = [on_reply_ptr, cmd_keep, follower_id](rusty::Arc<Future> fu)
         {
-          if (fu->get_error_code() != 0)
+          if (commo_future_failed(fu->get_error_code()))
           {
             Log_debug("[APPEND_RPC_CB] Error from site %d code=%d",
                       follower_id, fu->get_error_code());
@@ -921,12 +921,12 @@ namespace janus
           fu->get_reply() >> r.follower_current_term;
           fu->get_reply() >> r.follower_last_log_index;
           fu->get_reply() >> r.follower_ack_type;
-          if (*on_reply_ptr) {
+          if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr))) {
             (*on_reply_ptr)(follower_id, r);
           }
         };
 
-        if (!cmd.has_value())
+        if (commo_should_send_empty_append_entries(cmd.has_value()))
         {
           RaftProxy::RpcEmptyAppendEntriesRequest req{};
           req.slot = slot_id;
@@ -939,7 +939,7 @@ namespace janus
           req.trigger_election_now = trigger_election_now;
           auto f = proxy->async_EmptyAppendEntries(req, fuattr);
           _RPC_COUNT();
-          if (f.is_ok())
+          if (commo_future_result_ok(f.is_ok()))
           {
             Future::safe_release(f.unwrap().raw_future());
           }
@@ -959,7 +959,7 @@ namespace janus
           req.leaderNextLogTerm = cmdLogTerm;
           auto f = proxy->async_AppendEntries(req, fuattr);
           _RPC_COUNT();
-          if (f.is_ok())
+          if (commo_future_result_ok(f.is_ok()))
           {
             Future::safe_release(f.unwrap().raw_future());
           }
@@ -989,7 +989,7 @@ namespace janus
       for (auto &p : proxies)
       {
         auto site_id = p.first;
-        if (site_id == self_id)
+        if (commo_proxy_is_self(site_id, self_id))
           continue;
         RaftProxy *proxy;
         // @unsafe - legacy proxy table stores untyped proxy pointers;
@@ -1002,7 +1002,7 @@ namespace janus
         // Captures only site_id and shared ownership of the reply handler.
         fuattr.callback = [on_reply_ptr, site_id](rusty::Arc<Future> fu)
         {
-          if (fu->get_error_code() != 0)
+          if (commo_future_failed(fu->get_error_code()))
           {
             Log_debug("[VOTE_RPC_CB] Error from site %d code=%d",
                       site_id, fu->get_error_code());
@@ -1015,7 +1015,7 @@ namespace janus
           fu->get_reply() >> vote;
           r.max_ballot = term;
           r.vote_granted = vote;
-          if (*on_reply_ptr)
+          if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr)))
           {
             (*on_reply_ptr)(site_id, r);
           }
@@ -1027,7 +1027,7 @@ namespace janus
         req.cur_term = cur_term;
         auto f = proxy->async_Vote(req, fuattr);
         _RPC_COUNT();
-        if (f.is_ok())
+        if (commo_future_result_ok(f.is_ok()))
         {
           Future::safe_release(f.unwrap().raw_future());
         }

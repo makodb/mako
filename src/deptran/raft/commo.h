@@ -8,6 +8,7 @@
 #include <mutex>
 #include <rusty/function.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/slice.hpp>
 
 // @external: {
 //   Log_info: [safe, (...) -> void],
@@ -206,11 +207,47 @@ pub fn commo_append_entries_done_from_reply(ok: u64,
                                             last_log_index: u64) -> bool {
     !commo_append_entries_reply_lost(ok, term, last_log_index)
 }
+
+pub fn commo_proxy_is_target(proxy_site: u16, target_site: u16) -> bool {
+    proxy_site == target_site
+}
+
+pub fn commo_proxy_is_self(proxy_site: u16, self_site: u16) -> bool {
+    proxy_site == self_site
+}
+
+pub fn commo_future_failed(error_code: i32) -> bool {
+    error_code != 0
+}
+
+pub fn commo_future_result_ok(is_ok: bool) -> bool {
+    is_ok
+}
+
+pub fn commo_should_send_empty_append_entries(has_cmd: bool) -> bool {
+    !has_cmd
+}
+
+pub fn commo_callback_is_set(has_callback: bool) -> bool {
+    has_callback
+}
+
+pub fn commo_should_track_notify_restart_peer(peer_site: u16,
+                                              self_site: u16) -> bool {
+    peer_site != self_site
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=99dfd0b1a3cd17a6af5e8a87efebc27952bf26da06424da6c76ba5ebb557ccf0*/
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=602922be5cf2592200c2c6ca6ec8e2abaf2ccc3ad5364b6913623dacaf82937b*/
 inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
 inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
 inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
+inline bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site);
+inline bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site);
+inline bool commo_future_failed(int32_t error_code);
+inline bool commo_future_result_ok(bool is_ok);
+inline bool commo_should_send_empty_append_entries(bool has_cmd);
+inline bool commo_callback_is_set(bool has_callback);
+inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site);
 
 inline bool commo_append_entries_empty_from_cmd(bool has_cmd) {
     return !has_cmd;
@@ -222,6 +259,34 @@ inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t
 
 inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index) {
     return !commo_append_entries_reply_lost(ok, term, last_log_index);
+}
+
+inline bool commo_proxy_is_target(uint16_t proxy_site, uint16_t target_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(target_site);
+}
+
+inline bool commo_proxy_is_self(uint16_t proxy_site, uint16_t self_site) {
+    return rusty::detail::deref_if_pointer_like(proxy_site) == rusty::detail::deref_if_pointer_like(self_site);
+}
+
+inline bool commo_future_failed(int32_t error_code) {
+    return rusty::detail::deref_if_pointer_like(error_code) != static_cast<int32_t>(0);
+}
+
+inline bool commo_future_result_ok(bool is_ok) {
+    return std::move(is_ok);
+}
+
+inline bool commo_should_send_empty_append_entries(bool has_cmd) {
+    return !has_cmd;
+}
+
+inline bool commo_callback_is_set(bool has_callback) {
+    return std::move(has_callback);
+}
+
+inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site) {
+    return rusty::detail::deref_if_pointer_like(peer_site) != rusty::detail::deref_if_pointer_like(self_site);
 }
 /*RUSTYCPP:GEN-END id=commo.append_entries_result_helpers*/
 
