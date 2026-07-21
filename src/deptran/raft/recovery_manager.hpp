@@ -21,6 +21,8 @@
 #include <utility>
 
 #include <rusty/cell.hpp>
+#include <rusty/rusty.hpp>
+#include <rusty/slice.hpp>
 
 #include "log_storage.hpp"
 #include "rocksdb_log_storage.hpp"
@@ -243,6 +245,12 @@ pub fn recovery_result_mark_fresh_success(result: &mut RecoveryResult) {
     result.recovered_entries = 0;
 }
 
+pub fn recovery_result_begin(mode: RecoveryMode) -> RecoveryResult {
+    let mut result = RecoveryResult::defaults();
+    result.mode = mode;
+    result
+}
+
 pub fn recovery_result_mark_success(result: &mut RecoveryResult,
                                     recovered_entries: u64,
                                     recovery_time_ms: u64) {
@@ -261,13 +269,28 @@ pub fn recovery_storage_open_failed(has_storage: bool,
     !has_storage || !storage_is_open
 }
 
+pub fn recovery_fresh_start_should_attach_storage(mode: RecoveryMode,
+                                                  has_storage: bool) -> bool {
+    (mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH) && has_storage
+}
+
+pub fn recovery_normal_storage_missing(mode: RecoveryMode,
+                                       has_storage: bool) -> bool {
+    mode == RecoveryMode::NORMAL_RECOVERY && !has_storage
+}
+
+pub fn recovery_replay_failed(recover_ok: bool) -> bool {
+    !recover_ok
+}
+
 pub fn recovery_result_assign_recovery_time(result: &mut RecoveryResult,
                                             recovery_time_ms: u64) {
     result.recovery_time_ms = recovery_time_ms;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=2dc9559327bd79a04c16b1d8c7ae0e718a8326e978257f96873a8bfa7580f323*/
+/*RUSTYCPP:GEN-BEGIN id=recovery_manager.small_helpers version=1 rust_sha256=1505488c466c02fb636e67d285883f401311492497a958303ce3f53aab8c5cc1*/
 inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open);
+inline bool recovery_replay_failed(bool recover_ok);
 
 inline bool recovery_mode_is_fresh_start(RecoveryMode mode) {
     return mode == RecoveryMode::FRESH_START || mode == RecoveryMode::FORCED_FRESH;
@@ -282,6 +305,12 @@ inline void recovery_result_mark_fresh_success(RecoveryResult& result) {
     result.recovered_entries = 0;
 }
 
+inline RecoveryResult recovery_result_begin(RecoveryMode mode) {
+    auto result = RecoveryResult::defaults();
+    result.mode = std::move(mode);
+    return std::move(result);
+}
+
 inline void recovery_result_mark_success(RecoveryResult& result, uint64_t recovered_entries, uint64_t recovery_time_ms) {
     result.success = true;
     result.recovered_entries = std::move(recovered_entries);
@@ -294,6 +323,18 @@ inline bool recovery_should_clear_forced_fresh(RecoveryMode mode, bool clear_on_
 
 inline bool recovery_storage_open_failed(bool has_storage, bool storage_is_open) {
     return !has_storage || !storage_is_open;
+}
+
+inline bool recovery_fresh_start_should_attach_storage(RecoveryMode mode, bool has_storage) {
+    return (((rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FRESH_START)) || (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::FORCED_FRESH)))) && rusty::detail::deref_if_pointer_like(has_storage);
+}
+
+inline bool recovery_normal_storage_missing(RecoveryMode mode, bool has_storage) {
+    return (rusty::detail::deref_if_pointer_like(mode) == rusty::clone(RecoveryMode::NORMAL_RECOVERY)) && !has_storage;
+}
+
+inline bool recovery_replay_failed(bool recover_ok) {
+    return !recover_ok;
 }
 
 inline void recovery_result_assign_recovery_time(RecoveryResult& result, uint64_t recovery_time_ms) {
@@ -414,15 +455,14 @@ class RecoveryManager {
    */
   template <typename SetStorageFn, typename RecoverFn, typename GetStatsFn>
   RecoveryResult recover(SetStorageFn set_storage, RecoverFn recover, GetStatsFn get_stats) {
-    RecoveryResult result = RecoveryResult::defaults();
-    result.mode = detected_mode_.get();
+    RecoveryResult result = recovery_result_begin(detected_mode_.get());
 
     auto start_time = std::chrono::steady_clock::now();
 
     // Fresh start: nothing to recover
     if (recovery_mode_is_fresh_start(result.mode)) {
       // Set storage for future persistence
-      if (storage_) {
+      if (recovery_fresh_start_should_attach_storage(result.mode, storage_ != nullptr)) {
         set_storage(storage_);
       }
       recovery_result_mark_fresh_success(result);
@@ -430,7 +470,7 @@ class RecoveryManager {
     }
 
     // Normal recovery
-    if (!storage_) {
+    if (recovery_normal_storage_missing(result.mode, storage_ != nullptr)) {
       return RecoveryResult::failure("Storage not initialized");
     }
 
@@ -438,7 +478,7 @@ class RecoveryManager {
     set_storage(storage_);
 
     // Recover state
-    if (!recover()) {
+    if (recovery_replay_failed(recover())) {
       return RecoveryResult::failure("RecoverFromStorage failed");
     }
 
