@@ -525,6 +525,149 @@ inline void RaftServerTuningCore::set_log_retention_window(uint64_t value) {
 }
 /*RUSTYCPP:GEN-END id=server.tuning_core*/
 
+#if RUSTYCPP_RUST
+pub struct RaftServerLeadershipCore {
+    preferred_leader_site_id_: rusty::Cell<u16>,
+    leader_last_commit_index_: rusty::Cell<u64>,
+    transferring_leadership_: rusty::Cell<bool>,
+    leadership_transfer_start_time_: rusty::Cell<u64>,
+    startup_timestamp_: rusty::Cell<u64>,
+}
+
+impl RaftServerLeadershipCore {
+    // @safe
+    fn new(invalid_site_id: u16) -> RaftServerLeadershipCore {
+        RaftServerLeadershipCore {
+            preferred_leader_site_id_: rusty::Cell::<u16>::new_(invalid_site_id),
+            leader_last_commit_index_: rusty::Cell::<u64>::new_(0),
+            transferring_leadership_: rusty::Cell::<bool>::new_(false),
+            leadership_transfer_start_time_: rusty::Cell::<u64>::new_(0),
+            startup_timestamp_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn preferred_leader_site_id(&self) -> u16 {
+        self.preferred_leader_site_id_.get()
+    }
+
+    // @safe
+    fn set_preferred_leader_site_id(&mut self, site_id: u16) {
+        self.preferred_leader_site_id_.set(site_id)
+    }
+
+    // @safe
+    fn leader_last_commit_index(&self) -> u64 {
+        self.leader_last_commit_index_.get()
+    }
+
+    // @safe
+    fn set_leader_last_commit_index(&mut self, index: u64) {
+        self.leader_last_commit_index_.set(index)
+    }
+
+    // @safe
+    fn is_transferring_leadership(&self) -> bool {
+        self.transferring_leadership_.get()
+    }
+
+    // @safe
+    fn clear_transfer(&mut self) {
+        self.transferring_leadership_.set(false)
+    }
+
+    // @safe
+    fn start_transfer(&mut self, timestamp: u64) {
+        self.transferring_leadership_.set(true);
+        self.leadership_transfer_start_time_.set(timestamp)
+    }
+
+    // @safe
+    fn leadership_transfer_start_time(&self) -> u64 {
+        self.leadership_transfer_start_time_.get()
+    }
+
+    // @safe
+    fn startup_timestamp(&self) -> u64 {
+        self.startup_timestamp_.get()
+    }
+
+    // @safe
+    fn set_startup_timestamp(&mut self, timestamp: u64) {
+        self.startup_timestamp_.set(timestamp)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.leadership_core version=1 rust_sha256=70a75dedd306f9ce05ebc075ed897bbcd407530b1536005726fed302f766b581*/
+struct RaftServerLeadershipCore;
+
+struct RaftServerLeadershipCore {
+    rusty::Cell<uint16_t> preferred_leader_site_id_;
+    rusty::Cell<uint64_t> leader_last_commit_index_;
+    rusty::Cell<bool> transferring_leadership_;
+    rusty::Cell<uint64_t> leadership_transfer_start_time_;
+    rusty::Cell<uint64_t> startup_timestamp_;
+
+    static RaftServerLeadershipCore new_(uint16_t invalid_site_id);
+    uint16_t preferred_leader_site_id() const;
+    void set_preferred_leader_site_id(uint16_t site_id);
+    uint64_t leader_last_commit_index() const;
+    void set_leader_last_commit_index(uint64_t index);
+    bool is_transferring_leadership() const;
+    void clear_transfer();
+    void start_transfer(uint64_t timestamp);
+    uint64_t leadership_transfer_start_time() const;
+    uint64_t startup_timestamp() const;
+    void set_startup_timestamp(uint64_t timestamp);
+};
+
+
+inline RaftServerLeadershipCore RaftServerLeadershipCore::new_(uint16_t invalid_site_id) {
+    return RaftServerLeadershipCore{.preferred_leader_site_id_ = rusty::Cell<uint16_t>::new_(std::move(invalid_site_id)), .leader_last_commit_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .transferring_leadership_ = rusty::Cell<bool>::new_(false), .leadership_transfer_start_time_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .startup_timestamp_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline uint16_t RaftServerLeadershipCore::preferred_leader_site_id() const {
+    return this->preferred_leader_site_id_.get();
+}
+
+inline void RaftServerLeadershipCore::set_preferred_leader_site_id(uint16_t site_id) {
+    this->preferred_leader_site_id_.set(std::move(site_id));
+}
+
+inline uint64_t RaftServerLeadershipCore::leader_last_commit_index() const {
+    return this->leader_last_commit_index_.get();
+}
+
+inline void RaftServerLeadershipCore::set_leader_last_commit_index(uint64_t index) {
+    this->leader_last_commit_index_.set(std::move(index));
+}
+
+inline bool RaftServerLeadershipCore::is_transferring_leadership() const {
+    return this->transferring_leadership_.get();
+}
+
+inline void RaftServerLeadershipCore::clear_transfer() {
+    this->transferring_leadership_.set(false);
+}
+
+inline void RaftServerLeadershipCore::start_transfer(uint64_t timestamp) {
+    this->transferring_leadership_.set(true);
+    this->leadership_transfer_start_time_.set(std::move(timestamp));
+}
+
+inline uint64_t RaftServerLeadershipCore::leadership_transfer_start_time() const {
+    return this->leadership_transfer_start_time_.get();
+}
+
+inline uint64_t RaftServerLeadershipCore::startup_timestamp() const {
+    return this->startup_timestamp_.get();
+}
+
+inline void RaftServerLeadershipCore::set_startup_timestamp(uint64_t timestamp) {
+    this->startup_timestamp_.set(std::move(timestamp));
+}
+/*RUSTYCPP:GEN-END id=server.leadership_core*/
+
 // @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
 // commit, snapshot, and leadership predicates; raw frame/commo pointers,
 // threading/atomics, storage, callbacks, and consensus orchestration remain
@@ -642,16 +785,12 @@ class RaftServer : public TxLogServer {
   //    - Preferred replica starts election and becomes leader
   // 4. All operations maintain Raft safety guarantees (no data loss)
 
-  siteid_t preferred_leader_site_id_ = INVALID_SITEID;     // Site ID of preferred leader
-  uint64_t leader_last_commit_index_ = 0;                   // Leader's commit index (from heartbeats)
-  bool transferring_leadership_ = false;                    // True when transfer in progress
-  uint64_t leadership_transfer_start_time_ = 0;             // When transfer started (for timeout)
+  RaftServerLeadershipCore leadership_core_;
   // @unsafe - leadership monitor thread coordination; hard-deferred. The
   // monitor thread captures `this` and is coordinated manually during
   // leadership transfer and shutdown.
   std::atomic<bool> leadership_monitor_stop_{false};       // Signal to stop monitoring thread
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
-  uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
   // ============================================================================
   // SPECULATIVE REPLICATION STATE
@@ -736,8 +875,8 @@ class RaftServer : public TxLogServer {
   bool AmIPreferredLeader() const {
     // @unsafe
     {
-      return preferred_leader_site_id_ != INVALID_SITEID &&
-             site_id_ == preferred_leader_site_id_;
+      siteid_t preferred = leadership_core_.preferred_leader_site_id();
+      return preferred != INVALID_SITEID && site_id_ == preferred;
     }
   }
 
@@ -745,7 +884,7 @@ class RaftServer : public TxLogServer {
   bool HaveCaughtUp() const {
     // We've caught up if our commitIndex >= leader's last known commitIndex
     // Note: leader_last_commit_index_ is updated from AppendEntries heartbeats
-    return commitIndex >= leader_last_commit_index_;
+    return commitIndex >= leadership_core_.leader_last_commit_index();
   }
 
   // ============================================================================
@@ -1545,8 +1684,8 @@ class RaftServer : public TxLogServer {
   void SetPreferredLeader(siteid_t site_id) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-    siteid_t old_preferred = preferred_leader_site_id_;
-    preferred_leader_site_id_ = site_id;
+    siteid_t old_preferred = leadership_core_.preferred_leader_site_id();
+    leadership_core_.set_preferred_leader_site_id(site_id);
 
     if (old_preferred != site_id) {
       Log_info("[LEADERSHIP-TRANSFER] Site %d: Preferred leader set to %d",
@@ -1567,7 +1706,7 @@ class RaftServer : public TxLogServer {
    */
   // @safe
   siteid_t GetPreferredLeader() const {
-    return preferred_leader_site_id_;
+    return leadership_core_.preferred_leader_site_id();
   }
 
   /**

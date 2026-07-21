@@ -702,6 +702,7 @@ bool JetpackRecoveryEnabled() {
 // @unsafe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
   : tuning_core_(RaftServerTuningCore::new_(10000, HEARTBEAT_INTERVAL, 5000)),
+    leadership_core_(RaftServerLeadershipCore::new_(INVALID_SITEID)),
     timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
@@ -736,9 +737,10 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
 uint64_t RaftServer::GetElectionTimeout() {
   uint64_t current_time = Time::now();
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
-  bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
+  bool in_grace_period = (current_time - leadership_core_.startup_timestamp()) < grace_period_us;
 
-  if (!server_preferred_leader_is_configured(preferred_leader_site_id_)) {
+  siteid_t preferred_leader_site_id = leadership_core_.preferred_leader_site_id();
+  if (!server_preferred_leader_is_configured(preferred_leader_site_id)) {
     // Traditional Raft behavior when no preferred leader is configured.
     return GetNonPreferredSteadyElectionTimeoutUs();
   }
@@ -906,7 +908,7 @@ void RaftServer::StartApplyThread() {
 // @unsafe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
   // Record startup time for grace period logic
-  startup_timestamp_ = Time::now();
+  leadership_core_.set_startup_timestamp(Time::now());
 
   // ========== INITIALIZE PERSISTENCE (LogStorage + RecoveryManager) ==========
   const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
@@ -1199,7 +1201,7 @@ void RaftServer::setIsLeader(bool isLeader) {
     // LEADERSHIP TRANSFER: Clear transfer flags when becoming leader
     // ============================================================================
     // If we just became leader, any previous transfer is now complete
-    transferring_leadership_ = false;
+    leadership_core_.clear_transfer();
 
     // Only update view if we have enough information (not during initialization)
     if (partition_id_ != 0xFFFFFFFF && site_id_ != -1 && frame_ != nullptr) {
@@ -2759,7 +2761,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         } else {
             // I'm a NON-PREFERRED replica - just log and do nothing
             Log_info("[PIGGYBACKED-TRANSFER] Site %d (non-preferred): Received transfer signal (preferred=%d)",
-                     site_id_, preferred_leader_site_id_);
+                     site_id_, leadership_core_.preferred_leader_site_id());
         }
     }
 
@@ -2860,7 +2862,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   // Edge Case 4: We're transferring leadership (stepping down)
   // ============================================================================
-  if (transferring_leadership_) {
+  if (leadership_core_.is_transferring_leadership()) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring TimeoutNow from leader %d - currently transferring leadership",
              site_id_, leaderSiteId);
     return;
@@ -3152,23 +3154,24 @@ bool RaftServer::ShouldTransferLeadership() {
   }
 
   // Must have a preferred leader configured
+  siteid_t preferred_leader_site_id = leadership_core_.preferred_leader_site_id();
   // @unsafe
   {
-  if (preferred_leader_site_id_ == INVALID_SITEID) {
+  if (preferred_leader_site_id == INVALID_SITEID) {
     return false;
   }
   }
 
   // Already transferring
-  if (transferring_leadership_) {
+  if (leadership_core_.is_transferring_leadership()) {
     return false;
   }
 
   // Check if preferred replica is in our peer list
-  auto it = match_index_.find(preferred_leader_site_id_);
+  auto it = match_index_.find(preferred_leader_site_id);
   if (it == match_index_.end()) {
     Log_debug("[LEADERSHIP-TRANSFER] Site %d: Preferred replica %d not in peer list",
-              site_id_, preferred_leader_site_id_);
+              site_id_, preferred_leader_site_id);
     return false;
   }
 
@@ -3178,12 +3181,12 @@ bool RaftServer::ShouldTransferLeadership() {
 
   if (!is_caught_up) {
     Log_debug("[LEADERSHIP-TRANSFER] Site %d: Preferred replica %d not caught up (match=%lu, commit=%lu)",
-              site_id_, preferred_leader_site_id_, preferred_match_index, commitIndex);
+              site_id_, preferred_leader_site_id, preferred_match_index, commitIndex);
     return false;
   }
 
   Log_info("[LEADERSHIP-TRANSFER] Site %d: Preferred replica %d is caught up! Ready to transfer",
-           site_id_, preferred_leader_site_id_);
+           site_id_, preferred_leader_site_id);
   return true;
 }
 
@@ -3206,13 +3209,12 @@ void RaftServer::InitiateLeadershipTransfer() {
   {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-    target_site_id = preferred_leader_site_id_;
+    target_site_id = leadership_core_.preferred_leader_site_id();
     par_id = partition_id_;
     current_term_snapshot = currentTerm;
 
     // Mark transfer as in progress - this will suppress elections on non-preferred replicas
-    transferring_leadership_ = true;
-    leadership_transfer_start_time_ = Time::now();
+    leadership_core_.start_transfer(Time::now());
 
     Log_info("[LEADERSHIP-TRANSFER] Site %d (partition %d): Starting transfer to site %d",
              site_id_, partition_id_, target_site_id);
