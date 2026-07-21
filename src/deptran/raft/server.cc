@@ -2489,12 +2489,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  bool trigger_election_now) {
   std::unique_lock<std::recursive_mutex> lock(mtx_);
 
-  bool term_ok = (leaderCurrentTerm >= this->currentTerm);
-  const bool compacted_prefix_miss =
-      (leaderPrevLogIndex != 0 &&
-       leaderPrevLogIndex < min_active_slot_ &&
-       leaderPrevLogIndex != snapidx_);
-  bool index_ok = (leaderPrevLogIndex <= this->lastLogIndex) && !compacted_prefix_miss;
+  bool term_ok = server_append_term_is_acceptable(
+      leaderCurrentTerm, this->currentTerm);
+  const bool compacted_prefix_miss = server_append_prefix_is_compacted_miss(
+      leaderPrevLogIndex, min_active_slot_, snapidx_);
+  bool index_ok = server_append_index_is_acceptable(
+      leaderPrevLogIndex, this->lastLogIndex, compacted_prefix_miss);
   uint64_t local_prev_term = 0;
   if (leaderPrevLogIndex == 0) {
       local_prev_term = 0;
@@ -2505,7 +2505,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       auto prev_instance = GetRaftInstance(leaderPrevLogIndex);
       local_prev_term = prev_instance ? prev_instance->term : 0;
   }
-  bool prev_term_ok = (leaderPrevLogIndex == 0 || local_prev_term == leaderPrevLogTerm);
+  bool prev_term_ok = server_append_prev_term_is_acceptable(
+      leaderPrevLogIndex, local_prev_term, leaderPrevLogTerm);
 
   // Only log rejections or when cmd is present (actual log entries)
   if (!term_ok || !index_ok || !prev_term_ok || cmd.has_value()) {

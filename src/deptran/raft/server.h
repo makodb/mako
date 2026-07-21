@@ -170,8 +170,30 @@ pub fn server_candidate_log_is_at_least(candidate_term: u64,
     candidate_term > current_term ||
         (candidate_term == current_term && candidate_index >= current_index)
 }
+
+pub fn server_append_term_is_acceptable(leader_term: u64, follower_term: u64) -> bool {
+    leader_term >= follower_term
+}
+
+pub fn server_append_prefix_is_compacted_miss(prev_index: u64,
+                                              min_active_slot: u64,
+                                              snapshot_index: u64) -> bool {
+    prev_index != 0 && prev_index < min_active_slot && prev_index != snapshot_index
+}
+
+pub fn server_append_index_is_acceptable(prev_index: u64,
+                                         last_log_index: u64,
+                                         compacted_prefix_miss: bool) -> bool {
+    prev_index <= last_log_index && !compacted_prefix_miss
+}
+
+pub fn server_append_prev_term_is_acceptable(prev_index: u64,
+                                             local_prev_term: u64,
+                                             leader_prev_term: u64) -> bool {
+    prev_index == 0 || local_prev_term == leader_prev_term
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=34155f0fa2a5162926debe84e9f2ee015c4ae22ee9140bacd7ffc28ebb926e98*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=cdb1d243ba77fcff429b58418cc801a6cdba4bfdd80ec1d722164c6d85e2df65*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
@@ -179,6 +201,10 @@ inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_
 inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
 inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
 inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index);
+inline bool server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term);
+inline bool server_append_prefix_is_compacted_miss(uint64_t prev_index, uint64_t min_active_slot, uint64_t snapshot_index);
+inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss);
+inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term);
 
 inline bool server_step_down_reason_is_unsecured_failure(StepDownReason reason) {
     return reason == StepDownReason::UnsecuredFailure;
@@ -222,6 +248,22 @@ inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_
 
 inline bool server_candidate_log_is_at_least(uint64_t candidate_term, uint64_t current_term, uint64_t candidate_index, uint64_t current_index) {
     return (rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(current_term)) || (((rusty::detail::deref_if_pointer_like(candidate_term) == rusty::detail::deref_if_pointer_like(current_term)) && (rusty::detail::deref_if_pointer_like(candidate_index) >= rusty::detail::deref_if_pointer_like(current_index))));
+}
+
+inline bool server_append_term_is_acceptable(uint64_t leader_term, uint64_t follower_term) {
+    return rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term);
+}
+
+inline bool server_append_prefix_is_compacted_miss(uint64_t prev_index, uint64_t min_active_slot, uint64_t snapshot_index) {
+    return ((rusty::detail::deref_if_pointer_like(prev_index) != static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(prev_index) < rusty::detail::deref_if_pointer_like(min_active_slot))) && (rusty::detail::deref_if_pointer_like(prev_index) != rusty::detail::deref_if_pointer_like(snapshot_index));
+}
+
+inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss) {
+    return (rusty::detail::deref_if_pointer_like(prev_index) <= rusty::detail::deref_if_pointer_like(last_log_index)) && !compacted_prefix_miss;
+}
+
+inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term) {
+    return (rusty::detail::deref_if_pointer_like(prev_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_term));
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 
