@@ -394,7 +394,6 @@ pub struct FileSnapshotWriterCore {
 impl FileSnapshotWriterCore {
     // @unsafe - Records final/temp paths. Finalize owns file I/O; cleanup is
     // driven by the C++ bridge destructor.
-    #[cpp_ctor]
     fn new(final_path: std::string,
            temp_path: std::string,
            last_index: u64,
@@ -454,7 +453,7 @@ impl FileSnapshotWriterCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.writer_core version=1 rust_sha256=1eb1cf455fc0b378947811175d55dc01352ac7436678cf05cdddf62252278c01*/
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.writer_core version=1 rust_sha256=e78ca986049aecac50445c4d82b1baf3b19983d7b82dcb960d671370e487a32a*/
 struct FileSnapshotWriterCore;
 
 struct FileSnapshotWriterCore {
@@ -467,7 +466,7 @@ struct FileSnapshotWriterCore {
     bool aborted_;
     std::string buffer_;
 
-    FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term);
+    static FileSnapshotWriterCore new_(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term);
     bool Cleanup() const;
     bool Write(const c_char* data, size_t size);
     bool Finalize();
@@ -476,16 +475,9 @@ struct FileSnapshotWriterCore {
 };
 
 
-inline FileSnapshotWriterCore::FileSnapshotWriterCore(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term)
-    : final_path_(final_path)
-    , temp_path_(temp_path)
-    , last_index_(last_index)
-    , last_term_(last_term)
-    , offset_(static_cast<size_t>(0))
-    , finalized_(false)
-    , aborted_(false)
-    , buffer_(std::string())
-{}
+inline FileSnapshotWriterCore FileSnapshotWriterCore::new_(std::string final_path, std::string temp_path, uint64_t last_index, uint64_t last_term) {
+    return FileSnapshotWriterCore{.final_path_ = std::move(final_path), .temp_path_ = std::move(temp_path), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .offset_ = static_cast<size_t>(0), .finalized_ = false, .aborted_ = false, .buffer_ = std::string()};
+}
 
 inline bool FileSnapshotWriterCore::Cleanup() const {
     return file_snapshot_writer_cleanup_cpp(&this->temp_path_, this->finalized_, this->aborted_);
@@ -519,7 +511,8 @@ class FileSnapshotWriter : public SnapshotWriter {
                      const std::string& temp_path,
                      slotid_t last_index,
                      ballot_t last_term)
-      : core_(final_path, temp_path, last_index, last_term) {
+      : core_(FileSnapshotWriterCore::new_(final_path, temp_path, last_index,
+                                           last_term)) {
     Log_info("[SNAPSHOT-WRITER] Creating snapshot: index=%lu term=%lu path=%s",
              last_index, last_term, final_path.c_str());
   }
@@ -569,7 +562,6 @@ pub struct FileSnapshotReaderCore {
 
 impl FileSnapshotReaderCore {
     // @unsafe - Stores path, then Open() owns file I/O through a C++ helper.
-    #[cpp_ctor]
     fn new(path: std::string) -> FileSnapshotReaderCore {
         FileSnapshotReaderCore {
             path_: path,
@@ -628,7 +620,7 @@ impl FileSnapshotReaderCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.reader_core version=1 rust_sha256=309ea541afaae6d7bfc437e89938e041575f6792aa4bf446e0bd315306f5bea0*/
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.reader_core version=1 rust_sha256=402be0c36bb54c1c11e3908493c808ffa628fab7643b29f00215eed75413ac13*/
 struct FileSnapshotReaderCore;
 
 struct FileSnapshotReaderCore {
@@ -639,7 +631,7 @@ struct FileSnapshotReaderCore {
     size_t read_offset_;
     bool valid_;
 
-    FileSnapshotReaderCore(std::string path);
+    static FileSnapshotReaderCore new_(std::string path);
     bool Open();
     bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read);
     bool IsComplete() const;
@@ -649,14 +641,9 @@ struct FileSnapshotReaderCore {
 };
 
 
-inline FileSnapshotReaderCore::FileSnapshotReaderCore(std::string path)
-    : path_(path)
-    , file_data_(std::string())
-    , data_(std::string())
-    , metadata_(SnapshotMetadata{})
-    , read_offset_(static_cast<size_t>(0))
-    , valid_(false)
-{}
+inline FileSnapshotReaderCore FileSnapshotReaderCore::new_(std::string path) {
+    return FileSnapshotReaderCore{.path_ = std::move(path), .file_data_ = std::string(), .data_ = std::string(), .metadata_ = SnapshotMetadata{}, .read_offset_ = static_cast<size_t>(0), .valid_ = false};
+}
 
 inline bool FileSnapshotReaderCore::Open() {
     // @unsafe
@@ -696,7 +683,8 @@ class FileSnapshotReader : public SnapshotReader {
  public:
   // @unsafe - Opens the snapshot path with a local fd, reads it fully, closes
   // the fd, then owns the decoded payload in core_.
-  explicit FileSnapshotReader(const std::string& path) : core_(path) {
+  explicit FileSnapshotReader(const std::string& path)
+      : core_(FileSnapshotReaderCore::new_(path)) {
     core_.Open();
   }
 
@@ -953,7 +941,6 @@ pub struct FileSnapshotManagerCore {
 
 impl FileSnapshotManagerCore {
     // @safe
-    #[cpp_ctor]
     fn new(config: SnapshotConfig) -> FileSnapshotManagerCore {
         FileSnapshotManagerCore {
             config_: config,
@@ -1036,13 +1023,13 @@ impl FileSnapshotManagerCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.manager_core version=1 rust_sha256=7350824f65e5c2394553147c241817ce7818dfaceaa5fd9202f3845e1085a39b*/
+/*RUSTYCPP:GEN-BEGIN id=file_snapshot_manager.manager_core version=1 rust_sha256=9ff9b3ac65deb432abe7938d8e6a1139a067b7c6d71f2ebd55d5db5012e085fa*/
 struct FileSnapshotManagerCore;
 
 struct FileSnapshotManagerCore {
     SnapshotConfig config_;
 
-    FileSnapshotManagerCore(SnapshotConfig config);
+    static FileSnapshotManagerCore new_(SnapshotConfig config);
     bool EnsureDirectory() const;
     std::unique_ptr<SnapshotWriter> BeginSnapshot(uint64_t last_index, int64_t last_term) const;
     bool TakeSnapshot(uint64_t last_index, int64_t last_term, const c_char* data, size_t size) const;
@@ -1057,9 +1044,9 @@ struct FileSnapshotManagerCore {
 };
 
 
-inline FileSnapshotManagerCore::FileSnapshotManagerCore(SnapshotConfig config)
-    : config_(config)
-{}
+inline FileSnapshotManagerCore FileSnapshotManagerCore::new_(SnapshotConfig config) {
+    return FileSnapshotManagerCore{.config_ = std::move(config)};
+}
 
 inline bool FileSnapshotManagerCore::EnsureDirectory() const {
     // @unsafe
@@ -1146,7 +1133,8 @@ inline const std::string& FileSnapshotManagerCore::GetStoragePath() const {
 class FileSnapshotManager : public SnapshotManager {
  public:
   // @unsafe - May create the snapshot directory; config_ owns the path string.
-  explicit FileSnapshotManager(const SnapshotConfig& config) : core_(config) {
+  explicit FileSnapshotManager(const SnapshotConfig& config)
+      : core_(FileSnapshotManagerCore::new_(config)) {
     core_.EnsureDirectory();
     Log_info("[SNAPSHOT-MGR] Initialized: path=%s max_snapshots=%zu",
              core_.GetStoragePath().c_str(), config.max_snapshots);

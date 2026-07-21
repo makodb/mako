@@ -180,7 +180,6 @@ pub struct MemorySnapshotWriterCore {
 impl MemorySnapshotWriterCore {
     // @unsafe - borrows MemorySnapshotManager internals. The writer must not
     // outlive the manager that created it.
-    #[cpp_ctor]
     fn new(dest_payload: *mut std::string,
            dest_meta: *mut SnapshotMetadata,
            has_snapshot: *mut bool,
@@ -239,7 +238,7 @@ impl MemorySnapshotWriterCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.writer_core version=1 rust_sha256=84ee4df3ddc722dee0fe6c4bb16f4fa4d875880775ff75e49edc0d861c938fe2*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.writer_core version=1 rust_sha256=db83f53ef4be3a944f9498a4e1b9b5cc7b5237c94d98fb487c6dc107a97cf86c*/
 struct MemorySnapshotWriterCore;
 
 struct MemorySnapshotWriterCore {
@@ -253,7 +252,7 @@ struct MemorySnapshotWriterCore {
     uint64_t last_term_;
     bool finalized_;
 
-    MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term);
+    static MemorySnapshotWriterCore new_(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term);
     bool Write(const c_char* data, size_t size);
     bool Finalize();
     bool Abort();
@@ -261,17 +260,9 @@ struct MemorySnapshotWriterCore {
 };
 
 
-inline MemorySnapshotWriterCore::MemorySnapshotWriterCore(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term)
-    : dest_payload_(dest_payload)
-    , dest_meta_(dest_meta)
-    , has_snapshot_(has_snapshot)
-    , mtx_(mtx)
-    , buffer_(std::string())
-    , offset_(static_cast<size_t>(0))
-    , last_index_(last_index)
-    , last_term_(last_term)
-    , finalized_(false)
-{}
+inline MemorySnapshotWriterCore MemorySnapshotWriterCore::new_(std::string* dest_payload, SnapshotMetadata* dest_meta, bool* has_snapshot, std::mutex* mtx, uint64_t last_index, uint64_t last_term) {
+    return MemorySnapshotWriterCore{.dest_payload_ = dest_payload, .dest_meta_ = dest_meta, .has_snapshot_ = has_snapshot, .mtx_ = mtx, .buffer_ = std::string(), .offset_ = static_cast<size_t>(0), .last_index_ = std::move(last_index), .last_term_ = std::move(last_term), .finalized_ = false};
+}
 
 inline bool MemorySnapshotWriterCore::Write(const c_char* data, size_t size) {
     // @unsafe
@@ -308,8 +299,8 @@ class MemorySnapshotWriter : public SnapshotWriter {
                        std::mutex* mtx,
                        slotid_t last_index,
                        ballot_t last_term)
-      : core_(dest_payload, dest_meta, has_snapshot, mtx, last_index,
-              last_term) {}
+      : core_(MemorySnapshotWriterCore::new_(
+          dest_payload, dest_meta, has_snapshot, mtx, last_index, last_term)) {}
 
   // @unsafe - raw pointer append to internal buffer
   bool Write(const char* data, size_t size) override {
@@ -345,7 +336,6 @@ pub struct MemorySnapshotReaderCore {
 
 impl MemorySnapshotReaderCore {
     // @safe
-    #[cpp_ctor]
     fn new(payload: std::string, meta: SnapshotMetadata) -> MemorySnapshotReaderCore {
         MemorySnapshotReaderCore {
             payload_: payload,
@@ -382,7 +372,7 @@ impl MemorySnapshotReaderCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.reader_core version=1 rust_sha256=4d59bec3000742efc712aaf7fc42ed96b6ace8929202344053e35af894b6b97e*/
+/*RUSTYCPP:GEN-BEGIN id=memory_snapshot_manager.reader_core version=1 rust_sha256=ab46269cc0c28ff36fa0746bf9dc798a86c10e33119c0b1fa8d90eab0afe07d8*/
 struct MemorySnapshotReaderCore;
 
 struct MemorySnapshotReaderCore {
@@ -390,7 +380,7 @@ struct MemorySnapshotReaderCore {
     SnapshotMetadata meta_;
     size_t offset_;
 
-    MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta);
+    static MemorySnapshotReaderCore new_(std::string payload, SnapshotMetadata meta);
     bool Read(c_char* buffer, size_t buffer_size, size_t* bytes_read);
     bool IsComplete() const;
     const SnapshotMetadata& GetMetadata() const;
@@ -398,11 +388,9 @@ struct MemorySnapshotReaderCore {
 };
 
 
-inline MemorySnapshotReaderCore::MemorySnapshotReaderCore(std::string payload, SnapshotMetadata meta)
-    : payload_(payload)
-    , meta_(meta)
-    , offset_(static_cast<size_t>(0))
-{}
+inline MemorySnapshotReaderCore MemorySnapshotReaderCore::new_(std::string payload, SnapshotMetadata meta) {
+    return MemorySnapshotReaderCore{.payload_ = std::move(payload), .meta_ = std::move(meta), .offset_ = static_cast<size_t>(0)};
+}
 
 inline bool MemorySnapshotReaderCore::Read(c_char* buffer, size_t buffer_size, size_t* bytes_read) {
     // @unsafe
@@ -431,7 +419,7 @@ class MemorySnapshotReader : public SnapshotReader {
  public:
   // @safe
   MemorySnapshotReader(std::string payload, SnapshotMetadata meta)
-      : core_(std::move(payload), std::move(meta)) {}
+      : core_(MemorySnapshotReaderCore::new_(std::move(payload), std::move(meta))) {}
 
   // @unsafe - raw buffer copy from internal string
   bool Read(char* buffer, size_t buffer_size, size_t* bytes_read) override {

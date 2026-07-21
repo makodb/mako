@@ -964,7 +964,6 @@ pub struct RocksDBLogStorageCore {
 
 impl RocksDBLogStorageCore {
     // @unsafe - Allocates RocksDB C++ state and opens the database.
-    #[cpp_ctor]
     fn new(db_path: std::string) -> RocksDBLogStorageCore {
         RocksDBLogStorageCore {
             state_: unsafe { rocksdb_log_storage_state_new_cpp(&db_path) },
@@ -1073,13 +1072,13 @@ impl RocksDBLogStorageCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.core version=1 rust_sha256=8928316677be9a8e1417bc3f8c3026fe5c994d882cd3c3a250968942b3bce086*/
+/*RUSTYCPP:GEN-BEGIN id=rocksdb_log_storage.core version=1 rust_sha256=3d3f2edaf2c9c57e518159737cdecaef3331a6b095ea5ded46f9907a9994c9ca*/
 struct RocksDBLogStorageCore;
 
 struct RocksDBLogStorageCore {
     RocksDBLogStorageState* state_;
 
-    RocksDBLogStorageCore(std::string db_path);
+    static RocksDBLogStorageCore new_(std::string db_path);
     void Destroy();
     bool open();
     rusty::Option<LogEntry> get(uint64_t slot_id) const;
@@ -1103,9 +1102,9 @@ struct RocksDBLogStorageCore {
 };
 
 
-inline RocksDBLogStorageCore::RocksDBLogStorageCore(std::string db_path)
-    : state_(rocksdb_log_storage_state_new_cpp(db_path))
-{}
+inline RocksDBLogStorageCore RocksDBLogStorageCore::new_(std::string db_path) {
+    return RocksDBLogStorageCore{.state_ = rocksdb_log_storage_state_new_cpp(db_path)};
+}
 
 inline void RocksDBLogStorageCore::Destroy() {
     // @unsafe
@@ -1249,7 +1248,7 @@ class RocksDBLogStorage : public LogStorage {
 public:
     // @unsafe - Allocates RocksDB option handles and opens db_path.
     explicit RocksDBLogStorage(const std::string& db_path)
-        : core_(db_path) {}
+        : core_(RocksDBLogStorageCore::new_(db_path)) {}
 
     // @unsafe - Destroys RocksDB state.
     ~RocksDBLogStorage() noexcept override {

@@ -328,7 +328,6 @@ pub struct InMemoryLogStorageCore {
 
 impl InMemoryLogStorageCore {
     // @safe
-    #[cpp_ctor]
     fn new() -> InMemoryLogStorageCore {
         InMemoryLogStorageCore {
             logs_: rusty::Mutex::<std::map<u64, LogEntry>>::default_(),
@@ -443,7 +442,7 @@ impl InMemoryLogStorageCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=memory_log_storage.core version=1 rust_sha256=e17985adebde14ff444144319378dc0a14ec2e8cad5b2e1cdcb297e991d7aa62*/
+/*RUSTYCPP:GEN-BEGIN id=memory_log_storage.core version=1 rust_sha256=d3349026e7bb2c2506f68de9438356f6ff42a3c668bb6406080eea3e53da09c5*/
 struct InMemoryLogStorageCore;
 
 struct InMemoryLogStorageCore {
@@ -451,7 +450,7 @@ struct InMemoryLogStorageCore {
     rusty::Mutex<std::map<std::string, std::string>> metadata_;
     rusty::Cell<bool> is_open_;
 
-    InMemoryLogStorageCore();
+    static InMemoryLogStorageCore new_();
     rusty::Option<LogEntry> get(uint64_t slot_id) const;
     bool put(const LogEntry& entry);
     bool remove(uint64_t slot_id);
@@ -474,11 +473,9 @@ struct InMemoryLogStorageCore {
 };
 
 
-inline InMemoryLogStorageCore::InMemoryLogStorageCore()
-    : logs_(rusty::Mutex<std::map<uint64_t, LogEntry>>::default_())
-    , metadata_(rusty::Mutex<std::map<std::string, std::string>>::default_())
-    , is_open_(rusty::Cell<bool>::new_(true))
-{}
+inline InMemoryLogStorageCore InMemoryLogStorageCore::new_() {
+    return InMemoryLogStorageCore{.logs_ = rusty::Mutex<std::map<uint64_t, LogEntry>>::default_(), .metadata_ = rusty::Mutex<std::map<std::string, std::string>>::default_(), .is_open_ = rusty::Cell<bool>::new_(true)};
+}
 
 inline rusty::Option<LogEntry> InMemoryLogStorageCore::get(uint64_t slot_id) const {
     return memory_log_storage_get_cpp(&this->logs_, this->is_open_.get(), std::move(slot_id));
@@ -563,7 +560,7 @@ private:
 
 public:
     // @safe - Default constructor
-    InMemoryLogStorage() {}
+    InMemoryLogStorage() : core_(InMemoryLogStorageCore::new_()) {}
 
     // @safe - Destructor
     ~InMemoryLogStorage() noexcept override {

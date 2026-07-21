@@ -191,7 +191,6 @@ pub struct RrrTransportAdapterCore {
 
 impl RrrTransportAdapterCore {
     // @unsafe - Stores a non-owning RaftCommo pointer.
-    #[cpp_ctor]
     fn new(commo: *mut RaftCommo, self_site: u16, par: u32)
         -> RrrTransportAdapterCore {
         RrrTransportAdapterCore {
@@ -272,7 +271,7 @@ impl RrrTransportAdapterCore {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=rrr_transport.1 version=1 rust_sha256=add4d426b21a3fa3638bdbbe1b84ba477fc1a562fcaaa9f272cca9a3d371881b*/
+/*RUSTYCPP:GEN-BEGIN id=rrr_transport.1 version=1 rust_sha256=c11260f640c4ccb4bd7f8470b94a49df92596da2b29176b98ebd94bf7c4c48e8*/
 struct RrrTransportAdapterCore;
 
 struct RrrTransportAdapterCore {
@@ -280,7 +279,7 @@ struct RrrTransportAdapterCore {
     uint16_t self_;
     uint32_t par_;
 
-    RrrTransportAdapterCore(RaftCommo* commo, uint16_t self_site, uint32_t par);
+    static RrrTransportAdapterCore new_(RaftCommo* commo, uint16_t self_site, uint32_t par);
     uint16_t self_site_id() const;
     void send_vote_durable(uint16_t candidate, VoteDurableReq req);
     void send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req);
@@ -293,66 +292,64 @@ struct RrrTransportAdapterCore {
 };
 
 
-inline RrrTransportAdapterCore::RrrTransportAdapterCore(RaftCommo* commo, uint16_t self_site, uint32_t par)
-    : commo_(commo)
-    , self_(self_site)
-    , par_(par)
-{}
+RrrTransportAdapterCore RrrTransportAdapterCore::new_(RaftCommo* commo, uint16_t self_site, uint32_t par) {
+    return RrrTransportAdapterCore{.commo_ = commo, .self_ = std::move(self_site), .par_ = std::move(par)};
+}
 
-inline uint16_t RrrTransportAdapterCore::self_site_id() const {
+uint16_t RrrTransportAdapterCore::self_site_id() const {
     return this->self_;
 }
 
-inline void RrrTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
+void RrrTransportAdapterCore::send_vote_durable(uint16_t candidate, VoteDurableReq req) {
     // @unsafe
     {
         rrr_transport_send_vote_durable_cpp(this->commo_, std::move(candidate), this->par_, std::move(req));
     }
 }
 
-inline void RrrTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
+void RrrTransportAdapterCore::send_append_entries_durable(uint16_t leader, AppendEntriesDurableReq req) {
     // @unsafe
     {
         rrr_transport_send_append_entries_durable_cpp(this->commo_, std::move(leader), this->par_, std::move(req));
     }
 }
 
-inline void RrrTransportAdapterCore::send_notify_restart(uint16_t self_site, uint32_t par) {
+void RrrTransportAdapterCore::send_notify_restart(uint16_t self_site, uint32_t par) {
     // @unsafe
     {
         rrr_transport_send_notify_restart_cpp(this->commo_, std::move(self_site), std::move(par));
     }
 }
 
-inline AppendEntriesReply RrrTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
+AppendEntriesReply RrrTransportAdapterCore::send_append_entries(uint16_t dst, AppendEntriesReq req) {
     // @unsafe
     {
         return rrr_transport_send_append_entries_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline EmptyAppendEntriesReply RrrTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
+EmptyAppendEntriesReply RrrTransportAdapterCore::send_empty_append_entries(uint16_t dst, EmptyAppendEntriesReq req) {
     // @unsafe
     {
         return rrr_transport_send_empty_append_entries_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline VoteReply RrrTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
+VoteReply RrrTransportAdapterCore::send_vote(uint16_t dst, VoteReq req) {
     // @unsafe
     {
         return rrr_transport_send_vote_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline TimeoutNowReply RrrTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
+TimeoutNowReply RrrTransportAdapterCore::send_timeout_now(uint16_t dst, TimeoutNowReq req) {
     // @unsafe
     {
         return rrr_transport_send_timeout_now_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
     }
 }
 
-inline InstallSnapshotReply RrrTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
+InstallSnapshotReply RrrTransportAdapterCore::send_install_snapshot(uint16_t dst, InstallSnapshotReq req) {
     // @unsafe
     {
         return rrr_transport_send_install_snapshot_cpp(this->commo_, std::move(dst), this->par_, std::move(req));
@@ -364,7 +361,7 @@ class RrrTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning raw pointer; caller must ensure commo outlives this }
   RrrTransportAdapter(RaftCommo* commo, siteid_t self, parid_t par)
-      : core_(commo, self, par) {}
+      : core_(RrrTransportAdapterCore::new_(commo, self, par)) {}
 
   // @safe - identity read
   siteid_t self_site_id() const override { return core_.self_site_id(); }
