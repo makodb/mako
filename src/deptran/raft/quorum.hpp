@@ -163,7 +163,7 @@ class RaftQuorum {
   const int n_needed_;
   // See class-level @unsafe note about std::shared_ptr.
   std::shared_ptr<::rrr::IntEvent> ready_;
-  rusty::sync::atomic::Atomic<int> n_received_{0};
+  rusty::sync::atomic::AtomicI32 n_received_{0};
   mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
 };
 
