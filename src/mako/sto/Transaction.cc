@@ -245,10 +245,23 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
                 it->owner()->cleanup(*it, committed);
         }
     } else {
-        // in participant, we never invoke try_commit,
-        // and no good way to set state_ = s_committing_locked; as try_commit do
-        // so, we skip it blindly for participant
-        if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
+        // A 2PC PARTICIPANT (mode 1) never runs try_commit and never sets
+        // state_ = s_committing_locked; its write locks are taken directly by
+        // shard_put -> shard_try_lock_last_writeset (BatchLock). The ONLY
+        // release for those locks is this unlock loop (the commit path uses
+        // the explicit shard_unlock()). The old guard also required
+        // nwriteset > 0, but the participant ABORT path reaches stop() via
+        // silent_abort() -> stop(false, nullptr, 0) with nwriteset == 0, so
+        // this branch was skipped and the aborted participant's locked rows
+        // were NEVER unlocked -- then shard_reset() orphaned them, leaving
+        // each row's version lock_bit set forever (a permanently stuck row;
+        // observed live as a migration scan wedged on one stock row for
+        // 24+ minutes). needs_unlock() already filters to exactly the items
+        // this txn locked, so unlocking a participant abort unconditionally
+        // is correct and mirrors the commit path. (Coordinator aborts, mode
+        // 0, still reach this via s_committing_locked; one-op kernels commit
+        // through try_commit and are unaffected.)
+        if ((TThread::mode() == 1) || state_ == s_committing_locked) {
             it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
             for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
                 it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);

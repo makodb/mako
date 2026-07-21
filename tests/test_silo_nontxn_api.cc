@@ -381,4 +381,127 @@ TEST_F(SiloNonTxnApi, ConcurrentNonTxnOpsAllSucceed) {
 // nothing left to abort at runtime. (Legacy ht_*/ndb/kvdb backends
 // carry explicit aborting stubs; see storage/mbta_wrapper.hh.)
 
+// ===========================================================================
+// 6. 2PC PARTICIPANT lock lifecycle — the abort path must release row locks
+// ===========================================================================
+// A cross-shard transaction stages its remote writes on the participant via
+// BatchLock, which LOCKS each touched row (shard_put -> transPut +
+// shard_try_lock_last_writeset). That lock is held until the coordinator's
+// decision: Install (commit) releases it via shard_unlock(true); Abort
+// (silent_abort -> stop(false, nullptr, 0)) MUST release it too. A
+// regression where the abort path skipped the unlock left the row's version
+// lock_bit set forever — every later reader/writer aborts on it, a permanent
+// stuck lock (observed live: one stock row locked for 24+ minutes, wedging a
+// migration scan). These tests drive the participant lock/unlock protocol
+// directly (no RPC, no transport) and assert the row's raw version lock_bit
+// (TransactionTid::lock_bit = 0x200) is clear after BOTH outcomes.
+
+namespace {
+// TransactionTid::lock_bit (sto/Interface.hh) — bit 9 of the version word.
+constexpr uint64_t kLockBit = 0x200;
+
+// Read a row's raw version word without a transaction (no OCC, no retry) so
+// a locked or leaked row is INSPECTED, not aborted on. Returns 0 if absent.
+uint64_t raw_version(mbta_type* t, const std::string& key) {
+    uint64_t found = 0;
+    bool got = false;
+    t->debugScanVersions(
+        mbta_type::Str(key), mbta_type::Str(),
+        [&](mbta_type::Str k, uint64_t v) -> bool {
+            if (std::string(k.data(), k.length()) == key) { found = v; got = true; return false; }
+            return false;  // first emitted row is the smallest key >= `key`
+        });
+    return got ? found : 0;
+}
+}  // namespace
+
+class SiloParticipant2PC : public SiloNonTxnApi {
+protected:
+    // Run `body` on a DEDICATED mode-1 thread. A real helper thread lives its
+    // whole life in mode 1 with an ambient participant txn; the mode-0 main
+    // thread never sees it. Running the participant sequence here (instead of
+    // flipping the main thread's mode) keeps the participant txn lifecycle off
+    // the main thread, so a leaked lock can't leave the main thread's txn
+    // dangling and the failure reports cleanly.
+    template <class Body>
+    static void on_participant_thread(Body body) {
+        std::thread t([&]() {
+            silo_thread_init();          // fresh Silo tid + threadinfo
+            TThread::set_mode(1);
+            Sto::start_transaction();    // idle participant invariant
+            body();
+        });
+        t.join();
+    }
+};
+
+// Positive control: the COMMIT path releases the participant lock. Proves the
+// harness drives a real lock (so the abort test below isn't vacuously green).
+TEST_F(SiloParticipant2PC, CommitReleasesLock) {
+    mbta_ordered_index* idx = make_table("part_commit");
+    const std::string key = "row";
+    const std::string v0 = mako::Encode("v0");
+    ASSERT_TRUE(idx->put(lcdf::Str(key), v0));                   // seed the row (mode 0)
+
+    bool locked_after_put = false, locked_after_commit = true;
+    on_participant_thread([&]() {
+        // shard_put stages a POINTER into `v1`; it must outlive shard_install.
+        const std::string v1 = mako::Encode("v1");
+        idx->shard_put(lcdf::Str(key), v1);                      // stage + LOCK
+        locked_after_put  = (raw_version(idx->mbta, key) & kLockBit) != 0;
+        ASSERT_EQ(Sto::shard_validate(), 0);
+        Sto::shard_install(1);
+        Sto::shard_unlock(true);                                 // commit -> unlock
+        locked_after_commit = (raw_version(idx->mbta, key) & kLockBit) != 0;
+    });
+    EXPECT_TRUE(locked_after_put)     << "shard_put must lock the row";
+    EXPECT_FALSE(locked_after_commit) << "commit must clear the lock";
+}
+
+// The regression: the ABORT path must also release the participant lock.
+// FAILS on the buggy stop() (guard `mode==1 && nwriteset>0` is false on the
+// abort path, so the unlock loop is skipped); PASSES once the abort path
+// unlocks its needs_unlock items like the commit path does.
+TEST_F(SiloParticipant2PC, AbortReleasesLock) {
+    mbta_ordered_index* idx = make_table("part_abort");
+    const std::string key = "row";
+    const std::string v0 = mako::Encode("v0");
+    ASSERT_TRUE(idx->put(lcdf::Str(key), v0));  // existing row => UPDATE (cleanup can't save it)
+
+    bool locked_before = false, locked_after_abort = true, reacquired = false;
+    on_participant_thread([&]() {
+        const std::string v1 = mako::Encode("v1");
+        idx->shard_put(lcdf::Str(key), v1);                      // stage + LOCK
+        locked_before = (raw_version(idx->mbta, key) & kLockBit) != 0;
+
+        Sto::silent_abort();                                     // coordinator voted ABORT
+        Sto::start_transaction();                                // handler's shard_reset re-init
+
+        locked_after_abort = (raw_version(idx->mbta, key) & kLockBit) != 0;
+
+        // Behavioral corollary: the row must be writable again. On the leak
+        // this shard_put cannot re-acquire the lock and throws.
+        const std::string v2 = mako::Encode("v2");
+        try {
+            idx->shard_put(lcdf::Str(key), v2);
+            ASSERT_EQ(Sto::shard_validate(), 0);
+            Sto::shard_install(2);
+            Sto::shard_unlock(true);
+            reacquired = true;
+        } catch (abstract_db::abstract_abort_exception&) {
+            Sto::silent_abort();   // discard the failed re-acquire's staged txn
+        }
+    });
+
+    ASSERT_TRUE(locked_before)       << "precondition: shard_put must lock the row";
+    EXPECT_FALSE(locked_after_abort) << "LEAK: participant abort left the row's lock_bit set (eternal lock)";
+    EXPECT_TRUE(reacquired)          << "row remained locked after abort -> re-write could not acquire it";
+
+    if (reacquired) {  // value corollary, read on the mode-0 main thread
+        std::string out;
+        ASSERT_TRUE(idx->get(lcdf::Str(key), out, std::string::npos));
+        EXPECT_EQ(out.substr(0, 2), "v2");
+    }
+}
+
 }  // namespace
