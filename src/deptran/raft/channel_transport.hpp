@@ -264,6 +264,144 @@ make_fire_and_forget(Handle handle) {
 // ChannelTransportAdapter — satisfies TransportBase (fiber-sync).
 // ---------------------------------------------------------------------------
 
+// @unsafe { mpsc bridge }
+inline AppendEntriesReply channel_transport_send_append_entries_cpp(
+    ChannelSwitchboard* sw,
+    siteid_t self,
+    siteid_t dst,
+    parid_t /*par*/,
+    AppendEntriesReq req) {
+  auto [tx, rx] = rusty::sync::mpsc::channel<AppendEntriesReply>();
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+            (void)tx.send(disp->handle_append_entries(std::move(req)));
+          })};
+  sw->send(std::move(env));
+  auto r = rx.recv();
+  if (r.is_err()) return AppendEntriesReply{};
+  return r.unwrap();
+}
+
+// @unsafe { mpsc bridge }
+inline EmptyAppendEntriesReply channel_transport_send_empty_append_entries_cpp(
+    ChannelSwitchboard* sw,
+    siteid_t self,
+    siteid_t dst,
+    parid_t /*par*/,
+    EmptyAppendEntriesReq req) {
+  auto [tx, rx] = rusty::sync::mpsc::channel<EmptyAppendEntriesReply>();
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+            (void)tx.send(disp->handle_empty_append_entries(std::move(req)));
+          })};
+  sw->send(std::move(env));
+  auto r = rx.recv();
+  if (r.is_err()) return EmptyAppendEntriesReply{};
+  return r.unwrap();
+}
+
+// @unsafe { mpsc bridge }
+inline VoteReply channel_transport_send_vote_cpp(ChannelSwitchboard* sw,
+                                                siteid_t self,
+                                                siteid_t dst,
+                                                parid_t /*par*/,
+                                                VoteReq req) {
+  auto [tx, rx] = rusty::sync::mpsc::channel<VoteReply>();
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+            (void)tx.send(disp->handle_vote(std::move(req)));
+          })};
+  sw->send(std::move(env));
+  auto r = rx.recv();
+  if (r.is_err()) return VoteReply{};
+  return r.unwrap();
+}
+
+// @unsafe { mpsc bridge }
+inline TimeoutNowReply channel_transport_send_timeout_now_cpp(
+    ChannelSwitchboard* sw,
+    siteid_t self,
+    siteid_t dst,
+    parid_t /*par*/,
+    TimeoutNowReq req) {
+  auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+            (void)tx.send(disp->handle_timeout_now(std::move(req)));
+          })};
+  sw->send(std::move(env));
+  auto r = rx.recv();
+  if (r.is_err()) return TimeoutNowReply{};
+  return r.unwrap();
+}
+
+// @unsafe { mpsc bridge }
+inline InstallSnapshotReply channel_transport_send_install_snapshot_cpp(
+    ChannelSwitchboard* sw,
+    siteid_t self,
+    siteid_t dst,
+    parid_t /*par*/,
+    InstallSnapshotReq req) {
+  auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
+            (void)tx.send(disp->handle_install_snapshot(std::move(req)));
+          })};
+  sw->send(std::move(env));
+  auto r = rx.recv();
+  if (r.is_err()) return InstallSnapshotReply{};
+  return r.unwrap();
+}
+
+// @safe
+inline void channel_transport_send_vote_durable_cpp(ChannelSwitchboard* sw,
+                                                    siteid_t self,
+                                                    siteid_t candidate,
+                                                    parid_t /*par*/,
+                                                    VoteDurableReq req) {
+  Envelope env{self, candidate,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req](DispatcherProxy& disp) mutable {
+            (void)disp->handle_vote_durable(req);
+          })};
+  sw->send(std::move(env));
+}
+
+// @safe
+inline void channel_transport_send_append_entries_durable_cpp(
+    ChannelSwitchboard* sw,
+    siteid_t self,
+    siteid_t leader,
+    parid_t /*par*/,
+    AppendEntriesDurableReq req) {
+  Envelope env{self, leader,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req](DispatcherProxy& disp) mutable {
+            (void)disp->handle_append_entries_durable(req);
+          })};
+  sw->send(std::move(env));
+}
+
+// @safe
+inline void channel_transport_send_notify_restart_cpp(ChannelSwitchboard* sw,
+                                                      siteid_t self,
+                                                      siteid_t dst,
+                                                      parid_t /*par*/) {
+  NotifyRestartReq req{};
+  req.restarted_site_id = self;
+  Envelope env{self, dst,
+      rusty::Function<void(DispatcherProxy&)>(
+          [req](DispatcherProxy& disp) mutable {
+            (void)disp->handle_notify_restart(req);
+          })};
+  sw->send(std::move(env));
+}
+
 class ChannelTransportAdapter : public TransportBase {
  public:
   // @unsafe { non-owning switchboard pointer }
@@ -293,73 +431,32 @@ class ChannelTransportAdapter : public TransportBase {
 
   // @unsafe { mpsc bridge }
   AppendEntriesReply send_append_entries(siteid_t dst, AppendEntriesReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<AppendEntriesReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_append_entries(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return AppendEntriesReply{};
-    return r.unwrap();
+    return channel_transport_send_append_entries_cpp(sw_, self_, dst, par_,
+                                                     std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   EmptyAppendEntriesReply send_empty_append_entries(siteid_t dst,
                                                     EmptyAppendEntriesReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<EmptyAppendEntriesReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_empty_append_entries(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return EmptyAppendEntriesReply{};
-    return r.unwrap();
+    return channel_transport_send_empty_append_entries_cpp(sw_, self_, dst, par_,
+                                                           std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   VoteReply send_vote(siteid_t dst, VoteReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<VoteReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_vote(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return VoteReply{};
-    return r.unwrap();
+    return channel_transport_send_vote_cpp(sw_, self_, dst, par_, std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   TimeoutNowReply send_timeout_now(siteid_t dst, TimeoutNowReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<TimeoutNowReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_timeout_now(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return TimeoutNowReply{};
-    return r.unwrap();
+    return channel_transport_send_timeout_now_cpp(sw_, self_, dst, par_,
+                                                  std::move(req));
   }
 
   // @unsafe { mpsc bridge }
   InstallSnapshotReply send_install_snapshot(siteid_t dst, InstallSnapshotReq req) override {
-    auto [tx, rx] = rusty::sync::mpsc::channel<InstallSnapshotReply>();
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req = std::move(req), tx = std::move(tx)](DispatcherProxy& disp) mutable {
-              (void)tx.send(disp->handle_install_snapshot(std::move(req)));
-            })};
-    sw_->send(std::move(env));
-    auto r = rx.recv();
-    if (r.is_err()) return InstallSnapshotReply{};
-    return r.unwrap();
+    return channel_transport_send_install_snapshot_cpp(sw_, self_, dst, par_,
+                                                       std::move(req));
   }
 
   // ------------------------------------------------------------------
@@ -368,34 +465,19 @@ class ChannelTransportAdapter : public TransportBase {
 
   // @safe
   void send_vote_durable(siteid_t candidate, VoteDurableReq req) override {
-    Envelope env{self_, candidate,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_vote_durable(req);
-            })};
-    sw_->send(std::move(env));
+    channel_transport_send_vote_durable_cpp(sw_, self_, candidate, par_,
+                                            std::move(req));
   }
 
   // @safe
   void send_append_entries_durable(siteid_t leader, AppendEntriesDurableReq req) override {
-    Envelope env{self_, leader,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_append_entries_durable(req);
-            })};
-    sw_->send(std::move(env));
+    channel_transport_send_append_entries_durable_cpp(sw_, self_, leader, par_,
+                                                      std::move(req));
   }
 
   // @safe
   void send_notify_restart(siteid_t dst, parid_t /*par*/) override {
-    NotifyRestartReq req{};
-    req.restarted_site_id = self_;
-    Envelope env{self_, dst,
-        rusty::Function<void(DispatcherProxy&)>(
-            [req](DispatcherProxy& disp) mutable {
-              (void)disp->handle_notify_restart(req);
-            })};
-    sw_->send(std::move(env));
+    channel_transport_send_notify_restart_cpp(sw_, self_, dst, par_);
   }
 
  private:
