@@ -11,10 +11,9 @@
  * the lab-style correctness tests exercise; production still uses
  * FileSnapshotManager.
  *
- * Note on rusty-safety: this file implements the existing virtual
- * SnapshotManager interface (which itself is virtual). Retiring that
- * interface is a cross-cutting server.cc refactor left for a follow-up
- * — see docs/dev/raft_decouple_plan.md Phase 5 notes.
+ * Note on RustyCpp safety: the stream and manager cores use inline-Rust for
+ * pure value and state decisions. The generated trait surface still has C++
+ * hand-bridges for mutexes, buffers, callbacks, and virtual ownership.
  */
 
 #include <cstring>

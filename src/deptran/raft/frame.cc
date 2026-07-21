@@ -34,7 +34,7 @@ RaftFrame::RaftFrame(int mode) : Frame(mode) {
 
 }
 
-// @safe - Properly cleans up owned resources via Option<Box<T>>
+// @safe - owned unique_ptr members release resources after the destructor body.
 RaftFrame::~RaftFrame() {
 }
 

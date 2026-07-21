@@ -219,9 +219,9 @@ class CoordinatorRaft : public Coordinator {
 
   // @unsafe - raw pointer dereference svr_->, address-of &
   void AppendEntries();
-  // @safe - mutex and callback operations are bounded
+  // @unsafe - locks the coordinator mutex and invokes the completion callback.
   void Commit();
-  // @safe - mutex and callback operations are bounded
+  // @unsafe - locks the coordinator mutex, invokes the callback, and advances phase.
   void LeaderLearn();
 
   // @safe

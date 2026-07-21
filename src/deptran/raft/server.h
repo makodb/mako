@@ -420,9 +420,10 @@ struct KeyValue {
 #endif
 
 
-// @unsafe - large stateful Raft core. This remains a Part 1 reshape target:
-// raw frame/commo pointers come from TxLogServer, threading/atomics stay
-// hand-written, and storage/snapshot backends are shared legacy boundaries.
+// @unsafe - large stateful Raft core. Phase 3 extracted pure election, append,
+// commit, snapshot, and leadership predicates; raw frame/commo pointers,
+// threading/atomics, storage, callbacks, and consensus orchestration remain
+// hand-written boundaries.
 class RaftServer : public TxLogServer {
   friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
   friend class RaftLabTest;     // Allow test cases to access private members for verification
@@ -756,7 +757,8 @@ class RaftServer : public TxLogServer {
       n_vote_++ ;
   }
 
-  // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
+  // @unsafe - shared_ptr/callback operations and apply-state mutation remain
+  // in the hand-written implementation.
   void applyLogs();
 
   // Dedicated apply fiber and background apply thread. These capture `this`
