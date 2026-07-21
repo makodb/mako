@@ -172,11 +172,11 @@ Marshal& ReplicatedDBCommand::from_marshal(Marshal& m) {
 
 // @unsafe - Allocates RocksDB option handles and opens db_path_.
 ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
-    : raft_(raft), db_path_(db_path) {
+    : raft_(raft), db_path_(db_path), state_core_(ReplicatedDBStateCore::new_()) {
   // @unsafe { std::getenv is not borrow-checked }
   const char* comp_env = std::getenv("MAKO_SNAPSHOT_COMPRESSION");
   if (comp_env && std::strcmp(comp_env, "0") == 0) {
-    compression_enabled_ = false;
+    state_core_.set_compression_enabled(false);
   }
 
   // @unsafe - Owns these C handles until the destructor.
@@ -224,7 +224,7 @@ ReplicatedDB::ReplicatedDB(RaftServer* raft, const std::string& db_path)
   }
 
   Log_info("[ReplicatedDB] Opened database at %s, last_applied_index=%lu",
-           db_path_.c_str(), last_applied_index_);
+           db_path_.c_str(), state_core_.last_applied_index());
 }
 
 // @unsafe - Closes db_ if open and destroys constructor-owned option handles.
@@ -378,7 +378,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   uint64_t index = static_cast<uint64_t>(slot);
 
   // Idempotency: skip already-applied entries
-  if (replicated_db_should_skip_applied(index, last_applied_index_)) {
+  if (replicated_db_should_skip_applied(index, state_core_.last_applied_index())) {
     return;
   }
 
@@ -386,7 +386,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   if (!replicated_db_command_kind_matches(cmd.kind_,
                                           ReplicatedDBCommand::static_kind())) {
     // Not our command type; still advance the index to avoid re-processing
-    last_applied_index_ = index;
+    state_core_.set_last_applied_index(index);
     PersistLastAppliedIndex();
     return;
   }
@@ -394,7 +394,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   auto db_cmd = marshallable_cast<ReplicatedDBCommand>(cmd);
   if (!db_cmd) {
     Log_error("[ReplicatedDB] Failed to cast payload to ReplicatedDBCommand at index %lu", index);
-    last_applied_index_ = index;
+    state_core_.set_last_applied_index(index);
     PersistLastAppliedIndex();
     return;
   }
@@ -421,7 +421,7 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
   }
 
   // Update and persist last applied index
-  last_applied_index_ = index;
+  state_core_.set_last_applied_index(index);
   PersistLastAppliedIndex();
 }
 
@@ -452,7 +452,7 @@ void ReplicatedDB::ApplyDelete(const std::string& key) {
 
 // @unsafe - RocksDB C API
 void ReplicatedDB::PersistLastAppliedIndex() {
-  std::string idx_str = std::to_string(last_applied_index_);
+  std::string idx_str = std::to_string(state_core_.last_applied_index());
   char* err = nullptr;
   rocksdb_put(db_, write_options_,
               META_LAST_APPLIED, strlen(META_LAST_APPLIED),
@@ -475,17 +475,17 @@ void ReplicatedDB::LoadLastAppliedIndex() {
     return;
   }
   if (value_ptr == nullptr) {
-    last_applied_index_ = 0;
+    state_core_.set_last_applied_index(0);
     return;
   }
 
   std::string value(value_ptr, value_len);
   rocksdb_free(value_ptr);
   try {
-    last_applied_index_ = std::stoull(value);
+    state_core_.set_last_applied_index(std::stoull(value));
   } catch (...) {
     Log_error("[ReplicatedDB] Failed to parse last_applied_index from '%s'", value.c_str());
-    last_applied_index_ = 0;
+    state_core_.set_last_applied_index(0);
   }
 }
 
@@ -559,7 +559,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
     return "";
   }
 
-  std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(last_applied_index_);
+  std::string cp_dir = db_path_ + "_ckpt_" + std::to_string(state_core_.last_applied_index());
 
   // @unsafe { RocksDB checkpoint handle and filesystem operations }
   rocksdb_checkpoint_create(cp, cp_dir.c_str(), 0, &err);
@@ -652,7 +652,7 @@ std::string ReplicatedDB::CreateStateMachineSnapshot() {
   std::string result;
   size_t raw_size = blob.size();
 
-  if (compression_enabled_) {
+  if (state_core_.compression_enabled()) {
     int max_dst = LZ4_compressBound(static_cast<int>(blob.size()));
     std::string compressed(max_dst, '\0');
     int compressed_size = LZ4_compress(
@@ -829,5 +829,5 @@ void ReplicatedDB::LoadStateMachineSnapshot(const std::string& data) {
   LoadLastAppliedIndex();
 
   Log_info("[ReplicatedDB] Loaded snapshot: %u files, last_applied_index=%lu",
-           num_files, last_applied_index_);
+           num_files, state_core_.last_applied_index());
 }

@@ -2,6 +2,7 @@
 #include "__dep__.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"
+#include "rusty/cell.hpp"
 #include "rusty/rusty.hpp"
 #include "rusty/slice.hpp"
 #include <string>
@@ -363,6 +364,78 @@ inline bool replicated_db_snapshot_has_bytes(size_t offset, size_t needed, size_
 }
 /*RUSTYCPP:GEN-END id=replicated_db.command_helpers*/
 
+#if RUSTYCPP_RUST
+pub struct ReplicatedDBStateCore {
+    last_applied_index_: rusty::Cell<u64>,
+    compression_enabled_: rusty::Cell<bool>,
+}
+
+impl ReplicatedDBStateCore {
+    // @safe
+    fn new() -> ReplicatedDBStateCore {
+        ReplicatedDBStateCore {
+            last_applied_index_: rusty::Cell::<u64>::new_(0),
+            compression_enabled_: rusty::Cell::<bool>::new_(true),
+        }
+    }
+
+    // @safe
+    fn last_applied_index(&self) -> u64 {
+        self.last_applied_index_.get()
+    }
+
+    // @safe
+    fn set_last_applied_index(&mut self, value: u64) {
+        self.last_applied_index_.set(value)
+    }
+
+    // @safe
+    fn compression_enabled(&self) -> bool {
+        self.compression_enabled_.get()
+    }
+
+    // @safe
+    fn set_compression_enabled(&mut self, value: bool) {
+        self.compression_enabled_.set(value)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.state_core version=1 rust_sha256=a6209d25e2a81b13f7ea677e1a28ba0e38a62bdea2c81b0e47336226bbb55996*/
+struct ReplicatedDBStateCore;
+
+struct ReplicatedDBStateCore {
+    rusty::Cell<uint64_t> last_applied_index_;
+    rusty::Cell<bool> compression_enabled_;
+
+    static ReplicatedDBStateCore new_();
+    uint64_t last_applied_index() const;
+    void set_last_applied_index(uint64_t value);
+    bool compression_enabled() const;
+    void set_compression_enabled(bool value);
+};
+
+
+inline ReplicatedDBStateCore ReplicatedDBStateCore::new_() {
+    return ReplicatedDBStateCore{.last_applied_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .compression_enabled_ = rusty::Cell<bool>::new_(true)};
+}
+
+inline uint64_t ReplicatedDBStateCore::last_applied_index() const {
+    return this->last_applied_index_.get();
+}
+
+inline void ReplicatedDBStateCore::set_last_applied_index(uint64_t value) {
+    this->last_applied_index_.set(std::move(value));
+}
+
+inline bool ReplicatedDBStateCore::compression_enabled() const {
+    return this->compression_enabled_.get();
+}
+
+inline void ReplicatedDBStateCore::set_compression_enabled(bool value) {
+    this->compression_enabled_.set(std::move(value));
+}
+/*RUSTYCPP:GEN-END id=replicated_db.state_core*/
+
 /**
  * ReplicatedDB - A replicated key-value store built on Raft + RocksDB.
  *
@@ -419,10 +492,10 @@ public:
     bool IsOpen() const { return db_ != nullptr; }
 
     // @safe - Returns last applied Raft index
-    uint64_t GetLastAppliedIndex() const { return last_applied_index_; }
+    uint64_t GetLastAppliedIndex() const { return state_core_.last_applied_index(); }
 
     // @safe - Returns whether snapshot compression is enabled
-    bool IsCompressionEnabled() const { return compression_enabled_; }
+    bool IsCompressionEnabled() const { return state_core_.compression_enabled(); }
 
     // Snapshot support: create and load RocksDB checkpoints for Raft snapshots
     // @unsafe - Creates RocksDB checkpoint, serializes files into binary blob
@@ -466,8 +539,7 @@ private:
     rocksdb_writeoptions_t* write_options_ = nullptr;
     rocksdb_readoptions_t* read_options_ = nullptr;
     std::string db_path_;
-    uint64_t last_applied_index_ = 0;
-    bool compression_enabled_ = true;  // LZ4 snapshot compression (env: MAKO_SNAPSHOT_COMPRESSION)
+    ReplicatedDBStateCore state_core_;
 
     static constexpr const char* META_LAST_APPLIED = "__raft_last_applied__";
 
