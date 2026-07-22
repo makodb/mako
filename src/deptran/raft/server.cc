@@ -1023,17 +1023,17 @@ void RaftServer::Setup() {
   }
 
   // ========== INITIALIZE MEMBERSHIP CONFIGURATION ==========
-  // Populate current_config_ from the static partition configuration.
+  // Populate current_config() from the static partition configuration.
   // This gives us the initial set of replicas; AddServer/RemoveServer will
   // modify it dynamically at runtime.
   {
     auto config = Config::GetConfig();
     auto replicas = config->SitesByPartitionId(partition_id_);
     for (auto& site : replicas) {
-      current_config_.insert(site.id);
+      current_config().insert(site.id);
     }
-    Log_info("[RAFT-CONFIG] Initialized current_config_ for site %d partition %d with %zu replicas",
-             site_id_, partition_id_, current_config_.size());
+    Log_info("[RAFT-CONFIG] Initialized current_config() for site %d partition %d with %zu replicas",
+             site_id_, partition_id_, current_config().size());
   }
 
 #ifdef RAFT_TEST_CORO
@@ -1170,8 +1170,8 @@ void RaftServer::setIsLeader(bool isLeader) {
           }
         }
         // matchedIndex and nextIndex should have indices for all servers + learners except self
-        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
+        verify(match_index_.size() == current_config().size() + learners().size() - 1);
+        verify(next_index_.size() == current_config().size() + learners().size() - 1);
       }
     }
   }
@@ -1217,7 +1217,7 @@ void RaftServer::setIsLeader(bool isLeader) {
       old_view_ = new_view_;
 
       // Update new_view with this server as the leader
-      n_replicas = static_cast<int>(current_config_.size());
+      n_replicas = static_cast<int>(current_config().size());
       }
       new_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server %d became leader for partition %d, term=%lu, old_view=%s, new_view=%s", 
@@ -1477,8 +1477,8 @@ void RaftServer::HeartbeatLoop() {
       next_index_[p.first] = 1;
     }
     // matchedIndex and nextIndex should have indices for all servers + learners except self
-    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
-    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
+    verify(match_index_.size() == current_config().size() + learners().size() - 1);
+    verify(next_index_.size() == current_config().size() + learners().size() - 1);
   // }
 
   Log_debug("heartbeat loop init from site: %d", site_id_);
@@ -1503,7 +1503,7 @@ void RaftServer::HeartbeatLoop() {
         continue;
       }
 
-      auto nservers = current_config_.size();
+      auto nservers = current_config().size();
 
       // ========================================================================
       // PHASE 0: Calculate commit index ONCE per heartbeat round (not per-follower)
@@ -1515,7 +1515,7 @@ void RaftServer::HeartbeatLoop() {
         std::vector<uint64_t> matchedIndices{};
         for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
           // Exclude learners from quorum calculation
-          if (learners_.count(it->first) > 0) continue;
+          if (learners().count(it->first) > 0) continue;
           matchedIndices.push_back(it->second);
           Log_debug("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
         }
@@ -1873,7 +1873,7 @@ void RaftServer::HeartbeatLoop() {
         std::vector<uint64_t> finalMatchedIndices{};
         for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
           // Exclude learners from quorum calculation
-          if (learners_.count(it->first) > 0) continue;
+          if (learners().count(it->first) > 0) continue;
           finalMatchedIndices.push_back(it->second);
         }
         std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
@@ -3584,14 +3584,14 @@ void RaftServer::NotifyRollback(StepDownReason reason) {
 size_t RaftServer::GetQuorumSize() const {
   size_t config_size = 0;
   // @unsafe
-  { config_size = current_config_.size(); }
+  { config_size = current_config().size(); }
   return raft::raft_quorum_majority_count(config_size);
 }
 
 // @safe - Read-only accessor
 // @lifetime: (&'a) -> &'a
 const std::set<siteid_t>& RaftServer::GetCurrentConfig() const {
-  return current_config_;
+  return current_config();
 }
 
 // @unsafe - Modifies config state
@@ -3631,7 +3631,7 @@ void RaftServer::OnAddServer(const uint64_t term,
   }
 
   // Check if server is already in config or is already a learner
-  if (current_config_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+  if (current_config().count(static_cast<siteid_t>(new_server_id)) > 0) {
     // @unsafe
     {
       *success = false;
@@ -3642,7 +3642,7 @@ void RaftServer::OnAddServer(const uint64_t term,
     return;
   }
 
-  if (learners_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+  if (learners().count(static_cast<siteid_t>(new_server_id)) > 0) {
     // @unsafe
     {
       *success = false;
@@ -3658,7 +3658,7 @@ void RaftServer::OnAddServer(const uint64_t term,
   // Once caught up (match_index_ within catch-up threshold of lastLogIndex),
   // CheckAndPromoteLearners() will promote it to a full member.
   auto sid = static_cast<siteid_t>(new_server_id);
-  learners_.insert(sid);
+  learners().insert(sid);
   membership_core_.set_config_change_pending(true);
   membership_core_.set_pending_config_index(lastLogIndex);  // Track where this change happened
 
@@ -3678,30 +3678,30 @@ void RaftServer::OnAddServer(const uint64_t term,
 
   Log_info("[RAFT-CONFIG] AddServer: added server %lu as learner (site %d), "
            "learners=%zu, config_size=%zu, next_index=%lu",
-           new_server_id, site_id_, learners_.size(),
-           current_config_.size(), next_index_[sid]);
+           new_server_id, site_id_, learners().size(),
+           current_config().size(), next_index_[sid]);
 }
 
 // @unsafe - Modifies config state, logs output
 void RaftServer::PromoteLearner(siteid_t id) {
   // Must be called with mtx_ held
-  learners_.erase(id);
-  current_config_.insert(id);
+  learners().erase(id);
+  current_config().insert(id);
   membership_core_.set_config_change_pending(false);
   Log_info("[RAFT-CONFIG] Promoted learner %d to full member "
            "(config size=%zu, quorum=%zu, learners=%zu)",
-           id, current_config_.size(), GetQuorumSize(), learners_.size());
+           id, current_config().size(), GetQuorumSize(), learners().size());
 }
 
 // @unsafe - Reads match_index_, calls PromoteLearner
 void RaftServer::CheckAndPromoteLearners() {
   // Must be called with mtx_ held
-  if (learners_.empty()) {
+  if (learners().empty()) {
     return;
   }
 
   std::vector<siteid_t> to_promote;
-  for (auto learner_id : learners_) {
+  for (auto learner_id : learners()) {
     auto it = match_index_.find(learner_id);
     if (it != match_index_.end() && lastLogIndex > 0) {
       // Learner is caught up if within the configured threshold of leader's log
@@ -3752,7 +3752,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
   }
 
   // Check if server is in config
-  if (current_config_.count(static_cast<siteid_t>(server_id)) == 0) {
+  if (current_config().count(static_cast<siteid_t>(server_id)) == 0) {
     // @unsafe
     {
       *success = false;
@@ -3764,7 +3764,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
   }
 
   // Cannot remove the last server
-  if (current_config_.size() <= 1) {
+  if (current_config().size() <= 1) {
     // @unsafe
     {
       *success = false;
@@ -3779,7 +3779,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
   // directly in memory.
 
   // Apply config change immediately
-  current_config_.erase(static_cast<siteid_t>(server_id));
+  current_config().erase(static_cast<siteid_t>(server_id));
   membership_core_.set_config_change_pending(true);
   membership_core_.set_pending_config_index(lastLogIndex);  // Track where this change happened
 
@@ -3790,7 +3790,7 @@ void RaftServer::OnRemoveServer(const uint64_t term,
   }
 
   Log_info("[RAFT-CONFIG] RemoveServer: removed server %lu from config (site %d), new config size=%zu, quorum=%zu",
-           server_id, site_id_, current_config_.size(), GetQuorumSize());
+           server_id, site_id_, current_config().size(), GetQuorumSize());
 }
 
 } // namespace janus
