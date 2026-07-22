@@ -170,6 +170,22 @@ pub fn server_preferred_replica_is_caught_up(preferred_match_index: u64,
     preferred_match_index >= commit_index
 }
 
+pub fn server_local_commit_has_caught_up(local_commit_index: u64,
+                                         leader_commit_index: u64) -> bool {
+    local_commit_index >= leader_commit_index
+}
+
+pub fn server_election_timeout_has_fired(is_leader: bool,
+                                         time_elapsed: u64,
+                                         election_timeout: u64) -> bool {
+    !is_leader && time_elapsed > election_timeout
+}
+
+pub fn server_leadership_stable_window_elapsed(time_as_leader: u64,
+                                               min_stable_time: u64) -> bool {
+    time_as_leader >= min_stable_time
+}
+
 pub fn server_vote_term_is_stale(candidate_term: u64, current_term: u64) -> bool {
     candidate_term < current_term
 }
@@ -271,7 +287,7 @@ pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> boo
     observed_term > current_term
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=2603c513d2fccd99525fea26fce5316d3316cf672ed0c680fe4e7bf34730106d*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=c59c26905b4833a9c72fe95cd650eaeed799e5a1f79514a0c6f74b2d8626c428*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
@@ -279,6 +295,9 @@ inline bool server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred
 inline bool server_leadership_monitor_should_start(bool is_preferred_leader, bool is_leader, bool looping);
 inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool is_preferred_leader, bool preferred_configured, bool transferring);
 inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index);
+inline bool server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index);
+inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elapsed, uint64_t election_timeout);
+inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time);
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
 inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
 inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
@@ -339,6 +358,18 @@ inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool 
 
 inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index) {
     return rusty::detail::deref_if_pointer_like(preferred_match_index) >= rusty::detail::deref_if_pointer_like(commit_index);
+}
+
+inline bool server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index) {
+    return rusty::detail::deref_if_pointer_like(local_commit_index) >= rusty::detail::deref_if_pointer_like(leader_commit_index);
+}
+
+inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elapsed, uint64_t election_timeout) {
+    return !is_leader && (rusty::detail::deref_if_pointer_like(time_elapsed) > rusty::detail::deref_if_pointer_like(election_timeout));
+}
+
+inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time) {
+    return rusty::detail::deref_if_pointer_like(time_as_leader) >= rusty::detail::deref_if_pointer_like(min_stable_time);
 }
 
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
@@ -1363,7 +1394,8 @@ class RaftServer : public TxLogServer {
   bool HaveCaughtUp() const {
     // We've caught up if our commitIndex >= leader's last known commitIndex
     // Note: leader_last_commit_index_ is updated from AppendEntries heartbeats
-    return commitIndex >= leadership_core_.leader_last_commit_index();
+    return server_local_commit_has_caught_up(
+        commitIndex, leadership_core_.leader_last_commit_index());
   }
 
   // ============================================================================

@@ -1246,7 +1246,8 @@ void RaftServer::setIsLeader(bool isLeader) {
     // If we just became a non-preferred leader, start monitoring for transfer
     // opportunity. This ensures that after failover/elections, non-preferred
     // leaders will transfer back to preferred leaders when they catch up.
-    if (!AmIPreferredLeader() && looping_) {
+    if (server_leadership_monitor_should_start(
+            AmIPreferredLeader(), vote_core_.is_leader(), looping_)) {
       Log_info("[LEADERSHIP-TRANSFER] Site %d: Became non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
@@ -2422,7 +2423,8 @@ void RaftServer::StartElectionTimer() {
       // Log_info("[ELECTION_TIMER] Site %d: checking - is_leader=%d time_elapsed=%lu election_timeout=%lu last_hb_time=%lu",
       //          site_id_, IsLeader(), time_elapsed, election_timeout, last_heartbeat_time_);
 
-      if (!IsLeader() && time_elapsed > election_timeout) {
+      if (server_election_timeout_has_fired(
+              IsLeader(), time_elapsed, election_timeout)) {
         Log_info("[ELECTION_TIMER] Site %d: TIMEOUT FIRED - starting election (elapsed=%lu > timeout=%lu)",
                  site_id_, time_elapsed, election_timeout);
 
@@ -3112,7 +3114,8 @@ void RaftServer::StartLeadershipTransferMonitoring() {
 
         // Wait for cluster to stabilize after becoming leader
         uint64_t time_as_leader = Time::now() - became_leader_time;
-        if (time_as_leader < MIN_STABLE_TIME_US) {
+        if (!server_leadership_stable_window_elapsed(
+                time_as_leader, MIN_STABLE_TIME_US)) {
           continue;
         }
 
