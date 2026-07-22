@@ -204,8 +204,10 @@ void CoordinatorRaft::GotoNextPhase() {
   int current_phase = coordinator_raft_phase_value(phase_, n_phase);
   phase_++;
   switch (current_phase) {
-    case Phase::INIT_END:
-      if (IsLeader()) {
+    case Phase::INIT_END: {
+      bool is_leader = IsLeader();
+      if (coordinator_raft_should_run_leader_init_path(current_phase,
+                                                       is_leader)) {
         phase_++; // skip prepare phase for "leader"
         verify(coordinator_raft_phase_is_accept(
             coordinator_raft_phase_value(phase_, n_phase)));
@@ -213,19 +215,22 @@ void CoordinatorRaft::GotoNextPhase() {
         phase_++;
         verify(coordinator_raft_phase_is_commit(
             coordinator_raft_phase_value(phase_, n_phase)));
-      } else {
+      } else if (coordinator_raft_should_skip_to_commit_from_init(
+                     current_phase, is_leader)) {
         // TODO: non-leader should forward to leader
         // @unsafe { Log_warn is not borrow-checked }
         Log_warn("[RAFT] CoordinatorRaft::GotoNextPhase: non-leader path not yet implemented, skipping to COMMIT");
         // Forward(cmd_,commit_callback_) ;
         phase_ = Phase::COMMIT;
       }
+    }
     case Phase::ACCEPT:
       verify(coordinator_raft_phase_is_commit(
           coordinator_raft_phase_value(phase_, n_phase)));
       if (coordinator_raft_should_learn(committed_)) {
         LeaderLearn();
-      } else {
+      } else if (coordinator_raft_should_finish_accept_without_learn(
+                     current_phase, committed_)) {
         // verify(0);
         // Forward(cmd_,commit_callback_) ;
         phase_ = Phase::COMMIT;
@@ -234,7 +239,9 @@ void CoordinatorRaft::GotoNextPhase() {
     case Phase::PREPARE:
       verify(coordinator_raft_phase_is_accept(
           coordinator_raft_phase_value(phase_, n_phase)));
-      AppendEntries();
+      if (coordinator_raft_should_append_from_prepare(current_phase)) {
+        AppendEntries();
+      }
       break;
     case Phase::COMMIT:
       // do nothing.
