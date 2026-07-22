@@ -16,7 +16,7 @@ module;
 #include <string>
 #include <vector>
 #include <map>
-#include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
+#include <rusty/array.hpp>   // c529cd3d: BTreeMap::len() free-fn decl
 #include <rusty/vec.hpp>            // native-API vector (replaces std::vector)
 
 // deref_if_pointer_like + rusty::clone, used by the DSL-generated method
@@ -28,6 +28,8 @@ module;
 #include <rusty/move.hpp>
 
 export module cluster:sharding_policy;
+import btree_port.btree.map;
+import rusty;                  // c529cd3d: rusty::Vec is a module now   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
 
 // The policy value types serialize via their rrr Serializable save()/load()
 // DSL methods (see each `impl` below) instead of free-function rrr::Marshal
@@ -37,7 +39,18 @@ export module cluster:sharding_policy;
 // trade to keep serialization authored in the DSL.
 import rrr.serializable;
 
+namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
+
 export namespace janus {
+
+// @unsafe - deserialize into a bare local. The inline-Rust DSL moves bare-local
+// by-value args, but rrr::Deserialize_::deserialize needs a T& lvalue; `&mut x`
+// lowers to a raw pointer, which we forward through a deref (a place expression).
+template <typename T>
+inline void cluster_deser_(T* out, rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(*out, ar);  // @unsafe
+}
+
 
 /**
  * Defines how to extract the sharding key from a row key.
@@ -94,20 +107,20 @@ impl KeyExtractor {
     }
     // rrr Serializable value contract (save/load; no polymorphic kind()).
     fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        ar << ((*self).kind as i32);
-        ar << (*self).field_index;
-        ar << (*self).prefix_length;
+        rrr::Serialize_::serialize(((*self).kind as i32), ar);
+        rrr::Serialize_::serialize((*self).field_index, ar);
+        rrr::Serialize_::serialize((*self).prefix_length, ar);
     }
     fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
         let mut k: i32 = 0;
-        ar >> k;
+        cluster_deser_(&mut k, ar);
         (*self).kind = k as KeyExtractorType;
-        ar >> (*self).field_index;
-        ar >> (*self).prefix_length;
+        rrr::Deserialize_::deserialize((*self).field_index, ar);
+        rrr::Deserialize_::deserialize((*self).prefix_length, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=1b9c973f8334febd19bdbc360f4ea01c504bdd36e3cff5293b1fb684777e2ba2*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.1 version=1 rust_sha256=e5362c2ff870aefb22002ae702f524470a35da36d7c3e46d75b6e024f1ed4df0*/
 struct KeyExtractor;
 
 struct KeyExtractor {
@@ -125,38 +138,38 @@ struct KeyExtractor {
 };
 
 
-inline KeyExtractor KeyExtractor::defaults() {
+KeyExtractor KeyExtractor::defaults() {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::FIELD_INDEX)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(4)};
 }
 
-inline KeyExtractor KeyExtractor::make(KeyExtractorType kind, int32_t field, int32_t prefix) {
+KeyExtractor KeyExtractor::make(KeyExtractorType kind, int32_t field, int32_t prefix) {
     return KeyExtractor{.kind = std::move(kind), .field_index = std::move(field), .prefix_length = std::move(prefix)};
 }
 
-inline KeyExtractor KeyExtractor::by_field(int32_t index) {
+KeyExtractor KeyExtractor::by_field(int32_t index) {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::FIELD_INDEX)), .field_index = std::move(index), .prefix_length = static_cast<int32_t>(0)};
 }
 
-inline KeyExtractor KeyExtractor::by_prefix(int32_t length) {
+KeyExtractor KeyExtractor::by_prefix(int32_t length) {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::PREFIX_BYTES)), .field_index = static_cast<int32_t>(0), .prefix_length = std::move(length)};
 }
 
-inline KeyExtractor KeyExtractor::by_hash() {
+KeyExtractor KeyExtractor::by_hash() {
     return KeyExtractor{.kind = rusty::clone(rusty::clone(KeyExtractorType::HASH_MOD)), .field_index = static_cast<int32_t>(0), .prefix_length = static_cast<int32_t>(0)};
 }
 
-inline void KeyExtractor::save(rrr::BinaryWriteArchive& ar) const {
-    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).kind)));
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).field_index);
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).prefix_length);
+void KeyExtractor::save(rrr::BinaryWriteArchive& ar) const {
+    rrr::Serialize_::serialize((static_cast<int32_t>(((*this)).kind)), ar);
+    rrr::Serialize_::serialize(((*this)).field_index, ar);
+    rrr::Serialize_::serialize(((*this)).prefix_length, ar);
 }
 
-inline void KeyExtractor::load(rrr::BinaryReadArchive& ar) {
+void KeyExtractor::load(rrr::BinaryReadArchive& ar) {
     int32_t k = static_cast<int32_t>(0);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(k);
+    cluster_deser_(&k, ar);
     ((*this)).kind = static_cast<KeyExtractorType>(k);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).field_index);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).prefix_length);
+    rrr::Deserialize_::deserialize(((*this)).field_index, ar);
+    rrr::Deserialize_::deserialize(((*this)).prefix_length, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.1*/
 
@@ -190,18 +203,18 @@ impl RangeMapping {
         (*self).start_key <= key && key < (*self).end_key
     }
     fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        ar << (*self).start_key;
-        ar << (*self).end_key;
-        ar << (*self).shard_id;
+        rrr::Serialize_::serialize((*self).start_key, ar);
+        rrr::Serialize_::serialize((*self).end_key, ar);
+        rrr::Serialize_::serialize((*self).shard_id, ar);
     }
     fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        ar >> (*self).start_key;
-        ar >> (*self).end_key;
-        ar >> (*self).shard_id;
+        rrr::Deserialize_::deserialize((*self).start_key, ar);
+        rrr::Deserialize_::deserialize((*self).end_key, ar);
+        rrr::Deserialize_::deserialize((*self).shard_id, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=5e81f5ff8d2bca5b747994799be87be944b1b5fe603c6f6c4e6c9adce2e57352*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.2 version=1 rust_sha256=6230364922fc14352f2e2abea9339227a99d545c8d9308d8684e9e799ae8b978*/
 struct RangeMapping;
 
 struct RangeMapping {
@@ -216,24 +229,24 @@ struct RangeMapping {
 };
 
 
-inline RangeMapping RangeMapping::make(int64_t start, int64_t end, int32_t shard) {
+RangeMapping RangeMapping::make(int64_t start, int64_t end, int32_t shard) {
     return RangeMapping{.start_key = std::move(start), .end_key = std::move(end), .shard_id = std::move(shard)};
 }
 
-inline bool RangeMapping::contains(int64_t key) const {
+bool RangeMapping::contains(int64_t key) const {
     return (rusty::detail::deref_if_pointer_like(((*this)).start_key) <= rusty::detail::deref_if_pointer_like(key)) && (rusty::detail::deref_if_pointer_like(key) < rusty::detail::deref_if_pointer_like(((*this)).end_key));
 }
 
-inline void RangeMapping::save(rrr::BinaryWriteArchive& ar) const {
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).start_key);
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).end_key);
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).shard_id);
+void RangeMapping::save(rrr::BinaryWriteArchive& ar) const {
+    rrr::Serialize_::serialize(((*this)).start_key, ar);
+    rrr::Serialize_::serialize(((*this)).end_key, ar);
+    rrr::Serialize_::serialize(((*this)).shard_id, ar);
 }
 
-inline void RangeMapping::load(rrr::BinaryReadArchive& ar) {
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).start_key);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).end_key);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).shard_id);
+void RangeMapping::load(rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(((*this)).start_key, ar);
+    rrr::Deserialize_::deserialize(((*this)).end_key, ar);
+    rrr::Deserialize_::deserialize(((*this)).shard_id, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.2*/
 
@@ -292,21 +305,21 @@ impl TableShardingPolicy {
     }
     // rrr Serializable: name, extractor, range count + ranges, default_shard.
     fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        ar << (*self).table_name;
+        rrr::Serialize_::serialize((*self).table_name, ar);
         (*self).key_extractor.save(ar);
-        ar << ((*self).ranges.size() as i32);
+        rrr::Serialize_::serialize(((*self).ranges.size() as i32), ar);
         let mut i: usize = 0;
         while i < (*self).ranges.size() {
             (*self).ranges[i].save(ar);
             i = i + 1;
         }
-        ar << (*self).default_shard;
+        rrr::Serialize_::serialize((*self).default_shard, ar);
     }
     fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        ar >> (*self).table_name;
+        rrr::Deserialize_::deserialize((*self).table_name, ar);
         (*self).key_extractor.load(ar);
         let mut n: i32 = 0;
-        ar >> n;
+        cluster_deser_(&mut n, ar);
         (*self).ranges.clear();
         let mut i: i32 = 0;
         while i < n {
@@ -315,11 +328,11 @@ impl TableShardingPolicy {
             (*self).ranges.push(r);
             i = i + 1;
         }
-        ar >> (*self).default_shard;
+        rrr::Deserialize_::deserialize((*self).default_shard, ar);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=356bf8820f6e82baa2a21ef1678718230cd931231cad2d6ae9b4ae726b276329*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.3 version=1 rust_sha256=010a20ee1fa85ff481dc834054c4e28b17ffa620d37595d83c618c73edb3788d*/
 struct TableShardingPolicy;
 
 struct TableShardingPolicy {
@@ -336,52 +349,52 @@ struct TableShardingPolicy {
 };
 
 
-inline TableShardingPolicy TableShardingPolicy::create(const std::string& name, const KeyExtractor& extractor) {
+TableShardingPolicy TableShardingPolicy::create(const std::string& name, const KeyExtractor& extractor) {
     return TableShardingPolicy{.table_name = name, .key_extractor = extractor, .ranges = rusty::Vec<RangeMapping>::new_(), .default_shard = -1};
 }
 
-inline int32_t TableShardingPolicy::get_shard(int64_t key_value) const {
+int32_t TableShardingPolicy::get_shard(int64_t key_value) const {
     int32_t left = static_cast<int32_t>(0);
     int32_t right = ((static_cast<int32_t>(((*this)).ranges.size()))) - static_cast<int32_t>(1);
     while (rusty::detail::deref_if_pointer_like(left) <= rusty::detail::deref_if_pointer_like(right)) {
         const int32_t mid = rusty::detail::deref_if_pointer_like(left) + (((rusty::detail::deref_if_pointer_like(right) - rusty::detail::deref_if_pointer_like(left))) / static_cast<int32_t>(2));
-        if (rusty::detail::deref_if_pointer_like(key_value) < rusty::detail::deref_if_pointer_like(((*this)).ranges[mid].start_key)) {
+        if (rusty::detail::deref_if_pointer_like(key_value) < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.start_key); }) { return (__r.start_key); } else if constexpr (requires { (__r.start_key_field); }) { return (__r.start_key_field); } else if constexpr (requires { ((*__r).start_key); }) { return ((*__r).start_key); } else { return ((*__r).start_key_field); } }(((*this)).ranges[mid]))) {
             right = rusty::detail::deref_if_pointer_like(mid) - static_cast<int32_t>(1);
-        } else if (rusty::detail::deref_if_pointer_like(key_value) >= rusty::detail::deref_if_pointer_like(((*this)).ranges[mid].end_key)) {
+        } else if (rusty::detail::deref_if_pointer_like(key_value) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.end_key); }) { return (__r.end_key); } else if constexpr (requires { (__r.end_key_field); }) { return (__r.end_key_field); } else if constexpr (requires { ((*__r).end_key); }) { return ((*__r).end_key); } else { return ((*__r).end_key_field); } }(((*this)).ranges[mid]))) {
             left = rusty::detail::deref_if_pointer_like(mid) + static_cast<int32_t>(1);
         } else {
-            return ((*this)).ranges[mid].shard_id;
+            return [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.shard_id); }) { return (__r.shard_id); } else if constexpr (requires { (__r.shard_id_field); }) { return (__r.shard_id_field); } else if constexpr (requires { ((*__r).shard_id); }) { return ((*__r).shard_id); } else { return ((*__r).shard_id_field); } }(((*this)).ranges[mid]);
         }
     }
     return ((*this)).default_shard;
 }
 
-inline void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t shard) {
+void TableShardingPolicy::add_range(int64_t start, int64_t end, int32_t shard) {
     RangeMapping mapping = RangeMapping::make(std::move(start), std::move(end), std::move(shard));
     size_t idx = static_cast<size_t>(0);
-    while ((rusty::detail::deref_if_pointer_like(idx) < ((*this)).ranges.size()) && (rusty::detail::deref_if_pointer_like(((*this)).ranges[idx].start_key) < rusty::detail::deref_if_pointer_like(start))) {
+    while ((rusty::detail::deref_if_pointer_like(idx) < ((*this)).ranges.size()) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.start_key); }) { return (__r.start_key); } else if constexpr (requires { (__r.start_key_field); }) { return (__r.start_key_field); } else if constexpr (requires { ((*__r).start_key); }) { return ((*__r).start_key); } else { return ((*__r).start_key_field); } }(((*this)).ranges[idx])) < rusty::detail::deref_if_pointer_like(start))) {
         idx = rusty::detail::deref_if_pointer_like(idx) + static_cast<size_t>(1);
     }
     ((*this)).ranges.insert(std::move(idx), std::move(mapping));
 }
 
-inline void TableShardingPolicy::save(rrr::BinaryWriteArchive& ar) const {
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).table_name);
+void TableShardingPolicy::save(rrr::BinaryWriteArchive& ar) const {
+    rrr::Serialize_::serialize(((*this)).table_name, ar);
     ((*this)).key_extractor.save(ar);
-    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).ranges.size())));
+    rrr::Serialize_::serialize((static_cast<int32_t>(((*this)).ranges.size())), ar);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((*this)).ranges.size()) {
         ((*this)).ranges[i].save(ar);
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).default_shard);
+    rrr::Serialize_::serialize(((*this)).default_shard, ar);
 }
 
-inline void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).table_name);
+void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(((*this)).table_name, ar);
     ((*this)).key_extractor.load(ar);
     int32_t n = static_cast<int32_t>(0);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(n);
+    cluster_deser_(&n, ar);
     ((*this)).ranges.clear();
     int32_t i = static_cast<int32_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
@@ -390,7 +403,7 @@ inline void TableShardingPolicy::load(rrr::BinaryReadArchive& ar) {
         ((*this)).ranges.push(std::move(r));
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<int32_t>(1);
     }
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).default_shard);
+    rrr::Deserialize_::deserialize(((*this)).default_shard, ar);
 }
 /*RUSTYCPP:GEN-END id=sharding_policy.3*/
 
@@ -408,7 +421,7 @@ struct ShardingPolicySet;  // for the factory kernel's forward declaration
 // get_policy() now forwards the map's Option<&V> directly: no raw pointer,
 // no kernel.
 using TableShardingPolicyRef =
-    rusty::Option<std::reference_wrapper<const TableShardingPolicy>>;
+    rusty::Option<const TableShardingPolicy&>;
 
 #if RUSTYCPP_RUST
 pub struct ShardingPolicySet {
@@ -438,7 +451,7 @@ impl ShardingPolicySet {
     // Route: shard for (table, key), or -1 if the table has no policy.
     fn get_shard_for_key(&self, table_name: &std::string, key_value: i64) -> i32 {
         if (*self).policies.contains_key(table_name) {
-            return (*self).policies.get(table_name).unwrap().get().get_shard(key_value);
+            return (*self).policies.get(table_name).unwrap().get_shard(key_value);
         }
         -1
     }
@@ -449,23 +462,23 @@ impl ShardingPolicySet {
     // Number of tables with a policy. (.size() lowers directly; .len()
     // would map to rusty::len, which this pin doesn't provide.)
     fn table_count(&self) -> usize {
-        (*self).policies.size()
+        (*self).policies.len()
     }
     // rrr Serializable: version, num_shards, then each policy (the key is
     // rebuilt from policy.table_name on load, so only values are written).
     fn save(&self, ar: &mut rrr::BinaryWriteArchive) {
-        ar << (*self).version;
-        ar << (*self).num_shards;
-        ar << ((*self).policies.size() as i32);
+        rrr::Serialize_::serialize((*self).version, ar);
+        rrr::Serialize_::serialize((*self).num_shards, ar);
+        rrr::Serialize_::serialize(((*self).policies.len() as i32), ar);
         for kv in (*self).policies {
-            kv.second.save(ar);
+            kv.1.save(ar);
         }
     }
     fn load(&mut self, ar: &mut rrr::BinaryReadArchive) {
-        ar >> (*self).version;
-        ar >> (*self).num_shards;
+        rrr::Deserialize_::deserialize((*self).version, ar);
+        rrr::Deserialize_::deserialize((*self).num_shards, ar);
         let mut n: i32 = 0;
-        ar >> n;
+        cluster_deser_(&mut n, ar);
         (*self).policies.clear();
         let empty: std::string = std::string();
         let ext: KeyExtractor = KeyExtractor::defaults();
@@ -481,7 +494,7 @@ impl ShardingPolicySet {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=61090ff7423ebc7c3d45ccc5068448413e41579495f74e59db936d90d6552794*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy.4 version=1 rust_sha256=4fe903b2d2e2797167ac9874c40bfecf94a4d1aa3e926a2749f8a311732bc5b8*/
 struct ShardingPolicySet;
 
 struct ShardingPolicySet {
@@ -500,47 +513,47 @@ struct ShardingPolicySet {
 };
 
 
-inline ShardingPolicySet ShardingPolicySet::with_shards(int32_t shards) {
+ShardingPolicySet ShardingPolicySet::with_shards(int32_t shards) {
     return ShardingPolicySet{.version = static_cast<uint64_t>(0), .num_shards = std::move(shards), .policies = btree_port::BTreeMap<std::string, TableShardingPolicy>::new_()};
 }
 
-inline TableShardingPolicyRef ShardingPolicySet::get_policy(const std::string& table_name) const {
+TableShardingPolicyRef ShardingPolicySet::get_policy(const std::string& table_name) const {
     return ((*this)).policies.get(table_name);
 }
 
-inline void ShardingPolicySet::set_policy(const std::string& table_name, const TableShardingPolicy& policy) {
+void ShardingPolicySet::set_policy(const std::string& table_name, const TableShardingPolicy& policy) {
     ((*this)).policies.insert(table_name, std::move(policy));
 }
 
-inline int32_t ShardingPolicySet::get_shard_for_key(const std::string& table_name, int64_t key_value) const {
+int32_t ShardingPolicySet::get_shard_for_key(const std::string& table_name, int64_t key_value) const {
     if (((*this)).policies.contains_key(table_name)) {
-        return ((*this)).policies.get(table_name).unwrap().get().get_shard(std::move(key_value));
+        return ((*this)).policies.get(table_name).unwrap().get_shard(std::move(key_value));
     }
     return -1;
 }
 
-inline bool ShardingPolicySet::has_policy(const std::string& table_name) const {
+bool ShardingPolicySet::has_policy(const std::string& table_name) const {
     return ((*this)).policies.contains_key(table_name);
 }
 
-inline size_t ShardingPolicySet::table_count() const {
-    return ((*this)).policies.size();
+size_t ShardingPolicySet::table_count() const {
+    return rusty::len(((*this)).policies);
 }
 
-inline void ShardingPolicySet::save(rrr::BinaryWriteArchive& ar) const {
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).version);
-    rusty::detail::deref_if_pointer_like(ar) << rusty::detail::deref_if_pointer_like(((*this)).num_shards);
-    rusty::detail::deref_if_pointer_like(ar) << ((static_cast<int32_t>(((*this)).policies.size())));
+void ShardingPolicySet::save(rrr::BinaryWriteArchive& ar) const {
+    rrr::Serialize_::serialize(((*this)).version, ar);
+    rrr::Serialize_::serialize(((*this)).num_shards, ar);
+    rrr::Serialize_::serialize((static_cast<int32_t>(rusty::len(((*this)).policies))), ar);
     for (auto&& kv : rusty::for_in(((*this)).policies)) {
-        kv.second.save(ar);
+        rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)).save(ar);
     }
 }
 
-inline void ShardingPolicySet::load(rrr::BinaryReadArchive& ar) {
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).version);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(((*this)).num_shards);
+void ShardingPolicySet::load(rrr::BinaryReadArchive& ar) {
+    rrr::Deserialize_::deserialize(((*this)).version, ar);
+    rrr::Deserialize_::deserialize(((*this)).num_shards, ar);
     int32_t n = static_cast<int32_t>(0);
-    rusty::detail::deref_if_pointer_like(ar) >> rusty::detail::deref_if_pointer_like(n);
+    cluster_deser_(&n, ar);
     ((*this)).policies.clear();
     const std::string empty = std::string();
     const KeyExtractor ext = KeyExtractor::defaults();

@@ -10,13 +10,15 @@ module;
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <btree_port/btreemap.hpp>   // cc_load_from_cm builds a local BTreeMap
 #include <rusty/slice.hpp>           // deref_if_pointer_like (generated DSL bodies)
 #include <rusty/move.hpp>            // rusty::clone (enum-literal comparisons in the GEN block)
 module cluster;
+import btree_port.btree.map;   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
 import :sharding_policy;   // KeyExtractor(Type) used by cc_extract_key_value / cc_route
 import :cluster_config;    // ClusterConfigState / ShardInfo / cc_* declarations
 import :config_manager;    // ConfigManager (cc_load_from_cm reads through it)
+
+namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
 
 namespace janus {
 
@@ -41,7 +43,7 @@ pub fn cc_follow_replacement(s: &ClusterConfigState, sid: u32) -> u32 {
         if !s.shards.contains_key(cur) {
             return cur;
         }
-        let info: &ShardInfo = s.shards.get(cur).unwrap().get();
+        let info: &ShardInfo = s.shards.get(cur).unwrap();
         if info.status != std::string("dead") {
             return cur;
         }
@@ -86,8 +88,8 @@ pub fn cc_route(s: &ClusterConfigState, table: &std::string, key: &std::string) 
     }
     if !table.empty() {
         if s.table_policies.contains_key(table) {
-            let kv: i64 = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
-            let sid: i32 = s.table_policies.get(table).unwrap().get().get_shard(kv);
+            let kv: i64 = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().key_extractor, key);
+            let sid: i32 = s.table_policies.get(table).unwrap().get_shard(kv);
             if sid >= 0 {
                 return janus::cc_follow_replacement(s, sid as u32);
             }
@@ -96,7 +98,7 @@ pub fn cc_route(s: &ClusterConfigState, table: &std::string, key: &std::string) 
     janus::cc_follow_replacement(s, janus::cc_hash_key(key) % s.shard_count)
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=bbce2b2a3aaaf4af883bb95e9724103d5daa89f759e48a770b64371d728d2ef6*/
+/*RUSTYCPP:GEN-BEGIN id=cluster_config.1 version=1 rust_sha256=a5983ec6e8c4afa923e9219fec7150d4423047fb466f4e5bd8467b1778d8914f*/
 uint32_t cc_hash_key(const std::string& key);
 
 uint32_t cc_hash_key(const std::string& key) {
@@ -115,10 +117,10 @@ uint32_t cc_follow_replacement(const ClusterConfigState& s, uint32_t sid) {
     uint32_t cur = sid;
     uint32_t hop = static_cast<uint32_t>(0);
     while (rusty::detail::deref_if_pointer_like(hop) < rusty::detail::deref_if_pointer_like(max_hops)) {
-        if (!s.shards.contains_key(std::move(cur))) {
+        if (rusty::detail::rust_not(s.shards.contains_key(std::move(cur)))) {
             return std::move(cur);
         }
-        const ShardInfo& info = s.shards.get(std::move(cur)).unwrap().get();
+        const ShardInfo& info = s.shards.get(std::move(cur)).unwrap();
         if (rusty::detail::deref_if_pointer_like(info.status) != std::string("dead")) {
             return std::move(cur);
         }
@@ -159,10 +161,10 @@ uint32_t cc_route(const ClusterConfigState& s, const std::string& table, const s
     if (rusty::detail::deref_if_pointer_like(s.shard_count) == 0) {
         return static_cast<uint32_t>(0);
     }
-    if (!table.empty()) {
+    if (rusty::detail::rust_not(table.empty())) {
         if (s.table_policies.contains_key(table)) {
-            const int64_t kv = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().get().key_extractor, key);
-            const int32_t sid = s.table_policies.get(table).unwrap().get().get_shard(std::move(kv));
+            const int64_t kv = janus::cc_extract_key_value(s.table_policies.get(table).unwrap().key_extractor, key);
+            const int32_t sid = s.table_policies.get(table).unwrap().get_shard(std::move(kv));
             if (rusty::detail::deref_if_pointer_like(sid) >= 0) {
                 return janus::cc_follow_replacement(s, static_cast<uint32_t>(sid));
             }
@@ -179,7 +181,9 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
     uint32_t count = cm->get_shard_count();
     uint64_t ver = cm->get_version();
     uint64_t ep = cm->get_epoch();
-    btree_port::BTreeMap<uint32_t, ShardInfo> new_shards;
+    // c529cd3d: BTreeMap has no default ctor; construct explicitly.
+    btree_port::BTreeMap<uint32_t, ShardInfo> new_shards =
+        btree_port::BTreeMap<uint32_t, ShardInfo>::new_();
     for (uint32_t i = 0; i < count; i++) {
         ShardInfo info;
         info.id = i;
@@ -187,7 +191,7 @@ bool cc_load_from_cm(ClusterConfigState& s, ConfigManager* cm) {
         info.leader = cm->get_shard_leader(i);
         info.status = cm->get_shard_status(i);
         info.replacement = cm->get_shard_replacement(i);
-        new_shards.insert(i, std::move(info));
+        cc_shards_insert(new_shards, i, std::move(info));
     }
     s.shard_count = count;
     s.version = ver;

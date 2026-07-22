@@ -32,6 +32,7 @@ module;
 #include <rusty/vec.hpp>   // rusty::Vec<TableShardingPolicy> field
 
 export module cluster:sharding_policy_builder;
+import rusty;                  // c529cd3d: rusty::Vec is a module now
 import :sharding_policy;
 
 export namespace janus {
