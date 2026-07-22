@@ -186,6 +186,28 @@ pub fn server_leadership_stable_window_elapsed(time_as_leader: u64,
     time_as_leader >= min_stable_time
 }
 
+pub fn server_random_range_needs_swap(min_value: u64, max_value: u64) -> bool {
+    max_value < min_value
+}
+
+pub fn server_random_range_is_single_point(min_value: u64, max_value: u64) -> bool {
+    max_value == min_value
+}
+
+pub fn server_random_range_cap(range: u64, max_range: u64) -> u64 {
+    if range > max_range {
+        max_range
+    } else {
+        range
+    }
+}
+
+pub fn server_election_in_startup_grace_period(current_time: u64,
+                                               startup_timestamp: u64,
+                                               grace_period: u64) -> bool {
+    (current_time - startup_timestamp) < grace_period
+}
+
 pub fn server_vote_term_is_stale(candidate_term: u64, current_term: u64) -> bool {
     candidate_term < current_term
 }
@@ -287,7 +309,7 @@ pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> boo
     observed_term > current_term
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=c59c26905b4833a9c72fe95cd650eaeed799e5a1f79514a0c6f74b2d8626c428*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=74c5ad142ee944a32f60548839eb75544fe213bce3170fb7ac8877ee93b5bf0e*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
@@ -298,6 +320,10 @@ inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index
 inline bool server_local_commit_has_caught_up(uint64_t local_commit_index, uint64_t leader_commit_index);
 inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elapsed, uint64_t election_timeout);
 inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time);
+inline bool server_random_range_needs_swap(uint64_t min_value, uint64_t max_value);
+inline bool server_random_range_is_single_point(uint64_t min_value, uint64_t max_value);
+inline uint64_t server_random_range_cap(uint64_t range, uint64_t max_range);
+inline bool server_election_in_startup_grace_period(uint64_t current_time, uint64_t startup_timestamp, uint64_t grace_period);
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
 inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
 inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
@@ -370,6 +396,26 @@ inline bool server_election_timeout_has_fired(bool is_leader, uint64_t time_elap
 
 inline bool server_leadership_stable_window_elapsed(uint64_t time_as_leader, uint64_t min_stable_time) {
     return rusty::detail::deref_if_pointer_like(time_as_leader) >= rusty::detail::deref_if_pointer_like(min_stable_time);
+}
+
+inline bool server_random_range_needs_swap(uint64_t min_value, uint64_t max_value) {
+    return rusty::detail::deref_if_pointer_like(max_value) < rusty::detail::deref_if_pointer_like(min_value);
+}
+
+inline bool server_random_range_is_single_point(uint64_t min_value, uint64_t max_value) {
+    return rusty::detail::deref_if_pointer_like(max_value) == rusty::detail::deref_if_pointer_like(min_value);
+}
+
+inline uint64_t server_random_range_cap(uint64_t range, uint64_t max_range) {
+    if (rusty::detail::deref_if_pointer_like(range) > rusty::detail::deref_if_pointer_like(max_range)) {
+        return std::move(max_range);
+    } else {
+        return std::move(range);
+    }
+}
+
+inline bool server_election_in_startup_grace_period(uint64_t current_time, uint64_t startup_timestamp, uint64_t grace_period) {
+    return ((rusty::detail::deref_if_pointer_like(current_time) - rusty::detail::deref_if_pointer_like(startup_timestamp))) < rusty::detail::deref_if_pointer_like(grace_period);
 }
 
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {

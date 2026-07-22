@@ -124,16 +124,15 @@ uint64_t GetNonPreferredGraceElectionMaxUs() {
 }
 
 uint64_t RandomInRangeUs(uint64_t min_us, uint64_t max_us) {
-  if (max_us < min_us) {
+  if (server_random_range_needs_swap(min_us, max_us)) {
     std::swap(min_us, max_us);
   }
-  if (max_us == min_us) {
+  if (server_random_range_is_single_point(min_us, max_us)) {
     return min_us;
   }
-  uint64_t range = max_us - min_us;
-  if (range > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
-    range = static_cast<uint64_t>(std::numeric_limits<int>::max());
-  }
+  uint64_t range = server_random_range_cap(
+      max_us - min_us,
+      static_cast<uint64_t>(std::numeric_limits<int>::max()));
   return min_us + static_cast<uint64_t>(RandomGenerator::rand(0, static_cast<int>(range)));
 }
 
@@ -741,7 +740,8 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
 uint64_t RaftServer::GetElectionTimeout() {
   uint64_t current_time = Time::now();
   const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
-  bool in_grace_period = (current_time - leadership_core_.startup_timestamp()) < grace_period_us;
+  bool in_grace_period = server_election_in_startup_grace_period(
+      current_time, leadership_core_.startup_timestamp(), grace_period_us);
 
   siteid_t preferred_leader_site_id = leadership_core_.preferred_leader_site_id();
   if (!server_preferred_leader_is_configured(preferred_leader_site_id)) {
