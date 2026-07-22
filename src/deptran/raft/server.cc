@@ -3148,27 +3148,16 @@ void RaftServer::EnsureSetup() {
 bool RaftServer::ShouldTransferLeadership() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  // Must be leader
-  if (!vote_core_.is_leader()) {
-    return false;
-  }
-
-  // Must not be preferred (preferred leaders don't transfer)
-  if (AmIPreferredLeader()) {
-    return false;
-  }
-
   // Must have a preferred leader configured
   siteid_t preferred_leader_site_id = leadership_core_.preferred_leader_site_id();
-  // @unsafe
-  {
-  if (preferred_leader_site_id == INVALID_SITEID) {
-    return false;
-  }
-  }
 
-  // Already transferring
-  if (leadership_core_.is_transferring_leadership()) {
+  // Must be leader, non-preferred, have a preferred replica configured, and
+  // not already be transferring.
+  if (!server_leadership_transfer_preconditions_allow(
+          vote_core_.is_leader(),
+          AmIPreferredLeader(),
+          preferred_leader_site_id != INVALID_SITEID,
+          leadership_core_.is_transferring_leadership())) {
     return false;
   }
 
@@ -3182,7 +3171,8 @@ bool RaftServer::ShouldTransferLeadership() {
 
   // Check if preferred replica is caught up
   slotid_t preferred_match_index = it->second;
-  bool is_caught_up = (preferred_match_index >= commitIndex);
+  bool is_caught_up = server_preferred_replica_is_caught_up(
+      preferred_match_index, commitIndex);
 
   if (!is_caught_up) {
     Log_debug("[LEADERSHIP-TRANSFER] Site %d: Preferred replica %d not caught up (match=%lu, commit=%lu)",

@@ -146,6 +146,30 @@ pub fn server_preferred_leader_is_configured(preferred_leader_site_id: i32) -> b
     preferred_leader_site_id != -1
 }
 
+pub fn server_site_is_preferred_leader(site_id: u16,
+                                       preferred_leader_site_id: u16,
+                                       invalid_site_id: u16) -> bool {
+    preferred_leader_site_id != invalid_site_id && site_id == preferred_leader_site_id
+}
+
+pub fn server_leadership_monitor_should_start(is_preferred_leader: bool,
+                                              is_leader: bool,
+                                              looping: bool) -> bool {
+    !is_preferred_leader && is_leader && looping
+}
+
+pub fn server_leadership_transfer_preconditions_allow(is_leader: bool,
+                                                       is_preferred_leader: bool,
+                                                       preferred_configured: bool,
+                                                       transferring: bool) -> bool {
+    is_leader && !is_preferred_leader && preferred_configured && !transferring
+}
+
+pub fn server_preferred_replica_is_caught_up(preferred_match_index: u64,
+                                             commit_index: u64) -> bool {
+    preferred_match_index >= commit_index
+}
+
 pub fn server_vote_term_is_stale(candidate_term: u64, current_term: u64) -> bool {
     candidate_term < current_term
 }
@@ -247,10 +271,14 @@ pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> boo
     observed_term > current_term
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=516599f9484078ae86617ec251fd46ac6ac02a8a98c302c8be3cc40cd2d90625*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=2603c513d2fccd99525fea26fce5316d3316cf672ed0c680fe4e7bf34730106d*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
+inline bool server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_leader_site_id, uint16_t invalid_site_id);
+inline bool server_leadership_monitor_should_start(bool is_preferred_leader, bool is_leader, bool looping);
+inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool is_preferred_leader, bool preferred_configured, bool transferring);
+inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index);
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term);
 inline bool server_vote_is_already_granted_to_other(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
 inline bool server_vote_is_idempotent(uint64_t candidate_term, uint64_t current_term, int32_t voted_for, int32_t candidate_id);
@@ -295,6 +323,22 @@ inline bool server_log_index_above(uint64_t index, uint64_t boundary) {
 
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id) {
     return rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != -1;
+}
+
+inline bool server_site_is_preferred_leader(uint16_t site_id, uint16_t preferred_leader_site_id, uint16_t invalid_site_id) {
+    return (rusty::detail::deref_if_pointer_like(preferred_leader_site_id) != rusty::detail::deref_if_pointer_like(invalid_site_id)) && (rusty::detail::deref_if_pointer_like(site_id) == rusty::detail::deref_if_pointer_like(preferred_leader_site_id));
+}
+
+inline bool server_leadership_monitor_should_start(bool is_preferred_leader, bool is_leader, bool looping) {
+    return (!is_preferred_leader && rusty::detail::deref_if_pointer_like(is_leader)) && rusty::detail::deref_if_pointer_like(looping);
+}
+
+inline bool server_leadership_transfer_preconditions_allow(bool is_leader, bool is_preferred_leader, bool preferred_configured, bool transferring) {
+    return ((rusty::detail::deref_if_pointer_like(is_leader) && !is_preferred_leader) && rusty::detail::deref_if_pointer_like(preferred_configured)) && !transferring;
+}
+
+inline bool server_preferred_replica_is_caught_up(uint64_t preferred_match_index, uint64_t commit_index) {
+    return rusty::detail::deref_if_pointer_like(preferred_match_index) >= rusty::detail::deref_if_pointer_like(commit_index);
 }
 
 inline bool server_vote_term_is_stale(uint64_t candidate_term, uint64_t current_term) {
@@ -1311,7 +1355,7 @@ class RaftServer : public TxLogServer {
     // @unsafe
     {
       siteid_t preferred = leadership_core_.preferred_leader_site_id();
-      return preferred != INVALID_SITEID && site_id_ == preferred;
+      return server_site_is_preferred_leader(site_id_, preferred, INVALID_SITEID);
     }
   }
 
@@ -2128,7 +2172,8 @@ class RaftServer : public TxLogServer {
     }
 
     // If I'm a non-preferred leader, start monitoring for transfer opportunity
-    if (!AmIPreferredLeader() && vote_core_.is_leader() && looping_) {
+    if (server_leadership_monitor_should_start(
+            AmIPreferredLeader(), vote_core_.is_leader(), looping_)) {
       Log_info("[LEADERSHIP-TRANSFER] Site %d: I'm non-preferred leader, starting transfer monitoring",
                site_id_);
       StartLeadershipTransferMonitoring();
