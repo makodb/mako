@@ -463,6 +463,55 @@ inline void RaftCommoIdentityCore::set_self_par_id(uint32_t par_id) {
 }
 /*RUSTYCPP:GEN-END id=commo.8*/
 
+#if RUSTYCPP_RUST
+pub struct RaftCommoNotifyRestartCore {
+    statuses_: std::map<u16, NotifyRestartStatus>,
+}
+
+impl RaftCommoNotifyRestartCore {
+    // @safe
+    fn new() -> RaftCommoNotifyRestartCore {
+        RaftCommoNotifyRestartCore {
+            statuses_: std::map::<u16, NotifyRestartStatus>{},
+        }
+    }
+
+    // @safe
+    fn statuses(&self) -> &std::map<u16, NotifyRestartStatus> {
+        &self.statuses_
+    }
+
+    // @safe
+    fn statuses_mut(&mut self) -> &mut std::map<u16, NotifyRestartStatus> {
+        &mut self.statuses_
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.9 version=1 rust_sha256=63f3c3a530ffcc06deee6311e6cfd4b6d360ee0e60bf31915a7436b619d7a326*/
+struct RaftCommoNotifyRestartCore;
+
+struct RaftCommoNotifyRestartCore {
+    std::map<uint16_t, NotifyRestartStatus> statuses_;
+
+    static RaftCommoNotifyRestartCore new_();
+    const std::map<uint16_t, NotifyRestartStatus>& statuses() const;
+    std::map<uint16_t, NotifyRestartStatus>& statuses_mut();
+};
+
+
+inline RaftCommoNotifyRestartCore RaftCommoNotifyRestartCore::new_() {
+    return RaftCommoNotifyRestartCore{.statuses_ = std::map<uint16_t, NotifyRestartStatus>{}};
+}
+
+inline const std::map<uint16_t, NotifyRestartStatus>& RaftCommoNotifyRestartCore::statuses() const {
+    return this->statuses_;
+}
+
+inline std::map<uint16_t, NotifyRestartStatus>& RaftCommoNotifyRestartCore::statuses_mut() {
+    return this->statuses_;
+}
+/*RUSTYCPP:GEN-END id=commo.9*/
+
 
 // @unsafe - legacy RPC communicator. It owns no peer proxies directly; proxy
 // tables live in Communicator and are downcast at RPC boundaries.
@@ -472,9 +521,17 @@ friend class RaftProxy;
  private:
   // NotifyRestart status tracking for each peer.
   // @unsafe - guarded by std::mutex outside RustyCpp borrow checking.
-  std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
+  RaftCommoNotifyRestartCore notify_restart_core_;
   std::mutex notify_restart_mtx_;
   RaftCommoIdentityCore identity_core_;
+
+  std::map<siteid_t, NotifyRestartStatus>& notify_restart_statuses() {
+    return notify_restart_core_.statuses_mut();
+  }
+
+  const std::map<siteid_t, NotifyRestartStatus>& notify_restart_statuses() const {
+    return notify_restart_core_.statuses();
+  }
 
  public:
 #ifdef RAFT_TEST_CORO
@@ -611,7 +668,7 @@ friend class RaftProxy;
    * Peers in DOWN state are skipped (they will reconnect when they restart).
    * Peers in ACKNOWLEDGED state are skipped (already done).
    */
-  // @unsafe - retries legacy async RPCs and reads/writes notify_restart_status_
+  // @unsafe - retries legacy async RPCs and reads/writes notify_restart_statuses()
   // under std::mutex.
   void RetryPendingNotifyRestart();
 
@@ -628,7 +685,7 @@ friend class RaftProxy;
    *
    * @return true if any peer is still in PENDING state
    */
-  // @unsafe - reads notify_restart_status_ under std::mutex, which is outside
+  // @unsafe - reads notify_restart_statuses() under std::mutex, which is outside
   // RustyCpp borrow checking.
   bool HasPendingNotifyRestart();
 

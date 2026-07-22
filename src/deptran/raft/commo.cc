@@ -30,6 +30,7 @@ namespace janus
   // @safe
   RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll)
       : Communicator(std::move(poll)),
+        notify_restart_core_(RaftCommoNotifyRestartCore::new_()),
         identity_core_(RaftCommoIdentityCore::new_())
   {
     //  verify(poll != nullptr);
@@ -554,7 +555,7 @@ namespace janus
      * - error/timeout      → PENDING (should retry)
      */
     // @unsafe - Broadcasts async restart notifications and updates
-    // notify_restart_status_. Captures `this`, so RaftCommo must outlive any
+    // notify_restart_statuses(). Captures `this`, so RaftCommo must outlive any
     // in-flight FutureAttr callbacks on this path.
     void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id)
     {
@@ -570,12 +571,12 @@ namespace janus
       // Initialize all peers as PENDING
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
-        notify_restart_status_.clear();
+        notify_restart_statuses().clear();
         for (auto &p : proxies)
         {
           if (commo_should_track_notify_restart_peer(p.first, self_id))
           {
-            notify_restart_status_[p.first] = NotifyRestartStatus::PENDING;
+            notify_restart_statuses()[p.first] = NotifyRestartStatus::PENDING;
           }
         }
       }
@@ -595,7 +596,7 @@ namespace janus
         }
         FutureAttr fuattr;
 
-        // Capture `this` to update notify_restart_status_. The status map is
+        // Capture `this` to update notify_restart_statuses(). The status map is
         // protected by notify_restart_mtx_, but lifetime is still manual.
         fuattr.callback = [this, site_id](rusty::Arc<Future> fu)
         {
@@ -616,13 +617,13 @@ namespace janus
             if (acknowledged)
             {
               // Peer reconnected to us
-              notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
+              notify_restart_statuses()[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
               Log_info("[NOTIFY-RESTART] Site %d ACKNOWLEDGED - reconnected to us", site_id);
             }
             else
             {
               // Peer responded "I'm down" - no retry needed
-              notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
+              notify_restart_statuses()[site_id] = NotifyRestartStatus::DOWN;
               Log_info("[NOTIFY-RESTART] Site %d is DOWN - will reconnect when it restarts", site_id);
             }
           }
@@ -650,7 +651,7 @@ namespace janus
       // Get list of pending sites
       {
         std::lock_guard<std::mutex> lock(notify_restart_mtx_);
-        for (auto &pair : notify_restart_status_)
+        for (auto &pair : notify_restart_statuses())
         {
           if (commo_notify_restart_is_pending(pair.second))
           {
@@ -707,12 +708,12 @@ namespace janus
             std::lock_guard<std::mutex> lock(notify_restart_mtx_);
             if (acknowledged)
             {
-              notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
+              notify_restart_statuses()[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
               Log_info("[NOTIFY-RESTART] Retry: Site %d ACKNOWLEDGED", site_id);
             }
             else
             {
-              notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
+              notify_restart_statuses()[site_id] = NotifyRestartStatus::DOWN;
               Log_info("[NOTIFY-RESTART] Retry: Site %d is DOWN", site_id);
             }
           }
@@ -736,8 +737,8 @@ namespace janus
     NotifyRestartStatus RaftCommo::GetNotifyRestartStatus(siteid_t site_id)
     {
       std::lock_guard<std::mutex> lock(notify_restart_mtx_);
-      auto it = notify_restart_status_.find(site_id);
-      if (it == notify_restart_status_.end())
+      auto it = notify_restart_statuses().find(site_id);
+      if (it == notify_restart_statuses().end())
       {
         return NotifyRestartStatus::PENDING;
       }
@@ -750,7 +751,7 @@ namespace janus
     bool RaftCommo::HasPendingNotifyRestart()
     {
       std::lock_guard<std::mutex> lock(notify_restart_mtx_);
-      for (auto &pair : notify_restart_status_)
+      for (auto &pair : notify_restart_statuses())
       {
         if (commo_notify_restart_is_pending(pair.second))
         {
