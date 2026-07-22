@@ -28,7 +28,9 @@ namespace janus
 {
 
   // @safe
-  RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(std::move(poll))
+  RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll)
+      : Communicator(std::move(poll)),
+        identity_core_(RaftCommoIdentityCore::new_())
   {
     //  verify(poll != nullptr);
   }
@@ -559,8 +561,8 @@ namespace janus
       auto proxies = rpc_par_proxies_[par_id];
 
       // Store self info for retry mechanism
-      self_site_id_ = self_id;
-      self_par_id_ = par_id;
+      identity_core_.set_self_site_id(self_id);
+      identity_core_.set_self_par_id(par_id);
 
       Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site %d to %zu peers",
                self_id, proxies.size());
@@ -665,7 +667,7 @@ namespace janus
 
       Log_info("[NOTIFY-RESTART] Retrying NotifyRestart for %zu pending sites", pending_sites.size());
 
-      auto proxies = rpc_par_proxies_[self_par_id_];
+      auto proxies = rpc_par_proxies_[identity_core_.self_par_id()];
 
       for (siteid_t site_id : pending_sites)
       {
@@ -718,7 +720,7 @@ namespace janus
 
         Log_info("[NOTIFY-RESTART] Retrying NotifyRestart to site %d", site_id);
         RaftProxy::RpcNotifyRestartRequest req{};
-        req.restartedSiteId = self_site_id_;
+        req.restartedSiteId = identity_core_.self_site_id();
         auto f = proxy->async_NotifyRestart(req, fuattr);
         _RPC_COUNT();
         if (commo_future_result_ok(f.is_ok()))

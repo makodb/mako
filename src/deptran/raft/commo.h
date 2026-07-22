@@ -8,6 +8,7 @@
 #include <mutex>
 #include <rusty/function.hpp>
 #include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
 #include <rusty/slice.hpp>
 
 // @external: {
@@ -390,6 +391,78 @@ inline AppendEntriesResponse append_entries_response_defaults() {
   return response;
 }
 
+#if RUSTYCPP_RUST
+pub struct RaftCommoIdentityCore {
+    self_site_id_: rusty::Cell<u16>,
+    self_par_id_: rusty::Cell<u32>,
+}
+
+impl RaftCommoIdentityCore {
+    // @safe
+    fn new() -> RaftCommoIdentityCore {
+        RaftCommoIdentityCore {
+            self_site_id_: rusty::Cell::<u16>::new_(0),
+            self_par_id_: rusty::Cell::<u32>::new_(0),
+        }
+    }
+
+    // @safe
+    fn self_site_id(&self) -> u16 {
+        self.self_site_id_.get()
+    }
+
+    // @safe
+    fn set_self_site_id(&mut self, site_id: u16) {
+        self.self_site_id_.set(site_id)
+    }
+
+    // @safe
+    fn self_par_id(&self) -> u32 {
+        self.self_par_id_.get()
+    }
+
+    // @safe
+    fn set_self_par_id(&mut self, par_id: u32) {
+        self.self_par_id_.set(par_id)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.8 version=1 rust_sha256=8b7375062b8cf17ee81f08967a98b1f1be586e82507bf8d9747b3f72340d3de3*/
+struct RaftCommoIdentityCore;
+
+struct RaftCommoIdentityCore {
+    rusty::Cell<uint16_t> self_site_id_;
+    rusty::Cell<uint32_t> self_par_id_;
+
+    static RaftCommoIdentityCore new_();
+    uint16_t self_site_id() const;
+    void set_self_site_id(uint16_t site_id);
+    uint32_t self_par_id() const;
+    void set_self_par_id(uint32_t par_id);
+};
+
+
+inline RaftCommoIdentityCore RaftCommoIdentityCore::new_() {
+    return RaftCommoIdentityCore{.self_site_id_ = rusty::Cell<uint16_t>::new_(static_cast<uint16_t>(0)), .self_par_id_ = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0))};
+}
+
+inline uint16_t RaftCommoIdentityCore::self_site_id() const {
+    return this->self_site_id_.get();
+}
+
+inline void RaftCommoIdentityCore::set_self_site_id(uint16_t site_id) {
+    this->self_site_id_.set(std::move(site_id));
+}
+
+inline uint32_t RaftCommoIdentityCore::self_par_id() const {
+    return this->self_par_id_.get();
+}
+
+inline void RaftCommoIdentityCore::set_self_par_id(uint32_t par_id) {
+    this->self_par_id_.set(std::move(par_id));
+}
+/*RUSTYCPP:GEN-END id=commo.8*/
+
 
 // @unsafe - legacy RPC communicator. It owns no peer proxies directly; proxy
 // tables live in Communicator and are downcast at RPC boundaries.
@@ -401,8 +474,7 @@ friend class RaftProxy;
   // @unsafe - guarded by std::mutex outside RustyCpp borrow checking.
   std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
   std::mutex notify_restart_mtx_;
-  siteid_t self_site_id_ = 0;  // Our own site ID (set when SendNotifyRestart is called)
-  parid_t self_par_id_ = 0;    // Our partition ID
+  RaftCommoIdentityCore identity_core_;
 
  public:
 #ifdef RAFT_TEST_CORO
