@@ -289,6 +289,14 @@ pub fn replicated_db_commit_pending(commit_state: i32) -> bool {
     commit_state == 0
 }
 
+pub fn replicated_db_commit_callback_state(rolled_back: bool) -> i32 {
+    if rolled_back {
+        -1
+    } else {
+        1
+    }
+}
+
 pub fn replicated_db_can_get(has_db: bool, has_value_out: bool) -> bool {
     has_db && has_value_out
 }
@@ -322,13 +330,14 @@ pub fn replicated_db_snapshot_has_bytes(offset: usize,
     offset <= total && needed <= total - offset
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=138e13dc0572cd323a0e9e0eb057ff53cd48bddfb0b42536b085348296d37d6a*/
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=3fcacd1d73e6b5a5776da6585d52430b9b7ad49666bd4fe79e8c8ad6f086759c*/
 inline bool replicated_db_has_command_payload(bool has_value);
 inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
 inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
 inline bool replicated_db_can_submit(bool has_db, bool has_raft, bool has_ops);
 inline bool replicated_db_commit_succeeded(int32_t commit_state);
 inline bool replicated_db_commit_pending(int32_t commit_state);
+inline int32_t replicated_db_commit_callback_state(bool rolled_back);
 inline bool replicated_db_can_get(bool has_db, bool has_value_out);
 inline bool replicated_db_read_found(bool has_value_ptr);
 inline bool replicated_db_can_linearizable_read(bool has_raft, bool is_leader);
@@ -383,6 +392,14 @@ inline bool replicated_db_commit_succeeded(int32_t commit_state) {
 
 inline bool replicated_db_commit_pending(int32_t commit_state) {
     return rusty::detail::deref_if_pointer_like(commit_state) == static_cast<int32_t>(0);
+}
+
+inline int32_t replicated_db_commit_callback_state(bool rolled_back) {
+    if (rolled_back) {
+        return -1;
+    } else {
+        return static_cast<int32_t>(1);
+    }
 }
 
 inline bool replicated_db_can_get(bool has_db, bool has_value_out) {

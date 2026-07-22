@@ -264,7 +264,8 @@ bool ReplicatedDB::Put(const std::string& key, const std::string& value) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};  // 0=pending, 1=success, -1=rolled back
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
   // Poll until callback fires
@@ -292,7 +293,8 @@ bool ReplicatedDB::Delete(const std::string& key) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
   while (replicated_db_commit_pending(committed.load())) {
@@ -319,7 +321,8 @@ bool ReplicatedDB::Batch(const std::vector<KVOperation>& ops) {
   // @unsafe - atomic operations and callback registration
   std::atomic<int> committed{0};
   raft_->RegisterCommitCallback(index, [&committed](CommitStatus status) {
-    committed.store(status == CommitStatus::ROLLEDBACK ? -1 : 1);
+    committed.store(replicated_db_commit_callback_state(
+        status == CommitStatus::ROLLEDBACK));
   });
 
   while (replicated_db_commit_pending(committed.load())) {
