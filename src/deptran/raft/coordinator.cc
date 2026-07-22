@@ -32,6 +32,7 @@ CoordinatorRaft::CoordinatorRaft(uint32_t coo_id,
                                              rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                              uint32_t thread_id)
     : Coordinator(coo_id, benchmark, std::move(client_status), thread_id),
+      state_core_(CoordinatorRaftStateCore::new_()),
       slot_hint_(rusty::Arc<rusty::Cell<slotid_t>>::make(0)) {
 }
 
@@ -122,10 +123,10 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
   }
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  verify(!in_submission_);
+  verify(!state_core_.in_submission());
   verify(!cmd_.has_value());
 //  verify(cmd.self_cmd_ != nullptr);
-  in_submission_ = true;
+  state_core_.set_in_submission(true);
   cmd_ = cmd_env;
   verify(cmd_.has_value());
   commit_callback_ = std::move(func);
@@ -135,9 +136,9 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
 // @unsafe - external calls marked @external [safe], address-of ops in @unsafe blocks
 void CoordinatorRaft::AppendEntries() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    verify(!in_append_entries);
+    verify(!state_core_.in_append_entries());
     // verify(this->svr_->IsLeader()); TODO del it yidawu
-    in_append_entries = true;
+    state_core_.set_in_append_entries(true);
     uint64_t index = 0, term = 0;
     bool ok;
     // @unsafe
@@ -163,7 +164,7 @@ void CoordinatorRaft::AppendEntries() {
         // The command may or may not be committed by the new leader
         // Mark as not committed and let higher layers retry
         committed_ = false;
-        in_append_entries = false;
+        state_core_.set_in_append_entries(false);
         return;
       }
     }

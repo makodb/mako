@@ -138,6 +138,124 @@ inline bool coordinator_raft_should_learn(bool committed) {
 }
 /*RUSTYCPP:GEN-END id=coordinator.1*/
 
+#if RUSTYCPP_RUST
+pub struct CoordinatorRaftStateCore {
+    curr_ballot_: rusty::Cell<u64>,
+    in_submission_: rusty::Cell<bool>,
+    in_append_entries_: rusty::Cell<bool>,
+    min_index_: rusty::Cell<u64>,
+}
+
+impl CoordinatorRaftStateCore {
+    // @safe
+    fn new() -> CoordinatorRaftStateCore {
+        CoordinatorRaftStateCore {
+            curr_ballot_: rusty::Cell::<u64>::new_(1),
+            in_submission_: rusty::Cell::<bool>::new_(false),
+            in_append_entries_: rusty::Cell::<bool>::new_(false),
+            min_index_: rusty::Cell::<u64>::new_(0),
+        }
+    }
+
+    // @safe
+    fn curr_ballot(&self) -> u64 {
+        self.curr_ballot_.get()
+    }
+
+    // @safe
+    fn set_curr_ballot(&mut self, ballot: u64) {
+        self.curr_ballot_.set(ballot)
+    }
+
+    // @safe
+    fn in_submission(&self) -> bool {
+        self.in_submission_.get()
+    }
+
+    // @safe
+    fn set_in_submission(&mut self, value: bool) {
+        self.in_submission_.set(value)
+    }
+
+    // @safe
+    fn in_append_entries(&self) -> bool {
+        self.in_append_entries_.get()
+    }
+
+    // @safe
+    fn set_in_append_entries(&mut self, value: bool) {
+        self.in_append_entries_.set(value)
+    }
+
+    // @safe
+    fn min_index(&self) -> u64 {
+        self.min_index_.get()
+    }
+
+    // @safe
+    fn set_min_index(&mut self, index: u64) {
+        self.min_index_.set(index)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=coordinator.2 version=1 rust_sha256=53d0197a41d1325087a5368df7d9a92e32864ace8e31f343f43f7b5e224729a7*/
+struct CoordinatorRaftStateCore;
+
+struct CoordinatorRaftStateCore {
+    rusty::Cell<uint64_t> curr_ballot_;
+    rusty::Cell<bool> in_submission_;
+    rusty::Cell<bool> in_append_entries_;
+    rusty::Cell<uint64_t> min_index_;
+
+    static CoordinatorRaftStateCore new_();
+    uint64_t curr_ballot() const;
+    void set_curr_ballot(uint64_t ballot);
+    bool in_submission() const;
+    void set_in_submission(bool value);
+    bool in_append_entries() const;
+    void set_in_append_entries(bool value);
+    uint64_t min_index() const;
+    void set_min_index(uint64_t index);
+};
+
+
+inline CoordinatorRaftStateCore CoordinatorRaftStateCore::new_() {
+    return CoordinatorRaftStateCore{.curr_ballot_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(1)), .in_submission_ = rusty::Cell<bool>::new_(false), .in_append_entries_ = rusty::Cell<bool>::new_(false), .min_index_ = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+inline uint64_t CoordinatorRaftStateCore::curr_ballot() const {
+    return this->curr_ballot_.get();
+}
+
+inline void CoordinatorRaftStateCore::set_curr_ballot(uint64_t ballot) {
+    this->curr_ballot_.set(std::move(ballot));
+}
+
+inline bool CoordinatorRaftStateCore::in_submission() const {
+    return this->in_submission_.get();
+}
+
+inline void CoordinatorRaftStateCore::set_in_submission(bool value) {
+    this->in_submission_.set(std::move(value));
+}
+
+inline bool CoordinatorRaftStateCore::in_append_entries() const {
+    return this->in_append_entries_.get();
+}
+
+inline void CoordinatorRaftStateCore::set_in_append_entries(bool value) {
+    this->in_append_entries_.set(std::move(value));
+}
+
+inline uint64_t CoordinatorRaftStateCore::min_index() const {
+    return this->min_index_.get();
+}
+
+inline void CoordinatorRaftStateCore::set_min_index(uint64_t index) {
+    this->min_index_.set(std::move(index));
+}
+/*RUSTYCPP:GEN-END id=coordinator.2*/
+
 // @unsafe - inherits from non-@interface Coordinator and keeps borrowed raw
 // back-pointers into RaftFrame/RaftServer state.
 class CoordinatorRaft : public Coordinator {
@@ -159,14 +277,12 @@ class CoordinatorRaft : public Coordinator {
     // @unsafe
     { return (RaftCommo *) commo_; }
   }
-  bool in_submission_ = false; // debug;
+  CoordinatorRaftStateCore state_core_;
   // removed `in_prepare_` and `in_accept`
   // debug-guard fields — neither was ever written or read in the
   // raft path (the comparable guards on the paxos / mencius
   // coordinators ARE used; CoordinatorRaft just had the shape
   // copied over).
-  bool in_append_entries = false; // debug
-  uint64_t minIndex = 0;
  public:
   // migrated from
   // `shared_ptr<Marshallable>` to `janus::Command`.
@@ -175,7 +291,6 @@ class CoordinatorRaft : public Coordinator {
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
                         uint32_t thread_id);
-  ballot_t curr_ballot_ = 1; // TODO
   uint32_t n_replica_ = 0;   // TODO
   slotid_t slot_id_ = 0;
   // Safe shared mutable counter - shares ownership with RaftFrame.
