@@ -104,6 +104,31 @@ pub fn raft_worker_can_register_callback(has_scheduler: bool) -> bool {
     has_scheduler
 }
 
+pub fn raft_worker_leader_flag_from_bool(is_leader: bool) -> i32 {
+    if is_leader {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn raft_worker_is_leader_flag_set(is_leader: i32) -> bool {
+    is_leader != 0
+}
+
+pub fn raft_worker_should_notify_default_partition(has_registered_partitions: bool) -> bool {
+    !has_registered_partitions
+}
+
+pub fn raft_worker_partition_callback_available(found: bool,
+                                                has_callback: bool) -> bool {
+    found && has_callback
+}
+
+pub fn raft_worker_global_callback_available(has_callback: bool) -> bool {
+    has_callback
+}
+
 pub fn raft_worker_has_command_payload(has_value: bool) -> bool {
     has_value
 }
@@ -114,7 +139,7 @@ pub fn raft_worker_should_buffer_unreplayed(status: i32,
     status == safety_fail_status && len > 0
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=38a1056e499e7c397a482a16347b3eef8e1c93ba32b42e6acd503ea02fcc4a31*/
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=fc3b34aea42faac21b9534020ac7684f0299d3f8bf0b8b6fb4d0d933503e4bd3*/
 bool raft_worker_should_start_submit_thread(bool started);
 bool raft_worker_should_stop_submit_thread(bool started);
 bool raft_worker_should_enqueue(bool started);
@@ -126,6 +151,11 @@ bool raft_worker_submit_loop_should_stop(bool stop_requested, bool queue_empty);
 bool raft_worker_submit_loop_should_take(bool queue_empty, int32_t batch_size, int32_t limit);
 bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_partition, uint32_t requested_partition);
 bool raft_worker_can_register_callback(bool has_scheduler);
+int32_t raft_worker_leader_flag_from_bool(bool is_leader);
+bool raft_worker_is_leader_flag_set(int32_t is_leader);
+bool raft_worker_should_notify_default_partition(bool has_registered_partitions);
+bool raft_worker_partition_callback_available(bool found, bool has_callback);
+bool raft_worker_global_callback_available(bool has_callback);
 bool raft_worker_has_command_payload(bool has_value);
 bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len);
 
@@ -175,6 +205,30 @@ bool raft_worker_partition_matches(bool handles_all_partitions, uint32_t worker_
 
 bool raft_worker_can_register_callback(bool has_scheduler) {
     return std::move(has_scheduler);
+}
+
+int32_t raft_worker_leader_flag_from_bool(bool is_leader) {
+    if (is_leader) {
+        return static_cast<int32_t>(1);
+    } else {
+        return static_cast<int32_t>(0);
+    }
+}
+
+bool raft_worker_is_leader_flag_set(int32_t is_leader) {
+    return rusty::detail::deref_if_pointer_like(is_leader) != static_cast<int32_t>(0);
+}
+
+bool raft_worker_should_notify_default_partition(bool has_registered_partitions) {
+    return !has_registered_partitions;
+}
+
+bool raft_worker_partition_callback_available(bool found, bool has_callback) {
+    return rusty::detail::deref_if_pointer_like(found) && rusty::detail::deref_if_pointer_like(has_callback);
+}
+
+bool raft_worker_global_callback_available(bool has_callback) {
+    return std::move(has_callback);
 }
 
 bool raft_worker_has_command_payload(bool has_value) {
@@ -235,7 +289,7 @@ void RaftWorker::SetupBase() {
     raft_server->RegisterLeaderChangeCallback([this](bool leader) {
       {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
-        is_leader = leader ? 1 : 0;
+        state_core_.set_is_leader(raft_worker_leader_flag_from_bool(leader));
       }
       // Notify all partitions that currently have callback registrations.
       std::set<uint32_t> par_ids;
@@ -245,7 +299,7 @@ void RaftWorker::SetupBase() {
       for (const auto& kv : follower_callbacks_by_partition_) {
         par_ids.insert(kv.first);
       }
-      if (par_ids.empty()) {
+      if (raft_worker_should_notify_default_partition(!par_ids.empty())) {
         uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
         NotifyRaftLeaderChange(par_id, leader);
       } else {
@@ -428,7 +482,7 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
     }
   }
 
-  return false;
+  return raft_worker_is_leader_flag_set(state_core_.is_leader());
 }
 
 // @unsafe - uses raw pointers, dynamic_cast
@@ -789,11 +843,13 @@ int RaftWorker::Next(int slot_id, janus::Command md) {
   watermark_callback_t* active_callback_ptr = nullptr;
   auto& cb_map = am_leader ? leader_callbacks_by_partition_ : follower_callbacks_by_partition_;
   auto cb_it = cb_map.find(par_id);
-  if (cb_it != cb_map.end() && cb_it->second) {
+  if (raft_worker_partition_callback_available(
+          cb_it != cb_map.end(),
+          cb_it != cb_map.end() && static_cast<bool>(cb_it->second))) {
     active_callback_ptr = &cb_it->second;
   } else {
     auto& global_cb = am_leader ? leader_callback_par_id_return_ : follower_callback_par_id_return_;
-    if (global_cb) {
+    if (raft_worker_global_callback_available(static_cast<bool>(global_cb))) {
       active_callback_ptr = &global_cb;
     }
   }

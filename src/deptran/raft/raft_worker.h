@@ -79,6 +79,8 @@ struct RaftWorkerPendingLog {
 #if RUSTYCPP_RUST
 pub struct RaftWorkerStateCore {
     batch_limit_: rusty::Cell<i32>,
+    cur_epoch_: rusty::Cell<i32>,
+    is_leader_: rusty::Cell<i32>,
 }
 
 impl RaftWorkerStateCore {
@@ -86,6 +88,8 @@ impl RaftWorkerStateCore {
     fn new() -> RaftWorkerStateCore {
         RaftWorkerStateCore {
             batch_limit_: rusty::Cell::<i32>::new_(1),
+            cur_epoch_: rusty::Cell::<i32>::new_(0),
+            is_leader_: rusty::Cell::<i32>::new_(0),
         }
     }
 
@@ -98,22 +102,48 @@ impl RaftWorkerStateCore {
     fn set_batch_limit(&mut self, value: i32) {
         self.batch_limit_.set(value)
     }
+
+    // @safe
+    fn cur_epoch(&self) -> i32 {
+        self.cur_epoch_.get()
+    }
+
+    // @safe
+    fn set_cur_epoch(&mut self, value: i32) {
+        self.cur_epoch_.set(value)
+    }
+
+    // @safe
+    fn is_leader(&self) -> i32 {
+        self.is_leader_.get()
+    }
+
+    // @safe
+    fn set_is_leader(&mut self, value: i32) {
+        self.is_leader_.set(value)
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_worker.2 version=1 rust_sha256=cf6382551fb179a8fbb3502fdc27418fe1ba577877aff77422ad463d204afc58*/
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.2 version=1 rust_sha256=10d28575bfcecf9dbd4d4e122ea8064d344250f6ba6da438658a73cabcf509be*/
 struct RaftWorkerStateCore;
 
 struct RaftWorkerStateCore {
     rusty::Cell<int32_t> batch_limit_;
+    rusty::Cell<int32_t> cur_epoch_;
+    rusty::Cell<int32_t> is_leader_;
 
     static RaftWorkerStateCore new_();
     int32_t batch_limit() const;
     void set_batch_limit(int32_t value);
+    int32_t cur_epoch() const;
+    void set_cur_epoch(int32_t value);
+    int32_t is_leader() const;
+    void set_is_leader(int32_t value);
 };
 
 
 RaftWorkerStateCore RaftWorkerStateCore::new_() {
-    return RaftWorkerStateCore{.batch_limit_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(1))};
+    return RaftWorkerStateCore{.batch_limit_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(1)), .cur_epoch_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), .is_leader_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0))};
 }
 
 int32_t RaftWorkerStateCore::batch_limit() const {
@@ -122,6 +152,22 @@ int32_t RaftWorkerStateCore::batch_limit() const {
 
 void RaftWorkerStateCore::set_batch_limit(int32_t value) {
     this->batch_limit_.set(std::move(value));
+}
+
+int32_t RaftWorkerStateCore::cur_epoch() const {
+    return this->cur_epoch_.get();
+}
+
+void RaftWorkerStateCore::set_cur_epoch(int32_t value) {
+    this->cur_epoch_.set(std::move(value));
+}
+
+int32_t RaftWorkerStateCore::is_leader() const {
+    return this->is_leader_.get();
+}
+
+void RaftWorkerStateCore::set_is_leader(int32_t value) {
+    this->is_leader_.set(std::move(value));
 }
 /*RUSTYCPP:GEN-END id=raft_worker.2*/
 
@@ -211,9 +257,8 @@ public:
   // Queue for unreplayed logs (follower only)
   std::queue<std::tuple<int, int, int, int, const char*>> un_replay_logs_;
 
-  // Leadership state
-  int cur_epoch = 0;
-  int is_leader = 0;
+  // Leadership routing scalars live in state_core_; callback ownership and
+  // synchronization stay in C++.
   // @unsafe - recursive mutex protects leadership state across callbacks.
   std::recursive_mutex election_state_lock;
 
@@ -249,6 +294,10 @@ public:
   void EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size);
   // @safe
   bool HasSubmitThread() const { return submit_thread_started_; }
+  // @safe
+  int CurrentEpoch() const { return state_core_.cur_epoch(); }
+  // @safe
+  void SetCurrentEpoch(int epoch) { state_core_.set_cur_epoch(epoch); }
 
   // Leadership & Partition queries
   // @unsafe - uses raw pointers, dynamic_cast

@@ -862,7 +862,7 @@ void set_epoch(int epoch) {
   }
   for (auto& worker : raft_workers_g) {
     if (worker) {
-      worker->cur_epoch = es->get_epoch();
+      worker->SetCurrentEpoch(es->get_epoch());
     }
   }
 }
