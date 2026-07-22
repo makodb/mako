@@ -24,12 +24,25 @@ pub enum ReplicatedDBOp {
     DELETE = 2,
     BATCH = 3,
 }
+
+#[repr(u8)]
+pub enum ReplicatedDBApplyAction {
+    UNKNOWN = 0,
+    PUT = 1,
+    DELETE = 2,
+    BATCH = 3,
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=replicated_db.op version=1 rust_sha256=b0157873ab7f852c9b85b14b7d0706820a098f4147396bfa18a4c502e809c276*/
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.op version=1 rust_sha256=46fc9e0a3dc549b036880df4121cd58e1ab750266c5e667a0c0eee5a67b13286*/
 enum class ReplicatedDBOp : uint8_t;
 inline constexpr ReplicatedDBOp ReplicatedDBOp_PUT();
 inline constexpr ReplicatedDBOp ReplicatedDBOp_DELETE();
 inline constexpr ReplicatedDBOp ReplicatedDBOp_BATCH();
+enum class ReplicatedDBApplyAction;
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_UNKNOWN();
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_PUT();
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_DELETE();
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_BATCH();
 
 enum class ReplicatedDBOp : uint8_t {
     PUT = 1,
@@ -39,6 +52,17 @@ enum class ReplicatedDBOp : uint8_t {
 inline constexpr ReplicatedDBOp ReplicatedDBOp_PUT() { return ReplicatedDBOp::PUT; }
 inline constexpr ReplicatedDBOp ReplicatedDBOp_DELETE() { return ReplicatedDBOp::DELETE; }
 inline constexpr ReplicatedDBOp ReplicatedDBOp_BATCH() { return ReplicatedDBOp::BATCH; }
+
+enum class ReplicatedDBApplyAction {
+    UNKNOWN = 0,
+    PUT = 1,
+    DELETE = 2,
+    BATCH = 3
+};
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_UNKNOWN() { return ReplicatedDBApplyAction::UNKNOWN; }
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_PUT() { return ReplicatedDBApplyAction::PUT; }
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_DELETE() { return ReplicatedDBApplyAction::DELETE; }
+inline constexpr ReplicatedDBApplyAction ReplicatedDBApplyAction_BATCH() { return ReplicatedDBApplyAction::BATCH; }
 /*RUSTYCPP:GEN-END id=replicated_db.op*/
 
 struct KVOperation;
@@ -237,6 +261,20 @@ pub fn replicated_db_command_is_batch(op: janus::ReplicatedDBOp) -> bool {
     op == janus::ReplicatedDBOp::BATCH
 }
 
+pub fn replicated_db_command_apply_action(
+    op: janus::ReplicatedDBOp
+) -> janus::ReplicatedDBApplyAction {
+    if op == janus::ReplicatedDBOp::PUT {
+        janus::ReplicatedDBApplyAction::PUT
+    } else if op == janus::ReplicatedDBOp::DELETE {
+        janus::ReplicatedDBApplyAction::DELETE
+    } else if op == janus::ReplicatedDBOp::BATCH {
+        janus::ReplicatedDBApplyAction::BATCH
+    } else {
+        janus::ReplicatedDBApplyAction::UNKNOWN
+    }
+}
+
 pub fn replicated_db_can_submit(has_db: bool,
                                 has_raft: bool,
                                 has_ops: bool) -> bool {
@@ -284,7 +322,7 @@ pub fn replicated_db_snapshot_has_bytes(offset: usize,
     offset <= total && needed <= total - offset
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=7aa0406709a18dd45cb9d3ca8cf2bee1dcde82db83dde5c1a16a5545de0826f1*/
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=138e13dc0572cd323a0e9e0eb057ff53cd48bddfb0b42536b085348296d37d6a*/
 inline bool replicated_db_has_command_payload(bool has_value);
 inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
 inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
@@ -321,6 +359,18 @@ inline bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
 
 inline bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
     return op == janus::ReplicatedDBOp::BATCH;
+}
+
+inline janus::ReplicatedDBApplyAction replicated_db_command_apply_action(janus::ReplicatedDBOp op) {
+    if (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::PUT)) {
+        return rusty::clone(rusty::clone(janus::ReplicatedDBApplyAction::PUT));
+    } else if (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::DELETE)) {
+        return rusty::clone(rusty::clone(janus::ReplicatedDBApplyAction::DELETE));
+    } else if (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH)) {
+        return rusty::clone(rusty::clone(janus::ReplicatedDBApplyAction::BATCH));
+    } else {
+        return rusty::clone(rusty::clone(janus::ReplicatedDBApplyAction::UNKNOWN));
+    }
 }
 
 inline bool replicated_db_can_submit(bool has_db, bool has_raft, bool has_ops) {
@@ -513,6 +563,12 @@ private:
 
     // @unsafe - Applies a single DELETE to RocksDB
     void ApplyDelete(const std::string& key);
+
+    // @unsafe - Dispatches a DSL-classified command into RocksDB apply helpers.
+    void ApplyCommand(const ReplicatedDBCommand& db_cmd, uint64_t index);
+
+    // @unsafe - Dispatches one batch operation into RocksDB apply helpers.
+    void ApplyBatchOperation(const KVOperation& op);
 
     // @unsafe - Persists last_applied_index_ to RocksDB metadata
     void PersistLastAppliedIndex();

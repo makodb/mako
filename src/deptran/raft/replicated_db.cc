@@ -399,30 +399,51 @@ void ReplicatedDB::ApplyEntry(int slot, const janus::Command& cmd) {
     return;
   }
 
-  // Apply the operation
-  if (replicated_db_command_is_put(db_cmd->op_)) {
-    ApplyPut(db_cmd->key_, db_cmd->value_);
-  } else if (replicated_db_command_is_delete(db_cmd->op_)) {
-    ApplyDelete(db_cmd->key_);
-  } else if (replicated_db_command_is_batch(db_cmd->op_)) {
-    for (const auto& op : db_cmd->batch_ops_) {
-      if (replicated_db_command_is_put(op.op)) {
-        ApplyPut(op.key, op.value);
-      } else if (replicated_db_command_is_delete(op.op)) {
-        ApplyDelete(op.key);
-      } else {
-        Log_error("[ReplicatedDB] Unknown batch sub-operation %d",
-                  static_cast<int>(op.op));
-      }
-    }
-  } else {
-    Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
-              static_cast<int>(db_cmd->op_), index);
-  }
+  ApplyCommand(*db_cmd, index);
 
   // Update and persist last applied index
   state_core_.set_last_applied_index(index);
   PersistLastAppliedIndex();
+}
+
+// @unsafe - dispatches DSL-classified commands into RocksDB apply helpers.
+void ReplicatedDB::ApplyCommand(const ReplicatedDBCommand& db_cmd, uint64_t index) {
+  switch (replicated_db_command_apply_action(db_cmd.op_)) {
+    case ReplicatedDBApplyAction::PUT:
+      ApplyPut(db_cmd.key_, db_cmd.value_);
+      return;
+    case ReplicatedDBApplyAction::DELETE:
+      ApplyDelete(db_cmd.key_);
+      return;
+    case ReplicatedDBApplyAction::BATCH:
+      for (const auto& op : db_cmd.batch_ops_) {
+        ApplyBatchOperation(op);
+      }
+      return;
+    case ReplicatedDBApplyAction::UNKNOWN:
+      break;
+  }
+
+  Log_error("[ReplicatedDB] Unknown operation %d at index %lu",
+            static_cast<int>(db_cmd.op_), index);
+}
+
+// @unsafe - dispatches one DSL-classified batch operation to RocksDB.
+void ReplicatedDB::ApplyBatchOperation(const KVOperation& op) {
+  switch (replicated_db_command_apply_action(op.op)) {
+    case ReplicatedDBApplyAction::PUT:
+      ApplyPut(op.key, op.value);
+      return;
+    case ReplicatedDBApplyAction::DELETE:
+      ApplyDelete(op.key);
+      return;
+    case ReplicatedDBApplyAction::BATCH:
+    case ReplicatedDBApplyAction::UNKNOWN:
+      break;
+  }
+
+  Log_error("[ReplicatedDB] Unknown batch sub-operation %d",
+            static_cast<int>(op.op));
 }
 
 // @unsafe - RocksDB C API
