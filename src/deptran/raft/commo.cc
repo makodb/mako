@@ -84,7 +84,12 @@ namespace janus
           Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
           return;
         }
-        fu->get_reply() >> response->status >> response->term >> response->last_log_index >> response->ack_type;
+        uint64_t status = 0;
+        uint64_t term = 0;
+        uint64_t last_log_index = 0;
+        uint64_t ack_type = 0;
+        fu->get_reply() >> status >> term >> last_log_index >> ack_type;
+        response->apply_reply(status, term, last_log_index, ack_type);
         Log_debug("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
                   site_id, response->status, response->term, response->last_log_index, response->ack_type);
         response->event->set(1);
@@ -181,15 +186,18 @@ namespace janus
           Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
           return;
         }
-        fu->get_reply() >> res->ok;
-        fu->get_reply() >> res->followerTerm;
-        fu->get_reply() >> res->followerLastLogIndex;
-        fu->get_reply() >> res->followerAckType;
-        res->empty = commo_append_entries_empty_from_cmd(cmd.has_value());
+        uint64_t ok = 0;
+        uint64_t follower_term = 0;
+        uint64_t follower_last_log_index = 0;
+        uint64_t follower_ack_type = 0;
+        fu->get_reply() >> ok;
+        fu->get_reply() >> follower_term;
+        fu->get_reply() >> follower_last_log_index;
+        fu->get_reply() >> follower_ack_type;
         // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
         // only set res->done if it's not a lost RPC
-        res->done = commo_append_entries_done_from_reply(
-            res->ok, res->followerTerm, res->followerLastLogIndex);
+        res->apply_reply(ok, follower_term, follower_last_log_index,
+                         follower_ack_type, cmd.has_value());
       };
 
       if (commo_should_send_empty_append_entries(cmd.has_value()))

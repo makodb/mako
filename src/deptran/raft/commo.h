@@ -156,9 +156,24 @@ impl SendAppendEntriesResults {
     fn defaults() -> SendAppendEntriesResults {
         send_append_entries_results_defaults()
     }
+
+    // @safe
+    fn apply_reply(&mut self,
+                   ok: u64,
+                   follower_term: u64,
+                   follower_last_log_index: u64,
+                   follower_ack_type: u64,
+                   has_cmd: bool) {
+        self.ok = ok;
+        self.followerTerm = follower_term;
+        self.followerLastLogIndex = follower_last_log_index;
+        self.followerAckType = follower_ack_type;
+        self.empty = !has_cmd;
+        self.done = !(ok == 0 && follower_term == 0 && follower_last_log_index == 0);
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=commo.send_append_entries_results version=1 rust_sha256=a26d13a9b3118404a9773198ad508022eff105b484c564e122efc81f6b094a77*/
+/*RUSTYCPP:GEN-BEGIN id=commo.send_append_entries_results version=1 rust_sha256=6b6bca23f8357319e59dea5bf378dd812d77f4c980f9be24836198af6290a9af*/
 struct SendAppendEntriesResults;
 
 struct SendAppendEntriesResults {
@@ -170,11 +185,21 @@ struct SendAppendEntriesResults {
     bool empty;
 
     static SendAppendEntriesResults defaults();
+    void apply_reply(uint64_t ok, uint64_t follower_term, uint64_t follower_last_log_index, uint64_t follower_ack_type, bool has_cmd);
 };
 
 
 inline SendAppendEntriesResults SendAppendEntriesResults::defaults() {
     return send_append_entries_results_defaults();
+}
+
+inline void SendAppendEntriesResults::apply_reply(uint64_t ok, uint64_t follower_term, uint64_t follower_last_log_index, uint64_t follower_ack_type, bool has_cmd) {
+    this->ok = std::move(ok);
+    this->followerTerm = std::move(follower_term);
+    this->followerLastLogIndex = std::move(follower_last_log_index);
+    this->followerAckType = std::move(follower_ack_type);
+    this->empty = !has_cmd;
+    this->done = !(((rusty::detail::deref_if_pointer_like(ok) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(follower_term) == static_cast<uint64_t>(0))) && (rusty::detail::deref_if_pointer_like(follower_last_log_index) == static_cast<uint64_t>(0)));
 }
 /*RUSTYCPP:GEN-END id=commo.send_append_entries_results*/
 
@@ -360,9 +385,21 @@ impl AppendEntriesResponse {
     fn defaults() -> AppendEntriesResponse {
         append_entries_response_defaults()
     }
+
+    // @safe
+    fn apply_reply(&mut self,
+                   status: u64,
+                   term: u64,
+                   last_log_index: u64,
+                   ack_type: u64) {
+        self.status = status;
+        self.term = term;
+        self.last_log_index = last_log_index;
+        self.ack_type = ack_type;
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_response version=1 rust_sha256=c051d7c6b60ae5f3a5a0a80b20bdecb4f483c9d80f80d57489b8d5395135f6e9*/
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_response version=1 rust_sha256=de4dfbb8b0268305ca318f5ee94e0258ae18dd8d10205519612e4bf430010684*/
 struct AppendEntriesResponse;
 
 struct AppendEntriesResponse {
@@ -373,11 +410,19 @@ struct AppendEntriesResponse {
     uint64_t ack_type;
 
     static AppendEntriesResponse defaults();
+    void apply_reply(uint64_t status, uint64_t term, uint64_t last_log_index, uint64_t ack_type);
 };
 
 
 inline AppendEntriesResponse AppendEntriesResponse::defaults() {
     return append_entries_response_defaults();
+}
+
+inline void AppendEntriesResponse::apply_reply(uint64_t status, uint64_t term, uint64_t last_log_index, uint64_t ack_type) {
+    this->status = std::move(status);
+    this->term = std::move(term);
+    this->last_log_index = std::move(last_log_index);
+    this->ack_type = std::move(ack_type);
 }
 /*RUSTYCPP:GEN-END id=commo.append_entries_response*/
 
