@@ -262,8 +262,29 @@ pub fn commo_should_track_notify_restart_peer(peer_site: u16,
                                               self_site: u16) -> bool {
     peer_site != self_site
 }
+
+pub fn commo_make_append_entries_reply(
+    ok: u64,
+    term: u64,
+    last_log_index: u64,
+    ack_type: u64
+) -> raft::AppendEntriesReply {
+    raft::AppendEntriesReply {
+        follower_append_ok: ok,
+        follower_current_term: term,
+        follower_last_log_index: last_log_index,
+        follower_ack_type: ack_type,
+    }
+}
+
+pub fn commo_make_vote_reply(term: i64, vote_granted: bool) -> raft::VoteReply {
+    raft::VoteReply {
+        max_ballot: term,
+        vote_granted,
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=602922be5cf2592200c2c6ca6ec8e2abaf2ccc3ad5364b6913623dacaf82937b*/
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=749c4f988151fca25550830969ee586042782d484c361d8dd49c7eda99a32f8a*/
 inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
 inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
 inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
@@ -313,6 +334,14 @@ inline bool commo_callback_is_set(bool has_callback) {
 
 inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site) {
     return rusty::detail::deref_if_pointer_like(peer_site) != rusty::detail::deref_if_pointer_like(self_site);
+}
+
+inline raft::AppendEntriesReply commo_make_append_entries_reply(uint64_t ok, uint64_t term, uint64_t last_log_index, uint64_t ack_type) {
+    return raft::AppendEntriesReply{.follower_append_ok = std::move(ok), .follower_current_term = std::move(term), .follower_last_log_index = std::move(last_log_index), .follower_ack_type = std::move(ack_type)};
+}
+
+inline raft::VoteReply commo_make_vote_reply(int64_t term, bool vote_granted) {
+    return raft::VoteReply{.max_ballot = std::move(term), .vote_granted = std::move(vote_granted)};
 }
 /*RUSTYCPP:GEN-END id=commo.append_entries_result_helpers*/
 

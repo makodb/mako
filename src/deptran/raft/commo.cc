@@ -927,11 +927,16 @@ namespace janus
                       follower_id, fu->get_error_code());
             return;
           }
-          raft::AppendEntriesReply r{};
-          fu->get_reply() >> r.follower_append_ok;
-          fu->get_reply() >> r.follower_current_term;
-          fu->get_reply() >> r.follower_last_log_index;
-          fu->get_reply() >> r.follower_ack_type;
+          uint64_t ok = 0;
+          uint64_t term = 0;
+          uint64_t last_log_index = 0;
+          uint64_t ack_type = 0;
+          fu->get_reply() >> ok;
+          fu->get_reply() >> term;
+          fu->get_reply() >> last_log_index;
+          fu->get_reply() >> ack_type;
+          raft::AppendEntriesReply r = commo_make_append_entries_reply(
+              ok, term, last_log_index, ack_type);
           if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr))) {
             (*on_reply_ptr)(follower_id, r);
           }
@@ -1019,13 +1024,11 @@ namespace janus
                       site_id, fu->get_error_code());
             return;
           }
-          raft::VoteReply r{};
           ballot_t term = 0;
           bool_t vote = false;
           fu->get_reply() >> term;
           fu->get_reply() >> vote;
-          r.max_ballot = term;
-          r.vote_granted = vote;
+          raft::VoteReply r = commo_make_vote_reply(term, vote);
           if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr)))
           {
             (*on_reply_ptr)(site_id, r);
