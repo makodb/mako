@@ -142,31 +142,31 @@ struct RaftWorkerStateCore {
 };
 
 
-RaftWorkerStateCore RaftWorkerStateCore::new_() {
+inline RaftWorkerStateCore RaftWorkerStateCore::new_() {
     return RaftWorkerStateCore{.batch_limit_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(1)), .cur_epoch_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), .is_leader_ = rusty::Cell<int32_t>::new_(static_cast<int32_t>(0))};
 }
 
-int32_t RaftWorkerStateCore::batch_limit() const {
+inline int32_t RaftWorkerStateCore::batch_limit() const {
     return this->batch_limit_.get();
 }
 
-void RaftWorkerStateCore::set_batch_limit(int32_t value) {
+inline void RaftWorkerStateCore::set_batch_limit(int32_t value) {
     this->batch_limit_.set(std::move(value));
 }
 
-int32_t RaftWorkerStateCore::cur_epoch() const {
+inline int32_t RaftWorkerStateCore::cur_epoch() const {
     return this->cur_epoch_.get();
 }
 
-void RaftWorkerStateCore::set_cur_epoch(int32_t value) {
+inline void RaftWorkerStateCore::set_cur_epoch(int32_t value) {
     this->cur_epoch_.set(std::move(value));
 }
 
-int32_t RaftWorkerStateCore::is_leader() const {
+inline int32_t RaftWorkerStateCore::is_leader() const {
     return this->is_leader_.get();
 }
 
-void RaftWorkerStateCore::set_is_leader(int32_t value) {
+inline void RaftWorkerStateCore::set_is_leader(int32_t value) {
     this->is_leader_.set(std::move(value));
 }
 /*RUSTYCPP:GEN-END id=raft_worker.2*/

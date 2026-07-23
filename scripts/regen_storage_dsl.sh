@@ -86,6 +86,9 @@ FILES=(
   # Raft quorum threshold predicate only; atomics, mutexes, and rrr::IntEvent
   # wait/wake machinery stay hand-C++.
   src/deptran/raft/quorum.hpp
+  # Raft worker pending-log value/state cores; thread loops, queues, callbacks,
+  # and scheduler handoff stay hand-C++.
+  src/deptran/raft/raft_worker.h
   # Raft async AppendEntries response value only; RaftCommo and callback/Future
   # lifetimes stay hand-C++.
   src/deptran/raft/commo.h
