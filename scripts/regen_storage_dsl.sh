@@ -89,6 +89,9 @@ FILES=(
   # Raft worker pending-log value/state cores; thread loops, queues, callbacks,
   # and scheduler handoff stay hand-C++.
   src/deptran/raft/raft_worker.h
+  # Raft rrr transport adapter core; RaftCommo/RaftProxy RPC boundaries stay
+  # hand-C++ bridges.
+  src/deptran/raft/rrr_transport.hpp
   # Raft async AppendEntries response value only; RaftCommo and callback/Future
   # lifetimes stay hand-C++.
   src/deptran/raft/commo.h
