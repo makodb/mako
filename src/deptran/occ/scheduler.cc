@@ -46,7 +46,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
 
   // only do version check on leader.
   if (tx_box->is_leader_hint_ && !txn->version_check()) {
-    Log_debug("txn: occ validation failed. id %" PRIx64 "site: %x",
+    Log_debug("txn: occ validation failed. id {:x}site: {:x}",
         (int64_t) tx_id, (int) this->site_id_);
     txn->__debug_abort_ = 1;
     return false;
@@ -72,7 +72,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
           vr->unlock_row_by(txn->id());
         }
         txn->locks_.clear();
-        Log_debug("txn: occ read locks failed. id %" PRIx64 ", site: %x, is-leader: %d",
+        Log_debug("txn: occ read locks failed. id {:x}, site: {:x}, is-leader: {}",
             (int64_t)tx_id, (int)this->site_id_, tx_box->is_leader_hint_);
         txn->__debug_abort_ = 1;
         return false;
@@ -99,7 +99,7 @@ bool SchedulerOcc::DoPrepare(txnid_t tx_id) {
           vr->unlock_row_by(txn->id());
         }
         txn->locks_.clear();
-        Log_debug("txn: occ write locks failed. id %" PRIx64 "site: %x", (int64_t)tx_id, (int)this->site_id_);
+        Log_debug("txn: occ write locks failed. id {:x}site: {:x}", (int64_t)tx_id, (int)this->site_id_);
         txn->__debug_abort_ = 1;
         return false;
       }
@@ -121,7 +121,7 @@ void SchedulerOcc::DoCommit(Tx& tx) {
 
   auto txn = dynamic_cast<mdb::TxnOCC*>(mdb_txn_);
   if (txn->__debug_abort_) {
-    Log_fatal("2pc commit request received after prepare failure for %" PRIx64,
+    Log_fatal("2pc commit request received after prepare failure for {:x}",
               tx.tid_);
   }
   verify(txn->outcome_ == symbol_t::NONE);

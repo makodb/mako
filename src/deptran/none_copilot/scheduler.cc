@@ -14,7 +14,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 								   struct DepId dep_id,
 								   int commit_or_abort) {
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
-	Log_debug("{}: at site {}, tx: %" PRIx64,
+	Log_debug("{}: at site {}, tx: {:x}",
             __FUNCTION__, this->site_id_, tx_id);
 	auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));
 	// TODO maybe change inuse to an event?

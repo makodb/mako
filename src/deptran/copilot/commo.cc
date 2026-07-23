@@ -170,7 +170,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
         rrr::deserialize_from(fu->get_reply(), b, sgst_dep);
         bool ok = (ballot == b);
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<{}, {}> sgst_dep=%" PRId64 " dep=%" PRId64 "", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
+  Log_info("cmd<{}, {}> sgst_dep={} dep={}", SimpleRWCommand::GetCmdID(cmd_env).first, SimpleRWCommand::GetCmdID(cmd_env).second, sgst_dep, dep);
 #endif
         e->FeedResponse(ok, sgst_dep == dep);
         if (ok) {

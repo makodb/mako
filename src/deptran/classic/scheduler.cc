@@ -99,7 +99,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
   auto tx = dynamic_pointer_cast<TxClassic>(GetTx(cmd_id));
   verify(tx != nullptr);
 //  MergeCommands(tx.cmd_, cmd);
-  Log_debug("{}: received dispatch for tx id: %" PRIx64, site_id_, tx->tid_);
+  Log_debug("{}: received dispatch for tx id: {:x}", site_id_, tx->tid_);
 //  verify(partition_id_ == piece_data.partition_id_);
   // pre-proces
   // TODO separate pre-process and process/commit
@@ -164,8 +164,7 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		null_cmd = true;
 		return false;
 	}*/
-  Log_debug("{}: at site {}, tx: %"
-                PRIx64, __FUNCTION__, this->site_id_, tx_id);
+  Log_debug("{}: at site {}, tx: {:x}", __FUNCTION__, this->site_id_, tx_id);
   if (Config::GetConfig()->IsReplicated()) {
     // fill the payload on a LOCAL, then freeze it into a shared Arc —
     // rusty::Arc payloads are const-view after construction.
@@ -219,9 +218,9 @@ int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {
   }
   // else: is the leader.
   sp_tx->prepare_result->set(DoPrepare(sp_tx->tid_));
-  Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
+  Log_debug("prepare request replicated and executed for {:x}, result: {:x}, sid: {:x}",
       sp_tx->tid_, sp_tx->prepare_result->get(), (int)this->site_id_);
-  Log_debug("triggering prepare replication callback %" PRIx64, sp_tx->tid_);
+  Log_debug("triggering prepare replication callback {:x}", sp_tx->tid_);
   return 0;
 }
 
@@ -235,7 +234,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 															 struct DepId dep_id,
 															 int commit_or_abort) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("{}: at site {}, tx: %" PRIx64,
+  Log_debug("{}: at site {}, tx: {:x}",
             __FUNCTION__, this->site_id_, tx_id);
   Log_debug("Coordinator invokes Submit to submit a request to a specific protocol");
   // auto sp_tx = dynamic_pointer_cast<TxClassic>(GetOrCreateTx(tx_id));

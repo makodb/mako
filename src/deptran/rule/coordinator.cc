@@ -163,7 +163,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
   n_pd = 100;
   // auto cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
   auto cmds_by_par = cmds_by_par_;
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   // [Jetpack] TODO: only support partition = 1 now
   verify(cmds_by_par.size() == 1);
   shared_ptr<RuleSpeculativeExecuteQuorumEvent> e;
@@ -227,7 +227,7 @@ void CoordinatorRule::DispatchAsync(bool fastpath_broadcast_mode) {
   // cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
   // cmds_by_par_ = cmds_by_par;
   auto cmds_by_par = cmds_by_par_;
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   for (auto& pair: cmds_by_par) {
     const parid_t& par_id = pair.first;
     auto sp_vec_piece = sp_vec_piece_by_par_[par_id];

@@ -67,7 +67,7 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
   ongoing_tx_id_ = cmd->id_;
   cmd->client_id_ = req.client_id_;
   cmd->cmd_id_in_client_ = req.cmd_id_in_client_;
-  Log_debug("assigning tx id: %" PRIx64, ongoing_tx_id_);
+  Log_debug("assigning tx id: {:x}", ongoing_tx_id_);
   cmd->timestamp_ = GenerateTimestamp();
   cmd_ = cmd;
   n_retry_ = 0;
@@ -194,7 +194,7 @@ void CoordinatorClassic::Restart() {
   cmd_->root_id_ = this->next_txn_id();
   cmd_->id_ = cmd_->root_id_;
   ongoing_tx_id_ = cmd_->root_id_;
-  Log_debug("assigning tx_id: %" PRIx64, ongoing_tx_id_);
+  Log_debug("assigning tx_id: {:x}", ongoing_tx_id_);
   TxData* txn = (TxData*) cmd_;
   double last_latency = txn->last_attempt_latency();
   if (client_status_.is_some())
@@ -223,7 +223,7 @@ void CoordinatorClassic::DispatchAsync() {
   n_pd = 100;
   ReadyPiecesData cmds_by_par;
   cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   for (auto& pair: cmds_by_par) {
     const parid_t& par_id = pair.first;
     auto& cmds = pair.second;
@@ -246,7 +246,7 @@ void CoordinatorClassic::DispatchAsync() {
                                          std::placeholders::_2));
   }
 
-  Log_debug("Dispatch cnt: {} for tx_id: %" PRIx64, cnt, txn->root_id_);
+  Log_debug("Dispatch cnt: {} for tx_id: {:x}", cnt, txn->root_id_);
 }
 
 // removed `CoordinatorClassic::DispatchSync`
@@ -263,7 +263,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
   n_pd = 100;
   auto cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
-  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  Log_debug("Dispatch for tx_id: {:x}", txn->root_id_);
   
   for (auto& pair: cmds_by_par){
     auto& cmds = pair.second;
@@ -294,7 +294,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   } else if (last && aborted_) {
 		GotoNextPhase();
 	}
-  //Log_debug("Dispatch cnt: {} for tx_id: %" PRIx64, cnt, txn->root_id_);
+  //Log_debug("Dispatch cnt: {} for tx_id: {:x}", cnt, txn->root_id_);
 }
 
 bool CoordinatorClassic::AllDispatchAcked() {
@@ -472,9 +472,7 @@ void CoordinatorClassic::EarlyAbort() {
   tx_data().reply_.res_ = REJECT;
   for (auto& rp : tx_data().partition_ids_) {
     n_finish_req_++;
-    Log_debug("send abort for txn_id %"
-                  PRIx64
-                  " to %d", tx_data().id_, rp);
+    Log_debug("send abort for txn_id {:x} to {}", tx_data().id_, rp);
     commo()->SendEarlyAbort(rp, cmd_->id_);
     // removed `site_abort_[rp]++;` — write-only.
   }
@@ -489,10 +487,7 @@ void CoordinatorClassic::Commit() {
   // `// ___TestPhaseThree(cmd_->id_);` — method deleted.
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
-  Log_debug("send out finish request, cmd_id: %"
-                PRIx64
-                ", %d",
-            tx_data().id_, n_finish_req_);
+  Log_debug("send out finish request, cmd_id: {:x}, {}", tx_data().id_, n_finish_req_);
 
   verify(tx_data().commit_.load() == committed_);
   verify(committed_ != aborted_);
@@ -539,9 +534,7 @@ void CoordinatorClassic::Commit() {
     }
     /*for (auto& rp : tx_data().partition_ids_) {
       n_finish_req_++;
-      Log_debug("send commit for txn_id %"
-                    PRIx64
-                    " to %d", tx_data().id_, rp);
+      Log_debug("send commit for txn_id {:x} to {}", tx_data().id_, rp);
       commo()->SendCommit(rp,
                           tx_data().id_,
                           std::bind(&CoordinatorClassic::CommitAck,
@@ -573,9 +566,7 @@ void CoordinatorClassic::Commit() {
     else committed_ = true;
     /*for (auto& rp : tx_data().partition_ids_) {
       n_finish_req_++;
-      Log_debug("send abort for txn_id %"
-                    PRIx64
-                    " to %d", tx_data().id_, rp);
+      Log_debug("send abort for txn_id {:x} to {}", tx_data().id_, rp);
       commo()->SendAbort(rp,
                          cmd_->id_,
                          std::bind(&CoordinatorClassic::CommitAck,
@@ -661,8 +652,7 @@ void CoordinatorClassic::End() {
     verify(0);
   }
   tx_reply_buf.tx_id_ = ongoing_tx_id_;
-  Log_debug("call reply for tx_id: %"
-                PRIx64, ongoing_tx_id_);
+  Log_debug("call reply for tx_id: {:x}", ongoing_tx_id_);
 #ifdef FULL_LOG_DEBUG
   Log_info("callback for cmd<{}, {}>", tx_data->client_id_, tx_data->cmd_id_in_client_);
 #endif

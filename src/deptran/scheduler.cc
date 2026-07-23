@@ -53,7 +53,7 @@ read_only) {
 }
 
 shared_ptr<Tx> TxLogServer::CreateTx(txnid_t tx_id, bool ro) {
-  Log_debug("create tid %" PRIx64, tx_id);
+  Log_debug("create tid {:x}", tx_id);
   verify(dtxns_.find(tx_id) == dtxns_.end());
   auto dtxn = frame_->CreateTx(epoch_mgr_.curr_epoch_, tx_id, ro, this);
   if (dtxn != nullptr) {

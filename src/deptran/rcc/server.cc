@@ -780,7 +780,7 @@ void RccServer::Execute(RccTx& tx, int rank) {
   verify(rank == RANK_D || rank == RANK_I);
   verify(tx.subtx(rank).all_anc_cmt_hint);
   tx.subtx(rank).log_apply_started_ = true;
-  Log_debug("executing dtxn id %" PRIx64, tx.id());
+  Log_debug("executing dtxn id {:x}", tx.id());
   verify(tx.subtx(rank).IsDecided());
 
   if (tx.mocking_janus_) {
@@ -827,7 +827,7 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
   }
   verify(sp_tx->all_anc_cmt_hint);
   sp_tx->log_apply_started_ = true;
-  Log_debug("executing dtxn id %" PRIx64, sp_tx->id());
+  Log_debug("executing dtxn id {:x}", sp_tx->id());
   verify(sp_tx->IsDecided());
   if (sp_tx->Involve(partition_id_)) {
     sp_tx->commit_received_.wait_until_gte(1);
@@ -1078,7 +1078,7 @@ int RccServer::OnPreAccept(txnid_t txn_id,
   if ((rank == RANK_I && SKIP_I) || (rank == RANK_D && SKIP_D)) {
     return SUCCESS;
   }
-  Log_debug("pre-accept tid %" PRIx64 ", rank %d, partition: %d, site: %d",
+  Log_debug("pre-accept tid {:x}, rank {}, partition: {}, site: {}",
       txn_id, rank, (int)RccServer::partition_id_, (int)RccServer::site_id_);
   verify(txn_id > 0);
   verify(cmds[0].root_id_ == txn_id);
@@ -1156,7 +1156,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
     return SUCCESS;
   }
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("committing dtxn %" PRIx64, cmd_id);
+  Log_debug("committing dtxn {:x}", cmd_id);
   verify(rank == RANK_D || rank == RANK_I);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
 //    Log_info("on commit graph size: {}", graph.size());

@@ -198,9 +198,9 @@ class Witness {
       pair<int32_t, int32_t> cmd_id = SimpleRWCommand::GetCmdID(cmd_);
       uint64_t cmd_id_combined = SimpleRWCommand::GetCombinedCmdID(cmd_);
       if (operation_ == 0) {
-        Log_info("Log {:.2f} size {} suc {} key %" PRId32 " push_back %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key {} push_back {} {} {}", time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else if (operation_ == 1) {
-        Log_info("Log {:.2f} size {} suc {} key %" PRId32 " remove %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key {} remove {} {} {}", time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else {
         verify(0);
       }

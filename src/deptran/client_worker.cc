@@ -97,7 +97,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
   num_try.fetch_add(txn_reply.n_try_);
 
   bool have_more_time = timer_->elapsed() < duration;
-  Log_debug("received callback from tx_id %" PRIx64, txn_reply.tx_id_);
+  Log_debug("received callback from tx_id {:x}", txn_reply.tx_id_);
   Log_debug("elapsed: {:2.2f}; duration: {}", timer_->elapsed(), duration);
   if (have_more_time && config_->client_type_ == Config::Open) {
     std::lock_guard<std::mutex> lock(coordinator_mutex);
@@ -123,7 +123,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
       Log_debug("transactions they are processing:");
       for (auto c : created_coordinators_) {
         if (c->ongoing_tx_id_ > 0) {
-          Log_debug("\t %" PRIx64, c->ongoing_tx_id_);
+          Log_debug("\t {:x}", c->ongoing_tx_id_);
         }
       }
     }
