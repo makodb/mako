@@ -90,7 +90,7 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     Config::SiteInfo me = Config::GetConfig()->LeaderSiteByPartitionId(0);
     std::string bind_addr = "0.0.0.0:" + std::to_string(me.port + kConfigKvPortDelta);
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
-    g_cfg_server = new rrr::Server(rusty::Some(g_cfg_poll.as_ref().unwrap().clone()));
+    g_cfg_server = new rrr::Server(rrr::Server::new_(rusty::Some(g_cfg_poll.as_ref().unwrap().clone())));
     g_cfg_server->reg_service(rusty::make_box<ConfigKvServiceImpl>(kv));
     if (g_cfg_server->start(bind_addr.c_str()) != 0) {
         Log_warn("BootstrapClusterConfig: config server failed to bind {}",
