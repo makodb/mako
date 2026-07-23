@@ -58,8 +58,9 @@ pub fn raft_worker_should_stop_submit_thread(started: bool) -> bool {
     started
 }
 
-pub fn raft_worker_should_enqueue(started: bool) -> bool {
-    started
+pub fn raft_worker_should_enqueue(started: bool,
+                                  stop_requested: bool) -> bool {
+    started && !stop_requested
 }
 
 pub fn raft_worker_batch_limit(batch_size: i32) -> i32 {
@@ -138,11 +139,26 @@ pub fn raft_worker_should_buffer_unreplayed(status: i32,
                                             len: i32) -> bool {
     status == safety_fail_status && len > 0
 }
+
+pub fn raft_worker_pending_log_is_current(request_epoch: i32,
+                                          current_epoch: i32) -> bool {
+    request_epoch == current_epoch
+}
+
+pub fn raft_worker_leadership_changed(previous_is_leader: bool,
+                                      current_is_leader: bool) -> bool {
+    previous_is_leader != current_is_leader
+}
+
+pub fn raft_worker_should_count_submission(server_available: bool,
+                                           appended: bool) -> bool {
+    server_available && appended
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=fc3b34aea42faac21b9534020ac7684f0299d3f8bf0b8b6fb4d0d933503e4bd3*/
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.small_helpers version=1 rust_sha256=d5ef3893ed056f764577b488ab5bfeec982e49d24f96254ba805626c97d8b994*/
 bool raft_worker_should_start_submit_thread(bool started);
 bool raft_worker_should_stop_submit_thread(bool started);
-bool raft_worker_should_enqueue(bool started);
+bool raft_worker_should_enqueue(bool started, bool stop_requested);
 int32_t raft_worker_batch_limit(int32_t batch_size);
 bool raft_worker_wait_for_submit(int32_t submitted, int32_t total);
 bool raft_worker_queue_has_work(bool queue_empty);
@@ -158,6 +174,9 @@ bool raft_worker_partition_callback_available(bool found, bool has_callback);
 bool raft_worker_global_callback_available(bool has_callback);
 bool raft_worker_has_command_payload(bool has_value);
 bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len);
+bool raft_worker_pending_log_is_current(int32_t request_epoch, int32_t current_epoch);
+bool raft_worker_leadership_changed(bool previous_is_leader, bool current_is_leader);
+bool raft_worker_should_count_submission(bool server_available, bool appended);
 
 bool raft_worker_should_start_submit_thread(bool started) {
     return !started;
@@ -167,8 +186,8 @@ bool raft_worker_should_stop_submit_thread(bool started) {
     return std::move(started);
 }
 
-bool raft_worker_should_enqueue(bool started) {
-    return std::move(started);
+bool raft_worker_should_enqueue(bool started, bool stop_requested) {
+    return rusty::detail::deref_if_pointer_like(started) && !stop_requested;
 }
 
 int32_t raft_worker_batch_limit(int32_t batch_size) {
@@ -238,6 +257,18 @@ bool raft_worker_has_command_payload(bool has_value) {
 bool raft_worker_should_buffer_unreplayed(int32_t status, int32_t safety_fail_status, int32_t len) {
     return (rusty::detail::deref_if_pointer_like(status) == rusty::detail::deref_if_pointer_like(safety_fail_status)) && (rusty::detail::deref_if_pointer_like(len) > 0);
 }
+
+bool raft_worker_pending_log_is_current(int32_t request_epoch, int32_t current_epoch) {
+    return rusty::detail::deref_if_pointer_like(request_epoch) == rusty::detail::deref_if_pointer_like(current_epoch);
+}
+
+bool raft_worker_leadership_changed(bool previous_is_leader, bool current_is_leader) {
+    return rusty::detail::deref_if_pointer_like(previous_is_leader) != rusty::detail::deref_if_pointer_like(current_is_leader);
+}
+
+bool raft_worker_should_count_submission(bool server_available, bool appended) {
+    return rusty::detail::deref_if_pointer_like(server_available) && rusty::detail::deref_if_pointer_like(appended);
+}
 /*RUSTYCPP:GEN-END id=raft_worker.small_helpers*/
 
 // @safe
@@ -287,9 +318,15 @@ void RaftWorker::SetupBase() {
 
   if (auto raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
     raft_server->RegisterLeaderChangeCallback([this](bool leader) {
+      bool leadership_changed = false;
       {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
+        bool previous_leader = raft_worker_is_leader_flag_set(state_core_.is_leader());
+        leadership_changed = raft_worker_leadership_changed(previous_leader, leader);
         state_core_.set_is_leader(raft_worker_leader_flag_from_bool(leader));
+      }
+      if (!leadership_changed) {
+        return;
       }
       // Notify all partitions that currently have callback registrations.
       std::set<uint32_t> par_ids;
@@ -551,7 +588,8 @@ void RaftWorker::StopSubmitThread() {
 
 // @unsafe
 void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size) {
-  if (!raft_worker_should_enqueue(submit_thread_started_)) {
+  if (!raft_worker_should_enqueue(
+          submit_thread_started_, submit_thread_stop_.load())) {
     // @unsafe
     { // const char* propagation to Submit
       Submit(log, len, par_id);
@@ -565,6 +603,10 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
     entry.payload.assign(log, len);
   }
   entry.par_id = par_id;
+  {
+    std::lock_guard<std::recursive_mutex> state_lock(election_state_lock);
+    entry.epoch = CurrentEpoch();
+  }
 
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
@@ -632,9 +674,11 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!appended) {
     return;
   }
-  }
 
-  n_tot++;
+  if (raft_worker_should_count_submission(true, appended)) {
+    n_tot++;
+  }
+  }
 }
 
 // @safe
@@ -960,6 +1004,16 @@ void RaftWorker::SubmitLoop() {
     lock.unlock();
 
     for (auto& entry : batch) {
+      int current_epoch;
+      {
+        std::lock_guard<std::recursive_mutex> state_lock(election_state_lock);
+        current_epoch = CurrentEpoch();
+      }
+      if (!raft_worker_pending_log_is_current(entry.epoch, current_epoch)) {
+        Log_debug("[RAFT-WORKER] Dropping stale queued entry: epoch=%d current_epoch=%d partition=%u",
+                  entry.epoch, current_epoch, entry.par_id);
+        continue;
+      }
       Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
     }
 

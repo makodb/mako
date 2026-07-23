@@ -65,14 +65,16 @@ using watermark_callback_t = rusty::Function<int(
 pub struct RaftWorkerPendingLog {
     payload: std::string,
     par_id: u32,
+    epoch: i32,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_worker.1 version=1 rust_sha256=20411c3764b6a6b2c754885de1d5c15a2e8f4984d54840c2fc0570953c448413*/
+/*RUSTYCPP:GEN-BEGIN id=raft_worker.1 version=1 rust_sha256=65e141028f6b3b50c3192df3f89c4d1f76f402edb9557dc2637960b275d68065*/
 struct RaftWorkerPendingLog;
 
 struct RaftWorkerPendingLog {
     std::string payload;
     uint32_t par_id;
+    int32_t epoch;
 };
 /*RUSTYCPP:GEN-END id=raft_worker.1*/
 
