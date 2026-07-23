@@ -123,8 +123,8 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
   }
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  verify(!state_core_.in_submission());
-  verify(!cmd_.has_value());
+  verify(coordinator_raft_submission_is_available(
+      state_core_.in_submission(), cmd_.has_value()));
 //  verify(cmd.self_cmd_ != nullptr);
   state_core_.set_in_submission(true);
   cmd_ = cmd_env;
@@ -136,7 +136,8 @@ void CoordinatorRaft::Submit(const janus::Command& cmd_env,
 // @unsafe - external calls marked @external [safe], address-of ops in @unsafe blocks
 void CoordinatorRaft::AppendEntries() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    verify(!state_core_.in_append_entries());
+    verify(coordinator_raft_append_is_available(
+        state_core_.in_append_entries()));
     // verify(this->svr_->IsLeader()); TODO del it yidawu
     state_core_.set_in_append_entries(true);
     uint64_t index = 0, term = 0;
@@ -158,7 +159,8 @@ void CoordinatorRaft::AppendEntries() {
     while (coordinator_raft_should_wait_for_commit(this->svr_->commitIndex,
                                                    index)) {
       Reactor::create_sp_event<TimeoutEvent>(1000)->wait();
-      if (coordinator_raft_term_changed(this->svr_->currentTerm, term)) {
+      if (coordinator_raft_append_should_cancel_on_term_change(
+              this->svr_->currentTerm, term)) {
         Log_info("Term changed during AppendEntries: expected %lu, got %lu. Leader changed.",
                  term, this->svr_->currentTerm);
         // The command may or may not be committed by the new leader
@@ -180,6 +182,7 @@ void CoordinatorRaft::Commit() {
   // @unsafe
   {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
+  verify(coordinator_raft_callback_is_ready(static_cast<bool>(commit_callback_)));
   commit_callback_();
   }
   verify(coordinator_raft_phase_is_commit(phase_));
@@ -191,6 +194,7 @@ void CoordinatorRaft::LeaderLearn() {
     // @unsafe
     {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
+    verify(coordinator_raft_callback_is_ready(static_cast<bool>(commit_callback_)));
     commit_callback_();
     }
     verify(coordinator_raft_phase_is_commit(phase_));

@@ -93,8 +93,26 @@ pub fn coordinator_raft_should_finish_accept_without_learn(current_phase: i32,
                                                            committed: bool) -> bool {
     current_phase == 2 && !committed
 }
+
+pub fn coordinator_raft_submission_is_available(in_submission: bool,
+                                                has_command: bool) -> bool {
+    !in_submission && !has_command
+}
+
+pub fn coordinator_raft_append_is_available(in_append_entries: bool) -> bool {
+    !in_append_entries
+}
+
+pub fn coordinator_raft_callback_is_ready(has_callback: bool) -> bool {
+    has_callback
+}
+
+pub fn coordinator_raft_append_should_cancel_on_term_change(current_term: u64,
+                                                            expected_term: u64) -> bool {
+    current_term != expected_term
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=coordinator.1 version=1 rust_sha256=63b94d6742ac90aaf099b0fe7369ac5da455e8096acc28e88690b0d9bf73a82a*/
+/*RUSTYCPP:GEN-BEGIN id=coordinator.1 version=1 rust_sha256=5c62e5fd1fa9df8f524f23385507c964b532abd55acf3ad643d57958983003c4*/
 inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase);
 inline bool coordinator_raft_phase_is_prepare(int32_t phase);
 inline bool coordinator_raft_phase_is_accept(int32_t phase);
@@ -111,6 +129,10 @@ inline bool coordinator_raft_should_run_leader_init_path(int32_t current_phase, 
 inline bool coordinator_raft_should_skip_to_commit_from_init(int32_t current_phase, bool is_leader);
 inline bool coordinator_raft_should_append_from_prepare(int32_t current_phase);
 inline bool coordinator_raft_should_finish_accept_without_learn(int32_t current_phase, bool committed);
+inline bool coordinator_raft_submission_is_available(bool in_submission, bool has_command);
+inline bool coordinator_raft_append_is_available(bool in_append_entries);
+inline bool coordinator_raft_callback_is_ready(bool has_callback);
+inline bool coordinator_raft_append_should_cancel_on_term_change(uint64_t current_term, uint64_t expected_term);
 
 inline int32_t coordinator_raft_phase_value(int32_t phase, int32_t n_phase) {
     return phase % n_phase;
@@ -174,6 +196,22 @@ inline bool coordinator_raft_should_append_from_prepare(int32_t current_phase) {
 
 inline bool coordinator_raft_should_finish_accept_without_learn(int32_t current_phase, bool committed) {
     return (rusty::detail::deref_if_pointer_like(current_phase) == static_cast<int32_t>(2)) && !committed;
+}
+
+inline bool coordinator_raft_submission_is_available(bool in_submission, bool has_command) {
+    return !in_submission && !has_command;
+}
+
+inline bool coordinator_raft_append_is_available(bool in_append_entries) {
+    return !in_append_entries;
+}
+
+inline bool coordinator_raft_callback_is_ready(bool has_callback) {
+    return std::move(has_callback);
+}
+
+inline bool coordinator_raft_append_should_cancel_on_term_change(uint64_t current_term, uint64_t expected_term) {
+    return rusty::detail::deref_if_pointer_like(current_term) != rusty::detail::deref_if_pointer_like(expected_term);
 }
 /*RUSTYCPP:GEN-END id=coordinator.1*/
 
