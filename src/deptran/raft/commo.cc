@@ -668,7 +668,8 @@ namespace janus
         }
       }
 
-      if (pending_sites.size() == 0)
+      if (!commo_retry_has_pending_sites(
+              static_cast<uint64_t>(pending_sites.size())))
       {
         Log_debug("[NOTIFY-RESTART] No pending sites to retry");
         return;

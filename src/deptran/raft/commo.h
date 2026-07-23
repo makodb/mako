@@ -259,8 +259,12 @@ pub fn commo_callback_is_set(has_callback: bool) -> bool {
 }
 
 pub fn commo_should_track_notify_restart_peer(peer_site: u16,
-                                              self_site: u16) -> bool {
+                                               self_site: u16) -> bool {
     peer_site != self_site
+}
+
+pub fn commo_retry_has_pending_sites(pending_site_count: u64) -> bool {
+    pending_site_count > 0
 }
 
 pub fn commo_make_append_entries_reply(
@@ -284,7 +288,7 @@ pub fn commo_make_vote_reply(term: i64, vote_granted: bool) -> raft::VoteReply {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=749c4f988151fca25550830969ee586042782d484c361d8dd49c7eda99a32f8a*/
+/*RUSTYCPP:GEN-BEGIN id=commo.append_entries_result_helpers version=1 rust_sha256=edfb3f3c405c14062356f5ed026c8596b2c2e57b148e4730c1493eb8a47241ff*/
 inline bool commo_append_entries_empty_from_cmd(bool has_cmd);
 inline bool commo_append_entries_reply_lost(uint64_t ok, uint64_t term, uint64_t last_log_index);
 inline bool commo_append_entries_done_from_reply(uint64_t ok, uint64_t term, uint64_t last_log_index);
@@ -295,6 +299,7 @@ inline bool commo_future_result_ok(bool is_ok);
 inline bool commo_should_send_empty_append_entries(bool has_cmd);
 inline bool commo_callback_is_set(bool has_callback);
 inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site);
+inline bool commo_retry_has_pending_sites(uint64_t pending_site_count);
 
 inline bool commo_append_entries_empty_from_cmd(bool has_cmd) {
     return !has_cmd;
@@ -334,6 +339,10 @@ inline bool commo_callback_is_set(bool has_callback) {
 
 inline bool commo_should_track_notify_restart_peer(uint16_t peer_site, uint16_t self_site) {
     return rusty::detail::deref_if_pointer_like(peer_site) != rusty::detail::deref_if_pointer_like(self_site);
+}
+
+inline bool commo_retry_has_pending_sites(uint64_t pending_site_count) {
+    return rusty::detail::deref_if_pointer_like(pending_site_count) > 0;
 }
 
 inline raft::AppendEntriesReply commo_make_append_entries_reply(uint64_t ok, uint64_t term, uint64_t last_log_index, uint64_t ack_type) {
