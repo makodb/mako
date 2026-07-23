@@ -1170,7 +1170,7 @@ impl Server {
     }
 
     fn set_channel_factory(&mut self, factory: ChannelFactoryProxy) {
-        if !factory {
+        if !factory.is_valid() {
             return;
         }
         self.channel_factory_field = Some(factory);
@@ -1389,7 +1389,7 @@ Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
 }
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
-    if (rusty::detail::rust_not(factory)) {
+    if (rusty::detail::rust_not(factory.is_valid())) {
         return;
     }
     this->channel_factory_field = rusty::Option<ChannelFactoryProxy>(std::move(factory));

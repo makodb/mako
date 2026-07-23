@@ -2853,7 +2853,7 @@ impl Client {
     }
 
     fn set_channel_factory(&self, factory: ChannelFactoryProxy) {
-        if !factory {
+        if !factory.is_valid() {
             return;
         }
         let guard = self.pending_factory_field.lock().unwrap();
@@ -3324,7 +3324,7 @@ int32_t Client::reconnect(OnReconnectCompleteCallbackFn on_complete) const {
 }
 
 void Client::set_channel_factory(ChannelFactoryProxy factory) const {
-    if (rusty::detail::rust_not(factory)) {
+    if (rusty::detail::rust_not(factory.is_valid())) {
         return;
     }
     auto guard = this->pending_factory_field.lock().unwrap();
