@@ -22,8 +22,13 @@ sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config aut
 
 # Ensure CMake >= 3.30 for C++23 import std/module support.
 # Ubuntu 24.04 apt currently provides 3.28.x, which is too old for this repo.
-REQUIRED_CMAKE_VERSION="3.30.0"
-BOOTSTRAP_CMAKE_VERSION="${BOOTSTRAP_CMAKE_VERSION:-3.31.0}"
+# CMake 4.3.3: the experimental `import std` UUID in CMakeLists.txt
+# (CMAKE_EXPERIMENTAL_CXX_IMPORT_STD) is version-specific and is the one
+# CMake 4.3.x accepts. CMake 3.3x rejects it, so `import std` never enables
+# and every C++20-module target fails ("__CMAKE::CXX23 target not provided").
+# Keep this in lockstep with the local/dev CMake and the UUID.
+REQUIRED_CMAKE_VERSION="4.3.3"
+BOOTSTRAP_CMAKE_VERSION="${BOOTSTRAP_CMAKE_VERSION:-4.3.3}"
 
 version_ge() {
     # Returns success when $1 >= $2.
