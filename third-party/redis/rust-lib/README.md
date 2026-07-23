@@ -1,164 +1,62 @@
 # rust-lib
 
-A high-performance Redis-compatible server written in Rust, designed for maximum scalability using the **thread-per-core** architecture with **100% synchronous blocking I/O**.
+The Rust Redis-compatible protocol and connection layer used by `makoCon`.
+It uses a thread-per-core worker model with nonblocking sockets and synchronous
+Mako transactions.
 
 ## Architecture
 
-### Thread-Per-Core Model (100% Synchronous)
+`rust_init(n_threads)` creates one nonblocking TCP listener and N worker
+threads. The workers share the listener and take turns accepting connections,
+so the first N persistent connections are assigned to distinct workers instead
+of relying on kernel `SO_REUSEPORT` hashing. A connection remains owned by the
+worker that accepted it.
 
-This server uses a **thread-per-core** model where each OS thread is completely isolated with pure blocking I/O:
+Each worker:
 
-```
-┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-│   OS Thread 0     │  │   OS Thread 1     │  │   OS Thread 2     │
-│                   │  │                   │  │                   │
-│  Blocking Socket  │  │  Blocking Socket  │  │  Blocking Socket  │
-│  (SO_REUSEPORT)   │  │  (SO_REUSEPORT)   │  │  (SO_REUSEPORT)   │
-│                   │  │                   │  │                   │
-│  accept() blocks  │  │  accept() blocks  │  │  accept() blocks  │
-│  read() blocks    │  │  read() blocks    │  │  read() blocks    │
-│  write() blocks   │  │  write() blocks   │  │  write() blocks   │
-└─────────┬─────────┘  └─────────┬─────────┘  └─────────┬─────────┘
-          │                      │                      │
-          │      NO SHARED STATE BETWEEN THREADS        │
-          │                      │                      │
-          └──────────────────────┴──────────────────────┘
-                                 │
-                        Port 6380 (kernel)
-```
+- polls the shared listener, its client sockets, and a private wake socket;
+- parses buffered RESP2/RESP3 commands and writes nonblocking replies;
+- uses its own C++ thread-local Mako transaction state; and
+- can service multiple persistent clients without blocking on an idle client.
 
-### Key Design Decisions
+The worker wake sockets deliver cross-worker notifications. For example,
+`PUBLISH` queues a reply for each subscriber and wakes the worker that owns the
+subscriber connection. Shared registries still use synchronization, so the
+workers are not fully isolated.
 
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| **I/O Model** | 100% blocking | Simple, predictable, no async complexity |
-| **Threading** | N × `std::thread` | Each thread has isolated socket, no shared state |
-| **Accept** | `SO_REUSEPORT` | Kernel distributes connections across threads |
-| **Processing** | Synchronous | One client at a time per thread, fully blocking |
+## Connection Flow
 
-### Why 100% Synchronous?
-
-- **Simplicity** - No async runtime, no coroutines, no task scheduling
-- **Predictable latency** - No context switching within a thread
-- **Zero contention** - No shared data structures between threads
-- **Linear scalability** - Throughput scales with core count
-- **Better cache locality** - Each thread's data stays in its L1/L2 cache
-
-This is a simplified version of the model used by **Seastar** (ScyllaDB) and similar systems.
-
-### Thread Independence
-
-Each thread operates **completely independently** - no coordination during request processing:
-
-```
-Thread 0                    Thread 1                    Thread 2
-    │                           │                           │
-    ▼                           ▼                           ▼
-accept() ←── Client A      accept() ←── Client B      accept() ←── Client C
-    │                           │                           │
-    ▼                           ▼                           ▼
-handle_client_sync()       handle_client_sync()       handle_client_sync()
-    │                           │                           │
-    ▼                           ▼                           ▼
-cpp_execute_request()      cpp_execute_request()      cpp_execute_request()
-    │                           │                           │
-    ▼                           ▼                           ▼
-(uses tl_arena_0)          (uses tl_arena_1)          (uses tl_arena_2)
-
-     ↑                          ↑                          ↑
-     └── COMPLETELY INDEPENDENT ─┴── NO SHARED STATE ──────┘
+```text
+Redis clients
+     |
+shared nonblocking listener
+     |
+round-robin accept turn
+     |
+worker poll loop --- private wake socket
+     |
+RESP parse and reply buffering
+     |
+synchronous C++ Mako transaction
 ```
 
-Each thread:
-- Accepts **its own** connections (kernel distributes via SO_REUSEPORT)
-- Uses **its own** thread-local C++ buffers (`tl_arena`, `tl_txn_obj_buf`)
-- Executes **its own** database transactions
-- Never waits for or coordinates with other threads
-
-## System Flow
-
-```
-══════════════════════════════════════════════════════════════════════════════
-                              INITIALIZATION PHASE
-══════════════════════════════════════════════════════════════════════════════
-
-C++ main()
-    │
-    ├── Setup database, RustWrapper, tables
-    │
-    └── rust_init(n_threads)
-            │
-            └── for thread_id in 0..n_threads:
-                    │
-                    └── std::thread::spawn()
-                            │
-                            ├── Create SO_REUSEPORT socket (BLOCKING mode)
-                            │   (dedicated kernel accept queue)
-                            │
-                            ├── cpp_worker_thread_init(thread_id) ──────► C++
-                            │       │
-                            │       └── ensure_thread_info()
-                            │               ├── mbta_type::thread_init()
-                            │               ├── allocate tl_arena
-                            │               └── setup thread-local buffers
-                            │
-                            ├── barrier.wait() (sync all threads)
-                            │
-                            └── Enter Accept Loop...
-
-══════════════════════════════════════════════════════════════════════════════
-                              REQUEST PHASE (per connection)
-══════════════════════════════════════════════════════════════════════════════
-
-Redis Client (redis-benchmark, redis-cli, etc.)
-    │
-    │  TCP connection to 127.0.0.1:6380
-    ▼
-Kernel (SO_REUSEPORT load balancing)
-    │
-    │  Distributes to one of N sockets
-    ▼
-Rust Worker Thread (e.g., thread-3)
-    │
-    ├── listener.accept()  ← BLOCKS until connection arrives
-    │
-    └── handle_client_sync(stream)  ← BLOCKS until client done
-            │
-            ├── stream.read()  ← BLOCKS until data arrives
-            │
-            ├── Parse RESP3 frame (GET key / SET key value)
-            │
-            ├── cpp_execute_request_sync(op, key, val) ──────► C++
-            │       │                                    BLOCKS
-            │       └── RustWrapper::execute_request()
-            │               │
-            │               ├── ensure_thread_info() (already done)
-            │               │
-            │               ├── db->new_txn()
-            │               │
-            │               ├── customerTable->get() or ->put()
-            │               │
-            │               ├── db->commit_txn()
-            │               │
-            │               └── return result ◄────────────────── C++
-            │
-            ├── Write RESP3 response to buffer
-            │
-            ├── writer.flush()  ← BLOCKS until sent
-            │
-            └── Loop for next command (pipelining supported)
-```
+Pipelining is supported: a worker parses all complete frames already buffered
+for a client before returning to its poll loop. Redis command execution remains
+synchronous inside the owning worker.
 
 ## Protocol
 
-- **RESP3 Protocol**: Parses Redis commands using streaming decoder
+- Streaming RESP2/RESP3 command parsing via `redis-protocol`.
+- Protocol-specific replies, including RESP3 maps, doubles, and nulls.
+- Redis connection, transaction, collection, and Pub/Sub compatibility owned by
+  the Rust command layer.
 
 ## Dependencies
 
-- `socket2` - Low-level socket control for `SO_REUSEPORT`
-- `redis-protocol` (6.0.0) - RESP3 protocol parsing
-- `bytes` - Efficient byte buffer handling
-- `itoa` - Fast integer-to-string conversion
+- `socket2` - Listener creation and socket configuration.
+- `redis-protocol` (6.0.0) - RESP3 protocol parsing.
+- `bytes` - Byte buffers.
+- `itoa` - Integer formatting.
 
 ## C/C++ FFI Interface
 
@@ -166,7 +64,7 @@ Rust Worker Thread (e.g., thread-3)
 
 ```c
 // Initialize the server with N worker threads
-// Each thread: own blocking socket (SO_REUSEPORT), 100% synchronous I/O
+// Workers share one listener and service nonblocking client sockets.
 // Returns true on success
 bool rust_init(size_t n_threads);
 ```
@@ -237,10 +135,13 @@ int main() {
 }
 ```
 
-## Supported Commands
+## Command Scope And Validation
 
-- `GET <key>` - Retrieve value for key
-- `SET <key> <value>` - Store key-value pair
+The server now covers the scoped Redis connection, string, keyspace,
+transaction, expiry, set, list, hash, sorted-set, blocking, and Pub/Sub command
+families. The maintained command tiers, correctness suites, dated results, and
+intentional divergences are documented in
+`third-party/redis/compat/README.md`.
 
 ## Building
 

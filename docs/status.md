@@ -266,9 +266,9 @@ The API shape is right but the implementation is shallow. Priority: (1) add data
 ### What Exists
 
 - **makoCon** server: Located in `third-party/redis/cpp/makoCon.cc` and `third-party/redis/`.
-- Supports basic Redis protocol: `GET`, `SET`, `DEL`, `MULTI/EXEC`.
-- Thread-per-core architecture with `SO_REUSEPORT`.
-- Python-based correctness test suite (`tests/correctness/`) uses makoCon as the server.
+- Supports Redis strings, collections, Pub/Sub, connection commands, and `MULTI/EXEC`; see `docs/redis_interface.md` for the scoped command surface.
+- Thread-per-core architecture with one shared nonblocking listener and deterministic round-robin connection assignment.
+- Python compatibility tests in `third-party/redis/compat/` use `makoCon` as the server.
 
 ### What's Missing
 
@@ -276,7 +276,7 @@ The API shape is right but the implementation is shallow. Priority: (1) add data
 |-----|----------|--------|
 | **No Redis AUTH** | HIGH | No authentication support. |
 | **No Redis Cluster protocol** | HIGH | No CLUSTER SLOTS, MOVED/ASK redirects. |
-| **Limited command coverage** | HIGH | Only basic GET/SET/DEL/MULTI. No HASH, LIST, SET, SORTED SET, PUB/SUB, STREAM, etc. |
+| **No full Redis command parity** | HIGH | Streams, modules, scripting, clustering, and full Redis Search compatibility remain outside the scoped command surface. |
 | **No persistence semantics** | HIGH | In-memory only, no RDB/AOF equivalent. |
 | **No replication protocol** | MEDIUM | No Redis REPLCONF/PSYNC equivalent. |
 | **No Lua scripting** | LOW | No EVAL/EVALSHA support. |

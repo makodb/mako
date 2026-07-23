@@ -10,13 +10,14 @@ REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 TOOLS_PATH="/home/users/ssoumojit/.local/bin:${PATH}"
 JAVA_HOME="${JAVA_HOME:-/home/users/ssoumojit/.local/opt/jdk-21}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 FAILURES=0
 
 mkdir -p "$(dirname "${OUT_FILE}")" "${LOG_DIR}"
 printf 'tool,status,detail\n' >"${OUT_FILE}"
 
 csv_escape() {
-    python3 - "$1" <<'PY'
+    "${PYTHON_BIN}" - "$1" <<'PY'
 import csv
 import io
 import sys
@@ -70,7 +71,7 @@ run_checked() {
 
 run_pytest() {
     require_targets "pytest" || return
-    run_checked "pytest" bash -lc "cd '${ROOT_DIR}' && MAKO_REDIS_HOST='${MAKO_HOST}' MAKO_REDIS_PORT='${MAKO_PORT}' python3 -m pytest third-party/redis/compat -q --ignore=third-party/redis/compat/_client_tmp"
+    run_checked "pytest" bash -lc "cd '${ROOT_DIR}' && MAKO_REDIS_HOST='${MAKO_HOST}' MAKO_REDIS_PORT='${MAKO_PORT}' '${PYTHON_BIN}' -m pytest third-party/redis/compat -q --ignore=third-party/redis/compat/_client_tmp"
 }
 
 run_redis_cli() {
@@ -106,7 +107,7 @@ EOF
 
 run_redis_py() {
     require_targets "redis-py" || return
-    run_checked "redis-py" env REDIS_HOST="${REDIS_HOST}" REDIS_PORT="${REDIS_PORT}" MAKO_HOST="${MAKO_HOST}" MAKO_PORT="${MAKO_PORT}" python3 - <<'PY'
+    run_checked "redis-py" env REDIS_HOST="${REDIS_HOST}" REDIS_PORT="${REDIS_PORT}" MAKO_HOST="${MAKO_HOST}" MAKO_PORT="${MAKO_PORT}" "${PYTHON_BIN}" - <<'PY'
 import os
 import redis
 
@@ -389,7 +390,7 @@ start_fakeredis_forwarder() {
     local target_port="$2"
     local listen_port="$3"
 
-    python3 - "${target_host}" "${target_port}" "${listen_port}" >"${LOG_DIR}/fakeredis-forwarder.log" 2>&1 <<'PY' &
+    "${PYTHON_BIN}" - "${target_host}" "${target_port}" "${listen_port}" >"${LOG_DIR}/fakeredis-forwarder.log" 2>&1 <<'PY' &
 import select
 import socket
 import sys
@@ -460,7 +461,7 @@ run_fakeredis_py() {
     if [[ ! -f "${deps}/.mako-fakeredis-deps-installed" ]]; then
         rm -rf "${deps}"
         mkdir -p "${deps}"
-        if ! python3 -m pip install --target "${deps}" redis sortedcontainers pytest pytest-asyncio pytest-timeout pytest-mock hypothesis valkey >"${logfile}" 2>&1; then
+        if ! "${PYTHON_BIN}" -m pip install --target "${deps}" redis sortedcontainers pytest pytest-asyncio pytest-timeout pytest-mock hypothesis valkey >"${logfile}" 2>&1; then
             row "fakeredis-py" "FAIL" "$(tail -n 1 "${logfile}")"
             return
         fi
@@ -511,7 +512,7 @@ run_fakeredis_py() {
     status=0
     (
         cd "${repo}" &&
-            PYTHONPATH="${deps}:${repo}:${PYTHONPATH:-}" python3 -m pytest -q -m real -k "${pytest_k}" "${tests[@]}"
+            PYTHONPATH="${deps}:${repo}:${PYTHONPATH:-}" "${PYTHON_BIN}" -m pytest -q -m real -k "${pytest_k}" "${tests[@]}"
     ) >"${logfile}" 2>&1 || status=$?
 
     [[ -n "${forward_pid}" ]] && kill "${forward_pid}" >/dev/null 2>&1 || true

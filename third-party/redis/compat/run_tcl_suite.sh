@@ -9,6 +9,7 @@ HOST="${MAKO_HOST:-127.0.0.1}"
 PORT="${MAKO_PORT:-6380}"
 TIMEOUT_SECONDS="${TCL_COMPAT_FILE_TIMEOUT:-60}"
 TAGS="${TCL_COMPAT_TAGS:--slow -needs:debug -needs:repl}"
+ONLY="${TCL_COMPAT_ONLY:-}"
 
 if ! command -v tclsh >/dev/null 2>&1; then
     echo "missing tclsh"
@@ -41,6 +42,9 @@ for file in ${FILES}; do
     )
     if [[ -n "${TAGS}" ]]; then
         args+=(--tags "${TAGS}")
+    fi
+    if [[ -n "${ONLY}" ]]; then
+        args+=(--only "${ONLY}")
     fi
     if [[ -f "${SKIP_FILE}" ]]; then
         args+=(--skipfile "${SKIP_FILE}")

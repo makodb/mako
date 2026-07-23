@@ -3,8 +3,8 @@
 //
 // This file implements a simple Redis-compatible key-value server using:
 // - mako::DB interface for database operations
-// - Rust library for Redis protocol handling (SO_REUSEPORT thread-per-core)
-// - 100% synchronous blocking I/O
+// - Rust library for Redis protocol handling (shared listener, thread-per-core)
+// - Nonblocking connection I/O with synchronous Mako transactions
 // - Transaction support via MULTI/EXEC
 //
 // All operations (single GET/SET or batched MULTI/EXEC) go through execute_transaction()
@@ -6039,7 +6039,7 @@ int main() {
     }
     std::cout << "Table 'customer_0' opened" << std::endl;
 
-    // Initialize Rust server (spawns N worker threads with SO_REUSEPORT)
+    // Initialize Rust server (spawns N workers sharing one round-robin listener)
     // Each worker thread will call cpp_worker_thread_init() to initialize
     // its thread-local state via mako_db_->InitThread()
     if (!rust_init(nthreads)) {

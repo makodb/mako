@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 HOST="${MAKO_HOST:-127.0.0.1}"
 PORT="${MAKO_PORT:-6380}"
 MEMTIER="${MEMTIER_BIN:-/tmp/memtier-local/usr/bin/memtier_benchmark}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${ROOT_DIR}/third-party/redis/compat/acceptance"
 COMMIT="$(git -c safe.directory="${ROOT_DIR}" -C "${ROOT_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
@@ -121,7 +122,7 @@ run_probe_guard() {
         line "Command probe guard" "N/A" "makoCon not reachable at ${HOST}:${PORT}"
         return
     fi
-    run_optional_script "Command probe guard" "third-party/redis/compat/probe_commands.py" python3 third-party/redis/compat/probe_commands.py
+    run_optional_script "Command probe guard" "third-party/redis/compat/probe_commands.py" "${PYTHON_BIN}" third-party/redis/compat/probe_commands.py
 }
 
 run_soak_guard() {
@@ -142,18 +143,18 @@ run_resp_fuzz_guard() {
 
 {
     run_client_g1
-    run_optional_script "G2 bank transfer" "third-party/redis/compat/run_bank_transfer.py" python3 third-party/redis/compat/run_bank_transfer.py
-    run_optional_script "G2 cross-shard demo" "third-party/redis/compat/run_cross_shard_demo.py" python3 third-party/redis/compat/run_cross_shard_demo.py
-    run_optional_script "G3 failover durability" "third-party/redis/compat/run_failover_durability.py" python3 third-party/redis/compat/run_failover_durability.py
-    run_optional_script "G4 serializable isolation" "third-party/redis/compat/run_elle_isolation.py" python3 third-party/redis/compat/run_elle_isolation.py
+    run_optional_script "G2 bank transfer" "third-party/redis/compat/run_bank_transfer.py" "${PYTHON_BIN}" third-party/redis/compat/run_bank_transfer.py
+    run_optional_script "G2 cross-shard demo" "third-party/redis/compat/run_cross_shard_demo.py" "${PYTHON_BIN}" third-party/redis/compat/run_cross_shard_demo.py
+    run_optional_script "G3 failover durability" "third-party/redis/compat/run_failover_durability.py" "${PYTHON_BIN}" third-party/redis/compat/run_failover_durability.py
+    run_optional_script "G4 serializable isolation" "third-party/redis/compat/run_elle_isolation.py" "${PYTHON_BIN}" third-party/redis/compat/run_elle_isolation.py
     run_throughput_guard
     run_memtier_guard
     run_optional_script "TCL semantic guard" "third-party/redis/compat/run_tcl_suite.sh" bash third-party/redis/compat/run_tcl_suite.sh
     run_info_guard
     run_probe_guard
     run_soak_guard
-    run_optional_script "Restart durability guard" "third-party/redis/compat/run_restart_durability.py" python3 third-party/redis/compat/run_restart_durability.py
-    run_optional_script "Client failover guard" "third-party/redis/compat/run_client_failover.py" python3 third-party/redis/compat/run_client_failover.py
+    run_optional_script "Restart durability guard" "third-party/redis/compat/run_restart_durability.py" "${PYTHON_BIN}" third-party/redis/compat/run_restart_durability.py
+    run_optional_script "Client failover guard" "third-party/redis/compat/run_client_failover.py" "${PYTHON_BIN}" third-party/redis/compat/run_client_failover.py
     run_resp_fuzz_guard
 } | tee "${OUT_FILE}"
 

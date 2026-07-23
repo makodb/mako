@@ -6,9 +6,10 @@ use std::env;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex, OnceLock, Weak};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Barrier, Condvar, Mutex, OnceLock, Weak};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod resp3_handler;
 use resp3_handler::Resp3Handler;
@@ -17,6 +18,7 @@ static CONNECTED_CLIENTS: AtomicUsize = AtomicUsize::new(0);
 static BLOCKED_CLIENTS: AtomicUsize = AtomicUsize::new(0);
 static DIRTY_CHANGES: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_CONNECTIONS_RECEIVED: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_COMMANDS_PROCESSED: AtomicUsize = AtomicUsize::new(0);
 static CMDSTAT_BLPOP_CALLS: AtomicUsize = AtomicUsize::new(0);
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 static NEXT_SCAN_CURSOR_ID: AtomicUsize = AtomicUsize::new(1);
@@ -26,6 +28,8 @@ static LUA_BUSY: AtomicUsize = AtomicUsize::new(0);
 static SCAN_CURSORS: OnceLock<Mutex<HashMap<usize, Bytes>>> = OnceLock::new();
 static PUBSUB_REGISTRY: OnceLock<Mutex<PubSubRegistry>> = OnceLock::new();
 static UNBLOCK_REQUESTS: OnceLock<Mutex<HashMap<usize, bool>>> = OnceLock::new();
+static WORKER_WAKES: OnceLock<Vec<Weak<WorkerWake>>> = OnceLock::new();
+static BLOCKED_REGISTRY: OnceLock<(Mutex<BlockedClientRegistry>, Condvar)> = OnceLock::new();
 static KEY_VERSIONS: OnceLock<Mutex<HashMap<Bytes, usize>>> = OnceLock::new();
 static WATCHED_EXISTING_KEYS: OnceLock<Mutex<HashSet<Bytes>>> = OnceLock::new();
 static REDIS_BACKEND: OnceLock<RedisBackend> = OnceLock::new();
@@ -587,6 +591,215 @@ impl TransactionState {
 
 // ===== Client State =====
 
+struct WorkerWake {
+    reader: UnixStream,
+    writer: UnixStream,
+}
+
+impl WorkerWake {
+    fn new() -> std::io::Result<Self> {
+        let (reader, writer) = UnixStream::pair()?;
+        reader.set_nonblocking(true)?;
+        writer.set_nonblocking(true)?;
+        Ok(Self { reader, writer })
+    }
+
+    fn notify(&self) {
+        let mut writer = &self.writer;
+        match writer.write(&[1]) {
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(error) => eprintln!("Worker wake notification failed: {error}"),
+        }
+    }
+
+    fn drain(&self) {
+        let mut buffer = [0u8; 64];
+        let mut reader = &self.reader;
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(error) => {
+                    eprintln!("Worker wake drain failed: {error}");
+                    break;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct BlockedClientRegistry {
+    key_queues: HashMap<Bytes, VecDeque<usize>>,
+    client_keys: HashMap<usize, Vec<Bytes>>,
+}
+
+impl BlockedClientRegistry {
+    fn register(&mut self, client_id: usize, cmd: &Command) {
+        self.unregister(client_id);
+        let mut seen = HashSet::new();
+        let keys: Vec<Bytes> = cmd
+            .keys
+            .iter()
+            .filter(|key| seen.insert((*key).clone()))
+            .cloned()
+            .collect();
+        for key in &keys {
+            self.key_queues
+                .entry(key.clone())
+                .or_default()
+                .push_back(client_id);
+        }
+        self.client_keys.insert(client_id, keys);
+    }
+
+    fn unregister(&mut self, client_id: usize) {
+        let Some(keys) = self.client_keys.remove(&client_id) else {
+            return;
+        };
+        for key in keys {
+            let remove_queue = if let Some(queue) = self.key_queues.get_mut(&key) {
+                queue.retain(|queued_id| *queued_id != client_id);
+                queue.is_empty()
+            } else {
+                false
+            };
+            if remove_queue {
+                self.key_queues.remove(&key);
+            }
+        }
+    }
+
+    fn has_turn(&self, client_id: usize) -> bool {
+        let Some(keys) = self.client_keys.get(&client_id) else {
+            return true;
+        };
+        keys.is_empty()
+            || keys.iter().any(|key| {
+                self.key_queues
+                    .get(key)
+                    .and_then(VecDeque::front)
+                    .is_some_and(|queued_id| *queued_id == client_id)
+            })
+    }
+
+    fn fronts_for_keys(&self, keys: &[Bytes]) -> Vec<(Bytes, usize)> {
+        let mut seen = HashSet::new();
+        keys.iter()
+            .filter(|key| seen.insert((*key).clone()))
+            .filter_map(|key| {
+                self.key_queues
+                    .get(key)
+                    .and_then(VecDeque::front)
+                    .map(|client_id| (key.clone(), *client_id))
+            })
+            .collect()
+    }
+
+    fn eligible_keys(&self, client_id: usize, keys: &[Bytes]) -> Vec<Bytes> {
+        keys.iter()
+            .filter(|key| {
+                self.key_queues
+                    .get(*key)
+                    .and_then(VecDeque::front)
+                    .is_none_or(|queued_id| *queued_id == client_id)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn fronts_changed(&self, expected: &[(Bytes, usize)]) -> bool {
+        expected.iter().all(|(key, client_id)| {
+            self.key_queues
+                .get(key)
+                .and_then(VecDeque::front)
+                .is_none_or(|current| current != client_id)
+        })
+    }
+}
+
+fn blocked_registry() -> &'static (Mutex<BlockedClientRegistry>, Condvar) {
+    BLOCKED_REGISTRY.get_or_init(|| (Mutex::new(BlockedClientRegistry::default()), Condvar::new()))
+}
+
+fn register_blocked_client(client_id: usize, cmd: &Command) {
+    let (registry, _) = blocked_registry();
+    if let Ok(mut registry) = registry.lock() {
+        registry.register(client_id, cmd);
+    }
+}
+
+fn unregister_blocked_client(client_id: usize) {
+    let (registry, changed) = blocked_registry();
+    if let Ok(mut registry) = registry.lock() {
+        registry.unregister(client_id);
+        changed.notify_all();
+    }
+}
+
+fn blocked_client_has_turn(client_id: usize) -> bool {
+    let (registry, _) = blocked_registry();
+    registry
+        .lock()
+        .map(|registry| registry.has_turn(client_id))
+        .unwrap_or(true)
+}
+
+fn eligible_blocked_keys(client_id: usize, keys: &[Bytes]) -> Vec<Bytes> {
+    let (registry, _) = blocked_registry();
+    registry
+        .lock()
+        .map(|registry| registry.eligible_keys(client_id, keys))
+        .unwrap_or_else(|_| keys.to_vec())
+}
+
+fn blocked_fronts_for_keys(keys: &[Bytes]) -> Vec<(Bytes, usize)> {
+    let (registry, _) = blocked_registry();
+    registry
+        .lock()
+        .map(|registry| registry.fronts_for_keys(keys))
+        .unwrap_or_default()
+}
+
+fn wait_for_blocked_fronts(expected: &[(Bytes, usize)], timeout: Duration) {
+    if expected.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + timeout;
+    let (registry, changed) = blocked_registry();
+    let Ok(mut registry) = registry.lock() else {
+        return;
+    };
+    while !registry.fronts_changed(expected) {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        let Ok((next_registry, result)) = changed.wait_timeout(registry, remaining) else {
+            break;
+        };
+        registry = next_registry;
+        if result.timed_out() {
+            break;
+        }
+    }
+}
+
+fn notify_worker_wakes(wakes: &[Weak<WorkerWake>]) {
+    for wake in wakes {
+        if let Some(wake) = wake.upgrade() {
+            wake.notify();
+        }
+    }
+}
+
+fn notify_all_workers() {
+    if let Some(wakes) = WORKER_WAKES.get() {
+        notify_worker_wakes(wakes);
+    }
+}
+
 type PubSubQueue = Arc<Mutex<VecDeque<Vec<u8>>>>;
 type PubSubQueueWeak = Weak<Mutex<VecDeque<Vec<u8>>>>;
 
@@ -594,6 +807,7 @@ type PubSubQueueWeak = Weak<Mutex<VecDeque<Vec<u8>>>>;
 struct PubSubTarget {
     client_id: usize,
     queue: PubSubQueueWeak,
+    worker_wake: Option<Weak<WorkerWake>>,
 }
 
 struct PubSubRegistry {
@@ -630,8 +844,14 @@ fn unblock_requests() -> &'static Mutex<HashMap<usize, bool>> {
 }
 
 fn request_client_unblock(id: usize, error: bool) {
-    if let Ok(mut requests) = unblock_requests().lock() {
+    let inserted = if let Ok(mut requests) = unblock_requests().lock() {
         requests.insert(id, error);
+        true
+    } else {
+        false
+    };
+    if inserted {
+        notify_all_workers();
     }
 }
 
@@ -652,10 +872,20 @@ struct ClientState {
     subscribed_channels: HashSet<Bytes>,
     subscribed_patterns: HashSet<Bytes>,
     pubsub_queue: PubSubQueue,
+    worker_wake: Option<Weak<WorkerWake>>,
 }
 
 impl ClientState {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::new_with_worker_wake(None)
+    }
+
+    fn for_worker(worker_wake: &Arc<WorkerWake>) -> Self {
+        Self::new_with_worker_wake(Some(Arc::downgrade(worker_wake)))
+    }
+
+    fn new_with_worker_wake(worker_wake: Option<Weak<WorkerWake>>) -> Self {
         ClientState {
             id: NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed),
             protocol_version: 2,
@@ -665,6 +895,7 @@ impl ClientState {
             subscribed_channels: HashSet::new(),
             subscribed_patterns: HashSet::new(),
             pubsub_queue: Arc::new(Mutex::new(VecDeque::new())),
+            worker_wake,
         }
     }
 
@@ -4025,6 +4256,15 @@ fn write_double_text<W: Write>(w: &mut W, value: &[u8]) -> std::io::Result<()> {
 }
 
 #[inline]
+fn write_score<W: Write>(w: &mut W, value: &[u8], protocol_version: u8) -> std::io::Result<()> {
+    if protocol_version >= 3 {
+        write_double_text(w, value)
+    } else {
+        write_bulk(w, value)
+    }
+}
+
+#[inline]
 fn write_pong<W: Write>(w: &mut W) -> std::io::Result<()> {
     w.write_all(b"+PONG\r\n")
 }
@@ -4427,6 +4667,7 @@ fn make_pubsub_target(client_state: &ClientState) -> PubSubTarget {
     PubSubTarget {
         client_id: client_state.id,
         queue: Arc::downgrade(&client_state.pubsub_queue),
+        worker_wake: client_state.worker_wake.clone(),
     }
 }
 
@@ -4527,10 +4768,15 @@ fn enqueue_pubsub_reply(target: &PubSubTarget, reply: &[u8]) -> bool {
     let Some(queue) = target.queue.upgrade() else {
         return false;
     };
-    let Ok(mut queue) = queue.lock() else {
-        return false;
-    };
-    queue.push_back(reply.to_vec());
+    {
+        let Ok(mut queue) = queue.lock() else {
+            return false;
+        };
+        queue.push_back(reply.to_vec());
+    }
+    if let Some(wake) = target.worker_wake.as_ref().and_then(Weak::upgrade) {
+        wake.notify();
+    }
     true
 }
 
@@ -7713,9 +7959,20 @@ fn write_command_result<W: Write>(
                     if cmd.op == OpCode::HGetAll {
                         normalize_zip_fixture_hgetall(&mut items);
                     }
-                    write_array_header(writer, items.len())?;
-                    for item in items {
-                        write_bulk(writer, &item)?;
+                    if cmd.op == OpCode::HGetAll && protocol_version >= 3 {
+                        if items.len() % 2 != 0 {
+                            write_err(writer, "operation failed")?;
+                        } else {
+                            write_map_header(writer, items.len() / 2)?;
+                            for item in items {
+                                write_bulk(writer, &item)?;
+                            }
+                        }
+                    } else {
+                        write_array_header(writer, items.len())?;
+                        for item in items {
+                            write_bulk(writer, &item)?;
+                        }
                     }
                 } else {
                     write_err(writer, "operation failed")?;
@@ -8015,10 +8272,10 @@ fn write_command_result<W: Write>(
                             let data = unsafe {
                                 std::slice::from_raw_parts(first.data_ptr, first.data_len)
                             };
-                            write_bulk(writer, data)?;
+                            write_score(writer, data, protocol_version)?;
                         }
                     } else {
-                        write_bulk(writer, b"")?;
+                        write_score(writer, b"", protocol_version)?;
                     }
                 } else {
                     write_null(writer, protocol_version)?;
@@ -8041,10 +8298,10 @@ fn write_command_result<W: Write>(
                     } else {
                         let data =
                             unsafe { std::slice::from_raw_parts(first.data_ptr, first.data_len) };
-                        write_bulk(writer, data)?;
+                        write_score(writer, data, protocol_version)?;
                     }
                 } else {
-                    write_bulk(writer, b"")?;
+                    write_score(writer, b"", protocol_version)?;
                 }
             } else {
                 write_null(writer, protocol_version)?;
@@ -8068,7 +8325,7 @@ fn write_command_result<W: Write>(
                     } else {
                         unsafe { std::slice::from_raw_parts(result.data_ptr, result.data_len) }
                     };
-                    write_bulk(writer, data)?;
+                    write_score(writer, data, protocol_version)?;
                 } else {
                     write_null(writer, protocol_version)?;
                 }
@@ -8106,10 +8363,10 @@ fn write_command_result<W: Write>(
                             let data = unsafe {
                                 std::slice::from_raw_parts(first.data_ptr, first.data_len)
                             };
-                            write_bulk(writer, data)?;
+                            write_score(writer, data, protocol_version)?;
                         }
                     } else {
-                        write_bulk(writer, b"")?;
+                        write_score(writer, b"", protocol_version)?;
                     }
                 } else {
                     write_integer(writer, first.int_value)?;
@@ -8301,14 +8558,13 @@ fn write_command_result<W: Write>(
 
 // ===== Server =====
 
-fn create_reuseport_listener(addr: &str) -> std::io::Result<TcpListener> {
+fn create_shared_listener(addr: &str) -> std::io::Result<TcpListener> {
     let addr: SocketAddr = addr
         .parse()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
     let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
     socket.set_reuse_address(true)?;
-    socket.set_reuse_port(true)?;
     socket.set_nonblocking(true)?;
     socket.set_nodelay(true)?;
     socket.bind(&addr.into())?;
@@ -8317,18 +8573,53 @@ fn create_reuseport_listener(addr: &str) -> std::io::Result<TcpListener> {
     Ok(TcpListener::from(socket))
 }
 
+fn worker_has_accept_turn(next_worker: &AtomicUsize, thread_id: usize) -> bool {
+    next_worker.load(Ordering::Acquire) == thread_id
+}
+
+fn advance_accept_turn(next_worker: &AtomicUsize, thread_id: usize, n_threads: usize) {
+    next_worker.store((thread_id + 1) % n_threads, Ordering::Release);
+}
+
 #[no_mangle]
 pub extern "C" fn rust_init(n_threads: usize) -> bool {
+    if n_threads == 0 {
+        eprintln!("Cannot start Redis server with zero workers");
+        return false;
+    }
+
     let host = env::var("MAKO_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = env::var("MAKO_PORT").unwrap_or_else(|_| "6380".to_string());
     let addr = format!("{host}:{port}");
     let idle_wait_strategy = IdleWaitStrategy::from_env();
     let backend = redis_backend();
     let barrier = Arc::new(Barrier::new(n_threads));
-    let ready_count = Arc::new(AtomicUsize::new(0));
+    let listener = match create_shared_listener(&addr) {
+        Ok(listener) => Arc::new(listener),
+        Err(e) => {
+            eprintln!("Failed to create shared listener on {addr}: {e}");
+            return false;
+        }
+    };
+    let next_accept_worker = Arc::new(AtomicUsize::new(0));
+    let worker_wakes: Vec<Arc<WorkerWake>> = match (0..n_threads)
+        .map(|_| WorkerWake::new().map(Arc::new))
+        .collect()
+    {
+        Ok(wakes) => wakes,
+        Err(error) => {
+            eprintln!("Failed to create worker wake channel: {error}");
+            return false;
+        }
+    };
+    let wake_targets = worker_wakes.iter().map(Arc::downgrade).collect();
+    if WORKER_WAKES.set(wake_targets).is_err() {
+        eprintln!("Redis worker wake registry was already initialized");
+        return false;
+    }
 
     println!(
-        "Starting {} thread-per-core workers on {} (SO_REUSEPORT, nonblocking clients, MULTI/EXEC support, backend={}, idle_wait={})",
+        "Starting {} thread-per-core workers on {} (shared listener, round-robin accepts, nonblocking clients, MULTI/EXEC support, backend={}, idle_wait={})",
         n_threads,
         addr,
         backend.name(),
@@ -8337,32 +8628,25 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
 
     for thread_id in 0..n_threads {
         let barrier = Arc::clone(&barrier);
-        let ready_count = Arc::clone(&ready_count);
+        let listener = Arc::clone(&listener);
+        let next_accept_worker = Arc::clone(&next_accept_worker);
+        let worker_wake = Arc::clone(&worker_wakes[thread_id]);
         let addr = addr.clone();
         let idle_wait_strategy = idle_wait_strategy;
 
         std::thread::Builder::new()
             .name(format!("mako-worker-{}", thread_id))
             .spawn(move || {
-                let listener = match create_reuseport_listener(&addr) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        eprintln!("[thread-{}] Failed to create listener: {e}", thread_id);
-                        return;
-                    }
-                };
-
                 unsafe {
                     cpp_worker_thread_init(thread_id);
                 }
 
-                let count = ready_count.fetch_add(1, Ordering::SeqCst) + 1;
                 barrier.wait();
 
                 if thread_id == 0 {
                     println!(
                         "All {} threads ready, accepting connections on {}",
-                        count, addr
+                        n_threads, addr
                     );
                 }
 
@@ -8385,6 +8669,7 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
                             }
                             Ok(ClientEvent::WakeBlocked) => {
                                 made_progress = true;
+                                notify_all_workers();
                                 if let Err(e) = service_blocked_clients(&mut clients) {
                                     eprintln!("Blocked client wake error: {e}");
                                 }
@@ -8420,9 +8705,10 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
                         }
                     }
 
-                    loop {
+                    if worker_has_accept_turn(&next_accept_worker, thread_id) {
                         match listener.accept() {
                             Ok((stream, _)) => {
+                                advance_accept_turn(&next_accept_worker, thread_id, n_threads);
                                 let _ = stream.set_nodelay(true);
                                 if let Err(e) = stream.set_nonblocking(true) {
                                     eprintln!(
@@ -8433,13 +8719,12 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
                                 }
                                 TOTAL_CONNECTIONS_RECEIVED.fetch_add(1, Ordering::Relaxed);
                                 CONNECTED_CLIENTS.fetch_add(1, Ordering::Relaxed);
-                                clients.push(ClientConn::new(stream));
+                                clients.push(ClientConn::new(stream, &worker_wake));
                                 made_progress = true;
                             }
-                            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                            Err(e) if e.kind() == ErrorKind::WouldBlock => {}
                             Err(e) => {
                                 eprintln!("[thread-{}] Accept error: {e}", thread_id);
-                                break;
                             }
                         }
                     }
@@ -8447,7 +8732,9 @@ pub extern "C" fn rust_init(n_threads: usize) -> bool {
                     if !made_progress {
                         match idle_wait_strategy {
                             IdleWaitStrategy::Poll => {
-                                if let Err(e) = wait_for_server_events(&listener, &clients) {
+                                if let Err(e) =
+                                    wait_for_server_events(&listener, &worker_wake, &clients)
+                                {
                                     eprintln!("[thread-{}] Poll error: {e}", thread_id);
                                 }
                             }
@@ -8489,10 +8776,19 @@ impl IdleWaitStrategy {
     }
 }
 
-fn wait_for_server_events(listener: &TcpListener, clients: &[ClientConn]) -> std::io::Result<()> {
-    let mut fds = Vec::with_capacity(clients.len() + 1);
+fn wait_for_server_events(
+    listener: &TcpListener,
+    worker_wake: &WorkerWake,
+    clients: &[ClientConn],
+) -> std::io::Result<()> {
+    let mut fds = Vec::with_capacity(clients.len() + 2);
     fds.push(libc::pollfd {
         fd: listener.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    });
+    fds.push(libc::pollfd {
+        fd: worker_wake.reader.as_raw_fd(),
         events: libc::POLLIN,
         revents: 0,
     });
@@ -8519,6 +8815,9 @@ fn wait_for_server_events(listener: &TcpListener, clients: &[ClientConn]) -> std
             Err(err)
         }
     } else {
+        if result > 0 && fds[1].revents & libc::POLLIN != 0 {
+            worker_wake.drain();
+        }
         Ok(())
     }
 }
@@ -8561,14 +8860,14 @@ struct BlockedCommand {
 }
 
 impl ClientConn {
-    fn new(stream: TcpStream) -> Self {
+    fn new(stream: TcpStream, worker_wake: &Arc<WorkerWake>) -> Self {
         ClientConn {
             stream,
             resp3: Resp3Handler::new(10 * 1024 * 1024),
             read_buf: [0u8; 16384],
             write_buf: Vec::with_capacity(16384),
             txn_state: TransactionState::new(),
-            client_state: ClientState::new(),
+            client_state: ClientState::for_worker(worker_wake),
             close_after_write: false,
             blocked_command: None,
             pending_command: None,
@@ -8583,6 +8882,7 @@ impl ClientConn {
         };
         if self.blocked_command.is_none() {
             BLOCKED_CLIENTS.fetch_add(1, Ordering::Relaxed);
+            register_blocked_client(self.client_state.id, &cmd);
         }
         self.client_state.blocked = true;
         self.blocked_command = Some(BlockedCommand { cmd, deadline_ms });
@@ -8590,6 +8890,7 @@ impl ClientConn {
 
     fn clear_blocked(&mut self) {
         if self.blocked_command.take().is_some() {
+            unregister_blocked_client(self.client_state.id);
             BLOCKED_CLIENTS.fetch_sub(1, Ordering::Relaxed);
         }
         self.client_state.blocked = false;
@@ -8827,6 +9128,7 @@ fn bump_modified_key_versions(cmd: &Command) {
 }
 
 fn record_command_call(op: OpCode) {
+    TOTAL_COMMANDS_PROCESSED.fetch_add(1, Ordering::Relaxed);
     if op == OpCode::BLPop {
         CMDSTAT_BLPOP_CALLS.fetch_add(1, Ordering::Relaxed);
     }
@@ -8953,7 +9255,25 @@ fn retry_blocked_command(client: &mut ClientConn) -> std::io::Result<bool> {
         }
     }
 
-    let cmd = blocked.cmd.clone();
+    if !blocked_client_has_turn(client.client_state.id) {
+        return Ok(false);
+    }
+
+    let mut cmd = blocked.cmd.clone();
+    if matches!(
+        cmd.op,
+        OpCode::BLPop
+            | OpCode::BRPop
+            | OpCode::BLMPop
+            | OpCode::BZPopMin
+            | OpCode::BZPopMax
+            | OpCode::BZMPop
+    ) {
+        cmd.keys = eligible_blocked_keys(client.client_state.id, &cmd.keys);
+        if cmd.keys.is_empty() {
+            return Ok(false);
+        }
+    }
     let mut reply = Vec::new();
     ffi_execute_single(&cmd, client.client_state.protocol_version, &mut reply)?;
     if is_null_reply(&reply) {
@@ -8963,12 +9283,16 @@ fn retry_blocked_command(client: &mut ClientConn) -> std::io::Result<bool> {
     {
         Ok(false)
     } else {
-        client.clear_blocked();
-        if is_dirty_command(cmd.op) && !is_error_reply(&reply) {
+        let dirty = is_dirty_command(cmd.op) && !is_error_reply(&reply);
+        if dirty {
             DIRTY_CHANGES.fetch_add(1, Ordering::Relaxed);
             bump_modified_key_versions(&cmd);
         }
+        client.clear_blocked();
         client.write_buf.extend_from_slice(&reply);
+        if dirty {
+            notify_all_workers();
+        }
         Ok(true)
     }
 }
@@ -9001,17 +9325,29 @@ fn blocked_client_disconnected(client: &ClientConn) -> std::io::Result<bool> {
     }
 }
 
+fn command_may_wake_blocked(txn_state: &TransactionState, cmd: &Command) -> bool {
+    if !txn_state.in_multi {
+        return is_dirty_command(cmd.op);
+    }
+    cmd.op == OpCode::Exec
+        && txn_state
+            .queued_commands
+            .iter()
+            .any(|queued| is_dirty_command(queued.op))
+}
+
 fn should_wake_blocked_after_command(client: &ClientConn, cmd: &Command) -> bool {
-    !client.txn_state.in_multi
-        && is_dirty_command(cmd.op)
-        && BLOCKED_CLIENTS.load(Ordering::Relaxed) > 0
+    BLOCKED_CLIENTS.load(Ordering::Relaxed) > 0 && command_may_wake_blocked(&client.txn_state, cmd)
 }
 
 fn should_defer_dirty_command(client: &ClientConn, cmd: &Command) -> bool {
-    !client.txn_state.in_multi
-        && is_dirty_command(cmd.op)
-        && client.pending_command.is_none()
+    client.pending_command.is_none()
         && BLOCKED_CLIENTS.load(Ordering::Relaxed) > 0
+        && command_may_wake_blocked(&client.txn_state, cmd)
+}
+
+fn should_wait_for_blocked_completion(cmd: &Command) -> bool {
+    matches!(cmd.op, OpCode::LPush | OpCode::RPush | OpCode::ZAdd)
 }
 
 enum RawMakoCommand<'a> {
@@ -9185,6 +9521,7 @@ fn process_raw_mako_fast_frame(client: &mut ClientConn) -> std::io::Result<bool>
     let (consumed, dirty) = match parsed {
         RawMakoParse::Complete { command, consumed } => match command {
             RawMakoCommand::Get { key } => {
+                record_command_call(OpCode::Get);
                 let _ = execute_fast_mako_string_op(
                     OpCode::Get,
                     key,
@@ -9195,6 +9532,7 @@ fn process_raw_mako_fast_frame(client: &mut ClientConn) -> std::io::Result<bool>
                 (consumed, false)
             }
             RawMakoCommand::Set { key, value } => {
+                record_command_call(OpCode::Set);
                 let success = execute_fast_mako_string_op(
                     OpCode::Set,
                     key,
@@ -9236,11 +9574,12 @@ fn process_buffered_frames(
                             client.pending_command = Some(cmd);
                             break;
                         }
+                        let should_wake = should_wake_blocked_after_command(client, &cmd);
                         execute_or_block_command(client, &cmd)?;
                         if client.blocked_command.is_some() {
                             break;
                         }
-                        if should_wake_blocked_after_command(client, &cmd) {
+                        if should_wake {
                             *wake_blocked = true;
                             break;
                         }
@@ -9298,9 +9637,20 @@ fn service_client(client: &mut ClientConn) -> std::io::Result<ClientEvent> {
     }
 
     if let Some(cmd) = client.pending_command.take() {
+        let should_wake = should_wake_blocked_after_command(client, &cmd);
+        let blocked_fronts = if should_wake && should_wait_for_blocked_completion(&cmd) {
+            blocked_fronts_for_keys(&cmd.keys)
+        } else {
+            Vec::new()
+        };
+        let reply_start = client.write_buf.len();
         execute_or_block_command(client, &cmd)?;
         made_progress = true;
-        if should_wake_blocked_after_command(client, &cmd) {
+        if should_wake {
+            notify_all_workers();
+            if !is_error_reply(&client.write_buf[reply_start..]) {
+                wait_for_blocked_fronts(&blocked_fronts, Duration::from_millis(250));
+            }
             wake_blocked = true;
         }
     }
@@ -9695,6 +10045,7 @@ fn handle_config_command<W: Write>(cmd: &Command, writer: &mut W) -> std::io::Re
             )?;
             return Ok(());
         }
+        TOTAL_COMMANDS_PROCESSED.store(0, Ordering::Relaxed);
         CMDSTAT_BLPOP_CALLS.store(0, Ordering::Relaxed);
         write_simple_ok(writer)
     } else {
@@ -9793,6 +10144,9 @@ fn append_clients_info(out: &mut String) {
 
 fn append_stats_info(out: &mut String) {
     out.push_str("# Stats\r\n");
+    out.push_str("total_commands_processed:");
+    out.push_str(&TOTAL_COMMANDS_PROCESSED.load(Ordering::Relaxed).to_string());
+    out.push_str("\r\n");
     out.push_str("rdb_changes_since_last_save:");
     out.push_str(&DIRTY_CHANGES.load(Ordering::Relaxed).to_string());
     out.push_str("\r\n");
@@ -10632,6 +10986,49 @@ mod tests {
     }
 
     #[test]
+    fn shared_listener_accept_turn_cycles_across_workers() {
+        let next_worker = AtomicUsize::new(0);
+
+        for expected in [0, 1, 2, 3, 0, 1] {
+            assert!(worker_has_accept_turn(&next_worker, expected));
+            assert!(!worker_has_accept_turn(&next_worker, (expected + 1) % 4));
+            advance_accept_turn(&next_worker, expected, 4);
+        }
+    }
+
+    #[test]
+    fn info_stats_reports_and_resetstat_clears_processed_commands() {
+        let mut txn_state = TransactionState::new();
+        let mut client_state = ClientState::new();
+        TOTAL_COMMANDS_PROCESSED.store(0, Ordering::Relaxed);
+
+        record_command_call(OpCode::Ping);
+        record_command_call(OpCode::Get);
+        let out = run(
+            command(OpCode::Info, &[b"stats"]),
+            &mut txn_state,
+            &mut client_state,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("total_commands_processed:2\r\n"));
+
+        let reset = run(
+            command(OpCode::Config, &[b"RESETSTAT"]),
+            &mut txn_state,
+            &mut client_state,
+        );
+        assert_eq!(reset, b"+OK\r\n");
+
+        let out = run(
+            command(OpCode::Info, &[b"stats"]),
+            &mut txn_state,
+            &mut client_state,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("total_commands_processed:0\r\n"));
+    }
+
+    #[test]
     fn info_server_returns_parseable_server_section() {
         let mut txn_state = TransactionState::new();
         let mut client_state = ClientState::new();
@@ -10751,6 +11148,160 @@ mod tests {
         write_command_result(&cmd, Some(&response), (0, 1), 3, &mut out).unwrap();
 
         assert_eq!(out, b"_\r\n");
+    }
+
+    #[test]
+    fn hgetall_uses_a_map_only_for_resp3() {
+        let cmd = data_command(OpCode::HGetAll, &[b"h"], None);
+        let payload = pack_bytes_list(&[
+            Bytes::from_static(b"a"),
+            Bytes::from_static(b"1"),
+            Bytes::from_static(b"b"),
+            Bytes::from_static(b"2"),
+        ]);
+        let mut results = vec![TxnOpResult {
+            success: true,
+            value_present: true,
+            data_ptr: payload.as_ptr() as *mut u8,
+            data_len: payload.len(),
+            int_value: 0,
+        }];
+        let response = TxnResponse {
+            transaction_success: true,
+            num_results: results.len(),
+            results: results.as_mut_ptr(),
+        };
+        let mut resp2 = Vec::new();
+        let mut resp3 = Vec::new();
+
+        write_command_result(&cmd, Some(&response), (0, 1), 2, &mut resp2).unwrap();
+        write_command_result(&cmd, Some(&response), (0, 1), 3, &mut resp3).unwrap();
+
+        assert_eq!(resp2, b"*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n");
+        assert_eq!(resp3, b"%2\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n");
+    }
+
+    #[test]
+    fn zscore_uses_a_double_only_for_resp3() {
+        let cmd = data_command(OpCode::ZScore, &[b"z"], Some(b"member"));
+        let score = b"1.5";
+        let mut results = vec![TxnOpResult {
+            success: true,
+            value_present: true,
+            data_ptr: score.as_ptr() as *mut u8,
+            data_len: score.len(),
+            int_value: 0,
+        }];
+        let response = TxnResponse {
+            transaction_success: true,
+            num_results: results.len(),
+            results: results.as_mut_ptr(),
+        };
+        let mut resp2 = Vec::new();
+        let mut resp3 = Vec::new();
+
+        write_command_result(&cmd, Some(&response), (0, 1), 2, &mut resp2).unwrap();
+        write_command_result(&cmd, Some(&response), (0, 1), 3, &mut resp3).unwrap();
+
+        assert_eq!(resp2, b"$3\r\n1.5\r\n");
+        assert_eq!(resp3, b",1.5\r\n");
+    }
+
+    #[test]
+    fn pubsub_enqueue_notifies_the_owning_worker() {
+        let wake = Arc::new(WorkerWake::new().unwrap());
+        let state = ClientState::for_worker(&wake);
+        let target = make_pubsub_target(&state);
+
+        assert!(enqueue_pubsub_reply(&target, b"message"));
+        assert_eq!(
+            state.pubsub_queue.lock().unwrap().pop_front().unwrap(),
+            b"message"
+        );
+
+        let mut notification = [0u8; 1];
+        let mut reader = &wake.reader;
+        assert_eq!(reader.read(&mut notification).unwrap(), 1);
+        assert_eq!(notification, [1]);
+    }
+
+    #[test]
+    fn blocked_client_broadcast_notifies_every_worker() {
+        let first = Arc::new(WorkerWake::new().unwrap());
+        let second = Arc::new(WorkerWake::new().unwrap());
+        let wakes = vec![Arc::downgrade(&first), Arc::downgrade(&second)];
+
+        notify_worker_wakes(&wakes);
+
+        for wake in [&first, &second] {
+            let mut notification = [0u8; 1];
+            let mut reader = &wake.reader;
+            assert_eq!(reader.read(&mut notification).unwrap(), 1);
+            assert_eq!(notification, [1]);
+        }
+    }
+
+    #[test]
+    fn dirty_exec_is_classified_as_a_blocked_client_wakeup() {
+        let mut txn_state = TransactionState::new();
+        txn_state.start_multi();
+        txn_state.queue_command(Command::new(
+            OpCode::LPush,
+            vec![Bytes::from_static(b"list")],
+            None,
+            Vec::new(),
+        ));
+
+        assert!(command_may_wake_blocked(
+            &txn_state,
+            &command(OpCode::Exec, &[])
+        ));
+        assert!(!command_may_wake_blocked(
+            &txn_state,
+            &data_command(OpCode::Get, &[b"key"], None)
+        ));
+    }
+
+    #[test]
+    fn blocked_registry_preserves_per_key_registration_order() {
+        let key = Bytes::from_static(b"list");
+        let cmd = Command::new(OpCode::BLPop, vec![key.clone()], None, Vec::new());
+        let mut registry = BlockedClientRegistry::default();
+
+        registry.register(11, &cmd);
+        registry.register(12, &cmd);
+        assert!(registry.has_turn(11));
+        assert!(!registry.has_turn(12));
+        assert_eq!(registry.fronts_for_keys(&[key.clone()]), vec![(key, 11)]);
+
+        registry.unregister(11);
+        assert!(registry.has_turn(12));
+    }
+
+    #[test]
+    fn blocked_registry_limits_multi_key_retry_to_front_queues() {
+        let first = Command::new(
+            OpCode::BLPop,
+            vec![Bytes::from_static(b"first")],
+            None,
+            Vec::new(),
+        );
+        let second = Command::new(
+            OpCode::BLMPop,
+            vec![Bytes::from_static(b"first"), Bytes::from_static(b"second")],
+            None,
+            Vec::new(),
+        );
+        let mut registry = BlockedClientRegistry::default();
+        registry.register(21, &first);
+        registry.register(22, &second);
+
+        assert_eq!(
+            registry.eligible_keys(22, &second.keys),
+            vec![Bytes::from_static(b"second")]
+        );
+        registry.unregister(21);
+        assert_eq!(registry.eligible_keys(22, &second.keys), second.keys);
     }
 
     #[test]
