@@ -51,7 +51,7 @@ void MakoClientService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> r
             HandleDelete(std::move(req), sconn);
             break;
         default:
-            Log_warn("MakoClientService: Unknown RPC ID %d", rpc_id);
+            Log_warn("MakoClientService: Unknown RPC ID {}", rpc_id);
             // Send error response
             auto sconn_opt = sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -76,7 +76,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
 
     rrr::i32 status = ErrorCode::SUCCESS;
 
-    Log_debug("MakoClientService::HandleBeginTxn: client_id=%ld, counter=%u, txn_id=%lu",
+    Log_debug("MakoClientService::HandleBeginTxn: client_id={}, counter={}, txn_id={}",
               client_id, counter, txn_id);
 
     // Send response
@@ -99,7 +99,7 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
     // Commit transaction through ShardReceiver (removes from tracking)
     rrr::i32 status = receiver_->CommitClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleCommit: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleCommit: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
@@ -120,7 +120,7 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
     // Rollback transaction through ShardReceiver (aborts and removes from tracking)
     rrr::i32 status = receiver_->RollbackClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleRollback: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleRollback: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
@@ -151,10 +151,10 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
         nontxnPutReqType, static_cast<uint16_t>(table_id),
         key, value, &op_result, nullptr);
     if (status != ErrorCode::SUCCESS) {
-        Log_warn("MakoClientService::HandlePut: status=%d", status);
+        Log_warn("MakoClientService::HandlePut: status={}", status);
     }
 
-    Log_debug("MakoClientService::HandlePut: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandlePut: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
@@ -187,7 +187,7 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
         nontxnGetReqType, static_cast<uint16_t>(table_id),
         key, std::string(), &op_result, &value);
 
-    Log_debug("MakoClientService::HandleGet: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleGet: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
@@ -218,10 +218,10 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
         nontxnRemoveReqType, static_cast<uint16_t>(table_id),
         key, std::string(), &op_result, nullptr);
     if (status != ErrorCode::SUCCESS) {
-        Log_warn("MakoClientService::HandleDelete: status=%d", status);
+        Log_warn("MakoClientService::HandleDelete: status={}", status);
     }
 
-    Log_debug("MakoClientService::HandleDelete: txn_id=%ld, table=%d, key_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleDelete: txn_id={}, table={}, key_len={}, status={}",
               txn_id, table_id, key.length(), status);
 
     // Send response

@@ -19,9 +19,9 @@
 //            while (i < 100000) {
 //                if (i % 2000 == 0) {
 //                    uint64_t t1 = rrr::Time::now();
-//                    rrr::Log::info("time: %lu", t1 - t0);
+//                    rrr::Log_info("time: {}", t1 - t0);
 //                    t0 = t1;
-//                    rrr::Log::info("cpu utilization: %lf", rrr::CPUInfo::cpu_stat());
+//                    rrr::Log_info("cpu utilization: {:f}", rrr::CPUInfo::cpu_stat());
 //                }
 //                int ret = write(fd, buf, 100);
 //                verify(ret == 100);
@@ -43,7 +43,7 @@
 //                    volatile int j = 1;
 //                    i = i + j;
 //                    //if (i % 10000000 == 0) {
-//                    //    rrr::Log::info("cpu utilization: %lf", rrr::CPUInfo::cpu_stat());
+//                    //    rrr::Log_info("cpu utilization: {:f}", rrr::CPUInfo::cpu_stat());
 //                    //}
 //                }
 //                });

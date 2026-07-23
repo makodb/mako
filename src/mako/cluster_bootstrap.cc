@@ -93,11 +93,11 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     g_cfg_server = new rrr::Server(rusty::Some(g_cfg_poll.as_ref().unwrap().clone()));
     g_cfg_server->reg_service(rusty::make_box<ConfigKvServiceImpl>(kv));
     if (g_cfg_server->start(bind_addr.c_str()) != 0) {
-        Log_warn("BootstrapClusterConfig: config server failed to bind %s",
+        Log_warn("BootstrapClusterConfig: config server failed to bind {}",
                  bind_addr.c_str());
         return;
     }
-    Log_info("BootstrapClusterConfig: shard-0 config service listening on %s",
+    Log_info("BootstrapClusterConfig: shard-0 config service listening on {}",
              bind_addr.c_str());
 
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
@@ -116,7 +116,7 @@ void StartRemoteWatcher() {
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
     g_cfg_client = rusty::Some(rrr::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
     if (g_cfg_client.as_ref().unwrap()->connect(addr.c_str(), false) != 0) {
-        Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at %s",
+        Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at {}",
                  addr.c_str());
         return;
     }
@@ -131,7 +131,7 @@ void StartRemoteWatcher() {
     g_cfg_watcher = rusty::Some(rusty::make_box<ConfigWatcher>(
         ConfigWatcher::new_(g_cfg_cm.as_ref().unwrap().get(), &get_cluster_config(), kConfigPollIntervalMs)));
     g_cfg_watcher.as_ref().unwrap()->start();
-    Log_info("BootstrapClusterConfig: watching shard-0 config at %s", addr.c_str());
+    Log_info("BootstrapClusterConfig: watching shard-0 config at {}", addr.c_str());
 }
 
 }  // namespace
