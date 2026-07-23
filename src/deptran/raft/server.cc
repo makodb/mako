@@ -1776,29 +1776,26 @@ void RaftServer::HeartbeatLoop() {
             }
           } else if (resp.status == 0) {
             // case 2: AppendEntries rejected - log inconsistency
-            if (resp.last_log_index > 0 && (resp.last_log_index + 1) < next_index) {
-              uint64_t old_next = next_index;
-              next_index = resp.last_log_index + 1;
+            uint64_t old_next = next_index;
+            next_index = server_append_backoff_next_index(
+                next_index, resp.last_log_index);
+            if (next_index != old_next &&
+                resp.last_log_index > 0 &&
+                (resp.last_log_index + 1) < old_next) {
               Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
                        site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
-            } else if (resp.last_log_index > 0 && (resp.last_log_index + 1) == next_index && next_index > 1) {
+            } else if (next_index != old_next && resp.last_log_index > 0 &&
+                       (resp.last_log_index + 1) == old_next && old_next > 1) {
               // Follower has prevLogIndex but still rejected, which indicates a term conflict.
               // Step one slot further back so the next AppendEntries can overwrite conflict.
-              uint64_t old_next = next_index;
-              next_index--;
               Log_info("[LOG-RECONCILE] Site %d: Term-conflict backoff for follower %d: next_index %lu -> %lu",
                        site_id_, pending.follower_id, old_next, next_index);
-            } else if (next_index > 10) {
-              uint64_t old_next = next_index;
-              next_index = next_index / 2;
+            } else if (next_index != old_next && old_next > 10) {
               Log_info("[LOG-RECONCILE] Site %d: Exponential backoff for follower %d: next_index %lu -> %lu (halved)",
                        site_id_, pending.follower_id, old_next, next_index);
-            } else if (next_index > 1) {
-              next_index--;
+            } else if (next_index != old_next && old_next > 1) {
               Log_debug("[LOG-RECONCILE] Site %d: Linear backoff for follower %d: next_index %lu -> %lu",
-                        site_id_, pending.follower_id, next_index + 1, next_index);
-            } else {
-              next_index = 1;
+                        site_id_, pending.follower_id, old_next, next_index);
             }
           } else {
             // case 3: AppendEntries accepted
@@ -1925,7 +1922,7 @@ void RaftServer::HeartbeatLoop() {
           }
         }
 
-        if (newSpecCommitIndex > speculative_core_.spec_commit_index()) {
+        if (speculative_core_.should_advance_spec_commit(newSpecCommitIndex)) {
           uint64_t oldSpecCommitIndex = speculative_core_.spec_commit_index();
           Log_info("[SPEC-RAFT] Site %d: Advancing specCommitIndex %lu -> %lu",
                    site_id_, speculative_core_.spec_commit_index(), newSpecCommitIndex);
@@ -2305,8 +2302,9 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
 
   // Check if we've achieved secured leader status
   size_t quorum = GetQuorumSize();
-  if (!speculative_core_.secured_leader() &&
-      raft::raft_quorum_count_reached(durableVoters_.size(), quorum)) {
+  if (speculative_core_.should_become_secured(
+          static_cast<uint64_t>(durableVoters_.size()),
+          static_cast<uint64_t>(quorum))) {
     speculative_core_.set_secured_leader(true);
     Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
              site_id_, durableVoters_.size(), quorum);
@@ -2367,7 +2365,7 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
       }
     }
 
-    if (newSecuredIndex > speculative_core_.secured_log_index()) {
+    if (speculative_core_.should_advance_secured_index(newSecuredIndex)) {
       uint64_t oldSecuredLogIndex = speculative_core_.secured_log_index();
       Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
                site_id_, speculative_core_.secured_log_index(), newSecuredIndex);
@@ -2529,6 +2527,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   }
   bool prev_term_ok = server_append_prev_term_is_acceptable(
       leaderPrevLogIndex, local_prev_term, leaderPrevLogTerm);
+  bool append_ok = server_append_request_is_acceptable(
+      leaderCurrentTerm, this->currentTerm, leaderPrevLogIndex,
+      this->lastLogIndex, compacted_prefix_miss, local_prev_term,
+      leaderPrevLogTerm);
 
   // Only log rejections or when cmd is present (actual log entries)
   if (!term_ok || !index_ok || !prev_term_ok || cmd.has_value()) {
@@ -2557,7 +2559,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       }
   }
 
-  if (term_ok && index_ok && prev_term_ok) {
+  if (append_ok) {
       Log_debug("refresh timer on appendentry");
 
       // // Update follower's view to track the current leader
@@ -3421,14 +3423,16 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
 
   // Check if we need to become secured or step down
   // Relaxed invariant - durableVoters and specVoters are independent after crashes
-  if (!speculative_core_.secured_leader() && vote_core_.is_leader()) {
+    if (!speculative_core_.secured_leader() && vote_core_.is_leader()) {
     size_t quorum = GetQuorumSize();
 
     // NEW: Check if durable quorum is sufficient for secured status
     // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
     // or RequestElection), so no +1 needed. This matches OnVoteDurable() at line 1417.
     size_t durable_vote_count = durableVoters_.size();
-    if (raft::raft_quorum_count_reached(durable_vote_count, quorum)) {
+    if (speculative_core_.should_become_secured(
+            static_cast<uint64_t>(durable_vote_count),
+            static_cast<uint64_t>(quorum))) {
       // We have durable quorum - become secured leader
       // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
       speculative_core_.set_secured_leader(true);
@@ -3440,7 +3444,10 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
       // Note: site_id_ is already in specVoters_ (inserted by ResetSpeculativeState
       // or RequestElection), so no +1 needed.
       size_t vote_count = specVoters_.size();
-      if (raft::raft_quorum_count_below(vote_count, quorum)) {
+      if (speculative_core_.should_step_down_for_quorum_loss(
+              static_cast<uint64_t>(vote_count),
+              static_cast<uint64_t>(durable_vote_count),
+              static_cast<uint64_t>(quorum))) {
         // No durable quorum AND no speculative quorum - must step down
         Log_info("[SPEC-RAFT] Site %d: Lost both spec quorum (%zu/%zu) and durable quorum (%zu/%zu) - stepping down",
                  site_id_, vote_count, quorum, durable_vote_count, quorum);

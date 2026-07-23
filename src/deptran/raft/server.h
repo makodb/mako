@@ -273,6 +273,36 @@ pub fn server_append_prev_term_is_acceptable(prev_index: u64,
     prev_index == 0 || local_prev_term == leader_prev_term
 }
 
+pub fn server_append_backoff_next_index(next_index: u64,
+                                         follower_last_log_index: u64) -> u64 {
+    if follower_last_log_index > 0 && follower_last_log_index + 1 < next_index {
+        follower_last_log_index + 1
+    } else if follower_last_log_index > 0 &&
+              follower_last_log_index + 1 == next_index &&
+              next_index > 1 {
+        next_index - 1
+    } else if next_index > 10 {
+        next_index / 2
+    } else if next_index > 1 {
+        next_index - 1
+    } else {
+        1
+    }
+}
+
+pub fn server_append_request_is_acceptable(leader_term: u64,
+                                           follower_term: u64,
+                                           prev_index: u64,
+                                           last_log_index: u64,
+                                           compacted_prefix_miss: bool,
+                                           local_prev_term: u64,
+                                           leader_prev_term: u64) -> bool {
+    leader_term >= follower_term &&
+        prev_index <= last_log_index &&
+        !compacted_prefix_miss &&
+        (prev_index == 0 || local_prev_term == leader_prev_term)
+}
+
 pub fn server_commit_index_clamp(candidate_index: u64, last_log_index: u64) -> u64 {
     if candidate_index > last_log_index {
         last_log_index
@@ -326,7 +356,7 @@ pub fn server_observed_higher_term(observed_term: u64, current_term: u64) -> boo
     observed_term > current_term
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=295f704ed6bf7940398dcbde0cbe52f92211c7e57e36e668361b50f7db771601*/
+/*RUSTYCPP:GEN-BEGIN id=server.scalar_helpers version=1 rust_sha256=e374eb34aafc3b7598bb1e67edf4867159be348f5348a976aab99234f4ab05ba*/
 inline bool server_log_index_at_or_below(uint64_t index, uint64_t boundary);
 inline bool server_log_index_above(uint64_t index, uint64_t boundary);
 inline bool server_preferred_leader_is_configured(int32_t preferred_leader_site_id);
@@ -350,6 +380,8 @@ inline bool server_append_term_is_acceptable(uint64_t leader_term, uint64_t foll
 inline bool server_append_prefix_is_compacted_miss(uint64_t prev_index, uint64_t min_active_slot, uint64_t snapshot_index);
 inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss);
 inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term);
+inline uint64_t server_append_backoff_next_index(uint64_t next_index, uint64_t follower_last_log_index);
+inline bool server_append_request_is_acceptable(uint64_t leader_term, uint64_t follower_term, uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss, uint64_t local_prev_term, uint64_t leader_prev_term);
 inline uint64_t server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index);
 inline bool server_commit_index_should_advance(uint64_t candidate_index, uint64_t current_commit_index, uint64_t candidate_term, uint64_t current_term);
 inline bool server_log_entry_is_current_term(uint64_t entry_term, uint64_t current_term);
@@ -470,6 +502,24 @@ inline bool server_append_index_is_acceptable(uint64_t prev_index, uint64_t last
 
 inline bool server_append_prev_term_is_acceptable(uint64_t prev_index, uint64_t local_prev_term, uint64_t leader_prev_term) {
     return (rusty::detail::deref_if_pointer_like(prev_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_term));
+}
+
+inline uint64_t server_append_backoff_next_index(uint64_t next_index, uint64_t follower_last_log_index) {
+    if ((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && ((rusty::detail::deref_if_pointer_like(follower_last_log_index) + 1) < rusty::detail::deref_if_pointer_like(next_index))) {
+        return rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1);
+    } else if (((rusty::detail::deref_if_pointer_like(follower_last_log_index) > 0) && ((rusty::detail::deref_if_pointer_like(follower_last_log_index) + static_cast<uint64_t>(1)) == rusty::detail::deref_if_pointer_like(next_index))) && (rusty::detail::deref_if_pointer_like(next_index) > 1)) {
+        return rusty::detail::deref_if_pointer_like(next_index) - static_cast<uint64_t>(1);
+    } else if (rusty::detail::deref_if_pointer_like(next_index) > 10) {
+        return rusty::detail::deref_if_pointer_like(next_index) / static_cast<uint64_t>(2);
+    } else if (rusty::detail::deref_if_pointer_like(next_index) > 1) {
+        return rusty::detail::deref_if_pointer_like(next_index) - static_cast<uint64_t>(1);
+    } else {
+        return static_cast<uint64_t>(1);
+    }
+}
+
+inline bool server_append_request_is_acceptable(uint64_t leader_term, uint64_t follower_term, uint64_t prev_index, uint64_t last_log_index, bool compacted_prefix_miss, uint64_t local_prev_term, uint64_t leader_prev_term) {
+    return (((rusty::detail::deref_if_pointer_like(leader_term) >= rusty::detail::deref_if_pointer_like(follower_term)) && (rusty::detail::deref_if_pointer_like(prev_index) <= rusty::detail::deref_if_pointer_like(last_log_index))) && !compacted_prefix_miss) && (((rusty::detail::deref_if_pointer_like(prev_index) == static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(local_prev_term) == rusty::detail::deref_if_pointer_like(leader_prev_term))));
 }
 
 inline uint64_t server_commit_index_clamp(uint64_t candidate_index, uint64_t last_log_index) {
@@ -1022,9 +1072,34 @@ impl RaftServerSpeculativeCore {
     fn set_last_durable_notified_index(&mut self, index: u64) {
         self.last_durable_notified_index_.set(index)
     }
+
+    // @safe
+    fn should_advance_spec_commit(&self, candidate_index: u64) -> bool {
+        candidate_index > self.spec_commit_index_.get()
+    }
+
+    // @safe
+    fn should_become_secured(&self, durable_vote_count: u64, quorum: u64) -> bool {
+        !self.secured_leader_.get() && durable_vote_count >= quorum
+    }
+
+    // @safe
+    fn should_advance_secured_index(&self, candidate_index: u64) -> bool {
+        candidate_index > self.secured_log_index_.get()
+    }
+
+    // @safe
+    fn should_step_down_for_quorum_loss(&self,
+                                        speculative_vote_count: u64,
+                                        durable_vote_count: u64,
+                                        quorum: u64) -> bool {
+        !self.secured_leader_.get() &&
+            durable_vote_count < quorum &&
+            speculative_vote_count < quorum
+    }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.8 version=1 rust_sha256=1d85cc3212e8c8a406d1dd5d33896aa131b4db53d8cc9cb3fcea09b0c2aad012*/
+/*RUSTYCPP:GEN-BEGIN id=server.8 version=1 rust_sha256=058ca109a0e53c007a1f17470cf071a893982e8778362b23d59a8703325c41c5*/
 struct RaftServerSpeculativeCore;
 
 struct RaftServerSpeculativeCore {
@@ -1045,6 +1120,10 @@ struct RaftServerSpeculativeCore {
     void set_last_spec_notified_index(uint64_t index);
     uint64_t last_durable_notified_index() const;
     void set_last_durable_notified_index(uint64_t index);
+    bool should_advance_spec_commit(uint64_t candidate_index) const;
+    bool should_become_secured(uint64_t durable_vote_count, uint64_t quorum) const;
+    bool should_advance_secured_index(uint64_t candidate_index) const;
+    bool should_step_down_for_quorum_loss(uint64_t speculative_vote_count, uint64_t durable_vote_count, uint64_t quorum) const;
 };
 
 
@@ -1090,6 +1169,22 @@ inline uint64_t RaftServerSpeculativeCore::last_durable_notified_index() const {
 
 inline void RaftServerSpeculativeCore::set_last_durable_notified_index(uint64_t index) {
     this->last_durable_notified_index_.set(std::move(index));
+}
+
+inline bool RaftServerSpeculativeCore::should_advance_spec_commit(uint64_t candidate_index) const {
+    return rusty::detail::deref_if_pointer_like(candidate_index) > this->spec_commit_index_.get();
+}
+
+inline bool RaftServerSpeculativeCore::should_become_secured(uint64_t durable_vote_count, uint64_t quorum) const {
+    return !this->secured_leader_.get() && (rusty::detail::deref_if_pointer_like(durable_vote_count) >= rusty::detail::deref_if_pointer_like(quorum));
+}
+
+inline bool RaftServerSpeculativeCore::should_advance_secured_index(uint64_t candidate_index) const {
+    return rusty::detail::deref_if_pointer_like(candidate_index) > this->secured_log_index_.get();
+}
+
+inline bool RaftServerSpeculativeCore::should_step_down_for_quorum_loss(uint64_t speculative_vote_count, uint64_t durable_vote_count, uint64_t quorum) const {
+    return (!this->secured_leader_.get() && (rusty::detail::deref_if_pointer_like(durable_vote_count) < rusty::detail::deref_if_pointer_like(quorum))) && (rusty::detail::deref_if_pointer_like(speculative_vote_count) < rusty::detail::deref_if_pointer_like(quorum));
 }
 /*RUSTYCPP:GEN-END id=server.8*/
 
