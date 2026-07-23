@@ -23,6 +23,11 @@ protected:
     ClusterConfig cfg_ = ClusterConfig::new_();                // routing cache reloaded from cm_
     ShardManager mgr_ = ShardManager::new_(&cm_, &cfg_);       // control plane under test
 
+    // Force a noexcept dtor: the DSL-generated ConfigManager/ShardManager/
+    // ClusterConfig dtors are noexcept(false), which would otherwise make this
+    // fixture's dtor noexcept(false) and clash with ::testing::Test::~Test().
+    ~ShardManagerTest() noexcept override {}
+
     // Build an n-shard cluster by registering shards with the master, which
     // assigns ids monotonically from 0 -- so shard i gets id i here.
     void AddShards(uint32_t n) {

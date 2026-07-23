@@ -47,7 +47,11 @@ public:
     void clear() { store_.clear(); }
 
 private:
-    btree_port::BTreeMap<std::string, std::string> store_;
+    // Default member initializer so InMemoryKvStore stays default-constructible:
+    // the c529cd3d btree_port module BTreeMap has no default ctor, and gtest
+    // fixtures hold an InMemoryKvStore by value (`InMemoryKvStore kv_;`).
+    btree_port::BTreeMap<std::string, std::string> store_ =
+        btree_port::BTreeMap<std::string, std::string>::new_();
 };
 
 }  // namespace janus
