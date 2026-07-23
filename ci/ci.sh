@@ -280,7 +280,10 @@ compile() {
     echo "Using ${jobs} parallel build jobs"
     echo "Configuring CMake generator='${generator}', build_type='${build_type}', build_dir='${BUILD_DIR}'"
     set -o pipefail
-    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" 2>&1 | tee build.log
+    # -DCMAKE_POLICY_VERSION_MINIMUM=3.5: CMake 4.x removed compatibility with
+    # cmake_minimum_required(VERSION < 3.5); third-party/erpc pins an ancient one.
+    # (The local/dev configure passes this same flag.)
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 2>&1 | tee build.log
     cmake --build "${BUILD_DIR}" --parallel "${jobs}" 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
