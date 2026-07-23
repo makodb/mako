@@ -13,15 +13,15 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 ## Scope
 
 - Files scanned: 34
-- Declarations scanned: 321
-- DSL-covered declarations/functions: 266
+- Declarations scanned: 322
+- DSL-covered declarations/functions: 267
 - Unmigrated declarations/functions: 55
 
 ## Declaration Buckets
 
 | Bucket | Count | Meaning |
 | --- | ---: | --- |
-| `already-DSL` | 266 | Rust DSL source exists and has a generated region |
+| `already-DSL` | 267 | Rust DSL source exists and has a generated region |
 | `trivial` | 14 | POD, enum, alias, or simple value candidate |
 | `refactor-then-DSL` | 34 | Needs ownership, inheritance, threading, or API reshaping first |
 | `needs-transpiler` | 7 | Contains a guide-listed syntax blocker |
@@ -33,7 +33,7 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | --- | ---: |
 | `I/O-or-FFI` | 60 |
 | `operator-overload` | 2 |
-| `raw-pointer` | 133 |
+| `raw-pointer` | 134 |
 | `template` | 9 |
 | `threading` | 52 |
 | `void*` | 7 |
@@ -175,7 +175,8 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | `src/deptran/raft/raft_lab_standalone.cc` | 32 | `struct` | `Harness` | `needs-transpiler` | `unmigrated` | template, raw-pointer |
 | `src/deptran/raft/raft_node.hpp` | 53 | `struct` | `DummyDispatcherCore` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/raft_node.hpp` | 197 | `class` | `DummyDispatcher` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/raft_node.hpp` | 238 | `class` | `RaftNode` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
+| `src/deptran/raft/raft_node.hpp` | 235 | `struct` | `RaftNodeStateCore` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/raft_node.hpp` | 345 | `class` | `RaftNode` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
 | `src/deptran/raft/raft_worker.cc` | 53 | `fn` | `raft_worker_should_start_submit_thread` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/raft_worker.cc` | 57 | `fn` | `raft_worker_should_stop_submit_thread` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/raft_worker.cc` | 61 | `fn` | `raft_worker_should_enqueue` | `already-DSL` | `migrated` | none |
