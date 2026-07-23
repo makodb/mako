@@ -2258,7 +2258,8 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // TODO del only for test
   verify(lstoff == lastLogIndex ) ;
 
-  if (server_candidate_log_is_at_least(
+  if (server_vote_request_is_eligible(
+          can_term, cur_term, vote_core_.vote_for(), can_id,
           lst_log_term, curlstterm, lst_log_idx, curlstidx))
   {
     Log_debug("site %d vote for request vote from %d, lastidx %d, lastterm %d", site_id_, can_id, curlstidx, curlstterm);
@@ -2608,9 +2609,9 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       }
 
       // Advance commit index and enqueue committed entries for background apply.
-      if (leaderCommitIndex > commitIndex) {
+      if (server_log_index_above(leaderCommitIndex, commitIndex)) {
         auto old_commit = commitIndex;
-        commitIndex = std::min(leaderCommitIndex, lastLogIndex);
+        commitIndex = server_commit_index_clamp(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
         PersistCommitIndex(commitIndex, "OnAppendEntries: follower commit");
         EnqueueCommittedEntries(old_commit, commitIndex);
@@ -2816,7 +2817,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   // ============================================================================
   // Edge Case 1: Stale TimeoutNow from old term
   // ============================================================================
-  if (leaderTerm < currentTerm) {
+  if (server_vote_term_is_stale(leaderTerm, currentTerm)) {
     Log_info("[TIMEOUT-NOW] Site %d: Ignoring stale TimeoutNow from leader %d (leader_term=%lu < my_term=%lu)",
              site_id_, leaderSiteId, leaderTerm, currentTerm);
     return;
@@ -2923,7 +2924,7 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // ============================================================================
   // Edge Case 1: Stale term - reject
   // ============================================================================
-  if (term < currentTerm) {
+  if (server_vote_term_is_stale(term, currentTerm)) {
     Log_info("[INSTALL-SNAPSHOT] Site %d: Rejecting InstallSnapshot from leader %lu "
              "(leader_term=%lu < my_term=%lu)",
              site_id_, leader_id, term, currentTerm);
@@ -3009,16 +3010,16 @@ void RaftServer::OnInstallSnapshot(const uint64_t term,
   // ============================================================================
   // Advance commitIndex and executeIndex
   // ============================================================================
-  if (last_included_index > commitIndex) {
+  if (server_log_index_above(last_included_index, commitIndex)) {
     commitIndex = last_included_index;
     PersistCommitIndexToLogStorage();
   }
-  if (last_included_index > executeIndex) {
+  if (server_log_index_above(last_included_index, executeIndex)) {
     executeIndex = last_included_index;
   }
 
   // Update lastLogIndex if the snapshot covers beyond it
-  if (last_included_index > lastLogIndex) {
+  if (server_log_index_above(last_included_index, lastLogIndex)) {
     lastLogIndex = last_included_index;
   }
 
