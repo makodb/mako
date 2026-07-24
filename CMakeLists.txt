@@ -1868,6 +1868,9 @@ if(BUILD_TESTS)
     # only btree_port -- no cluster/mako code -- so a failure pins the bug on the
     # container, not the migration logic.
     add_executable(test_btree_scale tests/btree_scale_test.cc)
+    # Consuming the btree_port module BMI requires matching target features
+    # (the .pcm was compiled with -march=native); this TU imports it directly.
+    target_compile_options(test_btree_scale PRIVATE -march=native)
     target_include_directories(test_btree_scale PRIVATE
         src
         ${GTEST_INCLUDE_DIRS}
