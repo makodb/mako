@@ -383,7 +383,9 @@ run_1shard_replication() {
     echo "========================================="
     # DIAGNOSTIC (temporary): run dbtest under gdb batch mode so a shard-0
     # segfault during loading prints a full backtrace into the shard log.
+    # The CI env sets MAKO_NO_GDB=1 (forces gdb off in util.sh) -- override it.
     echo "use_gdb: 1" > ~/.makorc
+    export MAKO_NO_GDB=0
     local attempt=1
     local max_attempts=2
     while [ $attempt -le $max_attempts ]; do
