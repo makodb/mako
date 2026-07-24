@@ -695,7 +695,12 @@ run_rrr_unit_tests() {
 
     cd ${BUILD_DIR}
     # Exclude eRPC tests in CI due transport/environment instability on shared runners.
-    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc'
+    # Exclude rusty-cpp's own test suite: third-party/rusty-cpp is added
+    # EXCLUDE_FROM_ALL so its ~60 test binaries are never built, yet its CMake
+    # still registers them -> ctest counts the missing binaries as "Not Run"
+    # failures. Those tests belong to rusty-cpp's own CI, not mako's. (Verified
+    # no mako test name matches these patterns.)
+    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc|_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations'
     local test_result=$?
     cd ..
     rm -f "$tmp_config"
