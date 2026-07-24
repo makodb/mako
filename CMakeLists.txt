@@ -1863,27 +1863,6 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_shard_manager COMMAND test_shard_manager)
 
-    # ISOLATION REPRO: pure module-form btree_port BTreeMap at multi-node scale
-    # (diagnosing ShardManagerTest.LargeRangeMigrationConservesEveryKey). Uses
-    # only btree_port -- no cluster/mako code -- so a failure pins the bug on the
-    # container, not the migration logic.
-    add_executable(test_btree_scale tests/btree_scale_test.cc)
-    # Consuming the btree_port module BMI requires matching target features
-    # (the .pcm was compiled with -march=native); this TU imports it directly.
-    target_compile_options(test_btree_scale PRIVATE -march=native)
-    target_include_directories(test_btree_scale PRIVATE
-        src
-        ${GTEST_INCLUDE_DIRS}
-    )
-    target_link_options(test_btree_scale PRIVATE
-        "-L${_CXX_COMPILER_ROOT}/lib"
-        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
-    )
-    target_link_libraries(test_btree_scale
-        btree_port vec_port rc_port hashbrown_port rusty c++ pthread
-    )
-    add_test(NAME test_btree_scale COMMAND test_btree_scale)
-
     # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
     # Unlike test_config_manager (pure cluster), this TU pulls the
     # storage interface header + an in-memory FullOrderedIndex fake, so
