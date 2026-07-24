@@ -88,14 +88,7 @@ echo "  CPU throttle:      ${cpu_throttle_label} (cycle=${MAKO_THROTTLE_CYCLE_MS
 echo "========================================="
 
 # Execute command (with or without gdb based on GDB_PREFIX from util.sh)
-# DIAGNOSTIC (temporary): if /tmp/mako_force_gdb exists, force gdb here at the
-# point of use -- robust against env-stripping across the nohup shard spawn.
-if [ -f /tmp/mako_force_gdb ] && command -v gdb >/dev/null 2>&1; then
-    printf 'run\nthread apply all bt\nquit\n' > /tmp/mako_gdb_cmd.txt
-    GDB_PREFIX="gdb -batch -x /tmp/mako_gdb_cmd.txt --args"
-    echo "[diag-shard] forced gdb at point of use: $GDB_PREFIX"
-fi
-if [ "$GDB_ENABLED" == "1" ] || [ -n "$GDB_PREFIX" ]; then
+if [ "$GDB_ENABLED" == "1" ]; then
     echo "Running under gdb batch mode..."
 fi
 $GDB_PREFIX $CMD

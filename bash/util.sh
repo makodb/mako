@@ -17,9 +17,7 @@ read_makorc_value() {
 # GDB_ENABLED: Set from ~/.makorc (use_gdb: 1 to enable)
 # Can be overridden by MAKO_NO_GDB=1 environment variable (useful for CI)
 # Scripts can use this variable directly to conditionally run under GDB
-if [ "$MAKO_FORCE_GDB" == "1" ]; then
-    GDB_ENABLED="1"
-elif [ "$MAKO_NO_GDB" == "1" ]; then
+if [ "$MAKO_NO_GDB" == "1" ]; then
     GDB_ENABLED="0"
 else
     GDB_ENABLED=$(read_makorc_value "use_gdb" "0")
