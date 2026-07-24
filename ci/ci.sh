@@ -381,6 +381,9 @@ run_1shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1Replication"
     echo "========================================="
+    # DIAGNOSTIC (temporary): run dbtest under gdb batch mode so a shard-0
+    # segfault during loading prints a full backtrace into the shard log.
+    echo "use_gdb: 1" > ~/.makorc
     local attempt=1
     local max_attempts=2
     while [ $attempt -le $max_attempts ]; do
@@ -401,6 +404,15 @@ run_1shard_replication() {
         fi
         attempt=$((attempt + 1))
     done
+    # DIAGNOSTIC (temporary): surface the gdb backtrace from the crashed shard log(s).
+    echo "===== GDB BACKTRACE (shard1Replication segfault) ====="
+    for f in $(find . -name "*1shard_replication*shard*.log" 2>/dev/null | head -8); do
+        if grep -qE "received signal|thread apply all bt|SIGSEGV" "$f" 2>/dev/null; then
+            echo "----- backtrace frames from $f -----"
+            grep -nE "received signal|^#[0-9]+ |Thread [0-9]+ received|thread apply all bt| in [a-zA-Z_][a-zA-Z0-9_:]*" "$f" 2>/dev/null | head -80
+        fi
+    done
+    rm -f ~/.makorc
     return 1
 }
 
