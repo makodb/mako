@@ -381,6 +381,10 @@ run_1shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1Replication"
     echo "========================================="
+    # DIAGNOSTIC (temporary): capture a gdb backtrace for the shard-0 segfault.
+    command -v gdb >/dev/null 2>&1 || apt-get install -y gdb >/dev/null 2>&1 || { apt-get update >/dev/null 2>&1 && apt-get install -y gdb >/dev/null 2>&1; } || true
+    touch /tmp/mako_force_gdb
+    echo "[diag-ci] gdb=$(command -v gdb || echo NONE) marker=$(ls -la /tmp/mako_force_gdb 2>&1)"
     local attempt=1
     local max_attempts=2
     while [ $attempt -le $max_attempts ]; do
@@ -400,6 +404,14 @@ run_1shard_replication() {
             echo "Retrying shard1Replication (attempt $((attempt + 1))/$max_attempts)..."
         fi
         attempt=$((attempt + 1))
+    done
+    # DIAGNOSTIC (temporary): surface the gdb diag + backtrace from the shard logs.
+    echo "===== GDB DIAG (shard1Replication) ====="
+    rm -f /tmp/mako_force_gdb /tmp/mako_gdb_cmd.txt
+    for f in $(find . -name "*1shard_replication*shard*.log" 2>/dev/null | head -6); do
+        echo "----- diag+bt from $f -----"
+        grep -E "diag2|FORCED gdb|Running under gdb" "$f" 2>/dev/null | head -4
+        tail -70 "$f" 2>/dev/null | grep -E "received signal|SIGSEGV|^#[0-9]+ | in [a-zA-Z_][a-zA-Z0-9_:]*| at [^ ]+:[0-9]+|Thread [0-9]|finished loading|Segmentation" | head -55
     done
     return 1
 }
