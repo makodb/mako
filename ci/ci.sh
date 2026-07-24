@@ -383,9 +383,11 @@ run_1shard_replication() {
     echo "========================================="
     # DIAGNOSTIC (temporary): run dbtest under gdb batch mode so a shard-0
     # segfault during loading prints a full backtrace into the shard log.
-    # The CI env sets MAKO_NO_GDB=1 (forces gdb off in util.sh) -- override it.
-    echo "use_gdb: 1" > ~/.makorc
-    export MAKO_NO_GDB=0
+    # gdb may not be in the CI image; install best-effort. MAKO_FORCE_GDB=1
+    # forces gdb on in util.sh (bypasses CI's MAKO_NO_GDB=1 + HOME-dependent ~/.makorc).
+    command -v gdb >/dev/null 2>&1 || apt-get install -y gdb >/dev/null 2>&1 || { apt-get update >/dev/null 2>&1 && apt-get install -y gdb >/dev/null 2>&1; } || true
+    echo "[diag] gdb path: $(command -v gdb || echo NOT-INSTALLED)"
+    export MAKO_FORCE_GDB=1
     local attempt=1
     local max_attempts=2
     while [ $attempt -le $max_attempts ]; do
