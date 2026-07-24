@@ -387,7 +387,7 @@ run_1shard_replication() {
     # forces gdb on in util.sh (bypasses CI's MAKO_NO_GDB=1 + HOME-dependent ~/.makorc).
     command -v gdb >/dev/null 2>&1 || apt-get install -y gdb >/dev/null 2>&1 || { apt-get update >/dev/null 2>&1 && apt-get install -y gdb >/dev/null 2>&1; } || true
     echo "[diag] gdb path: $(command -v gdb || echo NOT-INSTALLED)"
-    export MAKO_FORCE_GDB=1
+    touch /tmp/mako_force_gdb
     local attempt=1
     local max_attempts=2
     while [ $attempt -le $max_attempts ]; do
@@ -410,13 +410,11 @@ run_1shard_replication() {
     done
     # DIAGNOSTIC (temporary): surface the gdb backtrace from the crashed shard log(s).
     echo "===== GDB BACKTRACE (shard1Replication segfault) ====="
-    for f in $(find . -name "*1shard_replication*shard*.log" 2>/dev/null | head -8); do
-        if grep -qE "received signal|thread apply all bt|SIGSEGV" "$f" 2>/dev/null; then
-            echo "----- backtrace frames from $f -----"
-            grep -nE "received signal|^#[0-9]+ |Thread [0-9]+ received|thread apply all bt| in [a-zA-Z_][a-zA-Z0-9_:]*" "$f" 2>/dev/null | head -80
-        fi
+    rm -f /tmp/mako_force_gdb /tmp/mako_gdb_cmd.txt
+    for f in $(find . /root /home -maxdepth 5 -name "*1shard_replication*shard*.log" 2>/dev/null | head -8); do
+        echo "----- frames/diag from $f -----"
+        grep -nE "received signal|SIGSEGV|^#[0-9]+ | in [a-zA-Z_][a-zA-Z0-9_:]*\(| at [^ ]+:[0-9]+|diag-shard|Running under gdb|Thread [0-9]" "$f" 2>/dev/null | tail -90
     done
-    rm -f ~/.makorc
     return 1
 }
 
