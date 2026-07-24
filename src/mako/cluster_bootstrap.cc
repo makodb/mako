@@ -92,7 +92,7 @@ void StartShard0Leader(abstract_db* db, uint32_t nshards) {
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
     g_cfg_server = new rrr::Server(rrr::Server::new_(rusty::Some(g_cfg_poll.as_ref().unwrap().clone())));
     g_cfg_server->reg_service_typed(rusty::make_box<ConfigKvServiceImpl>(kv));
-    if (g_cfg_server->start(bind_addr.c_str()) != 0) {
+    if (g_cfg_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) != 0) {
         Log_warn("BootstrapClusterConfig: config server failed to bind {}",
                  bind_addr.c_str());
         return;
@@ -115,7 +115,7 @@ void StartRemoteWatcher() {
 
     g_cfg_poll = rusty::Some(rrr::PollThread::create());
     g_cfg_client = rusty::Some(rrr::Client::create(g_cfg_poll.as_ref().unwrap().clone()));
-    if (g_cfg_client.as_ref().unwrap()->connect(addr.c_str(), false) != 0) {
+    if (g_cfg_client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(addr.c_str()), false) != 0) {
         Log_warn("BootstrapClusterConfig: could not connect to shard-0 config at {}",
                  addr.c_str());
         return;
