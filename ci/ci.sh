@@ -394,10 +394,18 @@ run_1shard_replication() {
         bash ./examples/test_1shard_replication.sh
         local test_result=$?
         set -e
+        # DIAGNOSTIC: surface diag+bt after EACH attempt (a crash bt is here even
+        # when a later retry passes and hides the after-loop surfacing).
+        echo "===== GDB DIAG attempt $attempt (result=$test_result) ====="
+        for f in $(find . -name "*1shard_replication*shard*.log" 2>/dev/null | head -6); do
+            grep -E "diag2|FORCED gdb|Running under gdb" "$f" 2>/dev/null | head -3
+            tail -60 "$f" 2>/dev/null | grep -E "received signal|SIGSEGV|^#[0-9]+ | in [a-zA-Z_]| at [^ ]+:[0-9]|Segmentation fault" | head -40
+        done
         # Always check for hanging processes, even if test failed
         check_for_hanging_processes "shard1Replication"
         local hanging_check=$?
         if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            rm -f /tmp/mako_force_gdb /tmp/mako_gdb_cmd.txt
             return 0
         fi
         if [ $attempt -lt $max_attempts ]; then
