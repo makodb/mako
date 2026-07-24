@@ -88,14 +88,6 @@ echo "  CPU throttle:      ${cpu_throttle_label} (cycle=${MAKO_THROTTLE_CYCLE_MS
 echo "========================================="
 
 # Execute command (with or without gdb based on GDB_PREFIX from util.sh)
-# DIAGNOSTIC (temporary): unconditional debug + robust point-of-use gdb force.
-GDBBIN="$(command -v gdb 2>/dev/null || echo /usr/bin/gdb)"
-echo "[diag2] forcefile=$([ -f /tmp/mako_force_gdb ] && echo YES || echo NO) gdbbin=$GDBBIN GDB_ENABLED=$GDB_ENABLED MAKO_NO_GDB=$MAKO_NO_GDB HOME=$HOME pwd=$(pwd)"
-if [ -f /tmp/mako_force_gdb ] && [ -x "$GDBBIN" ]; then
-    printf 'run\nthread apply all bt\nquit\n' > /tmp/mako_gdb_cmd.txt
-    GDB_PREFIX="$GDBBIN -batch -x /tmp/mako_gdb_cmd.txt --args"
-    echo "[diag2] FORCED gdb: $GDB_PREFIX"
-fi
 if [ "$GDB_ENABLED" == "1" ]; then
     echo "Running under gdb batch mode..."
 fi
