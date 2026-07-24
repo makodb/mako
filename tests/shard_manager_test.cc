@@ -425,6 +425,19 @@ TEST_F(ShardManagerTest, LargeRangeMigrationConservesEveryKey) {
     }
 }
 
+// ISOLATION REPRO (diagnosing LargeRangeMigrationConservesEveryKey): does the
+// multi-node btree_port BTreeMap survive 200 puts + a full range iterate with
+// NO migration at all? range_key_count reads shard 1's data BTreeMap directly
+// (no routing, no copy). If this crashes with "unwrap on None" or miscounts,
+// the module-form container is broken at multi-node scale on its own.
+TEST_F(ShardManagerTest, ScaleBtreePutAndIterateNoMigration) {
+    AddShards(3);
+    for (int i = 0; i < 200; ++i) {
+        mgr_.put_direct(1, "m" + std::to_string(i), "v" + std::to_string(i));
+    }
+    EXPECT_EQ(mgr_.range_key_count(1, "m", "n"), 200u);
+}
+
 // Killing a shard into itself is rejected (dead == taker precondition).
 TEST_F(ShardManagerTest, KillSelfIsRejected) {
     AddShards(3);
