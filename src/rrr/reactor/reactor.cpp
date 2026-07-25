@@ -72,6 +72,13 @@ import rrr.pollable_proxy;
 // fiber context switching / raw pointer access / thread-local lookup
 // have per-method `// @unsafe` overrides. The rest is analyzed as
 // @safe by default.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(is_ready)
+RUSTY_METHOD_DISPATCH(upgrade)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 // --- from event.h --------------------------------------------------------
@@ -2397,42 +2404,80 @@ void event_wait_impl(const W& self, uint64_t timeout) {
 
 // @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
 // and Log_debug are all @safe.
-// Verbatim test() machinery as a kernel over the concrete event type W
-// (see event_wait_impl above for the duck-typed surface contract).
-template <typename W>
-bool event_test_impl(const W& self) {
-  verify(self.state_.__debug_creator);
-  if (self.is_ready()) {
-    if (self.status_.get() == EventStatus::INIT) {
-      self.status_.set(EventStatus::DONE);
-    } else if (self.status_.get() == EventStatus::WAIT) {
-      if (rusty::thread::current_id() == self.owner_thread_) {
-        // Owner-thread-only: upgrading the weak fiber ref mutates a plain
-        // (non-atomic) Rc strong count; doing this from a foreign thread
-        // races the owner's own Rc<Fiber> clones and corrupts the count.
-        // The upgraded handle is used only for this liveness assertion.
-        auto option_fiber = (*self.state_.wp_fiber_.borrow()).upgrade();
-        verify(option_fiber.is_some());
-        verify(self.status_.get() != EventStatus::DEBUG);
-      }
-      self.status_.set(EventStatus::READY);
-    } else if (self.status_.get() == EventStatus::READY) {
-      Log_debug("event status ready, triggered?");
-    } else if (self.status_.get() == EventStatus::DONE) {
-      // do nothing
-    } else if (self.status_.get() == EventStatus::TIMEOUT) {
-      // do nothing
+// Authored as inline Rust DSL (docs/porting-cpp-to-rust-dsl.md §7.9): duck-typed
+// test() machinery as a generic kernel over the concrete event type W (see
+// event_wait_impl for the surface contract). Convertible since rusty-cpp #32
+// (guard-producing calls on generic receivers → deref dispatch) and #33
+// (deref-dispatch functor hoisted to global scope) landed. Param is `ev`, not
+// `self` — a free-function param named `self` lowers to a method receiver.
+#if RUSTYCPP_RUST
+fn event_test_impl<W>(ev: &W) -> bool {
+    verify(ev.state_.__debug_creator);
+    if ev.is_ready() {
+        if ev.status_.get() == EventStatus::INIT {
+            ev.status_.set(EventStatus::DONE);
+        } else if ev.status_.get() == EventStatus::WAIT {
+            if rusty::thread::current_id() == ev.owner_thread_ {
+                // Owner-thread-only: upgrading the weak fiber ref mutates a plain
+                // (non-atomic) Rc strong count; doing this from a foreign thread
+                // races the owner's own Rc<Fiber> clones and corrupts the count.
+                // The upgraded handle is used only for this liveness assertion.
+                let option_fiber = ev.state_.wp_fiber_.borrow().upgrade();
+                verify(option_fiber.is_some());
+                verify(ev.status_.get() != EventStatus::DEBUG);
+            }
+            ev.status_.set(EventStatus::READY);
+        } else if ev.status_.get() == EventStatus::READY {
+            Log_debug("event status ready, triggered?");
+        } else if ev.status_.get() == EventStatus::DONE {
+            // do nothing
+        } else if ev.status_.get() == EventStatus::TIMEOUT {
+            // do nothing
+        } else {
+            verify(0);
+        }
+        return true;
     } else {
-      verify(0);
+        if ev.status_.get() == EventStatus::DONE {
+            ev.status_.set(EventStatus::INIT);
+        }
     }
-    return true;
-  } else {
-    if (self.status_.get() == EventStatus::DONE) {
-      self.status_.set(EventStatus::INIT);
-    }
-  }
-  return false;
+    false
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.12 version=1 rust_sha256=6b878e0df1b9513246de90e18b8e92999fa8a1faf47c7d256d8c6274fbd92b95*/
+template<typename W>
+bool event_test_impl(const W& ev);
+
+template<typename W>
+bool event_test_impl(const W& ev) {
+    verify(ev.state_.__debug_creator);
+    if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
+        if (ev.status_.get() == rusty::clone(EventStatus::INIT)) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+        } else if (ev.status_.get() == rusty::clone(EventStatus::WAIT)) {
+            if (rusty::thread::current_id() == rusty::detail::deref_if_pointer_like(ev.owner_thread_)) {
+                const auto option_fiber = rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
+                verify(option_fiber.is_some());
+                verify(ev.status_.get() != rusty::clone(EventStatus::DEBUG));
+            }
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::READY)));
+        } else if (ev.status_.get() == rusty::clone(EventStatus::READY)) {
+            Log_debug("event status ready, triggered?");
+        } else if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+        } else if (ev.status_.get() == rusty::clone(EventStatus::TIMEOUT)) {
+        } else {
+            verify(0);
+        }
+        return true;
+    } else {
+        if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::INIT)));
+        }
+    }
+    return false;
+}
+/*RUSTYCPP:GEN-END id=reactor.12*/
 
 
 
