@@ -727,3 +727,88 @@ abort path, dependent on binutils being installed and on `PATH` trust. Resolve i
 `backtrace_symbols`) and accept the plainer output; addresses remain resolvable offline against
 the binary. When you delete such a path, delete its support machinery too (the pipe readers,
 command builders, and any helper — e.g. a `get_exec_path` — that existed only to feed it).
+
+### 7.9 Inline-DSL generics: template *functions* become DSL free templates (July 2026)
+
+§7.1–7.2 built the event system as DSL structs delegating to **hand-written C++
+template kernels** (`template<typename W> void event_wait_impl(W& self, …)`), on
+the standing assumption that the *inline* DSL couldn't emit generics — only the
+`--crate` path (the `BTreeMap<K,V>` port) was thought to exercise them. **That
+assumption was never probed in inline mode, and it is wrong.** `inline-rust
+--rewrite` lowers Rust generic free functions and structs straight to C++
+templates:
+
+| DSL source | Emitted C++ |
+|---|---|
+| `fn first_of<T>(a: T, b: T) -> T` | `template<typename T> T first_of(T a, T b)` |
+| `struct Pair<T> { first: T, second: T }` | `template<typename T> struct Pair { T first; T second; };` |
+| `fn max_of<T: PartialOrd + Copy>(…)` | `template<typename T> …` — **the bound is accepted and erased** |
+
+A kernel calling an unbounded `W`'s methods lowers through a method-dispatch
+shim:
+
+```rust
+fn event_test_impl<W>(ev: &W) -> bool {
+    if ev.is_ready() { … ev.status_.set(EventStatus::READY); … }
+}
+```
+→
+```cpp
+namespace rusty { namespace detail { RUSTY_METHOD_DISPATCH(is_ready) } }  // <-- see BLOCKER
+template<typename W> bool event_test_impl(const W& ev) {
+    if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
+        … ev.status_.set(rusty::clone(EventStatus::READY)); …
+    }
+}
+```
+
+The body is a faithful transcription — but **transpiling is not compiling**, and
+this particular one does *not* yet compile inside a namespace.
+
+**⚠ BLOCKER — duck-typed generic kernels don't compile inside a namespace (main
+`9a446dfe`).** The dispatch shim is emitted as
+`namespace rusty { namespace detail { RUSTY_METHOD_DISPATCH(is_ready) } }`
+**inline in the GEN block**. When that block lives inside `namespace rrr` (as
+every reactor/rrr kernel does), it opens **`rrr::rusty`**, which then *shadows*
+the global `::rusty` for the rest of the function — so every `rusty::deref_call`,
+`rusty::clone`, `rusty::thread`, `rusty::detail::deref_if_pointer_like` resolves
+into `rrr::rusty` and fails to compile:
+
+```
+error: no member named 'deref_call' in namespace 'rrr::rusty'; did you mean '::rusty::deref_call'?
+error: no member named 'clone'      in namespace 'rrr::rusty' … missing '#include "rusty/move.hpp"'
+error: no member named 'thread'     in namespace 'rrr::rusty'; did you mean '::rusty::thread'?
+```
+
+Confirmed the hard way: `event_test_impl<W>` converted in `reactor.cpp` under
+clang 22 **transpiled and `--check`-passed but failed to compile**, and was
+reverted. The fix is a **transpiler change** — emit `::rusty::`-qualified refs,
+or emit the `RUSTY_METHOD_DISPATCH` registration at global scope (close/reopen
+the enclosing namespace) rather than inline. Until then, duck-typed generic
+kernels (`event_wait_impl`, `event_test_impl`, …) stay hand-written C++ — **not**
+because generics don't work, but because the dispatch shim isn't namespace-safe.
+Pure-value generic free functions (no method calls on the generic type —
+arithmetic, field copies, most serde-shaped helpers) sidestep the shim entirely
+and *do* compile.
+
+**Other gotchas (mechanical):**
+
+1. **Never name a free-function param `self`** — the transpiler treats it as the
+   method receiver, emitting `f(/* self */)` with `this->…` in the body. Use
+   `ev`/`w`. (Callers pass positionally, so renaming is transparent.)
+2. **`rusty::clone` needs `#include "rusty/move.hpp"`** in the file's global
+   module fragment; the transpiler wraps enum literals in `clone(...)` but
+   doesn't pull the header.
+
+**Still floored** (§7.6 unchanged): **variadic parameter packs** —
+`create_sp_event<Ev, Args...>`, `make_arc<U, Args...>` — plus generic
+*impl-blocks-over-a-type* and CRTP/SFINAE.
+
+**Scope, honestly.** A measured rrr sweep found **345** hand-written
+`template<…>` decls: **~119 single-type-param** (only ~18 variadic). But the
+convertible subset splits again: **pure-value** templates should convert and
+compile today; **duck-typed method-call kernels are gated on the namespace-shim
+fix above** — so the near-term win is smaller than the raw 119 suggests.
+**Lesson (reinforcing §7.5): probe with a *compile*, not just a transpile — mock
+the types and build the generated template. `--rewrite` + `--check` passing
+proves nothing about compilation.**
