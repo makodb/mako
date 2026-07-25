@@ -2192,16 +2192,36 @@ int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
 }
 
 // @unsafe - drives the on_error callback then closes the listener.
-void tcplistener_handle_error(const TcpListener& self) {
-    if (self.closed_.get()) return;
+// @unsafe - fires on_error callback + drives tcplistener_close (::shutdown).
+// Authored as inline Rust DSL — mirrors the tcpconn_handle_error twin.
+#if RUSTYCPP_RUST
+fn tcplistener_handle_error(listener: &TcpListener) {
+    if listener.closed_.get() {
+        return;
+    }
     {
-        auto guard = self.on_error_.lock().unwrap();
-        if (*guard) {
-            (*guard)(ChannelError::Internal, "epoll/poll signaled error");
+        let mut guard = listener.on_error_.lock().unwrap();
+        if *guard {
+            (*guard)(ChannelError_Internal(), "epoll/poll signaled error");
         }
     }
-    tcplistener_close(self);
+    tcplistener_close(listener);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.20 version=1 rust_sha256=832ba5c63c38770ec7d6e48dbafab135da8b23f0c30494f1647c5d9bd622d2fe*/
+void tcplistener_handle_error(const TcpListener& listener) {
+    if (listener.closed_.get()) {
+        return;
+    }
+    {
+        auto guard = listener.on_error_.lock().unwrap();
+        if (rusty::detail::deref_if_pointer_like(guard)) {
+            (rusty::detail::deref_if_pointer_like(guard))(ChannelError_Internal(), "epoll/poll signaled error");
+        }
+    }
+    tcplistener_close(listener);
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.20*/
 
 // ===========================================================================
 // TcpFactory
