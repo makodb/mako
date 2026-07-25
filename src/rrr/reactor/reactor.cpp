@@ -203,18 +203,48 @@ template <typename W> bool event_test_impl(const W& self);
 // the generated method bodies resolve these by ordinary lookup, and the
 // templates instantiate once the concrete struct is complete).
 using SrcFileCStr = const char*;
-template <typename W> rusty::Option<rusty::Arc<EventPollable>> event_core_self_lock(const W& self) {
-  return self.self_.upgrade();
+// Duck-typed event-core kernels, authored as inline Rust DSL — convertible
+// since rusty-cpp #32/#33. Params renamed `self`->`ev` (a free-function param
+// named `self` lowers to a method receiver).
+#if RUSTYCPP_RUST
+fn event_core_self_lock<W>(ev: &W) -> rusty::Option<rusty::Arc<EventPollable>> {
+    ev.self_.upgrade()
 }
-template <typename W> void event_core_set_self(W& self, rusty::sync::Weak<EventPollable> p) {
-  self.self_ = std::move(p);
+fn event_core_set_self<W>(ev: &mut W, p: rusty::sync::Weak<EventPollable>) {
+    ev.self_ = p;
 }
-template <typename W> uint64_t event_core_wakeup_time(const W& self) {
-  return self.state_.wakeup_time_.get();
+fn event_core_wakeup_time<W>(ev: &W) -> u64 {
+    ev.state_.wakeup_time_.get()
 }
-template <typename W> rusty::Option<rusty::Rc<Fiber>> event_core_upgrade_fiber(const W& self) {
-  return (*self.state_.wp_fiber_.borrow()).upgrade();
+fn event_core_upgrade_fiber<W>(ev: &W) -> rusty::Option<rusty::Rc<Fiber>> {
+    ev.state_.wp_fiber_.borrow().upgrade()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.3 version=1 rust_sha256=8aa535460ee9fdf427c4e23e24455948268424b1d896b69639b4b35047e8e754*/
+template<typename W>
+uint64_t event_core_wakeup_time(const W& ev);
+
+template<typename W>
+rusty::Option<rusty::Arc<EventPollable>> event_core_self_lock(const W& ev) {
+    return ev.self_.upgrade();
+}
+
+template<typename W>
+void event_core_set_self(W& ev, rusty::sync::Weak<EventPollable> p) {
+    W* ev_shadow1 = &ev;
+    (*ev_shadow1).self_ = std::move(p);
+}
+
+template<typename W>
+uint64_t event_core_wakeup_time(const W& ev) {
+    return ev.state_.wakeup_time_.get();
+}
+
+template<typename W>
+rusty::Option<rusty::Rc<Fiber>> event_core_upgrade_fiber(const W& ev) {
+    return rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
+}
+/*RUSTYCPP:GEN-END id=reactor.3*/
 template <typename W> void event_core_record_place(const W& self, SrcFileCStr file, int line) {
   char buff[200];
   sprintf(buff, "%s:%d", file, line);
