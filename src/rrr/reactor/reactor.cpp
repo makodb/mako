@@ -74,7 +74,10 @@ import rrr.pollable_proxy;
 // @safe by default.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(get_self)
+RUSTY_METHOD_DISPATCH(is_composite_event)
 RUSTY_METHOD_DISPATCH(is_ready)
+RUSTY_METHOD_DISPATCH(push_back)
 RUSTY_METHOD_DISPATCH(upgrade)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
 /*RUSTYCPP:GEN-DISPATCH-END*/
@@ -2343,92 +2346,111 @@ namespace rrr {
 //   }
 // }
 
-// Flattening S4: the wait/test machinery, extracted VERBATIM from
-// Event::wait/Event::test as templates over the concrete event type W.
-// Duck-typed surface: W provides status_, state_, owner_thread_,
-// is_ready(), is_composite_event(), get_self(). Works identically for
-// the legacy Event hierarchy (virtual dispatch through W=Event) and the
-// flattened per-kind DSL structs (static dispatch).
-template <typename W>
-void event_wait_impl(const W& self, uint64_t timeout) {
-//  verify(__debug_creator); // if this fails, the event is not created by reactor.
-  verify(sp_reactor_th_.is_some());
-  verify(sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
-  if (self.status_.get() == EventStatus::DONE) return; // TODO: yidawu add for the second use the event.
-  // verify(status_.get() == INIT);
-  if (self.is_ready()) {
-    self.status_.set(EventStatus::DONE); // no need to wait.
-    return;
-  } else {
-//    if (status_ == WAIT) {
-//      // this does not look right, fix later
-//      Log_fatal("multiple waits on the same event; no support at the moment");
-//    }
-//    verify(status_ == INIT); // does not support multiple wait so far. maybe we can support it in the future.
-//    status_= DEBUG;
-    // the event may be created in a different fiber.
-    // this value is set when wait is called.
-    // for now only one fiber can wait on an event.
-    auto fiber_opt = Fiber::current_fiber();
-    verify(fiber_opt.is_some());  // Can't wait outside a fiber
-    auto fiber = fiber_opt.unwrap();
-
-    // Use RefCell borrow_mut() for safe interior mutability
-    auto reactor_rc = Reactor::get_reactor();
-    reactor_rc->waiting_events_.borrow_mut()->push_back(self.get_self().unwrap());
-
-    // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
-    // Add them to a separate queue that gets scanned (much smaller than all events)
-    // Regular RPC events (Raft) self-notify via test() - zero overhead!
-    if (self.is_composite_event()) {
-      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(self.get_self().unwrap());
+// Flattening S4: the wait machinery, extracted from Event::wait as a generic
+// kernel over the concrete event type W. Duck-typed surface: W provides
+// status_, state_, is_ready(), is_composite_event(), get_self(). Works
+// identically for the legacy Event hierarchy (virtual dispatch through
+// W=Event) and the flattened per-kind DSL structs (static dispatch).
+//
+// Authored as inline Rust DSL (docs/porting-cpp-to-rust-dsl.md §7.9).
+// Convertible since rusty-cpp #32/#33 (guard-producing calls on generic
+// receivers → deref dispatch), #34 (deref through a generic guard receiver on
+// an assignment LHS), and #35 (keep the guard deref for a CONCRETE receiver
+// too — the `borrow_mut().push_back()` enqueues) all landed. Param is `ev`,
+// not `self` — a free-function param named `self` lowers to a method receiver.
+// Rc field/method access uses the explicit `(*rc).member` deref form; a value
+// binding (`.clone()`) is required for `*` to lower — a reference binding or an
+// inline `*<call-chain>` drops the deref. The dead `#ifdef EVENT_TIMEOUT_CHECK`
+// branches (macro never defined) are dropped.
+#if RUSTYCPP_RUST
+fn event_wait_impl<W>(ev: &W, timeout: u64) {
+    verify(sp_reactor_th_.is_some());
+    // `.clone()` binds a *value* Rc (not a reference): `*ident` lowers to a
+    // deref only for value bindings, so `(*reactor_th).thread_id_` reaches
+    // through the Rc.
+    let reactor_th = sp_reactor_th_.as_ref().unwrap().clone();
+    verify((*reactor_th).thread_id_.get() == rusty::thread::current_id());
+    if ev.status_.get() == EventStatus::DONE {
+        return; // second use of the event
     }
+    if ev.is_ready() {
+        ev.status_.set(EventStatus::DONE); // no need to wait
+        return;
+    } else {
+        // The event may be created in a different fiber; for now only one
+        // fiber can wait on an event. Capture the running fiber to wake later.
+        let fiber_opt = Fiber::current_fiber();
+        verify(fiber_opt.is_some()); // can't wait outside a fiber
+        let fiber = fiber_opt.unwrap();
 
-#ifdef EVENT_TIMEOUT_CHECK
-    if (timeout == 0) {
-      self.__debug_timeout_ = true;
-      timeout = 200 * 1000 * 1000;
-//#ifdef SIMULATE_WAN
-//      timeout = 600 * 1000 * 1000;
-//#endif
-    }
-#endif
-    if (timeout > 0) {
-      auto now = Time::now(true);
-      self.state_.wakeup_time_.set(now + timeout);
-      //Log_info("WAITING: {}", get_self().get());
-      // Log_info("wake up {}, now {}", wakeup_time_, now);
-      reactor_rc->timeout_events_.borrow_mut()->push_back(self.get_self().unwrap());
-    }
-    // TODO optimize timeout_events, sort by wakeup time.
-//      auto it = timeout_events.end();
-//      timeout_events.push_back(rc_this_event);
-//      while (it != events.begin()) {
-//        it--;
-//        auto& it_event = *it;
-//        if (it_event->wakeup_time_ < wakeup_time_) {
-//          it++; // list insert happens before position.
-//          break;
-//        }
-//      }
-//      events.insert(it, shared_from_this());
+        let reactor_rc = Reactor::get_reactor();
+        // Inline `borrow_mut().push_back(…)`: the RefMut temporary releases at
+        // the end of each statement — before the yield below — so the reactor
+        // loop can re-borrow these queues while this fiber sleeps. (#35 keeps
+        // the guard deref for these concrete-receiver calls.)
+        (*reactor_rc).waiting_events_.borrow_mut().push_back(ev.get_self().unwrap());
 
-    // Transpiled Weak has no implicit Rc→Weak conversion / op= — use
-    // the static `Rc::downgrade(rc)` factory (mirrors std::rc::Rc::downgrade
-    // in Rust). Legacy hand-written rusty::Weak had `operator=(const Arc&)`.
-    (*self.state_.wp_fiber_.borrow_mut()) = ::rusty::port::rc::Rc<Fiber>::downgrade(fiber);
-    self.status_.set(EventStatus::WAIT);
-    auto fiber_status = fiber->status_.get();
-    verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
-    fiber->yield_();
-#ifdef EVENT_TIMEOUT_CHECK
-    if (self.__debug_timeout_ && self.status_.get() == EventStatus::TIMEOUT) {
-      Log_info("timeout");
-      verify(0);
+        // Composite events (WaitAll/WaitAny/Quorum) need periodic polling; add
+        // them to a smaller scanned queue. Regular RPC events self-notify.
+        if ev.is_composite_event() {
+            (*reactor_rc).composite_events_.borrow_mut().push_back(ev.get_self().unwrap());
+        }
+
+        if timeout > 0 {
+            let now = Time::now(true);
+            ev.state_.wakeup_time_.set(now + timeout);
+            (*reactor_rc).timeout_events_.borrow_mut().push_back(ev.get_self().unwrap());
+        }
+
+        // Transpiled Weak has no implicit Rc→Weak conversion; use the static
+        // Rc::downgrade(rc) factory (mirrors std::rc::Rc::downgrade). `fiber` is
+        // cloned (a refcount bump) so the factory consumes the temporary and the
+        // original `fiber` stays live for the checks below.
+        *ev.state_.wp_fiber_.borrow_mut() = ::rusty::port::rc::Rc::<Fiber>::downgrade(fiber.clone());
+        ev.status_.set(EventStatus::WAIT);
+        let fiber_status = (*fiber).status_.get();
+        verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
+        (*fiber).yield_();
     }
-#endif
-  }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.13 version=1 rust_sha256=ea6cbb771479971d143f60f862b2af9bfa86340585731f4a80a84b1c99c4f87c*/
+template<typename W>
+void event_wait_impl(const W& ev, uint64_t timeout);
+
+template<typename W>
+void event_wait_impl(const W& ev, uint64_t timeout) {
+    verify(sp_reactor_th_.is_some());
+    const auto reactor_th = rusty::clone(sp_reactor_th_.as_ref().unwrap());
+    verify((rusty::detail::deref_if_pointer_like(reactor_th)).thread_id_.get() == rusty::thread::current_id());
+    if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+        return;
+    }
+    if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+        return;
+    } else {
+        auto fiber_opt = Fiber::current_fiber();
+        verify(fiber_opt.is_some());
+        const auto fiber = fiber_opt.unwrap();
+        const auto reactor_rc = Reactor::get_reactor();
+        rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).waiting_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        if (rusty::deref_call(ev, rusty::detail::__mdisp_is_composite_event{})) {
+            rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).composite_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        }
+        if (rusty::detail::deref_if_pointer_like(timeout) > 0) {
+            const auto now = Time::now(true);
+            ev.state_.wakeup_time_.set(rusty::detail::deref_if_pointer_like(now) + rusty::detail::deref_if_pointer_like(timeout));
+            rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).timeout_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        }
+        rusty::detail::deref_if_pointer_like(ev.state_.wp_fiber_.borrow_mut()) = std::conditional_t<true, ::rusty::port::rc::Rc<Fiber>, W>::downgrade(rusty::clone(fiber));
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus::WAIT)));
+        const auto fiber_status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
+        verify((rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::FINISHED)) && (rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::RECYCLED)));
+        ((rusty::detail::deref_if_pointer_like(fiber))).yield_();
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.13*/
 
 
 
