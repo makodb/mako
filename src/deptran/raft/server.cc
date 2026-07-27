@@ -158,6 +158,15 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
   return max_entries;
 }
 
+uint64_t GetAppendEntriesPipelineWidth() {
+  // Keep pipelining opt-in until response ordering and failure backoff use the
+  // per-request range metadata. Width 1 preserves the current behavior.
+  constexpr uint64_t kDefaultPipelineWidth = 1ULL;
+  static uint64_t pipeline_width = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_APPEND_PIPELINE_WIDTH", kDefaultPipelineWidth);
+  return pipeline_width;
+}
+
 }  // namespace
 
 // ============================================================================
