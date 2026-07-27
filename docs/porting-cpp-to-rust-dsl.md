@@ -812,3 +812,56 @@ fix above** — so the near-term win is smaller than the raw 119 suggests.
 **Lesson (reinforcing §7.5): probe with a *compile*, not just a transpile — mock
 the types and build the generated template. `--rewrite` + `--check` passing
 proves nothing about compilation.**
+
+### 7.10 Resolution — the shim + guard-deref fixes landed; every reactor kernel converted (late July 2026)
+
+The §7.9 blocker and its siblings were all fixed upstream (shuaimu/rusty-cpp),
+and **all seven duck-typed reactor kernels are now inline-Rust DSL**
+(`event_test_impl`, the four `event_core_*`, `tcplistener_handle_error`, and
+finally `event_wait_impl`). The fixes, in order landed:
+
+| Issue | Fix | What it unblocks |
+|---|---|---|
+| **#33** namespace-shim | hoist the `RUSTY_METHOD_DISPATCH` functor to **global scope** (after `export module …`), not inline in the GEN block | duck-typed kernels compile inside `namespace rrr` — `::rusty::` no longer shadowed |
+| **#32** borrow-deref | a **generic** receiver's `x.borrow().m()` → `deref_call(borrow(x), __mdisp_m{})` (was a `.` on the `Ref` guard) | `wp_fiber_.borrow().upgrade()` etc. |
+| **#34** deref-assign | `*x.borrow_mut() = v` through a generic guard → `deref_if_pointer_like(x.borrow_mut()) = v` (was dropping the `*`) | the weak-fiber store `*wp_fiber_.borrow_mut() = Rc::downgrade(…)` |
+| **#35** concrete guard-deref | keep the guard deref for a **concrete** receiver too → `rc.q.borrow_mut().push_back(y)` routes through `deref_call(…, __mdisp_push_back{}, y)` | the reactor-queue enqueues (`RefCell<VecDeque<…>>`) |
+
+**Winning idioms (all compile-verified — mock the real types).**
+
+1. **Duck-typed method call, generic receiver.** `ev.is_ready()` →
+   `deref_call(ev, __mdisp_is_ready{})`. The transpiler **auto-injects** the
+   `RUSTY_METHOD_DISPATCH(name)` line into the `GEN-DISPATCH` block (merging and
+   sorting with any you added by hand — no redefinition). Manual registration is
+   not required.
+
+2. **Concrete-receiver guard method call (#35).** `(*rc).q.borrow_mut().push_back(y)`
+   → `deref_call(deref_if_pointer_like(rc).q.borrow_mut(), __mdisp_push_back{}, y)`.
+   Needed because `RefMut<T>` does **not** uniformly forward the inner type's
+   methods — `RefMut<Vec>` happens to forward `push_back`, `RefMut<VecDeque>`
+   does **not**. **Probe with the ACTUAL container type**; a `Vec` mock compiles
+   green and hides the gap (this cost a full build to learn).
+
+3. **Rc / pointer field or method through `*`.** Write the explicit `(*rc).member`
+   — it lowers to `deref_if_pointer_like(rc).member`. But `*` only lowers for a
+   **value** binding: `let r = get_rc(); (*r).f` works, whereas
+   `let r = opt.as_ref().unwrap(); (*r).f` (a *reference* binding) and an inline
+   `(*call().chain()).f` both **drop** the `*`. Force a value with `.clone()`:
+   `let r = opt.as_ref().unwrap().clone();`.
+
+4. **Guard lifetime vs. a later yield.** Prefer the **inline**
+   `q.borrow_mut().push_back(y)` form: the `RefMut` temporary is released at the
+   end of the statement, so a `yield_()` later in the same block runs with the
+   borrow already dropped (the reactor re-borrows those queues while the fiber
+   sleeps). A `let g = q.borrow_mut();` binding holds it to end of scope — only
+   do that inside its own `{ }` block.
+
+5. **Static factory call.** `Rc::<Fiber>::downgrade(fiber.clone())`. Two traps:
+   passing `&fiber` turns `Path::method(&recv)` into UFCS `recv.method()` (an
+   instance call that may not exist); passing `fiber` bare makes the transpiler
+   `std::move` it (use-after-move if `fiber` is read below). `fiber.clone()`
+   dodges both — a value arg (no UFCS) that is a throwaway temporary (no move of
+   the original).
+
+`event_core_record_place` stays hand-C++: it is a genuine `sprintf`/`char[]`
+kernel, not a transpiler gap.
