@@ -419,7 +419,7 @@ uint64_t GetElectionTimeout();
 
 ### Leader Shutdown Hang Issue
 
-**Status**: Work in progress
+**Status**: Fixed in `f89ba8a6` (`raft: fix poll thread shutdown ordering`)
 
 **Problem**: The Raft leader process hangs during shutdown and never completes verification. Followers shut down cleanly and pass.
 
@@ -436,17 +436,16 @@ uint64_t GetElectionTimeout();
 5. `sconns_ctr_` never reaches 0
 6. Server destructor waits forever
 
-**Current Workarounds**:
-- Tests verify replication success based on **follower** results
-- Leader hang is tolerated if followers verify successfully
-- Log replication itself works fine - only shutdown is affected
-
-**Tracking**: See `doc/leader_shutdown_hang.md` for detailed investigation.
+**Resolution**: RaftWorker now destroys the RPC servers while poll threads are
+still alive, then stops and joins the poll threads exactly once. This lets the
+server destructor enqueue and drain its pollable-removal commands before the
+poll threads exit. The simpleRaft shutdown test now verifies clean exit for all
+nodes.
 
 ### TODO List
 
-- [ ] **Leader shutdown hang**: Fix race condition between poll thread drain and server destructor
-- [ ] **Graceful shutdown coordination**: Ensure clean shutdown sequence
+- [x] **Leader shutdown hang**: Fixed by ordering RPC-server destruction before poll-thread shutdown
+- [x] **Graceful shutdown coordination**: Covered by the RaftWorker shutdown ordering fix
 - [ ] **Election timeout tuning**: Consider making election timeouts configurable per deployment
 - [ ] **Snapshot support**: Implement log compaction via snapshots for long-running deployments
 

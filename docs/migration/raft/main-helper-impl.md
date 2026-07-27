@@ -1,13 +1,16 @@
 # Raft Main Helper Implementation Guide
 
-**Goal**: Replace the stubbed `raft_main_helper.{h,cc}` with a working equivalent of the Paxos helper so that Mako can run with Raft when `MAKO_USE_RAFT` is enabled.
+**Goal**: Keep the working `raft_main_helper.{h,cc}` equivalent of the Paxos
+helper documented and close the remaining parity gaps so that Mako can run
+with Raft when `MAKO_USE_RAFT` is enabled.
 
 This checklist assumes:
 - `RaftWorker` already mirrors `PaxosWorker` for submit/commit callbacks.
 - `MAKO_USE_RAFT` toggles inclusion of `raft_main_helper.h` (already wired).
 
 Work through the steps in order; each builds on the previous one.  The outputs
-below document what is already **implemented** versus what remains **TODO** so
+below document what is already **implemented** versus what remains
+**deferred** so
 you can reason about Raft ↔︎ Mako wiring at a glance.
 
 ---
@@ -26,7 +29,7 @@ you can reason about Raft ↔︎ Mako wiring at a glance.
   notifications (`NotifyRaftLeaderChange`).
 - Graceful shutdown fixes (submit-thread stop, epoll ignore on EBADF/ENOENT).
 
-**Still TODO**
+**Deferred**
 
 1. `microbench_paxos()` / `microbench_paxos_queue()` parity (currently warn).
 2. Paxos-style heartbeat / failover monitors (Jetpack demo tooling).
@@ -170,4 +173,6 @@ Outstanding:
 | `setup` | same config flow, different worker |
 | `set_epoch` | maintain `ElectionState` parity |
 
-Following this guide should give you a fully operational `raft_main_helper` with the same surface API as the Paxos version, ready for higher-layer integration and testing.
+The helper is operational for the production Raft startup, submission,
+callback, epoch, and shutdown paths. The deferred items above are optional
+parity/tooling work rather than blockers for Raft replication.

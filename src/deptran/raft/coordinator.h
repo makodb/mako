@@ -390,13 +390,12 @@ class CoordinatorRaft : public Coordinator {
   // @unsafe - raw pointer dereference svr_->
   bool IsFPGALeader() ;
 
-  // @unsafe - calls Log_warn (non-borrow-checked I/O), Uses Arc<Cell<T>> for safe shared mutable access
+  // @safe - allocates the coordinator's local slot hint; this is not a
+  // committed Raft log index.
   slotid_t GetNextSlot() {
-    // @unsafe { Log_warn is not borrow-checked }
-    Log_warn("[RAFT] CoordinatorRaft::GetNextSlot called but not implemented for Raft");
     slot_id_ = slot_hint_->get();
-    slot_hint_->set(slot_hint_->get() + 1);
-    return 0;
+    slot_hint_->set(slot_id_ + 1);
+    return slot_id_;
   }
 
   // @safe
@@ -419,12 +418,25 @@ class CoordinatorRaft : public Coordinator {
   // @unsafe - locks the coordinator mutex, invokes the callback, and advances phase.
   void LeaderLearn();
 
-  // @safe
-  void Reset() override {}
-  // @unsafe - calls Log_warn (non-borrow-checked I/O)
+  // @unsafe - resets inherited coordinator state and the Raft coordinator's
+  // local transaction/phase state. Server, commo, and shared slot ownership
+  // remain outside this reset boundary.
+  void Reset() override {
+    Coordinator::Reset();
+    phase_ = 0;
+    Coordinator::slot_id_ = 0;
+    slot_id_ = 0;
+    cmd_ = Command{};
+    state_core_.set_in_submission(false);
+    state_core_.set_in_append_entries(false);
+    state_core_.set_min_index(0);
+  }
+
+  // Raft has no separate prepare/restart protocol. Restarting a coordinator
+  // means making its reusable transaction state available for the next submit;
+  // the RaftServer owns term, log, timer, and leadership recovery.
   void Restart() override {
-    // @unsafe { Log_warn is not borrow-checked }
-    Log_warn("[RAFT] CoordinatorRaft::Restart called but not implemented for Raft");
+    Reset();
   }
 
   // @unsafe - calls AppendEntries which is @unsafe

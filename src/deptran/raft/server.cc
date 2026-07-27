@@ -3782,9 +3782,11 @@ void RaftServer::OnRemoveServer(const uint64_t term,
     return;
   }
 
-  // TODO: In the future, this should append a configuration change entry to the
-  // Raft log and only take effect when committed. For now, we apply the change
-  // directly in memory.
+  // Known protocol limitation: membership changes are not represented by a
+  // dedicated replicated configuration-entry command yet. This path updates
+  // the leader's in-memory membership directly and uses config_change_pending
+  // to serialize concurrent requests; a committed-entry implementation must
+  // also update apply/recovery and quorum-transition semantics together.
 
   // Apply config change immediately
   current_config().erase(static_cast<siteid_t>(server_id));
