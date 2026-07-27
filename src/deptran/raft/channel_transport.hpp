@@ -210,10 +210,7 @@ impl ChannelSwitchboardStateCore {
     // @safe
     fn new() -> ChannelSwitchboardStateCore {
         ChannelSwitchboardStateCore {
-            faults_: ChannelFaults {
-                dropped: std::vector::<std::pair<u16, u16>>::new_(),
-                partitions: std::vector::<std::vector<u16>>::new_(),
-            },
+            faults_: ChannelFaults {},
         }
     }
 
@@ -223,25 +220,17 @@ impl ChannelSwitchboardStateCore {
     }
 
     // @safe
-    fn drop_direction(&mut self, from: u16, to: u16) {
-        self.faults_.dropped.push(std::pair::<u16, u16>::new_(from, to))
-    }
-
-    // @safe
-    fn partition(&mut self, groups: std::vector<std::vector<u16>>) {
-        self.faults_.partitions = groups
-    }
-
-    // @safe
     fn reset_faults(&mut self) {
-        self.faults_ = ChannelFaults {
-            dropped: std::vector::<std::pair<u16, u16>>::new_(),
-            partitions: std::vector::<std::vector<u16>>::new_(),
-        }
+        self.faults_ = ChannelFaults {}
+    }
+
+    // @safe - C++ owns vector mutation at the mpsc boundary.
+    fn faults_mut(&mut self) -> &mut ChannelFaults {
+        &mut self.faults_
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=channel_transport.switchboard_state version=1 rust_sha256=45027293e30e979c7e26ed8b8ccbe8ec0eb0e5d3087caed96f1827d3a9373f9d*/
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.switchboard_state version=1 rust_sha256=a8ee15e12fd1509d40ddf7e4f0041e0fb598ea30dde94a08488bb9ace4c378b5*/
 struct ChannelSwitchboardStateCore;
 
 struct ChannelSwitchboardStateCore {
@@ -249,30 +238,25 @@ struct ChannelSwitchboardStateCore {
 
     static ChannelSwitchboardStateCore new_();
     bool is_dropped(uint16_t from, uint16_t to) const;
-    void drop_direction(uint16_t from, uint16_t to);
-    void partition(std::vector<std::vector<uint16_t>> groups);
     void reset_faults();
+    ChannelFaults& faults_mut();
 };
 
 
 inline ChannelSwitchboardStateCore ChannelSwitchboardStateCore::new_() {
-    return ChannelSwitchboardStateCore{.faults_ = ChannelFaults{.dropped = std::vector<std::pair<uint16_t, uint16_t>>::new_(), .partitions = std::vector<std::vector<uint16_t>>::new_()}};
+    return ChannelSwitchboardStateCore{.faults_ = ChannelFaults{}};
 }
 
 inline bool ChannelSwitchboardStateCore::is_dropped(uint16_t from, uint16_t to) const {
     return this->faults_.is_dropped(std::move(from), std::move(to));
 }
 
-inline void ChannelSwitchboardStateCore::drop_direction(uint16_t from, uint16_t to) {
-    this->faults_.dropped.push(std::pair<uint16_t, uint16_t>::new_(std::move(from), std::move(to)));
-}
-
-inline void ChannelSwitchboardStateCore::partition(std::vector<std::vector<uint16_t>> groups) {
-    this->faults_.partitions = std::move(groups);
-}
-
 inline void ChannelSwitchboardStateCore::reset_faults() {
-    this->faults_ = ChannelFaults{.dropped = std::vector<std::pair<uint16_t, uint16_t>>::new_(), .partitions = std::vector<std::vector<uint16_t>>::new_()};
+    this->faults_ = ChannelFaults{};
+}
+
+inline ChannelFaults& ChannelSwitchboardStateCore::faults_mut() {
+    return this->faults_;
 }
 /*RUSTYCPP:GEN-END id=channel_transport.switchboard_state*/
 
@@ -305,10 +289,10 @@ class ChannelSwitchboard {
 
   // @safe - fault-injection accessors
   void drop_direction(siteid_t from, siteid_t to) {
-    state_core_.drop_direction(from, to);
+    state_core_.faults_mut().dropped.emplace_back(from, to);
   }
   void partition(std::vector<std::vector<siteid_t>> groups) {
-    state_core_.partition(std::move(groups));
+    state_core_.faults_mut().partitions = std::move(groups);
   }
   void reset_faults() {
     state_core_.reset_faults();
