@@ -435,16 +435,6 @@ void RaftWorker::SetupHeartbeat() {
 void RaftWorker::ShutDown() {
   Log_info("[RAFT-WORKER-SHUTDOWN] entering");
 
-  // Signal poll threads to stop BEFORE deleting servers.
-  // This allows Reactor::Loop() to exit, which unblocks server connection cleanup.
-  Log_info("[RAFT-WORKER-SHUTDOWN] signaling poll threads to stop");
-  if (svr_poll_thread_worker_.is_some()) {
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
-  }
-  if (svr_hb_poll_thread_worker_g.is_some()) {
-    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
-  }
-
   if (rpc_server_) {
     Log_info("[RAFT-WORKER-SHUTDOWN] resetting rpc_server_");
     rpc_server_.reset();
@@ -464,10 +454,10 @@ void RaftWorker::ShutDown() {
   // rep_commo_ is borrowed from RaftFrame::commo_; RaftWorker must not delete it.
   rep_commo_ = nullptr;
 
-  // IMPORTANT: Shutdown poll threads AFTER servers are destroyed.
-  // Server::~Server() enqueues remove commands to the poll thread; keeping the
-  // poll thread alive allows it to drain those commands and drop the final
-  // references so sconns_ctr_ reaches zero.
+  // Server::~Server() enqueues remove commands to the poll thread; keep the
+  // poll thread alive until both servers are destroyed so it can drain those
+  // commands and drop the final references before joining.
+  Log_info("[RAFT-WORKER-SHUTDOWN] signaling poll threads to stop");
   Log_info("[RAFT-WORKER-SHUTDOWN] shutting down poll threads");
   if (svr_poll_thread_worker_.is_some()) {
     auto& poll_thread = svr_poll_thread_worker_.as_ref().unwrap();
