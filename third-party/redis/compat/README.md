@@ -9,6 +9,8 @@ database behind this interface.
 The semantic target is `third-party/redis/cpp/makoCon.cc` with
 `MAKO_REDIS_BACKEND=mako`, which is the default. The optional `memory` backend
 and `makoConMultiTrd` are not correctness targets for the results below.
+The worker-scaling methodology and 2026-07-27 results are in
+[`SCALABILITY.md`](SCALABILITY.md).
 
 ## Latest Validation Snapshot
 
@@ -21,7 +23,7 @@ rebuilt binary on port 6396.
 
 | Check | Result | What it establishes |
 |---|---:|---|
-| Rust unit tests | PASS, 38/38 | RESP parsing, reply formatting, command classification, worker wakeups, blocked-client ordering, and retry eligibility |
+| Rust unit tests | PASS, 40/40 (2026-07-27 rerun) | RESP parsing, reply formatting, command classification, worker wakeups, blocked-client ordering, and retry eligibility |
 | Focused pytest suite | PASS, 105/105 | Redis and Mako agree on the claimed command behavior covered by local tests |
 | Command-tier probe | PASS, P0 34/34, P1 48/48, P2 32/32 | All 114 declared probe cases completed successfully on Mako |
 | Ecosystem client matrix | PASS, 8/8 rows | Common clients and tools can connect and exercise the scoped command surface |
@@ -53,6 +55,10 @@ ignored by Git; the dated human-readable findings are retained here.
 | G4 isolation claim | `run_elle_isolation.py` |
 | Robustness and operational guards | `run_fuzz.sh`, `run_soak.sh`, `run_restart_durability.py`, `run_client_failover.py` |
 | Worker CPU sampler | `run_worker_cpu_benchmark.py` |
+| Worker-scaling runner | `run_scalability_benchmark.py` |
+| RESP scalability client | `bench_resp_scalability.cpp` |
+| Direct Mako baseline | `examples/makoRedisDirectBench.cc` |
+| Scalability report and plots | `SCALABILITY.md`, `plot_scalability.py` |
 | Full acceptance orchestrator | `run_acceptance.sh` |
 | Intentional incompatibilities | `known_divergences.txt` |
 
@@ -216,6 +222,19 @@ uses 19.64 cores, so the workers are not CPU-saturated.
 This benchmark is only an in-memory Mako-backed GET-hit test. It does not
 measure writes, mixed command workloads, large values, pipelining, vectors,
 replication, persistence, cross-shard execution, or tail latency.
+
+## Worker Scalability
+
+The Rolis-style worker sweep is documented separately in
+[`SCALABILITY.md`](SCALABILITY.md). It varies configured server workers instead
+of holding the server at 32, measures GET/SET/80:20 mixed workloads, separates
+server and client physical cores, and reports throughput, per-worker
+throughput, speedup, efficiency, request/helper CPU, and p50/p95/p99 latency.
+New runs also record load-generator process CPU so a client ceiling is visible.
+
+The saturated two-client-per-worker run peaks at 24 workers: 873,175 GET/s,
+836,640 SET/s, and 855,728 mixed operations/s. The one-client-per-worker run is
+retained as a lower-load latency curve and is not presented as server capacity.
 
 ## Not Run Or Infrastructure-Dependent
 

@@ -56,6 +56,19 @@ This file records what exists in the Redis compatibility work and where each pie
   `third-party/redis/compat/run_worker_cpu_benchmark.py`.
 - The worker sampler writes `third-party/redis/compat/worker_cpu_results.csv`,
   which is a generated, Git-ignored artifact.
+- Rolis-style worker-scaling runner:
+  `third-party/redis/compat/run_scalability_benchmark.py`.
+- Its synchronous RESP load generator is
+  `third-party/redis/compat/bench_resp_scalability.cpp`; its direct Mako
+  baseline is the `makoRedisDirectBench` CMake target implemented in
+  `examples/makoRedisDirectBench.cc`.
+- `third-party/redis/compat/plot_scalability.py` renders the summary CSV.
+  Methodology, dated findings, limitations, and reproduction commands are in
+  `third-party/redis/compat/SCALABILITY.md`.
+- Repeat-level scalability artifacts are written under
+  `third-party/redis/compat/benchmark_logs/<run>/`. CSV, JSON, and logs are
+  Git-ignored; each run contains `manifest.json`, `scalability_raw.csv`,
+  `scalability_summary.csv`, per-sample `pidstat` output, and server logs.
 - Cross-worker blocking wakeups, blocked-client fairness queues, and multi-key
   retry eligibility are implemented and unit-tested in
   `third-party/redis/rust-lib/src/lib.rs`.

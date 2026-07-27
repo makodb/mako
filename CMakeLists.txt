@@ -1396,6 +1396,7 @@ add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
 add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.cc)
 add_apps(makoCon third-party/redis/cpp/makoCon.cc)
 add_apps(makoConDBBench examples/makoConDBBench.cc)
+add_apps(makoRedisDirectBench examples/makoRedisDirectBench.cc)
 add_apps(makoConMultiTrd third-party/redis/cpp/makoConMultiTrd.cc)
 # Note: makoServer functionality has been consolidated into simpleTransactionRep.cc
 #       Use: ./simpleTransactionRep --server <args> for server-only mode

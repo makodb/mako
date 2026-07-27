@@ -725,6 +725,54 @@ workers as persistent clients. The defensible conclusion is that deterministic
 distribution works and the 32-worker server was not CPU-saturated; a
 single-thread benchmark plateau is not evidence of Mako worker saturation.
 
+## How To Run And Interpret Worker Scaling
+
+A Rolis-style curve varies server workers. A fixed 32-worker server with a
+changing client count is a load curve and cannot establish worker scalability.
+Use 1/2/4/8/16/24/32 configured workers, keep the keyspace and value size
+fixed, and report both total and per-configured-worker throughput.
+
+One closed-loop client per worker is useful for latency and connection
+distribution, but it left the 32-worker server at about 58% allocated CPU.
+Calibrate offered load before calling a curve capacity. On the 2026-07-27 host,
+two clients per worker raised the server to roughly 85-94% allocated CPU and 64
+clients reached the 32-worker throughput plateau; 128 clients did not improve
+GET throughput. Measure load-generator process CPU alongside server CPU: a
+focused 32-worker/64-client sample used 27.9 server cores and 27.1 client
+cores. Keep the one-to-one and high-load curves separate, and do not call a
+same-host plateau a server-only maximum.
+
+Pin server and client processes to disjoint physical cores. SMT siblings of
+client cores may be used for extra client threads, but client cores must not
+share a physical core with the server pool. Record the exact topology, source
+hashes, binary hashes, load model, pipeline depth, warmup, duration, and repeat
+count in the run manifest.
+
+Preload exact keys before timing. Insertion grows the tree and can cause far
+more transaction retries than steady-state updates, so including preload in a
+sample gives the wrong workload. The focused 32-worker run observed 283,251
+abort/retry attempts while inserting one million keys and zero retries during
+the following 8.42 million-operation mixed sample.
+
+The direct Mako baseline is an upper bound only. It excludes TCP, RESP,
+Redis-visible semantics, TTL checks, adapter locking, and response allocation.
+It is useful for showing whether Mako itself scales and for bounding adapter
+cost, but its throughput-retention percentage is not directly comparable to a
+paper that compares two closer transaction paths.
+
+At high concurrency, do not expose a transient Mako transaction abort as
+`-ERR backend` after one attempt. The raw fast GET and SET paths and general
+core storage commands use the same bounded retry policy. Keep retry counts
+visible through `INFO mako`, fail a benchmark on any client-visible error, and
+include the operation type in the failure log.
+
+The saturated 2026-07-27 curve scales strongly through 16 workers and peaks at
+24. All three workloads decline slightly at 32 while tail latency rises. Say
+"capacity plateaus at 24 workers under this closed-loop setup." Do not say all
+32 cores are hardware-saturated, because the process used about 28 cores and
+the experiment does not isolate client, lock, cache, protocol, and syscall
+costs.
+
 ## Compatibility Before Feature Expansion
 
 Redis compatibility is the current deliverable. Do not widen the command

@@ -110,7 +110,9 @@ cmake-build/*
 # Misc build/test artifacts
 /Testing/
 third-party/redis/compat/_client_tmp/
+third-party/redis/compat/benchmark_logs/
 third-party/redis/compat/probe_results.json
+third-party/redis/rust-lib/target/
 
 # Local assistant workspace
 /.claude/

@@ -6396,7 +6396,11 @@ fn build_txn_ops(commands: &[Command]) -> (Vec<TxnOperation>, Vec<(usize, usize)
 fn command_needs_retry(cmd: &Command) -> bool {
     matches!(
         cmd.op,
-        OpCode::Set
+        OpCode::Get
+            | OpCode::Set
+            | OpCode::Del
+            | OpCode::Exists
+            | OpCode::MGet
             | OpCode::SetEx
             | OpCode::PSetEx
             | OpCode::MSet
@@ -6406,8 +6410,11 @@ fn command_needs_retry(cmd: &Command) -> bool {
             | OpCode::GetDel
             | OpCode::SetNx
             | OpCode::Append
+            | OpCode::StrLen
             | OpCode::SetBit
+            | OpCode::GetBit
             | OpCode::SetRange
+            | OpCode::GetRange
             | OpCode::Lcs
             | OpCode::Dump
             | OpCode::Restore
@@ -6424,6 +6431,8 @@ fn command_needs_retry(cmd: &Command) -> bool {
             | OpCode::PExpire
             | OpCode::ExpireAt
             | OpCode::PExpireAt
+            | OpCode::Ttl
+            | OpCode::PTtl
             | OpCode::ExpireTime
             | OpCode::PExpireTime
             | OpCode::Persist
@@ -6522,7 +6531,7 @@ fn command_needs_retry(cmd: &Command) -> bool {
     )
 }
 
-const WRITING_TXN_MAX_ATTEMPTS: usize = 32;
+const TXN_MAX_ATTEMPTS: usize = 32;
 const SET_RANDOM_COUNT_LIMIT: i64 = 1_000_000;
 
 struct OwnedTxnResponse {
@@ -6971,6 +6980,13 @@ fn sleep_for_retry(attempt: usize) {
     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
 }
 
+fn fast_mako_max_attempts(op: OpCode) -> usize {
+    match op {
+        OpCode::Get | OpCode::Set => TXN_MAX_ATTEMPTS,
+        _ => 1,
+    }
+}
+
 fn execute_fast_mako_string_op<W: Write>(
     op: OpCode,
     key: &[u8],
@@ -6978,22 +6994,18 @@ fn execute_fast_mako_string_op<W: Write>(
     protocol_version: u8,
     writer: &mut W,
 ) -> std::io::Result<bool> {
-    let (txn_op, val_ptr, val_len, max_attempts) = match op {
-        OpCode::Get => (TXN_OP_GET, std::ptr::null(), 0, 1),
+    let (txn_op, val_ptr, val_len) = match op {
+        OpCode::Get => (TXN_OP_GET, std::ptr::null(), 0),
         OpCode::Set => {
             let Some(value) = value else {
                 write_err(writer, "operation failed")?;
                 return Ok(false);
             };
-            (
-                TXN_OP_SET,
-                value.as_ptr(),
-                value.len(),
-                WRITING_TXN_MAX_ATTEMPTS,
-            )
+            (TXN_OP_SET, value.as_ptr(), value.len())
         }
         _ => return Ok(false),
     };
+    let max_attempts = fast_mako_max_attempts(op);
 
     let operation = TxnOperation {
         op: txn_op,
@@ -7145,7 +7157,7 @@ fn ffi_execute_single<W: Write>(
     };
 
     let max_attempts = if command_needs_retry(cmd) {
-        WRITING_TXN_MAX_ATTEMPTS
+        TXN_MAX_ATTEMPTS
     } else {
         1
     };
@@ -7229,7 +7241,7 @@ fn ffi_execute_transaction<W: Write>(
     };
 
     let max_attempts = if commands.iter().any(command_needs_retry) {
-        WRITING_TXN_MAX_ATTEMPTS
+        TXN_MAX_ATTEMPTS
     } else {
         1
     };
@@ -10705,6 +10717,42 @@ mod tests {
             }
             _ => panic!("expected raw SET fast path"),
         }
+    }
+
+    #[test]
+    fn fast_mako_get_and_set_retry_transient_aborts() {
+        assert_eq!(fast_mako_max_attempts(OpCode::Get), TXN_MAX_ATTEMPTS);
+        assert_eq!(fast_mako_max_attempts(OpCode::Set), TXN_MAX_ATTEMPTS);
+        assert_eq!(fast_mako_max_attempts(OpCode::Ping), 1);
+    }
+
+    #[test]
+    fn core_storage_commands_retry_transient_aborts() {
+        for op in [
+            OpCode::Get,
+            OpCode::Set,
+            OpCode::Del,
+            OpCode::Exists,
+            OpCode::MGet,
+            OpCode::StrLen,
+            OpCode::GetBit,
+            OpCode::GetRange,
+            OpCode::Ttl,
+            OpCode::PTtl,
+        ] {
+            assert!(command_needs_retry(&Command::new(
+                op,
+                vec![Bytes::from_static(b"k")],
+                None,
+                Vec::new(),
+            )));
+        }
+        assert!(!command_needs_retry(&Command::new(
+            OpCode::Ping,
+            Vec::new(),
+            None,
+            Vec::new(),
+        )));
     }
 
     #[test]
