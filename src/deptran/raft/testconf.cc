@@ -16,6 +16,36 @@ import std;
 
 namespace janus {
 
+#if RUSTYCPP_RUST
+pub fn raft_test_index_is_valid(index: i32, size: i32) -> bool {
+    index >= 0 && index < size
+}
+
+pub fn raft_test_wrapped_index(index: i32, offset: i32, size: i32) -> i32 {
+    let mut result = (index + offset) % size;
+    if result < 0 {
+        result += size
+    }
+    result
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=testconf.scalar_helpers version=1 rust_sha256=2bdd7a65c126a986e40748135a5fcd38a94ffbfb652955ed053e6b504016d4e0*/
+bool raft_test_index_is_valid(int32_t index, int32_t size);
+int32_t raft_test_wrapped_index(int32_t index, int32_t offset, int32_t size);
+
+bool raft_test_index_is_valid(int32_t index, int32_t size) {
+    return (rusty::detail::deref_if_pointer_like(index) >= 0) && (rusty::detail::deref_if_pointer_like(index) < rusty::detail::deref_if_pointer_like(size));
+}
+
+int32_t raft_test_wrapped_index(int32_t index, int32_t offset, int32_t size) {
+    auto result = ((rusty::detail::deref_if_pointer_like(index) + rusty::detail::deref_if_pointer_like(offset))) % rusty::detail::deref_if_pointer_like(size);
+    if (rusty::detail::deref_if_pointer_like(result) < 0) {
+        rusty::detail::deref_if_pointer_like(result) += size;
+    }
+    return std::move(result);
+}
+/*RUSTYCPP:GEN-END id=testconf.scalar_helpers*/
+
 #ifdef RAFT_TEST_CORO
 
 int _test_id_g = 0;
@@ -811,7 +841,7 @@ siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {
 
 siteid_t RaftTestConfig::getServerIdByIndex(int index) const {
   // Get server ID by its position in the replicas map (0-4)
-  if (index < 0 || index >= NSERVERS) {
+  if (!raft_test_index_is_valid(index, NSERVERS)) {
     // Index out of range, return -1
     return -1;
   }
@@ -845,10 +875,7 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
   }
   
   // Calculate new index with wrapping
-  int new_index = (current_index + offset) % NSERVERS;
-  if (new_index < 0) {
-    new_index += NSERVERS;
-  }
+  int new_index = raft_test_wrapped_index(current_index, offset, NSERVERS);
   
   siteid_t result = getServerIdByIndex(new_index);
   if (result == -1) {

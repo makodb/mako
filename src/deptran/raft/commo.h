@@ -87,6 +87,28 @@ inline bool commo_notify_restart_is_down(NotifyRestartStatus status) {
 }
 /*RUSTYCPP:GEN-END id=commo.notify_restart_helpers*/
 
+#if RUSTYCPP_RUST
+pub fn commo_quorum_should_record_vote(vote_yes: bool, voter_id: u16) -> bool {
+    vote_yes && voter_id != 0
+}
+
+pub fn commo_quorum_should_advance_term(term: u64, highest_term: u64) -> bool {
+    term > highest_term
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=commo.quorum_decisions version=1 rust_sha256=19672f928ad7ccafc3eff033ad9b0e0f264846beeda995bb311705d367052a3c*/
+inline bool commo_quorum_should_record_vote(bool vote_yes, uint16_t voter_id);
+inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_term);
+
+inline bool commo_quorum_should_record_vote(bool vote_yes, uint16_t voter_id) {
+    return rusty::detail::deref_if_pointer_like(vote_yes) && (rusty::detail::deref_if_pointer_like(voter_id) != static_cast<uint16_t>(0));
+}
+
+inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_term) {
+    return rusty::detail::deref_if_pointer_like(term) > rusty::detail::deref_if_pointer_like(highest_term);
+}
+/*RUSTYCPP:GEN-END id=commo.quorum_decisions*/
+
 // @unsafe - inherits from non-@interface base QuorumEvent and tracks voters
 // behind a std::mutex; keep hand-written until the event hierarchy migrates.
 class RaftVoteQuorumEvent: public QuorumEvent {
@@ -108,13 +130,13 @@ class RaftVoteQuorumEvent: public QuorumEvent {
       // @unsafe
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
       // Track the voter for speculative voting
-      if (voter_id != 0) {
+      if (commo_quorum_should_record_vote(y, voter_id)) {
         std::lock_guard<std::mutex> lock(voters_mtx_);
         spec_voters_.insert(voter_id);
       }
     } else {
       vote_no();
-      if(term > highest_term_)
+      if (commo_quorum_should_advance_term(term, highest_term_))
       {
         highest_term_ = term ;
       }

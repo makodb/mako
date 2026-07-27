@@ -261,6 +261,17 @@ pub fn replicated_db_command_is_batch(op: janus::ReplicatedDBOp) -> bool {
     op == janus::ReplicatedDBOp::BATCH
 }
 
+pub fn replicated_db_command_should_encode_batch(op: janus::ReplicatedDBOp,
+                                                 batch_count: u64) -> bool {
+    op == janus::ReplicatedDBOp::BATCH && batch_count > 0
+}
+
+pub fn replicated_db_command_kind_is_known(op: janus::ReplicatedDBOp) -> bool {
+    op == janus::ReplicatedDBOp::PUT ||
+        op == janus::ReplicatedDBOp::DELETE ||
+        op == janus::ReplicatedDBOp::BATCH
+}
+
 pub fn replicated_db_command_apply_action(
     op: janus::ReplicatedDBOp
 ) -> janus::ReplicatedDBApplyAction {
@@ -330,7 +341,7 @@ pub fn replicated_db_snapshot_has_bytes(offset: usize,
     offset <= total && needed <= total - offset
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=3fcacd1d73e6b5a5776da6585d52430b9b7ad49666bd4fe79e8c8ad6f086759c*/
+/*RUSTYCPP:GEN-BEGIN id=replicated_db.command_helpers version=1 rust_sha256=f9bb817d26f5837b19180aaa0770c50a7d4d2de755610f15e43f9669b23e15cf*/
 inline bool replicated_db_has_command_payload(bool has_value);
 inline bool replicated_db_should_skip_applied(uint64_t index, uint64_t last_applied_index);
 inline bool replicated_db_command_kind_matches(int32_t kind, int32_t expected_kind);
@@ -368,6 +379,14 @@ inline bool replicated_db_command_is_delete(janus::ReplicatedDBOp op) {
 
 inline bool replicated_db_command_is_batch(janus::ReplicatedDBOp op) {
     return op == janus::ReplicatedDBOp::BATCH;
+}
+
+inline bool replicated_db_command_should_encode_batch(janus::ReplicatedDBOp op, uint64_t batch_count) {
+    return (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH)) && (rusty::detail::deref_if_pointer_like(batch_count) > 0);
+}
+
+inline bool replicated_db_command_kind_is_known(janus::ReplicatedDBOp op) {
+    return ((rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::PUT)) || (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::DELETE))) || (rusty::detail::deref_if_pointer_like(op) == rusty::clone(janus::ReplicatedDBOp::BATCH));
 }
 
 inline janus::ReplicatedDBApplyAction replicated_db_command_apply_action(janus::ReplicatedDBOp op) {

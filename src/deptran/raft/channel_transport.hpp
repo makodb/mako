@@ -201,6 +201,81 @@ inline int channel_faults_find_partition(const ChannelFaults& faults,
   return -1;
 }
 
+#if RUSTYCPP_RUST
+pub struct ChannelSwitchboardStateCore {
+    faults_: ChannelFaults,
+}
+
+impl ChannelSwitchboardStateCore {
+    // @safe
+    fn new() -> ChannelSwitchboardStateCore {
+        ChannelSwitchboardStateCore {
+            faults_: ChannelFaults {
+                dropped: std::vector::<std::pair<u16, u16>>::new_(),
+                partitions: std::vector::<std::vector<u16>>::new_(),
+            },
+        }
+    }
+
+    // @safe
+    fn is_dropped(&self, from: u16, to: u16) -> bool {
+        self.faults_.is_dropped(from, to)
+    }
+
+    // @safe
+    fn drop_direction(&mut self, from: u16, to: u16) {
+        self.faults_.dropped.push(std::pair::<u16, u16>::new_(from, to))
+    }
+
+    // @safe
+    fn partition(&mut self, groups: std::vector<std::vector<u16>>) {
+        self.faults_.partitions = groups
+    }
+
+    // @safe
+    fn reset_faults(&mut self) {
+        self.faults_ = ChannelFaults {
+            dropped: std::vector::<std::pair<u16, u16>>::new_(),
+            partitions: std::vector::<std::vector<u16>>::new_(),
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=channel_transport.switchboard_state version=1 rust_sha256=45027293e30e979c7e26ed8b8ccbe8ec0eb0e5d3087caed96f1827d3a9373f9d*/
+struct ChannelSwitchboardStateCore;
+
+struct ChannelSwitchboardStateCore {
+    ChannelFaults faults_;
+
+    static ChannelSwitchboardStateCore new_();
+    bool is_dropped(uint16_t from, uint16_t to) const;
+    void drop_direction(uint16_t from, uint16_t to);
+    void partition(std::vector<std::vector<uint16_t>> groups);
+    void reset_faults();
+};
+
+
+inline ChannelSwitchboardStateCore ChannelSwitchboardStateCore::new_() {
+    return ChannelSwitchboardStateCore{.faults_ = ChannelFaults{.dropped = std::vector<std::pair<uint16_t, uint16_t>>::new_(), .partitions = std::vector<std::vector<uint16_t>>::new_()}};
+}
+
+inline bool ChannelSwitchboardStateCore::is_dropped(uint16_t from, uint16_t to) const {
+    return this->faults_.is_dropped(std::move(from), std::move(to));
+}
+
+inline void ChannelSwitchboardStateCore::drop_direction(uint16_t from, uint16_t to) {
+    this->faults_.dropped.push(std::pair<uint16_t, uint16_t>::new_(std::move(from), std::move(to)));
+}
+
+inline void ChannelSwitchboardStateCore::partition(std::vector<std::vector<uint16_t>> groups) {
+    this->faults_.partitions = std::move(groups);
+}
+
+inline void ChannelSwitchboardStateCore::reset_faults() {
+    this->faults_ = ChannelFaults{.dropped = std::vector<std::pair<uint16_t, uint16_t>>::new_(), .partitions = std::vector<std::vector<uint16_t>>::new_()};
+}
+/*RUSTYCPP:GEN-END id=channel_transport.switchboard_state*/
+
 // ---------------------------------------------------------------------------
 // ChannelSwitchboard
 // ---------------------------------------------------------------------------
@@ -208,7 +283,7 @@ inline int channel_faults_find_partition(const ChannelFaults& faults,
 class ChannelSwitchboard {
  public:
   // @safe
-  ChannelSwitchboard() = default;
+  ChannelSwitchboard() : state_core_(ChannelSwitchboardStateCore::new_()) {}
 
   // @safe - registers a new site. Returns the receiver side.
   rusty::sync::mpsc::Receiver<Envelope> register_site(siteid_t s) {
@@ -219,7 +294,7 @@ class ChannelSwitchboard {
 
   // @unsafe { pushes into mpsc; drops silently if the dest is gone }
   void send(Envelope env) {
-    if (faults_.is_dropped(env.from, env.to)) return;
+    if (state_core_.is_dropped(env.from, env.to)) return;
     for (auto& pair : senders_) {
       if (channel_envelope_matches_destination(env.to, pair.first)) {
         (void)pair.second.send(std::move(env));
@@ -230,18 +305,18 @@ class ChannelSwitchboard {
 
   // @safe - fault-injection accessors
   void drop_direction(siteid_t from, siteid_t to) {
-    faults_.dropped.emplace_back(from, to);
+    state_core_.drop_direction(from, to);
   }
   void partition(std::vector<std::vector<siteid_t>> groups) {
-    faults_.partitions = std::move(groups);
+    state_core_.partition(std::move(groups));
   }
   void reset_faults() {
-    faults_ = ChannelFaults{};
+    state_core_.reset_faults();
   }
 
  private:
   std::vector<std::pair<siteid_t, rusty::sync::mpsc::Sender<Envelope>>> senders_;
-  ChannelFaults faults_{};
+  ChannelSwitchboardStateCore state_core_;
 };
 
 // ---------------------------------------------------------------------------

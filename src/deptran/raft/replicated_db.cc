@@ -115,7 +115,8 @@ void ReplicatedDBCommand::save(BinaryWriteArchive& ar) const {
   ar << static_cast<uint8_t>(op_);
   ar << key_;
   ar << value_;
-  if (op_ == ReplicatedDBOp::BATCH) {
+  if (replicated_db_command_should_encode_batch(
+          op_, static_cast<uint64_t>(batch_ops_.size()))) {
     uint32_t count = static_cast<uint32_t>(batch_ops_.size());
     ar << count;
     for (const auto& op : batch_ops_) {
