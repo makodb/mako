@@ -25,6 +25,8 @@
  *
  * Rusty-safety:
  *  - Polymorphism via virtual dispatch with a virtual destructor.
+ *  - TransportBase is a DSL-owned trait, but concrete transports are still
+ *    bridges around their RPC/channel runtimes.
  *  - std::shared_ptr appears only at the rrr-module boundary
  *    (MarshallDeputy carries std::shared_ptr<Marshallable>). Every
  *    such boundary is annotated `@unsafe`.

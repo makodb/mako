@@ -1857,8 +1857,8 @@ class RaftServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
 
-  /* NOTE: I think I should move these to the RaftData class */
-  /* TODO: talk to Shuai about it */
+  // Core Raft progress counters. Keep them on RaftServer for now: snapshots,
+  // replication, voting, and membership paths read them directly.
   uint64_t lastLogIndex = 0;
   uint64_t currentTerm = 0;
   uint64_t commitIndex = 0;

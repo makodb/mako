@@ -11,12 +11,13 @@
  *    invokes the dispatcher and uses the returned value as the reply
  *    payload. No rrr::DeferredReply, no callbacks, no rusty::Function.
  *  - Concrete adapters:
- *      RaftServerDispatcher (phase 8.2) — delegates to RaftServer
- *                                         methods synchronously.
+ *      RaftServerDispatcher — delegates to RaftServer methods synchronously.
  *      A recording adapter in the tests that returns fixed replies.
  *
  * Rusty-safety:
  *  - Polymorphism via an abstract base class with a virtual destructor.
+ *  - DispatcherBase is a DSL-owned trait; concrete dispatchers keep ownership
+ *    and server lifetimes in C++.
  *  - Reply structs are passed by value.
  */
 

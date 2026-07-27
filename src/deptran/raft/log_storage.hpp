@@ -7,7 +7,12 @@
  * - LogEntry: A unified log entry structure for both Raft and Paxos
  * - LogStorage: Abstract interface for pluggable storage backends
  *
- * RustyCpp Compliance: Uses rusty::Option, rusty::Mutex, rusty::Cell
+ * RustyCpp migration notes:
+ * - LogEntry and LogStorage are DSL-owned declaration surfaces.
+ * - Serialization and backend I/O are intentionally delegated to helpers or
+ *   concrete storage bridges.
+ * - In-memory and RocksDB implementations decide their own synchronization and
+ *   unsafe boundaries; the base trait only fixes the call shape.
  */
 
 #include <cstdint>
@@ -254,6 +259,10 @@ inline void log_entry_load(LogEntry& entry, BinaryReadArchive& ar) {
  * - Custom backends
  *
  * All methods are thread-safe in implementations.
+ *
+ * This trait is the stable virtual surface. Concrete implementations may use
+ * DSL Core structs, but backend handles, RocksDB iterators, raw byte
+ * serialization, and persistence side effects stay behind C++ helpers.
  */
 #if RUSTYCPP_RUST
 pub trait LogStorage {

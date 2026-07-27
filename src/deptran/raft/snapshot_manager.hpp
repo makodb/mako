@@ -9,7 +9,13 @@
  * - SnapshotWriter: Abstract writer for streaming snapshot data
  * - SnapshotManager: Interface for snapshot operations
  *
- * RustyCpp Compliance: Uses rusty::Option for optional values
+ * RustyCpp migration notes:
+ * - SnapshotMetadata, SnapshotReader, SnapshotWriter, SnapshotManager, and
+ *   SnapshotConfig are DSL-owned declaration surfaces.
+ * - Generated fallback below the Rust blocks is committed for ordinary C++
+ *   builds; edit the Rust source and regenerate, never patch GEN regions.
+ * - Concrete managers use small C++ bridges where locks, filesystem effects,
+ *   raw buffers, and unique_ptr factory ownership are easiest to audit.
  */
 
 #include <cstdint>
@@ -41,8 +47,8 @@ using c_char = char;
  */
 struct SnapshotMetadata;
 
-// DSL-prep helpers: keep SnapshotMetadata methods thin so a later inline-Rust
-// impl can delegate string formatting to ordinary C++.
+// DSL helpers: keep SnapshotMetadata methods thin and value-only. String
+// formatting stays in ordinary C++ so metadata remains a low-risk DSL surface.
 inline bool snapshot_metadata_is_valid(const SnapshotMetadata& metadata);
 inline std::string snapshot_metadata_to_string(const SnapshotMetadata& metadata);
 
@@ -179,6 +185,10 @@ template <class U> class SnapshotReaderAdapterRefMut;
  * - Streaming for large snapshots
  * - Checksum verification
  * - Concurrent access safety
+ *
+ * The trait intentionally includes the unique_ptr factory methods. Concrete
+ * managers still bridge through hand-written C++ classes so object ownership,
+ * mutexes, and side effects stay explicit at the implementation boundary.
  */
 #if RUSTYCPP_RUST
 pub trait SnapshotManager {

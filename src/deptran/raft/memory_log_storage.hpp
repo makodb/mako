@@ -6,7 +6,11 @@
  * Thread-safe in-memory implementation of LogStorage for testing
  * and simple use cases. Uses rusty::Mutex for thread safety.
  *
- * RustyCpp Compliance: Uses rusty::Mutex, rusty::Cell, rusty::Option
+ * RustyCpp migration notes:
+ * - The small predicate helpers and InMemoryLogStorageCore are DSL-owned.
+ * - The std::map containers remain behind rusty::Mutex fields and helper
+ *   functions so map iterators do not leak into the DSL surface.
+ * - The public class remains the LogStorage virtual bridge.
  */
 
 #include <map>

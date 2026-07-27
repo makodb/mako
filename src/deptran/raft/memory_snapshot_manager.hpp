@@ -11,9 +11,12 @@
  * the lab-style correctness tests exercise; production still uses
  * FileSnapshotManager.
  *
- * Note on RustyCpp safety: the stream and manager cores use inline-Rust for
- * pure value and state decisions. The generated trait surface still has C++
- * hand-bridges for mutexes, buffers, callbacks, and virtual ownership.
+ * RustyCpp migration notes:
+ * - Writer, reader, and manager state live in DSL-owned Core structs.
+ * - The public classes remain C++ virtual bridges for SnapshotWriter,
+ *   SnapshotReader, and SnapshotManager.
+ * - Mutex locking stays in the manager bridge; Core methods expect the bridge
+ *   to provide synchronization and lifetime discipline.
  */
 
 #include <cstring>
@@ -528,6 +531,9 @@ inline const std::string& memory_snapshot_manager_storage_path_cpp(
   return *storage_path;
 }
 
+// MemorySnapshotManagerCore owns the single in-memory snapshot payload and
+// manager query/update behavior. The C++ bridge below keeps mutex locking and
+// SnapshotManager virtual dispatch outside the DSL-owned state.
 #if RUSTYCPP_RUST
 pub struct MemorySnapshotManagerCore {
     has_snapshot_: bool,

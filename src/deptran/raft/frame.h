@@ -43,7 +43,8 @@ class RaftFrame : public Frame {
   // @unsafe - owning communicator handle. Exposed as a raw borrowed
   // Communicator* by CreateCommo() for legacy scheduler/coordinator APIs.
   std::unique_ptr<RaftCommo> commo_;
-  /* TODO: have another class for common data */
+  // RaftFrame currently owns both RaftCommo and RaftServer so coordinators can
+  // borrow the same common Raft state through legacy Frame factory APIs.
   // @unsafe - owning scheduler/server handle. Exposed as a raw borrowed
   // TxLogServer* by CreateScheduler(); callers must not delete it.
   std::unique_ptr<RaftServer> svr_;

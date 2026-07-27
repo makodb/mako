@@ -368,7 +368,9 @@ class CoordinatorRaft : public Coordinator {
                         int32_t benchmark,
                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
                         uint32_t thread_id);
-  uint32_t n_replica_ = 0;   // TODO
+  // Set by RaftFrame during coordinator construction; n_replica() verifies it
+  // before use.
+  uint32_t n_replica_ = 0;
   slotid_t slot_id_ = 0;
   // Safe shared mutable counter - shares ownership with RaftFrame.
   rusty::Arc<rusty::Cell<slotid_t>> slot_hint_;

@@ -6,7 +6,11 @@
  * Persistent implementation of LogStorage for Raft/Paxos consensus logs.
  * Uses RocksDB C API as the underlying storage interface.
  *
- * RustyCpp Compliance: Uses rusty::Cell, rusty::Option
+ * RustyCpp migration notes:
+ * - Pure key/status/range helpers and RocksDBLogStorageCore are DSL-owned.
+ * - RocksDB C handles, iterators, error buffers, Marshal byte copies, and
+ *   database destruction remain C++ helper/state boundaries.
+ * - The public class remains the LogStorage virtual bridge.
  * Note: RocksDB operations are marked @unsafe (third-party library, not borrow-checked)
  */
 

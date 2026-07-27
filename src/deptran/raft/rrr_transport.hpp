@@ -3,9 +3,8 @@
 /**
  * @file rrr_transport.hpp
  * @brief Production TransportBase adapter that wraps RaftCommo /
- *        RaftProxy. Fiber-synchronous since Phase 8.0 — each
- *        reply-expecting send_* blocks the calling fiber on an
- *        rrr::IntEvent until the reply lands.
+ *        RaftProxy. Reply-expecting send_* calls block the calling
+ *        fiber on an rrr::IntEvent until the reply lands.
  *
  * Rusty-safety:
  *  - Polymorphism via TransportBase virtual dispatch.
@@ -14,9 +13,9 @@
  *    rusty::Arc<RaftCommo> is unusable because Arc<T>::operator-> yields
  *    const access but RaftCommo's Send* methods are non-const.
  *  - The reply-slot + IntEvent pair is allocated via std::make_shared
-*     at the rrr boundary. `RaftCommo::Send*Cb` takes rusty::Function,
-*    and each call builds a one-shot lambda that captures the shared
-*    reply slot and wakeup event. One @unsafe boundary per method.
+ *    at the rrr boundary. `RaftCommo::Send*Cb` takes rusty::Function,
+ *    and each call builds a one-shot lambda that captures the shared
+ *    reply slot and wakeup event. One @unsafe boundary per method.
  */
 
 #include <cstdint>

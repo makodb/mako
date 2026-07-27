@@ -12,7 +12,13 @@
  *   snapshot_<index>_<term>.snap     - Complete snapshots
  *   snapshot_<index>_<term>.snap.tmp - In-progress writes
  *
- * RustyCpp Compliance: Uses @safe/@unsafe annotations
+ * RustyCpp migration notes:
+ * - Path parsing, scalar predicates, reader/writer cores, and manager state
+ *   are DSL-owned.
+ * - File descriptors, directory scans, unlink/rename/fsync, and raw buffer
+ *   reads stay in C++ helpers.
+ * - Public classes remain C++ virtual bridges so filesystem side effects and
+ *   unique_ptr ownership are visible at the boundary.
  */
 
 #include <dirent.h>
@@ -934,6 +940,9 @@ inline const std::string& file_snapshot_manager_storage_path_cpp(
   return config->storage_path;
 }
 
+// FileSnapshotManagerCore owns SnapshotConfig and delegates every filesystem
+// operation to C++ helpers. The FileSnapshotManager bridge below supplies
+// mutex locking and SnapshotManager virtual dispatch.
 #if RUSTYCPP_RUST
 pub struct FileSnapshotManagerCore {
     config_: SnapshotConfig,

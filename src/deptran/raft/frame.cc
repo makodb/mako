@@ -145,7 +145,8 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   coo->frame_ = this;
   verify(commo_ != nullptr);
   coo->commo_ = commo_.get();
-  /* TODO: remove when have a class for common data */
+  // Share the frame-owned server with this coordinator; RaftFrame keeps the
+  // pointee alive for the coordinator lifetime.
   verify(svr_ != nullptr);
   coo->svr_ = this->svr_.get();
   coo->slot_hint_ = slot_hint_;  // Safe: Arc copy shares ownership
@@ -153,7 +154,7 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   slot_hint_->set(slot_hint_->get() + 1);
   coo->n_replica_ = config->GetPartitionSize(site_info_->partition_id_);
   coo->loc_id_ = this->site_info_->locale_id;
-  verify(coo->n_replica_ != 0); // TODO
+  verify(coo->n_replica_ != 0);
   Log_debug("create new fpga raft coord, coo_id: %d", (int) coo->coo_id_);
   return coo;
 }

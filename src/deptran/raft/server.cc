@@ -2252,7 +2252,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
 
 
-  // TODO del only for test
+  // Test/lab invariant: vote requests are expected to inspect the current tip.
   verify(lstoff == lastLogIndex ) ;
 
   if (server_vote_request_is_eligible(

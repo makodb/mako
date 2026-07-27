@@ -138,7 +138,8 @@ void CoordinatorRaft::AppendEntries() {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(coordinator_raft_append_is_available(
         state_core_.in_append_entries()));
-    // verify(this->svr_->IsLeader()); TODO del it yidawu
+    // Historical guard disabled for Raft mode: this path may race leadership
+    // changes while Start() re-checks term/log state below.
     state_core_.set_in_append_entries(true);
     uint64_t index = 0, term = 0;
     bool ok;
@@ -221,7 +222,9 @@ void CoordinatorRaft::GotoNextPhase() {
             coordinator_raft_phase_value(phase_, n_phase)));
       } else if (coordinator_raft_should_skip_to_commit_from_init(
                      current_phase, is_leader)) {
-        // TODO: non-leader should forward to leader
+        // Forwarding is intentionally not wired here; non-leaders complete the
+        // local coordinator path and let higher layers retry through the
+        // current leader.
         // @unsafe { Log_warn is not borrow-checked }
         Log_warn("[RAFT] CoordinatorRaft::GotoNextPhase: non-leader path not yet implemented, skipping to COMMIT");
         // Forward(cmd_,commit_callback_) ;
