@@ -1431,16 +1431,22 @@ void RaftServer::applyLogs() {
 #if RUSTYCPP_RUST
 pub struct RaftServerPendingAppendEntries {
     follower_id: u16,
+    start_index: u64,
+    end_index: u64,
+    sequence: u64,
     response: shared_ptr<AppendEntriesResponse>,
     cmd: janus::Command,
     sent_term: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2330c507bdff9d2dcd6a069109d0706cd736c8288ab280277a3ea2f899e6896e*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=42faed43ad92b63053c11f40ec243a44035b126b71a62a1919cee07af93cf6da*/
 struct RaftServerPendingAppendEntries;
 
 struct RaftServerPendingAppendEntries {
     uint16_t follower_id;
+    uint64_t start_index;
+    uint64_t end_index;
+    uint64_t sequence;
     shared_ptr<AppendEntriesResponse> response;
     janus::Command cmd;
     uint64_t sent_term;
