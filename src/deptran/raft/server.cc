@@ -1564,6 +1564,8 @@ void RaftServer::HeartbeatLoop() {
       // The async RPC callback writes to ret_status/ret_term/ret_last_log_index,
       // so these must remain at fixed addresses until the RPC completes.
       std::vector<std::unique_ptr<RaftServerPendingAppendEntries>> pending_rpcs;
+      const uint64_t pipeline_width = GetAppendEntriesPipelineWidth();
+      std::set<siteid_t> cancelled_followers;
 
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
@@ -1574,8 +1576,13 @@ void RaftServer::HeartbeatLoop() {
           break;  // Stop sending if we lost leadership
         }
 
+        uint64_t request_index = it->second;
+        for (uint64_t pipeline_sequence = 0;
+             pipeline_sequence < pipeline_width && IsLeader();
+             ++pipeline_sequence) {
         uint64_t prevLogIndex = 0;
         uint64_t prevLogTerm = 0;
+        uint64_t request_end_index = request_index;
         // migrated from
         // `shared_ptr<Marshallable> cmd = nullptr` to `janus::Command{}`.
         // Empty Command (has_value() == false) signals heartbeat.
@@ -1584,22 +1591,22 @@ void RaftServer::HeartbeatLoop() {
         bool skip_follower = false;
         {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          prevLogIndex = it->second - 1;
+          prevLogIndex = request_index - 1;
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex (%ld) > lastLogIndex (%ld), fixing next_index", prevLogIndex, lastLogIndex);
-            it->second = lastLogIndex + 1;
-            prevLogIndex = it->second - 1;
+            request_index = lastLogIndex + 1;
+            prevLogIndex = request_index - 1;
           }
 
           if (prevLogIndex > lastLogIndex) {
             Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower %d: prevLogIndex (%ld) > lastLogIndex (%ld), skipping",
                      site_id, prevLogIndex, lastLogIndex);
-            it->second = 1;
+            request_index = 1;
             skip_follower = true;
-          } else if (it->second < min_active_slot_ && snapshot_manager_) {
+          } else if (request_index < min_active_slot_ && snapshot_manager_) {
             // @unsafe - Follower is too far behind (log compacted), send InstallSnapshot
             Log_info("[HEARTBEAT-SNAPSHOT] Site %d: Follower %d next_index=%lu < min_active_slot_=%lu, sending InstallSnapshot",
-                     site_id_, site_id, it->second, min_active_slot_);
+                     site_id_, site_id, request_index, min_active_slot_);
             janus::raft::SnapshotMetadata snap_meta{};
             std::string snap_data;
             if (snapshot_manager_->LoadLatestSnapshot(&snap_meta, &snap_data)) {
@@ -1658,21 +1665,22 @@ void RaftServer::HeartbeatLoop() {
             if (!skip_follower) {
 #ifndef RAFT_BATCH_OPTIMIZATION
               Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
-                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
-              if (it->second <= lastLogIndex) {
-                auto curInstance = GetRaftInstance(it->second);
+                       site_id_, site_id, request_index, min_active_slot_, lastLogIndex);
+              if (request_index <= lastLogIndex) {
+                auto curInstance = GetRaftInstance(request_index);
                 if (!curInstance) {
-                  Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
+                  Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", request_index);
                 } else {
                   // cmd is Command; assign directly from
                   // curInstance->log_ (also Command).
                   cmd = curInstance->log_;
                   cmdLogTerm = curInstance->term;
+                  request_end_index = request_index;
                   // 2 step 1: debug log no longer needs the
                   // inner shared_ptr's raw pointer; the kind tag is
                   // a more useful identifier anyway.
                   Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd_kind=%d",
-                      site_id_, it->second, site_id, cmd.kind_);
+                      site_id_, request_index, site_id, cmd.kind_);
                 }
               }
 #endif
@@ -1680,9 +1688,9 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
-              const uint64_t batch_start_idx = std::max<uint64_t>(it->second, min_active_slot_);
+              const uint64_t batch_start_idx = std::max<uint64_t>(request_index, min_active_slot_);
               Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
-                       site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
+                       site_id_, site_id, request_index, min_active_slot_, lastLogIndex);
               for (uint64_t idx = batch_start_idx;
                    idx <= lastLogIndex && batch_buffer_.size() < max_batch_entries;
                    idx++) {
@@ -1710,6 +1718,7 @@ void RaftServer::HeartbeatLoop() {
                 batch_cmd->AddCmds(batch_buffer_);
                 cmd = batch_cmd;
                 const uint64_t batch_end_idx = batch_start_idx + batch_buffer_.size() - 1;
+                request_end_index = batch_end_idx;
                 const bool truncated = batch_end_idx < lastLogIndex;
                 Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d "
                          "(from=%lu to=%lu%s)",
@@ -1721,12 +1730,15 @@ void RaftServer::HeartbeatLoop() {
           }
         }
         if (skip_follower) {
-          continue;
+          break;
         }
 
         // Create pending RPC context
         auto pending = std::make_unique<RaftServerPendingAppendEntries>();
         pending->follower_id = site_id;
+        pending->start_index = request_index;
+        pending->end_index = request_end_index;
+        pending->sequence = pipeline_sequence;
         pending->cmd = cmd;
         pending->sent_term = term;
 
@@ -1745,7 +1757,16 @@ void RaftServer::HeartbeatLoop() {
                                               cmd,
                                               cmdLogTerm);
 
+        Log_info("[PIPELINE-SEND] site=%d follower=%d sequence=%lu range=%lu-%lu has_entries=%d",
+                 site_id_, site_id, pipeline_sequence,
+                 request_index, request_end_index, cmd.has_value());
         pending_rpcs.push_back(std::move(pending));
+
+        if (!cmd.has_value() || request_end_index < request_index) {
+          break;
+        }
+        request_index = request_end_index + 1;
+      }
       }
 
       // ========================================================================
@@ -1761,12 +1782,21 @@ void RaftServer::HeartbeatLoop() {
         }
 
         auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
+        if (cancelled_followers.count(pending.follower_id) > 0) {
+          Log_debug("[PIPELINE-CANCEL] Skipping follower %d sequence %lu after an earlier request failed",
+                    pending.follower_id, pending.sequence);
+          continue;
+        }
         auto& resp = *pending.response;  // Access response data
 
         resp.event->wait(PER_RPC_TIMEOUT);
 
         if (resp.event->status_.get() == Event::TIMEOUT) {
           Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          auto& follower_next_index = next_index_[pending.follower_id];
+          follower_next_index = std::min(follower_next_index, pending.start_index);
+          cancelled_followers.insert(pending.follower_id);
           continue;  // Skip this follower, try again next round
         }
 
@@ -1777,7 +1807,12 @@ void RaftServer::HeartbeatLoop() {
           auto& match_index = match_index_[pending.follower_id];
 
           if (resp.status == false && resp.term == 0 && resp.last_log_index == 0) {
-            // RPC failed or no response - do nothing
+            // RPC failed or no response. Cancel later pipelined requests and
+            // retry from this request's range on the next heartbeat.
+            next_index = std::min(next_index, pending.start_index);
+            cancelled_followers.insert(pending.follower_id);
+            Log_debug("[PIPELINE-CANCEL] follower %d sequence %lu failed; retrying from %lu",
+                      pending.follower_id, pending.sequence, next_index);
           } else if (currentTerm > pending.sent_term) {
             // Stale response from old term - ignore
           } else if (resp.status == 0 && resp.term > pending.sent_term) {
@@ -1792,8 +1827,10 @@ void RaftServer::HeartbeatLoop() {
           } else if (resp.status == 0) {
             // case 2: AppendEntries rejected - log inconsistency
             uint64_t old_next = next_index;
+            next_index = std::min(next_index, pending.start_index);
             next_index = server_append_backoff_next_index(
                 next_index, resp.last_log_index);
+            cancelled_followers.insert(pending.follower_id);
             if (next_index != old_next &&
                 resp.last_log_index > 0 &&
                 (resp.last_log_index + 1) < old_next) {
@@ -1847,26 +1884,14 @@ void RaftServer::HeartbeatLoop() {
               }
             } else {
               Log_debug("case 3B: AppendEntries accepted for non-empty msg");
-              if (resp.last_log_index < next_index) {
-                next_index = resp.last_log_index + 1;
-                match_index = resp.last_log_index;
-              } else {
-                Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                    pending.follower_id, resp.last_log_index, next_index, match_index);
-#ifndef RAFT_BATCH_OPTIMIZATION
-                match_index = next_index;
-                next_index++;
-#endif
-#ifdef RAFT_BATCH_OPTIMIZATION
-                match_index = resp.last_log_index;
-                next_index = resp.last_log_index + 1;
-#endif
-                if (match_index > lastLogIndex) {
-                  match_index = lastLogIndex;
-                }
-                Log_debug("leader site %d receiving site %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                    site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
-              }
+              const uint64_t acknowledged_index =
+                  std::min(resp.last_log_index, lastLogIndex);
+              match_index = std::max(match_index, acknowledged_index);
+              next_index = std::max(next_index, acknowledged_index + 1);
+              Log_debug("leader site %d receiving site %ld sequence=%lu range=%lu-%lu followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
+                  site_id_, pending.follower_id, pending.sequence,
+                  pending.start_index, pending.end_index,
+                  resp.last_log_index, next_index, match_index);
             }
           }
         }
