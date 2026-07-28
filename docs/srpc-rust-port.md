@@ -183,7 +183,25 @@ Known debt inherited from the ports (pre-existing, tracked):
 - btree port: broken `btree_internal` clone templates (the reason
   `PollThreadWorker::jobs_` is `std::set` today).
 
-Gap list from this campaign: *(append as W3+ surfaces them)*
+Gap list from this campaign:
+- **#37 — FIX IMPLEMENTED upstream** (branch
+  `fix-37-namespace-crate-root-items` on shuaimu/rusty-cpp): the
+  `--cxx-namespace` wrap-close now re-qualifies bare `::<item>`
+  crate-root references via the boundary-aware
+  `requalify_crate_root_symbol` over `declared_item_names` — the same
+  Rule-4 mechanics `wrap_module_purview_in_crate_namespace` already
+  uses (that rule landed on main after our pin, but only for the
+  dep-pipeline wrap; the CLI namespace wrap had no requalification).
+  Verified against srpc: namespace-mode `varint` **and** `archive`
+  now compile; e2e regression test added
+  (`test_cxx_namespace_requalifies_crate_root_item_refs`).
+- **#38 narrowed**: with #37 fixed and auto-namespace sibling aliases,
+  path-qualified sibling refs (`archive::WireError`) resolve; the
+  remaining shape is *bare-name* `use` imports
+  (`use super::varint::VARINT_BUF_LEN` → bare `VARINT_BUF_LEN` with no
+  using-declaration). Clang's fix-it even names the resolution.
+- **#39 / #40**: unchanged on current main (re-verified at cb0c14b9);
+  still open.
 
 ## W3 spike results (2026-07-28)
 
