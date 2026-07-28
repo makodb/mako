@@ -167,6 +167,29 @@ std::vector<GoldenCase> build_corpus() {
             rrr::Serialize_::serialize(std::string("payload"), ar);
         }));
 
+    // --- ordered map: [v64 len][k,v...] in key order -----------------------
+    add("map_i32_str", encode_case([](BinaryWriteArchive& ar) {
+            std::map<int32_t, std::string> m;
+            m[7] = "seven";
+            m[-1] = "neg";
+            rrr::Serialize_::serialize(m, ar);
+        }));
+
+    // --- frame codec: [i32 LE (size | ext<<31)][payload] -------------------
+    {
+        auto frame_hex = [](const char* payload, bool ext) {
+            std::vector<std::uint8_t> out;
+            const auto* p = reinterpret_cast<const std::uint8_t*>(payload);
+            bool ok = rrr::frame_codec_encode_into(
+                out, p, static_cast<std::int32_t>(strlen(payload)), ext);
+            EXPECT_TRUE(ok);
+            return to_hex(out.data(), out.size());
+        };
+        add("frame_empty", frame_hex("", false));
+        add("frame_hello", frame_hex("hello", false));
+        add("frame_ext_x", frame_hex("x", true));
+    }
+
     return cs;
 }
 

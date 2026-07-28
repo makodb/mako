@@ -178,6 +178,29 @@ fn build_corpus() -> Vec<(String, String)> {
         }),
     ));
 
+    // --- ordered map: [v64 len][k,v...] in key order -----------------------
+    cs.push((
+        String::from("map_i32_str"),
+        encode_case(|ar| {
+            let mut m: std::collections::BTreeMap<i32, String> = std::collections::BTreeMap::new();
+            m.insert(7, String::from("seven"));
+            m.insert(-1, String::from("neg"));
+            m.serialize(ar);
+        }),
+    ));
+
+    // --- frame codec: [i32 LE (size | ext<<31)][payload] -------------------
+    {
+        let frame_hex = |payload: &[u8], ext: bool| -> String {
+            let mut out: Vec<u8> = Vec::new();
+            assert!(srpc::wire::frame::encode_into(&mut out, payload, ext));
+            hex(&out)
+        };
+        cs.push((String::from("frame_empty"), frame_hex(b"", false)));
+        cs.push((String::from("frame_hello"), frame_hex(b"hello", false)));
+        cs.push((String::from("frame_ext_x"), frame_hex(b"x", true)));
+    }
+
     cs
 }
 

@@ -18,8 +18,10 @@
 //! * **Envelope**: `[V32 kind][payload]`.
 
 pub mod archive;
+pub mod frame;
 pub mod serde;
 pub mod varint;
 
 pub use archive::{ReadArchive, WireError, WriteArchive};
+pub use frame::{FrameDecodeStatus, FrameHeader, FrameReader};
 pub use serde::{Deserialize, Serialize, V32, V64};

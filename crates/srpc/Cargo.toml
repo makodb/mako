@@ -14,3 +14,9 @@ license = "MIT"
 
 [lints.rust]
 unsafe_code = "deny"
+
+# Custom-main micro-benchmark mirroring src/rrr/tests/bench_marshal.cc
+# (perf-parity gate, docs/srpc-rust-port.md). Plain main, no harness.
+[[bench]]
+name = "wire_bench"
+harness = false

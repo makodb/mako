@@ -51,6 +51,13 @@ impl WriteArchive {
         &self.bytes
     }
 
+    /// Drop accumulated bytes, keeping the allocation (buffer-reuse
+    /// pattern the transport pumps rely on — mirrors
+    /// `sink.bytes.clear()` on the C++ side).
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+    }
+
     /// Consume the archive, yielding the wire bytes.
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes

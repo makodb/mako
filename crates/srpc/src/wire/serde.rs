@@ -185,6 +185,38 @@ impl<T: Deserialize> Deserialize for Vec<T> {
 }
 
 // ---------------------------------------------------------------------------
+// Ordered maps: [V64 len][k,v,k,v...] in key order (std::map /
+// rusty::BTreeMap — BTreeMap's iteration order matches).
+
+impl<K: Serialize, V: Serialize> Serialize for std::collections::BTreeMap<K, V> {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        V64(self.len() as i64).serialize(ar);
+        for (k, v) in self.iter() {
+            k.serialize(ar);
+            v.serialize(ar);
+        }
+    }
+}
+
+impl<K: Deserialize + Ord, V: Deserialize> Deserialize for std::collections::BTreeMap<K, V> {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let len = V64::deserialize(ar)?.0;
+        if len < 0 {
+            return Err(WireError::Underflow);
+        }
+        let mut m = std::collections::BTreeMap::new();
+        let mut i: i64 = 0;
+        while i < len {
+            let k = K::deserialize(ar)?;
+            let v = V::deserialize(ar)?;
+            m.insert(k, v);
+            i += 1;
+        }
+        Ok(m)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Pairs: first then second (std::pair<T1, T2>).
 
 impl<A: Serialize, B: Serialize> Serialize for (A, B) {
