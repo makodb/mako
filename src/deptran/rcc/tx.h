@@ -15,17 +15,9 @@ namespace janus {
 
 class RccTx: public Tx, public Vertex<RccTx> {
  public:
-  class StatusBox : public BoxEvent<int> {
-   public:
-    int Get() {
-      verify(is_set_.get());
-      return BoxEvent<int>::get();
-    }
-    void Set(const int& x) {
-//      verify(x != REJECT);
-      BoxEvent<int>::set(x);
-    }
-  };
+  // (StatusBox removed — it was a dead-convenience subclass of BoxEvent<int>;
+  //  every call site uses BoxEvent<int>'s own set/get/wait/status_/is_set_
+  //  directly, so local_validated_/global_validated_ are now Arc<BoxEvent<int>>.)
   bool mocking_janus_{false};
 
   void __DebugCheckParents(rank_t rank);
@@ -142,8 +134,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
     bool waiting_all_anc_committing_{false};
     SharedIntEvent wait_all_anc_commit_done_{};
     bool __debug_local_validated_foreign_{false};
-    rusty::Arc<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
-    rusty::Arc<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
+    rusty::Arc<BoxEvent<int>> local_validated_{Reactor::create_sp_event<BoxEvent<int>>()};
+    rusty::Arc<BoxEvent<int>> global_validated_{Reactor::create_sp_event<BoxEvent<int>>()};
     rusty::Arc<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
 //  bool fully_dispatched_{false};
     vector<SimpleCommand> dreqs_ = {};

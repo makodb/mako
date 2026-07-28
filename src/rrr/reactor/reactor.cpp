@@ -289,6 +289,14 @@ rusty::Arc<IntEvent> int_event_make(int32_t target);
 rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);
 rusty::Arc<WaitAll> waitall_make();
 rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs);
+template<class Type> struct BoxEvent;
+template<class Type> rusty::Arc<BoxEvent<Type>> boxevent_make();
+// Detect BoxEvent<T> instantiations so event_make can dispatch to the template
+// factory (concrete-type is_same_v can't match a class-template instantiation).
+template<class> struct is_box_event : std::false_type {};
+template<class T> struct is_box_event<BoxEvent<T>> : std::true_type {};
+template<class> struct box_event_payload;
+template<class T> struct box_event_payload<BoxEvent<T>> { using type = T; };
 template <typename Ev, typename... Args>
 rusty::Arc<Ev> event_make(Args&&... args) {
   if constexpr (std::is_same_v<Ev, NeverEvent>) {
@@ -311,6 +319,8 @@ rusty::Arc<Ev> event_make(Args&&... args) {
     } else {
       return waitall_make_from(std::forward<Args>(args)...);  // vector ctor
     }
+  } else if constexpr (is_box_event<Ev>::value) {
+    return boxevent_make<typename box_event_payload<Ev>::type>();  // BoxEvent<T>()
   } else {
     return rusty::Arc<Ev>::make(std::forward<Args>(args)...);
   }
@@ -318,65 +328,195 @@ rusty::Arc<Ev> event_make(Args&&... args) {
 
 
 
-// `BoxEvent<Type>` — a one-shot slot event (ready once `set()`). FLATTENED
-// (S4): a hand-written bridge deriving EventPollable directly (no longer
-// `: public Event`), so no event type inherits another. It stays a
-// template — the inline-Rust DSL cannot express one — but it is otherwise
-// the same shape as the flattened structs: the five event-core fields laid
-// out identically, driven by the shared event_wait_impl / event_test_impl
-// / event_core_* kernels. `StatusBox` (rcc) still derives BoxEvent<int>
-// unchanged. Instantiated only with <int>/<bool>; the kernels are exported
-// from this module, so cross-TU instantiation resolves.
-// @unsafe - bridges the DSL trait to the hand-written slot payload.
-template <class Type>
-class BoxEvent : public EventPollable {
- public:
-  // Event core — same fields/order as the flattened DSL structs so the
-  // shared kernels see an identical duck-typed surface.
-  rusty::Cell<EventStatus> status_{EventStatus::INIT};
-  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
-  EventState state_{};
-  rusty::Cell<bool> prunable_{true};
-  rusty::sync::Weak<EventPollable> self_;
-  // Slot payload. RefCell so get/set/clear stay const under a
-  // const-view Arc handle (content_ may be non-Copy, e.g.
-  // BoxEvent<std::string>); is_set_ is a Copy flag -> Cell.
-  rusty::RefCell<Type> content_{};
-  rusty::Cell<bool> is_set_{false};
+// `BoxEvent<Type>` — a one-shot slot event (ready once `set()`). FLATTENED (S4):
+// a GENERIC inline-Rust DSL struct deriving EventPollable via `#[cpp_inherit]`
+// (the transpiler DOES lower generic structs: `struct BoxEvent<Type>` +
+// `impl<Type> ... for BoxEvent<Type>` -> `template<class Type> struct BoxEvent :
+// public EventPollable`). Carries the five event-core fields + the slot payload,
+// driven by the shared event_wait_impl / event_test_impl / event_core_* kernels.
+// The generic slot ops (get returns Type by value; set/clear deref-assign the
+// RefCell<Type>; clear value-inits Type{}) stay hand-written @unsafe TEMPLATE
+// kernels the DSL calls. Construction (the former default ctor) is the
+// `boxevent_make<Type>` factory, dispatched from event_make via is_box_event<Ev>.
+// Instantiated with <int>/<bool>/<std::string>; the kernels + factory are
+// exported templates so cross-TU (deptran) instantiation resolves. The former
+// StatusBox (rcc) subclass was removed (dead-convenience — see rcc/tx.h).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+// @unsafe - the generic slot-op kernels the DSL body calls.
+template<class Type> Type boxevent_get(const BoxEvent<Type>& self);
+template<class Type> void boxevent_set(const BoxEvent<Type>& self, const Type& c);
+template<class Type> void boxevent_clear(const BoxEvent<Type>& self);
+#if RUSTYCPP_RUST
+struct BoxEvent<Type> {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    content_: RefCell<Type>,
+    is_set_: Cell<bool>,
+}
 
-  BoxEvent() { event_state_seed(state_); }
+impl<Type> BoxEvent<Type> {
+    fn get(&self) -> Type {
+        boxevent_get(self)
+    }
+    fn set(&self, c: &Type) {
+        boxevent_set(self, c)
+    }
+    fn clear(&self) {
+        boxevent_clear(self)
+    }
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
 
-  Type get() const { return *content_.borrow(); }
-  void set(const Type& c) const {
-    is_set_.set(true);
-    (*content_.borrow_mut()) = c;
-    test();
-  }
-  void clear() const {
-    is_set_.set(false);
-    (*content_.borrow_mut()) = Type{};
-  }
+#[cpp_inherit]
+impl<Type> EventPollable for BoxEvent<Type> {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        self.is_set_.get()
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.box_event version=1 rust_sha256=bdc2d8f2dc9495014bacdc53d10a179405f30e640e2649f012051b79adabf633*/
+template<typename Type>
+struct BoxEvent;
 
-  // Concrete event surface (matches the flattened structs' inherent fns).
-  void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
-  void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
-  bool is_composite_event() const { return false; }
-  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
-  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+template<typename Type>
+struct BoxEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::RefCell<Type> content_;
+    rusty::Cell<bool> is_set_;
+    BoxEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::RefCell<Type> content__init, rusty::Cell<bool> is_set__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), content_(std::move(content__init)), is_set_(std::move(is_set__init)) {}
+    BoxEvent(BoxEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), content_(std::move(other.content_)), is_set_(std::move(other.is_set_)) {}
 
-  // EventPollable trait surface.
-  bool test() const override { return event_test_impl(*this); }
-  bool is_ready() const override { return is_set_.get(); }
-  void log() const override {}
-  EventStatus status() const override { return status_.get(); }
-  void set_status(EventStatus s) const override { status_.set(s); }
-  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
-  bool prunable() const override { return prunable_.get(); }
-  void set_prunable(bool v) const override { prunable_.set(v); }
-  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
-    return event_core_upgrade_fiber(*this);
-  }
+
+    Type get() const {
+        return boxevent_get((*this));
+    }
+    void set(const Type& c) const {
+        boxevent_set((*this), c);
+    }
+    void clear() const {
+        boxevent_clear((*this));
+    }
+    void wait() const {
+        event_wait_impl((*this), static_cast<uint64_t>(0));
+    }
+    void wait_timeout(uint64_t timeout) const {
+        event_wait_impl((*this), std::move(timeout));
+    }
+    bool is_composite_event() const {
+        return false;
+    }
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const {
+        return event_core_self_lock((*this));
+    }
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+        event_core_set_self((*this), std::move(self_ptr));
+    }
+    bool test() const {
+        return event_test_impl((*this));
+    }
+    bool is_ready() const {
+        return this->is_set_.get();
+    }
+    void log() const {
+    }
+    EventStatus status() const {
+        return this->status_.get();
+    }
+    void set_status(EventStatus s) const {
+        this->status_.set(std::move(s));
+    }
+    uint64_t wakeup_time() const {
+        return event_core_wakeup_time((*this));
+    }
+    bool prunable() const {
+        return this->prunable_.get();
+    }
+    void set_prunable(bool v) const {
+        this->prunable_.set(std::move(v));
+    }
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const {
+        return event_core_upgrade_fiber((*this));
+    }
 };
+/*RUSTYCPP:GEN-END id=reactor.box_event*/
+
+// Template factory + slot-op kernels for BoxEvent<Type>, defined after the
+// struct is complete and in this exported module region so deptran's
+// BoxEvent<int>/<bool>/<std::string> instantiations resolve.
+template<class Type>
+rusty::Arc<BoxEvent<Type>> boxevent_make() {
+  auto sp = rusty::Arc<BoxEvent<Type>>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      rusty::RefCell<Type>(),                             // content_ (Type{})
+      rusty::Cell<bool>::new_(false));                    // is_set_
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// @unsafe - returns the slot payload by value (copy out of the RefCell).
+template<class Type> Type boxevent_get(const BoxEvent<Type>& self) {
+  return *self.content_.borrow();
+}
+// @unsafe - deref-assign the RefCell<Type> slot + run the readiness test.
+template<class Type> void boxevent_set(const BoxEvent<Type>& self, const Type& c) {
+  self.is_set_.set(true);
+  (*self.content_.borrow_mut()) = c;
+  self.test();
+}
+// @unsafe - value-init the slot back to Type{}.
+template<class Type> void boxevent_clear(const BoxEvent<Type>& self) {
+  self.is_set_.set(false);
+  (*self.content_.borrow_mut()) = Type{};
+}
 
 // `IntEvent` — an Event that fires when value_ reaches target_ (or a custom
 // inherited `test_` predicate passes). Hand-written subclass of the stateful
