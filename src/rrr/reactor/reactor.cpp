@@ -282,10 +282,13 @@ struct NeverEvent;
 struct TimeoutEvent;
 struct IntEvent;
 struct WaitAny;
+struct WaitAll;
 rusty::Arc<NeverEvent> never_event_make();
 rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us);
 rusty::Arc<IntEvent> int_event_make(int32_t target);
 rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);
+rusty::Arc<WaitAll> waitall_make();
+rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs);
 template <typename Ev, typename... Args>
 rusty::Arc<Ev> event_make(Args&&... args) {
   if constexpr (std::is_same_v<Ev, NeverEvent>) {
@@ -302,6 +305,12 @@ rusty::Arc<Ev> event_make(Args&&... args) {
     return janus::quorum_event_make(std::forward<Args>(args)...);
   } else if constexpr (std::is_same_v<Ev, WaitAny>) {
     return waitany_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, WaitAll>) {
+    if constexpr (sizeof...(Args) == 0) {
+      return waitall_make();               // default ctor
+    } else {
+      return waitall_make_from(std::forward<Args>(args)...);  // vector ctor
+    }
   } else {
     return rusty::Arc<Ev>::make(std::forward<Args>(args)...);
   }
@@ -1137,79 +1146,193 @@ rusty::Option<rusty::Rc<Fiber>> WaitAny::upgrade_fiber() const {
 /*RUSTYCPP:GEN-END id=reactor.wait_any*/
 
 // `WaitAll` — composite event ready once ALL child events are ready (or DONE).
-// Flattened the same way as WaitAny; keeps its default/vector/variadic ctors.
-// @unsafe - bridges the DSL trait to the composite child-event vector.
-class WaitAll : public EventPollable {
- public:
-  rusty::Cell<EventStatus> status_{EventStatus::INIT};
-  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
-  EventState state_{};
-  rusty::Cell<bool> prunable_{true};
-  rusty::sync::Weak<EventPollable> self_;
-  rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events_;
+// FLATTENED (S4): an inline-Rust DSL struct deriving EventPollable via
+// `#[cpp_inherit]`. Like WaitAny it carries the event-core fields + a child
+// vector, but its vector is a RefCell (add_event mutates it after construction).
+// The variadic ctor + variadic add_event(Args...) the DSL cannot express are
+// dropped: construction goes through the `waitall_make` (empty) /
+// `waitall_make_from` (vector) factories wired into event_make, and add_event is
+// single-arg (every call site already passes one event). The one test that used
+// the 3-arg variadic ctor now builds a vector.
+//
+// The single push stays a hand-written @unsafe kernel (`waitall_add_event`) —
+// `.push()` on a RefCell<Vec> guard currently mis-lowers in the transpiler
+// (wraps the element in Vec::from_iter). is_ready / log iterate the borrowed
+// guard directly in DSL.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+struct WaitAll;
+// @unsafe - pushes onto the RefCell<Vec> child list (guard-push kernel).
+void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x);
+#if RUSTYCPP_RUST
+struct WaitAll {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    events_: RefCell<rusty::Vec<rusty::Arc<EventPollable>>>,
+}
 
-  // Default constructor (mako-dev)
-  WaitAll() { event_state_seed(state_); }
-
-  // Constructor for vector of events
-  explicit WaitAll(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
-    event_state_seed(state_);
-    auto guard = events_.borrow_mut();
-    guard->reserve(evs.len());
-    for (const auto& ev : evs) {
-      guard->push(ev);
+impl WaitAll {
+    fn add_event(&self, x: rusty::Arc<EventPollable>) {
+        waitall_add_event(self, x)
     }
-  }
-
-  void add_event() const {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename... Args>
-  void add_event(rusty::Arc<EventPollable> x, Args... rest) const {
-    events_.borrow_mut()->push(std::move(x));
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitAll(rusty::Arc<EventPollable> first, Args... rest) {
-    event_state_seed(state_);
-    add_event(std::move(first), rest...);
-  }
-
-  // Concrete event surface.
-  void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
-  void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
-  bool is_composite_event() const { return true; }
-  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
-  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
-
-  // EventPollable trait surface.
-  bool test() const override { return event_test_impl(*this); }
-  void log() const override {
-    auto guard = events_.borrow();
-    for(size_t i = 0; i < guard->len(); i++){
-      (*guard)[i]->log();
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
     }
-  }
-  bool is_ready() const override {
-    // All events must be ready (or DONE) for WaitAll to be ready.
-    for (const auto& e : *events_.borrow()) {
-      if (!(e->is_ready() || e->status() == EventStatus::DONE)) {
-        return false;
-      }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        true
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for WaitAll {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        for e in self.events_.borrow().iter() {
+            if !((*e).is_ready() || (*e).status() == EventStatus::DONE) {
+                return false;
+            }
+        }
+        true
+    }
+    fn log(&self) {
+        for e in self.events_.borrow().iter() {
+            (*e).log();
+        }
+    }
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_all version=1 rust_sha256=e3f006bce41bf22a6d458abd7d525bf4e4ce1e5963bc3bfb251577961c6ce81c*/
+struct WaitAll;
+
+struct WaitAll : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events_;
+    WaitAll(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), events_(std::move(events__init)) {}
+    WaitAll(WaitAll&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), events_(std::move(other.events_)) {}
+
+
+    void add_event(rusty::Arc<EventPollable> x) const;
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void WaitAll::add_event(rusty::Arc<EventPollable> x) const {
+    waitall_add_event((*this), std::move(x));
+}
+
+void WaitAll::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void WaitAll::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+bool WaitAll::is_composite_event() const {
+    return true;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> WaitAll::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void WaitAll::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool WaitAll::test() const {
+    return event_test_impl((*this));
+}
+
+bool WaitAll::is_ready() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_.borrow()))) {
+        if (!(((rusty::detail::deref_if_pointer_like(e))).is_ready() || (((rusty::detail::deref_if_pointer_like(e))).status() == rusty::clone(EventStatus::DONE)))) {
+            return false;
+        }
     }
     return true;
-  }
-  EventStatus status() const override { return status_.get(); }
-  void set_status(EventStatus s) const override { status_.set(s); }
-  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
-  bool prunable() const override { return prunable_.get(); }
-  void set_prunable(bool v) const override { prunable_.set(v); }
-  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
-    return event_core_upgrade_fiber(*this);
-  }
-};
+}
+
+void WaitAll::log() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_.borrow()))) {
+        ((rusty::detail::deref_if_pointer_like(e))).log();
+    }
+}
+
+EventStatus WaitAll::status() const {
+    return this->status_.get();
+}
+
+void WaitAll::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t WaitAll::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool WaitAll::prunable() const {
+    return this->prunable_.get();
+}
+
+void WaitAll::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> WaitAll::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.wait_all*/
 
 // --- from fiber_impl.h ---------------------------------------------------
 
@@ -2928,6 +3051,43 @@ rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPo
       std::move(events));                                 // events_
   event_state_seed(sp->state_);
   return sp;
+}
+
+// Flattened (S4): the former WaitAll default ctor (empty child list).
+rusty::Arc<WaitAll> waitall_make() {
+  auto sp = rusty::Arc<WaitAll>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),        // status_
+      rusty::thread::current_id(),                              // owner_thread_
+      EventState{},                                             // state_
+      rusty::Cell<bool>::new_(true),                            // prunable_
+      rusty::sync::Weak<EventPollable>(),                       // self_
+      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>()); // events_ (empty)
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// Flattened (S4): the former WaitAll(const Vec&) ctor.
+rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
+  rusty::Vec<rusty::Arc<EventPollable>> events;
+  events.reserve(evs.len());
+  for (const auto& ev : evs) {
+    events.push(ev);
+  }
+  auto sp = rusty::Arc<WaitAll>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));  // events_
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// @unsafe - the single push the DSL add_event forwards here (a `.push()` on a
+// RefCell<Vec> guard currently mis-lowers, so it stays a hand-written kernel).
+void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x) {
+  self.events_.borrow_mut()->push(std::move(x));
 }
 
 int shared_int_event_set(SharedIntEvent& self, const int& v) {

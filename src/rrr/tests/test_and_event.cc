@@ -111,8 +111,10 @@ TEST(AndEventTest, VariadicConstructor) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
-    // Test variadic constructor
-    auto and_event = Reactor::create_sp_event<WaitAll>(event1, event2, event3);
+    // Test vector constructor (the 3-arg variadic ctor was dropped when WaitAll
+    // was flattened to a DSL struct)
+    rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2, event3};
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> completed{false};
     
