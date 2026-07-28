@@ -184,8 +184,9 @@ Known debt inherited from the ports (pre-existing, tracked):
   `PollThreadWorker::jobs_` is `std::set` today).
 
 Gap list from this campaign:
-- **#37 — FIX IMPLEMENTED upstream** (branch
-  `fix-37-namespace-crate-root-items` on shuaimu/rusty-cpp): the
+- **#37 — FIXED upstream, PR open**: [rusty-cpp PR #41](https://github.com/shuaimu/rusty-cpp/pull/41)
+  (branch `fix-37-namespace-crate-root-items`, commit f3328c22 — 1910/1910
+  bin suite + new e2e regression green): the
   `--cxx-namespace` wrap-close now re-qualifies bare `::<item>`
   crate-root references via the boundary-aware
   `requalify_crate_root_symbol` over `declared_item_names` — the same
