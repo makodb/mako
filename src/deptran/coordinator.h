@@ -56,12 +56,22 @@ class Coordinator {
   // was a default-null shared_ptr — Option<Arc> keeps the empty state without
   // eagerly constructing a placeholder QuorumEvent.
   rusty::Option<rusty::Arc<QuorumEvent>> sp_quorum_event;
-  // Assigned from BroadcastDispatch() (which now returns Arc<IntEvent>) before
-  // every use in classic/coordinator.cc via `sp_int_event->...`. Arc has no
-  // null/default state and the Coordinator ctor (coordinator.cc) does not
-  // initialize it, so a default member initializer supplies a throwaway event
-  // that is overwritten before any wait (same pattern as rcc/tx.h).
-  rusty::Arc<IntEvent> sp_int_event{Reactor::create_sp_event<IntEvent>()};
+  // Assigned from BroadcastDispatch() (which returns Arc<IntEvent>) before
+  // every use in classic/coordinator.cc. Option<Arc> keeps the empty state
+  // (mako-dev parity: this was a default-NULL shared_ptr<IntEvent>) instead of
+  // eagerly creating a throwaway event. The eager
+  // `{Reactor::create_sp_event<IntEvent>()}` default initializer this replaces
+  // was a real bug, not just waste: coordinators are constructed on ARBITRARY
+  // submitter threads (PaxosWorker::_Submit), including mako worker threads
+  // running their thread_local destructors (~StringAllocator flushes the log
+  // tail via add_log_to_nc at thread exit) — at which point the submitting
+  // thread's thread_local Reactor is already destroyed, and create_sp_event
+  // wrote into its freed event queue (ASan-verified heap-use-after-free; the
+  // intermittent shard1Replication leader segfaults / empty-BulkPaxosCmd
+  // broadcasts in CI). Construction must not touch the calling thread's
+  // reactor; the event is created on the thread that actually runs the
+  // dispatch (BroadcastDispatch).
+  rusty::Option<rusty::Arc<IntEvent>> sp_int_event{rusty::None};
   int benchmark_;
   // Shared client status for statistics tracking
   rusty::Option<rusty::Arc<ClientStatus>> client_status_;

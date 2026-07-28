@@ -270,13 +270,14 @@ void CoordinatorClassic::DispatchAsync(bool last) {
     n_dispatch_ += cmds.size();
   }
   
-  sp_int_event = commo()->BroadcastDispatch(cmds_by_par, this, txn);
+  sp_int_event = rusty::Option<rusty::Arc<IntEvent>>(
+      commo()->BroadcastDispatch(cmds_by_par, this, txn));
   phase_t phase = phase_;
 
-  sp_int_event->wait_timeout(txn_timeout_);
+  sp_int_event.as_ref().unwrap()->wait_timeout(txn_timeout_);
 
   // Check for timeout
-  if (sp_int_event->status_.get() == EventStatus::TIMEOUT) {
+  if (sp_int_event.as_ref().unwrap()->status_.get() == EventStatus::TIMEOUT) {
     Log_warn("Transaction {}: DispatchAsync timed out after {} us",
              (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
     aborted_ = true;
