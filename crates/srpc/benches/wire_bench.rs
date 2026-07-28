@@ -201,4 +201,29 @@ fn main() {
             }
         },
     });
+
+    run(&Scenario {
+        name: "write 10x 1KB then drain 10x 1KB",
+        iters: 50_000,
+        body: |n| {
+            let b = blob(1024, 0xEE);
+            let mut dst = vec![0u8; 1024];
+            let mut i = 0usize;
+            while i < n {
+                let mut war = WriteArchive::new();
+                let mut k = 0usize;
+                while k < 10 {
+                    war.write_bytes(&b);
+                    k += 1;
+                }
+                let mut rar = ReadArchive::new(war.as_bytes());
+                let mut k = 0usize;
+                while k < 10 {
+                    rar.read_exact(&mut dst).unwrap();
+                    k += 1;
+                }
+                i += 1;
+            }
+        },
+    });
 }

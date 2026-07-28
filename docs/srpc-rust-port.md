@@ -240,13 +240,13 @@ methodology):
 | write+read String(100) | 160.4 | 145.6 | 1.10× faster |
 | 4×i32 + String(100) | 237.2 | 245.1 | ≈ parity (−3%) |
 | write 4KB + read 4KB | 258.9 | 272.1 | ≈ parity (−5%) |
+| write 10×1KB then drain 10×1KB | 1306.5 | 821.7 | **1.6× faster** |
 
-Six of eight at or better than C++; the varint/serde paths are
+Seven of nine at or better than C++; the varint/serde paths are
 2.2–2.5× faster (the C++ side pays SinkProxy virtual dispatch on that
 path). Watch item: the raw-8-byte case (15.1 vs 11.6 ns — Vec
 clear/extend vs the C++ sink's raw path); revisit when the transport
-pump design lands. The C++ table's extra scenario ("write 10×1KB then
-drain") is not yet mirrored. Parity gate: **on track**.
+pump design lands. Parity gate: **on track**.
 
 ## Status log
 
