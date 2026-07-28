@@ -25,11 +25,11 @@ template <class T>
 static T serialize_roundtrip(const T& in) {
     rrr::BufferSink sink;
     {
-        rrr::BinaryWriteArchive w(&sink);
+        rrr::BinaryWriteArchive w(rrr::make_sink_proxy(&sink));
         in.save(w);
     }
     rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
-    rrr::BinaryReadArchive r(&src);
+    rrr::BinaryReadArchive r(rrr::make_source_proxy(&src));
     T out;
     out.load(r);
     return out;
@@ -228,7 +228,17 @@ TEST_F(ShardingPolicyTest, ShardingPolicySetSerialization) {
     p2.default_shard = 2;
     original.set_policy("TABLE_B", p2);
 
-    ShardingPolicySet restored = serialize_roundtrip(original);
+    // ShardingPolicySet is move-only (holds a BTreeMap), so it can't use the
+    // generic serialize_roundtrip (which default-constructs T); round-trip it
+    // inline via the with_shards() factory.
+    ShardingPolicySet restored = ShardingPolicySet::with_shards(0);
+    {
+        rrr::BufferSink sink;
+        { rrr::BinaryWriteArchive w(rrr::make_sink_proxy(&sink)); original.save(w); }
+        rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+        rrr::BinaryReadArchive r(rrr::make_source_proxy(&src));
+        restored.load(r);
+    }
 
     EXPECT_EQ(restored.version, original.version);
     EXPECT_EQ(restored.num_shards, original.num_shards);
@@ -346,19 +356,19 @@ TEST_F(ShardingPolicyTest, BuilderDifferentKeyExtractors) {
     // not a raw pointer -- is_some() + unwrap().get() instead of != nullptr.
     auto field_policy = policy.get_policy("BY_FIELD");
     ASSERT_TRUE(field_policy.is_some());
-    const TableShardingPolicy& fp = field_policy.unwrap().get();
+    const TableShardingPolicy& fp = field_policy.unwrap();
     EXPECT_EQ(fp.key_extractor.kind, KeyExtractorType::FIELD_INDEX);
     EXPECT_EQ(fp.key_extractor.field_index, 1);
 
     auto prefix_policy = policy.get_policy("BY_PREFIX");
     ASSERT_TRUE(prefix_policy.is_some());
-    const TableShardingPolicy& pp = prefix_policy.unwrap().get();
+    const TableShardingPolicy& pp = prefix_policy.unwrap();
     EXPECT_EQ(pp.key_extractor.kind, KeyExtractorType::PREFIX_BYTES);
     EXPECT_EQ(pp.key_extractor.prefix_length, 8);
 
     auto hash_policy = policy.get_policy("BY_HASH");
     ASSERT_TRUE(hash_policy.is_some());
-    const TableShardingPolicy& hp = hash_policy.unwrap().get();
+    const TableShardingPolicy& hp = hash_policy.unwrap();
     EXPECT_EQ(hp.key_extractor.kind, KeyExtractorType::HASH_MOD);
 }
 

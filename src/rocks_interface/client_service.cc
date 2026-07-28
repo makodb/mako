@@ -51,11 +51,11 @@ void MakoClientService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> r
             HandleDelete(std::move(req), sconn);
             break;
         default:
-            Log_warn("MakoClientService: Unknown RPC ID %d", rpc_id);
+            Log_warn("MakoClientService: Unknown RPC ID {}", rpc_id);
             // Send error response
             auto sconn_opt = sconn.upgrade();
             if (sconn_opt.is_some()) {
-                sconn_opt.unwrap()->reply(*req, ENOENT);
+                sconn_opt.unwrap()->reply(*req, ENOENT, [](rrr::BinaryWriteArchive&){});
             }
             break;
     }
@@ -66,7 +66,8 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
                                        rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 client_id;
-    req->m >> client_id;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(client_id, ar);
 
     // Generate unique transaction ID and register with ShardReceiver for tracking
     // Using atomic counter ensures uniqueness per BeginTxn call
@@ -76,15 +77,15 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
 
     rrr::i32 status = ErrorCode::SUCCESS;
 
-    Log_debug("MakoClientService::HandleBeginTxn: client_id=%ld, counter=%u, txn_id=%lu",
+    Log_debug("MakoClientService::HandleBeginTxn: client_id={}, counter={}, txn_id={}",
               client_id, counter, txn_id);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << static_cast<rrr::i64>(txn_id);
-            m << status;
+            rrr::Serialize_::serialize(static_cast<rrr::i64>(txn_id), m);
+            rrr::Serialize_::serialize(status, m);
         });
     }
 }
@@ -94,18 +95,19 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
                                      rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 txn_id;
-    req->m >> txn_id;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(txn_id, ar);
 
     // Commit transaction through ShardReceiver (removes from tracking)
     rrr::i32 status = receiver_->CommitClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleCommit: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleCommit: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << status;
+            rrr::Serialize_::serialize(status, m);
         });
     }
 }
@@ -115,18 +117,19 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
                                        rrr::WeakServerConnection sconn) {
     // Unmarshal request
     rrr::i64 txn_id;
-    req->m >> txn_id;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(txn_id, ar);
 
     // Rollback transaction through ShardReceiver (aborts and removes from tracking)
     rrr::i32 status = receiver_->RollbackClientTransaction(static_cast<uint64_t>(txn_id));
 
-    Log_debug("MakoClientService::HandleRollback: txn_id=%ld, status=%d", txn_id, status);
+    Log_debug("MakoClientService::HandleRollback: txn_id={}, status={}", txn_id, status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << status;
+            rrr::Serialize_::serialize(status, m);
         });
     }
 }
@@ -140,7 +143,11 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
     std::string key;
     std::string value;
 
-    req->m >> txn_id >> table_id >> key >> value;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(txn_id, ar);
+    rrr::Deserialize_::deserialize(table_id, ar);
+    rrr::Deserialize_::deserialize(key, ar);
+    rrr::Deserialize_::deserialize(value, ar);
 
     // Self-contained non-txn put (commits + replicates) — NOT
     // shard_put, which staged + locked a 2PC participant write that
@@ -151,17 +158,17 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
         nontxnPutReqType, static_cast<uint16_t>(table_id),
         key, value, &op_result, nullptr);
     if (status != ErrorCode::SUCCESS) {
-        Log_warn("MakoClientService::HandlePut: status=%d", status);
+        Log_warn("MakoClientService::HandlePut: status={}", status);
     }
 
-    Log_debug("MakoClientService::HandlePut: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandlePut: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << status;
+            rrr::Serialize_::serialize(status, m);
         });
     }
 }
@@ -174,7 +181,10 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
     rrr::i32 table_id;
     std::string key;
 
-    req->m >> txn_id >> table_id >> key;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(txn_id, ar);
+    rrr::Deserialize_::deserialize(table_id, ar);
+    rrr::Deserialize_::deserialize(key, ar);
 
     std::string value;
 
@@ -187,15 +197,15 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
         nontxnGetReqType, static_cast<uint16_t>(table_id),
         key, std::string(), &op_result, &value);
 
-    Log_debug("MakoClientService::HandleGet: txn_id=%ld, table=%d, key_len=%zu, val_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleGet: txn_id={}, table={}, key_len={}, val_len={}, status={}",
               txn_id, table_id, key.length(), value.length(), status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << status;
-            m << value;
+            rrr::Serialize_::serialize(status, m);
+            rrr::Serialize_::serialize(value, m);
         });
     }
 }
@@ -208,7 +218,10 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
     rrr::i32 table_id;
     std::string key;
 
-    req->m >> txn_id >> table_id >> key;
+    rrr::BinaryReadArchive ar(rrr::make_source_proxy(&req->src));
+    rrr::Deserialize_::deserialize(txn_id, ar);
+    rrr::Deserialize_::deserialize(table_id, ar);
+    rrr::Deserialize_::deserialize(key, ar);
 
     // Real non-txn remove — the old path "deleted" by staging an
     // empty-value shard_put that was never committed. Absent key is
@@ -218,17 +231,17 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
         nontxnRemoveReqType, static_cast<uint16_t>(table_id),
         key, std::string(), &op_result, nullptr);
     if (status != ErrorCode::SUCCESS) {
-        Log_warn("MakoClientService::HandleDelete: status=%d", status);
+        Log_warn("MakoClientService::HandleDelete: status={}", status);
     }
 
-    Log_debug("MakoClientService::HandleDelete: txn_id=%ld, table=%d, key_len=%zu, status=%d",
+    Log_debug("MakoClientService::HandleDelete: txn_id={}, table={}, key_len={}, status={}",
               txn_id, table_id, key.length(), status);
 
     // Send response
     auto sconn_opt = sconn.upgrade();
     if (sconn_opt.is_some()) {
         sconn_opt.unwrap()->reply(*req, 0, [&](rrr::BinaryWriteArchive& m) {
-            m << status;
+            rrr::Serialize_::serialize(status, m);
         });
     }
 }

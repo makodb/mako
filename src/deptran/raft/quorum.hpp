@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 
@@ -90,6 +91,21 @@ inline bool raft_quorum_count_below(size_t count, size_t quorum) {
 }
 /*RUSTYCPP:GEN-END id=raft_quorum_count_helpers*/
 
+// @unsafe - Preserve the std::shared_ptr<IntEvent> boundary used by
+// RaftQuorum::on_reply while retaining the upstream reactor's Arc ownership.
+// The custom deleter owns the Arc and therefore never deletes event_ptr
+// directly.
+inline std::shared_ptr<::rrr::IntEvent> raft_quorum_share_ready_event(
+    rusty::Arc<::rrr::IntEvent> event) {
+  ::rrr::IntEvent* event_ptr = event.as_ptr();
+  return std::shared_ptr<::rrr::IntEvent>(
+      event_ptr,
+      [event = std::move(event)](::rrr::IntEvent*) mutable {
+        // Dropping the captured Arc releases this ownership share.
+        (void)event;
+      });
+}
+
 template <typename Reply>
 class RaftQuorum {
  public:
@@ -99,10 +115,8 @@ class RaftQuorum {
   RaftQuorum(int n_total, int n_needed)
       : n_total_(n_total),
         n_needed_(n_needed),
-        // @unsafe { rrr::Reactor::create_sp_event returns std::shared_ptr;
-        //           we keep that shape because the reactor owns the event
-        //           via its all_events_ list. }
-        ready_(::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed)),
+        ready_(raft_quorum_share_ready_event(
+            ::rrr::Reactor::create_sp_event<::rrr::IntEvent>(n_needed))),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.
@@ -134,7 +148,7 @@ class RaftQuorum {
   bool wait_until_quorum(uint64_t timeout_us) {
     // @unsafe { rrr::IntEvent::wait yields the fiber via the reactor;
     //           rrr-boundary call }
-    ready_->wait(timeout_us);
+    ready_->wait_timeout(timeout_us);
     // @unsafe { rrr::IntEvent::is_ready compares value_ >= target_ }
     return ready_->is_ready();
   }

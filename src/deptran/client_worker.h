@@ -45,9 +45,6 @@ class ClientWorker {
   vector<Coordinator*> free_coordinators_{};
   vector<Coordinator*> created_coordinators_{};
   Coordinator* fail_ctrl_coo_{nullptr};  // Jetpack: failover coordinator
-  std::shared_ptr<TimeoutEvent> timeout_event;
-  std::shared_ptr<WaitN> n_event;
-  std::shared_ptr<WaitAll> and_event;
 
   std::atomic<uint32_t> num_txn, success, num_try;
   int all_done_{0};  // Jetpack: completion flag

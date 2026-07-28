@@ -17,6 +17,10 @@
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.connection_metrics;
+import rrr.load_balancer;
 #include "benchmark_service.h"
 
 import std;
@@ -54,7 +58,7 @@ bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
 
 class LoadBalancerStateTest : public ::testing::Test {
 protected:
-    LoadBalancerState state_;
+    LoadBalancerState state_{LoadBalancerState::new_()};
 };
 
 TEST_F(LoadBalancerStateTest, RoundRobinIndexStartsAtZero) {
@@ -107,7 +111,7 @@ TEST_F(LoadBalancerStateTest, ResetResetsIndex) {
 
 // Mock client for testing load balancer selection
 class MockClientForLB {
-    ConnectionMetrics metrics_;
+    ConnectionMetrics metrics_{ConnectionMetrics::new_()};
 
 public:
     MockClientForLB() = default;
@@ -144,7 +148,7 @@ public:
 
 class LoadBalancerTest : public ::testing::Test {
 protected:
-    LoadBalancerState state_;
+    LoadBalancerState state_{LoadBalancerState::new_()};
     std::vector<std::shared_ptr<MockClientForLB>> clients_;
 
     void SetUp() override {
@@ -410,13 +414,13 @@ protected:
 
         // Create server
         auto poll_clone = poll_thread_.as_ref().unwrap().clone();
-        server_ = new Server(rusty::Some(std::move(poll_clone)));
+        server_ = new Server(Server::new_(rusty::Some(std::move(poll_clone))));
 
         // Create service
         auto service_box = rusty::make_box<TestServiceForLB>();
         service_ = service_box.get();
-        server_->reg_service(std::move(service_box));
-        ASSERT_EQ(server_->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+        server_->reg_service_typed(std::move(service_box));
+        ASSERT_EQ(server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
@@ -433,11 +437,11 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigDefaultsToRandom) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToRoundRobin) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get clients multiple times
     std::vector<rusty::Arc<Client>> clients_obtained;
@@ -452,11 +456,11 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToRoundRobin) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get a client
     auto client_opt = pool.get_client(addr_);
@@ -466,8 +470,8 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
     // Make a request to verify it works
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -478,12 +482,12 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFlightLoad) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
     config.min_connections = 2;
     config.max_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     auto busy_client_opt = pool.get_client(addr_);
     ASSERT_TRUE(busy_client_opt.is_some());
@@ -491,8 +495,8 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
 
     // Keep one request in-flight on the selected client.
     auto sleep_result = busy_client->request(
-        benchmark::BenchmarkService::SLEEP,
-        [&](BinaryWriteArchive& m) { m << 0.30; }
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(0.30, m); }
     );
     ASSERT_TRUE(sleep_result.is_ok());
     auto sleep_future = sleep_result.unwrap();
@@ -519,11 +523,11 @@ TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFligh
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
-    PoolConfig config;
+    auto config = PoolConfig::defaults();
     config.load_balancing = LoadBalancingStrategy::LEAST_LATENCY;
     config.min_connections = 2;
 
-    ClientPool pool(poll_thread_.clone(), config);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config);
 
     // Get a client
     auto client_opt = pool.get_client(addr_);
@@ -533,8 +537,8 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
     // Make a request to verify it works
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -545,13 +549,13 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeChanged) {
-    PoolConfig config1;
+    auto config1 = PoolConfig::defaults();
     config1.load_balancing = LoadBalancingStrategy::RANDOM;
 
-    ClientPool pool(poll_thread_.clone(), config1);
+    auto pool = ClientPool::new_(poll_thread_.clone(), config1);
 
     // Change to round-robin
-    PoolConfig config2;
+    auto config2 = PoolConfig::defaults();
     config2.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
     pool.set_pool_config(config2);
 

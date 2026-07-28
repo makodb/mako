@@ -4,6 +4,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <rusty/option.hpp>
 #include "../rrr.hpp"
 
 namespace rrr {
@@ -15,7 +16,13 @@ protected:
     }
 
     void TearDown() override {
-        // Clean up
+        // Drop the thread-local reactor + any running-fiber slot between
+        // tests so each test gets a fresh scheduler. Without this, fibers
+        // suspended in one test (e.g. after a yield/sleep) stay registered
+        // in the next test's `reactor->loop()` call and block it forever.
+        // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
+        *rrr::sp_running_fiber_th_.borrow_mut() = rusty::None;
+        rrr::sp_reactor_th_ = rusty::None;
     }
 };
 
@@ -36,11 +43,6 @@ TEST_F(FiberTest, WaitAllIsDefined) {
 TEST_F(FiberTest, WaitAnyIsDefined) {
     // Verify WaitAny class is defined and usable
     static_assert(sizeof(WaitAny) > 0, "WaitAny must be a defined class");
-}
-
-TEST_F(FiberTest, WaitNIsDefined) {
-    // Verify WaitN class is defined and usable
-    static_assert(sizeof(WaitN) > 0, "WaitN must be a defined class");
 }
 
 // =============================================================================
@@ -240,7 +242,7 @@ TEST_F(FiberTest, SleepSConversion) {
     // Note: Even sleep_s(0) creates a TimeoutEvent that may yield
 
     // Verify the conversion factor is correct: 1 second = 1,000,000 us
-    static_assert(Time::RRR_USEC_PER_SEC == 1000000,
+    static_assert(rrr::RRR_USEC_PER_SEC == 1000000,
                   "1 second should be 1,000,000 microseconds");
 
     // Just verify the function exists and is callable
@@ -443,7 +445,7 @@ TEST_F(FiberTest, FutureWithVectorType) {
     auto future = promise.get_future();
     promise.set_value({1, 2, 3, 4, 5});
 
-    auto& result = future.get();
+    auto result = future.get();
     EXPECT_EQ(5u, result.size());
     EXPECT_EQ(1, result[0]);
     EXPECT_EQ(5, result[4]);

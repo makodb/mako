@@ -12,7 +12,7 @@
 //   Log_debug: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
 //   Config::GetConfig: [safe, () -> Config*],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   std::make_shared: [safe, (...) -> shared_ptr<T>],
 //   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>]
 // }

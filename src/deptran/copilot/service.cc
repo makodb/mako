@@ -65,8 +65,8 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
   gettimeofday(&tp, NULL);
-  Log_info("[1+] [tx=%d] on FastAccept %.3f",
-           marshallable_cast<TpcBatchCommand>(cmd)->cmds_.at(0)->tx_id_,
+  Log_info("[1+] [tx={}] on FastAccept {:.3f}",
+           marshallable_cast<TpcBatchCommand>(cmd).unwrap()->cmds_.at(0)->tx_id_,
            tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
   sched_->OnFastAccept(is_pilot,

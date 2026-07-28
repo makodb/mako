@@ -10,7 +10,6 @@
 #include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 
 namespace janus {
 
@@ -25,7 +24,9 @@ class RaftFrame : public Frame {
   // @unsafe - test-only global coordination state; keep hand-written while the
   // lab coroutine harness exists.
   static std::mutex raft_test_mutex_;
-  static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
+  // raft_test_fiber_ demoted to a file-scope static in frame.cc because
+  // rusty::Rc is now module-only (no header). All references live in
+  // frame.cc; nothing outside this TU consumes the field.
   static uint16_t n_replicas_;
   // @unsafe - borrowed frame registry for RAFT_TEST_CORO; entries are not owned
   // by this map.

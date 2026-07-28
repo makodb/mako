@@ -214,7 +214,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
 
 Result<RaftService::RpcEmptyAppendEntriesResponse, rrr::i32>
 RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
-  Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader %d", req.leaderSiteId);
+  Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
   bool has_server = svr != nullptr;
@@ -274,7 +274,7 @@ RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
 
 Result<RaftService::RpcNotifyRestartResponse, rrr::i32>
 RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
-  Log_info("[NOTIFY-RESTART] Received restart notification from site %d",
+  Log_info("[NOTIFY-RESTART] Received restart notification from site {}",
            req.restartedSiteId);
   RpcNotifyRestartResponse resp{};
   RaftServer* svr = GetServer();
@@ -289,11 +289,11 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
     bool success = commo->ReconnectToSite(req.restartedSiteId,
                                           svr->partition_id_);
     resp.acknowledged = raft_service_notify_ack_from_reconnect(success);
-    Log_info("[NOTIFY-RESTART] Reconnected to site %d: %s",
+    Log_info("[NOTIFY-RESTART] Reconnected to site {}: {}",
              req.restartedSiteId, success ? "success" : "failed");
   } else {
     resp.acknowledged = raft_service_default_acknowledged();
-    Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site %d",
+    Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site {}",
              req.restartedSiteId);
   }
   // Invalidate speculative state for the peer that just restarted.
@@ -387,9 +387,9 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
     // Publish a borrowed server pointer for future RPC handlers. nullptr is
     // intentional during Kill(); handlers then return disconnected defaults.
     it->second->state_core_.set_server(new_svr);
-    Log_info("[RAFT-SERVICE] UpdateServer: site %d -> %p", site_id, new_svr);
+    Log_info("[RAFT-SERVICE] UpdateServer: site {} -> {}", site_id, (void*)new_svr);
   } else {
-    Log_warn("[RAFT-SERVICE] UpdateServer: site %d not found in registry", site_id);
+    Log_warn("[RAFT-SERVICE] UpdateServer: site {} not found in registry", site_id);
   }
 }
 

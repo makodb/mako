@@ -84,7 +84,7 @@ impl ShardingPolicyCache {
         if (*guard).is_none() { return -1; }
         let found = (*guard).as_ref().unwrap().get_policy(table_name);
         if found.is_none() { return -1; }
-        let tp = found.unwrap().get();
+        let tp = found.unwrap();
         let ext: KeyExtractor = tp.key_extractor;
         let key_value: i64 = ShardingPolicyCache::extract_key_value(ext, key_fields);
         if key_value < 0 { return tp.default_shard; }
@@ -158,7 +158,7 @@ impl ShardingPolicyCache {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=b4693a01261a565fbdb3c2b3ece1d3378f6aa798c2782af4d0a7ec31f6152bba*/
+/*RUSTYCPP:GEN-BEGIN id=sharding_policy_cache.1 version=1 rust_sha256=c06d3120e7350e30f0dd86e8ffd7b210bcfe43f4a97b2fdffe56fcd164714083*/
 struct ShardingPolicyCache;
 
 struct ShardingPolicyCache {
@@ -180,11 +180,11 @@ struct ShardingPolicyCache {
 };
 
 
-inline ShardingPolicyCache ShardingPolicyCache::new_() {
+ShardingPolicyCache ShardingPolicyCache::new_() {
     return ShardingPolicyCache{.policy = rusty::Mutex<rusty::Option<ShardingPolicySet>>::default_(), .cached_version = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .initialized = rusty::Cell<bool>::new_(false)};
 }
 
-inline void ShardingPolicyCache::set_policy(ShardingPolicySet policy) {
+void ShardingPolicyCache::set_policy(ShardingPolicySet policy) {
     uint64_t version = policy.version;
     auto guard = ((*this)).policy.lock().unwrap();
     rusty::detail::deref_if_pointer_like(guard) = rusty::Option<ShardingPolicySet>(std::move(policy));
@@ -192,23 +192,23 @@ inline void ShardingPolicyCache::set_policy(ShardingPolicySet policy) {
     ((*this)).initialized.set(true);
 }
 
-inline bool ShardingPolicyCache::is_initialized() const {
+bool ShardingPolicyCache::is_initialized() const {
     return ((*this)).initialized.get();
 }
 
-inline void ShardingPolicyCache::clear() {
+void ShardingPolicyCache::clear() {
     auto guard = ((*this)).policy.lock().unwrap();
     rusty::detail::deref_if_pointer_like(guard) = rusty::None;
     ((*this)).cached_version.set(0);
     ((*this)).initialized.set(false);
 }
 
-inline uint64_t ShardingPolicyCache::get_version() const {
+uint64_t ShardingPolicyCache::get_version() const {
     return ((*this)).cached_version.get();
 }
 
-inline int32_t ShardingPolicyCache::get_shard_for_key(const std::string& table_name, int64_t key_value) const {
-    if (!((*this)).initialized.get()) {
+int32_t ShardingPolicyCache::get_shard_for_key(const std::string& table_name, int64_t key_value) const {
+    if (rusty::detail::rust_not(((*this)).initialized.get())) {
         return -1;
     }
     const auto guard = ((*this)).policy.lock().unwrap();
@@ -218,8 +218,8 @@ inline int32_t ShardingPolicyCache::get_shard_for_key(const std::string& table_n
     return ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap().get_shard_for_key(table_name, std::move(key_value));
 }
 
-inline int32_t ShardingPolicyCache::get_shard_for_composite_key(const std::string& table_name, const std::vector<int64_t>& key_fields) const {
-    if (!((*this)).initialized.get()) {
+int32_t ShardingPolicyCache::get_shard_for_composite_key(const std::string& table_name, const std::vector<int64_t>& key_fields) const {
+    if (rusty::detail::rust_not(((*this)).initialized.get())) {
         return -1;
     }
     const auto guard = ((*this)).policy.lock().unwrap();
@@ -230,17 +230,17 @@ inline int32_t ShardingPolicyCache::get_shard_for_composite_key(const std::strin
     if (found.is_none()) {
         return -1;
     }
-    const auto tp = found.unwrap().get();
-    const KeyExtractor ext = tp.key_extractor;
+    auto tp = found.unwrap();
+    const KeyExtractor ext = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key_extractor); }) { return (__r.key_extractor); } else if constexpr (requires { (__r.key_extractor_field); }) { return (__r.key_extractor_field); } else if constexpr (requires { ((*__r).key_extractor); }) { return ((*__r).key_extractor); } else { return ((*__r).key_extractor_field); } }(tp);
     const int64_t key_value = ShardingPolicyCache::extract_key_value(ext, key_fields);
     if (rusty::detail::deref_if_pointer_like(key_value) < 0) {
-        return tp.default_shard;
+        return [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.default_shard); }) { return (__r.default_shard); } else if constexpr (requires { (__r.default_shard_field); }) { return (__r.default_shard_field); } else if constexpr (requires { ((*__r).default_shard); }) { return ((*__r).default_shard); } else { return ((*__r).default_shard_field); } }(tp);
     }
     return tp.get_shard(std::move(key_value));
 }
 
-inline bool ShardingPolicyCache::has_policy_for_table(const std::string& table_name) const {
-    if (!((*this)).initialized.get()) {
+bool ShardingPolicyCache::has_policy_for_table(const std::string& table_name) const {
+    if (rusty::detail::rust_not(((*this)).initialized.get())) {
         return false;
     }
     const auto guard = ((*this)).policy.lock().unwrap();
@@ -250,8 +250,8 @@ inline bool ShardingPolicyCache::has_policy_for_table(const std::string& table_n
     return ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap().has_policy(table_name);
 }
 
-inline int32_t ShardingPolicyCache::get_num_shards() const {
-    if (!((*this)).initialized.get()) {
+int32_t ShardingPolicyCache::get_num_shards() const {
+    if (rusty::detail::rust_not(((*this)).initialized.get())) {
         return static_cast<int32_t>(0);
     }
     const auto guard = ((*this)).policy.lock().unwrap();
@@ -261,7 +261,7 @@ inline int32_t ShardingPolicyCache::get_num_shards() const {
     return ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap().num_shards;
 }
 
-inline int64_t ShardingPolicyCache::extract_key_value(const KeyExtractor& extractor, const std::vector<int64_t>& key_fields) {
+int64_t ShardingPolicyCache::extract_key_value(const KeyExtractor& extractor, const std::vector<int64_t>& key_fields) {
     if (rusty::detail::deref_if_pointer_like((extractor).kind) == rusty::clone(KeyExtractorType::FIELD_INDEX)) {
         const int32_t field_index = (extractor).field_index;
         if ((rusty::detail::deref_if_pointer_like(field_index) < 0) || (((static_cast<size_t>(field_index))) >= ((key_fields)).size())) {
@@ -285,7 +285,7 @@ inline int64_t ShardingPolicyCache::extract_key_value(const KeyExtractor& extrac
     return -1;
 }
 
-inline int64_t ShardingPolicyCache::extract_key_from_bytes(const KeyExtractor& extractor, const std::string& key) {
+int64_t ShardingPolicyCache::extract_key_from_bytes(const KeyExtractor& extractor, const std::string& key) {
     if (rusty::detail::deref_if_pointer_like((extractor).kind) == rusty::clone(KeyExtractorType::PREFIX_BYTES)) {
         const int32_t prefix_len = (extractor).prefix_length;
         if ((rusty::detail::deref_if_pointer_like(prefix_len) <= 0) || (((static_cast<size_t>(prefix_len))) > ((key)).size())) {

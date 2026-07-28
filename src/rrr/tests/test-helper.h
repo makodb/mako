@@ -10,7 +10,7 @@
 
 template <class T>
 void report_qps(const char* action, T n_ops, double duration) {
-    base::Log::info("%s: %d ops, took %.2lf sec, qps=%s",
+    base::Log_info("{}: {} ops, took {:.2f} sec, qps={}",
         action, n_ops, duration, base::format_decimal(T(n_ops / duration)).c_str());
 }
 
@@ -47,7 +47,7 @@ static inline void print_row(const mdb::Row* r) {
     for (auto& col : *sch) {
         ostr << " " << r->get_column(col.id);
     }
-    base::Log::info("row:%s", ostr.str().c_str());
+    base::Log_info("row:{}", ostr.str().c_str());
 }
 
 static inline void print_row(mdb::Txn* txn, mdb::Row* r) {
@@ -61,7 +61,7 @@ static inline void print_row(mdb::Txn* txn, mdb::Row* r) {
             ostr << " (read failure)";
         }
     }
-    base::Log::info("row:%s", ostr.str().c_str());
+    base::Log_info("row:{}", ostr.str().c_str());
 }
 
 template <class EnumeratorOfRows>

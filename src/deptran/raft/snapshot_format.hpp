@@ -587,7 +587,7 @@ inline bool snapshot_deserialize_cpp(const uint8_t* input,
   }
 
   if (input_size < sizeof(SnapshotHeader)) {
-    Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small (%zu < %zu)",
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small ({} < {})",
               input_size, sizeof(SnapshotHeader));
     return false;
   }
@@ -596,18 +596,18 @@ inline bool snapshot_deserialize_cpp(const uint8_t* input,
   std::memcpy(&header, input, sizeof(SnapshotHeader));
 
   if (!snapshot_magic_valid(header.magic)) {
-    Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x%08X (expected 0x%08X)",
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
               header.magic, 0x504E4153);
     return false;
   }
   if (!snapshot_version_valid(header.version)) {
-    Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version %u", header.version);
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
     return false;
   }
 
   uint32_t expected_header_crc = snapshot_crc32(input, 44);
   if (header.header_crc != expected_header_crc) {
-    Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x%08X != 0x%08X)",
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x{:08X} != 0x{:08X})",
               header.header_crc, expected_header_crc);
     return false;
   }
@@ -624,7 +624,7 @@ inline bool snapshot_deserialize_cpp(const uint8_t* input,
   size_t expected_size = snapshot_expected_serialized_size(
       static_cast<size_t>(header.data_size), checksum_size);
   if (input_size < expected_size) {
-    Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated (%zu < %zu)",
+    Log_error("[SNAPSHOT-FORMAT] Deserialize: input truncated ({} < {})",
               input_size, expected_size);
     return false;
   }
@@ -635,7 +635,7 @@ inline bool snapshot_deserialize_cpp(const uint8_t* input,
     std::memcpy(&expected_crc, data_ptr + header.data_size, 4);
     uint32_t actual_crc = snapshot_crc32(data_ptr, header.data_size);
     if (expected_crc != actual_crc) {
-      Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x%08X != 0x%08X)",
+      Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
                 expected_crc, actual_crc);
       return false;
     }

@@ -17,7 +17,7 @@
 //   Log_warn: [safe, (...) -> void],
 //   Log_error: [safe, (...) -> void],
 //   verify: [safe, (bool) -> void],
-//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Reactor::create_sp_event: [safe, () -> rusty::Arc<IntEvent>],
 //   Config::GetConfig: [safe, () -> Config*],
 //   MarshallDeputy: [safe, (...) -> janus::Command],
 //   Future::safe_release: [safe, (Future*) -> void],
@@ -109,16 +109,16 @@ inline bool commo_quorum_should_advance_term(uint64_t term, uint64_t highest_ter
 }
 /*RUSTYCPP:GEN-END id=commo.quorum_decisions*/
 
-// @unsafe - inherits from non-@interface base QuorumEvent and tracks voters
-// behind a std::mutex; keep hand-written until the event hierarchy migrates.
-class RaftVoteQuorumEvent: public QuorumEvent {
+// @unsafe - owns the flattened QuorumEvent through the upstream composition
+// wrapper and tracks voters behind a std::mutex.
+class RaftVoteQuorumEvent: public QuorumEventWrapper {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
   std::set<siteid_t> spec_voters_;
   std::mutex voters_mtx_;
 
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   // @safe
   bool HasAcceptedValue() {
     return false;
@@ -136,9 +136,9 @@ class RaftVoteQuorumEvent: public QuorumEvent {
       }
     } else {
       vote_no();
-      if (commo_quorum_should_advance_term(term, highest_term_))
+      if (commo_quorum_should_advance_term(term, q().highest_term_.get()))
       {
-        highest_term_ = term ;
+        q().highest_term_.set(term);
       }
     }
   }
@@ -150,7 +150,7 @@ class RaftVoteQuorumEvent: public QuorumEvent {
 
   // @safe
   int64_t Term() {
-    return highest_term_;
+    return q().highest_term_.get();
   }
 
   // @unsafe - Get the set of sites that voted yes (memory votes)

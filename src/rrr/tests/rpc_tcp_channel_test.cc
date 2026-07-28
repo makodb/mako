@@ -40,6 +40,10 @@
 
 #include "../rrr.hpp"
 
+// PollMode (READ/WRITE) lives in rrr.epoll_wrapper, which the trimmed
+// consumer umbrella no longer re-exports (08b68144) — import directly.
+import rrr.epoll_wrapper;
+
 import std;
 
 namespace rrr {
@@ -179,7 +183,7 @@ TEST_F(TcpConnectionTest, MultipleSendFramesCoalesceIntoOneWrite) {
     ASSERT_EQ(n, static_cast<ssize_t>(4 + sizeof(a) + 4 + sizeof(b)));
 
     // Decode both frames out of the coalesced buffer.
-    FrameStreamReader reader;
+    auto reader = FrameStreamReader::new_();
     reader.append(got.data(), got.size());
     FrameView v{};
     ASSERT_EQ(reader.next_frame(v), FrameDecodeStatus::Complete);

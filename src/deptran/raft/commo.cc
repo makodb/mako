@@ -26,6 +26,25 @@ import std;
 
 namespace janus
 {
+  namespace {
+
+  // @unsafe - Compatibility bridge for the Raft Rust-DSL response shape.
+  // Reactor registration is owned by an Arc after the upstream event
+  // migration, while AppendEntriesResponse intentionally retains the branch's
+  // shared_ptr<IntEvent> API. The shared_ptr's deleter owns the Arc and never
+  // deletes the borrowed raw pointer directly.
+  std::shared_ptr<IntEvent> commo_share_int_event(
+      rusty::Arc<IntEvent> event) {
+    IntEvent* event_ptr = event.as_ptr();
+    return std::shared_ptr<IntEvent>(
+        event_ptr,
+        [event = std::move(event)](IntEvent*) mutable {
+          // Dropping the captured Arc releases this ownership share.
+          (void)event;
+        });
+  }
+
+  }  // namespace
 
   // @safe
   RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll)
@@ -57,7 +76,8 @@ namespace janus
     // and signals response->event when the legacy Future completes.
     auto response = std::make_shared<AppendEntriesResponse>(
         AppendEntriesResponse::defaults());
-    response->event = Reactor::create_sp_event<IntEvent>();
+    response->event = commo_share_int_event(
+        Reactor::create_sp_event<IntEvent>());
 
     auto proxies = rpc_par_proxies_[par_id];
     // vector<rusty::Arc<Future>> fus;
@@ -66,7 +86,8 @@ namespace janus
     {
       if (!commo_proxy_is_target(p.first, site_id))
         continue;
-      Log_debug("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
+      Log_debug("[RPC-SEND] Sending AppendEntries to site {} via proxy {}",
+                site_id, static_cast<void*>(p.second));
       auto follower_id = p.first;
       RaftProxy *proxy;
       // @unsafe
@@ -81,16 +102,16 @@ namespace janus
         if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
-          Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
+          Log_debug("[APPEND_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
           return;
         }
         uint64_t status = 0;
         uint64_t term = 0;
         uint64_t last_log_index = 0;
         uint64_t ack_type = 0;
-        fu->get_reply() >> status >> term >> last_log_index >> ack_type;
+        rrr::deserialize_from(fu->get_reply(), status, term, last_log_index, ack_type);
         response->apply_reply(status, term, last_log_index, ack_type);
-        Log_debug("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
+        Log_debug("[APPEND_RPC] Success response from site {}: status={}, term={}, lastLogIndex={}, ackType={}",
                   site_id, response->status, response->term, response->last_log_index, response->ack_type);
         response->event->set(1);
       };
@@ -98,7 +119,7 @@ namespace janus
       if (commo_should_send_empty_append_entries(cmd.has_value()))
       {
         // send a heartbeat AppendEntries
-        Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld", site_id, prevLogIndex);
+        Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={}", site_id, prevLogIndex);
         RaftProxy::RpcEmptyAppendEntriesRequest req{};
         req.slot = slot_id;
         req.ballot = ballot;
@@ -120,7 +141,7 @@ namespace janus
         // send a regular AppendEntries
         verify(cmd.has_value());
 
-        Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
+        Log_debug("AppendEntries to site {} for log index {}", site_id, prevLogIndex + 1);
         RaftProxy::RpcAppendEntriesRequest req{};
         req.slot = slot_id;
         req.ballot = ballot;
@@ -183,17 +204,17 @@ namespace janus
         if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
-          Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
+          Log_debug("[APPEND_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
           return;
         }
         uint64_t ok = 0;
         uint64_t follower_term = 0;
         uint64_t follower_last_log_index = 0;
         uint64_t follower_ack_type = 0;
-        fu->get_reply() >> ok;
-        fu->get_reply() >> follower_term;
-        fu->get_reply() >> follower_last_log_index;
-        fu->get_reply() >> follower_ack_type;
+        rrr::deserialize_from(fu->get_reply(), ok);
+        rrr::deserialize_from(fu->get_reply(), follower_term);
+        rrr::deserialize_from(fu->get_reply(), follower_last_log_index);
+        rrr::deserialize_from(fu->get_reply(), follower_ack_type);
         // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
         // only set res->done if it's not a lost RPC
         res->apply_reply(ok, follower_term, follower_last_log_index,
@@ -203,7 +224,7 @@ namespace janus
       if (commo_should_send_empty_append_entries(cmd.has_value()))
       {
         // send a heartbeat AppendEntries
-        Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld trigger_election=%d",
+        Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={} trigger_election={}",
                   site_id, prevLogIndex, trigger_election_now);
         RaftProxy::RpcEmptyAppendEntriesRequest req{};
         req.slot = slot_id;
@@ -226,7 +247,7 @@ namespace janus
         // send a regular AppendEntries
         verify(cmd.has_value());
 
-        Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
+        Log_debug("AppendEntries to site {} for log index {}", site_id, prevLogIndex + 1);
         RaftProxy::RpcAppendEntriesRequest req{};
         req.slot = slot_id;
         req.ballot = ballot;
@@ -285,13 +306,13 @@ namespace janus
         if (commo_future_failed(fu->get_error_code()))
         {
           // Don't reconnect here - rely on NotifyRestart mechanism instead
-          Log_debug("[VOTE_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
+          Log_debug("[VOTE_RPC] Error response from site {}, error_code={}", site_id, fu->get_error_code());
           return;
         }
         ballot_t term = 0;
         bool_t vote = false;
-        fu->get_reply() >> term;
-        fu->get_reply() >> vote;
+        rrr::deserialize_from(fu->get_reply(), term);
+        rrr::deserialize_from(fu->get_reply(), vote);
         // SPECULATIVE VOTING: Track which site voted yes
         e->FeedResponse(vote, term, site_id);
       };
@@ -359,7 +380,7 @@ namespace janus
 
       fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu) {
         if (commo_future_failed(fu->get_error_code())) {
-          Log_debug("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - network error (code=%d)",
+          Log_debug("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - network error (code={})",
                     fu->get_error_code());
 
           if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
@@ -371,10 +392,10 @@ namespace janus
         uint64_t follower_term = 0;
         bool_t success = false;
 
-        fu->get_reply() >> follower_term;
-        fu->get_reply() >> success;
+        rrr::deserialize_from(fu->get_reply(), follower_term);
+        rrr::deserialize_from(fu->get_reply(), success);
 
-        Log_info("[TIMEOUT-NOW-RPC] TimeoutNow RPC completed: success=%d, follower_term=%lu",
+        Log_info("[TIMEOUT-NOW-RPC] TimeoutNow RPC completed: success={}, follower_term={}",
                 (int)success, follower_term);
 
         if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
@@ -382,7 +403,7 @@ namespace janus
         }
       };
 
-      Log_info("[TIMEOUT-NOW-RPC] Sending TimeoutNow to site %d (term=%lu)",
+      Log_info("[TIMEOUT-NOW-RPC] Sending TimeoutNow to site {} (term={})",
               site_id, leader_term);
 
       RaftProxy::RpcTimeoutNowRequest req{};
@@ -399,7 +420,7 @@ namespace janus
       return;
     }
 
-    Log_warn("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - site %d not found in proxies",
+    Log_warn("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - site {} not found in proxies",
             site_id);
 
     if (commo_callback_is_set(static_cast<bool>(*callback_ptr))) {
@@ -445,7 +466,7 @@ namespace janus
 
       if (proxy == nullptr)
       {
-        Log_warn("[SPEC-RAFT] SendVoteDurable: No proxy found for candidate %d", candidate_id);
+        Log_warn("[SPEC-RAFT] SendVoteDurable: No proxy found for candidate {}", candidate_id);
         return;
       }
       FutureAttr fuattr;
@@ -453,16 +474,16 @@ namespace janus
       {
         if (commo_future_failed(fu->get_error_code()))
         {
-          Log_debug("[SPEC-RAFT] VoteDurable RPC to %d failed with error %d",
+          Log_debug("[SPEC-RAFT] VoteDurable RPC to {} failed with error {}",
                     candidate_id, fu->get_error_code());
           return;
         }
         bool_t ack = false;
-        fu->get_reply() >> ack;
-        Log_debug("[SPEC-RAFT] VoteDurable RPC to %d completed, ack=%d", candidate_id, ack);
+        rrr::deserialize_from(fu->get_reply(), ack);
+        Log_debug("[SPEC-RAFT] VoteDurable RPC to {} completed, ack={}", candidate_id, ack);
       };
 
-      Log_info("[SPEC-RAFT] Sending VoteDurable to candidate %d (term=%lu, voter=%d)",
+      Log_info("[SPEC-RAFT] Sending VoteDurable to candidate {} (term={}, voter={})",
                candidate_id, term, voter_id);
 
       RaftProxy::RpcVoteDurableRequest req{};
@@ -512,7 +533,7 @@ namespace janus
 
       if (proxy == nullptr)
       {
-        Log_warn("[SPEC-RAFT] SendAppendEntriesDurable: No proxy found for leader %d", leader_id);
+        Log_warn("[SPEC-RAFT] SendAppendEntriesDurable: No proxy found for leader {}", leader_id);
         return;
       }
 
@@ -523,16 +544,16 @@ namespace janus
       {
         if (commo_future_failed(fu->get_error_code()))
         {
-          Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d failed with error %d",
+          Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} failed with error {}",
                     leader_id, fu->get_error_code());
           return;
         }
         bool_t ack = false;
-        fu->get_reply() >> ack;
-        Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d completed, ack=%d", leader_id, ack);
+        rrr::deserialize_from(fu->get_reply(), ack);
+        Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to {} completed, ack={}", leader_id, ack);
       };
 
-      Log_info("[SPEC-RAFT] Sending AppendEntriesDurable to leader %d (term=%lu, follower=%d, lastIdx=%lu)",
+      Log_info("[SPEC-RAFT] Sending AppendEntriesDurable to leader {} (term={}, follower={}, lastIdx={})",
                leader_id, term, follower_id, lastLogIndex);
 
       RaftProxy::RpcAppendEntriesDurableRequest req{};
@@ -573,7 +594,7 @@ namespace janus
       identity_core_.set_self_site_id(self_id);
       identity_core_.set_self_par_id(par_id);
 
-      Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site %d to %zu peers",
+      Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site {} to {} peers",
                self_id, proxies.size());
 
       // Initialize all peers as PENDING
@@ -611,14 +632,14 @@ namespace janus
           if (commo_future_failed(fu->get_error_code()))
           {
             // Error/timeout - keep PENDING for retry
-            Log_warn("[NOTIFY-RESTART] Failed to notify site %d - error code %d (will retry)",
+            Log_warn("[NOTIFY-RESTART] Failed to notify site {} - error code {} (will retry)",
                      site_id, fu->get_error_code());
             // Status remains PENDING (already set)
             return;
           }
 
           bool_t acknowledged = false;
-          fu->get_reply() >> acknowledged;
+          rrr::deserialize_from(fu->get_reply(), acknowledged);
 
           {
             std::lock_guard<std::mutex> lock(notify_restart_mtx_);
@@ -626,18 +647,18 @@ namespace janus
             {
               // Peer reconnected to us
               notify_restart_statuses()[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
-              Log_info("[NOTIFY-RESTART] Site %d ACKNOWLEDGED - reconnected to us", site_id);
+              Log_info("[NOTIFY-RESTART] Site {} ACKNOWLEDGED - reconnected to us", site_id);
             }
             else
             {
               // Peer responded "I'm down" - no retry needed
               notify_restart_statuses()[site_id] = NotifyRestartStatus::DOWN;
-              Log_info("[NOTIFY-RESTART] Site %d is DOWN - will reconnect when it restarts", site_id);
+              Log_info("[NOTIFY-RESTART] Site {} is DOWN - will reconnect when it restarts", site_id);
             }
           }
         };
 
-        Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site %d", site_id);
+        Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site {}", site_id);
         RaftProxy::RpcNotifyRestartRequest req{};
         req.restartedSiteId = self_id;
         auto f = proxy->async_NotifyRestart(req, fuattr);
@@ -675,7 +696,7 @@ namespace janus
         return;
       }
 
-      Log_info("[NOTIFY-RESTART] Retrying NotifyRestart for %zu pending sites", pending_sites.size());
+      Log_info("[NOTIFY-RESTART] Retrying NotifyRestart for {} pending sites", pending_sites.size());
 
       auto proxies = rpc_par_proxies_[identity_core_.self_par_id()];
 
@@ -694,7 +715,7 @@ namespace janus
 
         if (proxy == nullptr)
         {
-          Log_warn("[NOTIFY-RESTART] No proxy found for site %d", site_id);
+          Log_warn("[NOTIFY-RESTART] No proxy found for site {}", site_id);
           continue;
         }
 
@@ -705,30 +726,30 @@ namespace janus
         {
           if (commo_future_failed(fu->get_error_code()))
           {
-            Log_warn("[NOTIFY-RESTART] Retry failed for site %d - error code %d (will retry again)",
+            Log_warn("[NOTIFY-RESTART] Retry failed for site {} - error code {} (will retry again)",
                      site_id, fu->get_error_code());
             return;
           }
 
           bool_t acknowledged = false;
-          fu->get_reply() >> acknowledged;
+          rrr::deserialize_from(fu->get_reply(), acknowledged);
 
           {
             std::lock_guard<std::mutex> lock(notify_restart_mtx_);
             if (acknowledged)
             {
               notify_restart_statuses()[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
-              Log_info("[NOTIFY-RESTART] Retry: Site %d ACKNOWLEDGED", site_id);
+              Log_info("[NOTIFY-RESTART] Retry: Site {} ACKNOWLEDGED", site_id);
             }
             else
             {
               notify_restart_statuses()[site_id] = NotifyRestartStatus::DOWN;
-              Log_info("[NOTIFY-RESTART] Retry: Site %d is DOWN", site_id);
+              Log_info("[NOTIFY-RESTART] Retry: Site {} is DOWN", site_id);
             }
           }
         };
 
-        Log_info("[NOTIFY-RESTART] Retrying NotifyRestart to site %d", site_id);
+        Log_info("[NOTIFY-RESTART] Retrying NotifyRestart to site {}", site_id);
         RaftProxy::RpcNotifyRestartRequest req{};
         req.restartedSiteId = identity_core_.self_site_id();
         auto f = proxy->async_NotifyRestart(req, fuattr);
@@ -824,7 +845,7 @@ namespace janus
         {
           if (commo_future_failed(fu->get_error_code()))
           {
-            Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site %d - error code %d",
+            Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot to site {} - error code {}",
                       site_id, fu->get_error_code());
             if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
             {
@@ -834,9 +855,9 @@ namespace janus
           }
 
           uint64_t follower_term = 0;
-          fu->get_reply() >> follower_term;
+          rrr::deserialize_from(fu->get_reply(), follower_term);
 
-          Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site %d: term=%lu",
+          Log_info("[INSTALL-SNAPSHOT-RPC] InstallSnapshot response from site {}: term={}",
                    site_id, follower_term);
 
           if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
@@ -845,7 +866,7 @@ namespace janus
           }
         };
 
-        Log_info("[INSTALL-SNAPSHOT-RPC] Sending InstallSnapshot to site %d (term=%lu, lastIdx=%lu, lastTerm=%lu, dataSize=%zu)",
+        Log_info("[INSTALL-SNAPSHOT-RPC] Sending InstallSnapshot to site {} (term={}, lastIdx={}, lastTerm={}, dataSize={})",
                  site_id, term, last_included_index, last_included_term, data.size());
 
         RaftProxy::RpcInstallSnapshotRequest req{};
@@ -865,7 +886,7 @@ namespace janus
       }
 
       // Target not found in proxy list
-      Log_warn("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot - site %d not found in proxies",
+      Log_warn("[INSTALL-SNAPSHOT-RPC] Failed to send InstallSnapshot - site {} not found in proxies",
                site_id);
       if (commo_callback_is_set(static_cast<bool>(*callback_ptr)))
       {
@@ -924,7 +945,7 @@ namespace janus
         {
           if (commo_future_failed(fu->get_error_code()))
           {
-            Log_debug("[APPEND_RPC_CB] Error from site %d code=%d",
+            Log_debug("[APPEND_RPC_CB] Error from site {} code={}",
                       follower_id, fu->get_error_code());
             return;
           }
@@ -932,10 +953,10 @@ namespace janus
           uint64_t term = 0;
           uint64_t last_log_index = 0;
           uint64_t ack_type = 0;
-          fu->get_reply() >> ok;
-          fu->get_reply() >> term;
-          fu->get_reply() >> last_log_index;
-          fu->get_reply() >> ack_type;
+          rrr::deserialize_from(fu->get_reply(), ok);
+          rrr::deserialize_from(fu->get_reply(), term);
+          rrr::deserialize_from(fu->get_reply(), last_log_index);
+          rrr::deserialize_from(fu->get_reply(), ack_type);
           raft::AppendEntriesReply r = commo_make_append_entries_reply(
               ok, term, last_log_index, ack_type);
           if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr))) {
@@ -1021,14 +1042,14 @@ namespace janus
         {
           if (commo_future_failed(fu->get_error_code()))
           {
-            Log_debug("[VOTE_RPC_CB] Error from site %d code=%d",
+            Log_debug("[VOTE_RPC_CB] Error from site {} code={}",
                       site_id, fu->get_error_code());
             return;
           }
           ballot_t term = 0;
           bool_t vote = false;
-          fu->get_reply() >> term;
-          fu->get_reply() >> vote;
+          rrr::deserialize_from(fu->get_reply(), term);
+          rrr::deserialize_from(fu->get_reply(), vote);
           raft::VoteReply r = commo_make_vote_reply(term, vote);
           if (commo_callback_is_set(static_cast<bool>(*on_reply_ptr)))
           {

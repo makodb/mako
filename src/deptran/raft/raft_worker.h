@@ -361,7 +361,7 @@ public:
   }
 
   // @unsafe - uses std::make_shared, raw pointers
-  std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
+  rusty::Arc<TpcCommitCommand> CreateRaftLogCommand(
       const char* log_entry,
       int length,
       txnid_t tx_id,

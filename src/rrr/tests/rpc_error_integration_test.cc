@@ -81,10 +81,10 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ErrorTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -195,7 +195,7 @@ TEST_F(ErrorIntegrationTest, ConnectionRefusedScenario) {
     // Don't start server - connection should fail
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    int result = client->connect(server_addr().c_str());
+    int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
     EXPECT_NE(result, 0);
 
     // We can categorize this error
@@ -211,7 +211,7 @@ TEST_F(ErrorIntegrationTest, ConnectionRefusedScenario) {
 TEST_F(ErrorIntegrationTest, InvalidAddressScenario) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    int result = client->connect("invalid_address:1234");
+    int result = client->connect(reinterpret_cast<const int8_t*>("invalid_address:1234"), true);
     EXPECT_NE(result, 0);
 
     // Describe error with our types
@@ -227,13 +227,13 @@ TEST_F(ErrorIntegrationTest, SuccessfulRequestHasNoError) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -257,11 +257,11 @@ TEST_F(ErrorIntegrationTest, InvalidRpcIdError) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Request with invalid RPC ID
-    auto fu_result = client->request(99999);
+    auto fu_result = client->request(99999, FutureAttr(), [](BinaryWriteArchive&) {});
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     fu->wait();

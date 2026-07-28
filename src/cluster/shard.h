@@ -15,12 +15,16 @@ module;
 // btree_port::BTreeMap<u32, Shard> by value.
 
 #include <string>
-#include <btree_port/btreemap.hpp>   // native-API ordered map (the stub's data)
 #include <rusty/vec.hpp>             // drop_range's collect-then-remove buffer
+#include <rusty/array.hpp>           // c529cd3d: BTreeMap::len() free-fn decl
 #include <rusty/option.hpp>          // get() -> Option<std::string>
 #include <rusty/slice.hpp>           // deref_if_pointer_like (generated bodies)
 
 export module cluster:shard;
+import btree_port.btree.map;
+import rusty;                  // c529cd3d: rusty::Vec is a module now   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
+
+namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
 
 export namespace janus {
 
@@ -47,7 +51,7 @@ struct ShardRange {
 };
 
 
-inline ShardRange ShardRange::make(std::string lo, std::string hi) {
+ShardRange ShardRange::make(std::string lo, std::string hi) {
     return ShardRange{.lo = std::move(lo), .hi = std::move(hi)};
 }
 /*RUSTYCPP:GEN-END id=shard.1*/
@@ -88,7 +92,7 @@ impl Shard {
     fn id(&self) -> u32 { (*self).shard_id }
     fn is_alive(&self) -> bool { (*self).alive }
     fn mark_dead(&mut self) { (*self).alive = false; }
-    fn key_count(&self) -> usize { (*self).data.size() }
+    fn key_count(&self) -> usize { (*self).data.len() }
     fn contains(&self, key: &std::string) -> bool {
         (*self).data.contains_key(key)
     }
@@ -101,13 +105,29 @@ impl Shard {
     fn get(&self, key: &std::string) -> rusty::Option<std::string> {
         let found = (*self).data.get(key);
         if found.is_none() { return rusty::None; }
-        rusty::Some(std::string(found.unwrap().get()))
+        rusty::Some(std::string(found.unwrap()))
     }
     // Delete = a "null write": drop the live value and record a tombstone, so
     // the deletion is a positive fact that copies + checksums like any write.
     fn remove(&mut self, key: &std::string) {
         (*self).data.remove(key);
         (*self).tombstones.insert(key, true);
+    }
+    // Apply a migration write-delta (staged puts + staged deletes accumulated
+    // during a background copy) to this shard. Hosted on Shard rather than
+    // inlined into ShardManager::final_sync so the BTreeMap `for_in` codegen
+    // lands in this (smaller) module partition: shard_manager's partition
+    // trips a clang22 Itanium-mangler frontend crash on the rusty::iter
+    // dispatcher lambda. See docs/dev/clang22-mangler-crash.md.
+    fn apply_migration_delta(&mut self,
+                             staged: &btree_port::BTreeMap<std::string, std::string>,
+                             deleted: &btree_port::BTreeMap<std::string, bool>) {
+        for kv in staged {
+            self.put(kv.0, kv.1);
+        }
+        for dk in deleted {
+            self.remove(dk.0);
+        }
     }
     // True iff `key` is currently tombstoned (deleted) on this shard.
     fn is_tombstoned(&self, key: &std::string) -> bool {
@@ -120,7 +140,7 @@ impl Shard {
     fn absorb(&mut self, other: *mut Shard) {
         unsafe {
             for kv in (*other).data {
-                (*self).data.insert(kv.first, kv.second);
+                (*self).data.insert(kv.0, kv.1);
             }
             (*other).data.clear();
         }
@@ -132,21 +152,21 @@ impl Shard {
     fn copy_range_from(&mut self, source: *mut Shard, lo: &std::string, hi: &std::string) {
         unsafe {
             for kv in (*source).data {
-                if kv.first >= (*lo) && kv.first < (*hi) {
+                if kv.0 >= (*lo) && kv.0 < (*hi) {
                     // COPY into locals (not a move of kv.*): the transpiler
                     // moves by-value insert args, and moving out of `source`
                     // would empty it -- but the source must stay intact to keep
                     // serving the range during the background copy.
-                    let k: std::string = kv.first;
-                    let v: std::string = kv.second;
+                    let k: std::string = kv.0;
+                    let v: std::string = kv.1;
                     (*self).data.insert(k, v);
                 }
             }
             // Carry the source's tombstones too, so a deletion transmits (the
             // destination learns the key is gone, not just "not copied").
             for tk in (*source).tombstones {
-                if tk.first >= (*lo) && tk.first < (*hi) {
-                    let tkk: std::string = tk.first;
+                if tk.0 >= (*lo) && tk.0 < (*hi) {
+                    let tkk: std::string = tk.0;
                     (*self).data.remove(tkk);
                     (*self).tombstones.insert(tkk, true);
                 }
@@ -158,8 +178,8 @@ impl Shard {
     fn drop_range(&mut self, lo: &std::string, hi: &std::string) {
         let mut victims: rusty::Vec<std::string> = rusty::Vec::<std::string>::new_();
         for kv in (*self).data {
-            if kv.first >= (*lo) && kv.first < (*hi) {
-                victims.push(kv.first);
+            if kv.0 >= (*lo) && kv.0 < (*hi) {
+                victims.push(kv.0);
             }
         }
         let mut i: usize = 0;
@@ -169,8 +189,8 @@ impl Shard {
         }
         let mut tvictims: rusty::Vec<std::string> = rusty::Vec::<std::string>::new_();
         for tk in (*self).tombstones {
-            if tk.first >= (*lo) && tk.first < (*hi) {
-                tvictims.push(tk.first);
+            if tk.0 >= (*lo) && tk.0 < (*hi) {
+                tvictims.push(tk.0);
             }
         }
         let mut j: usize = 0;
@@ -183,7 +203,7 @@ impl Shard {
     fn range_count(&self, lo: &std::string, hi: &std::string) -> usize {
         let mut n: usize = 0;
         for kv in (*self).data {
-            if kv.first >= (*lo) && kv.first < (*hi) {
+            if kv.0 >= (*lo) && kv.0 < (*hi) {
                 n = n + 1;
             }
         }
@@ -207,15 +227,15 @@ impl Shard {
     fn checksum(&self, lo: &std::string, hi: &std::string) -> u64 {
         let mut sum: u64 = 0;
         for kv in (*self).data {
-            if kv.first >= (*lo) && kv.first < (*hi) {
-                let kh: u64 = Shard::hash64(kv.first);
-                let vh: u64 = Shard::hash64(kv.second);
+            if kv.0 >= (*lo) && kv.0 < (*hi) {
+                let kh: u64 = Shard::hash64(kv.0);
+                let vh: u64 = Shard::hash64(kv.1);
                 sum = sum + (kh * 1000003) + vh;
             }
         }
         for tk in (*self).tombstones {
-            if tk.first >= (*lo) && tk.first < (*hi) {
-                let th: u64 = Shard::hash64(tk.first);
+            if tk.0 >= (*lo) && tk.0 < (*hi) {
+                let th: u64 = Shard::hash64(tk.0);
                 sum = sum + (th * 2000029) + 1;
             }
         }
@@ -285,7 +305,7 @@ impl Shard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=f000ce37f6d27833cdd10f2bb9d7f9f08e4b6c9e5474f7689af3a0606e493128*/
+/*RUSTYCPP:GEN-BEGIN id=shard.2 version=1 rust_sha256=c0aecc22818e9b3f07044e24b6fb1b94b77fe798694b66e5231b5f9e6ee8ecad*/
 struct Shard;
 
 struct Shard {
@@ -310,6 +330,7 @@ struct Shard {
     void put(const std::string& key, const std::string& value);
     rusty::Option<std::string> get(const std::string& key) const;
     void remove(const std::string& key);
+    void apply_migration_delta(const btree_port::BTreeMap<std::string, std::string>& staged, const btree_port::BTreeMap<std::string, bool>& deleted);
     bool is_tombstoned(const std::string& key) const;
     void absorb(Shard* other);
     void copy_range_from(Shard* source, const std::string& lo, const std::string& hi);
@@ -332,75 +353,84 @@ struct Shard {
 };
 
 
-inline Shard Shard::new_(uint32_t id) {
+Shard Shard::new_(uint32_t id) {
     return Shard{.shard_id = std::move(id), .alive = true, .data = btree_port::BTreeMap<std::string, std::string>::new_(), .tombstones = btree_port::BTreeMap<std::string, bool>::new_(), .owned = rusty::Vec<ShardRange>::new_(), .mig_active = false, .mig_lo = std::string(""), .mig_hi = std::string(""), .mig_is_source = false, .mig_locked = false, .mig_gen = static_cast<uint64_t>(0)};
 }
 
-inline uint32_t Shard::id() const {
+uint32_t Shard::id() const {
     return ((*this)).shard_id;
 }
 
-inline bool Shard::is_alive() const {
+bool Shard::is_alive() const {
     return ((*this)).alive;
 }
 
-inline void Shard::mark_dead() {
+void Shard::mark_dead() {
     ((*this)).alive = false;
 }
 
-inline size_t Shard::key_count() const {
-    return ((*this)).data.size();
+size_t Shard::key_count() const {
+    return rusty::len(((*this)).data);
 }
 
-inline bool Shard::contains(const std::string& key) const {
+bool Shard::contains(const std::string& key) const {
     return ((*this)).data.contains_key(key);
 }
 
-inline void Shard::put(const std::string& key, const std::string& value) {
+void Shard::put(const std::string& key, const std::string& value) {
     ((*this)).data.insert(key, std::move(value));
     ((*this)).tombstones.remove(key);
 }
 
-inline rusty::Option<std::string> Shard::get(const std::string& key) const {
+rusty::Option<std::string> Shard::get(const std::string& key) const {
     auto found = ((*this)).data.get(key);
     if (found.is_none()) {
         return rusty::None;
     }
-    return rusty::Option<std::string>(std::string(found.unwrap().get()));
+    return rusty::Option<std::string>(std::string(found.unwrap()));
 }
 
-inline void Shard::remove(const std::string& key) {
+void Shard::remove(const std::string& key) {
     ((*this)).data.remove(key);
     ((*this)).tombstones.insert(key, true);
 }
 
-inline bool Shard::is_tombstoned(const std::string& key) const {
+void Shard::apply_migration_delta(const btree_port::BTreeMap<std::string, std::string>& staged, const btree_port::BTreeMap<std::string, bool>& deleted) {
+    for (auto&& kv : rusty::for_in(rusty::iter(staged))) {
+        this->put(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)), rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)));
+    }
+    for (auto&& dk : rusty::for_in(rusty::iter(deleted))) {
+        this->remove(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(dk)));
+    }
+}
+
+bool Shard::is_tombstoned(const std::string& key) const {
     return ((*this)).tombstones.contains_key(key);
 }
 
-inline void Shard::absorb(Shard* other) {
+void Shard::absorb(Shard* other) {
     // @unsafe
     {
         for (auto&& kv : rusty::for_in((*other).data)) {
-            ((*this)).data.insert(std::move(kv.first), std::move(kv.second));
+            ((*this)).data.insert(std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))), std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv))));
         }
         (*other).data.clear();
     }
 }
 
-inline void Shard::copy_range_from(Shard* source, const std::string& lo, const std::string& hi) {
+void Shard::copy_range_from(Shard* source, const std::string& lo, const std::string& hi) {
     // @unsafe
     {
         for (auto&& kv : rusty::for_in((*source).data)) {
-            if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
-                const std::string k = kv.first;
-                std::string v = kv.second;
+            if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) < (hi))) {
+                const std::string k = rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv));
+                std::string v = rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv));
                 ((*this)).data.insert(std::move(k), std::move(v));
             }
         }
         for (auto&& tk : rusty::for_in((*source).tombstones)) {
-            if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
-                const std::string tkk = tk.first;
+            if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) < (hi))) {
+                const std::string tkk = rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk));
                 ((*this)).data.remove(tkk);
                 ((*this)).tombstones.insert(std::move(tkk), true);
             }
@@ -408,11 +438,11 @@ inline void Shard::copy_range_from(Shard* source, const std::string& lo, const s
     }
 }
 
-inline void Shard::drop_range(const std::string& lo, const std::string& hi) {
+void Shard::drop_range(const std::string& lo, const std::string& hi) {
     rusty::Vec<std::string> victims = rusty::Vec<std::string>::new_();
     for (auto&& kv : rusty::for_in(((*this)).data)) {
-        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
-            victims.push(std::move(kv.first));
+        if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) < (hi))) {
+            victims.push(std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))));
         }
     }
     size_t i = static_cast<size_t>(0);
@@ -422,8 +452,8 @@ inline void Shard::drop_range(const std::string& lo, const std::string& hi) {
     }
     rusty::Vec<std::string> tvictims = rusty::Vec<std::string>::new_();
     for (auto&& tk : rusty::for_in(((*this)).tombstones)) {
-        if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
-            tvictims.push(std::move(tk.first));
+        if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) < (hi))) {
+            tvictims.push(std::move(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))));
         }
     }
     size_t j = static_cast<size_t>(0);
@@ -433,17 +463,17 @@ inline void Shard::drop_range(const std::string& lo, const std::string& hi) {
     }
 }
 
-inline size_t Shard::range_count(const std::string& lo, const std::string& hi) const {
+size_t Shard::range_count(const std::string& lo, const std::string& hi) const {
     size_t n = static_cast<size_t>(0);
     for (auto&& kv : rusty::for_in(((*this)).data)) {
-        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
+        if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) < (hi))) {
             n = rusty::detail::deref_if_pointer_like(n) + static_cast<size_t>(1);
         }
     }
     return std::move(n);
 }
 
-inline uint64_t Shard::hash64(const std::string& s) {
+uint64_t Shard::hash64(const std::string& s) {
     uint64_t h = static_cast<uint64_t>(1469598103934665603);
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((s)).size()) {
@@ -454,28 +484,28 @@ inline uint64_t Shard::hash64(const std::string& s) {
     return std::move(h);
 }
 
-inline uint64_t Shard::checksum(const std::string& lo, const std::string& hi) const {
+uint64_t Shard::checksum(const std::string& lo, const std::string& hi) const {
     uint64_t sum = static_cast<uint64_t>(0);
     for (auto&& kv : rusty::for_in(((*this)).data)) {
-        if ((rusty::detail::deref_if_pointer_like(kv.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(kv.first) < (hi))) {
-            const uint64_t kh = Shard::hash64(kv.first);
-            const uint64_t vh = Shard::hash64(kv.second);
+        if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv))) < (hi))) {
+            const uint64_t kh = Shard::hash64(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(kv)));
+            const uint64_t vh = Shard::hash64(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._1; }) return (std::forward<decltype(__t)>(__t)._1); else if constexpr (requires { std::get<1>(std::forward<decltype(__t)>(__t)); }) return std::get<1>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._1; }) return ((*std::forward<decltype(__t)>(__t))._1); else return std::get<1>(*std::forward<decltype(__t)>(__t)); })(kv)));
             sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(kh) * static_cast<uint64_t>(1000003)))) + rusty::detail::deref_if_pointer_like(vh);
         }
     }
     for (auto&& tk : rusty::for_in(((*this)).tombstones)) {
-        if ((rusty::detail::deref_if_pointer_like(tk.first) >= (lo)) && (rusty::detail::deref_if_pointer_like(tk.first) < (hi))) {
-            const uint64_t th = Shard::hash64(tk.first);
+        if ((rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) >= (lo)) && (rusty::detail::deref_if_pointer_like(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk))) < (hi))) {
+            const uint64_t th = Shard::hash64(rusty::detail::deref_if_pointer(([](auto&& __t) -> decltype(auto) { if constexpr (requires { __t._0; }) return (std::forward<decltype(__t)>(__t)._0); else if constexpr (requires { std::get<0>(std::forward<decltype(__t)>(__t)); }) return std::get<0>(std::forward<decltype(__t)>(__t)); else if constexpr (requires { (*__t)._0; }) return ((*std::forward<decltype(__t)>(__t))._0); else return std::get<0>(*std::forward<decltype(__t)>(__t)); })(tk)));
             sum = (rusty::detail::deref_if_pointer_like(sum) + ((rusty::detail::deref_if_pointer_like(th) * static_cast<uint64_t>(2000029)))) + static_cast<uint64_t>(1);
         }
     }
     return std::move(sum);
 }
 
-inline void Shard::assign_range(const std::string& lo, const std::string& hi) {
+void Shard::assign_range(const std::string& lo, const std::string& hi) {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
-        if ((rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo) == (lo)) && (rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi) == (hi))) {
+        if ((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.lo); }) { return (__r.lo); } else if constexpr (requires { (__r.lo_field); }) { return (__r.lo_field); } else if constexpr (requires { ((*__r).lo); }) { return ((*__r).lo); } else { return ((*__r).lo_field); } }(((*this)).owned[i])) == (lo)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.hi); }) { return (__r.hi); } else if constexpr (requires { (__r.hi_field); }) { return (__r.hi_field); } else if constexpr (requires { ((*__r).hi); }) { return ((*__r).hi); } else { return ((*__r).hi_field); } }(((*this)).owned[i])) == (hi))) {
             return;
         }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
@@ -483,22 +513,22 @@ inline void Shard::assign_range(const std::string& lo, const std::string& hi) {
     ((*this)).owned.push(ShardRange::make((lo), (hi)));
 }
 
-inline void Shard::unassign_range(const std::string& lo, const std::string& hi) {
+void Shard::unassign_range(const std::string& lo, const std::string& hi) {
     rusty::Vec<ShardRange> kept = rusty::Vec<ShardRange>::new_();
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
-        if (!((rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo) == (lo)) && (rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi) == (hi)))) {
-            kept.push(ShardRange::make(((*this)).owned[i].lo, ((*this)).owned[i].hi));
+        if (!((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.lo); }) { return (__r.lo); } else if constexpr (requires { (__r.lo_field); }) { return (__r.lo_field); } else if constexpr (requires { ((*__r).lo); }) { return ((*__r).lo); } else { return ((*__r).lo_field); } }(((*this)).owned[i])) == (lo)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.hi); }) { return (__r.hi); } else if constexpr (requires { (__r.hi_field); }) { return (__r.hi_field); } else if constexpr (requires { ((*__r).hi); }) { return ((*__r).hi); } else { return ((*__r).hi_field); } }(((*this)).owned[i])) == (hi)))) {
+            kept.push(ShardRange::make([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.lo); }) { return (__r.lo); } else if constexpr (requires { (__r.lo_field); }) { return (__r.lo_field); } else if constexpr (requires { ((*__r).lo); }) { return ((*__r).lo); } else { return ((*__r).lo_field); } }(((*this)).owned[i]), [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.hi); }) { return (__r.hi); } else if constexpr (requires { (__r.hi_field); }) { return (__r.hi_field); } else if constexpr (requires { ((*__r).hi); }) { return ((*__r).hi); } else { return ((*__r).hi_field); } }(((*this)).owned[i])));
         }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
     }
     ((*this)).owned = std::move(kept);
 }
 
-inline bool Shard::owns(const std::string& key) const {
+bool Shard::owns(const std::string& key) const {
     size_t i = static_cast<size_t>(0);
     while (rusty::detail::deref_if_pointer_like(i) < ((*this)).owned.size()) {
-        if (((key) >= rusty::detail::deref_if_pointer_like(((*this)).owned[i].lo)) && ((key) < rusty::detail::deref_if_pointer_like(((*this)).owned[i].hi))) {
+        if (((key) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.lo); }) { return (__r.lo); } else if constexpr (requires { (__r.lo_field); }) { return (__r.lo_field); } else if constexpr (requires { ((*__r).lo); }) { return ((*__r).lo); } else { return ((*__r).lo_field); } }(((*this)).owned[i]))) && ((key) < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.hi); }) { return (__r.hi); } else if constexpr (requires { (__r.hi_field); }) { return (__r.hi_field); } else if constexpr (requires { ((*__r).hi); }) { return ((*__r).hi); } else { return ((*__r).hi_field); } }(((*this)).owned[i])))) {
             return true;
         }
         i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
@@ -506,11 +536,11 @@ inline bool Shard::owns(const std::string& key) const {
     return false;
 }
 
-inline size_t Shard::owned_count() const {
+size_t Shard::owned_count() const {
     return ((*this)).owned.size();
 }
 
-inline void Shard::set_migration(const std::string& lo, const std::string& hi, bool is_source, uint64_t gen) {
+void Shard::set_migration(const std::string& lo, const std::string& hi, bool is_source, uint64_t gen) {
     ((*this)).mig_active = true;
     ((*this)).mig_lo = (lo);
     ((*this)).mig_hi = (hi);
@@ -519,34 +549,34 @@ inline void Shard::set_migration(const std::string& lo, const std::string& hi, b
     ((*this)).mig_gen = std::move(gen);
 }
 
-inline void Shard::lock_migration() {
+void Shard::lock_migration() {
     if (((*this)).mig_active) {
         ((*this)).mig_locked = true;
     }
 }
 
-inline void Shard::clear_migration() {
+void Shard::clear_migration() {
     ((*this)).mig_active = false;
     ((*this)).mig_locked = false;
 }
 
-inline bool Shard::is_migrating() const {
+bool Shard::is_migrating() const {
     return ((*this)).mig_active;
 }
 
-inline bool Shard::migration_locked() const {
+bool Shard::migration_locked() const {
     return rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked);
 }
 
-inline bool Shard::migration_is_source() const {
+bool Shard::migration_is_source() const {
     return rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_is_source);
 }
 
-inline uint64_t Shard::migration_generation() const {
+uint64_t Shard::migration_generation() const {
     return ((*this)).mig_gen;
 }
 
-inline bool Shard::frozen_for(const std::string& key) const {
+bool Shard::frozen_for(const std::string& key) const {
     return ((rusty::detail::deref_if_pointer_like(((*this)).mig_active) && rusty::detail::deref_if_pointer_like(((*this)).mig_locked)) && ((key) >= rusty::detail::deref_if_pointer_like(((*this)).mig_lo))) && ((key) < rusty::detail::deref_if_pointer_like(((*this)).mig_hi));
 }
 /*RUSTYCPP:GEN-END id=shard.2*/

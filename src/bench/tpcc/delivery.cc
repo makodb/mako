@@ -50,7 +50,7 @@ void TpccWorkload::RegDelivery() {
          // resource. And the bottom half is in charge of release the resource,
          // including the vertex entry
 
-         Log_debug("TPCC_DELIVERY, piece: %d", TPCC_DELIVERY_0);
+         Log_debug("TPCC_DELIVERY, piece: {}", TPCC_DELIVERY_0);
          verify(cmd.input.size() >= 3);
          Value buf;
          //cell_locator_t cl(TPCC_TB_NEW_ORDER, 3);
@@ -103,7 +103,7 @@ void TpccWorkload::RegDelivery() {
        {TPCC_TB_ORDER, {TPCC_VAR_W_ID}}, // s
        DF_NO,
        PROC {
-         Log_debug("TPCC_DELIVERY, piece: %d", TPCC_DELIVERY_1);
+         Log_debug("TPCC_DELIVERY, piece: {}", TPCC_DELIVERY_1);
          verify(cmd.input.size() >= 4);
          mdb::Txn *txn = tx.mdb_txn_;
          mdb::MultiBlob mb(3);
@@ -111,7 +111,7 @@ void TpccWorkload::RegDelivery() {
          mb[0] = cmd.input[TPCC_VAR_D_ID].get_blob();
          mb[1] = cmd.input[TPCC_VAR_W_ID].get_blob();
          mb[2] = cmd.input[TPCC_VAR_O_ID].get_blob();
-         //Log::debug("Delivery: o_d_id: %d, o_w_id: %d, o_id: %d, hash: %u", input[2].get_i32(), input[1].get_i32(), input[0].get_i32(), mdb::MultiBlob::hash()(cl.primary_key));
+         //Log_debug("Delivery: o_d_id: {}, o_w_id: {}, o_id: {}, hash: {}", input[2].get_i32(), input[1].get_i32(), input[0].get_i32(), mdb::MultiBlob::hash()(cl.primary_key));
          auto tbl_order = txn->get_table(TPCC_TB_ORDER);
          mdb::Row *row_order = tx.Query(tbl_order, mb, ROW_ORDER);
          tx.ReadColumn(row_order,
@@ -134,7 +134,7 @@ void TpccWorkload::RegDelivery() {
        {TPCC_TB_ORDER_LINE, {TPCC_VAR_W_ID}}, // s
        DF_NO,
        PROC {
-         Log_debug("TPCC_DELIVERY, piece: %d", TPCC_DELIVERY_2);
+         Log_debug("TPCC_DELIVERY, piece: {}", TPCC_DELIVERY_2);
          verify(cmd.input.size() >= 3);
          //        mdb::Txn *txn = DTxnMgr::get_sole_mgr()->get_mdb_txn(header);
          mdb::MultiBlob mbl = mdb::MultiBlob(4);
@@ -200,7 +200,7 @@ void TpccWorkload::RegDelivery() {
        {TPCC_TB_CUSTOMER, {TPCC_VAR_W_ID}}, // s
        DF_REAL,
        PROC {
-         Log_debug("TPCC_DELIVERY, piece: %d", TPCC_DELIVERY_3);
+         Log_debug("TPCC_DELIVERY, piece: {}", TPCC_DELIVERY_3);
          verify(cmd.input.size() >= 4);
          mdb::Row *row_customer = NULL;
          mdb::MultiBlob mb = mdb::MultiBlob(3);

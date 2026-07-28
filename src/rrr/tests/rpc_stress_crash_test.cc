@@ -9,6 +9,10 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -143,11 +147,11 @@ protected:
 
     // @safe - Create server on given port
     Server* create_server(int port) {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<StressTestService>();
-        server->reg_service(std::move(service_box));
+        server->reg_service_typed(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (server->start(addr.c_str()) != 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -194,8 +198,8 @@ protected:
         stats.requests_sent++;
         std::string input = "stress";
         auto fu_result = client->request(
-            BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_err()) {
             stats.requests_failed++;
@@ -232,7 +236,7 @@ TEST_F(StressCrashTest, ServerCrashUnderLoad) {
     for (int i = 0; i < NUM_CLIENTS; i++) {
         auto client = create_stress_client();
         stats.connect_attempts++;
-        if (client->connect(addr.c_str()) == 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
             stats.connect_succeeded++;
             clients.push_back(std::move(client));
         } else {
@@ -293,7 +297,7 @@ TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
     std::string addr = make_addr(port);
 
     auto client = create_stress_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Send 100 requests without waiting (async)
@@ -301,8 +305,8 @@ TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
     for (int i = 0; i < 100; i++) {
         std::string input = "req_" + std::to_string(i);
         auto fu_result = client->request(
-            BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_ok()) {
             futures.push_back(fu_result.unwrap());
@@ -354,7 +358,7 @@ TEST_F(StressCrashTest, RapidServerRestarts) {
         stats.connect_attempts++;
         int connect_result = 0;
         if (!client->connected()) {
-            connect_result = client->connect(addr.c_str());
+            connect_result = client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
         }
 
         if (connect_result == 0 || client->connected()) {
@@ -396,7 +400,7 @@ TEST_F(StressCrashTest, QuickServerBounce) {
     std::string addr = make_addr(port);
 
     auto client = create_stress_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify initial connection works
@@ -414,7 +418,7 @@ TEST_F(StressCrashTest, QuickServerBounce) {
 
     // Reconnect
     client->close();
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify connection still works
@@ -448,7 +452,7 @@ TEST_F(StressCrashTest, ClientStormAfterRecovery) {
     // Connect all clients initially
     for (auto& client : clients) {
         stats.connect_attempts++;
-        if (client->connect(addr.c_str()) == 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
             stats.connect_succeeded++;
         } else {
             stats.connect_failed++;
@@ -477,7 +481,7 @@ TEST_F(StressCrashTest, ClientStormAfterRecovery) {
             // Close and reconnect
             client->close();
             std::this_thread::sleep_for(milliseconds(10));  // Small jitter
-            if (client->connect(addr.c_str()) == 0) {
+            if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
                 reconnect_success++;
             }
         });
@@ -525,7 +529,7 @@ TEST_F(StressCrashTest, StaggeredClientReconnection) {
 
     for (int i = 0; i < NUM_CLIENTS; i++) {
         auto client = create_stress_client();
-        EXPECT_EQ(client->connect(addr.c_str()), 0);
+        EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
         clients.push_back(std::move(client));
     }
     std::this_thread::sleep_for(milliseconds(100));
@@ -545,7 +549,7 @@ TEST_F(StressCrashTest, StaggeredClientReconnection) {
         threads.emplace_back([i, &clients, &addr, &success_count]() {
             std::this_thread::sleep_for(milliseconds(i * 20));  // Stagger by 20ms each
             clients[i]->close();
-            if (clients[i]->connect(addr.c_str()) == 0) {
+            if (clients[i]->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
                 success_count++;
             }
         });
@@ -586,7 +590,7 @@ TEST_F(StressCrashTest, MemoryStabilityShortRun) {
         std::vector<rusty::Arc<Client>> clients;
         for (int i = 0; i < CLIENTS_PER_ITERATION; i++) {
             auto client = create_stress_client();
-            if (client->connect(addr.c_str()) == 0) {
+            if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
                 clients.push_back(std::move(client));
             }
         }
@@ -624,7 +628,7 @@ TEST_F(StressCrashTest, RepeatedConnectDisconnectCycle) {
 
     for (int i = 0; i < CYCLES; i++) {
         // Connect
-        if (client->connect(addr.c_str()) == 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
             success_count++;
 
             // Send one request
@@ -650,18 +654,18 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
     int port = test_ports::get_port();
     std::string addr = make_addr(port);
 
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 5;
     cb_config.success_threshold = 3;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start with no server - should trip circuit
     auto client = create_stress_client();
 
     // Attempt connections that will fail
     for (int i = 0; i < 5 && cb.allow_request(); i++) {
-        if (client->connect(addr.c_str()) != 0) {
+        if (client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) != 0) {
             cb.record_failure();
         } else {
             client->close();
@@ -684,7 +688,7 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
 
     // Create new client and probe
     auto new_client = create_stress_client();
-    if (new_client->connect(addr.c_str()) == 0) {
+    if (new_client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true) == 0) {
         std::this_thread::sleep_for(milliseconds(50));
 
         // Record successes to close circuit
@@ -724,8 +728,8 @@ TEST_F(StressCrashTest, MultiServerFailover) {
     // Create clients for both
     auto client1 = create_stress_client();
     auto client2 = create_stress_client();
-    ASSERT_EQ(client1->connect(addr1.c_str()), 0);
-    ASSERT_EQ(client2->connect(addr2.c_str()), 0);
+    ASSERT_EQ(client1->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(addr2.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     StressStats stats;
@@ -751,7 +755,7 @@ TEST_F(StressCrashTest, MultiServerFailover) {
 
     // Reconnect client1
     client1->close();
-    EXPECT_EQ(client1->connect(addr1.c_str()), 0);
+    EXPECT_EQ(client1->connect(reinterpret_cast<const int8_t*>(addr1.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Both should work again
@@ -776,7 +780,7 @@ TEST_F(StressCrashTest, MetricsAccuracyUnderStress) {
     std::string addr = make_addr(port);
 
     auto client = create_stress_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Access metrics

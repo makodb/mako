@@ -84,11 +84,11 @@ void RaftTestConfig::SetLearnerAction(void) {
     RaftTestConfig::commit_callbacks[svr] =
         [svr](int slot, janus::Command md) -> int {
           verify(md.kind_ == TpcCommitCommand::static_kind());
-          auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-          verify(commit_cmd != nullptr);
-          Log_debug("server %d committed value %d at slot %d",
-                    svr, commit_cmd->tx_id_, slot);
-          RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+          const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+          verify(commit_cmd.is_some());
+          Log_debug("server {} committed value {} at slot {}",
+                    svr, commit_cmd.unwrap()->tx_id_, slot);
+          RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
           return 0;
         };
     frame->svr_->RegLearnerAction(RaftTestConfig::commit_callbacks[svr]);
@@ -128,7 +128,7 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
         } else if (term > mostRecentTerm) {
           leader = svr;
           mostRecentTerm = term;
-          Log_debug("found leader %d with term %d", leader, term);
+          Log_debug("found leader {} with term {}", leader, term);
         }
       }
     }
@@ -203,20 +203,25 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   auto it = replicas.find(svr);
   if (it == replicas.end())
   {
-    Log_error("Server %d not found in replicas map", svr);
+    Log_error("Server {} not found in replicas map", svr);
     return false;
   }
 
   // Construct an empty TpcCommitCommand containing cmd as its tx_id_
-  auto cmdptr = std::make_shared<TpcCommitCommand>();
-  auto vpd_p = std::make_shared<VecPieceData>();
-  vpd_p->sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<SimpleCommand>>>();
-  cmdptr->tx_id_ = cmd;
-  cmdptr->cmd_ = vpd_p;
+  auto cmdptr = rusty::Arc<TpcCommitCommand>::make();
+  auto vpd_p = rusty::Arc<VecPieceData>::make();
+  // @unsafe - unique-owner mutation window (factory-fresh Arcs).
+  vpd_p.get_mut().unwrap().sp_vec_piece_data_ =
+      std::make_shared<vector<shared_ptr<SimpleCommand>>>();
+  {
+    auto& mut_cmd = cmdptr.get_mut().unwrap();
+    mut_cmd.tx_id_ = cmd;
+    mut_cmd.cmd_ = std::move(vpd_p);
+  }
   // call Start()
-  // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
-  bool result = it->second->svr_->Start(cmdptr, index, term);
-  // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld",
+  // Log_info("Start: Calling Start() on server {} for command {}", svr, cmd);
+  bool result = it->second->svr_->Start(std::move(cmdptr), index, term);
+  // Log_info("Start: Server {} Start() for command {} returned {}, index={}, term={}",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
   return result;
 }
@@ -269,7 +274,7 @@ int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
 }
 
 uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
-  Log_info("DoAgreement: Starting agreement for command %d, expecting %d servers, retry=%s", cmd, n, retry ? "true" : "false");
+  Log_info("DoAgreement: Starting agreement for command {}, expecting {} servers, retry={}", cmd, n, retry ? "true" : "false");
   auto start = chrono::steady_clock::now();
   while ((chrono::steady_clock::now() - start) < chrono::seconds{10}) {
     // Fiber::sleep(50000);
@@ -277,27 +282,27 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
     // Call Start() to all servers until leader is found
     siteid_t ldr = -1;
     uint64_t index, term;
-    // Log_info("DoAgreement: Trying to find leader for command %d", cmd);
+    // Log_info("DoAgreement: Trying to find leader for command {}", cmd);
     for (auto& pair : replicas) {
       auto svr = pair.first;
       auto frame = pair.second;
       // skip disconnected servers
       if (frame->svr_->IsDisconnected()) {
-        // Log_info("DoAgreement: Skipping disconnected server %d for command %d", svr, cmd);
+        // Log_info("DoAgreement: Skipping disconnected server {} for command {}", svr, cmd);
         continue;
       }
-      Log_info("DoAgreement: Attempting Start() on server %d for command %d", svr, cmd);
+      Log_info("DoAgreement: Attempting Start() on server {} for command {}", svr, cmd);
       if (Start(svr, cmd, &index, &term)) {
-        Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
+        Log_info("DoAgreement: SUCCESS - found leader {} for command {}, index={}, term={}", svr, cmd, index, term);
         ldr = svr;
         break;
       } else {
-        // Log_info("DoAgreement: FAILED - server %d rejected Start() for command %d", svr, cmd);
+        // Log_info("DoAgreement: FAILED - server {} rejected Start() for command {}", svr, cmd);
       }
     }
     if (ldr != -1) {
       // If Start() successfully called, wait for agreement
-      // Log_info("DoAgreement: Waiting for agreement on command %d at index %ld", cmd, index);
+      // Log_info("DoAgreement: Waiting for agreement on command {} at index {}", cmd, index);
       auto start2 = chrono::steady_clock::now();
       int nc;
       int iteration = 0;
@@ -305,7 +310,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
         if (retry) {
           // If leadership/term moved on, this index may be stale. Retry Start() quickly.
           if (TermMovedOn(term)) {
-            Log_info("DoAgreement: Term moved on from %ld while waiting for command %d at index %ld, retrying Start()", term, cmd, index);
+            Log_info("DoAgreement: Term moved on from {} while waiting for command {} at index {}, retrying Start()", term, cmd, index);
             break;
           }
 
@@ -313,58 +318,58 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
           uint64_t curTerm = 0;
           auto ldr_it = replicas.find(ldr);
           if (ldr_it == replicas.end() || ldr_it->second == nullptr || ldr_it->second->svr_ == nullptr) {
-            Log_info("DoAgreement: Leader %d disappeared while waiting for command %d at index %ld, retrying Start()", ldr, cmd, index);
+            Log_info("DoAgreement: Leader {} disappeared while waiting for command {} at index {}, retrying Start()", ldr, cmd, index);
             break;
           }
           ldr_it->second->svr_->GetState(&isLeader, &curTerm);
           if (!isLeader || curTerm != term) {
-            Log_info("DoAgreement: Leader changed (server=%d isLeader=%d term=%ld expected_term=%ld) while waiting for command %d at index %ld, retrying Start()",
+            Log_info("DoAgreement: Leader changed (server={} isLeader={} term={} expected_term={}) while waiting for command {} at index {}, retrying Start()",
                      ldr, isLeader ? 1 : 0, curTerm, term, cmd, index);
             break;
           }
         }
 
         nc = NCommitted(index);
-        Log_info("DoAgreement: Iteration %d - NCommitted(%ld) returned %d for command %d", iteration++, index, nc, cmd);
+        Log_info("DoAgreement: Iteration {} - NCommitted({}) returned {} for command {}", iteration++, index, nc, cmd);
         if (nc < 0) {
-          // Log_info("DoAgreement: ERROR - NCommitted returned %d (values differ) for command %d at index %ld", nc, cmd, index);
+          // Log_info("DoAgreement: ERROR - NCommitted returned {} (values differ) for command {} at index {}", nc, cmd, index);
           break;
         } else if (nc >= n) {
-          // Log_info("DoAgreement: SUCCESS - %d servers committed index %ld for command %d", nc, index, cmd);
+          // Log_info("DoAgreement: SUCCESS - {} servers committed index {} for command {}", nc, index, cmd);
           for (auto& pair : replicas) {
             auto svr = pair.first;
             if (committed_cmds[svr].size() > index) {
-              // Log_info("DoAgreement: Found commit log on server %d at index %ld", svr, index);
+              // Log_info("DoAgreement: Found commit log on server {} at index {}", svr, index);
               auto cmd2 = committed_cmds[svr][index];
-              // Log_info("DoAgreement: Server %d committed command %d at index %ld (expected %d)", svr, cmd2, index, cmd);
+              // Log_info("DoAgreement: Server {} committed command {} at index {} (expected {})", svr, cmd2, index, cmd);
               if (cmd == cmd2) {
-                // Log_info("DoAgreement: AGREEMENT REACHED - command %d successfully committed at index %ld", cmd, index);
+                // Log_info("DoAgreement: AGREEMENT REACHED - command {} successfully committed at index {}", cmd, index);
                 return index;
               } else {
-                // Log_info("DoAgreement: COMMAND MISMATCH - expected %d, got %d at index %ld", cmd, cmd2, index);
+                // Log_info("DoAgreement: COMMAND MISMATCH - expected {}, got {} at index {}", cmd, cmd2, index);
                 break;
               }
             }
           }
           break;
         }
-        // Log_info("DoAgreement: Waiting... only %d/%d servers committed index %ld for command %d", nc, n, index, cmd);
+        // Log_info("DoAgreement: Waiting... only {}/{} servers committed index {} for command {}", nc, n, index, cmd);
         // Fiber::sleep(50000);
         usleep(20000);
       }
-      // Log_info("DoAgreement: Agreement wait loop ended - %d committed server at index %ld for command %d", nc, index, cmd);
+      // Log_info("DoAgreement: Agreement wait loop ended - {} committed server at index {} for command {}", nc, index, cmd);
       if (!retry) {
-          // Log_info("DoAgreement: FAILED - no retry allowed for command %d", cmd);
+          // Log_info("DoAgreement: FAILED - no retry allowed for command {}", cmd);
           return 0;
         }
     } else {
       // If no leader found, sleep and retry.
-      // Log_info("DoAgreement: No leader found for command %d, sleeping and retrying", cmd);
+      // Log_info("DoAgreement: No leader found for command {}, sleeping and retrying", cmd);
       // Fiber::sleep(50000)
       usleep(50000);
     }
   }
-  // Log_info("DoAgreement: FAILED - timeout reached for command %d", cmd);
+  // Log_info("DoAgreement: FAILED - timeout reached for command {}", cmd);
   return 0;
 }
 
@@ -556,7 +561,7 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
   auto it = RaftTestConfig::replicas.find(svr);
   if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
     if (!ignore) {
-      Log_warn("[RAFT-TEST] disconnect(%d): replica not present", svr);
+      Log_warn("[RAFT-TEST] disconnect({}): replica not present", svr);
     }
     return;
   }
@@ -573,7 +578,7 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   auto it = RaftTestConfig::replicas.find(svr);
   if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
     if (!ignore) {
-      Log_warn("[RAFT-TEST] reconnect(%d): replica not present", svr);
+      Log_warn("[RAFT-TEST] reconnect({}): replica not present", svr);
     }
     return;
   }
@@ -599,11 +604,11 @@ void RaftTestConfig::Kill(siteid_t svr) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
-  Log_info("[RAFT-TEST] Killing server %d", svr);
+  Log_info("[RAFT-TEST] Killing server {}", svr);
 
   auto it = replicas.find(svr);
   if (it == replicas.end()) {
-    Log_error("[RAFT-TEST] Server %d not found in replicas", svr);
+    Log_error("[RAFT-TEST] Server {} not found in replicas", svr);
     return;
   }
 
@@ -640,18 +645,18 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // Reset RPC count
   rpc_count_last[svr] = 0;
 
-  Log_info("[RAFT-TEST] Server %d killed successfully", svr);
+  Log_info("[RAFT-TEST] Server {} killed successfully", svr);
 }
 
 void RaftTestConfig::Restart(siteid_t svr) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
   std::lock_guard<std::mutex> lk2(disconnect_mtx_);
 
-  Log_info("[RAFT-TEST] Restarting server %d", svr);
+  Log_info("[RAFT-TEST] Restarting server {}", svr);
 
   // Check if server is already running
   if (replicas.find(svr) != replicas.end()) {
-    Log_error("[RAFT-TEST] Server %d is already running, cannot restart", svr);
+    Log_error("[RAFT-TEST] Server {} is already running, cannot restart", svr);
     return;
   }
 
@@ -669,7 +674,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 
   if (!site_info) {
-    Log_error("[RAFT-TEST] Could not find site info for server %d", svr);
+    Log_error("[RAFT-TEST] Could not find site info for server {}", svr);
     return;
   }
 
@@ -693,7 +698,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     // RaftFrame owns the recreated communicator.
     frame->commo_ = std::make_unique<RaftCommo>(std::move(poll_thread));
   } else {
-    Log_warn("[RAFT-RESTART] site %d: poll thread not found, creating new one", svr);
+    Log_warn("[RAFT-RESTART] site {}: poll thread not found, creating new one", svr);
     // RaftFrame owns the recreated communicator even when a poll thread must
     // be created lazily by RaftCommo.
     frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
@@ -716,7 +721,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
                                        (strcmp(async_flag, "1") == 0 ||
                                         strcmp(async_flag, "true") == 0));
 
-    Log_info("[RAFT-TEST-RESTART] Loading persistence for site %d (mode=%s)",
+    Log_info("[RAFT-TEST-RESTART] Loading persistence for site {} (mode={})",
              svr, frame->svr_->async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
@@ -741,11 +746,11 @@ void RaftTestConfig::Restart(siteid_t svr) {
       );
 
       if (result.success) {
-        Log_info("[RAFT-TEST-RESTART] Loaded: term=%lu vote=%d lastLogIndex=%lu (mode=%d)",
-                 frame->svr_->currentTerm, frame->svr_->vote_for_,
+        Log_info("[RAFT-TEST-RESTART] Loaded: term={} vote={} lastLogIndex={} (mode={})",
+                 frame->svr_->currentTerm, frame->svr_->vote_core_.vote_for(),
                  frame->svr_->lastLogIndex, static_cast<int>(result.mode));
       } else {
-        Log_error("[RAFT-TEST-RESTART] Recovery failed: %s", result.error_message.c_str());
+        Log_error("[RAFT-TEST-RESTART] Recovery failed: {}", result.error_message.c_str());
       }
     }
   }
@@ -766,7 +771,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
 
     // Add HeartbeatLoop as a job to the correct poll thread
-    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
       Fiber::create_run([frame]() {
         frame->svr_->HeartbeatLoop();
       });
@@ -775,7 +780,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
     // Add election timer as a job to the correct poll thread
     if (frame->svr_->failover_) {
-      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([frame]() {
         Fiber::create_run([frame]() {
           frame->svr_->StartElectionTimer();
         });
@@ -791,11 +796,11 @@ void RaftTestConfig::Restart(siteid_t svr) {
   commit_callbacks[svr] =
       [svr](int slot, janus::Command md) -> int {
         verify(md.kind_ == TpcCommitCommand::static_kind());
-        auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
-        verify(commit_cmd != nullptr);
-        Log_debug("server %d committed value %d at slot %d",
-                  svr, commit_cmd->tx_id_, slot);
-        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+        const auto commit_cmd = marshallable_cast<TpcCommitCommand>(md);
+        verify(commit_cmd.is_some());
+        Log_debug("server {} committed value {} at slot {}",
+                  svr, commit_cmd.unwrap()->tx_id_, slot);
+        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd.unwrap()->tx_id_);
         return 0;
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);
@@ -815,14 +820,14 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Notify all other servers to reconnect their client connections to this server
   // This is needed because after Kill/Restart, other servers' TCP connections to us are stale
   if (frame->commo_ != nullptr) {
-    Log_info("[RAFT-TEST] Sending NotifyRestart from site %d to all peers", svr);
+    Log_info("[RAFT-TEST] Sending NotifyRestart from site {} to all peers", svr);
     auto commo = dynamic_cast<RaftCommo*>(frame->commo_.get());
     if (commo != nullptr) {
       commo->SendNotifyRestart(svr, frame->svr_->partition_id_);
     }
   }
 
-  Log_info("[RAFT-TEST] Server %d restarted successfully (term=%lu, lastLogIndex=%lu)",
+  Log_info("[RAFT-TEST] Server {} restarted successfully (term={}, lastLogIndex={})",
            svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);
 }
 
@@ -943,12 +948,12 @@ bool RaftTestConfig::VerifySpecInvariants(siteid_t svr) {
 
   // Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
   if (securedLogIndex > specCommitIndex) {
-    Log_error("[SPEC-TEST] Invariant violation: securedLogIndex (%lu) > specCommitIndex (%lu)",
+    Log_error("[SPEC-TEST] Invariant violation: securedLogIndex ({}) > specCommitIndex ({})",
               securedLogIndex, specCommitIndex);
     return false;
   }
   if (specCommitIndex > lastLogIndex) {
-    Log_error("[SPEC-TEST] Invariant violation: specCommitIndex (%lu) > lastLogIndex (%lu)",
+    Log_error("[SPEC-TEST] Invariant violation: specCommitIndex ({}) > lastLogIndex ({})",
               specCommitIndex, lastLogIndex);
     return false;
   }

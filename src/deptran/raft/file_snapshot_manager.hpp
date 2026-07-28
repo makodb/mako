@@ -238,14 +238,14 @@ inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
 
   int fd = open(temp_path->c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0) {
-    Log_error("[SNAPSHOT-WRITER] Failed to open temp file: %s (%s)",
+    Log_error("[SNAPSHOT-WRITER] Failed to open temp file: {} ({})",
               temp_path->c_str(), strerror(errno));
     return false;
   }
 
   ssize_t written = write(fd, serialized.data(), serialized.size());
   if (written != static_cast<ssize_t>(serialized.size())) {
-    Log_error("[SNAPSHOT-WRITER] Failed to write snapshot: wrote %zd of %zu",
+    Log_error("[SNAPSHOT-WRITER] Failed to write snapshot: wrote {} of {}",
               written, serialized.size());
     close(fd);
     unlink(temp_path->c_str());
@@ -253,7 +253,7 @@ inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
   }
 
   if (fsync(fd) < 0) {
-    Log_error("[SNAPSHOT-WRITER] Failed to fsync: %s", strerror(errno));
+    Log_error("[SNAPSHOT-WRITER] Failed to fsync: {}", strerror(errno));
     close(fd);
     unlink(temp_path->c_str());
     return false;
@@ -261,14 +261,14 @@ inline bool file_snapshot_writer_finalize_cpp(const std::string* final_path,
   close(fd);
 
   if (rename(temp_path->c_str(), final_path->c_str()) < 0) {
-    Log_error("[SNAPSHOT-WRITER] Failed to rename %s -> %s: %s",
+    Log_error("[SNAPSHOT-WRITER] Failed to rename {} -> {}: {}",
               temp_path->c_str(), final_path->c_str(), strerror(errno));
     unlink(temp_path->c_str());
     return false;
   }
 
   *finalized = true;
-  Log_info("[SNAPSHOT-WRITER] Snapshot finalized: %s (%zu bytes data, %zu bytes total)",
+  Log_info("[SNAPSHOT-WRITER] Snapshot finalized: {} ({} bytes data, {} bytes total)",
            final_path->c_str(), buffer->size(), serialized.size());
   return true;
 }
@@ -294,7 +294,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
                                           bool* valid) {
   int fd = open(path->c_str(), O_RDONLY);
   if (fd < 0) {
-    Log_error("[SNAPSHOT-READER] Failed to open: %s (%s)",
+    Log_error("[SNAPSHOT-READER] Failed to open: {} ({})",
               path->c_str(), strerror(errno));
     *valid = false;
     return false;
@@ -302,7 +302,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
 
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    Log_error("[SNAPSHOT-READER] Failed to stat: %s", path->c_str());
+    Log_error("[SNAPSHOT-READER] Failed to stat: {}", path->c_str());
     close(fd);
     *valid = false;
     return false;
@@ -313,7 +313,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
   close(fd);
 
   if (bytes_read != st.st_size) {
-    Log_error("[SNAPSHOT-READER] Failed to read: got %zd of %ld",
+    Log_error("[SNAPSHOT-READER] Failed to read: got {} of {}",
               bytes_read, st.st_size);
     *valid = false;
     return false;
@@ -322,7 +322,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
   uint64_t last_index, last_term;
   if (!SnapshotFormat::Deserialize(file_data->data(), file_data->size(),
                                    &last_index, &last_term, data)) {
-    Log_error("[SNAPSHOT-READER] Failed to deserialize: %s", path->c_str());
+    Log_error("[SNAPSHOT-READER] Failed to deserialize: {}", path->c_str());
     *valid = false;
     return false;
   }
@@ -337,7 +337,7 @@ inline bool file_snapshot_reader_open_cpp(const std::string* path,
   }
 
   *valid = true;
-  Log_info("[SNAPSHOT-READER] Opened snapshot: index=%lu term=%lu size=%zu",
+  Log_info("[SNAPSHOT-READER] Opened snapshot: index={} term={} size={}",
            last_index, last_term, data->size());
   return true;
 }
@@ -519,7 +519,7 @@ class FileSnapshotWriter : public SnapshotWriter {
                      ballot_t last_term)
       : core_(FileSnapshotWriterCore::new_(final_path, temp_path, last_index,
                                            last_term)) {
-    Log_info("[SNAPSHOT-WRITER] Creating snapshot: index=%lu term=%lu path=%s",
+    Log_info("[SNAPSHOT-WRITER] Creating snapshot: index={} term={} path={}",
              last_index, last_term, final_path.c_str());
   }
 
@@ -869,7 +869,7 @@ inline size_t file_snapshot_manager_prune_cpp(const SnapshotConfig* config,
                                             snap.last_included_index,
                                             snap.last_included_term);
       if (unlink(path.c_str()) == 0) {
-        Log_info("[SNAPSHOT-MGR] Pruned snapshot: %s", path.c_str());
+        Log_info("[SNAPSHOT-MGR] Pruned snapshot: {}", path.c_str());
         deleted++;
       }
     }
@@ -891,7 +891,7 @@ inline size_t file_snapshot_manager_delete_all_cpp(
       deleted++;
     }
   }
-  Log_info("[SNAPSHOT-MGR] Deleted all %zu snapshots", deleted);
+  Log_info("[SNAPSHOT-MGR] Deleted all {} snapshots", deleted);
   return deleted;
 }
 
@@ -915,7 +915,7 @@ inline void file_snapshot_manager_apply_retention_cpp(
                                           snapshots[i].last_included_index,
                                           snapshots[i].last_included_term);
     if (unlink(path.c_str()) == 0) {
-      Log_info("[SNAPSHOT-MGR] Retention policy: deleted %s", path.c_str());
+      Log_info("[SNAPSHOT-MGR] Retention policy: deleted {}", path.c_str());
     }
   }
 }
@@ -1145,7 +1145,7 @@ class FileSnapshotManager : public SnapshotManager {
   explicit FileSnapshotManager(const SnapshotConfig& config)
       : core_(FileSnapshotManagerCore::new_(config)) {
     core_.EnsureDirectory();
-    Log_info("[SNAPSHOT-MGR] Initialized: path=%s max_snapshots=%zu",
+    Log_info("[SNAPSHOT-MGR] Initialized: path={} max_snapshots={}",
              core_.GetStoragePath().c_str(), config.max_snapshots);
   }
 

@@ -6,6 +6,9 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
 #include "benchmark_service.h"
 
 import std;
@@ -85,10 +88,10 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<CircuitBreakerTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -101,16 +104,16 @@ protected:
 };
 
 TEST_F(CircuitBreakerIntegrationTest, InitialStateClosed) {
-    CircuitBreaker cb(CircuitBreakerConfig{});
+    auto cb = CircuitBreaker::new_(CircuitBreakerConfig{});
     EXPECT_EQ(cb.state(), CircuitState::CLOSED);
     EXPECT_TRUE(cb.is_closed());
     EXPECT_TRUE(cb.allow_request());
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitOpensAfterFailures) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 3;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record failures up to threshold
     cb.record_failure();
@@ -125,17 +128,17 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitOpensAfterFailures) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 3;
     config.timeout_ms = 100;  // Short timeout for testing
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Start server first
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Simulate checking circuit before each request
@@ -144,8 +147,8 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     // Make a successful request
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -167,7 +170,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
     // Try connecting to non-existent server to simulate failures
     for (int i = 0; i < 3 && cb.allow_request(); i++) {
         auto fail_client = Client::create(poll_thread_.as_ref().unwrap());
-        int result = fail_client->connect(server_addr().c_str());
+        int result = fail_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -180,10 +183,10 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerWithRpcFailures) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitHalfOpenAfterTimeout) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.timeout_ms = 50;  // Short timeout
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -199,11 +202,11 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitHalfOpenAfterTimeout) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitClosesOnProbeSuccess) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.success_threshold = 2;
     config.timeout_ms = 20;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -224,10 +227,10 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitClosesOnProbeSuccess) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitReopensOnProbeFailure) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
     config.timeout_ms = 20;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -245,7 +248,7 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitReopensOnProbeFailure) {
 
 TEST_F(CircuitBreakerIntegrationTest, DisabledCircuitAlwaysAllows) {
     auto config = CircuitBreakerConfig::disabled();
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Record many failures
     for (int i = 0; i < 100; i++) {
@@ -258,9 +261,9 @@ TEST_F(CircuitBreakerIntegrationTest, DisabledCircuitAlwaysAllows) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerReset) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit
     cb.record_failure();
@@ -279,17 +282,17 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerReset) {
 // ============================================================================
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 3;
     config.timeout_ms = 100;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Start server
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Make some successful requests
@@ -300,8 +303,8 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
 
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -321,9 +324,9 @@ TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerProtectsRpcCalls) {
 }
 
 TEST_F(CircuitBreakerIntegrationTest, CircuitBreakerFailFast) {
-    CircuitBreakerConfig config;
+    auto config = CircuitBreakerConfig::defaults();
     config.failure_threshold = 2;
-    CircuitBreaker cb(config);
+    auto cb = CircuitBreaker::new_(config);
 
     // Open the circuit immediately
     cb.record_failure();

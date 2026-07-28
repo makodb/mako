@@ -7,56 +7,153 @@ export module rrr.pollable_proxy;
 
 import std;
 
-// @safe - Pollable interface + thin Arc<T>-wrapping adapter. The
+// @safe - `PollableBase` trait + thin Arc<T>-wrapping adapter. The
 // adapter's `mut_poll()` helper does a const_cast<T&> through
 // rusty::Arc<T>::get() — that one method carries an explicit
 // `// @unsafe` override below; everything else is pure delegation.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block is
+// the source of truth. The transpiler emits the matching abstract
+// C++ class (`class PollableBase`) at namespace scope — the `pub trait`
+// visibility tells it not to wrap in an anonymous namespace, so
+// downstream TUs (`rrr.reactor`, `rrr.tcp_channel`, …) can name
+// `PollableBase` through the import graph. This is the first real
+// trait migration in rrr — exercising the `pub trait` → namespace-
+// scope-class codegen fix that landed on rusty-cpp main as 591aca7.
+//
+// Trait name kept as `PollableBase` (not the Rust-idiomatic
+// `Pollable`) to avoid a name collision with the unrelated
+// `rrr::Pollable` interface that `rrr.epoll_wrapper` exports in
+// the same namespace; the two are structurally identical but live
+// in separate modules and serve different roles, and renaming
+// either is out of scope for this migration.
 export namespace rrr {
 
+#if RUSTYCPP_RUST
+pub trait PollableBase {
+    fn fd(&self) -> i32;
+    fn poll_mode(&self) -> i32;
+    fn content_size(&mut self) -> usize;
+    fn handle_read(&mut self) -> bool;
+    fn handle_write(&mut self) -> i32;
+    fn handle_error(&mut self);
+    fn close(&mut self);
+    fn check_pending_write_update(&self) -> bool;
+    fn is_closed(&self) -> bool;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=pollable.0 version=1 rust_sha256=58f4fd8299bef8518306a38e8d93c412bfb6de8a9c7150f5c46259aeee31ed7a*/
 class PollableBase {
- public:
-  virtual ~PollableBase() = default;
-
-  virtual int fd() const = 0;
-  virtual int poll_mode() const = 0;
-  virtual size_t content_size() = 0;
-  virtual bool handle_read() = 0;
-  virtual int handle_write() = 0;
-  virtual void handle_error() = 0;
-  virtual void close() = 0;
-  virtual bool check_pending_write_update() const = 0;
-  virtual bool is_closed() const = 0;
+public:
+    virtual ~PollableBase() noexcept(false) {}
+    virtual int32_t fd() const = 0;
+    virtual int32_t poll_mode() const = 0;
+    virtual size_t content_size() = 0;
+    virtual bool handle_read() = 0;
+    virtual int32_t handle_write() = 0;
+    virtual void handle_error() = 0;
+    virtual void close() = 0;
+    virtual bool check_pending_write_update() const = 0;
+    virtual bool is_closed() const = 0;
+    PollableBase(const PollableBase&) = delete;
+    PollableBase& operator=(const PollableBase&) = delete;
+    PollableBase(PollableBase&&) = delete;
+    PollableBase& operator=(PollableBase&&) = delete;
+protected:
+    PollableBase() = default;
 };
+
+template <class U> class PollableBaseAdapter;
+template <class U> class PollableBaseAdapterRef;
+template <class U> class PollableBaseAdapterRefMut;
+/*RUSTYCPP:GEN-END id=pollable.0*/
 
 using PollableProxy = rusty::Box<PollableBase>;
+// `PollableArcShim<T>` — the generic Arc-holding PollableBase
+// implementor (generic #[cpp_inherit], probe-verified). Requires T's
+// pollable hooks to be &self/const — true for every production T after
+// the interior-mutability flips; the old adapter's mut_poll()
+// const_cast is gone.
+#if RUSTYCPP_RUST
+struct PollableArcShim<T> {
+    poll_: Arc<T>,
+}
 
-template <typename T>
-class PollableTypedArcAdapter : public PollableBase {
- public:
-  explicit PollableTypedArcAdapter(rusty::Arc<T> poll) : poll_(std::move(poll)) {}
+#[cpp_inherit]
+impl<T> PollableBase for PollableArcShim<T> {
+    fn fd(&self) -> i32 {
+        self.poll_.fd()
+    }
+    fn poll_mode(&self) -> i32 {
+        self.poll_.poll_mode()
+    }
+    fn content_size(&mut self) -> usize {
+        self.poll_.content_size()
+    }
+    fn handle_read(&mut self) -> bool {
+        self.poll_.handle_read()
+    }
+    fn handle_write(&mut self) -> i32 {
+        self.poll_.handle_write()
+    }
+    fn handle_error(&mut self) {
+        self.poll_.handle_error()
+    }
+    fn close(&mut self) {
+        self.poll_.close()
+    }
+    fn check_pending_write_update(&self) -> bool {
+        self.poll_.check_pending_write_update()
+    }
+    fn is_closed(&self) -> bool {
+        self.poll_.is_closed()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=pollable_proxy.arc_shim version=1 rust_sha256=943e959c53d0a213e676eead25ffcd462759245e5a6ac4a01136c15506b38a98*/
+template<typename T>
+struct PollableArcShim;
 
-  int fd() const override { return poll_->fd(); }
-  int poll_mode() const override { return poll_->poll_mode(); }
-  size_t content_size() override { return mut_poll().content_size(); }
-  bool handle_read() override { return mut_poll().handle_read(); }
-  int handle_write() override { return mut_poll().handle_write(); }
-  void handle_error() override { mut_poll().handle_error(); }
-  void close() override { mut_poll().close(); }
-  bool check_pending_write_update() const override { return poll_->check_pending_write_update(); }
-  bool is_closed() const override { return poll_->is_closed(); }
+template<typename T>
+struct PollableArcShim : public PollableBase {
+    rusty::Arc<T> poll_;
+    PollableArcShim(rusty::Arc<T> poll__init) : PollableBase(), poll_(std::move(poll__init)) {}
+    PollableArcShim(PollableArcShim&& other) noexcept : PollableBase(), poll_(std::move(other.poll_)) {}
 
- private:
-  // @unsafe - const_cast through Arc::get() returning T*; lifts the
-  // const-ness so the adapter can invoke non-const Pollable hooks
-  // (handle_read/write/error, content_size, close). Callers guarantee
-  // single-threaded access via the poll thread.
-  T& mut_poll() { return const_cast<T&>(*poll_.get()); }
-  rusty::Arc<T> poll_;
+
+    int32_t fd() const {
+        return this->poll_->fd();
+    }
+    int32_t poll_mode() const {
+        return this->poll_->poll_mode();
+    }
+    size_t content_size() {
+        return this->poll_->content_size();
+    }
+    bool handle_read() {
+        return this->poll_->handle_read();
+    }
+    int32_t handle_write() {
+        return this->poll_->handle_write();
+    }
+    void handle_error() {
+        this->poll_->handle_error();
+    }
+    void close() {
+        this->poll_->close();
+    }
+    bool check_pending_write_update() const {
+        return this->poll_->check_pending_write_update();
+    }
+    bool is_closed() const {
+        return this->poll_->is_closed();
+    }
 };
+/*RUSTYCPP:GEN-END id=pollable_proxy.arc_shim*/
 
 template <typename T>
 inline PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll) {
-  return rusty::make_box<PollableTypedArcAdapter<T>>(std::move(poll));
+  return rusty::make_box<PollableArcShim<T>>(std::move(poll));
 }
 
 }  // export namespace rrr

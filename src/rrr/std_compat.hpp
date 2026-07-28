@@ -36,6 +36,7 @@
 #include <cfloat>
 #include <charconv>
 #include <chrono>
+#include <cinttypes>
 #include <climits>
 #include <cmath>
 #include <codecvt>

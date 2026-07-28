@@ -69,7 +69,7 @@ int SortedMultiKey::compare(const SortedMultiKey& o) const {
             }
             break;
         default:
-            Log::fatal("unexpected column type %d", info->type);
+            rrr::Log_fatal("unexpected column type {}", (int)info->type);
             verify(0);
         }
     }

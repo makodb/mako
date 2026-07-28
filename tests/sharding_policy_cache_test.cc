@@ -35,7 +35,7 @@ TEST_F(ShardingPolicyCacheTest, SetPolicy) {
     });
     policy.version = 42;
 
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     EXPECT_TRUE(cache.is_initialized());
     EXPECT_EQ(42u, cache.get_version());
@@ -53,7 +53,7 @@ TEST_F(ShardingPolicyCacheTest, get_shard_for_key) {
         make_table_policy("WAREHOUSE", KeyExtractor::by_field(0),
                           {{0, 5, 0}, {5, 10, 1}}, 0),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     // Test range lookups
     EXPECT_EQ(0, cache.get_shard_for_key("WAREHOUSE", 0));
@@ -74,7 +74,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForKeyUnknownTable) {
     auto policy = make_policy_set(2, {
         make_table_policy("WAREHOUSE", KeyExtractor::by_field(0), {{0, 10, 0}}),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     // Unknown table should return -1
     EXPECT_EQ(-1, cache.get_shard_for_key("UNKNOWN_TABLE", 5));
@@ -94,7 +94,7 @@ TEST_F(ShardingPolicyCacheTest, HasPolicyForTable) {
         make_table_policy("WAREHOUSE", KeyExtractor::by_field(0), {{0, 10, 0}}),
         make_table_policy("DISTRICT", KeyExtractor::by_field(0), {{0, 10, 0}}),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     EXPECT_TRUE(cache.has_policy_for_table("WAREHOUSE"));
     EXPECT_TRUE(cache.has_policy_for_table("DISTRICT"));
@@ -113,7 +113,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKey) {
         make_table_policy("DISTRICT", KeyExtractor::by_field(0),
                           {{0, 10, 0}, {10, 20, 1}, {20, 30, 2}}),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     // Composite key: [w_id, d_id]
     // Should shard by w_id (field 0)
@@ -130,7 +130,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeySecondField) {
         make_table_policy("SECONDARY", KeyExtractor::by_field(1),
                           {{0, 50, 0}, {50, 100, 1}}),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     // Composite key: [first, second]
     // Should shard by second (field 1)
@@ -145,7 +145,7 @@ TEST_F(ShardingPolicyCacheTest, GetShardForCompositeKeyInvalidFieldIndex) {
         // Field 5 doesn't exist; extraction falls back to the default shard.
         make_table_policy("TEST", KeyExtractor::by_field(5), {{0, 10, 0}}, 1),
     });
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     // Should use default shard when field extraction fails
     EXPECT_EQ(1, cache.get_shard_for_composite_key("TEST", {1, 2, 3}));
@@ -247,7 +247,7 @@ TEST_F(ShardingPolicyCacheTest, TpccStyleRouting) {
     // Shard 0: w_id in [1, 6) → w_id 1, 2, 3, 4, 5
     // Shard 1: w_id in [6, 11) → w_id 6, 7, 8, 9, 10
     auto policy = create_tpcc_sharding_policy(10, 2).unwrap();
-    cache.set_policy(policy);
+    cache.set_policy(std::move(policy));
 
     EXPECT_TRUE(cache.is_initialized());
     EXPECT_EQ(2, cache.get_num_shards());

@@ -100,11 +100,11 @@
 ////    EXPECT_EQ(output[0], Value((int64_t)200));
 ////
 ////    tbl2->read(Value(1), {2}, &output);
-////    //Log::debug("%" PRIu64 "", output[0].get_i64());
+////    //Log_debug("%" PRIu64 "", output[0].get_i64());
 ////    EXPECT_EQ(output[0], Value((int64_t)200));
 ////
 ////    tbl3->read(Value(1), {1}, &output);
-//////    Log::debug("%" PRIu64 "", output[0].get_i64());
+//////    Log_debug("%" PRIu64 "", output[0].get_i64());
 ////    EXPECT_EQ(output[0], Value((int64_t)200));
 ////
 ////    // let us see what can happen if we write a value that is not there.

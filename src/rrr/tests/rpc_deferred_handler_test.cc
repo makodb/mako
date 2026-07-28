@@ -56,11 +56,11 @@ protected:
         for (int attempt = 0; attempt < 20; ++attempt) {
             port_ = test_ports::get_port();
             auto poll_clone = poll_.as_ref().unwrap().clone();
-            server_ = new Server(rusty::Some(std::move(poll_clone)));
+            server_ = new Server(Server::new_(rusty::Some(std::move(poll_clone))));
             auto svc = rusty::make_box<DeferTestService>();
             service_ = svc.get();
-            server_->reg_service(std::move(svc));
-            if (server_->start(("0.0.0.0:" + std::to_string(port_)).c_str()) == 0) {
+            server_->reg_service_typed(std::move(svc));
+            if (server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(port_)).c_str())) == 0) {
                 started = true;
                 break;
             }
@@ -72,7 +72,7 @@ protected:
 
         client_ = rusty::Some(Client::create(poll_.as_ref().unwrap()));
         ASSERT_EQ(client_.as_ref().unwrap()->connect(
-            ("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+            reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
         std::this_thread::sleep_for(50ms);
     }
 
@@ -153,7 +153,7 @@ TEST_F(DeferredHandlerTest, ConcurrentDeferredCallsNoLeak) {
         threads.emplace_back([&, poll_clone = std::move(poll_clone)]() {
             auto thread_client = Client::create(poll_clone);
             if (thread_client->connect(
-                    ("127.0.0.1:" + std::to_string(port_)).c_str()) != 0) {
+                    reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true) != 0) {
                 return;
             }
             std::this_thread::sleep_for(20ms);

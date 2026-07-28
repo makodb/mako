@@ -494,7 +494,7 @@ class RecoveryManager {
       std::error_code ec;
       std::filesystem::remove_all(core_.config_.storage_path, ec);
       if (ec) {
-        Log_error("Failed to clear storage at %s: %s",
+        Log_error("Failed to clear storage at {}: {}",
                   core_.config_.storage_path.c_str(), ec.message().c_str());
       }
     }
@@ -503,13 +503,13 @@ class RecoveryManager {
     storage_ = std::make_shared<RocksDBLogStorage>(core_.config_.storage_path);
     if (recovery_storage_open_failed(storage_ != nullptr,
                                      storage_ != nullptr && storage_->is_open())) {
-      Log_error("Failed to open RocksDB at %s", core_.config_.storage_path.c_str());
+      Log_error("Failed to open RocksDB at {}", core_.config_.storage_path.c_str());
       storage_ = nullptr;
       return nullptr;
     }
 
     core_.mark_initialized();
-    Log_info("Recovery: Storage opened at %s (mode=%d)",
+    Log_info("Recovery: Storage opened at {} (mode={})",
              core_.config_.storage_path.c_str(), static_cast<int>(core_.detected_mode()));
     return storage_;
   }
@@ -587,7 +587,7 @@ class RecoveryManager {
 
     recovery_result_assign_recovery_time(result, recovery_time_ms);
     recovery_result_mark_success(result, recovered_entries, recovery_time_ms);
-    Log_info("Recovery complete: %lu entries in %lu ms",
+    Log_info("Recovery complete: {} entries in {} ms",
              result.recovered_entries, result.recovery_time_ms);
     return result;
   }

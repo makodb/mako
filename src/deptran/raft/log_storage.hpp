@@ -32,7 +32,6 @@ namespace janus {
 namespace raft {
 
 // Bring rrr:: marshalling types into janus::raft:: scope (they live in rrr::).
-using ::rrr::Marshal;
 using ::rrr::BinaryWriteArchive;
 using ::rrr::BinaryReadArchive;
 using ::rrr::i8;
@@ -195,19 +194,19 @@ inline bool operator==(const LogEntry& lhs, const LogEntry& rhs) {
  */
 // @unsafe - delegates to BinaryWriteArchive primitive operators
 inline void log_entry_save(const LogEntry& entry, BinaryWriteArchive& ar) {
-    ar << entry.slot_id;
-    ar << entry.term;
-    ar << entry.max_ballot_seen;
-    ar << entry.max_ballot_accepted;
-    ar << static_cast<i8>(entry.committed ? 1 : 0);
-    ar << static_cast<i8>(entry.is_no_op ? 1 : 0);
+    rrr::Serialize_::serialize(entry.slot_id, ar);
+    rrr::Serialize_::serialize(entry.term, ar);
+    rrr::Serialize_::serialize(entry.max_ballot_seen, ar);
+    rrr::Serialize_::serialize(entry.max_ballot_accepted, ar);
+    rrr::Serialize_::serialize(static_cast<i8>(entry.committed ? 1 : 0), ar);
+    rrr::Serialize_::serialize(static_cast<i8>(entry.is_no_op ? 1 : 0), ar);
 
     // Drive the polymorphic command through Command's own archive operator.
     // Wire format is identical (Command emits `[v32 kind][payload]`).
     i8 has_command = entry.command.has_value() ? 1 : 0;
-    ar << has_command;
+    rrr::Serialize_::serialize(has_command, ar);
     if (has_command) {
-        ar << entry.command;
+        rrr::Serialize_::serialize(entry.command, ar);
     }
 }
 
@@ -219,23 +218,23 @@ inline void log_entry_save(const LogEntry& entry, BinaryWriteArchive& ar) {
  */
 // @unsafe - delegates to BinaryReadArchive primitive operators
 inline void log_entry_load(LogEntry& entry, BinaryReadArchive& ar) {
-    ar >> entry.slot_id;
-    ar >> entry.term;
-    ar >> entry.max_ballot_seen;
-    ar >> entry.max_ballot_accepted;
+    rrr::Deserialize_::deserialize(entry.slot_id, ar);
+    rrr::Deserialize_::deserialize(entry.term, ar);
+    rrr::Deserialize_::deserialize(entry.max_ballot_seen, ar);
+    rrr::Deserialize_::deserialize(entry.max_ballot_accepted, ar);
 
     i8 committed_byte = 0;
-    ar >> committed_byte;
+    rrr::Deserialize_::deserialize(committed_byte, ar);
     entry.committed = (committed_byte != 0);
 
     i8 is_no_op_byte = 0;
-    ar >> is_no_op_byte;
+    rrr::Deserialize_::deserialize(is_no_op_byte, ar);
     entry.is_no_op = (is_no_op_byte != 0);
 
     i8 has_command = 0;
-    ar >> has_command;
+    rrr::Deserialize_::deserialize(has_command, ar);
     if (has_command) {
-        ar >> entry.command;
+        rrr::Deserialize_::deserialize(entry.command, ar);
     } else {
         entry.command = Command{};
     }

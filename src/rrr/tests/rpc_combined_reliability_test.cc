@@ -6,6 +6,11 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.heartbeat;
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -79,10 +84,10 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<CombinedTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -99,9 +104,9 @@ protected:
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start server
     auto server = start_server();
@@ -114,7 +119,7 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
     EXPECT_TRUE(cb.is_closed());
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -124,8 +129,8 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
     if (cb.allow_request()) {
         std::string input = "test";
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -141,17 +146,17 @@ TEST_F(CombinedReliabilityTest, StateAndCircuitBreakerInteraction) {
 }
 
 TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // First, try connecting to non-existent server
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     for (int i = 0; i < 2; i++) {
         if (cb.allow_request()) {
-            int result = client->connect(server_addr().c_str());
+            int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
             if (result != 0) {
                 cb.record_failure();
             }
@@ -174,7 +179,7 @@ TEST_F(CombinedReliabilityTest, CircuitBreakerWithConnectionState) {
 
     // Create new client and connect
     auto new_client = Client::create(poll_thread_.as_ref().unwrap());
-    int result = new_client->connect(server_addr().c_str());
+    int result = new_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
     if (result == 0) {
         cb.record_success();
     } else {
@@ -206,14 +211,14 @@ TEST_F(CombinedReliabilityTest, ReconnectPolicyWithStateTracking) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Configure reconnection policy
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 50;
     policy.max_retries = 3;
     policy.auto_reconnect = true;
     client->set_reconnect_policy(policy);
 
     // Connect
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -246,12 +251,12 @@ TEST_F(CombinedReliabilityTest, ReconnectPolicyWithStateTracking) {
 }
 
 TEST_F(CombinedReliabilityTest, ReconnectCalculatorResetOnSuccess) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.max_retries = 5;
     policy.jitter_enabled = false;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Simulate some failed retries
     calc.next_delay_ms();  // Retry 1
@@ -270,13 +275,13 @@ TEST_F(CombinedReliabilityTest, ReconnectCalculatorResetOnSuccess) {
 
 TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
     // Configure all reliability components
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
-    HeartbeatConfig hb_config;
+    auto hb_config = HeartbeatConfig::defaults();
     hb_config.interval_ms = 100;
-    HeartbeatManager hb(hb_config);
+    auto hb = HeartbeatManager::new_(hb_config);
 
     ReconnectPolicy reconnect_policy = ReconnectPolicy::aggressive();
 
@@ -290,7 +295,7 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
 
     // Connect
     EXPECT_TRUE(cb.allow_request());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     cb.record_success();
 
@@ -302,8 +307,8 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
         if (cb.allow_request()) {
             std::string input = "test_" + std::to_string(i);
             auto fu_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP,
-                [&](BinaryWriteArchive& m) { m << input; }
+                benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+                [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
             );
             ASSERT_TRUE(fu_result.is_ok());
             auto fu = fu_result.unwrap();
@@ -327,10 +332,10 @@ TEST_F(CombinedReliabilityTest, FullStackSuccessPath) {
 }
 
 TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 2;
     cb_config.timeout_ms = 100;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Start with no server
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -338,7 +343,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Try to connect - should fail
     if (cb.allow_request()) {
-        int result = client->connect(server_addr().c_str());
+        int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -346,7 +351,7 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Second attempt
     if (cb.allow_request()) {
-        int result = client->connect(server_addr().c_str());
+        int result = client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (result != 0) {
             cb.record_failure();
         }
@@ -368,15 +373,15 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 
     // Create new client and try again
     auto new_client = Client::create(poll_thread_.as_ref().unwrap());
-    if (new_client->connect(server_addr().c_str()) == 0) {
+    if (new_client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true) == 0) {
         cb.record_success();
         std::this_thread::sleep_for(milliseconds(50));
 
         // Make request to verify
         std::string input = "recovery_test";
         auto fu_result = new_client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -396,9 +401,9 @@ TEST_F(CombinedReliabilityTest, FullStackFailureAndRecovery) {
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 3;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     // Simulate different error types and their effect on circuit
     // Note: Only CONNECTION (100-199) and TIMEOUT (400-499) errors trigger record_failure
@@ -427,17 +432,17 @@ TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
 }
 
 TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 50;
     config.timeout_ms = 100;
     config.max_missed = 2;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     auto server = start_server();
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -463,10 +468,10 @@ TEST_F(CombinedReliabilityTest, HeartbeatWithStateTransitions) {
 // ============================================================================
 
 TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
-    CircuitBreakerConfig cb_config;
+    auto cb_config = CircuitBreakerConfig::defaults();
     cb_config.failure_threshold = 5;
     cb_config.timeout_ms = 50;
-    CircuitBreaker cb(cb_config);
+    auto cb = CircuitBreaker::new_(cb_config);
 
     auto server = start_server();
     ASSERT_NE(server, nullptr);
@@ -476,7 +481,7 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
 
         // Connect
         if (cb.allow_request()) {
-            if (client->connect(server_addr().c_str()) == 0) {
+            if (client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true) == 0) {
                 cb.record_success();
             } else {
                 cb.record_failure();
@@ -489,8 +494,8 @@ TEST_F(CombinedReliabilityTest, RapidCycleStressTest) {
         for (int i = 0; i < 3 && client->connected() && cb.allow_request(); i++) {
             std::string input = "cycle_" + std::to_string(cycle) + "_" + std::to_string(i);
             auto fu_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP,
-                [&](BinaryWriteArchive& m) { m << input; }
+                benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+                [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
             );
             if (fu_result.is_ok()) {
                 auto fu = fu_result.unwrap();

@@ -12,6 +12,9 @@
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.request_options;
 #include "rpc_test_ports.h"
 
 import std;
@@ -40,7 +43,8 @@ public:
         }
 
         v32 payload;
-        req->m >> payload;
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(payload, __req_ar__);
 
         int call = call_count.fetch_add(1) + 1;
         if (call <= drops_before_reply_) {
@@ -54,7 +58,7 @@ public:
 
         auto sconn = sconn_opt.unwrap();
         const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](BinaryWriteArchive& m) {
-            m << payload;
+            rrr::Serialize_::serialize(payload, m);
         });
     }
 
@@ -122,7 +126,7 @@ TEST(TimeoutTypeTest, UnknownTypeReturnsUnknown) {
 // ============================================================================
 
 TEST(RequestOptionsTest, DefaultValues) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     EXPECT_EQ(opts.timeout_ms, 1000u);
     EXPECT_EQ(opts.total_timeout_ms, 0u);
     EXPECT_EQ(opts.max_retries, 0u);
@@ -151,14 +155,14 @@ TEST(RequestOptionsTest, WithRetryPreset) {
 }
 
 TEST(RequestOptionsTest, WithRetryDefaultTimeout) {
-    auto opts = RequestOptions::with_retry(5);
+    auto opts = RequestOptions::with_retry(5, 1000);
     EXPECT_EQ(opts.timeout_ms, 1000u);  // Default
     EXPECT_EQ(opts.max_retries, 5u);
     EXPECT_TRUE(opts.idempotent);
 }
 
 TEST(RequestOptionsTest, IdempotentRetryPreset) {
-    auto opts = RequestOptions::idempotent_retry();  // Default 3 retries
+    auto opts = RequestOptions::idempotent_retry(3);  // Default 3 retries
     EXPECT_EQ(opts.max_retries, 3u);
     EXPECT_TRUE(opts.idempotent);
 }
@@ -199,7 +203,7 @@ TEST(RequestOptionsTest, PatientPreset) {
 // ============================================================================
 
 TEST(RequestOptionsTest, CanRetryWhenIdempotentAndUnderLimit) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.idempotent = true;
     opts.max_retries = 3;
 
@@ -211,7 +215,7 @@ TEST(RequestOptionsTest, CanRetryWhenIdempotentAndUnderLimit) {
 }
 
 TEST(RequestOptionsTest, CannotRetryWhenNotIdempotent) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.idempotent = false;
     opts.max_retries = 3;
 
@@ -220,7 +224,7 @@ TEST(RequestOptionsTest, CannotRetryWhenNotIdempotent) {
 }
 
 TEST(RequestOptionsTest, CannotRetryWhenNoRetries) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.idempotent = true;
     opts.max_retries = 0;
 
@@ -232,7 +236,7 @@ TEST(RequestOptionsTest, CannotRetryWhenNoRetries) {
 // ============================================================================
 
 TEST(RequestOptionsTest, CalculateDelayExponentialBackoff) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 100;
     opts.max_delay_ms = 10000;
     opts.jitter_factor = 0.0f;  // Disable jitter for deterministic test
@@ -245,7 +249,7 @@ TEST(RequestOptionsTest, CalculateDelayExponentialBackoff) {
 }
 
 TEST(RequestOptionsTest, CalculateDelayCappedAtMax) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 100;
     opts.max_delay_ms = 500;
     opts.jitter_factor = 0.0f;
@@ -258,7 +262,7 @@ TEST(RequestOptionsTest, CalculateDelayCappedAtMax) {
 }
 
 TEST(RequestOptionsTest, CalculateDelayWithJitter) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 100;
     opts.max_delay_ms = 10000;
     opts.jitter_factor = 0.2f;  // 20% jitter
@@ -291,7 +295,7 @@ TEST(RequestOptionsTest, CalculateDelayWithJitter) {
 // ============================================================================
 
 TEST(RequestOptionsTest, TotalTimeoutExceeded) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.total_timeout_ms = 5000;
 
     EXPECT_FALSE(opts.is_total_timeout_exceeded(0));
@@ -301,7 +305,7 @@ TEST(RequestOptionsTest, TotalTimeoutExceeded) {
 }
 
 TEST(RequestOptionsTest, TotalTimeoutNotSetNeverExceeds) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.total_timeout_ms = 0;  // Disabled
 
     EXPECT_FALSE(opts.is_total_timeout_exceeded(0));
@@ -309,7 +313,7 @@ TEST(RequestOptionsTest, TotalTimeoutNotSetNeverExceeds) {
 }
 
 TEST(RequestOptionsTest, RemainingTimeCalculation) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.total_timeout_ms = 5000;
 
     EXPECT_EQ(opts.remaining_time_ms(0), 5000u);
@@ -320,7 +324,7 @@ TEST(RequestOptionsTest, RemainingTimeCalculation) {
 }
 
 TEST(RequestOptionsTest, RemainingTimeNoLimit) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.total_timeout_ms = 0;
 
     EXPECT_EQ(opts.remaining_time_ms(0), UINT64_MAX);
@@ -332,7 +336,7 @@ TEST(RequestOptionsTest, RemainingTimeNoLimit) {
 // ============================================================================
 
 TEST(RequestOptionsTest, ConcurrentDelayCalculation) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 100;
     opts.max_delay_ms = 10000;
     opts.jitter_factor = 0.1f;
@@ -364,7 +368,7 @@ TEST(RequestOptionsTest, ConcurrentDelayCalculation) {
 // ============================================================================
 
 TEST(RequestOptionsTest, ZeroBaseDelay) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 0;
     opts.max_delay_ms = 1000;
     opts.jitter_factor = 0.0f;
@@ -374,7 +378,7 @@ TEST(RequestOptionsTest, ZeroBaseDelay) {
 }
 
 TEST(RequestOptionsTest, VeryLargeAttempt) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 100;
     opts.max_delay_ms = 5000;
     opts.jitter_factor = 0.0f;
@@ -385,7 +389,7 @@ TEST(RequestOptionsTest, VeryLargeAttempt) {
 }
 
 TEST(RequestOptionsTest, MaxDelayLessThanBase) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.base_delay_ms = 1000;
     opts.max_delay_ms = 500;  // Less than base!
     opts.jitter_factor = 0.0f;
@@ -399,7 +403,7 @@ TEST(RequestOptionsTest, MaxDelayLessThanBase) {
 // ============================================================================
 
 TEST(RequestOptionsTest, CopyConstruct) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 5000;
     opts.max_retries = 10;
     opts.idempotent = true;
@@ -411,7 +415,7 @@ TEST(RequestOptionsTest, CopyConstruct) {
 }
 
 TEST(RequestOptionsTest, MoveConstruct) {
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 5000;
     opts.max_retries = 10;
 
@@ -425,16 +429,16 @@ TEST(RequestOptionsTest, MoveConstruct) {
 // ============================================================================
 
 TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenSucceeds) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(1);  // Drop first response only.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 40;
     opts.max_retries = 2;
     opts.base_delay_ms = 80;
@@ -448,7 +452,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
         TimeoutRetryService::kRpcId, opts,
         [&](BinaryWriteArchive& m) {
             marshal_calls.fetch_add(1);
-            m << v32(123);
+            rrr::Serialize_::serialize(v32(123), m);
         });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -473,16 +477,16 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
 }
 
 TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 40;
     opts.max_retries = 5;   // Should be ignored because request is non-idempotent.
     opts.base_delay_ms = 80;
@@ -492,7 +496,7 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(456); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(456), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -509,16 +513,16 @@ TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
 }
 
 TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTimeout) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 30;
     opts.max_retries = 2;
     opts.base_delay_ms = 50;
@@ -529,7 +533,7 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(9); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(9), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -549,13 +553,13 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
 }
 
 TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(0);
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     BufferingConfig buffering = BufferingConfig::defaults();
     buffering.behavior = DisconnectBehavior::FAIL_FAST;
@@ -563,14 +567,14 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
     client->close();
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1000)));
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 50;
     opts.max_retries = 0;
     opts.idempotent = true;
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(3); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(3), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -585,14 +589,14 @@ TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) 
 }
 
 TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(0);
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     BufferingConfig buffering = BufferingConfig::defaults();
     buffering.behavior = DisconnectBehavior::QUEUE;
@@ -603,14 +607,14 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
     client->close();
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1000)));
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 50;
     opts.max_retries = 0;
     opts.idempotent = true;
 
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(5); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(5), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -626,16 +630,16 @@ TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
 }
 
 TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 80;
     opts.total_timeout_ms = 130;
     opts.max_retries = 5;
@@ -647,7 +651,7 @@ TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAt
     auto start = steady_clock::now();
     auto fu_result = client->request_with_options(
         TimeoutRetryService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(77); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(77), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -694,7 +698,7 @@ TEST(RequestOptionsTest, CellConcurrentAccess) {
     for (int i = 0; i < 4; i++) {
         threads.emplace_back([&cell, i]() {
             for (int j = 0; j < 100; j++) {
-                RequestOptions opts;
+                auto opts = RequestOptions::defaults();
                 opts.timeout_ms = static_cast<uint64_t>(i * 1000 + j);
                 cell.set(opts);
             }

@@ -17,6 +17,7 @@ module;
 #include <std_compat.hpp>
 #include <std_annotation.hpp>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -37,13 +38,11 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/async.hpp>
 #include <rusty/box.hpp>
-#include <rusty/btreeset.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/fn.hpp>
 #include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/rusty.hpp>
 #include <rusty/sync/atomic.hpp>
@@ -54,6 +53,7 @@ module;
 export module rrr.reactor;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
 import rrr.logging;
@@ -72,353 +72,1407 @@ import rrr.pollable_proxy;
 // fiber context switching / raw pointer access / thread-local lookup
 // have per-method `// @unsafe` overrides. The rest is analyzed as
 // @safe by default.
+// Forward declarations for the flattened QuorumEvent (defined in `namespace
+// janus` far below). Hoisted here so `rrr::event_make` — defined inside the
+// `rrr` block, before janus opens — can dispatch `create_sp_event<QuorumEvent>`
+// to the janus factory. The leaf events live in `rrr`, but QuorumEvent stays in
+// `janus` (its 41 deptran use sites name it there).
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(get_self)
+RUSTY_METHOD_DISPATCH(is_composite_event)
+RUSTY_METHOD_DISPATCH(is_ready)
+RUSTY_METHOD_DISPATCH(push_back)
+RUSTY_METHOD_DISPATCH(upgrade)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
+export namespace janus {
+struct QuorumEvent;
+rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum);
+}
+
 export namespace rrr {
 
 // --- from event.h --------------------------------------------------------
 
 class Reactor;
 class Fiber;
-class Event {
- protected:
-  // Self-reference for adding to queues (using weak_ptr for shared ownership)
-  // Set by CreateSpEvent after construction
-  std::weak_ptr<Event> self_;
-//class Event {
- public:
-  int __debug_creator{0};
-  enum EventStatus { INIT = 0, WAIT = 1, READY = 2,
-      DONE = 3, TIMEOUT = 4, DEBUG};
 
-#ifdef EVENT_TIMEOUT_CHECK
-  bool __debug_timeout_{false};
+// Per-thread scheduler singletons + the running-fiber slot. Namespace-
+// scope (not class-static) so the DSL singleton/save/restore logic can
+// name them; `inline` keeps vague linkage (same clang-21 dup-symbol
+// rationale as the former class members).
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
+inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
+inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
+
+
+// `EventState` — the cleanly-DSL-able portion of an Event's data, factored out
+// of the hand-written `class Event` into an inline-Rust struct. These nine
+// fields are pure rusty/POD types with no interior-mutability or vtable
+// constraint, so they transpile to a plain aggregate composed onto Event as
+// the member `state_`. The fields that must stay hand-written remain directly
+// on Event: `status_` (rusty::Cell), the `EventStatus` enum, `self_`
+// (std::weak_ptr), the `_dbg_p_scheduler_` void*, and the
+// `#ifdef EVENT_TIMEOUT_CHECK __debug_timeout_`.
+// `wp_fiber_` is a weak ref because an Event usually lives on a fiber stack and
+// must not keep its owning fiber alive.
+// Event status machine, hoisted out of `class Event` (flattening S4 prep):
+// the flat DSL structs each carry a `status_: Cell<EventStatus>`, and a
+// DSL `#[repr(i32)] enum` lowers to exactly this `enum class` shape. All
+// call sites already spell `EventStatus::X` (S2).
+enum class EventStatus : int32_t {
+  INIT = 0,
+  WAIT = 1,
+  READY = 2,
+  DONE = 3,
+  TIMEOUT = 4,
+  DEBUG = 5,
+};
+
+using EventTestFn = rusty::Function<bool(int) const>;
+#if RUSTYCPP_RUST
+struct EventState {
+    __debug_creator: i32,
+    test_: RefCell<EventTestFn>,
+    wakeup_time_: Cell<u64>,
+    rcd_wait_: Cell<bool>,
+    wait_place_: RefCell<std::string>,
+    wp_fiber_: RefCell<rusty::rc::Weak<Fiber>>,
+}
 #endif
-  rusty::Cell<EventStatus> status_{INIT};
-  void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
-  uint64_t type_{0};
-  rusty::Function<bool(int)> test_{};
-	bool needs_finalize_{false};
-  uint64_t wakeup_time_; // calculated by timeout, unit: microsecond
-  bool rcd_wait_ = false;
-  std::string wait_place_{"not recorded"};
-  bool in_waiting_list_{false};
+/*RUSTYCPP:GEN-BEGIN id=reactor.event_state version=1 rust_sha256=074996f76ecb4e468e7e8e788e5f5ecddd91eefd2032b143f448655783c3892e*/
+struct EventState;
 
-  // An event is usually allocated on a fiber stack, thus it cannot own a
-  //   shared_ptr to the fiber it is.
-  // In this case there is no shared pointer to the event.
-  // When the stack that contains the event frees, the event frees.
-  // Weak reference to a fiber using rusty::rc::Weak with proper reference counting
-  rusty::rc::Weak<Fiber> wp_fiber_{};
+struct EventState {
+    int32_t __debug_creator;
+    rusty::RefCell<EventTestFn> test_;
+    rusty::Cell<uint64_t> wakeup_time_;
+    rusty::Cell<bool> rcd_wait_;
+    rusty::RefCell<std::string> wait_place_;
+    rusty::RefCell<rusty::rc::Weak<Fiber>> wp_fiber_;
+};
+/*RUSTYCPP:GEN-END id=reactor.event_state*/
 
-  // @unsafe
-  virtual void wait(uint64_t timeout=0) final;
-
-  void wait(rusty::Function<bool(int)> f) {
-    test_ = std::move(f);
-    wait();
-  }
-
-  virtual void log(){return;}
-  virtual uint64_t get_fiber_id();
-  void record_place(const char* file, int line);
-
-  // @safe - Tests if event is ready
-  virtual bool test();
-  virtual bool is_slow();
-  virtual bool is_ready() {
-    if (!test_) return false;
-    return test_(0);
-  }
-
-  // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
-  // Added at END to preserve vtable layout for binary compatibility
-  virtual bool is_composite_event() { return false; }
-
-  // Self-reference management (uses shared_ptr for polymorphism support)
-  void set_self(std::weak_ptr<Event> self) { self_ = self; }
-  std::shared_ptr<Event> get_self() const { return self_.lock(); }
-
-  friend Reactor;
-// protected:
-  Event();
+// `EventPollable` — the reactor's polymorphic surface over queued events
+// (flattening S4): exactly what the loop/timeout/prune machinery invokes
+// through the four event queues, and nothing else. Data-free trait; the
+// hand-written `Event` derives it as a bridge during the transition, and
+// each flattened per-kind DSL struct will `#[cpp_inherit] impl` it.
+// wait()/set_self()/state_ stay OFF the trait: they are only ever touched
+// through concrete-typed handles.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+pub trait EventPollable {
+    fn test(&self) -> bool;
+    fn is_ready(&self) -> bool;
+    fn log(&self);
+    fn status(&self) -> EventStatus;
+    fn set_status(&self, s: EventStatus);
+    fn wakeup_time(&self) -> u64;
+    fn prunable(&self) -> bool;
+    fn set_prunable(&self, v: bool);
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>>;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.event_pollable version=1 rust_sha256=342f3c1646b41349ac6febce95fc5c9a264abe74cb3f7e2d2c3ba25df0feb539*/
+class EventPollable {
+public:
+    virtual ~EventPollable() noexcept(false) {}
+    virtual bool test() const = 0;
+    virtual bool is_ready() const = 0;
+    virtual void log() const = 0;
+    virtual EventStatus status() const = 0;
+    virtual void set_status(EventStatus s) const = 0;
+    virtual uint64_t wakeup_time() const = 0;
+    virtual bool prunable() const = 0;
+    virtual void set_prunable(bool v) const = 0;
+    virtual rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const = 0;
+    EventPollable(const EventPollable&) = delete;
+    EventPollable& operator=(const EventPollable&) = delete;
+    EventPollable(EventPollable&&) = delete;
+    EventPollable& operator=(EventPollable&&) = delete;
+protected:
+    EventPollable() = default;
 };
 
-template <class Type>
-class BoxEvent : public Event {
- public:
-  Type content_{};
-  bool is_set_{false};
-  Type& get() {
-    return content_;
-  }
-  void set(const Type& c) {
-    is_set_ = true;
-    content_ = c;
-    test();
-  }
-  void clear() {
-    is_set_ = false;
-    content_ = {};
-  }
-  virtual bool is_ready() override {
-    return is_set_;
-  }
-};
+template <class U> class EventPollableAdapter;
+template <class U> class EventPollableAdapterRef;
+template <class U> class EventPollableAdapterRefMut;
+/*RUSTYCPP:GEN-END id=reactor.event_pollable*/
 
-class IntEvent : public Event {
+// Kernel forward declarations (definitions live with the other out-of-line
+// event machinery below): the flattened DSL structs' generated method
+// bodies call these by ordinary lookup, so the names must exist first.
+template <typename W> void event_wait_impl(const W& self, uint64_t timeout);
+template <typename W> bool event_test_impl(const W& self);
 
- public:
-  IntEvent() {}
-  IntEvent(int tar) :target_(tar) {}
-  int value_{0};
-  int target_{1};
+// Shared core-field kernels for the flattened DSL structs (each carries
+// the same five event-core fields, so one template set serves them all;
+// the generated method bodies resolve these by ordinary lookup, and the
+// templates instantiate once the concrete struct is complete).
+using SrcFileCStr = const char*;
+// Duck-typed event-core kernels, authored as inline Rust DSL — convertible
+// since rusty-cpp #32/#33. Params renamed `self`->`ev` (a free-function param
+// named `self` lowers to a method receiver).
+#if RUSTYCPP_RUST
+fn event_core_self_lock<W>(ev: &W) -> rusty::Option<rusty::Arc<EventPollable>> {
+    ev.self_.upgrade()
+}
+fn event_core_set_self<W>(ev: &mut W, p: rusty::sync::Weak<EventPollable>) {
+    ev.self_ = p;
+}
+fn event_core_wakeup_time<W>(ev: &W) -> u64 {
+    ev.state_.wakeup_time_.get()
+}
+fn event_core_upgrade_fiber<W>(ev: &W) -> rusty::Option<rusty::Rc<Fiber>> {
+    ev.state_.wp_fiber_.borrow().upgrade()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.3 version=1 rust_sha256=8aa535460ee9fdf427c4e23e24455948268424b1d896b69639b4b35047e8e754*/
+template<typename W>
+uint64_t event_core_wakeup_time(const W& ev);
 
+template<typename W>
+rusty::Option<rusty::Arc<EventPollable>> event_core_self_lock(const W& ev) {
+    return ev.self_.upgrade();
+}
 
-  bool test_trigger();
+template<typename W>
+void event_core_set_self(W& ev, rusty::sync::Weak<EventPollable> p) {
+    W* ev_shadow1 = &ev;
+    (*ev_shadow1).self_ = std::move(p);
+}
 
-  int get() {
-    return value_;
-  }
+template<typename W>
+uint64_t event_core_wakeup_time(const W& ev) {
+    return ev.state_.wakeup_time_.get();
+}
 
-  // @safe - integer assignment + virtual `test()` (itself @safe).
-  int set(int n) {
-    int t = value_;
-    value_ = n;
-    // test_trigger();
-    test();
-    return t;
-  };
+template<typename W>
+rusty::Option<rusty::Rc<Fiber>> event_core_upgrade_fiber(const W& ev) {
+    return rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
+}
+/*RUSTYCPP:GEN-END id=reactor.3*/
+template <typename W> void event_core_record_place(const W& self, SrcFileCStr file, int line) {
+  char buff[200];
+  sprintf(buff, "%s:%d", file, line);
+  (*self.state_.wait_place_.borrow_mut()) += std::string(buff);
+  self.state_.rcd_wait_.set(true);
+}
+// Current fiber id — matches Event::get_fiber_id (reads the running
+// fiber, not event state), declared here for the flat structs that expose
+// it (defined after Fiber below).
+uint64_t event_core_get_fiber_id();
+// Seeds an event's EventState (wait_place_ tag + creating-fiber capture),
+// matching the legacy Event constructor. Declared here so the BoxEvent
+// hand-bridge's inline ctor (below) can call it; defined after Fiber.
+void event_state_seed(const EventState& st);
 
-  bool is_ready() override {
-    if (test_) {
-      return test_(value_);
+// Per-type construction factory used by Reactor::create_sp_event. Legacy
+// Event subclasses fall through to make_shared (they have real
+// constructors); the flattened DSL structs — field-wise aggregates with
+// no default arguments — dispatch to plain factory functions that supply
+// their defaults in exactly one audited place each.
+struct NeverEvent;
+struct TimeoutEvent;
+struct IntEvent;
+struct WaitAny;
+struct WaitAll;
+rusty::Arc<NeverEvent> never_event_make();
+rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us);
+rusty::Arc<IntEvent> int_event_make(int32_t target);
+rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);
+rusty::Arc<WaitAll> waitall_make();
+rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs);
+template<class Type> struct BoxEvent;
+template<class Type> rusty::Arc<BoxEvent<Type>> boxevent_make();
+// Detect BoxEvent<T> instantiations so event_make can dispatch to the template
+// factory (concrete-type is_same_v can't match a class-template instantiation).
+template<class> struct is_box_event : std::false_type {};
+template<class T> struct is_box_event<BoxEvent<T>> : std::true_type {};
+template<class> struct box_event_payload;
+template<class T> struct box_event_payload<BoxEvent<T>> { using type = T; };
+template <typename Ev, typename... Args>
+rusty::Arc<Ev> event_make(Args&&... args) {
+  if constexpr (std::is_same_v<Ev, NeverEvent>) {
+    return never_event_make();
+  } else if constexpr (std::is_same_v<Ev, TimeoutEvent>) {
+    return timeout_event_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, IntEvent>) {
+    if constexpr (sizeof...(Args) == 0) {
+      return int_event_make(1);  // IntEvent() had target_{1}
     } else {
-      return (value_ >= target_);
+      return int_event_make(std::forward<Args>(args)...);
     }
-  }
-};
-
-class SharedIntEvent {
- public:
-  int value_{};
-  rusty::Vec<std::shared_ptr<IntEvent>> events_;
-  // Declaration only - definition in event.cc
-  int set(const int& v);
-
-  void wait(rusty::Function<bool(int)> f);
-  bool wait_until_gte(int x, int timeout=0);
-};
-
-
-class NeverEvent: public Event {
- public:
-  bool is_ready() override {
-    return false;
-  }
-};
-
-class TimeoutEvent : public Event {
- public:
-  uint64_t wakeup_time_{0};
-  uint64_t wait_us_{0};
-  TimeoutEvent(uint64_t wait_us)
-      : wakeup_time_{Time::now(true) + wait_us}, wait_us_(wait_us) {}
-
-  bool is_ready() override {
-//    Log_debug("test timeout");
-    return (Time::now(true) > wakeup_time_);
-  }
-
-  // @unsafe
-  void wait() {
-    Event::wait(wait_us_);
-  }
-};
-
-class WaitAny : public Event {
- public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
-
-  void add_event() {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename X, typename... Args>
-  void add_event(X& x, Args&... rest) {
-    events_.push(x);
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitAny(Args&&... args) {
-    add_event(args...);
-  }
-
-  bool is_ready() override {
-    for (const auto& e : events_) {
-      if (e && e->is_ready()) {
-        return true;
-      }
+  } else if constexpr (std::is_same_v<Ev, janus::QuorumEvent>) {
+    return janus::quorum_event_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, WaitAny>) {
+    return waitany_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, WaitAll>) {
+    if constexpr (sizeof...(Args) == 0) {
+      return waitall_make();               // default ctor
+    } else {
+      return waitall_make_from(std::forward<Args>(args)...);  // vector ctor
     }
-    return false;
+  } else if constexpr (is_box_event<Ev>::value) {
+    return boxevent_make<typename box_event_payload<Ev>::type>();  // BoxEvent<T>()
+  } else {
+    return rusty::Arc<Ev>::make(std::forward<Args>(args)...);
   }
+}
 
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
-};
 
-class WaitAll : public Event {
- public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
 
-  // Default constructor (mako-dev)
-  WaitAll() {}
+// `BoxEvent<Type>` — a one-shot slot event (ready once `set()`). FLATTENED (S4):
+// a GENERIC inline-Rust DSL struct deriving EventPollable via `#[cpp_inherit]`
+// (the transpiler DOES lower generic structs: `struct BoxEvent<Type>` +
+// `impl<Type> ... for BoxEvent<Type>` -> `template<class Type> struct BoxEvent :
+// public EventPollable`). Carries the five event-core fields + the slot payload,
+// driven by the shared event_wait_impl / event_test_impl / event_core_* kernels.
+// The generic slot ops (get returns Type by value; set/clear deref-assign the
+// RefCell<Type>; clear value-inits Type{}) stay hand-written @unsafe TEMPLATE
+// kernels the DSL calls. Construction (the former default ctor) is the
+// `boxevent_make<Type>` factory, dispatched from event_make via is_box_event<Ev>.
+// Instantiated with <int>/<bool>/<std::string>; the kernels + factory are
+// exported templates so cross-TU (deptran) instantiation resolves. The former
+// StatusBox (rcc) subclass was removed (dead-convenience — see rcc/tx.h).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+// @unsafe - the generic slot-op kernels the DSL body calls.
+template<class Type> Type boxevent_get(const BoxEvent<Type>& self);
+template<class Type> void boxevent_set(const BoxEvent<Type>& self, const Type& c);
+template<class Type> void boxevent_clear(const BoxEvent<Type>& self);
+#if RUSTYCPP_RUST
+struct BoxEvent<Type> {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    content_: RefCell<Type>,
+    is_set_: Cell<bool>,
+}
 
-  // Constructor for vector of events
-  explicit WaitAll(const rusty::Vec<std::shared_ptr<Event>>& evs) {
-    events_.reserve(evs.len());
-    for (const auto& ev : evs) {
-      events_.push(ev);
+impl<Type> BoxEvent<Type> {
+    fn get(&self) -> Type {
+        boxevent_get(self)
     }
-  }
-
-  void add_event() {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename... Args>
-  void add_event(std::shared_ptr<Event> x, Args... rest) {
-    events_.push(std::move(x));
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitAll(std::shared_ptr<Event> first, Args... rest) {
-    add_event(std::move(first), rest...);
-  }
-
-  void log() override {
-    for(size_t i = 0; i < events_.len(); i++){
-      events_[i]->log();
+    fn set(&self, c: &Type) {
+        boxevent_set(self, c)
     }
-  }
+    fn clear(&self) {
+        boxevent_clear(self)
+    }
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
 
-  bool is_ready() override {
-    // All events must be ready (or DONE) for WaitAll to be ready.
-    for (const auto& e : events_) {
-      if (!e) {
+#[cpp_inherit]
+impl<Type> EventPollable for BoxEvent<Type> {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        self.is_set_.get()
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.box_event version=1 rust_sha256=bdc2d8f2dc9495014bacdc53d10a179405f30e640e2649f012051b79adabf633*/
+template<typename Type>
+struct BoxEvent;
+
+template<typename Type>
+struct BoxEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::RefCell<Type> content_;
+    rusty::Cell<bool> is_set_;
+    BoxEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::RefCell<Type> content__init, rusty::Cell<bool> is_set__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), content_(std::move(content__init)), is_set_(std::move(is_set__init)) {}
+    BoxEvent(BoxEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), content_(std::move(other.content_)), is_set_(std::move(other.is_set_)) {}
+
+
+    Type get() const {
+        return boxevent_get((*this));
+    }
+    void set(const Type& c) const {
+        boxevent_set((*this), c);
+    }
+    void clear() const {
+        boxevent_clear((*this));
+    }
+    void wait() const {
+        event_wait_impl((*this), static_cast<uint64_t>(0));
+    }
+    void wait_timeout(uint64_t timeout) const {
+        event_wait_impl((*this), std::move(timeout));
+    }
+    bool is_composite_event() const {
         return false;
-      }
-      if (!(e->is_ready() || e->status_.get() == Event::DONE)) {
-        return false;
-      }
+    }
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const {
+        return event_core_self_lock((*this));
+    }
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+        event_core_set_self((*this), std::move(self_ptr));
+    }
+    bool test() const {
+        return event_test_impl((*this));
+    }
+    bool is_ready() const {
+        return this->is_set_.get();
+    }
+    void log() const {
+    }
+    EventStatus status() const {
+        return this->status_.get();
+    }
+    void set_status(EventStatus s) const {
+        this->status_.set(std::move(s));
+    }
+    uint64_t wakeup_time() const {
+        return event_core_wakeup_time((*this));
+    }
+    bool prunable() const {
+        return this->prunable_.get();
+    }
+    void set_prunable(bool v) const {
+        this->prunable_.set(std::move(v));
+    }
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const {
+        return event_core_upgrade_fiber((*this));
+    }
+};
+/*RUSTYCPP:GEN-END id=reactor.box_event*/
+
+// Template factory + slot-op kernels for BoxEvent<Type>, defined after the
+// struct is complete and in this exported module region so deptran's
+// BoxEvent<int>/<bool>/<std::string> instantiations resolve.
+template<class Type>
+rusty::Arc<BoxEvent<Type>> boxevent_make() {
+  auto sp = rusty::Arc<BoxEvent<Type>>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      rusty::RefCell<Type>(),                             // content_ (Type{})
+      rusty::Cell<bool>::new_(false));                    // is_set_
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// @unsafe - returns the slot payload by value (copy out of the RefCell).
+template<class Type> Type boxevent_get(const BoxEvent<Type>& self) {
+  return *self.content_.borrow();
+}
+// @unsafe - deref-assign the RefCell<Type> slot + run the readiness test.
+template<class Type> void boxevent_set(const BoxEvent<Type>& self, const Type& c) {
+  self.is_set_.set(true);
+  (*self.content_.borrow_mut()) = c;
+  self.test();
+}
+// @unsafe - value-init the slot back to Type{}.
+template<class Type> void boxevent_clear(const BoxEvent<Type>& self) {
+  self.is_set_.set(false);
+  (*self.content_.borrow_mut()) = Type{};
+}
+
+// `IntEvent` — an Event that fires when value_ reaches target_ (or a custom
+// inherited `test_` predicate passes). Hand-written subclass of the stateful
+// `Event` base (Event is intentionally not trait-ified — it carries data fields
+// and non-pure default-bodied virtuals).
+// `IntEvent` — fires when value_ reaches target_ (or a custom `test_`
+// predicate passes). FLATTENED (S4): flat inline-Rust DSL struct on the
+// NeverEvent pattern. Defaults (value_=0, target_=1) live in
+// int_event_make; set() runs the shared test kernel and returns the
+// previous value, exactly as before.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+int32_t int_event_set(const IntEvent& self, int32_t n);
+bool int_event_is_ready(const IntEvent& self);
+uint64_t event_core_get_fiber_id();
+
+#if RUSTYCPP_RUST
+struct IntEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    value_: Cell<i32>,
+    target_: Cell<i32>,
+}
+
+impl IntEvent {
+    fn get(&self) -> i32 {
+        self.value_.get()
+    }
+    fn set(&self, n: i32) -> i32 {
+        int_event_set(self, n)
+    }
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn record_place(&self, file: SrcFileCStr, line: i32) {
+        event_core_record_place(self, file, line)
+    }
+    fn get_fiber_id(&self) -> u64 {
+        event_core_get_fiber_id()
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for IntEvent {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        int_event_is_ready(self)
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.int_event version=1 rust_sha256=51795c7da5e97a13f4a95dc2998b9eb8907aaef9c77b65eb1811026ee70855d8*/
+struct IntEvent;
+
+struct IntEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::Cell<int32_t> value_;
+    rusty::Cell<int32_t> target_;
+    IntEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::Cell<int32_t> value__init, rusty::Cell<int32_t> target__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), value_(std::move(value__init)), target_(std::move(target__init)) {}
+    IntEvent(IntEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), value_(std::move(other.value_)), target_(std::move(other.target_)) {}
+
+
+    int32_t get() const;
+    int32_t set(int32_t n) const;
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    void record_place(SrcFileCStr file, int32_t line) const;
+    uint64_t get_fiber_id() const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+int32_t IntEvent::get() const {
+    return this->value_.get();
+}
+
+int32_t IntEvent::set(int32_t n) const {
+    return int_event_set((*this), std::move(n));
+}
+
+void IntEvent::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void IntEvent::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+void IntEvent::record_place(SrcFileCStr file, int32_t line) const {
+    event_core_record_place((*this), std::move(file), std::move(line));
+}
+
+uint64_t IntEvent::get_fiber_id() const {
+    return event_core_get_fiber_id();
+}
+
+bool IntEvent::is_composite_event() const {
+    return false;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> IntEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void IntEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool IntEvent::test() const {
+    return event_test_impl((*this));
+}
+
+bool IntEvent::is_ready() const {
+    return int_event_is_ready((*this));
+}
+
+void IntEvent::log() const {
+}
+
+EventStatus IntEvent::status() const {
+    return this->status_.get();
+}
+
+void IntEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t IntEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool IntEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void IntEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> IntEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.int_event*/
+
+// @safe - sets value_ and runs the readiness test kernel; returns the
+// previous value (verbatim from the legacy IntEvent::set).
+inline int32_t int_event_set(const IntEvent& self, int32_t n) {
+  int32_t t = self.value_.get();
+  self.value_.set(n);
+  event_test_impl(self);
+  return t;
+}
+
+// @unsafe - invokes the state_.test_ rusty::Function (custom predicate).
+inline bool int_event_is_ready(const IntEvent& self) {
+  auto guard = self.state_.test_.borrow();
+  if (*guard) {
+    return (*guard)(self.value_.get());
+  }
+  return self.value_.get() >= self.target_.get();
+}
+
+// `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
+// it crosses their thresholds. The `rusty::Arc<IntEvent>` element
+// type stays std (Reactor::create_sp_event hands out shared_ptr — a
+// declared boundary type), aliased so the DSL can spell the Vec.
+using IntEventSp = rusty::Arc<IntEvent>;
+
+struct SharedIntEvent;
+
+// Hand-written backing free fns for the DSL methods below — the bodies
+// drive Reactor::create_sp_event / Event-status machinery (not
+// DSL-expressible). Definitions near the bottom of this file.
+int shared_int_event_set(SharedIntEvent& self, const int& v);
+bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout);
+void shared_int_event_wait(SharedIntEvent& self, EventTestFn f);
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
+//
+// Behavioral diffs from the original C++ class:
+//   * `wait_until_gte` lost its `timeout = 0` default argument (DSL fns
+//     have no default args); the one-arg call sites now pass 0
+//     explicitly.
+//   * The struct stays a plain aggregate, so the widespread
+//     `SharedIntEvent x{};` member value-init keeps zeroing `value_`.
+#if RUSTYCPP_RUST
+struct SharedIntEvent {
+    value_: i32,
+    events_: Vec<IntEventSp>,
+}
+
+impl SharedIntEvent {
+    fn set(&mut self, v: &i32) -> i32 {
+        shared_int_event_set(self, v)
+    }
+
+    fn wait(&mut self, f: EventTestFn) {
+        shared_int_event_wait(self, f)
+    }
+
+    fn wait_until_gte(&mut self, x: i32, timeout: i32) -> bool {
+        shared_int_event_wait_until_gte(self, x, timeout)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.shared_int_event version=1 rust_sha256=a1fe4b98eed4b6baf839a49046bc8047706af69bd90bb9c7a9c058663ce300f2*/
+struct SharedIntEvent;
+
+struct SharedIntEvent {
+    int32_t value_;
+    rusty::Vec<IntEventSp> events_;
+
+    int32_t set(const int32_t& v);
+    void wait(EventTestFn f);
+    bool wait_until_gte(int32_t x, int32_t timeout);
+};
+
+
+int32_t SharedIntEvent::set(const int32_t& v) {
+    return shared_int_event_set((*this), v);
+}
+
+void SharedIntEvent::wait(EventTestFn f) {
+    shared_int_event_wait((*this), std::move(f));
+}
+
+bool SharedIntEvent::wait_until_gte(int32_t x, int32_t timeout) {
+    return shared_int_event_wait_until_gte((*this), std::move(x), std::move(timeout));
+}
+/*RUSTYCPP:GEN-END id=reactor.shared_int_event*/
+
+
+// `NeverEvent` — an Event that is never ready, used as a pure timeout/yield
+// handle (`create_sp_event<NeverEvent>()->wait(us)`). Hand-written subclass of
+// the stateful `Event` base; adds no fields and overrides only `is_ready()`.
+// `NeverEvent` — never ready on its own; a pure timeout/yield handle
+// (`create_sp_event<NeverEvent>()->wait_timeout(us)`). FIRST FLATTENED
+// EVENT TYPE (S4): a flat inline-Rust DSL struct carrying the event core
+// fields directly (so the event_wait_impl/event_test_impl kernels see the
+// same duck-typed surface as the legacy Event), implementing EventPollable
+// via #[cpp_inherit]. Constructed ONLY through Reactor::create_sp_event's
+// event_make<NeverEvent>() factory (aggregate defaults live there — the
+// DSL has no field initializers).
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+struct NeverEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+}
+
+impl NeverEvent {
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn record_place(&self, file: SrcFileCStr, line: i32) {
+        event_core_record_place(self, file, line)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for NeverEvent {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        false
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.never_event version=1 rust_sha256=208ba006360937022eeaadf8559e6353e25cfc09fdb59a9576ee3f26323d6edb*/
+struct NeverEvent;
+
+struct NeverEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    NeverEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)) {}
+    NeverEvent(NeverEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)) {}
+
+
+    void wait_timeout(uint64_t timeout) const;
+    void record_place(SrcFileCStr file, int32_t line) const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void NeverEvent::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+void NeverEvent::record_place(SrcFileCStr file, int32_t line) const {
+    event_core_record_place((*this), std::move(file), std::move(line));
+}
+
+bool NeverEvent::is_composite_event() const {
+    return false;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> NeverEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void NeverEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool NeverEvent::test() const {
+    return event_test_impl((*this));
+}
+
+bool NeverEvent::is_ready() const {
+    return false;
+}
+
+void NeverEvent::log() const {
+}
+
+EventStatus NeverEvent::status() const {
+    return this->status_.get();
+}
+
+void NeverEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t NeverEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool NeverEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void NeverEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> NeverEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.never_event*/
+
+
+
+// `TimeoutEvent` — ready once `wait_us_` microseconds have elapsed past
+// construction (`wakeup_time_` is its OWN deadline field, distinct from
+// `state_.wakeup_time_` which the wait machinery stamps). FLATTENED (S4):
+// flat inline-Rust DSL struct on the NeverEvent pattern; the deadline is
+// computed at construction inside timeout_event_make (the DSL has no
+// field initializers). Its `wait()` keeps the historical no-argument
+// shape: it waits with its own wait_us_ as the timeout.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+bool timeout_event_is_ready(const TimeoutEvent& self);
+
+#if RUSTYCPP_RUST
+struct TimeoutEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    wakeup_time_: u64,
+    wait_us_: u64,
+}
+
+impl TimeoutEvent {
+    fn wait(&self) {
+        event_wait_impl(self, self.wait_us_)
+    }
+    fn is_composite_event(&self) -> bool {
+        false
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for TimeoutEvent {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        timeout_event_is_ready(self)
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.timeout_event version=1 rust_sha256=e9c4d62ad6f1952d10ee6e47c695016ccc924846aafddfeda0d9c6a0400b2532*/
+struct TimeoutEvent;
+
+struct TimeoutEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    uint64_t wakeup_time_;
+    uint64_t wait_us_;
+    TimeoutEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, uint64_t wakeup_time__init, uint64_t wait_us__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), wakeup_time_(std::move(wakeup_time__init)), wait_us_(std::move(wait_us__init)) {}
+    TimeoutEvent(TimeoutEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), wakeup_time_(std::move(other.wakeup_time_)), wait_us_(std::move(other.wait_us_)) {}
+
+
+    void wait() const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void TimeoutEvent::wait() const {
+    event_wait_impl((*this), this->wait_us_);
+}
+
+bool TimeoutEvent::is_composite_event() const {
+    return false;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> TimeoutEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void TimeoutEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool TimeoutEvent::test() const {
+    return event_test_impl((*this));
+}
+
+bool TimeoutEvent::is_ready() const {
+    return timeout_event_is_ready((*this));
+}
+
+void TimeoutEvent::log() const {
+}
+
+EventStatus TimeoutEvent::status() const {
+    return this->status_.get();
+}
+
+void TimeoutEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t TimeoutEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool TimeoutEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void TimeoutEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> TimeoutEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.timeout_event*/
+
+// @unsafe - Time::now read; strict `>` preserved from the original.
+inline bool timeout_event_is_ready(const TimeoutEvent& self) {
+  return Time::now(true) > self.wakeup_time_;
+}
+
+// `WaitAny` — a composite event that is ready as soon as ANY of its child
+// events is ready (polled in the reactor loop via `is_composite_event()`).
+// FLATTENED (S4): an inline-Rust DSL struct deriving EventPollable via
+// `#[cpp_inherit]` (its Arc<WaitAny> is upcast to Arc<EventPollable> at the
+// create_sp_event site), carrying the five event-core fields inline plus the
+// child-event vector, driven by the shared event_wait_impl / event_test_impl /
+// event_core_* kernels. Construction (the former 2-arg ctor) is the
+// `waitany_make` factory, wired into event_make. Unlike WaitAll it has no
+// variadic ctor, so it converts cleanly; the any-ready predicate is a plain
+// DSL loop over the child vector.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+#if RUSTYCPP_RUST
+struct WaitAny {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    events_: rusty::Vec<rusty::Arc<EventPollable>>,
+}
+
+impl WaitAny {
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        true
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for WaitAny {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        for e in self.events_.iter() {
+            if (*e).is_ready() {
+                return true;
+            }
+        }
+        false
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_any version=1 rust_sha256=88cb434be8cb78f9f0b9c117c1c3ec9d374e8c7548a83171687bff129e8e713c*/
+struct WaitAny;
+
+struct WaitAny : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::Vec<rusty::Arc<EventPollable>> events_;
+    WaitAny(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::Vec<rusty::Arc<EventPollable>> events__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), events_(std::move(events__init)) {}
+    WaitAny(WaitAny&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), events_(std::move(other.events_)) {}
+
+
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void WaitAny::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void WaitAny::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+bool WaitAny::is_composite_event() const {
+    return true;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> WaitAny::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void WaitAny::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool WaitAny::test() const {
+    return event_test_impl((*this));
+}
+
+bool WaitAny::is_ready() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_))) {
+        if (((rusty::detail::deref_if_pointer_like(e))).is_ready()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void WaitAny::log() const {
+}
+
+EventStatus WaitAny::status() const {
+    return this->status_.get();
+}
+
+void WaitAny::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t WaitAny::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool WaitAny::prunable() const {
+    return this->prunable_.get();
+}
+
+void WaitAny::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> WaitAny::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.wait_any*/
+
+// `WaitAll` — composite event ready once ALL child events are ready (or DONE).
+// FLATTENED (S4): an inline-Rust DSL struct deriving EventPollable via
+// `#[cpp_inherit]`. Like WaitAny it carries the event-core fields + a child
+// vector, but its vector is a RefCell (add_event mutates it after construction).
+// The variadic ctor + variadic add_event(Args...) the DSL cannot express are
+// dropped: construction goes through the `waitall_make` (empty) /
+// `waitall_make_from` (vector) factories wired into event_make, and add_event is
+// single-arg (every call site already passes one event). The one test that used
+// the 3-arg variadic ctor now builds a vector.
+//
+// The single push stays a hand-written @unsafe kernel (`waitall_add_event`) —
+// `.push()` on a RefCell<Vec> guard currently mis-lowers in the transpiler
+// (wraps the element in Vec::from_iter). is_ready / log iterate the borrowed
+// guard directly in DSL.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+struct WaitAll;
+// @unsafe - pushes onto the RefCell<Vec> child list (guard-push kernel).
+void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x);
+#if RUSTYCPP_RUST
+struct WaitAll {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    events_: RefCell<rusty::Vec<rusty::Arc<EventPollable>>>,
+}
+
+impl WaitAll {
+    fn add_event(&self, x: rusty::Arc<EventPollable>) {
+        waitall_add_event(self, x)
+    }
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        true
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for WaitAll {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        for e in self.events_.borrow().iter() {
+            if !((*e).is_ready() || (*e).status() == EventStatus::DONE) {
+                return false;
+            }
+        }
+        true
+    }
+    fn log(&self) {
+        for e in self.events_.borrow().iter() {
+            (*e).log();
+        }
+    }
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_all version=1 rust_sha256=e3f006bce41bf22a6d458abd7d525bf4e4ce1e5963bc3bfb251577961c6ce81c*/
+struct WaitAll;
+
+struct WaitAll : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events_;
+    WaitAll(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>> events__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), events_(std::move(events__init)) {}
+    WaitAll(WaitAll&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), events_(std::move(other.events_)) {}
+
+
+    void add_event(rusty::Arc<EventPollable> x) const;
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void WaitAll::add_event(rusty::Arc<EventPollable> x) const {
+    waitall_add_event((*this), std::move(x));
+}
+
+void WaitAll::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void WaitAll::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+bool WaitAll::is_composite_event() const {
+    return true;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> WaitAll::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void WaitAll::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool WaitAll::test() const {
+    return event_test_impl((*this));
+}
+
+bool WaitAll::is_ready() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_.borrow()))) {
+        if (!(((rusty::detail::deref_if_pointer_like(e))).is_ready() || (((rusty::detail::deref_if_pointer_like(e))).status() == rusty::clone(EventStatus::DONE)))) {
+            return false;
+        }
     }
     return true;
-  }
+}
 
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
-};
-
-class WaitN : public Event {
- public:
-  rusty::Vec<std::shared_ptr<Event>> events_;
-  int number;
-
-  void add_event() {
-    // empty func for recursive variadic parameters
-  }
-
-  template<typename... Args>
-  void add_event(std::shared_ptr<Event> x, Args... rest) {
-    events_.push(std::move(x));
-    add_event(rest...);
-  }
-
-  template<typename... Args>
-  WaitN(std::shared_ptr<Event> first, Args... rest) {
-    add_event(std::move(first), rest...);
-  }
-
-  bool is_ready() override {
-    int count = 0;
-    for(auto index = events_.begin(); index != events_.end(); index++){
-      if((*index)->is_ready()){
-        count++;
-        if(count == number){
-          return true;
-        }
-      }
+void WaitAll::log() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_.borrow()))) {
+        ((rusty::detail::deref_if_pointer_like(e))).log();
     }
-    return false;
-  }
-};
+}
 
-class DispatchEvent: public Event{
-  public:
-    uint32_t n_dispatch_;
-    uint32_t n_dispatch_ack_ = 0;
-    rusty::BTreeMap<uint32_t, bool> dispatch_acks_ = {};
-    bool aborted_ = false;
-    bool more = false;
+EventStatus WaitAll::status() const {
+    return this->status_.get();
+}
 
-    DispatchEvent() : Event(){
+void WaitAll::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
 
-    }
+uint64_t WaitAll::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
 
-    bool is_ready() override{
-      if(n_dispatch_ == n_dispatch_ack_){
-        if(aborted_){
-          return true;
-        }
-        else{
-          for (const auto& [_, acked] : dispatch_acks_) {
-            if (!acked) {
-              return false;
-            }
-          }
-          return true;
-        }
-      }
-      else if(more){
-        return true;
-      }
-      return false;
-    }
+bool WaitAll::prunable() const {
+    return this->prunable_.get();
+}
 
-};
+void WaitAll::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
 
-class SingleRPCEvent: public Event{
-  public:
-    uint32_t cli_id_;
-    uint32_t coo_id_;
-    int32_t& res_;
-    std::string log_file = "logs.txt";
-    rusty::HashSet<int> dep{};
-    SingleRPCEvent(uint32_t cli_id, int32_t res): Event(),
-                                                   cli_id_(cli_id),
-                                                   res_(res){
-    }
-    void add_dep(int tgtId){
-      if (!dep.contains(tgtId)) {
-        dep.insert(tgtId);
-      }
-    }
-    void log() override {
-      std::ofstream of(log_file, std::fstream::app);
-      //of << "hello\n";
-      of << "{ " << cli_id_ << ": ";
-      for(auto it = dep.begin(); it != dep.end(); ++it){
-        of << *it << " ";
-      }
-      of << "}\n";
-      of.close();
-    }
-    bool is_ready() override{
-      // SUCCESS=0, REJECT=-10 (macros removed to avoid conflict with mako ErrorCode)
-      return res_ == 0 || res_ == -10;
-    }
-};
-
+rusty::Option<rusty::Rc<Fiber>> WaitAll::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.wait_all*/
 
 // --- from fiber_impl.h ---------------------------------------------------
 
@@ -460,16 +1514,74 @@ struct FiberContext {
 
 extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
 
+// Default stack size for stackless fibers (1 MiB). Lifted out of
+// `fiber_task_t` class scope (was `private static constexpr`) because
+// DSL constants live at namespace scope. The one use site
+// (`fiber_task_t::init_context`) references it unqualified, so
+// namespace lookup still resolves to this constant.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+#if RUSTYCPP_RUST
+const kDefaultStackBytes: usize = 1usize << 20;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_default_stack version=1 rust_sha256=573a148f9a126f68ff3cd154018259cab614444f2c74a62837b70635855b9e68*/
+extern const size_t kDefaultStackBytes;
+
+constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
+/*RUSTYCPP:GEN-END id=reactor.fiber_default_stack*/
+
 class fiber_task_t;
 
-class fiber_yield_t {
- public:
-  explicit fiber_yield_t(fiber_task_t& task) : task_(&task) {}
-  void operator()();
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// `fiber_yield_t` is now a pure-POD pointer wrapper. The previous
+// member method `void operator()()` (renamed to `void yield_now()` in
+// an earlier DSL-prep commit) is now the free function
+// `fiber_yield_invoke(fiber_yield_t&)`, kept outside the DSL block
+// because the body raw-dereferences `task_` and the rusty-cpp
+// transpiler doesn't yet translate that style of impl body. The two
+// call sites (`yield()` in `Fiber::run_wrapper`, `(*yield_ptr)()` in
+// `Fiber::yield_`) now use `fiber_yield_invoke(yield)` /
+// `fiber_yield_invoke(*yield_ptr)`. The DSL `fn new(task)` factory
+// lowers to the `static new_()` the one in-tree member init in
+// `fiber_task_t::fiber_task_t` already calls.
+#if RUSTYCPP_RUST
+struct fiber_yield_t {
+    task_: *mut fiber_task_t,
+}
 
- private:
-  fiber_task_t* task_{nullptr};
+impl fiber_yield_t {
+    fn new(task: &mut fiber_task_t) -> fiber_yield_t {
+        fiber_yield_t {
+            task_: task as *mut fiber_task_t,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.fiber_yield version=1 rust_sha256=ab6ef3f623333af344b247aab5325e40a15188044251222c9884ef258de66b5d*/
+struct fiber_yield_t;
+
+struct fiber_yield_t {
+    fiber_task_t* task_;
+
+    static fiber_yield_t new_(fiber_task_t& task);
 };
+
+
+fiber_yield_t fiber_yield_t::new_(fiber_task_t& task) {
+    return fiber_yield_t{.task_ = static_cast<fiber_task_t*>(rusty::detail::ptr_or_addr(task))};
+}
+/*RUSTYCPP:GEN-END id=reactor.fiber_yield*/
+
+// @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
+// the friend declaration on fiber_task_t still applies. } Free
+// function — kept outside the DSL block because the body raw-deref
+// is not yet supported by the rusty-cpp transpiler.
+void fiber_yield_invoke(fiber_yield_t& self);
 
 class fiber_task_t {
  public:
@@ -493,6 +1605,7 @@ class fiber_task_t {
 
  private:
   friend class fiber_yield_t;
+  friend void fiber_yield_invoke(fiber_yield_t& self);
 
   enum class State : uint8_t {
     NEW = 0,
@@ -501,7 +1614,6 @@ class fiber_task_t {
     FINISHED
   };
 
-  static constexpr std::size_t kDefaultStackBytes = 1u << 20;  // 1 MiB
   static thread_local fiber_task_t* tls_active_task_;
 
   static void entry_trampoline();
@@ -521,7 +1633,6 @@ class fiber_task_t {
 };
 
 class Reactor;
-class Event;
 
 /**
  * Fiber - A stackful fiber (execution context).
@@ -706,9 +1817,10 @@ class Reactor {
   // in every TU that uses it via an inline accessor, causing duplicate-
   // definition linker errors. clang 22 happened to avoid this; we use
   // `inline` to make the linkage explicit and toolchain-independent.
-  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_{};
-  static inline thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_{};
-  static inline thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_{};
+  // (sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ hoisted
+  // to namespace-scope thread_locals above the class — the DSL free fns
+  // that own the singleton/running-fiber logic cannot name class
+  // statics; same move the file already made for g_current_poll_worker.)
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
@@ -720,15 +1832,20 @@ class Reactor {
    */
   // Events managed with std::shared_ptr<Event> for polymorphism support
   // Using RefCell<VecDeque> for safe interior mutability in const methods
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> all_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> waiting_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> timeout_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events_{};
+  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
   // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
   // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> fibers_{};
+  // std::set (not rusty::BTreeSet) — BTreeSet::remove() triggers a
+  // cascade of transpiler bugs in btree_internal (OccupiedEntry
+  // remove_entry path has ._0 variant-access typos, non-const member
+  // calls, NodeRef temporary binding issues). Migrate back when the
+  // upstream bugs are patched.
+  rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_{};
   rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
@@ -763,7 +1880,6 @@ class Reactor {
   rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
   rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
   rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
-  static SpinLock trying_job_;
 #if defined(REUSE_FIBER) || defined(REUSE_CORO)
 #define REUSING_FIBER (true)
 #else
@@ -771,7 +1887,7 @@ class Reactor {
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
-  void check_timeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
+  void check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>&) const;
   /**
    * @param ev. is usually allocated on a fiber stack. memory managed by user.
    */
@@ -819,10 +1935,13 @@ class Reactor {
   }
 
  public:
+  // @safe - Amortized prune of finished events from all_events_ (drops events
+  // the list is the sole owner of; non-prunable events are retained).
+  void prune_finished_events() const;
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
   // @safe - Continues execution of a paused fiber
-  void continue_fiber(rusty::Rc<Fiber> fiber) const;
+  void continue_fiber(const rusty::Rc<Fiber>& fiber) const;
   void recycle(rusty::Rc<Fiber>& fiber) const;
   void display_waiting_ev() const;
   // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
@@ -887,40 +2006,58 @@ class Reactor {
   }
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, fibers_.len()=%zu",
-              all_events_.borrow()->len(), fibers_.borrow()->len());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
+              all_events_.borrow()->len(), fibers_.borrow()->size());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
-  friend Event;
 
   // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
   // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
-  //   1. shared_ptr is stored in all_events_ list (owned by reactor)
+  //   1. shared_ptr is stored in all_events_ list (an owner of the reactor)
+  //      while the event is live
   //   2. Reactor lives for entire program duration
-  //   3. Events are never removed from all_events_ until reactor destruction
-  // Cross-thread notification uses raw pointers (safe: reactor owns all events)
+  //   3. Finished events (sole-owned by all_events_, i.e. use_count()==1) are
+  //      pruned amortized via prune_finished_events(), so the list stays bounded
+  //      under sustained event churn (e.g. one IntEvent per recv_frame).
+  // Cross-thread notification reaches an event via its weak_ptr self-ref
+  // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
   template <typename Ev, typename... Args>
-  static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
-    auto ev = std::make_shared<Ev>(args...);
-    ev->__debug_creator = 1;
-    // Set self-reference for cross-thread signaling (uses raw pointer now)
-    ev->set_self(ev);
-    // Store in all_events_ using RefCell borrow_mut()
+  static rusty::Arc<Ev> create_sp_event(Args&&... args) {  // @unsafe
+    auto ev = event_make<Ev>(args...);
+    // Unique-owner init window: ev is freshly minted (strong_count 1),
+    // so get_mut() gives the one mutable access needed to stamp
+    // __debug_creator and install the self weak-ref before ev is ever
+    // shared. The self-ref is a sync::Weak<EventPollable> obtained by
+    // upcasting Arc<Ev> -> Arc<EventPollable> (single-base) then
+    // downgrading (sync::Weak has no derived->base converting ctor).
+    {
+      auto mut_opt = ev.get_mut();
+      verify(mut_opt.is_some());
+      Ev& m = mut_opt.unwrap();
+      m.state_.__debug_creator = 1;
+      m.set_self(rusty::sync::downgrade(rusty::Arc<EventPollable>(ev)));
+    }
+    // Store the canonical strong ref in all_events_ (upcast clone).
     auto reactor = get_reactor();
-    reactor->all_events_.borrow_mut()->push_back(ev);
+    reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
+    // Clear out finished events the reactor is the sole owner of (bounded growth).
+    reactor->prune_finished_events();
     return ev;
   }
 
   // @unsafe - Creates event and returns reference to shared_ptr content
   // SAFETY: Returned reference is valid because:
   //   1. Event is created via create_sp_event and stored in all_events_
-  //   2. all_events_ is never cleared during reactor lifetime
+  //   2. The event is marked NON-prunable so all_events_ retains it (the
+  //      returned bare Event& is the caller's only handle — there is no
+  //      shared_ptr to keep it alive, so it must not be pruned)
   //   3. Returned reference points to heap-allocated Event managed by shared_ptr
   // Manual verification required: reference lifetime extends beyond function scope
   template <typename Ev, typename... Args>
-  static Ev& create_event(Args&&... args) {  // @unsafe
+  static const Ev& create_event(Args&&... args) {  // @unsafe
     auto sp = create_sp_event<Ev>(args...);
+    sp->set_prunable(false);
     return *sp;
   }
 };
@@ -934,16 +2071,57 @@ class PollThreadWorker;
 // =============================================================================
 
 // Commands sent from PollThread to PollThreadWorker via channel
-// Using std::variant for type-safe discriminated union
+// Using std::variant for type-safe discriminated union. All seven
+// emit through the DSL block below; the `pollable` field's DSL form
+// `Box<PollableBase>` lowers to `rusty::Box<PollableBase>`, which the
+// `PollableProxy = rusty::Box<PollableBase>` using-alias in
+// `rrr.pollable_proxy` keeps backward-compatible with prior call sites.
+#if RUSTYCPP_RUST
+struct CmdAddPollable { pollable: Box<PollableBase> }
+struct CmdRemovePollable { fd: i32 }
+struct CmdClosePollable { fd: i32 }
+struct CmdUpdateMode { fd: i32, new_mode: i32 }
+struct CmdAddJob { job: Arc<Job> }
+struct CmdRemoveJob { job: Arc<Job> }
+struct CmdShutdown {}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_cmds version=1 rust_sha256=322b492b439ebf16ebbdfa4e0177a363ef006de129416083fa97070e3002de7f*/
+struct CmdAddPollable;
+struct CmdRemovePollable;
+struct CmdClosePollable;
+struct CmdUpdateMode;
+struct CmdAddJob;
+struct CmdRemoveJob;
+struct CmdShutdown;
+
 struct CmdAddPollable {
-    PollableProxy pollable;
+    rusty::Box<PollableBase> pollable;
 };
-struct CmdRemovePollable { int fd; };
-struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
-struct CmdUpdateMode { int fd; int new_mode; };
-struct CmdAddJob { rusty::Arc<Job> job; };
-struct CmdRemoveJob { rusty::Arc<Job> job; };
-struct CmdShutdown {};
+
+struct CmdRemovePollable {
+    int32_t fd;
+};
+
+struct CmdClosePollable {
+    int32_t fd;
+};
+
+struct CmdUpdateMode {
+    int32_t fd;
+    int32_t new_mode;
+};
+
+struct CmdAddJob {
+    rusty::Arc<Job> job;
+};
+
+struct CmdRemoveJob {
+    rusty::Arc<Job> job;
+};
+
+struct CmdShutdown {
+};
+/*RUSTYCPP:GEN-END id=reactor.poll_cmds*/
 
 using PollCommand = std::variant<
     CmdAddPollable,
@@ -972,175 +2150,275 @@ export namespace rrr {
 // =============================================================================
 // PollThreadWorker - Owns all polling state, runs in dedicated thread
 // =============================================================================
+// TLS slot for the worker running on this thread (set around
+// poll_loop in pollthread_create's spawn lambda). Namespace-scope:
+// a DSL struct cannot carry static data. `inline` keeps vague linkage.
+class PollThreadWorker;
+inline thread_local PollThreadWorker* g_current_poll_worker = nullptr;
 
-// Worker class that owns all polling state
-// Runs entirely in the spawned thread
-// Receives commands from PollThread via mpsc channel
-//
-// @safe - Single-threaded worker with RefCell for interior mutability
-// Design rationale - PollThreadWorker is memory-safe because:
-// 1. Single-threaded: Runs only on its dedicated poll thread, no data races
-// 2. Ownership: Owns all Pollables via fd_to_pollable_ map
-// 3. Lifetime: Worker outlives all Pollables - on shutdown, clears before destruction
-// 4. Channel: Cross-thread communication only via thread-safe mpsc channel
-// 5. No re-entrancy: handle_write() returns new mode instead of calling back,
-//    so RefCell borrow is never held across handler calls
-class PollThreadWorker {
-    friend class PollThread;
-    friend class rusty::Rc<rusty::RefCell<PollThreadWorker>>;
+// Field-type aliases for the DSL (angle-bracketed args).
+using PollCmdReceiver = rusty::sync::mpsc::Receiver<PollCommand>;
+using FdPollableMap = rusty::HashMap<int, PollableProxy>;
+using FdModeMap = rusty::HashMap<int, int>;
+using FdSet = rusty::HashSet<int>;
+// std::set (not rusty::BTreeSet) — the transpiled BTreeSet drags in
+// broken btree_internal clone templates; migrate when upstream fixes.
+using JobSet = std::set<rusty::Arc<Job>>;
 
-public:
-    // @unsafe - Factory method - creates worker wrapped in Rc<RefCell<>>
-    static rusty::Rc<rusty::RefCell<PollThreadWorker>> create(rusty::sync::mpsc::Receiver<PollCommand> receiver);
+// Lifecycle + epoll/fiber kernels for the DSL methods below.
+rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver);
+void pollworker_poll_loop(PollThreadWorker& self);
+void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode);
 
-    // Constructor is public for Rc::make(), but prefer create() factory
-    explicit PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> receiver);
+// `PollThreadWorker` — the poll-loop state machine: epoll instance,
+// fd->pollable ownership, jobs, deferred removals. Single-threaded by
+// construction (owned by its poll thread through Rc<RefCell<>>).
+// Authored as inline Rust DSL. Behavioral diffs:
+//   * The dead zero-caller statics (both add_pollable_from_current_thread
+//     overloads, private get_remove_count) are deleted.
+//   * current_worker_ hoists to the namespace-scope thread_local
+//     g_current_poll_worker (a DSL struct holds no statics).
+//   * The public 1-arg ctor is gone; pollworker_create aggregate-
+//     initializes inside Rc<RefCell<>> directly.
+#if RUSTYCPP_RUST
+struct PollThreadWorker {
+    receiver_: PollCmdReceiver,
+    poll_: Epoll,
+    fd_to_pollable_: FdPollableMap,
+    mode_: FdModeMap,
+    pending_remove_: FdSet,
+    jobs_: JobSet,
+    stop_: bool,
+}
 
-    ~PollThreadWorker() = default;
-
-    // Delete copy - worker is owned by Rc<RefCell<>>
-    PollThreadWorker(const PollThreadWorker&) = delete;
-    PollThreadWorker& operator=(const PollThreadWorker&) = delete;
-    // Allow move - needed for RefCell construction
-    PollThreadWorker(PollThreadWorker&&) = default;
-    PollThreadWorker& operator=(PollThreadWorker&&) = delete;
-
-    // @unsafe - Main polling loop - processes epoll events and channel commands
-    // Non-const because it modifies state (no more mutable fields)
-    void poll_loop();
-
-    // @safe - Check if current thread is a poll thread
-    // Returns true if called from a poll thread, false otherwise.
-    static bool is_on_poll_thread() { return current_worker_ != nullptr; }
-
-    // @unsafe - Add a pollable from within the poll thread (e.g., from handle_read)
-    // Must only be called from the poll thread (asserts if not)
-    // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
-    static void add_pollable_from_current_thread(PollableProxy poll) {
-        verify(current_worker_ != nullptr);
-        current_worker_->do_add_pollable(std::move(poll));
+impl PollThreadWorker {
+    // Factory: worker wrapped in Rc<RefCell<>> for its thread.
+    fn create(receiver: PollCmdReceiver) -> rusty::Rc<rusty::RefCell<PollThreadWorker>> {
+        pollworker_create(receiver)
     }
 
-    template <typename T>
-    static void add_pollable_from_current_thread(rusty::Arc<T> poll) {
-        verify(current_worker_ != nullptr);
-        auto poll_proxy = make_pollable_proxy_from_typed_arc(std::move(poll));
-        current_worker_->do_add_pollable(std::move(poll_proxy));
+    // Main polling loop — epoll events + channel commands.
+    fn poll_loop(&mut self) {
+        pollworker_poll_loop(self)
     }
 
-    // @unsafe - Update poll mode directly (bypasses channel)
-    // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-    // SAFETY: Internal @unsafe block handles epoll operations and address-of
-    void update_mode(Pollable& poll, int new_mode);
+    // Direct mode update (bypasses the channel; poll-thread only).
+    fn update_mode(&mut self, poll: &mut Pollable, new_mode: i32) {
+        pollworker_update_mode(self, poll, new_mode)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread_worker version=1 rust_sha256=f647aa922d81a406d7c95b737347d8f8b915e1f0a2b2038c6c8ae6aee040bdf6*/
+struct PollThreadWorker;
 
-private:
-    // Thread-local storage for current worker (raw pointer for internal use only)
-    // Only accessed via with_current_worker() which provides safe reference access.
-    // `inline` keeps the symbol in vague linkage — see Reactor::sp_reactor_th_ above.
-    static inline thread_local PollThreadWorker* current_worker_ = nullptr;
-
-private:
-    // @unsafe - For testing: get number of epoll Remove() calls
-    // SAFETY: Atomic load is safe but requires @unsafe annotation
-    int get_remove_count() const { return poll_.remove_count_.load(); }
-
-private:
-    // Process incoming commands from channel
-    void process_commands();
-
-    // Triggers ready jobs in fibers
-    void trigger_job();
-
-    // Internal implementations (single-threaded, no races)
-    void do_add_pollable(PollableProxy poll);
-    void do_remove_pollable(int fd);
-    void do_close_pollable(int fd);  // Close socket and drop Arc
-    void do_update_mode(int fd, int new_mode);
-    void do_add_job(rusty::Arc<Job> job);
-    void do_remove_job(rusty::Arc<Job> job);
-
-    // Process deferred removals
-    void process_pending_removals();
-
-private:
-    // MPSC receiver for commands from PollThread
-    rusty::sync::mpsc::Receiver<PollCommand> receiver_;
-
-    // Epoll instance
+struct PollThreadWorker {
+    PollCmdReceiver receiver_;
     Epoll poll_;
+    FdPollableMap fd_to_pollable_;
+    FdModeMap mode_;
+    FdSet pending_remove_;
+    JobSet jobs_;
+    bool stop_;
 
-    // Pollable state - single owner in worker thread
-    rusty::HashMap<int, PollableProxy> fd_to_pollable_;
-    rusty::HashMap<int, int> mode_;  // fd -> mode
-    rusty::HashSet<int> pending_remove_;
-
-    // Jobs - single owner in worker thread
-    rusty::BTreeSet<rusty::Arc<Job>> jobs_;
-
-    // Stop flag
-    bool stop_ = false;
+    static rusty::Rc<rusty::RefCell<PollThreadWorker>> create(PollCmdReceiver receiver);
+    void poll_loop();
+    void update_mode(Pollable& poll, int32_t new_mode);
 };
+
+
+rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(PollCmdReceiver receiver) {
+    return pollworker_create(std::move(receiver));
+}
+
+void PollThreadWorker::poll_loop() {
+    pollworker_poll_loop((*this));
+}
+
+void PollThreadWorker::update_mode(Pollable& poll, int32_t new_mode) {
+    pollworker_update_mode((*this), poll, std::move(new_mode));
+}
+/*RUSTYCPP:GEN-END id=reactor.poll_thread_worker*/
+
+// @safe - Check if the current thread is a poll thread.
+inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nullptr; }
 
 // =============================================================================
 // PollThread - Handle for controlling the poll thread
 // =============================================================================
+// Type aliases so the DSL can spell the angle-bracketed field types.
+using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
+using PollJoinSlot =
+    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>>;
 
-// @unsafe - Handle for controlling the poll thread (has mutable fields)
-// SAFETY: Despite @unsafe annotation, PollThread is thread-safe because:
-// 1. All cross-thread communication via thread-safe mpsc channel
-// 2. Mutable fields use proper synchronization (mutex for join_handle_, atomic for shutdown_called_)
-class PollThread {
-    // Friend Arc to allow make access to private constructor
-    friend class rusty::Arc<PollThread>;
+struct PollThread;
 
-private:
-    // MPSC sender for commands to worker
-    mutable rusty::sync::mpsc::Sender<PollCommand> sender_;
+// Lifecycle + channel-send kernels for the DSL methods below (thread
+// spawn/join, mpsc sends, syscall logging). Definitions near the
+// original impl site.
+rusty::Arc<PollThread> pollthread_create();
+void pollthread_shutdown(const PollThread& self);
+void pollthread_drop(const PollThread& self);
+void pollthread_add_proxy(const PollThread& self, PollableProxy poll);
+void pollthread_remove(const PollThread& self, Pollable& poll);
+void pollthread_remove_fd(const PollThread& self, int fd);
+void pollthread_request_close(const PollThread& self, int fd);
+void pollthread_update_mode(const PollThread& self, int fd, int new_mode);
+void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job);
 
-    // Join handle for the thread (Mutex provides interior mutability)
-    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>> join_handle_;
+// `PollThread` — the poll-loop thread handle: an mpsc command sender,
+// the join slot, and shutdown/identity state. Authored as inline Rust
+// DSL. Behavioral diffs from the original C++ class:
+//   * The private ctor + `friend rusty::Arc` in-place-construction
+//     machinery is gone: rusty atomics are MOVABLE (value-moving move
+//     ctor), so pollthread_create Arc::new_'s a plain aggregate.
+//   * shutdown_called_ becomes AtomicBool (rusty) — const ops, no
+//     `mutable`; the exchange() gate becomes swap().
+//   * The zero-caller remove(Arc<Job>) overload and the
+//     one-dead-test-caller update_mode(const Pollable&) overload are
+//     dropped (a Rust impl holds no overloads); remove(Pollable&)
+//     keeps its name.
+#if RUSTYCPP_RUST
+struct PollThread {
+    sender_: PollCmdSender,
+    join_handle_: PollJoinSlot,
+    // Thread id of the poll thread as raw u64 bits (bit_cast of the
+    // native id) — used to detect self-join attempts in shutdown.
+    poll_thread_id_bits_: AtomicU64,
+    shutdown_called_: AtomicBool,
+}
 
-    // Thread ID of the poll thread - used to detect self-join attempts.
-    // rusty::Atomic wraps std::atomic<ThreadId> — ThreadId is TriviallyCopyable so
-    // this stays lock-free on typical platforms.
-    mutable rusty::sync::atomic::Atomic<rusty::thread::ThreadId> poll_thread_id_{};
+impl PollThread {
+    // Factory: spawns the worker thread; returns the Arc handle.
+    fn create() -> Arc<PollThread> {
+        pollthread_create()
+    }
 
-    // Track if shutdown was called
-    mutable std::atomic<bool> shutdown_called_{false};
+    // Explicit shutdown: send CmdShutdown, join unless self-join.
+    fn shutdown(&self) {
+        pollthread_shutdown(self)
+    }
 
-    // Private constructor - use create() factory
-    explicit PollThread(rusty::sync::mpsc::Sender<PollCommand> sender);
+    fn add_proxy(&self, poll: PollableProxy) {
+        pollthread_add_proxy(self, poll)
+    }
 
-public:
-    ~PollThread();
+    fn remove(&self, poll: &mut Pollable) {
+        pollthread_remove(self, poll)
+    }
 
-    // Factory method returns Arc<PollThread>
+    // fd-keyed variant (remove only reads .fd() anyway); lets
+    // shim-only callers avoid the Pollable base entirely.
+    fn remove_fd(&self, fd: i32) {
+        pollthread_remove_fd(self, fd)
+    }
+
+    // Thread-safe close: removes from epoll, closes socket, drops
+    // proxy ownership.
+    fn request_close(&self, fd: i32) {
+        pollthread_request_close(self, fd)
+    }
+
+    fn update_mode(&self, fd: i32, new_mode: i32) {
+        pollthread_update_mode(self, fd, new_mode)
+    }
+
+    fn add(&self, job: Arc<Job>) {
+        pollthread_add_job(self, job)
+    }
+
+    // For testing — worker state is not reachable across the channel.
+    fn get_remove_count(&self) -> i32 {
+        0
+    }
+}
+
+impl Drop for PollThread {
+    fn drop(&mut self) {
+        pollthread_drop(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=3fef7a30346c94da0802af0018d3ccdd7480ddabc5cea386e08fa0ceee183864*/
+struct PollThread;
+
+struct PollThread {
+    PollCmdSender sender_;
+    PollJoinSlot join_handle_;
+    rusty::sync::atomic::AtomicU64 poll_thread_id_bits_;
+    rusty::sync::atomic::AtomicBool shutdown_called_;
+    mutable bool _rusty_forgotten = false;
+    PollThread(PollCmdSender sender__init, PollJoinSlot join_handle__init, rusty::sync::atomic::AtomicU64 poll_thread_id_bits__init, rusty::sync::atomic::AtomicBool shutdown_called__init) : sender_(std::move(sender__init)), join_handle_(std::move(join_handle__init)), poll_thread_id_bits_(std::move(poll_thread_id_bits__init)), shutdown_called_(std::move(shutdown_called__init)) {}
+    PollThread(const PollThread&) = default;
+    PollThread(PollThread&& other) noexcept : sender_(std::move(other.sender_)), join_handle_(std::move(other.join_handle_)), poll_thread_id_bits_(std::move(other.poll_thread_id_bits_)), shutdown_called_(std::move(other.shutdown_called_)) {
+        this->_rusty_forgotten = other._rusty_forgotten;
+        other._rusty_forgotten = true;
+    }
+    PollThread& operator=(const PollThread&) = default;
+    PollThread& operator=(PollThread&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        this->~PollThread();
+        new (this) PollThread(std::move(other));
+        return *this;
+    }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+
+
     static rusty::Arc<PollThread> create();
-
-    // Explicit shutdown
     void shutdown() const;
-
-    // Delete copy/move
-    PollThread(const PollThread&) = delete;
-    PollThread& operator=(const PollThread&) = delete;
-    PollThread(PollThread&& other) = delete;
-    PollThread& operator=(PollThread&& other) = delete;
-
-    // Send commands to worker via channel
     void add_proxy(PollableProxy poll) const;
     void remove(Pollable& poll) const;
-    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops proxy ownership
-    // @safe - Sends update mode command via channel
-    // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
-    void update_mode(int fd, int new_mode) const;
-    void update_mode(const Pollable& poll, int new_mode) const;
+    void remove_fd(int32_t fd) const;
+    void request_close(int32_t fd) const;
+    void update_mode(int32_t fd, int32_t new_mode) const;
     void add(rusty::Arc<Job> job) const;
-    void remove(rusty::Arc<Job> job) const;
-
-    // For testing - NOTE: This won't work with channel design
-    // since worker state is not accessible. Return 0 for now.
-    int get_remove_count() const { return 0; }
+    int32_t get_remove_count() const;
+    ~PollThread() noexcept(false);
 };
+
+
+rusty::Arc<PollThread> PollThread::create() {
+    return pollthread_create();
+}
+
+void PollThread::shutdown() const {
+    pollthread_shutdown((*this));
+}
+
+void PollThread::add_proxy(PollableProxy poll) const {
+    pollthread_add_proxy((*this), std::move(poll));
+}
+
+void PollThread::remove(Pollable& poll) const {
+    pollthread_remove((*this), poll);
+}
+
+void PollThread::remove_fd(int32_t fd) const {
+    pollthread_remove_fd((*this), std::move(fd));
+}
+
+void PollThread::request_close(int32_t fd) const {
+    pollthread_request_close((*this), std::move(fd));
+}
+
+void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
+    pollthread_update_mode((*this), std::move(fd), std::move(new_mode));
+}
+
+void PollThread::add(rusty::Arc<Job> job) const {
+    pollthread_add_job((*this), std::move(job));
+}
+
+int32_t PollThread::get_remove_count() const {
+    return static_cast<int32_t>(0);
+}
+
+PollThread::~PollThread() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    pollthread_drop((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.poll_thread*/
 
 }  // export namespace rrr
 
@@ -1161,108 +2439,454 @@ export namespace janus {
 // janus-namespace purview of the consolidated `rrr.reactor` module so
 // `QuorumEvent` can name `Event` / `IntEvent` / `verify` / `shared_ptr`
 // unqualified, matching the original source.
-using rrr::Event;
 using rrr::IntEvent;
 using rrr::verify;
 using std::shared_ptr;
+// S4 flatten: QuorumEvent derives EventPollable and drives the shared event
+// kernels directly, so it now names these rrr entities unqualified. (The
+// kernels can't be found by ADL here — `*this` is janus::QuorumEvent — so the
+// using-declarations are required, not just convenient.)
+using rrr::EventPollable;
+using rrr::EventStatus;
+using rrr::EventState;
+using rrr::Reactor;
+using rrr::Fiber;
+using rrr::event_state_seed;
+using rrr::event_core_get_fiber_id;
+using rrr::event_core_self_lock;
+using rrr::event_core_set_self;
+using rrr::event_core_wakeup_time;
+using rrr::event_core_upgrade_fiber;
+using rrr::event_wait_impl;
+using rrr::event_test_impl;
 
-class QuorumEvent : public Event {
+// Quorum-math specialization (composition-flattening S3): the former
+// per-protocol QuorumEvent subclasses expressed their yes()/no()/is_ready()
+// variations by overriding; those variations are DATA, captured exactly by
+// this policy enum. The full live override matrix across all 19 protocol
+// subclasses reduces to:
+//   DEFAULT         — yes: n_voted_yes_ >= quorum_;
+//                     no: n_voted_no_ > n_total_ - quorum_;
+//                     ready: timeouted_ || yes || no
+//   ALL_NO          — (GetLeader) no: every voter said no
+//                     (n_voted_no_ == n_total_); ready: yes || no. The
+//                     dropped timeouted_ check is equivalent to DEFAULT
+//                     because timeouted_ has zero writers repo-wide (do not
+//                     add one without revisiting this policy).
+//   LEADER_AND      — (RuleSpeculativeExecute) yes additionally requires
+//                     n_leader_yes_ >= num_leader_; no additionally trips
+//                     on any leader-no (n_leader_no_ > 0).
+//   COMMITTED_SHORT — (CopilotPrepare) ready short-circuits on
+//                     committed_seen_ (a committed reply obviates the
+//                     quorum), then falls back to DEFAULT's shape.
+//   ALWAYS_READY    — (CopilotFake) no quorum semantics at all.
+enum class QuorumPolicy : int {
+  DEFAULT = 0,
+  ALL_NO = 1,
+  LEADER_AND = 2,
+  COMMITTED_SHORT = 3,
+  ALWAYS_READY = 4,
+};
+
+// FLATTENED (S4): QuorumEvent is now an inline-Rust DSL struct that derives
+// EventPollable via `#[cpp_inherit]` — the `Arc<QuorumEvent> ->
+// Arc<EventPollable>` upcast at its create_sp_event / finalize_event_ sites
+// needs the transpiler's opt-in direct-inheritance mode (untagged impls emit an
+// adapter, which cannot upcast). It carries the five event-core fields inline
+// and is driven by the shared event_wait_impl / event_test_impl / event_core_*
+// kernels, like the other flattened events. Two bodies stay hand-written
+// @unsafe C++ kernels the DSL calls: `quorum_event_finalize` (spawns a fiber
+// with a move-capturing closure) and `quorum_event_is_slow` (reads/clears the
+// reactor's shared slow_ flag). Construction goes through `quorum_event_make`
+// (wired into rrr::event_make). The owning QuorumEventWrapper is unchanged.
+
+// The finalize callback type: the DSL cannot parse a bare fn-type template
+// argument as a field/param signature, so alias it outside the block (the
+// established rrr-dsl idiom for Function-typed members/params).
+using QuorumFinalizeFn =
+    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)>;
+
+// Hand-written @unsafe kernels the DSL bodies call. Declared before the DSL
+// block so the generated method bodies resolve them by ordinary lookup.
+// @unsafe - fiber-spawning finalize closure; reactor slow_ poke.
+struct QuorumEvent;
+void quorum_event_finalize(const QuorumEvent& self, uint64_t timeout,
+                           QuorumFinalizeFn finalize_func);
+bool quorum_event_is_slow(const QuorumEvent& self);
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+#if RUSTYCPP_RUST
+struct QuorumEvent {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    n_voted_yes_: Cell<i32>,
+    n_voted_no_: Cell<i32>,
+    xids_: RefCell<rusty::HashMap<u16, rrr::i64>>,
+    n_total_: i32,
+    quorum_: i32,
+    policy_: Cell<QuorumPolicy>,
+    committed_seen_: Cell<bool>,
+    num_leader_: Cell<i32>,
+    n_leader_yes_: Cell<i32>,
+    n_leader_no_: Cell<i32>,
+    highest_term_: Cell<i64>,
+    timeouted_: Cell<bool>,
+    leader_id_: Cell<u32>,
+    par_id_: Cell<i64>,
+    id_: Cell<u64>,
+    finalize_event_: rusty::Arc<IntEvent>,
+}
+
+impl QuorumEvent {
+    fn add_xid(&self, site: u16, xid: rrr::i64) {
+        self.xids_.borrow_mut().insert(site, xid);
+    }
+    fn remove_xid(&self, site: u16) {
+        self.xids_.borrow_mut().remove(site);
+    }
+    fn finalize(&self, timeout: u64, finalize_func: QuorumFinalizeFn) {
+        quorum_event_finalize(self, timeout, finalize_func)
+    }
+    fn yes(&self) -> bool {
+        let base = self.n_voted_yes_.get() >= self.quorum_;
+        if self.policy_.get() == QuorumPolicy::LEADER_AND {
+            return base && self.n_leader_yes_.get() >= self.num_leader_.get();
+        }
+        base
+    }
+    fn no(&self) -> bool {
+        if self.policy_.get() == QuorumPolicy::ALL_NO {
+            return self.n_voted_no_.get() == self.n_total_;
+        }
+        verify(self.n_total_ >= self.quorum_);
+        let base = self.n_voted_no_.get() > (self.n_total_ - self.quorum_);
+        if self.policy_.get() == QuorumPolicy::LEADER_AND {
+            return base || self.n_leader_no_.get() > 0;
+        }
+        base
+    }
+    fn vote_yes(&self) {
+        self.n_voted_yes_.set(self.n_voted_yes_.get() + 1);
+        event_test_impl(self);
+        let fe = self.finalize_event_.clone();
+        if (*fe).status_.get() != EventStatus::TIMEOUT && (*fe).status_.get() != EventStatus::DONE {
+            (*fe).set(self.n_voted_yes_.get() + self.n_voted_no_.get());
+        }
+    }
+    fn vote_no(&self) {
+        self.n_voted_no_.set(self.n_voted_no_.get() + 1);
+        event_test_impl(self);
+        let fe = self.finalize_event_.clone();
+        if (*fe).status_.get() != EventStatus::TIMEOUT && (*fe).status_.get() != EventStatus::DONE {
+            (*fe).set(self.n_voted_yes_.get() + self.n_voted_no_.get());
+        }
+    }
+    fn is_composite_event(&self) -> bool {
+        true
+    }
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn get_fiber_id(&self) -> u64 {
+        event_core_get_fiber_id()
+    }
+    fn is_slow(&self) -> bool {
+        quorum_event_is_slow(self)
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
+
+#[cpp_inherit]
+impl EventPollable for QuorumEvent {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        let p = self.policy_.get();
+        if p == QuorumPolicy::ALWAYS_READY {
+            return true;
+        }
+        if p == QuorumPolicy::ALL_NO {
+            return self.yes() || self.no();
+        }
+        if p == QuorumPolicy::COMMITTED_SHORT {
+            if self.timeouted_.get() {
+                return true;
+            }
+            if self.committed_seen_.get() {
+                return true;
+            }
+            return self.yes() || self.no();
+        }
+        if self.timeouted_.get() {
+            return true;
+        }
+        self.yes() || self.no()
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.quorum_event version=1 rust_sha256=b4a1ee9c2e71a307974f3f62652465e3b24b823075b9a1002d41aeeb480cdbe3*/
+struct QuorumEvent;
+
+struct QuorumEvent : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::Cell<int32_t> n_voted_yes_;
+    rusty::Cell<int32_t> n_voted_no_;
+    rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>> xids_;
+    int32_t n_total_;
+    int32_t quorum_;
+    rusty::Cell<QuorumPolicy> policy_;
+    rusty::Cell<bool> committed_seen_;
+    rusty::Cell<int32_t> num_leader_;
+    rusty::Cell<int32_t> n_leader_yes_;
+    rusty::Cell<int32_t> n_leader_no_;
+    rusty::Cell<int64_t> highest_term_;
+    rusty::Cell<bool> timeouted_;
+    rusty::Cell<uint32_t> leader_id_;
+    rusty::Cell<int64_t> par_id_;
+    rusty::Cell<uint64_t> id_;
+    rusty::Arc<IntEvent> finalize_event_;
+    QuorumEvent(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::Cell<int32_t> n_voted_yes__init, rusty::Cell<int32_t> n_voted_no__init, rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>> xids__init, int32_t n_total__init, int32_t quorum__init, rusty::Cell<QuorumPolicy> policy__init, rusty::Cell<bool> committed_seen__init, rusty::Cell<int32_t> num_leader__init, rusty::Cell<int32_t> n_leader_yes__init, rusty::Cell<int32_t> n_leader_no__init, rusty::Cell<int64_t> highest_term__init, rusty::Cell<bool> timeouted__init, rusty::Cell<uint32_t> leader_id__init, rusty::Cell<int64_t> par_id__init, rusty::Cell<uint64_t> id__init, rusty::Arc<IntEvent> finalize_event__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), n_voted_yes_(std::move(n_voted_yes__init)), n_voted_no_(std::move(n_voted_no__init)), xids_(std::move(xids__init)), n_total_(std::move(n_total__init)), quorum_(std::move(quorum__init)), policy_(std::move(policy__init)), committed_seen_(std::move(committed_seen__init)), num_leader_(std::move(num_leader__init)), n_leader_yes_(std::move(n_leader_yes__init)), n_leader_no_(std::move(n_leader_no__init)), highest_term_(std::move(highest_term__init)), timeouted_(std::move(timeouted__init)), leader_id_(std::move(leader_id__init)), par_id_(std::move(par_id__init)), id_(std::move(id__init)), finalize_event_(std::move(finalize_event__init)) {}
+    QuorumEvent(QuorumEvent&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), n_voted_yes_(std::move(other.n_voted_yes_)), n_voted_no_(std::move(other.n_voted_no_)), xids_(std::move(other.xids_)), n_total_(std::move(other.n_total_)), quorum_(std::move(other.quorum_)), policy_(std::move(other.policy_)), committed_seen_(std::move(other.committed_seen_)), num_leader_(std::move(other.num_leader_)), n_leader_yes_(std::move(other.n_leader_yes_)), n_leader_no_(std::move(other.n_leader_no_)), highest_term_(std::move(other.highest_term_)), timeouted_(std::move(other.timeouted_)), leader_id_(std::move(other.leader_id_)), par_id_(std::move(other.par_id_)), id_(std::move(other.id_)), finalize_event_(std::move(other.finalize_event_)) {}
+
+
+    void add_xid(uint16_t site, rrr::i64 xid) const;
+    void remove_xid(uint16_t site) const;
+    void finalize(uint64_t timeout, QuorumFinalizeFn finalize_func) const;
+    bool yes() const;
+    bool no() const;
+    void vote_yes() const;
+    void vote_no() const;
+    bool is_composite_event() const;
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    uint64_t get_fiber_id() const;
+    bool is_slow() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) const {
+    this->xids_.borrow_mut()->insert(std::move(site), std::move(xid));
+}
+
+void QuorumEvent::remove_xid(uint16_t site) const {
+    this->xids_.borrow_mut()->remove(std::move(site));
+}
+
+void QuorumEvent::finalize(uint64_t timeout, QuorumFinalizeFn finalize_func) const {
+    quorum_event_finalize((*this), std::move(timeout), std::move(finalize_func));
+}
+
+bool QuorumEvent::yes() const {
+    auto base = this->n_voted_yes_.get() >= rusty::detail::deref_if_pointer_like(this->quorum_);
+    if (this->policy_.get() == rusty::clone(QuorumPolicy::LEADER_AND)) {
+        return rusty::detail::deref_if_pointer_like(base) && (this->n_leader_yes_.get() >= this->num_leader_.get());
+    }
+    return std::move(base);
+}
+
+bool QuorumEvent::no() const {
+    if (this->policy_.get() == rusty::clone(QuorumPolicy::ALL_NO)) {
+        return this->n_voted_no_.get() == rusty::detail::deref_if_pointer_like(this->n_total_);
+    }
+    verify(rusty::detail::deref_if_pointer_like(this->n_total_) >= rusty::detail::deref_if_pointer_like(this->quorum_));
+    auto base = this->n_voted_no_.get() > ((rusty::detail::deref_if_pointer_like(this->n_total_) - rusty::detail::deref_if_pointer_like(this->quorum_)));
+    if (this->policy_.get() == rusty::clone(QuorumPolicy::LEADER_AND)) {
+        return rusty::detail::deref_if_pointer_like(base) || (this->n_leader_no_.get() > 0);
+    }
+    return std::move(base);
+}
+
+void QuorumEvent::vote_yes() const {
+    this->n_voted_yes_.set(this->n_voted_yes_.get() + static_cast<int32_t>(1));
+    event_test_impl((*this));
+    const auto fe = rusty::clone(this->finalize_event_);
+    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::TIMEOUT)) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::DONE))) {
+        ((rusty::detail::deref_if_pointer_like(fe))).set(this->n_voted_yes_.get() + this->n_voted_no_.get());
+    }
+}
+
+void QuorumEvent::vote_no() const {
+    this->n_voted_no_.set(this->n_voted_no_.get() + static_cast<int32_t>(1));
+    event_test_impl((*this));
+    const auto fe = rusty::clone(this->finalize_event_);
+    if (((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::TIMEOUT)) && ((rusty::detail::deref_if_pointer_like(fe)).status_.get() != rusty::clone(EventStatus::DONE))) {
+        ((rusty::detail::deref_if_pointer_like(fe))).set(this->n_voted_yes_.get() + this->n_voted_no_.get());
+    }
+}
+
+bool QuorumEvent::is_composite_event() const {
+    return true;
+}
+
+void QuorumEvent::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void QuorumEvent::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+uint64_t QuorumEvent::get_fiber_id() const {
+    return event_core_get_fiber_id();
+}
+
+bool QuorumEvent::is_slow() const {
+    return quorum_event_is_slow((*this));
+}
+
+rusty::Option<rusty::Arc<EventPollable>> QuorumEvent::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void QuorumEvent::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool QuorumEvent::test() const {
+    return event_test_impl((*this));
+}
+
+bool QuorumEvent::is_ready() const {
+    const auto p = this->policy_.get();
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::ALWAYS_READY)) {
+        return true;
+    }
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::ALL_NO)) {
+        return this->yes() || this->no();
+    }
+    if (rusty::detail::deref_if_pointer_like(p) == rusty::clone(QuorumPolicy::COMMITTED_SHORT)) {
+        if (this->timeouted_.get()) {
+            return true;
+        }
+        if (this->committed_seen_.get()) {
+            return true;
+        }
+        return this->yes() || this->no();
+    }
+    if (this->timeouted_.get()) {
+        return true;
+    }
+    return this->yes() || this->no();
+}
+
+void QuorumEvent::log() const {
+}
+
+EventStatus QuorumEvent::status() const {
+    return this->status_.get();
+}
+
+void QuorumEvent::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t QuorumEvent::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool QuorumEvent::prunable() const {
+    return this->prunable_.get();
+}
+
+void QuorumEvent::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> QuorumEvent::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.quorum_event*/
+
+// Composition base for the per-protocol quorum events (flattening S3b).
+// The former `class XQuorumEvent : public QuorumEvent` subclasses become
+// `class XQuorumEvent : public QuorumEventWrapper` — they OWN the reactor-
+// registered QuorumEvent instead of BEING it, so nothing outside rrr
+// inherits the event type (a hard requirement for flattening QuorumEvent
+// to an inline-Rust DSL struct, which cannot be a base class). The wrapper
+// itself is not an Event and is never registered; waiting/voting forward
+// to the owned, registered `q_`.
+//
+// Field access through a wrapper goes via `q()`:  e->timeouted_  becomes
+// e->q().timeouted_. The common verb surface is forwarded so method call
+// sites compile unchanged. `q_` is set once at construction and never
+// reseated.
+class QuorumEventWrapper {
  public:
-	static uint64_t count;
-  int32_t n_voted_yes_{0};
-  int32_t n_voted_no_{0};
-  rusty::HashMap<uint16_t, rrr::i64> xids_;
-  uint64_t begin_timestamp_;
+  rusty::Arc<QuorumEvent> q_;
 
- public:
-  int32_t n_total_ = -1;
-  int32_t quorum_ = -1;
-  int64_t highest_term_{0} ;
-  bool timeouted_ = false;
-  uint64_t cmt_idx_{0} ;
-  uint32_t leader_id_{0} ;
-  uint64_t coro_id_ = -1;
-  int64_t par_id_ = -1;
-  uint64_t id_ = -1;
-	uint64_t server_id_ = -1;
-  std::chrono::steady_clock::time_point ready_time;
-  // fast vote result.
-  rusty::Vec<uint64_t> vec_timestamp_{};
-  shared_ptr<IntEvent> finalize_event_;
+  QuorumEventWrapper(int n_total, int quorum)
+      : q_(rrr::Reactor::create_sp_event<QuorumEvent>(n_total, quorum)) {}
 
-  QuorumEvent() = delete;
+  // Arc is const-view; every QuorumEvent field mutation now goes
+  // through Cell::set / RefCell (both const), so a const ref suffices.
+  const QuorumEvent& q() { return *q_; }
+  const QuorumEvent& q() const { return *q_; }
 
-  QuorumEvent(int n_total, int quorum);
-
-  /**
-   * Record the TXid of an issued RPC and which site it's issued to
-   * in the dangling RPC list
-   *
-   * @param site site id of the RPC issuing to
-   * @param xid TXid of the RPC
-   */
-  void add_xid(uint16_t site, rrr::i64 xid);
-
-  /**
-   * Remove an replied RPC from the dangling RPC list
-   *
-   * @param site site id of the reply coming from
-   */
-  void remove_xid(uint16_t site);
-
-  /**
-   * call finalize before/after wait() to cleanup the side-effect of the quorum-event
-   * (e.g. free dangling RPCs). However, finalize should not block execution after wait.
-   * That is, finalize should be a background task, with respect to the main fiber (
-   * the fiber where wait() is called)
-   * TODO: find a proper way to achieve this
-   *
-   * @param timeout time to wait after event-ready to do finalize
-   * @param finalize_func what to do in finalization, take a list of dangling RPC
-   */
+  // Forwarded verb surface (matches the former inherited methods):
+  void wait() { q_->wait(); }
+  void wait_timeout(uint64_t timeout) { q_->wait_timeout(timeout); }
+  void log() { q_->log(); }
+  uint64_t get_fiber_id() { return q_->get_fiber_id(); }
+  void vote_yes() { q_->vote_yes(); }
+  void vote_no() { q_->vote_no(); }
+  bool yes() { return q_->yes(); }
+  bool no() { return q_->no(); }
+  bool is_ready() { return q_->is_ready(); }
+  bool is_slow() { return q_->is_slow(); }
+  void test() { q_->test(); }
+  void add_xid(uint16_t site, rrr::i64 xid) { q_->add_xid(site, xid); }
+  void remove_xid(uint16_t site) { q_->remove_xid(site); }
   void finalize(uint64_t timeout,
-                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
-
-  virtual bool yes() {
-    return n_voted_yes_ >= quorum_;
+                rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> >&)> f) {
+    q_->finalize(timeout, std::move(f));
   }
-
-  virtual bool no() {
-    verify(n_total_ >= quorum_);
-    return n_voted_no_ > (n_total_ - quorum_);
-  }
-
-  // @safe - test(), Time::now(), rusty::Vec::push, IntEvent::set
-  // are all @safe; Cell::get on `finalize_event_->status_` is @safe.
-  void vote_yes();
-
-  // @safe - test() and IntEvent::set are @safe; Cell::get on
-  // `finalize_event_->status_` is @safe.
-  void vote_no();
-
-  bool is_ready() override {
-    if (timeouted_) {
-      // TODO add time out support
-      return true;
-    }
-    if (yes()) {
-//      Log_info("voted: %d is equal or greater than quorum: %d",
-//                (int)n_voted_yes_, (int) quorum_);
-      ready_time = std::chrono::steady_clock::now();
-      return true;
-    } else if (no()) {
-      return true;
-    }
-//    Log_debug("voted: %d is smaller than quorum: %d",
-//              (int)n_voted_, (int) quorum_);
-    return false;
-  }
-
-  // Mark as composite event - will be polled in reactor loop
-  bool is_composite_event() override { return true; }
-
-  void log_event();
-
 };
 
 }  // export namespace janus
@@ -1280,23 +2904,13 @@ namespace rrr {
 
 // --- from event.cc -------------------------------------------------------
 
-uint64_t Event::get_fiber_id(){
-  auto fiber_opt = Fiber::current_fiber();
-  verify(fiber_opt.is_some());
-  return fiber_opt.unwrap()->id;
-}
 
-bool Event::is_slow() {
-	bool result = Reactor::get_reactor()->slow_.get();
-	Reactor::get_reactor()->slow_.set(false);
-	return result;
-}
 
 // void Event::Wait(uint64_t timeoutuint64_t timeout) {
 // //  verify(__debug_creator); // if this fails, the event is not created by reactor.
 
-//   verify(Reactor::sp_reactor_th_);
-//   verify(Reactor::sp_reactor_th_->thread_id_ == rusty::thread::current_id());
+//   verify(sp_reactor_th_);
+//   verify(sp_reactor_th_->thread_id_ == rusty::thread::current_id());
 //   if (IsReady()) {
 //     status_ = DONE; // does not need to wait.
 //     return;
@@ -1318,152 +2932,310 @@ bool Event::is_slow() {
 //   }
 // }
 
-void Event::wait(uint64_t timeout) {
-//  verify(__debug_creator); // if this fails, the event is not created by reactor.
-  verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == rusty::thread::current_id());
-  if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
-  // verify(status_.get() == INIT);
-  if (is_ready()) {
-    status_.set(DONE); // no need to wait.
-    return;
-  } else {
-//    if (status_ == WAIT) {
-//      // this does not look right, fix later
-//      Log_fatal("multiple waits on the same event; no support at the moment");
-//    }
-//    verify(status_ == INIT); // does not support multiple wait so far. maybe we can support it in the future.
-//    status_= DEBUG;
-    // the event may be created in a different fiber.
-    // this value is set when wait is called.
-    // for now only one fiber can wait on an event.
-    auto fiber_opt = Fiber::current_fiber();
-    verify(fiber_opt.is_some());  // Can't wait outside a fiber
-    auto fiber = fiber_opt.unwrap();
-
-    // Use RefCell borrow_mut() for safe interior mutability
-    auto reactor_rc = Reactor::get_reactor();
-    reactor_rc->waiting_events_.borrow_mut()->push_back(get_self());
-
-    // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
-    // Add them to a separate queue that gets scanned (much smaller than all events)
-    // Regular RPC events (Raft) self-notify via test() - zero overhead!
-    if (is_composite_event()) {
-      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(get_self());
+// Flattening S4: the wait machinery, extracted from Event::wait as a generic
+// kernel over the concrete event type W. Duck-typed surface: W provides
+// status_, state_, is_ready(), is_composite_event(), get_self(). Works
+// identically for the legacy Event hierarchy (virtual dispatch through
+// W=Event) and the flattened per-kind DSL structs (static dispatch).
+//
+// Authored as inline Rust DSL (docs/porting-cpp-to-rust-dsl.md §7.9).
+// Convertible since rusty-cpp #32/#33 (guard-producing calls on generic
+// receivers → deref dispatch), #34 (deref through a generic guard receiver on
+// an assignment LHS), and #35 (keep the guard deref for a CONCRETE receiver
+// too — the `borrow_mut().push_back()` enqueues) all landed. Param is `ev`,
+// not `self` — a free-function param named `self` lowers to a method receiver.
+// Rc field/method access uses the explicit `(*rc).member` deref form; a value
+// binding (`.clone()`) is required for `*` to lower — a reference binding or an
+// inline `*<call-chain>` drops the deref. The dead `#ifdef EVENT_TIMEOUT_CHECK`
+// branches (macro never defined) are dropped.
+#if RUSTYCPP_RUST
+fn event_wait_impl<W>(ev: &W, timeout: u64) {
+    verify(sp_reactor_th_.is_some());
+    // `.clone()` binds a *value* Rc (not a reference): `*ident` lowers to a
+    // deref only for value bindings, so `(*reactor_th).thread_id_` reaches
+    // through the Rc.
+    let reactor_th = sp_reactor_th_.as_ref().unwrap().clone();
+    verify((*reactor_th).thread_id_.get() == rusty::thread::current_id());
+    if ev.status_.get() == EventStatus::DONE {
+        return; // second use of the event
     }
+    if ev.is_ready() {
+        ev.status_.set(EventStatus::DONE); // no need to wait
+        return;
+    } else {
+        // The event may be created in a different fiber; for now only one
+        // fiber can wait on an event. Capture the running fiber to wake later.
+        let fiber_opt = Fiber::current_fiber();
+        verify(fiber_opt.is_some()); // can't wait outside a fiber
+        let fiber = fiber_opt.unwrap();
 
-#ifdef EVENT_TIMEOUT_CHECK
-    if (timeout == 0) {
-      __debug_timeout_ = true;
-      timeout = 200 * 1000 * 1000;
-//#ifdef SIMULATE_WAN
-//      timeout = 600 * 1000 * 1000;
-//#endif
-    }
-#endif
-    if (timeout > 0) {
-      auto now = Time::now(true);
-      wakeup_time_ = now + timeout;
-      //Log_info("WAITING: %p", get_self().get());
-      // Log_info("wake up %lld, now %lld", wakeup_time_, now);
-      reactor_rc->timeout_events_.borrow_mut()->push_back(get_self());
-    }
-    // TODO optimize timeout_events, sort by wakeup time.
-//      auto it = timeout_events.end();
-//      timeout_events.push_back(rc_this_event);
-//      while (it != events.begin()) {
-//        it--;
-//        auto& it_event = *it;
-//        if (it_event->wakeup_time_ < wakeup_time_) {
-//          it++; // list insert happens before position.
-//          break;
-//        }
-//      }
-//      events.insert(it, shared_from_this());
+        let reactor_rc = Reactor::get_reactor();
+        // Inline `borrow_mut().push_back(…)`: the RefMut temporary releases at
+        // the end of each statement — before the yield below — so the reactor
+        // loop can re-borrow these queues while this fiber sleeps. (#35 keeps
+        // the guard deref for these concrete-receiver calls.)
+        (*reactor_rc).waiting_events_.borrow_mut().push_back(ev.get_self().unwrap());
 
-    wp_fiber_ = fiber;
-    status_.set(WAIT);
-    auto fiber_status = fiber->status_.get();
-    verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
-    fiber->yield_();
-#ifdef EVENT_TIMEOUT_CHECK
-    if (__debug_timeout_ && status_.get() == TIMEOUT) {
-      Log_info("timeout");
-      verify(0);
+        // Composite events (WaitAll/WaitAny/Quorum) need periodic polling; add
+        // them to a smaller scanned queue. Regular RPC events self-notify.
+        if ev.is_composite_event() {
+            (*reactor_rc).composite_events_.borrow_mut().push_back(ev.get_self().unwrap());
+        }
+
+        if timeout > 0 {
+            let now = Time::now(true);
+            ev.state_.wakeup_time_.set(now + timeout);
+            (*reactor_rc).timeout_events_.borrow_mut().push_back(ev.get_self().unwrap());
+        }
+
+        // Transpiled Weak has no implicit Rc→Weak conversion; use the static
+        // Rc::downgrade(rc) factory (mirrors std::rc::Rc::downgrade). `fiber` is
+        // cloned (a refcount bump) so the factory consumes the temporary and the
+        // original `fiber` stays live for the checks below.
+        *ev.state_.wp_fiber_.borrow_mut() = ::rusty::port::rc::Rc::<Fiber>::downgrade(fiber.clone());
+        ev.status_.set(EventStatus::WAIT);
+        let fiber_status = (*fiber).status_.get();
+        verify(fiber_status != Fiber::FINISHED && fiber_status != Fiber::RECYCLED);
+        (*fiber).yield_();
     }
-#endif
-  }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.13 version=1 rust_sha256=ea6cbb771479971d143f60f862b2af9bfa86340585731f4a80a84b1c99c4f87c*/
+template<typename W>
+void event_wait_impl(const W& ev, uint64_t timeout);
 
-void Event::record_place(const char* file, int line) {
-  char buff[200];
-  sprintf(buff, "%s:%d", file, line);
-  wait_place_ += std::string(buff);
-  rcd_wait_ = true;
+template<typename W>
+void event_wait_impl(const W& ev, uint64_t timeout) {
+    verify(sp_reactor_th_.is_some());
+    const auto reactor_th = rusty::clone(sp_reactor_th_.as_ref().unwrap());
+    verify((rusty::detail::deref_if_pointer_like(reactor_th)).thread_id_.get() == rusty::thread::current_id());
+    if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+        return;
+    }
+    if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+        return;
+    } else {
+        auto fiber_opt = Fiber::current_fiber();
+        verify(fiber_opt.is_some());
+        const auto fiber = fiber_opt.unwrap();
+        const auto reactor_rc = Reactor::get_reactor();
+        rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).waiting_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        if (rusty::deref_call(ev, rusty::detail::__mdisp_is_composite_event{})) {
+            rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).composite_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        }
+        if (rusty::detail::deref_if_pointer_like(timeout) > 0) {
+            const auto now = Time::now(true);
+            ev.state_.wakeup_time_.set(rusty::detail::deref_if_pointer_like(now) + rusty::detail::deref_if_pointer_like(timeout));
+            rusty::deref_call((rusty::detail::deref_if_pointer_like(reactor_rc)).timeout_events_.borrow_mut(), rusty::detail::__mdisp_push_back{}, rusty::deref_call(ev, rusty::detail::__mdisp_get_self{}).unwrap());
+        }
+        rusty::detail::deref_if_pointer_like(ev.state_.wp_fiber_.borrow_mut()) = std::conditional_t<true, ::rusty::port::rc::Rc<Fiber>, W>::downgrade(rusty::clone(fiber));
+        ev.status_.set(rusty::clone(rusty::clone(EventStatus::WAIT)));
+        const auto fiber_status = (rusty::detail::deref_if_pointer_like(fiber)).status_.get();
+        verify((rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::FINISHED)) && (rusty::detail::deref_if_pointer_like(fiber_status) != rusty::clone(Fiber::RECYCLED)));
+        ((rusty::detail::deref_if_pointer_like(fiber))).yield_();
+    }
 }
+/*RUSTYCPP:GEN-END id=reactor.13*/
+
+
 
 // @safe - verify(), is_ready(), Cell::get/set, Weak::upgrade, Option::is_some
 // and Log_debug are all @safe.
-bool Event::test() {
-  verify(__debug_creator);
-  if (is_ready()) {
-    if (status_.get() == INIT) {
-      status_.set(DONE);
-    } else if (status_.get() == WAIT) {
-      auto option_fiber = wp_fiber_.upgrade();
-      verify(option_fiber.is_some());
-      verify(status_.get() != DEBUG);
-      status_.set(READY);
-    } else if (status_.get() == READY) {
-      Log_debug("event status ready, triggered?");
-    } else if (status_.get() == DONE) {
-      // do nothing
-    } else if (status_.get() == TIMEOUT) {
-      // do nothing
+// Authored as inline Rust DSL (docs/porting-cpp-to-rust-dsl.md §7.9): duck-typed
+// test() machinery as a generic kernel over the concrete event type W (see
+// event_wait_impl for the surface contract). Convertible since rusty-cpp #32
+// (guard-producing calls on generic receivers → deref dispatch) and #33
+// (deref-dispatch functor hoisted to global scope) landed. Param is `ev`, not
+// `self` — a free-function param named `self` lowers to a method receiver.
+#if RUSTYCPP_RUST
+fn event_test_impl<W>(ev: &W) -> bool {
+    verify(ev.state_.__debug_creator);
+    if ev.is_ready() {
+        if ev.status_.get() == EventStatus::INIT {
+            ev.status_.set(EventStatus::DONE);
+        } else if ev.status_.get() == EventStatus::WAIT {
+            if rusty::thread::current_id() == ev.owner_thread_ {
+                // Owner-thread-only: upgrading the weak fiber ref mutates a plain
+                // (non-atomic) Rc strong count; doing this from a foreign thread
+                // races the owner's own Rc<Fiber> clones and corrupts the count.
+                // The upgraded handle is used only for this liveness assertion.
+                let option_fiber = ev.state_.wp_fiber_.borrow().upgrade();
+                verify(option_fiber.is_some());
+                verify(ev.status_.get() != EventStatus::DEBUG);
+            }
+            ev.status_.set(EventStatus::READY);
+        } else if ev.status_.get() == EventStatus::READY {
+            Log_debug("event status ready, triggered?");
+        } else if ev.status_.get() == EventStatus::DONE {
+            // do nothing
+        } else if ev.status_.get() == EventStatus::TIMEOUT {
+            // do nothing
+        } else {
+            verify(0);
+        }
+        return true;
     } else {
-      verify(0);
+        if ev.status_.get() == EventStatus::DONE {
+            ev.status_.set(EventStatus::INIT);
+        }
     }
-    return true;
-  } else {
-    if (status_.get() == DONE) {
-      status_.set(INIT);
-    }
-  }
-  return false;
+    false
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.12 version=1 rust_sha256=6b878e0df1b9513246de90e18b8e92999fa8a1faf47c7d256d8c6274fbd92b95*/
+template<typename W>
+bool event_test_impl(const W& ev);
 
-Event::Event() {
+template<typename W>
+bool event_test_impl(const W& ev) {
+    verify(ev.state_.__debug_creator);
+    if (rusty::deref_call(ev, rusty::detail::__mdisp_is_ready{})) {
+        if (ev.status_.get() == rusty::clone(EventStatus::INIT)) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::DONE)));
+        } else if (ev.status_.get() == rusty::clone(EventStatus::WAIT)) {
+            if (rusty::thread::current_id() == rusty::detail::deref_if_pointer_like(ev.owner_thread_)) {
+                const auto option_fiber = rusty::deref_call(rusty::borrow(ev.state_.wp_fiber_), rusty::detail::__mdisp_upgrade{});
+                verify(option_fiber.is_some());
+                verify(ev.status_.get() != rusty::clone(EventStatus::DEBUG));
+            }
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::READY)));
+        } else if (ev.status_.get() == rusty::clone(EventStatus::READY)) {
+            Log_debug("event status ready, triggered?");
+        } else if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+        } else if (ev.status_.get() == rusty::clone(EventStatus::TIMEOUT)) {
+        } else {
+            verify(0);
+        }
+        return true;
+    } else {
+        if (ev.status_.get() == rusty::clone(EventStatus::DONE)) {
+            ev.status_.set(rusty::clone(rusty::clone(EventStatus::INIT)));
+        }
+    }
+    return false;
+}
+/*RUSTYCPP:GEN-END id=reactor.12*/
+
+
+
+// Flattened-struct factories (declared next to event_make): each
+// replicates the legacy Event constructor's seeding — wait_place_ tag and
+// the creating-fiber capture — on top of the aggregate's zero state, plus
+// the type's own defaults. Field order matches the DSL struct exactly.
+uint64_t event_core_get_fiber_id() {
   auto fiber_opt = Fiber::current_fiber();
-  // It's OK if no fiber is running - event might be created outside a fiber
-  // and Wait() called later from within one
+  verify(fiber_opt.is_some());
+  return fiber_opt.unwrap()->id;
+}
+
+void event_state_seed(const EventState& st) {
+  (*st.wait_place_.borrow_mut()) = "not recorded";
+  auto fiber_opt = Fiber::current_fiber();
   if (fiber_opt.is_some()) {
-    wp_fiber_ = fiber_opt.unwrap();
+    auto rc_fiber = fiber_opt.unwrap();
+    (*st.wp_fiber_.borrow_mut()) = ::rusty::port::rc::Rc<Fiber>::downgrade(rc_fiber);
   }
-  // Otherwise wp_fiber_ stays as default empty weak pointer
 }
 
-bool IntEvent::test_trigger() {
-  verify(status_.get() <= WAIT);
-  if (value_ == target_) {
-    if (status_.get() == INIT) {
-      // do nothing until wait happens.
-      status_.set(DONE);
-    } else if (status_.get() == WAIT) {
-      status_.set(READY);
-    } else {
-      verify(0);
-    }
-    return true;
-  }
-  return false;
+rusty::Arc<NeverEvent> never_event_make() {
+  auto sp = rusty::Arc<NeverEvent>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      rusty::sync::Weak<EventPollable>());
+  event_state_seed(sp->state_);
+  return sp;
 }
 
-int SharedIntEvent::set(const int& v) {
-  auto ret = value_;
-  value_ = v;
-  for (auto& ev : events_) {
-    if (ev->status_.get() <= Event::WAIT) {
-      if (ev->target_ <= v) {
+rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
+  auto sp = rusty::Arc<TimeoutEvent>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      rusty::sync::Weak<EventPollable>(),
+      Time::now(true) + wait_us,  // wakeup_time_: the deadline, at construction
+      wait_us);
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+rusty::Arc<IntEvent> int_event_make(int32_t target) {
+  auto sp = rusty::Arc<IntEvent>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
+      rusty::thread::current_id(),
+      EventState{},
+      rusty::Cell<bool>::new_(true),
+      rusty::sync::Weak<EventPollable>(),
+      rusty::Cell<int32_t>::new_(0),        // value_
+      rusty::Cell<int32_t>::new_(target));
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// Flattened (S4): the former WaitAny(a, b) ctor, as the aggregate factory
+// rrr::event_make dispatches to. Build the child vector, then the aggregate,
+// then seed the event-core state.
+rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
+  rusty::Vec<rusty::Arc<EventPollable>> events;
+  events.push(std::move(a));
+  events.push(std::move(b));
+  auto sp = rusty::Arc<WaitAny>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      std::move(events));                                 // events_
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// Flattened (S4): the former WaitAll default ctor (empty child list).
+rusty::Arc<WaitAll> waitall_make() {
+  auto sp = rusty::Arc<WaitAll>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),        // status_
+      rusty::thread::current_id(),                              // owner_thread_
+      EventState{},                                             // state_
+      rusty::Cell<bool>::new_(true),                            // prunable_
+      rusty::sync::Weak<EventPollable>(),                       // self_
+      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>()); // events_ (empty)
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// Flattened (S4): the former WaitAll(const Vec&) ctor.
+rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
+  rusty::Vec<rusty::Arc<EventPollable>> events;
+  events.reserve(evs.len());
+  for (const auto& ev : evs) {
+    events.push(ev);
+  }
+  auto sp = rusty::Arc<WaitAll>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));  // events_
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// @unsafe - the single push the DSL add_event forwards here (a `.push()` on a
+// RefCell<Vec> guard currently mis-lowers, so it stays a hand-written kernel).
+void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x) {
+  self.events_.borrow_mut()->push(std::move(x));
+}
+
+int shared_int_event_set(SharedIntEvent& self, const int& v) {
+  auto ret = self.value_;
+  self.value_ = v;
+  for (auto& ev : self.events_) {
+    if (ev->status_.get() <= EventStatus::WAIT) {
+      if (ev->target_.get() <= v) {
         ev->set(v);
       }
     }
@@ -1475,36 +3247,36 @@ int SharedIntEvent::set(const int& v) {
 // retain() lambda capture to identity-compare against shared_ptr<IntEvent>
 // entries in `events_`. The shared_ptr keeps the target alive for the
 // duration of the call.
-bool SharedIntEvent::wait_until_gte(int x, int timeout) {
-  if (value_ >= x) {
+bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
+  if (self.value_ >= x) {
     return false;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
-  ev->value_ = value_;
-  ev->target_ = x;
-  events_.push(ev);
-  ev->wait(timeout);
-  // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
+  ev->value_.set(self.value_);
+  ev->target_.set(x);
+  self.events_.push(ev);
+  ev->wait_timeout(timeout);
+  // verify(ev->status_.get() != EventStatus::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
-  bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
+  bool if_timeout = (ev->status_.get() == EventStatus::TIMEOUT);
   auto* ev_ptr = ev.get();
-  events_.retain(rusty::Function<bool(const std::shared_ptr<IntEvent>&)>(
-      [ev_ptr](const std::shared_ptr<IntEvent>& item) {
+  self.events_.retain(rusty::Function<bool(const rusty::Arc<IntEvent>&)>(
+      [ev_ptr](const rusty::Arc<IntEvent>& item) {
         return item.get() != ev_ptr;
       }));
   return if_timeout;
 }
 
-void SharedIntEvent::wait(rusty::Function<bool(int v)> f) {
-  if (f(value_)) {
+void shared_int_event_wait(SharedIntEvent& self, EventTestFn f) {
+  if (f(self.value_)) {
     return;
   }
   auto ev =  Reactor::create_sp_event<IntEvent>();
-  ev->value_ = value_;
-  ev->test_ = std::move(f);
-  events_.push(ev);
+  ev->value_.set(self.value_);
+  (*ev->state_.test_.borrow_mut()) = std::move(f);
+  self.events_.push(ev);
 //  ev->wait(1000*1000*1000);
-//  verify(ev->status_ != Event::TIMEOUT);
+//  verify(ev->status_ != EventStatus::TIMEOUT);
   ev->wait();
 }
 
@@ -1534,7 +3306,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
   verify(static_cast<bool>(*func_.borrow()));
   auto reactor = Reactor::get_reactor();
   while (true) {
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     verify(static_cast<bool>(*func_.borrow()));
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -1546,7 +3318,7 @@ void Fiber::run_wrapper(fiber_yield_t& yield) {
     }
     auto reactor = Reactor::get_reactor();
     reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
-    yield();
+    fiber_yield_invoke(yield);
   }
 }
 
@@ -1560,7 +3332,7 @@ void Fiber::run() const {
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::get_reactor();
-    auto sz = reactor->fibers_.borrow()->len();
+    auto sz = reactor->fibers_.borrow()->size();  // std::set::size
     verify(sz > 0);
     auto task = std::bind(&Fiber::run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
     *fiber_task_.borrow_mut() = rusty::Some(rusty::make_box<fiber_task_t>(std::move(task)));
@@ -1584,7 +3356,7 @@ void Fiber::yield_() const {
       auto reactor = Reactor::get_reactor();
       reactor->n_active_fibers_.set(reactor->n_active_fibers_.get() - 1);
     }
-    (*yield_ptr)();
+    fiber_yield_invoke(*yield_ptr);
   }
 }
 
@@ -1618,7 +3390,6 @@ void Fiber::do_finalize() {
 
 // --- from reactor.cc -----------------------------------------------------
 
-const int64_t n_max_fiber = 2000;
 // `REUSING_FIBER` is provided as a macro by reactor.h (line 203).
 // The original module-attached `constexpr bool REUSING_FIBER`
 // shadowed the macro inside the rrr module's purview; with
@@ -1637,16 +3408,53 @@ inline bool stackless_profile_enabled() {
   return enabled;
 }
 
+// Type aliases — the DSL grammar can't parse `std::atomic<...>` itself,
+// so we hide the template behind typedefs (same pattern as Server's
+// `ServerPendingRequestsAtomic`). C++20 guarantees `std::atomic<T>{}`
+// zero-initializes integer T, so the previous brace-init `{0}` is the
+// same as default-construction; the DSL aggregate emit relies on that.
+using StacklessProfileCountU64 = std::atomic<uint64_t>;
+using StacklessProfileCountUsize = std::atomic<size_t>;
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// Pure POD bag of profile counters. The per-field `.load()` /
+// `.fetch_add()` / `.compare_exchange_weak()` calls live in the
+// surrounding free functions (`stackless_profile_update_max_slots`,
+// `stackless_profile_report_periodic`, and the dispatcher hot-path
+// callers); the CAS loop on `max_slots` was the reason this struct
+// was previously trivial-blocked. Moving the struct itself into a
+// DSL block (with the helpers staying as plain C++ free functions
+// against the global) clears that — the DSL emit keeps the same
+// memory layout as the original brace-init form.
+#if RUSTYCPP_RUST
 struct StacklessProfileCounters {
-  std::atomic<uint64_t> reg_calls{0};
-  std::atomic<uint64_t> reg_scan_steps{0};
-  std::atomic<uint64_t> reg_reuse{0};
-  std::atomic<uint64_t> reg_new{0};
-  std::atomic<uint64_t> poll_calls{0};
-  std::atomic<uint64_t> poll_ready{0};
-  std::atomic<uint64_t> enqueue_calls{0};
-  std::atomic<size_t> max_slots{0};
+    reg_calls: StacklessProfileCountU64,
+    reg_scan_steps: StacklessProfileCountU64,
+    reg_reuse: StacklessProfileCountU64,
+    reg_new: StacklessProfileCountU64,
+    poll_calls: StacklessProfileCountU64,
+    poll_ready: StacklessProfileCountU64,
+    enqueue_calls: StacklessProfileCountU64,
+    max_slots: StacklessProfileCountUsize,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.stackless_profile version=1 rust_sha256=89b7d7978e54ae9761a6ce9cd806b5f954a010c626df7683c7b74daac49f9502*/
+struct StacklessProfileCounters;
+
+struct StacklessProfileCounters {
+    StacklessProfileCountU64 reg_calls;
+    StacklessProfileCountU64 reg_scan_steps;
+    StacklessProfileCountU64 reg_reuse;
+    StacklessProfileCountU64 reg_new;
+    StacklessProfileCountU64 poll_calls;
+    StacklessProfileCountU64 poll_ready;
+    StacklessProfileCountU64 enqueue_calls;
+    StacklessProfileCountUsize max_slots;
 };
+/*RUSTYCPP:GEN-END id=reactor.stackless_profile*/
 
 StacklessProfileCounters g_stackless_profile;
 
@@ -1683,7 +3491,7 @@ inline void stackless_profile_report_periodic() {
   size_t max_slots = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
 
   double avg_scan = (reg_calls > 0) ? static_cast<double>(reg_scans) / static_cast<double>(reg_calls) : 0.0;
-  Log_info("[async-prof] reg_calls=%llu avg_scan=%.2f reuse=%llu new=%llu max_slots=%zu poll_calls=%llu poll_ready=%llu enqueue_calls=%llu",
+  Log_info("[async-prof] reg_calls={} avg_scan={:.2f} reuse={} new={} max_slots={} poll_calls={} poll_ready={} enqueue_calls={}",
            static_cast<unsigned long long>(reg_calls),
            avg_scan,
            static_cast<unsigned long long>(reg_reuse),
@@ -1698,8 +3506,7 @@ inline void stackless_profile_report_periodic() {
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
-// Same for PollThreadWorker::current_worker_, clients_, and dangling_ips_.
-SpinLock Reactor::trying_job_;
+// Same for g_current_poll_worker, clients_, and dangling_ips_.
 
 // @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
@@ -1707,7 +3514,7 @@ SpinLock Reactor::trying_job_;
 rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
   // @unsafe - RefCell::borrow, Rc::clone
   {
-    auto guard = Reactor::sp_running_fiber_th_.borrow();
+    auto guard = sp_running_fiber_th_.borrow();
     if ((*guard).is_none()) {
       return rusty::None;
     }
@@ -1746,29 +3553,115 @@ void Fiber::sleep(uint64_t microseconds) {
  * - Returns valid Rc<Reactor> pinned to current thread
  * - Reactor's thread_id_ matches rusty::thread::current_id()
  */
+// @unsafe - Rc<Reactor> allocation + the create-time log lines (kept
+// as kernels: Rc::<T>::make turbofish adjacent to a Log_* call
+// mis-lowers the log as a member of the turbofish expression).
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl();
+void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber);
+void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber);
+rusty::Rc<Reactor> reactor_make() { return rusty::Rc<Reactor>::make(); }
+// @unsafe - RefCell borrow returns a temporary Ref the DSL can't bind
+// as a named guard; the read is one line, kept as a kernel.
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl() {
+    auto guard = sp_running_fiber_th_.borrow();
+    if ((*guard).is_some()) {
+        return rusty::Some((*guard).as_ref().unwrap().clone());
+    }
+    return rusty::Option<rusty::Rc<Fiber>>{};
+}
+
+// @unsafe - RefMut borrow_mut() returns a temporary the DSL binds as
+// address-of; these one-line writes stay kernels.
+void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
+    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
+}
+void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber) {
+    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
+}
+void reactor_log_create(bool disk) {
+    if (disk) { Log_debug("create a disk fiber scheduler"); return; }
+    Log_debug("create a fiber scheduler");
+    if (!REUSING_FIBER) { Log_warn("reusing fiber not enabled!"); }
+}
+
+// Singleton fetch-or-init for the per-thread schedulers, authored as
+// inline Rust DSL over the namespace-scope TLS slots; the members
+// below are 1-line shims.
+#if RUSTYCPP_RUST
+fn reactor_tls_get() -> rusty::Rc<Reactor> {
+    if sp_reactor_th_.is_none() {
+        reactor_log_create(false);
+        let mut r = reactor_make();
+        (*r).thread_id_.set(rusty::thread::current_id());
+        sp_reactor_th_ = rusty::Some(r);
+    }
+    sp_reactor_th_.as_ref().unwrap().clone()
+}
+
+fn reactor_tls_get_disk() -> rusty::Rc<Reactor> {
+    if sp_disk_reactor_th_.is_none() {
+        reactor_log_create(true);
+        let mut r = reactor_make();
+        (*r).thread_id_.set(rusty::thread::current_id());
+        sp_disk_reactor_th_ = rusty::Some(r);
+    }
+    sp_disk_reactor_th_.as_ref().unwrap().clone()
+}
+
+fn reactor_tls_save_running() -> rusty::Option<rusty::Rc<Fiber>> {
+    reactor_tls_save_running_impl()
+}
+
+fn reactor_tls_restore_running(old_fiber: rusty::Option<rusty::Rc<Fiber>>) {
+    reactor_tls_restore_running_impl(old_fiber);
+}
+
+fn reactor_tls_set_running(fiber: &rusty::Rc<Fiber>) {
+    reactor_tls_set_running_impl(fiber);
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.tls_singletons version=1 rust_sha256=9dd0ea584d04ac0dd0add842e3fcc67c71a447e5aa5febec38e93cf2bd096889*/
+rusty::Rc<Reactor> reactor_tls_get() {
+    if (sp_reactor_th_.is_none()) {
+        reactor_log_create(false);
+        auto r = reactor_make();
+        (rusty::detail::deref_if_pointer_like(r)).thread_id_.set(rusty::thread::current_id());
+        sp_reactor_th_ = rusty::Some(std::move(r));
+    }
+    return rusty::clone(sp_reactor_th_.as_ref().unwrap());
+}
+
+rusty::Rc<Reactor> reactor_tls_get_disk() {
+    if (sp_disk_reactor_th_.is_none()) {
+        reactor_log_create(true);
+        auto r = reactor_make();
+        (rusty::detail::deref_if_pointer_like(r)).thread_id_.set(rusty::thread::current_id());
+        sp_disk_reactor_th_ = rusty::Some(std::move(r));
+    }
+    return rusty::clone(sp_disk_reactor_th_.as_ref().unwrap());
+}
+
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running() {
+    return reactor_tls_save_running_impl();
+}
+
+void reactor_tls_restore_running(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
+    reactor_tls_restore_running_impl(std::move(old_fiber));
+}
+
+void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
+    reactor_tls_set_running_impl(fiber);
+}
+/*RUSTYCPP:GEN-END id=reactor.tls_singletons*/
+
 rusty::Rc<Reactor>
 Reactor::get_reactor() {
-  // @unsafe { Option operator=, unwrap, Rc::make are not borrow-checked }
-  {
-  if (sp_reactor_th_.is_none()) {
-    Log_debug("create a fiber scheduler");
-    if (!REUSING_FIBER)
-      Log_warn("reusing fiber not enabled!");
-    sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
-  }
-  return sp_reactor_th_.as_ref().unwrap().clone();
-  }
+  return reactor_tls_get();
 }
 
 rusty::Rc<Reactor>
 Reactor::get_disk_reactor() {
-  if (sp_disk_reactor_th_.is_none()) {
-    Log_debug("create a disk fiber scheduler");
-    sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
-    (*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_.set(rusty::thread::current_id());
-  }
-  return sp_disk_reactor_th_.as_ref().unwrap().clone();
+  return reactor_tls_get_disk();
 }
 
 // =============================================================================
@@ -1797,7 +3690,7 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
       auto fiber = rusty::Rc<Fiber>::make(std::move(func));
       n_created_fibers_.set(n_created_fibers_.get() + 1);
       if (n_created_fibers_.get() % 1024 == 0) {
-        Log_debug("created %d, busy %d, idle %d fibers on server %d, recent %s:%lld",
+        Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
                  (int)n_created_fibers_.get(),
                  (int)n_busy_fibers_.get(),
                  (int)n_idle_fibers_.get(),
@@ -1810,48 +3703,34 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
   }
 }
 
-// @safe - Saves current running fiber to allow nesting
+// @safe - 1-line shims into the DSL TLS helpers above.
 rusty::Option<rusty::Rc<Fiber>>
 Reactor::save_running_fiber() const {
-  // @unsafe
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    if ((*guard).is_some()) {
-      return rusty::Some((*guard).as_ref().unwrap().clone());
-    }
-    return rusty::Option<rusty::Rc<Fiber>>{};
-  }
+  return reactor_tls_save_running();
 }
 
-// @safe - Restores previously saved running fiber
 void Reactor::restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const {
-  // @unsafe
-  {
-    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
-  }
+  reactor_tls_restore_running(std::move(old_fiber));
 }
 
-// @safe - Sets the current running fiber
 void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe
-  {
-    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
-  }
+  reactor_tls_set_running(fiber);
 }
 
 // @safe - Registers a fiber in the active set
 void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe { RefCell::borrow_mut, BTreeSet::insert are not borrow-checked }
+  // @unsafe { RefCell::borrow_mut, std::set::insert are not borrow-checked }
   {
-  // BTreeSet::insert returns bool (true if newly inserted)
+  // std::set::insert returns pair<iterator, bool>; `.second` is true
+  // when the value was newly inserted.
   auto fibers_guard = fibers_.borrow_mut();
-  bool inserted = fibers_guard->insert(fiber.clone());
+  bool inserted = fibers_guard->insert(fiber.clone()).second;
   if (!inserted) {
     Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
-    Log_error("[DEBUG] fibers_ len: %zu, REUSING_FIBER: %d", fibers_guard->len(), REUSING_FIBER);
+    Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", fibers_guard->size(), REUSING_FIBER);
   }
   verify(inserted);
-  verify(fibers_guard->len() > 0);
+  verify(fibers_guard->size() > 0);
   }
 }
 
@@ -1999,6 +3878,12 @@ bool Reactor::process_stackless_tasks() const {
  */
 // @safe - Creates and runs a fiber using safe helper functions
 rusty::Rc<Fiber>
+// KERNEL by verdict (reactor slice 2b): orchestration dominated by
+// Rc<Fiber> arrow-method calls (run/continue_/finished/status) where
+// the DSL's last-use move-insertion mis-handles the repeatedly-passed
+// Rc, plus Reactor being a hand-written class (a DSL `self` param
+// emits `this->` with no receiver). Converting would need per-call
+// clone-guards + a member-shim dance for zero borrow-check gain.
 Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
   // Step 1: Get or create a fiber
   auto fiber = get_or_create_fiber(std::move(func), file, line);
@@ -2045,7 +3930,11 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 }
 
 // @unsafe - Uses RefCell::borrow_mut (not borrow-checked)
-void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
+// KERNEL by verdict: first pass derefs shared_ptr<EventPollable> to
+// virtual-dispatch status()/wakeup_time()/is_ready() (arrow wall), and
+// extract_if/retain take rusty::Function predicates that themselves
+// cross the sp-> arrow — all-kernel body, no separable DSL policy.
+void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const {
   // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
   int64_t time_now = Time::now(true);
 
@@ -2055,16 +3944,16 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // First pass: update status of timed-out events
   for (size_t i = 0; i < guard->len(); ++i) {
     auto& sp = (*guard)[i];
-    Event& event = *sp;
-    auto status = event.status_.get();
-    if (status == Event::WAIT) {
-      const auto& wakeup_time = event.wakeup_time_;
+    const EventPollable& event = *sp;
+    auto status = event.status();
+    if (status == EventStatus::WAIT) {
+      const auto wakeup_time = event.wakeup_time();
       verify(wakeup_time > 0);
-      if (time_now >= wakeup_time) {
+      if (time_now >= static_cast<int64_t>(wakeup_time)) {
         if (event.is_ready()) {
-          event.status_.set(Event::READY);
+          event.set_status(EventStatus::READY);
         } else {
-          event.status_.set(Event::TIMEOUT);
+          event.set_status(EventStatus::TIMEOUT);
         }
       }
     }
@@ -2073,10 +3962,10 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // Extract events that are READY or TIMEOUT (timed out)
   {
     auto timed_out = guard->extract_if(
-      rusty::Function<bool(const std::shared_ptr<Event>&)>(
-        [](const std::shared_ptr<Event>& sp) {
-          auto status = sp->status_.get();
-          return status == Event::READY || status == Event::TIMEOUT;
+      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+        [](const rusty::Arc<EventPollable>& sp) {
+          auto status = sp->status();
+          return status == EventStatus::READY || status == EventStatus::TIMEOUT;
         }));
     ready_events.append(std::move(timed_out));
   }
@@ -2084,11 +3973,31 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   // Remove events that are DONE (shouldn't happen often, but clean up)
   {
     guard->retain(
-      rusty::Function<bool(const std::shared_ptr<Event>&)>(
-        [](const std::shared_ptr<Event>& sp) {
-          return sp->status_.get() != Event::DONE;
+      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+        [](const rusty::Arc<EventPollable>& sp) {
+          return sp->status() != EventStatus::DONE;
         }));
   }
+}
+
+// @unsafe - shared_ptr::use_count + rusty::Function in the retain predicate.
+// Amortized cleanup of `all_events_`: drop events the list is the sole owner of
+// (use_count()==1 → no fiber/waiter/other shared_ptr holds them, so they are
+// finished) and that opted into pruning. Throttled by a moving high-water mark
+// so the O(n) sweep runs ~O(1) amortized per create_sp_event. Runs on the
+// reactor thread (single-threaded ownership), and cross-thread signalers reach
+// events via the weak_ptr `self_`, so freeing a sole-owned event is safe.
+void Reactor::prune_finished_events() const {
+  static thread_local std::size_t prune_hwm = 64;
+  auto guard = all_events_.borrow_mut();
+  if (guard->len() < prune_hwm) {
+    return;
+  }
+  guard->retain(rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+    [](const rusty::Arc<EventPollable>& e) {
+      return e.strong_count() > 1 || !e->prunable();
+    }));
+  prune_hwm = guard->len() * 2 + 64;
 }
 
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
@@ -2103,7 +4012,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       if (process_stackless_tasks()) {
         found_ready_events = true;
       }
-      rusty::VecDeque<std::shared_ptr<Event>> ready_events;
+      rusty::VecDeque<rusty::Arc<EventPollable>> ready_events;
 
       // Process waiting events using RefCell
       {
@@ -2115,9 +4024,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Extract READY events
         {
           auto ready_from_waiting = waiting_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == Event::READY;
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
+                return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_waiting.is_empty()) {
             ready_events.append(std::move(ready_from_waiting));
@@ -2127,9 +4036,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         // Remove DONE events
         {
           waiting_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != Event::DONE;
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
+                return ev->status() != EventStatus::DONE;
               }));
         }
       }
@@ -2142,9 +4051,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           auto ready_from_composite = composite_guard->extract_if(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() == Event::READY;
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
+                return ev->status() == EventStatus::READY;
               }));
           if (!ready_from_composite.is_empty()) {
             ready_events.append(std::move(ready_from_composite));
@@ -2153,9 +4062,9 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         }
         {
           composite_guard->retain(
-            rusty::Function<bool(const std::shared_ptr<Event>&)>(
-              [](const std::shared_ptr<Event>& ev) {
-                return ev->status_.get() != Event::DONE;
+            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
+              [](const rusty::Arc<EventPollable>& ev) {
+                return ev->status() != EventStatus::DONE;
               }));
         }
       }
@@ -2176,10 +4085,10 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       {
         for (size_t i = 0; i < ready_events.len(); ++i) {
           auto& ev = ready_events[i];
-          if (ev->status_.get() == Event::DONE) {
+          if (ev->status() == EventStatus::DONE) {
             continue;
           }
-          auto option_fiber = ev->wp_fiber_.upgrade();
+          auto option_fiber = ev->upgrade_fiber();
           if (option_fiber.is_none()) {
             continue;
           }
@@ -2188,10 +4097,10 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             continue;
           }
           verify(fiber->status_.get() == Fiber::PAUSED);
-          if (ev->status_.get() == Event::READY) {
-            ev->status_.set(Event::DONE);
+          if (ev->status() == EventStatus::READY) {
+            ev->set_status(EventStatus::DONE);
           } else {
-            verify(ev->status_.get() == Event::TIMEOUT);
+            verify(ev->status() == EventStatus::TIMEOUT);
           }
           continue_fiber(fiber);
         }
@@ -2205,8 +4114,16 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
   } while (looping_.get());
 }
 
-// @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls
-void Reactor::continue_fiber(rusty::Rc<Fiber> fiber) const {
+// @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls.
+// Takes the Rc by const reference: passing by value would invoke the port
+// Rc's defaulted (shallow, non-incrementing) copy constructor, creating an
+// uncounted alias that double-decrements the strong count on destruction and
+// frees a still-referenced fiber. We clone() internally where ownership is
+// actually needed.
+// KERNEL by verdict: dense RefCell borrow guards (named-guard binding
+// emits address-of-temporary) around Rc<Fiber> arrow calls; same walls
+// as create_run_fiber.
+void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
   // Save current running fiber for nesting support
   rusty::Option<rusty::Rc<Fiber>> old_fiber;
   // @unsafe { RefCell::borrow, Option operator=, unwrap are not borrow-checked }
@@ -2262,11 +4179,11 @@ void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
   }
   n_busy_fibers_.set(n_busy_fibers_.get() - 1);
   // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
-  { fibers_.borrow_mut()->remove(fiber); }
+  { fibers_.borrow_mut()->erase(fiber); }  // std::set::erase (was BTreeSet::remove)
 }
 
 void Reactor::display_waiting_ev() const {
-  Log_info("waiting_events_: %zu, composite_events_: %zu",
+  Log_info("waiting_events_: {}, composite_events_: {}",
            waiting_events_.borrow()->len(), composite_events_.borrow()->len());
 }
 
@@ -2333,33 +4250,46 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
 // PollThreadWorker Implementation
 // =============================================================================
 
-PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> receiver)
-    : receiver_(std::move(receiver)),
-      poll_(),
-      fd_to_pollable_(),
-      mode_(),
-      pending_remove_(),
-      jobs_(),
-      stop_(false) {
-  // No eventfd needed - we poll the channel with try_recv() after each epoll_wait
+// Kernel-internal forward decls (definition order below is legacy).
+void pollworker_process_commands(PollThreadWorker& self);
+void pollworker_trigger_job(PollThreadWorker& self);
+void pollworker_process_pending_removals(PollThreadWorker& self);
+void pollworker_do_add_pollable(PollThreadWorker& self, PollableProxy poll);
+// 1-line arrow kernels for the DSL bodies (Box-trait dispatch wall).
+int  pollable_proxy_fd(const PollableProxy& p);
+int  pollable_proxy_mode(const PollableProxy& p);
+rusty::Vec<int> pollworker_take_removals(PollThreadWorker& self);
+void pollworker_close_proxy_of(PollThreadWorker& self, int fd);
+void pollworker_do_remove_pollable(PollThreadWorker& self, int fd);
+void pollworker_do_close_pollable(PollThreadWorker& self, int fd);
+void pollworker_do_update_mode(PollThreadWorker& self, int fd, int new_mode);
+void pollworker_do_add_job(PollThreadWorker& self, rusty::Arc<Job> job);
+void pollworker_do_remove_job(PollThreadWorker& self, rusty::Arc<Job> job);
+
+// (ctor folded into an aggregate factory; no eventfd needed — the
+// channel is polled with try_recv() after each epoll_wait.)
+static PollThreadWorker pollworker_make(PollCmdReceiver receiver) {
+  return PollThreadWorker{std::move(receiver), Epoll(),        FdPollableMap(),
+                          FdModeMap(),         FdSet(),        JobSet(),
+                          false};
 }
 
 // @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
-rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync::mpsc::Receiver<PollCommand> receiver) {
+rusty::Rc<rusty::RefCell<PollThreadWorker>> pollworker_create(PollCmdReceiver receiver) {
   // Create worker, then wrap in RefCell
-  PollThreadWorker worker(std::move(receiver));
+  auto worker = pollworker_make(std::move(receiver));
   return rusty::Rc<rusty::RefCell<PollThreadWorker>>::make(std::move(worker));
 }
 
-void PollThreadWorker::poll_loop() {
+void pollworker_poll_loop(PollThreadWorker& self) {
   Log_debug("[poll_loop] Starting poll loop");
-  while (!stop_) {
-    trigger_job();
+  while (!self.stop_) {
+    pollworker_trigger_job(self);
 
     // Wait for events (epoll_wait with short timeout)
     // Dispatch through proxy storage by fd; no Pollable* userdata assumptions.
-    poll_.Wait([this](int fd, int ready_events) {
-      auto poll_opt = fd_to_pollable_.get(fd);
+    self.poll_.Wait([&self](int fd, int ready_events) {
+      auto poll_opt = self.fd_to_pollable_.get(fd);
       if (poll_opt.is_none()) {
         return;
       }
@@ -2371,7 +4301,7 @@ void PollThreadWorker::poll_loop() {
       if (ready_events & PollReady::WRITABLE) {
         int new_mode = poll->handle_write();
         if (new_mode != PollMode::NO_CHANGE) {
-          do_update_mode(fd, new_mode);
+          pollworker_do_update_mode(self, fd, new_mode);
         }
       }
       if (ready_events & PollReady::ERROR) {
@@ -2380,39 +4310,39 @@ void PollThreadWorker::poll_loop() {
     });
 
     // Process commands from channel (non-blocking try_recv)
-    process_commands();
+    pollworker_process_commands(self);
 
-    trigger_job();
+    pollworker_trigger_job(self);
 
     // Process deferred removals
-    process_pending_removals();
+    pollworker_process_pending_removals(self);
 
-    trigger_job();
+    pollworker_trigger_job(self);
     Reactor::get_reactor()->loop();
 
     // Check for pending write updates (set by end_reply() during fiber execution)
     // @unsafe - const_cast needed because Arc provides const access, but we know the
     // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
-    for (auto [fd, poll] : fd_to_pollable_) {
+    for (auto [fd, poll] : self.fd_to_pollable_) {
       if (poll->check_pending_write_update()) {
-        do_update_mode(fd, PollMode::READ | PollMode::WRITE);
+        pollworker_do_update_mode(self, fd, PollMode::READ | PollMode::WRITE);
       }
     }
 
     // Check for pollables closed by handle_error() and remove them
     // This prevents fd reuse issues when old connection is closed but not removed
     rusty::Vec<int> closed_fds;
-    for (auto [fd, poll] : fd_to_pollable_) {
+    for (auto [fd, poll] : self.fd_to_pollable_) {
       if (poll->is_closed()) {
         closed_fds.push(fd);
       }
     }
     for (int fd : closed_fds) {
-      auto proxy_opt = fd_to_pollable_.get(fd);
+      auto proxy_opt = self.fd_to_pollable_.get(fd);
       if (proxy_opt.is_some()) {
         // Remove from epoll if still registered
-        if (mode_.contains_key(fd)) {
-          poll_.Remove(fd);
+        if (self.mode_.contains_key(fd)) {
+          self.poll_.Remove(fd);
         }
 
         // Invoke close callback before erasing map entry so cleanup hooks run.
@@ -2420,53 +4350,53 @@ void PollThreadWorker::poll_loop() {
         // PollableProxy reference, no extra deref.
         proxy_opt.unwrap()->close();
 
-        fd_to_pollable_.remove(fd);
-        mode_.remove(fd);
+        self.fd_to_pollable_.remove(fd);
+        self.mode_.remove(fd);
       }
     }
   }
 
-  Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+  Log_debug("[poll_loop] Exited while loop (self.stop_=true), starting cleanup");
   // Shutdown cleanup - remove all registered pollables
-  for (auto [fd, poll] : fd_to_pollable_) {
-    if (mode_.contains_key(fd)) {
-      poll_.Remove(fd);
+  for (auto [fd, poll] : self.fd_to_pollable_) {
+    if (self.mode_.contains_key(fd)) {
+      self.poll_.Remove(fd);
     }
   }
-  fd_to_pollable_.clear();
-  mode_.clear();
-  pending_remove_.clear();
+  self.fd_to_pollable_.clear();
+  self.mode_.clear();
+  self.pending_remove_.clear();
   Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
 }
 
 // @unsafe - calls try_recv and std::visit
-void PollThreadWorker::process_commands() {
+void pollworker_process_commands(PollThreadWorker& self) {
   // Non-blocking receive: process all pending commands
   int cmd_count = 0;
   while (true) {
-    auto result = receiver_.try_recv();
+    auto result = self.receiver_.try_recv();
     if (result.is_err()) {
       // Empty or disconnected - either way, stop processing
       break;
     }
     cmd_count++;
     auto cmd = result.unwrap();
-    std::visit([this](auto&& arg) {
+    std::visit([&self](auto&& arg) {
       using T = std::decay_t<decltype(arg)>;
       if constexpr (std::is_same_v<T, CmdAddPollable>) {
-        do_add_pollable(std::move(arg.pollable));
+        pollworker_do_add_pollable(self, std::move(arg.pollable));
       } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
-        do_remove_pollable(arg.fd);
+        pollworker_do_remove_pollable(self, arg.fd);
       } else if constexpr (std::is_same_v<T, CmdClosePollable>) {
-        do_close_pollable(arg.fd);
+        pollworker_do_close_pollable(self, arg.fd);
       } else if constexpr (std::is_same_v<T, CmdUpdateMode>) {
-        do_update_mode(arg.fd, arg.new_mode);
+        pollworker_do_update_mode(self, arg.fd, arg.new_mode);
       } else if constexpr (std::is_same_v<T, CmdAddJob>) {
-        do_add_job(std::move(arg.job));
+        pollworker_do_add_job(self, std::move(arg.job));
       } else if constexpr (std::is_same_v<T, CmdRemoveJob>) {
-        do_remove_job(std::move(arg.job));
+        pollworker_do_remove_job(self, std::move(arg.job));
       } else if constexpr (std::is_same_v<T, CmdShutdown>) {
-        stop_ = true;
+        self.stop_ = true;
       }
     }, cmd);
   }
@@ -2475,10 +4405,10 @@ void PollThreadWorker::process_commands() {
 // @safe - rusty::BTreeSet::clone/clear/insert and rusty::Arc are @safe;
 // only the raw `Job*` extraction + virtual dispatch escapes into inner
 // @unsafe blocks.
-void PollThreadWorker::trigger_job() {
+void pollworker_trigger_job(PollThreadWorker& self) {
   // Copy jobs to process (in case jobs modify the set).
-  rusty::BTreeSet<rusty::Arc<Job>> jobs_exec = jobs_.clone();
-  jobs_.clear();
+  std::set<rusty::Arc<Job>> jobs_exec = self.jobs_;
+  self.jobs_.clear();
 
   for (const auto& job : jobs_exec) {
     bool ready;
@@ -2499,170 +4429,268 @@ void PollThreadWorker::trigger_job() {
       // Don't re-add ready jobs that were executed.
     } else {
       // Re-add jobs that aren't ready yet - they should be checked again later.
-      jobs_.insert(job);
+      self.jobs_.insert(job);
     }
   }
 }
 
-// @unsafe - PollableProxy accessors and Epoll::Add are not borrow-checked
-void PollThreadWorker::do_add_pollable(PollableProxy poll) {
-  int fd;
-  int poll_mode;
-  // @unsafe { PollableProxy::fd, poll_mode are not borrow-checked }
-  {
-    fd = poll->fd();
-    poll_mode = poll->poll_mode();
-  }
+// The poll-worker command handlers — registration policy, deferred
+// removal, close, interest updates, job set — as inline Rust DSL. The
+// Box-trait arrows (fd/poll_mode/close through PollableProxy) are
+// 1-line kernels; Epoll::Add/Remove/Update are GEN methods.
+#if RUSTYCPP_RUST
+fn pollworker_do_add_pollable(w: &mut PollThreadWorker, poll: PollableProxy) {
+    let fd = pollable_proxy_fd(poll);
+    let poll_mode = pollable_proxy_mode(poll);
 
-  // Check if already exists
-  if (fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-
-  // Store in maps
-  fd_to_pollable_.insert(fd, std::move(poll));
-  mode_.insert(fd, poll_mode);
-
-  // @unsafe { Epoll::Add is not borrow-checked }
-  { poll_.Add(fd, poll_mode); }
-}
-
-// @safe - rusty::HashMap::contains_key + rusty::HashSet::insert are @safe.
-void PollThreadWorker::do_remove_pollable(int fd) {
-  if (!fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-  // Add to pending_remove (actual removal happens after epoll_wait).
-  pending_remove_.insert(fd);
-}
-
-// @safe - rusty::HashMap / HashSet ops are @safe; only the
-// Epoll::Remove syscall path and the virtual Pollable::close()
-// dispatch escape into inner @unsafe blocks.
-void PollThreadWorker::do_close_pollable(int fd) {
-  // Remove from pending_remove if present.
-  pending_remove_.remove(fd);
-
-  auto proxy_opt = fd_to_pollable_.get(fd);
-  if (proxy_opt.is_none()) {
-    return;
-  }
-
-  // Remove from epoll if still registered.
-  if (mode_.contains_key(fd)) {
-    // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-    { poll_.Remove(fd); }
-  }
-
-  // Close the socket via Pollable's close() method.
-  // HashMap::get now returns Option<V&>; unwrap() yields the proxy ref.
-  // @unsafe { virtual Pollable::close() dispatch }
-  { proxy_opt.unwrap()->close(); }
-
-  // Erase from maps, dropping storage references.
-  fd_to_pollable_.remove(fd);
-  mode_.remove(fd);
-}
-
-// @unsafe - Uses raw pointers for epoll userdata and calls Epoll::Update
-void PollThreadWorker::do_update_mode(int fd, int new_mode) {
-  if (!fd_to_pollable_.contains_key(fd)) {
-    return;
-  }
-
-  auto mode_opt = mode_.get(fd);
-  if (mode_opt.is_none()) {
-    return;
-  }
-
-  int old_mode = mode_opt.unwrap();
-  mode_.insert(fd, new_mode);
-
-  if (new_mode != old_mode) {
-    poll_.Update(fd, new_mode, old_mode);
-  }
-}
-
-// @safe - rusty::BTreeSet::insert is @safe via namespace inheritance.
-void PollThreadWorker::do_add_job(rusty::Arc<Job> job) {
-  jobs_.insert(job);
-}
-
-// @safe - rusty::BTreeSet::remove is @safe via namespace inheritance.
-void PollThreadWorker::do_remove_job(rusty::Arc<Job> job) {
-  jobs_.remove(job);
-}
-
-// @safe - the rusty::HashSet / HashMap ops are @safe; only `poll_.Remove(fd)`
-// (Epoll::Remove, a syscall-issuing path) escapes into an inner @unsafe block.
-void PollThreadWorker::process_pending_removals() {
-  rusty::HashSet<int> remove_fds = pending_remove_.clone();
-  pending_remove_.clear();
-
-  for (int fd : remove_fds) {
-    if (!fd_to_pollable_.contains_key(fd)) {
-      continue;
+    // The pollable can close between CmdAddPollable being enqueued and
+    // processed (teardown racing an accept/connect registration): fd is
+    // then -1 and registering would abort inside Epoll::Add. A closed
+    // pollable can never produce events — drop it.
+    if fd < 0 {
+        return;
     }
-
-    // Check if fd was NOT reused (still in mode map).
-    if (mode_.contains_key(fd)) {
-      // @unsafe { Epoll::Remove issues an epoll_ctl/kevent syscall }
-      { poll_.Remove(fd); }
+    if w.fd_to_pollable_.contains_key(fd) {
+        return;
     }
-
-    fd_to_pollable_.remove(fd);
-    mode_.remove(fd);
-  }
+    w.fd_to_pollable_.insert(fd, poll);
+    w.mode_.insert(fd, poll_mode);
+    // Add fails (-1) on the EBADF teardown race — drop the dead
+    // pollable again.
+    if w.poll_.Add(fd, poll_mode) != 0 {
+        w.fd_to_pollable_.remove(fd);
+        w.mode_.remove(fd);
+    }
 }
 
+fn pollworker_do_remove_pollable(w: &mut PollThreadWorker, fd: i32) {
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    // Deferred: actual removal happens after epoll_wait.
+    w.pending_remove_.insert(fd);
+}
 
-// @safe - Update poll mode directly (bypasses channel)
-// Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-// SAFETY: Internal @unsafe block handles epoll operations and address-of
-void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
-  // @unsafe - address-of operation and epoll modification
-  { do_update_mode(poll.fd(), new_mode); }
+fn pollworker_do_close_pollable(w: &mut PollThreadWorker, fd: i32) {
+    w.pending_remove_.remove(fd);
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    if w.mode_.contains_key(fd) {
+        w.poll_.Remove(fd);
+    }
+    // Virtual close through the proxy (arrow kernel: unwrap would copy
+    // the move-only Box).
+    pollworker_close_proxy_of(w, fd);
+    w.fd_to_pollable_.remove(fd);
+    w.mode_.remove(fd);
+}
+
+fn pollworker_do_update_mode(w: &mut PollThreadWorker, fd: i32, new_mode: i32) {
+    if !w.fd_to_pollable_.contains_key(fd) {
+        return;
+    }
+    let mode_opt = w.mode_.get(fd);
+    if mode_opt.is_none() {
+        return;
+    }
+    let old_mode = mode_opt.unwrap();
+    w.mode_.insert(fd, new_mode);
+    if new_mode != old_mode {
+        w.poll_.Update(fd, new_mode, old_mode);
+    }
+}
+
+fn pollworker_do_add_job(w: &mut PollThreadWorker, job: rusty::Arc<Job>) {
+    w.jobs_.insert(job);
+}
+
+fn pollworker_do_remove_job(w: &mut PollThreadWorker, job: rusty::Arc<Job>) {
+    w.jobs_.erase(job);
+}
+
+fn pollworker_process_pending_removals(w: &mut PollThreadWorker) {
+    // take-to-Vec kernel: the HashSet rejects the rusty::iter shim.
+    let remove_fds = pollworker_take_removals(w);
+    let mut i: usize = 0;
+    while i < remove_fds.len() {
+        let fd = remove_fds[i];
+        if w.fd_to_pollable_.contains_key(fd) {
+            // fd not reused (still in the mode map) => unregister.
+            if w.mode_.contains_key(fd) {
+                w.poll_.Remove(fd);
+            }
+            w.fd_to_pollable_.remove(fd);
+            w.mode_.remove(fd);
+        }
+        i += 1;
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollworker_cmds version=1 rust_sha256=195fbe036a1b4f3475eded34b645d6f80a489acd017d532eb8c0bc7faebb7c4f*/
+void pollworker_do_add_pollable(PollThreadWorker& w, PollableProxy poll) {
+    const auto fd = pollable_proxy_fd(std::move(poll));
+    auto poll_mode = pollable_proxy_mode(std::move(poll));
+    if (rusty::detail::deref_if_pointer_like(fd) < 0) {
+        return;
+    }
+    if (w.fd_to_pollable_.contains_key(std::move(fd))) {
+        return;
+    }
+    w.fd_to_pollable_.insert(std::move(fd), std::move(poll));
+    w.mode_.insert(std::move(fd), std::move(poll_mode));
+    if (w.poll_.Add(std::move(fd), std::move(poll_mode)) != 0) {
+        w.fd_to_pollable_.remove(std::move(fd));
+        w.mode_.remove(std::move(fd));
+    }
+}
+
+void pollworker_do_remove_pollable(PollThreadWorker& w, int32_t fd) {
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
+        return;
+    }
+    w.pending_remove_.insert(std::move(fd));
+}
+
+void pollworker_do_close_pollable(PollThreadWorker& w, int32_t fd) {
+    w.pending_remove_.remove(std::move(fd));
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
+        return;
+    }
+    if (w.mode_.contains_key(std::move(fd))) {
+        w.poll_.Remove(std::move(fd));
+    }
+    pollworker_close_proxy_of(w, std::move(fd));
+    w.fd_to_pollable_.remove(std::move(fd));
+    w.mode_.remove(std::move(fd));
+}
+
+void pollworker_do_update_mode(PollThreadWorker& w, int32_t fd, int32_t new_mode) {
+    if (rusty::detail::rust_not(w.fd_to_pollable_.contains_key(std::move(fd)))) {
+        return;
+    }
+    auto mode_opt = w.mode_.get(std::move(fd));
+    if (mode_opt.is_none()) {
+        return;
+    }
+    const auto old_mode = mode_opt.unwrap();
+    w.mode_.insert(std::move(fd), std::move(new_mode));
+    if (rusty::detail::deref_if_pointer_like(new_mode) != rusty::detail::deref_if_pointer_like(old_mode)) {
+        w.poll_.Update(std::move(fd), std::move(new_mode), std::move(old_mode));
+    }
+}
+
+void pollworker_do_add_job(PollThreadWorker& w, rusty::Arc<Job> job) {
+    w.jobs_.insert(std::move(job));
+}
+
+void pollworker_do_remove_job(PollThreadWorker& w, rusty::Arc<Job> job) {
+    w.jobs_.erase(std::move(job));
+}
+
+void pollworker_process_pending_removals(PollThreadWorker& w) {
+    const auto remove_fds = pollworker_take_removals(w);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(remove_fds)) {
+        const auto fd = remove_fds[i];
+        if (w.fd_to_pollable_.contains_key(std::move(fd))) {
+            if (w.mode_.contains_key(std::move(fd))) {
+                w.poll_.Remove(std::move(fd));
+            }
+            w.fd_to_pollable_.remove(std::move(fd));
+            w.mode_.remove(std::move(fd));
+        }
+        i += 1;
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.pollworker_cmds*/
+
+// @unsafe - Box-trait arrow dispatch (the 1-line kernels the DSL calls).
+int pollable_proxy_fd(const PollableProxy& p) { return p->fd(); }
+// @unsafe - drains the pending-remove set into an indexable Vec for
+// the DSL sweep (the HashSet's range-for has no rusty::iter shim).
+rusty::Vec<int> pollworker_take_removals(PollThreadWorker& self) {
+    rusty::Vec<int> v;
+    for (int fd : self.pending_remove_) {
+        v.push(fd);
+    }
+    self.pending_remove_.clear();
+    return v;
+}
+int pollable_proxy_mode(const PollableProxy& p) { return p->poll_mode(); }
+void pollworker_close_proxy_of(PollThreadWorker& self, int fd) {
+    auto proxy_opt = self.fd_to_pollable_.get(fd);
+    if (proxy_opt.is_some()) {
+        proxy_opt.unwrap()->close();
+    }
+}
+
+// @safe - Update poll mode directly (bypasses channel); only safe on
+// the poll thread. Kernel by verdict: takes the abstract Pollable by
+// reference (dyn-trait ref params have no verified DSL spelling) for
+// one line of logic.
+void pollworker_update_mode(PollThreadWorker& self, Pollable& poll, int new_mode) {
+  { pollworker_do_update_mode(self, poll.fd(), new_mode); }
 }
 
 // =============================================================================
 // PollThread Implementation
 // =============================================================================
 
-PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
-    : sender_(std::move(sender)),
-      join_handle_(rusty::None),
-      poll_thread_id_(),
-      shutdown_called_(false) {
+
+// @safe - ThreadId<->u64 bit_cast helpers. `platform::threading::thread_id`
+// is `std::thread::id` (default backend) or `pthread_t` (POSIX backend).
+// Both are 8-byte trivially copyable on the platforms we support; the
+// static_assert below makes the bit_cast safe.
+namespace {
+inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
+    using NativeId = decltype(tid.as_native());
+    static_assert(sizeof(NativeId) == sizeof(std::uint64_t),
+                  "platform thread_id must be 8 bytes for bit_cast to u64");
+    static_assert(std::is_trivially_copyable_v<NativeId>,
+                  "platform thread_id must be trivially copyable");
+    return std::bit_cast<std::uint64_t>(tid.as_native());
 }
 
-// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_`)
+inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
+    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
+    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
+}
+} // namespace
+
+// @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_bits_`)
 // and passes the raw pointer into a spawned thread closure. The Arc
 // keeps the PollThread (and thus the atomic) alive until the worker
 // thread finishes; rusty-cpp can't express that lifetime relationship.
-rusty::Arc<PollThread> PollThread::create() {
+rusty::Arc<PollThread> pollthread_create() {
   // Create MPSC channel
   auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
 
-  // Create PollThread with sender
-  auto arc = rusty::Arc<PollThread>::make(std::move(sender));
+  // Movable-atomics aggregate route (no private ctor / friend Arc):
+  auto arc = rusty::Arc<PollThread>::new_(PollThread{
+      std::move(sender),
+      PollJoinSlot(rusty::None),
+      rusty::sync::atomic::AtomicU64(0),
+      rusty::sync::atomic::AtomicBool(false)});
 
-  // Pointer to atomic thread ID for safe cross-thread access
-  rusty::sync::atomic::Atomic<rusty::thread::ThreadId>* thread_id_ptr = &arc->poll_thread_id_;
+  // Pointer to atomic thread ID for safe cross-thread access (rusty
+  // Atomic ops are const, so a const* suffices through the Arc).
+  const rusty::sync::atomic::AtomicU64* thread_id_ptr = &arc->poll_thread_id_bits_;
 
   // Spawn thread - worker owns the receiver
   auto handle = rusty::thread::spawn(
     [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
       auto tid = rusty::thread::current_id();
-      thread_id_ptr->store(tid, rusty::sync::atomic::Ordering::Release);
+      thread_id_ptr->store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
       // Store raw pointer in TLS for direct access from same thread
       // The borrow_mut guard keeps RefCell borrowed during poll_loop()
       // Using raw pointer avoids RefCell re-borrow issues in fibers
       auto guard = worker->borrow_mut();
-      PollThreadWorker::current_worker_ = &*guard;
+      g_current_poll_worker = &*guard;
       guard->poll_loop();
-      PollThreadWorker::current_worker_ = nullptr;  // Clear on exit
+      g_current_poll_worker = nullptr;  // Clear on exit
     },
     std::move(receiver)
   );
@@ -2676,29 +4704,45 @@ rusty::Arc<PollThread> PollThread::create() {
   return arc;
 }
 
-PollThread::~PollThread() {
-  pid_t tid = syscall(SYS_gettid);
-  Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", (int)tid);
-  shutdown();
-  Log_debug("[PollThread::~PollThread] Destructor complete");
+// The PollThread drop body, authored as inline Rust DSL: gettid via a
+// route-2 unsafe{} syscall (SYS_gettid is a macro identifier that
+// lowers as-is), int-arg Log_debug, and the shutdown() method call on
+// the by-ref PollThread (non-`self` param name so it emits pt.method,
+// not this->).
+#if RUSTYCPP_RUST
+fn pollthread_drop(pt: &PollThread) {
+    let tid: i64 = unsafe { syscall(SYS_gettid) };
+    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", tid as i32);
+    pt.shutdown();
+    Log_debug("[PollThread::~PollThread] Destructor complete");
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.pollthread_drop version=1 rust_sha256=7e16d65337680fee3f4e12decbc58faaf2f1a2143c44a83a053a8644c330056c*/
+void pollthread_drop(const PollThread& pt) {
+    const int64_t tid = syscall(SYS_gettid);
+    Log_debug("[PollThread::~PollThread] Destructor called from TID={}", static_cast<int32_t>(tid));
+    pt.shutdown();
+    Log_debug("[PollThread::~PollThread] Destructor complete");
+}
+/*RUSTYCPP:GEN-END id=reactor.pollthread_drop*/
 
-void PollThread::shutdown() const {
+void pollthread_shutdown(const PollThread& self) {
   pid_t main_tid = syscall(SYS_gettid);
-  Log_debug("[PollThread::shutdown] Called from TID=%d", (int)main_tid);
-  if (shutdown_called_.exchange(true)) {
+  Log_debug("[PollThread::shutdown] Called from TID={}", (int)main_tid);
+  if (self.shutdown_called_.swap(true)) {
     Log_debug("[PollThread::shutdown] Already called, returning");
     return;  // Already called
   }
 
   // Send shutdown command via channel
   Log_debug("[PollThread::shutdown] Sending CmdShutdown");
-  sender_.send(CmdShutdown{});
+  const_cast<PollCmdSender&>(self.sender_).send(CmdShutdown{});
   Log_debug("[PollThread::shutdown] CmdShutdown sent");
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
   auto current_tid = rusty::thread::current_id();
-  auto poll_tid = poll_thread_id_.load(rusty::sync::atomic::Ordering::Acquire);
+  auto poll_tid = u64_to_thread_id(
+      self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
   if (current_tid == poll_tid) {
     Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
     return;
@@ -2707,7 +4751,7 @@ void PollThread::shutdown() const {
   // Join thread
   Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
   {
-    auto guard = join_handle_.lock().unwrap();
+    auto guard = self.join_handle_.lock().unwrap();
     Log_debug("[PollThread::shutdown] join_handle lock acquired");
     if ((*guard).is_some()) {
       Log_debug("[PollThread::shutdown] Calling thread.join()...");
@@ -2721,40 +4765,36 @@ void PollThread::shutdown() const {
   Log_debug("[PollThread::shutdown] Complete");
 }
 
-void PollThread::add_proxy(PollableProxy poll) const {
-  sender_.send(CmdAddPollable{std::move(poll)});
+void pollthread_add_proxy(const PollThread& self, PollableProxy poll) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdAddPollable{std::move(poll)});
 }
 
-void PollThread::remove(Pollable& poll) const {
-  sender_.send(CmdRemovePollable{poll.fd()});
+void pollthread_remove(const PollThread& self, Pollable& poll) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{poll.fd()});
 }
 
-void PollThread::request_close(int fd) const {
-  sender_.send(CmdClosePollable{fd});
+void pollthread_remove_fd(const PollThread& self, int fd) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{fd});
+}
+
+void pollthread_request_close(const PollThread& self, int fd) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdClosePollable{fd});
 }
 
 // @safe - Sends update mode command via channel (send wrapped @unsafe)
 // SAFETY: Channel send is thread-safe
-void PollThread::update_mode(int fd, int new_mode) const {
+void pollthread_update_mode(const PollThread& self, int fd, int new_mode) {
   // @unsafe { mpsc::Sender::send is not borrow-checked }
   {
-  auto result = sender_.send(CmdUpdateMode{fd, new_mode});
+  auto result = const_cast<PollCmdSender&>(self.sender_).send(CmdUpdateMode{fd, new_mode});
   if (result.is_err()) {
     Log_error("PollThread::update_mode: send failed! Channel disconnected?");
   }
   }
 }
 
-void PollThread::update_mode(const Pollable& poll, int new_mode) const {
-  update_mode(poll.fd(), new_mode);
-}
-
-void PollThread::add(rusty::Arc<Job> job) const {
-  sender_.send(CmdAddJob{std::move(job)});
-}
-
-void PollThread::remove(rusty::Arc<Job> job) const {
-  sender_.send(CmdRemoveJob{std::move(job)});
+void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job) {
+  const_cast<PollCmdSender&>(self.sender_).send(CmdAddJob{std::move(job)});
 }
 
 
@@ -2766,14 +4806,16 @@ void PollThread::remove(rusty::Arc<Job> job) const {
 
 thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
 
-void fiber_yield_t::operator()() {
-  verify(task_ != nullptr);
-  task_->yield_to_caller();
+// @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
+// the friend declaration on fiber_task_t still applies. }
+void fiber_yield_invoke(fiber_yield_t& self) {
+  verify(self.task_ != nullptr);
+  self.task_->yield_to_caller();
 }
 
 fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
-      yield_(*this) {
+      yield_(fiber_yield_t::new_(*this)) {
   init_context();
   // Match Boost.Coroutine2 pull_type behavior: run immediately on construction.
   resume();
@@ -2886,77 +4928,94 @@ void fiber_task_t::entry_trampoline() {
 // @safe - QuorumEvent impl. Methods carry per-method annotations.
 namespace janus {
 
-using rrr::Event;
 using rrr::IntEvent;
 using rrr::Fiber;
 using rrr::Time;
 using rrr::verify;
+// EventStatus used to be Event's nested enum (found via base-class scope in
+// these member definitions); it now lives at rrr namespace scope (S4 hoist).
+using rrr::EventStatus;
 
-QuorumEvent::QuorumEvent(int n_total, int quorum)
-    : Event(), n_total_(n_total), quorum_(quorum) {
-  finalize_event_ = std::make_shared<IntEvent>(n_total_);
-  finalize_event_->__debug_creator = 1;
-  begin_timestamp_ = Time::now(true);
+// Flattened (S4): the former QuorumEvent(int,int) ctor, as the aggregate
+// factory rrr::event_make dispatches to. Build the struct with its field
+// defaults, then seed the event-core state (was Event()'s job). finalize_event_
+// is Registered via create_sp_event (not bare make) so the event has a live
+// self-reference: the finalize fiber's wait() and the vote-side set() push
+// get_self() into the reactor queues, which for an unregistered event is null
+// (latent crash on the copilot finalize path). Nested create is safe: this runs
+// inside the outer create_sp_event's make, BEFORE the outer all_events_ borrow.
+rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
+  auto sp = rusty::Arc<QuorumEvent>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),      // status_
+      rusty::thread::current_id(),                            // owner_thread_
+      EventState{},                                           // state_
+      rusty::Cell<bool>::new_(true),                          // prunable_
+      rusty::sync::Weak<EventPollable>(),                     // self_
+      rusty::Cell<int32_t>::new_(0),                          // n_voted_yes_
+      rusty::Cell<int32_t>::new_(0),                          // n_voted_no_
+      rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(),   // xids_
+      n_total,                                                // n_total_
+      quorum,                                                 // quorum_
+      rusty::Cell<QuorumPolicy>::new_(QuorumPolicy::DEFAULT), // policy_
+      rusty::Cell<bool>::new_(false),                         // committed_seen_
+      rusty::Cell<int32_t>::new_(0),                          // num_leader_
+      rusty::Cell<int32_t>::new_(0),                          // n_leader_yes_
+      rusty::Cell<int32_t>::new_(0),                          // n_leader_no_
+      rusty::Cell<int64_t>::new_(0),                          // highest_term_
+      rusty::Cell<bool>::new_(false),                         // timeouted_
+      rusty::Cell<uint32_t>::new_(0),                         // leader_id_
+      rusty::Cell<int64_t>::new_(-1),                         // par_id_
+      rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(-1)), // id_
+      rrr::Reactor::create_sp_event<IntEvent>(n_total));      // finalize_event_
+  event_state_seed(sp->state_);
+  return sp;
 }
 
-void QuorumEvent::finalize(
-    uint64_t timeout,
-    rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
-
-
-  // rusty::Function is move-only, so capture the callback by move
-  // into the background fiber's lambda.  The lambda must also be
-  // `mutable` so the captured (non-const) Function can be invoked.
-  Fiber::create_run([timeout, finalize_func = std::move(finalize_func), this]() mutable {
+// @unsafe - spawns a background fiber whose mutable closure captures the
+// move-only finalize_func + a reference to `self`. Faithful port of the former
+// QuorumEvent::finalize; only touches `self` (the final_ev clone + the
+// dangling_rpc copy-out) BEFORE wait_timeout (see comment A), so the reference
+// is safe.
+void quorum_event_finalize(
+    const QuorumEvent& self, uint64_t timeout,
+    QuorumFinalizeFn finalize_func) {
+  Fiber::create_run([timeout, finalize_func = std::move(finalize_func), &self]() mutable {
     bool ret = false;
 
-    auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)
+    auto final_ev = self.finalize_event_.clone();  // copy the finalize event (comment A)
     rusty::Vec<std::pair<uint16_t, rrr::i64> > dangling_rpc;
-    for (auto it : xids_)
-      dangling_rpc.push(it);  // fetch out dangling rpc info before it's freed (see comment A)
+    // borrow_mut (RefCell::borrow_mut is const) — HashMap iteration needs a
+    // non-const map; this is a read-only copy-out, no aliasing.
+    for (auto it : *self.xids_.borrow_mut())
+      dangling_rpc.push(it);  // fetch dangling rpc info before it's freed (comment A)
 
-    final_ev->wait(timeout);
+    final_ev->wait_timeout(timeout);
     /* A: by the time this fires, the quorum event could have been freed. Thus,
-     avoid accesing the quorum event object or its members after this line */
+     avoid accessing `self` or its members after this line */
 
     // didn't receive all RPC replies
-    if (final_ev->status_.get() == Event::TIMEOUT) {
-      // Log_info("finalized timeout");
+    if (final_ev->status_.get() == EventStatus::TIMEOUT) {
       ret = finalize_func(dangling_rpc);
+      // Drain guard: a TIMEOUT'd event is never evicted by the reactor loop
+      // (extract takes READY, retain drops DONE), so a registered
+      // finalize_event_ would otherwise linger in the queues forever at
+      // broadcast rate. Mark it DONE here (we run on the owner thread) so
+      // the next pass evicts and prune can free it.
+      final_ev->status_.set(EventStatus::DONE);
     }
     (void)ret;
   }, __FILE__, __LINE__);
 }
 
-void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) {
-  xids_[site] = xid;
+// @unsafe - reads/clears the reactor's shared slow_ flag (matches the former
+// QuorumEvent::is_slow / Event::is_slow); slow_ is public and Reactor is
+// complete here. `self` is unused (the flag is reactor-global).
+bool quorum_event_is_slow(const QuorumEvent& self) {
+  (void)self;
+  bool result = Reactor::get_reactor()->slow_.get();
+  Reactor::get_reactor()->slow_.set(false);
+  return result;
 }
 
-void QuorumEvent::remove_xid(uint16_t site) {
-  xids_.remove(site);
-}
-
-void QuorumEvent::vote_yes() {
-  n_voted_yes_++;
-  test();
-  vec_timestamp_.push(Time::now(true) - begin_timestamp_);
-
-  if (finalize_event_->status_.get() != Event::TIMEOUT)
-    finalize_event_->set(n_voted_yes_ + n_voted_no_);
-}
-
-void QuorumEvent::vote_no() {
-  n_voted_no_++;
-  test();
-
-  if (finalize_event_->status_.get() != Event::TIMEOUT)
-    finalize_event_->set(n_voted_yes_ + n_voted_no_);
-}
-
-void QuorumEvent::log_event() {
-  for (auto t : vec_timestamp_)
-    std::cout << " " << t;
-  std::cout << std::endl;
-}
 
 }  // namespace janus (definitions)

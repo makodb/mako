@@ -189,32 +189,28 @@ private:
         return rocksdb_log_make_meta_key(key);
     }
 
-    // @unsafe - Uses Marshal which has non-borrow-checked operations.
-    // routes through `LogEntry::save(BinaryWriteArchive&)`
-    // (the migrated archive method) by way of a `MarshalSink` over the
-    // backing `Marshal`. Wire format byte-for-byte unchanged.  The
-    // const_cast on `entry` was removed — `save` is `const`-qualified.
+    // @unsafe - raw byte copy of the sink into the out string.
+    // Routes through `LogEntry::save(BinaryWriteArchive&)` over a
+    // BufferSink. Wire format byte-for-byte unchanged (the former
+    // Marshal + MarshalSink scratch pair is gone).
     bool serialize_entry(const LogEntry& entry, std::string* out) const {
-        Marshal m;
-        rrr::MarshalSink sink(&m);
+        rrr::BufferSink sink;
         BinaryWriteArchive writer(rrr::make_sink_proxy(&sink));
         entry.save(writer);
-        size_t size = m.content_size();
-        out->resize(size);
-        m.read(out->data(), size);  // @unsafe - read Marshal contents into string
+        out->assign(reinterpret_cast<const char*>(sink.bytes.data()),
+                    sink.bytes.len());
         return true;
     }
 
-    // @unsafe - Uses Marshal which has non-borrow-checked operations.
-    // routes through `LogEntry::load(BinaryReadArchive&)`
-    // by way of a `MarshalSource` over the same backing `Marshal`.
-    // The Phase 3f-prep MarshallDeputy archive op requires a
-    // MarshalSource (no length prefix on the deputy payload), which
-    // this satisfies.
+    // @unsafe - archive read over the rocksdb value's raw bytes.
+    // Routes through `LogEntry::load(BinaryReadArchive&)` over a
+    // BufferSource view of `data` — no copy into a scratch Marshal.
+    // (The MarshallDeputy payload has no length prefix; BufferSource
+    // bounds reads to the value's size, same as the former
+    // MarshalSource satisfied.)
     bool deserialize_entry(const std::string& data, LogEntry* out) const {
-        Marshal m;
-        m.write(data.data(), data.size());  // @unsafe - write string bytes into Marshal
-        rrr::MarshalSource src(&m);
+        rrr::BufferSource src(reinterpret_cast<const std::uint8_t*>(data.data()),
+                              data.size());
         BinaryReadArchive reader(rrr::make_source_proxy(&src));
         out->load(reader);
         return true;
@@ -293,14 +289,14 @@ public:
         db_ = rocksdb_open(options_, db_path_.c_str(), &err);
         if (err != nullptr || db_ == nullptr) {
             std::string err_str = take_rocksdb_error(&err);
-            rrr::Log_error("[RocksDBLogStorage] Failed to open %s: %s",
+            rrr::Log_error("[RocksDBLogStorage] Failed to open {}: {}",
                       db_path_.c_str(), err_str.empty() ? "null handle" : err_str.c_str());
             db_ = nullptr;
             return false;
         }
 
         is_open_.set(true);
-        rrr::Log_info("[RocksDBLogStorage] Opened database at %s", db_path_.c_str());
+        rrr::Log_info("[RocksDBLogStorage] Opened database at {}", db_path_.c_str());
         return true;
     }
 

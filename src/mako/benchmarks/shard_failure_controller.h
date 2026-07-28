@@ -52,29 +52,29 @@ public:
     // @safe - Mark a shard as failed
     void fail_shard(size_t shard_idx) {
         if (shard_idx >= num_shards_) {
-            rrr::Log_error("ShardFailureController: invalid shard index %zu (num_shards=%zu)",
+            rrr::Log_error("ShardFailureController: invalid shard index {} (num_shards={})",
                       shard_idx, num_shards_);
             return;
         }
         shard_failed_[shard_idx]->store(true, std::memory_order_relaxed);
-        rrr::Log_info("ShardFailureController: shard %zu marked as FAILED", shard_idx);
+        rrr::Log_info("ShardFailureController: shard {} marked as FAILED", shard_idx);
     }
 
     // @safe - Mark a shard as recovered (healthy)
     void recover_shard(size_t shard_idx) {
         if (shard_idx >= num_shards_) {
-            rrr::Log_error("ShardFailureController: invalid shard index %zu (num_shards=%zu)",
+            rrr::Log_error("ShardFailureController: invalid shard index {} (num_shards={})",
                       shard_idx, num_shards_);
             return;
         }
         shard_failed_[shard_idx]->store(false, std::memory_order_relaxed);
-        rrr::Log_info("ShardFailureController: shard %zu marked as RECOVERED", shard_idx);
+        rrr::Log_info("ShardFailureController: shard {} marked as RECOVERED", shard_idx);
     }
 
     // @safe - Check if a shard is currently failed
     bool is_shard_failed(size_t shard_idx) const {
         if (shard_idx >= num_shards_) {
-            rrr::Log_error("ShardFailureController: invalid shard index %zu (num_shards=%zu)",
+            rrr::Log_error("ShardFailureController: invalid shard index {} (num_shards={})",
                       shard_idx, num_shards_);
             return false;  // Assume healthy if index invalid
         }
@@ -102,7 +102,7 @@ public:
         for (size_t i = 0; i < num_shards_; i++) {
             shard_failed_[i]->store(true, std::memory_order_relaxed);
         }
-        rrr::Log_info("ShardFailureController: all %zu shards marked as FAILED", num_shards_);
+        rrr::Log_info("ShardFailureController: all {} shards marked as FAILED", num_shards_);
     }
 
     // @safe - Recover all shards
@@ -110,7 +110,7 @@ public:
         for (size_t i = 0; i < num_shards_; i++) {
             shard_failed_[i]->store(false, std::memory_order_relaxed);
         }
-        rrr::Log_info("ShardFailureController: all %zu shards marked as RECOVERED", num_shards_);
+        rrr::Log_info("ShardFailureController: all {} shards marked as RECOVERED", num_shards_);
     }
 };
 

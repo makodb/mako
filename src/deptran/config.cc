@@ -195,10 +195,10 @@ int Config::CreateConfig(int argc, char **argv) {
             (optopt == 'p') ||
             (optopt == 'r') ||
             (optopt == 's') ||
-            (optopt == 't')) Log_error("Option -%c requires an argument.",
+            (optopt == 't')) Log_error("Option -{:c} requires an argument.",
                                        optopt);
-        else if (isprint(optopt)) Log_error("Unknown option -%c.", optopt);
-        else Log_error("Unknown option \\x%x", optopt);
+        else if (isprint(optopt)) Log_error("Unknown option -{:c}.", optopt);
+        else Log_error("Unknown option \\x{:x}", optopt);
         return -2;
       default:
         return -3;
@@ -306,7 +306,7 @@ void Config::Load() {
 }
 
 void Config::LoadYML(std::string &filename) {
-  Log_info("%s: %s", __FUNCTION__, filename.c_str());
+  Log_info("{}: {}", __FUNCTION__, filename.c_str());
   yaml_config_ = YAML::LoadFile(filename);
 
   if (yaml_config_["process"]) {
@@ -344,7 +344,7 @@ void Config::LoadYML(std::string &filename) {
   }
   if (yaml_config_["n_concurrent"]) {
     n_concurrent_ = yaml_config_["n_concurrent"].as<uint16_t>();
-    Log_info("# of concurrent requests: %d", n_concurrent_);
+    Log_info("# of concurrent requests: {}", n_concurrent_);
   }
   if (yaml_config_["n_parallel_dispatch"]) {
     n_parallel_dispatch_ = yaml_config_["n_parallel_dispatch"].as<int32_t>();
@@ -488,9 +488,9 @@ void Config::InitMode(string &cc_name, string& ab_name) {
   } else if (cc_name == "2pl_w") {
     retry_wait_ = true;
   } else if (cc_name == "2pl_wait_die" || cc_name == "2pl_wd") {
-    mdb::FineLockedRow::set_wait_die();
+    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
   } else if ((cc_name == "2pl_ww") || (cc_name == "2pl_wound_die")) {
-    mdb::FineLockedRow::set_wound_wait();
+    // FineLockedRow/ALock removed (dead code); no per-row lock mode to set.
     n_parallel_dispatch_ = 1;
   }
 
@@ -514,7 +514,7 @@ void Config::InitBench(std::string &bench_str) {
   } else if (bench_str == "micro_bench") {
     benchmark_ = MICRO_BENCH;
   } else {
-    Log_error("No implementation for benchmark: %s", bench_str.c_str());
+    Log_error("No implementation for benchmark: {}", bench_str.c_str());
     verify(0);
   }
 }
@@ -530,7 +530,7 @@ std::string Config::site2host_addr(std::string& siteaddr) {
 }
 
 std::string Config::site2host_name(std::string& sitename) {
-  //    Log::debug("find host name by site name: %s", sitename.c_str());
+  //    Log_debug("find host name by site name: {}", sitename.c_str());
   auto it = proc_host_map_.find(sitename);
 
   if (it != proc_host_map_.end()) {
@@ -579,7 +579,7 @@ void Config::UpdateWeights(YAML::Node config) {
       txn_weights_[txn_name] = weight;
   }  
   for (std::map<std::string, double>::iterator it = txn_weights_.begin(); it != txn_weights_.end(); ++it) {
-    Log_info("key: %s value: %.2f", it->first.c_str(), it->second);
+    Log_info("key: {} value: {:.2f}", it->first.c_str(), it->second);
   }
 }
 
@@ -706,7 +706,7 @@ void Config::LoadShardingYML(YAML::Node config) {
     auto &tbl_info = info_it->second;
     string method = it->second.as<string>();
 
-    Log_info("group size: %d", replica_groups_.size());
+    Log_info("group size: {}", replica_groups_.size());
     for (auto replica_group_it = this->replica_groups_.begin();
          replica_group_it != this->replica_groups_.end();
          replica_group_it++) {
@@ -732,7 +732,7 @@ void Config::LoadClientYML(YAML::Node client) {
     client_max_undone_ = -1;
   }
   forwarding_enabled_ = client["forwarding"].as<bool>(false);
-  Log_info("client forwarding: %d", forwarding_enabled_);
+  Log_info("client forwarding: {}", forwarding_enabled_);
 }
 
 void Config::LoadFailoverYML(YAML::Node config) {
@@ -1003,11 +1003,11 @@ Config::SitesByLocaleId(uint32_t locale_id, SiteInfoType type) {
 
 vector<Config::SiteInfo>
 Config::SitesByProcessName(string proc_name, Config::SiteInfoType type) {
-  //Log_info("SitesByProcessName proc_name=%s type=%d", proc_name.c_str(), type==SERVER);
+  //Log_info("SitesByProcessName proc_name={} type={}", proc_name.c_str(), type==SERVER);
   std::vector<SiteInfo> result;
   auto processFunc = [&proc_name, &result](SiteInfo& site) {
     if (site.proc_name == "") {
-      Log_fatal("cannot find proc name for site %s", site.name.c_str());
+      Log_fatal("cannot find proc name for site {}", site.name.c_str());
     }
     if (site.proc_name == proc_name) {
       result.push_back(site);

@@ -23,6 +23,11 @@ protected:
     ClusterConfig cfg_ = ClusterConfig::new_();                // routing cache reloaded from cm_
     ShardManager mgr_ = ShardManager::new_(&cm_, &cfg_);       // control plane under test
 
+    // Force a noexcept dtor: the DSL-generated ConfigManager/ShardManager/
+    // ClusterConfig dtors are noexcept(false), which would otherwise make this
+    // fixture's dtor noexcept(false) and clash with ::testing::Test::~Test().
+    ~ShardManagerTest() noexcept override {}
+
     // Build an n-shard cluster by registering shards with the master, which
     // assigns ids monotonically from 0 -- so shard i gets id i here.
     void AddShards(uint32_t n) {
@@ -418,6 +423,19 @@ TEST_F(ShardManagerTest, LargeRangeMigrationConservesEveryKey) {
         ASSERT_TRUE(r.is_some()) << "lost m" << i;
         EXPECT_EQ(r.unwrap(), "v" + std::to_string(i));
     }
+}
+
+// ISOLATION REPRO (diagnosing LargeRangeMigrationConservesEveryKey): does the
+// multi-node btree_port BTreeMap survive 200 puts + a full range iterate with
+// NO migration at all? range_key_count reads shard 1's data BTreeMap directly
+// (no routing, no copy). If this crashes with "unwrap on None" or miscounts,
+// the module-form container is broken at multi-node scale on its own.
+TEST_F(ShardManagerTest, ScaleBtreePutAndIterateNoMigration) {
+    AddShards(3);
+    for (int i = 0; i < 200; ++i) {
+        mgr_.put_direct(1, "m" + std::to_string(i), "v" + std::to_string(i));
+    }
+    EXPECT_EQ(mgr_.range_key_count(1, "m", "n"), 200u);
 }
 
 // Killing a shard into itself is rejected (dead == taker precondition).

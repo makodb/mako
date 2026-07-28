@@ -10,7 +10,7 @@ class RccCommo : public Communicator {
   using Communicator::Communicator;
   virtual void SendDispatch(
       vector<SimpleCommand>& cmd,
-      const function<void(int res, TxnOutput& cmd, RccGraph& graph)>&);
+      const function<void(int res, TxnOutput& cmd, const RccGraph& graph)>&);
 
   virtual void SendHandoutRo(
       SimpleCommand& cmd,
@@ -27,7 +27,7 @@ class RccCommo : public Communicator {
   virtual void SendInquire(parid_t pid,
                            epoch_t epoch,
                            txnid_t tid,
-                           const function<void(RccGraph& graph)>&);
+                           const function<void(const RccGraph& graph)>&);
 
   shared_ptr<map<txid_t, parent_set_t>>
   Inquire(parid_t pid, txnid_t tid, rank_t rank);

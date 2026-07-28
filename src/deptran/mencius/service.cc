@@ -57,7 +57,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
     }
   }
   for (auto x: skip_commits) {
-    auto cmd_ptr = std::make_shared<TpcCommitCommand>();
+    auto cmd_ptr = rusty::Arc<TpcCommitCommand>::make();
     janus::Command md{cmd_ptr};
     // OnCommit takes janus::Command directly.
     sched_->OnCommit(x, 100, md, true);

@@ -35,7 +35,7 @@ void CoordinatorMultiPaxos::Submit(const janus::Command& cmd,
 #endif
   if (!IsLeader()) {
     //change back to fatal
-    Log_info("i am not the leader; site %d; locale %d",
+    Log_info("i am not the leader; site {}; locale {}",
               frame_->site_info_->id, loc_id_);
   }
 
@@ -77,7 +77,7 @@ void CoordinatorMultiPaxos::Accept() {
   verify(!in_accept);
   in_accept = true;
   Log_debug("multi-paxos coordinator broadcasts accept, "
-                "par_id_: %lx, slot_id: %llx",
+                "par_id_: {:x}, slot_id: {:x}",
             par_id_, slot_id_);
   auto start = chrono::system_clock::now();
 #ifdef LATENCY_DEBUG
@@ -107,7 +107,7 @@ void CoordinatorMultiPaxos::Accept() {
 void CoordinatorMultiPaxos::Commit() {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   commit_callback_();
-  Log_debug("multi-paxos broadcast commit for partition: %d, slot %d",
+  Log_debug("multi-paxos broadcast commit for partition: {}, slot {}",
             (int) par_id_, (int) slot_id_);
   commo()->BroadcastDecide(par_id_, slot_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
@@ -117,7 +117,7 @@ void CoordinatorMultiPaxos::Commit() {
 void CoordinatorMultiPaxos::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
-  //Log_info("Current phase is %d", current_phase);
+  //Log_info("Current phase is {}", current_phase);
   phase_++;
   switch (current_phase) {
     case Phase::INIT_END:
@@ -133,7 +133,7 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
         // was never defined and the non-leader branch is
         // `verify(0)`-guarded anyway.
         verify(0);
-        Log_info("The local id is %d", this->loc_id_);
+        Log_info("The local id is {}", this->loc_id_);
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);
@@ -198,8 +198,8 @@ void BulkCoordinatorMultiPaxos::Accept() {
     // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.  BroadcastBulkAccept now also takes
     // const Command& (per prep6t), so cmd_ flows through directly.
-    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-    verify(cmd_temp1 != nullptr);
+    const auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1.is_some());
     if(!in_submission_){
       return;
     }
@@ -219,14 +219,14 @@ void BulkCoordinatorMultiPaxos::Accept() {
   // auto endt2 = std::chrono::high_resolution_clock::now();
   sp_quorum->wait();
   // auto endt3 = std::chrono::high_resolution_clock::now();
-  // Log_info("Wan_wait: %d, %d", 
+  // Log_info("Wan_wait: {}, {}",
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt2 - strt).count(),
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt3 - endt2).count());
 
     sp_quorum->wait();
     if (sp_quorum->yes()) {
 	      if(ess_cc->machine_id == 0)
-			Log_debug("Accept: slot %d  is committed, partition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
+			Log_debug("Accept: slot {}  is committed, partition id {}", cmd_temp1.unwrap()->slots[0], frame_->site_info_->partition_id_);
         committed_ = true;
     } else if (sp_quorum->no()) {
         in_submission_ = false;
@@ -239,7 +239,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
 }
 
 void BulkCoordinatorMultiPaxos::Commit() {
-    // Log_info("BulkCoordinatorMultiPaxos::Commit() called, in_submission_=%d", (int)in_submission_);
+    // Log_info("BulkCoordinatorMultiPaxos::Commit() called, in_submission_={}", (int)in_submission_);
     if(!in_submission_){
       // Log_info("BulkCoordinatorMultiPaxos::Commit() returning early because in_submission_=false");
       return;
@@ -248,16 +248,18 @@ void BulkCoordinatorMultiPaxos::Commit() {
 
     // cmd_ is Command; marshallable_cast<T>(Command&)
     // overload handles the cast.
-    auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
-    verify(cmd_temp1 != nullptr);
-    auto commit_cmd = make_shared<PaxosPrepCmd>();
-    commit_cmd->slots = cmd_temp1->slots;
-    commit_cmd->ballots = cmd_temp1->ballots;
-    commit_cmd->leader_id = cmd_temp1->leader_id;
+    const auto cmd_temp1 = marshallable_cast<BulkPaxosCmd>(cmd_);
+    verify(cmd_temp1.is_some());
+    // Fill-then-wrap: build the payload as a local, wrap once complete.
+    PaxosPrepCmd prep_cmd;
+    prep_cmd.slots = cmd_temp1.unwrap()->slots;
+    prep_cmd.ballots = cmd_temp1.unwrap()->ballots;
+    prep_cmd.leader_id = cmd_temp1.unwrap()->leader_id;
+    auto commit_cmd = rusty::Arc<PaxosPrepCmd>::make(std::move(prep_cmd));
 
     auto ess_cc = es_cc;
     // Log_info("About to call BroadcastBulkDecide from Commit()");
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd, [this, ess_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, std::move(commit_cmd), [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_commit){
         return;
       }

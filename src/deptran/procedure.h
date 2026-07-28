@@ -1,3 +1,5 @@
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include <memory>
 
 #pragma once
@@ -28,7 +30,7 @@ class TxReply {
   int32_t txn_type_;
   txnid_t tx_id_;
   // Optional view data for client view updates (e.g., when WRONG_LEADER error occurs)
-  std::shared_ptr<ViewData> sp_view_data_ = nullptr;
+  rusty::Option<rusty::Arc<ViewData>> sp_view_data_{};
   // Timeout flag - set when transaction timed out waiting for shard responses
   bool timed_out_ = false;
 };
@@ -62,11 +64,14 @@ class TxWorkspace {
   }
 
   Value& WaitAt(int32_t k) {
-    auto e = Reactor::create_sp_event<Event>();
-    e->wait([this, k](int x)->bool{
+    // Predicate wait via IntEvent (the residual Event class was deleted; its
+    // 2 predicate call sites moved to IntEvent, which honors state_.test_).
+    auto e = Reactor::create_sp_event<rrr::IntEvent>();
+    (*e->state_.test_.borrow_mut()) = [this, k](int x)->bool{
       auto it = this->values_->find(k);
       return (it != this->values_->end());
-    });
+    };
+    e->wait();
     auto it = values_->find(k);
     verify(it != values_->end());
     return it->second;
@@ -114,24 +119,22 @@ class TxRequest {
   // (`snow/ro6_coord.cc:247`, `rcc/coord.cc:27`).
 };
 
-Marshal& operator << (Marshal& m, const TxWorkspace &ws);
+// Phase 8 batch 4 / Marshal-deprecation slice A: the archive serde free
+// functions own the TxWorkspace/TxReply wire formats (the Marshal-form
+// mirrors are deleted — zero callers).
+void serialize(const TxWorkspace &ws, BinaryWriteArchive &ar);
+void deserialize(TxWorkspace &ws, BinaryReadArchive &ar);
+void serialize(const TxReply &reply, BinaryWriteArchive &ar);
+void deserialize(TxReply &reply, BinaryReadArchive &ar);
 
-Marshal& operator >> (Marshal& m, TxWorkspace& ws);
-
-// archive operators for TxWorkspace
-// (mirrors the Marshal-based pair byte-for-byte). Used by the
+// archive operators for TxWorkspace. Used by the
 // 6 SimpleCommand archive operators which feed VecPieceData's
 // Serializable save/load.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxWorkspace &ws);
 
 BinaryReadArchive& operator >> (BinaryReadArchive& ar, TxWorkspace& ws);
 
-Marshal& operator << (Marshal& m, const TxReply& reply);
-
-Marshal& operator >> (Marshal& m, TxReply& reply);
-
-// archive operators for TxReply (mirrors the
-// Marshal-based pair byte-for-byte). Used by the rcc_rpc.h archive
+// archive operators for TxReply. Used by the rcc_rpc.h archive
 // emission now that rpcgen defaults to --archive.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const TxReply& reply);
 
@@ -192,26 +195,26 @@ class VecPieceData : public rrr::Serializable<VecPieceData, MakoCommands> {
 
   void save(BinaryWriteArchive& ar) const {
     verify(sp_vec_piece_data_);
-    ar << static_cast<int32_t>(sp_vec_piece_data_->size());
+    rrr::Serialize_::serialize(static_cast<int32_t>(sp_vec_piece_data_->size()), ar);
     for (const auto& sp : *sp_vec_piece_data_) {
-      ar << *sp;
+      rrr::Serialize_::serialize(*sp, ar);
     }
-    ar << time_sent_from_client_;
-    ar << is_recovery_command_;
+    rrr::Serialize_::serialize(time_sent_from_client_, ar);
+    rrr::Serialize_::serialize(is_recovery_command_, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       auto x = std::make_shared<TxPieceData>();
-      ar >> *x;
+      rrr::Deserialize_::deserialize(*x, ar);
       sp_vec_piece_data_->push_back(x);
     }
-    ar >> time_sent_from_client_;
-    ar >> is_recovery_command_;
+    rrr::Deserialize_::deserialize(time_sent_from_client_, ar);
+    rrr::Deserialize_::deserialize(is_recovery_command_, ar);
   }
 };
 
@@ -224,9 +227,9 @@ class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
 
   void save(BinaryWriteArchive& ar) const {
     verify(key_data_);
-    ar << static_cast<int32_t>(key_data_->size());
+    rrr::Serialize_::serialize(static_cast<int32_t>(key_data_->size()), ar);
     for (const key_t& k : *key_data_) {
-      ar << k;
+      rrr::Serialize_::serialize(k, ar);
     }
   }
 
@@ -234,10 +237,10 @@ class VecRecData : public rrr::Serializable<VecRecData, MakoCommands> {
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       key_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       key_data_->push_back(x);
     }
   }
@@ -260,30 +263,30 @@ class ViewData : public rrr::Serializable<ViewData, MakoCommands> {
   View& GetView() { return view_; }
 
   void save(BinaryWriteArchive& ar) const {
-    ar << view_.n_;
-    ar << view_.view_id_;
-    ar << view_.timestamp_;
-    ar << static_cast<int32_t>(view_.leaders_.size());
+    rrr::Serialize_::serialize(view_.n_, ar);
+    rrr::Serialize_::serialize(view_.view_id_, ar);
+    rrr::Serialize_::serialize(view_.timestamp_, ar);
+    rrr::Serialize_::serialize(static_cast<int32_t>(view_.leaders_.size()), ar);
     for (int leader : view_.leaders_) {
-      ar << leader;
+      rrr::Serialize_::serialize(leader, ar);
     }
-    ar << partition_id_;
+    rrr::Serialize_::serialize(partition_id_, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> view_.n_;
-    ar >> view_.view_id_;
-    ar >> view_.timestamp_;
+    rrr::Deserialize_::deserialize(view_.n_, ar);
+    rrr::Deserialize_::deserialize(view_.view_id_, ar);
+    rrr::Deserialize_::deserialize(view_.timestamp_, ar);
     int32_t leader_count;
-    ar >> leader_count;
+    rrr::Deserialize_::deserialize(leader_count, ar);
     view_.leaders_.clear();
     view_.leaders_.reserve(leader_count);
     for (int i = 0; i < leader_count; i++) {
       int leader;
-      ar >> leader;
+      rrr::Deserialize_::deserialize(leader, ar);
       view_.leaders_.push_back(leader);
     }
-    ar >> partition_id_;
+    rrr::Deserialize_::deserialize(partition_id_, ar);
   }
 
   std::string ToString() const {
@@ -336,23 +339,23 @@ class KeyCmdBatchData : public rrr::Serializable<KeyCmdBatchData,
   void save(BinaryWriteArchive& ar) const {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
-    ar << sz;
+    rrr::Serialize_::serialize(sz, ar);
     for (int32_t i = 0; i < sz; i++) {
-      ar << keys_[i];
+      rrr::Serialize_::serialize(keys_[i], ar);
       // drive Command's archive op directly (same wire
       // format as the previous `MarshallDeputy(commands_[i])` round-trip).
-      ar << commands_[i];
+      rrr::Serialize_::serialize(commands_[i], ar);
     }
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz = 0;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     keys_.resize(sz);
     commands_.resize(sz);
     for (int32_t i = 0; i < sz; i++) {
-      ar >> keys_[i];
-      ar >> commands_[i];
+      rrr::Deserialize_::deserialize(keys_[i], ar);
+      rrr::Deserialize_::deserialize(commands_[i], ar);
     }
   }
 };

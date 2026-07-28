@@ -47,7 +47,7 @@ void CoordinatorTapir::DispatchAsync() {
                                          std::placeholders::_1,
                                          std::placeholders::_2));
   }
-  Log_debug("sent %d SubCmds", cnt);
+  Log_debug("sent {} SubCmds", cnt);
 }
 
 void CoordinatorTapir::DispatchAck(phase_t phase,
@@ -62,18 +62,18 @@ void CoordinatorTapir::DispatchAck(phase_t phase,
     const innid_t &inn_id = pair.first;
     verify(dispatch_acks_[inn_id] == false);
     dispatch_acks_[inn_id] = true;
-    Log_debug("get start ack %ld/%ld for cmd_id: %lx, inn_id: %d",
+    Log_debug("get start ack {}/{} for cmd_id: {:x}, inn_id: {}",
               n_dispatch_ack_, n_dispatch_, cmd_->id_, inn_id);
 
     txn->Merge(pair.first, pair.second);
   }
   if (txn->HasMoreUnsentPiece()) {
-    Log_debug("command has more sub-cmd, cmd_id: %llx,"
-                  " n_started_: %d, n_pieces: %d",
+    Log_debug("command has more sub-cmd, cmd_id: {:x},"
+                  " n_started_: {}, n_pieces: {}",
               txn->id_, txn->n_pieces_dispatched_, txn->GetNPieceAll());
     DispatchAsync();
   } else if (AllDispatchAcked()) {
-    Log_debug("receive all start acks, txn_id: %llx; START PREPARE",
+    Log_debug("receive all start acks, txn_id: {:x}; START PREPARE",
               txn->id_);
     GotoNextPhase();
   }
@@ -90,7 +90,7 @@ void CoordinatorTapir::Reset() {
 void CoordinatorTapir::FastAccept() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
-  Log_debug("send out fast accept for cmd_id: %llx", cmd_->id_);
+  Log_debug("send out fast accept for cmd_id: {:x}", cmd_->id_);
   auto pars = tx_data().GetPartitionIds();
   verify(pars.size() > 0);
   int32_t sum = 0;
@@ -174,7 +174,7 @@ void CoordinatorTapir::Accept() {
 void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, rusty::Arc<Future> fu) {
   if (phase_ != phase) return;
   int res;
-  fu->get_reply() >> res;
+  rrr::deserialize_from(fu->get_reply(), res);
   verify(res == SUCCESS);
   n_accept_oks_[pid]++;
   if (n_accept_oks_[pid] >= GetSlowQuorum(pid)) {
@@ -239,7 +239,7 @@ void CoordinatorTapir::Decide() {
     verify(0);
   }
   auto pars = cmd_->GetPartitionIds();
-  Log_debug("send out decide request, cmd_id: %llx, ", cmd_->id_);
+  Log_debug("send out decide request, cmd_id: {:x}, ", cmd_->id_);
   for (auto par_id : pars) {
     commo()->BroadcastDecide(par_id, cmd_->id_, d);
   }

@@ -6,11 +6,12 @@ namespace janus {
 
 class SimpleCommand;
 class CmdData;
-rrr::Marshal &operator<<(rrr::Marshal &m, const SimpleCommand &cmd);
-rrr::Marshal &operator>>(rrr::Marshal &m, SimpleCommand &cmd);
+// Marshal-deprecation slice A: archive serde free functions own the
+// SimpleCommand wire format (Marshal-form mirrors deleted, zero callers).
+void serialize(const SimpleCommand &cmd, rrr::BinaryWriteArchive &ar);
+void deserialize(SimpleCommand &cmd, rrr::BinaryReadArchive &ar);
 
-// archive operators for SimpleCommand.
-// Mirror the Marshal-based pair byte-for-byte. Used by VecPieceData's
+// archive operators for SimpleCommand. Used by VecPieceData's
 // Serializable save/load which serializes a
 // vector of `shared_ptr<SimpleCommand>`.
 rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const SimpleCommand &cmd);

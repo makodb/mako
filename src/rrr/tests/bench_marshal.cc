@@ -1,13 +1,14 @@
-// Marshal-isolated microbenchmark.
+// Serde-isolated microbenchmark.
 //
-// Measures the hot paths of rrr::Marshal in isolation (no network,
-// no archive layer, no RPC scaffolding). The goal is to establish a
-// perf baseline for the existing chunk-linked-list implementation so
-// a Cursor<Vec<u8>>-backed rewrite can be compared apples-to-apples.
+// Measures the hot paths of the archive serde surface
+// (BufferSink/BufferSource + Binary{Write,Read}Archive) in isolation
+// (no network, no RPC scaffolding). Originally benchmarked the
+// chunk-linked-list rrr::Marshal; the scenarios keep their historical
+// names so runs stay comparable apples-to-apples.
 //
-// Each scenario runs for a fixed number of iterations against a
-// freshly-constructed Marshal so chunk-allocator state doesn't
-// accumulate across runs. Reports ns/op and ops/sec.
+// Each scenario runs for a fixed number of iterations; sinks are
+// either freshly constructed or cleared per iteration, mirroring what
+// the original fresh/reused Marshal did. Reports ns/op and ops/sec.
 //
 // Build:  cmake --build build_clang21 --target bench_marshal -j32
 // Run:    ./build_clang21/bench_marshal
@@ -25,8 +26,8 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
-using rrr::Marshal;
 using rrr::i32;
 using rrr::i64;
 
@@ -82,11 +83,14 @@ int main() {
        2'000'000,
        [](std::size_t n) {
          for (std::size_t i = 0; i < n; ++i) {
-           Marshal m;
+           rrr::BufferSink sink;
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
            i64 v = static_cast<i64>(i);
-           m << v;
+           rrr::Serialize_::serialize(v, war);
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
            i64 out;
-           m >> out;
+           rrr::Deserialize_::deserialize(out, rar);
            if (out != v) std::abort();
          }
        }});
@@ -97,12 +101,16 @@ int main() {
   run({"write+read i64 (single Marshal, drains immediately)",
        5'000'000,
        [](std::size_t n) {
-         Marshal m;
+         rrr::BufferSink sink;
+         rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
          for (std::size_t i = 0; i < n; ++i) {
+           sink.bytes.clear();
            i64 v = static_cast<i64>(i);
-           m << v;
+           rrr::Serialize_::serialize(v, war);
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
            i64 out;
-           m >> out;
+           rrr::Deserialize_::deserialize(out, rar);
            if (out != v) std::abort();
          }
        }});
@@ -114,14 +122,17 @@ int main() {
        [](std::size_t n) {
          constexpr std::size_t kCount = 1024;
          for (std::size_t k = 0; k < n; ++k) {
-           Marshal m;
+           rrr::BufferSink sink;
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 v = static_cast<i64>(i);
-             m << v;
+             rrr::Serialize_::serialize(v, war);
            }
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
            for (std::size_t i = 0; i < kCount; ++i) {
              i64 out;
-             m >> out;
+             rrr::Deserialize_::deserialize(out, rar);
              if (out != static_cast<i64>(i)) std::abort();
            }
          }
@@ -131,12 +142,14 @@ int main() {
   run({"raw write(8) + read(8) (single Marshal)",
        5'000'000,
        [](std::size_t n) {
-         Marshal m;
+         rrr::BufferSink sink;
          std::uint64_t v = 0xDEADBEEFCAFEBABEull;
          std::uint64_t out = 0;
          for (std::size_t i = 0; i < n; ++i) {
-           m.write(&v, sizeof(v));
-           m.read(&out, sizeof(out));
+           sink.bytes.clear();
+           sink.write_bytes(reinterpret_cast<const std::uint8_t*>(&v), sizeof(v));
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           src.read_bytes(reinterpret_cast<std::uint8_t*>(&out), sizeof(out));
            if (out != v) std::abort();
          }
        }});
@@ -146,11 +159,12 @@ int main() {
   run({"write 1KB blob + read 1KB blob",
        200'000,
        [](std::size_t n) {
-         std::vector<std::uint8_t> sink(kBlob1k.size());
+         std::vector<std::uint8_t> dst(kBlob1k.size());
          for (std::size_t i = 0; i < n; ++i) {
-           Marshal m;
-           m.write(kBlob1k.data(), kBlob1k.size());
-           m.read(sink.data(), sink.size());
+           rrr::BufferSink sink;
+           sink.write_bytes(reinterpret_cast<const std::uint8_t*>(kBlob1k.data()), kBlob1k.size());
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           src.read_bytes(reinterpret_cast<std::uint8_t*>(dst.data()), dst.size());
          }
        }});
 
@@ -161,9 +175,12 @@ int main() {
          std::string in = kStr100;
          std::string out;
          for (std::size_t i = 0; i < n; ++i) {
-           Marshal m;
-           m << in;
-           m >> out;
+           rrr::BufferSink sink;
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
+           rrr::Serialize_::serialize(in, war);
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::Deserialize_::deserialize(out, rar);
            if (out != in) std::abort();
          }
        }});
@@ -174,12 +191,23 @@ int main() {
        [](std::size_t n) {
          std::string in = kStr100;
          for (std::size_t i = 0; i < n; ++i) {
-           Marshal m;
+           rrr::BufferSink sink;
+           rrr::BinaryWriteArchive war(rrr::make_sink_proxy(&sink));
            i32 a = 1, b = 2, c = 3, d = 4;
-           m << a << b << c << d << in;
+           rrr::Serialize_::serialize(a, war);
+           rrr::Serialize_::serialize(b, war);
+           rrr::Serialize_::serialize(c, war);
+           rrr::Serialize_::serialize(d, war);
+           rrr::Serialize_::serialize(in, war);
            i32 ao, bo, co, dxo;
            std::string so;
-           m >> ao >> bo >> co >> dxo >> so;
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
+           rrr::Deserialize_::deserialize(ao, rar);
+           rrr::Deserialize_::deserialize(bo, rar);
+           rrr::Deserialize_::deserialize(co, rar);
+           rrr::Deserialize_::deserialize(dxo, rar);
+           rrr::Deserialize_::deserialize(so, rar);
            if (so.size() != in.size()) std::abort();
          }
        }});
@@ -191,11 +219,12 @@ int main() {
        100'000,
        [](std::size_t n) {
          std::vector<std::uint8_t> blob(4096, 0xAB);
-         std::vector<std::uint8_t> sink(4096);
+         std::vector<std::uint8_t> dst(4096);
          for (std::size_t i = 0; i < n; ++i) {
-           Marshal m;
-           m.write(blob.data(), blob.size());
-           m.read(sink.data(), sink.size());
+           rrr::BufferSink sink;
+           sink.write_bytes(reinterpret_cast<const std::uint8_t*>(blob.data()), blob.size());
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+           src.read_bytes(reinterpret_cast<std::uint8_t*>(dst.data()), dst.size());
          }
        }});
 
@@ -204,14 +233,15 @@ int main() {
   run({"write 10x 1KB then drain 10x 1KB",
        50'000,
        [](std::size_t n) {
-         std::vector<std::uint8_t> sink(kBlob1k.size());
+         std::vector<std::uint8_t> dst(kBlob1k.size());
          for (std::size_t k = 0; k < n; ++k) {
-           Marshal m;
+           rrr::BufferSink sink;
            for (int i = 0; i < 10; ++i) {
-             m.write(kBlob1k.data(), kBlob1k.size());
+             sink.write_bytes(reinterpret_cast<const std::uint8_t*>(kBlob1k.data()), kBlob1k.size());
            }
+           rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
            for (int i = 0; i < 10; ++i) {
-             m.read(sink.data(), sink.size());
+             src.read_bytes(reinterpret_cast<std::uint8_t*>(dst.data()), dst.size());
            }
          }
        }});

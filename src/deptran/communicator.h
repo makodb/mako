@@ -14,28 +14,10 @@
 
 namespace janus {
 
-static void _wan_wait() {
-  int num = 50;
-  Reactor::create_sp_event<NeverEvent>()->wait(num*1000);
-}
-
-static void _wan_wait_time(int m) {
-  this_thread::sleep_for(chrono::milliseconds(m));
-}
-
-
-#ifdef SIMULATE_WAN
-
-#define WAN_WAIT _wan_wait();
-
-#define WAN_WAIT_TIME(m) _wan_wait_time(m);
-
-#else
-
+// SIMULATE_WAN plumbing removed (never enabled — constants.h keeps the
+// define commented out); the macros stay as no-ops for the live call sites.
 #define WAN_WAIT ;
-#define WAN_WAIT_TIME ;
-
-#endif
+#define WAN_WAIT_TIME(m) ;
 
 class Coordinator;
 class ClassicProxy;
@@ -45,24 +27,10 @@ class TxLogServer;
 typedef std::pair<siteid_t, ClassicProxy*> SiteProxyPair;
 typedef std::pair<siteid_t, ClientControlProxy*> ClientSiteProxyPair;
 
-class MessageEvent : public IntEvent {
+
+class PaxosPrepareQuorumEvent: public QuorumEventWrapper {
  public:
-  shardid_t shard_id_;
-  svrid_t svr_id_;
-  string msg_;
-  MessageEvent(svrid_t svr_id) : IntEvent(), svr_id_(svr_id) {
-
-  }
-
-  MessageEvent(shardid_t shard_id, svrid_t svr_id)
-      : IntEvent(), shard_id_(shard_id), svr_id_(svr_id) {
-
-  }
-};
-
-class PaxosPrepareQuorumEvent: public QuorumEvent {
- public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
 //  ballot_t max_ballot_{0};
   bool HasAcceptedValue() {
     // TODO implement this
@@ -70,9 +38,9 @@ class PaxosPrepareQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y) {
     if (y) {
-      n_voted_yes_++;
+      q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
     } else {
-      n_voted_no_++;
+      q().n_voted_no_.set(q().n_voted_no_.get() + 1);
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
@@ -81,68 +49,61 @@ class PaxosPrepareQuorumEvent: public QuorumEvent {
 
 };
 
-class PaxosAcceptQuorumEvent: public QuorumEvent {
+class PaxosAcceptQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   void FeedResponse(bool y) {
     if (y) {
-      n_voted_yes_++;
+      q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
     } else {
-      n_voted_no_++;
+      q().n_voted_no_.set(q().n_voted_no_.get() + 1);
     }
     // Self-notification: call test() to push to ready queue when quorum reached
     test();
   }
 };
 
-class GetLeaderQuorumEvent : public QuorumEvent {
+class GetLeaderQuorumEvent : public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  // Quorum math now lives on QuorumEvent as QuorumPolicy::ALL_NO (S3):
+  // no() == every voter said no; is_ready() == yes()||no().
+  GetLeaderQuorumEvent(int n_total, int quorum)
+      : QuorumEventWrapper(n_total, quorum) {
+    q().policy_.set(QuorumPolicy::ALL_NO);
+  }
   void FeedResponse(bool y, locid_t leader_id) {
     if (y) {
-      leader_id_ = leader_id;
+      q().leader_id_.set(leader_id);
       vote_yes();
     } else {
       vote_no();
     }
   }
-
-  bool no() override { return n_voted_no_ == n_total_; }
-
-  bool is_ready() override {
-    if (yes()) {
-      return true;
-    } else if (no()) {
-      return true;
-    }
-
-    return false;
-  }
 };
 
 /************************RULE begin*********************************/
 
-class RuleSpeculativeExecuteQuorumEvent: public QuorumEvent {
+class RuleSpeculativeExecuteQuorumEvent: public QuorumEventWrapper {
   bool has_result_ = false;
   value_t result_;
-  int num_leader_{0};
-  int n_leader_yes_{0};
-  int n_leader_no_{0};
  public:
+  // Quorum math now lives on QuorumEvent as QuorumPolicy::LEADER_AND (S3):
+  // yes() additionally requires n_leader_yes_ >= num_leader_; no()
+  // additionally trips on any leader-no. The leader counters are hoisted
+  // onto QuorumEvent so the policy only reads its own fields.
   RuleSpeculativeExecuteQuorumEvent(int n_total, int quorum, int num_leader)
-    : QuorumEvent(n_total, quorum) {
-      num_leader_ = num_leader;
+    : QuorumEventWrapper(n_total, quorum) {
+      q().policy_.set(QuorumPolicy::LEADER_AND);
+      q().num_leader_.set(num_leader);
   }
   void FeedResponse(bool y, value_t result, bool is_leader);
-  bool yes() override;
-  bool no() override;
   value_t GetResult();
 };
 
-class JetpackPullIdSetQuorumEvent: public QuorumEvent {
+class JetpackPullIdSetQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
-  std::vector<shared_ptr<VecRecData>> id_sets_;
+  using QuorumEventWrapper::QuorumEventWrapper;
+  std::vector<rusty::Arc<VecRecData>> id_sets_;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   
@@ -151,8 +112,9 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
       vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
       auto vec_rec_data = marshallable_cast<VecRecData>(id_set);
-      if (vec_rec_data) {
-        id_sets_.push_back(vec_rec_data);
+      if (vec_rec_data.is_some()) {
+        // intentional extraction — last use of the Option local
+        id_sets_.push_back(vec_rec_data.unwrap());
       }
     } else {
       vote_no();
@@ -185,30 +147,30 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackPullCmdQuorumEvent: public QuorumEvent {
+class JetpackPullCmdQuorumEvent: public QuorumEventWrapper {
  public:
   JetpackPullCmdQuorumEvent(int n_total, int quorum, const std::vector<key_t>& keys)
-      : QuorumEvent(n_total, quorum), ordered_keys_(keys) {
+      : QuorumEventWrapper(n_total, quorum), ordered_keys_(keys) {
     key_states_.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); i++) {
       key_index_[keys[i]] = i;
       key_states_.push_back(KeyState{keys[i], {}, 0, janus::Command{}});
     }
-    int f = (n_total_ - 1) / 2;
+    int f = (q().n_total_ - 1) / 2;
     majority_threshold_ = (f + 2 + 1) / 2;
   }
 
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const janus::Command& batch_md) {
     if (y) {
       vote_yes();
-      auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
-      if (batch) {
-        for (size_t i = 0; i < batch->Size(); i++) {
-          auto it = key_index_.find(batch->GetKey(i));
+      const auto batch = marshallable_cast<KeyCmdBatchData>(batch_md);
+      if (batch.is_some()) {
+        for (size_t i = 0; i < batch.unwrap()->Size(); i++) {
+          auto it = key_index_.find(batch.unwrap()->GetKey(i));
           if (it == key_index_.end()) {
             continue;
           }
-          const auto& cmd = batch->GetCommand(i);
+          const auto& cmd = batch.unwrap()->GetCommand(i);
           if (!cmd.has_value()) {
             continue;
           }
@@ -266,9 +228,9 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
   int majority_threshold_{0};
 };
 
-class JetpackPrepareQuorumEvent: public QuorumEvent {
+class JetpackPrepareQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_accepted_ballot_ = -1;
@@ -315,9 +277,9 @@ class JetpackPrepareQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackAcceptQuorumEvent: public QuorumEvent {
+class JetpackAcceptQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   ballot_t max_seen_ballot_ = -1;
@@ -341,9 +303,9 @@ class JetpackAcceptQuorumEvent: public QuorumEvent {
   }
 };
 
-class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
+class JetpackPullRecSetInsQuorumEvent: public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
   epoch_t max_jepoch_ = -1;
   epoch_t max_oepoch_ = -1;
   // recovered_cmd_ migrated
@@ -429,7 +391,11 @@ class Communicator {
 	bool paused = false;
 	bool slow = false;
 	int total_;
-	shared_ptr<QuorumEvent> qe;
+	// @unsafe { placeholder event so the const-view Arc handle is always
+	//   non-null (Arc has no null state); only read on the dead `paused`
+	//   debug path in client_worker.cc / classic/coordinator.cc, both of
+	//   which deref it via `->`. Was a default-null shared_ptr before. }
+	rusty::Arc<QuorumEvent> qe{Reactor::create_sp_event<QuorumEvent>(1, 1)};
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;
@@ -471,7 +437,7 @@ class Communicator {
   
   // View management methods (static for global access)
   // @unsafe
-  static void UpdatePartitionView(parid_t partition_id, const std::shared_ptr<ViewData>& view_data);
+  static void UpdatePartitionView(parid_t partition_id, const ViewData& view_data);
   static View GetPartitionView(parid_t partition_id);
   static locid_t GetLeaderForPartition(parid_t partition_id);
   std::pair<int, ClassicProxy*> ConnectToSite(Config::SiteInfo &site,
@@ -509,18 +475,18 @@ class Communicator {
   // declaration — only call site was the now-deleted
   // `CoordinatorClassic::DispatchSync`.
 
-	shared_ptr<QuorumEvent> SendReelect();
+	rusty::Arc<QuorumEvent> SendReelect();
 
-  shared_ptr<IntEvent> BroadcastDispatch(ReadyPiecesData cmds_by_par,
+  rusty::Arc<IntEvent> BroadcastDispatch(ReadyPiecesData cmds_by_par,
                         Coordinator* coo,
                         TxData* txn);
 
-  shared_ptr<WaitAll> SendPrepare(Coordinator* coo,
+  rusty::Arc<WaitAll> SendPrepare(Coordinator* coo,
                                          txnid_t tid,
                                          std::vector<int32_t>& sids);
-  shared_ptr<WaitAll> SendCommit(Coordinator* coo,
+  rusty::Arc<WaitAll> SendCommit(Coordinator* coo,
                                      txnid_t tid);
-  shared_ptr<WaitAll> SendAbort(Coordinator* coo,
+  rusty::Arc<WaitAll> SendAbort(Coordinator* coo,
                                     txnid_t tid);
   /*void SendPrepare(parid_t gid,
                    txnid_t tid,
@@ -554,10 +520,6 @@ class Communicator {
    * @param svr_id 0 means broadcast to all replicas in that shard.
    * @param msg
    */
-  vector<shared_ptr<MessageEvent>> BroadcastMessage(shardid_t shard_id,
-                                                    svrid_t svr_id,
-                                                    string& msg);
-  std::shared_ptr<MessageEvent> SendMessage(svrid_t svr_id, string& msg);
 
   void AddMessageHandler(std::function<bool(const string&, string&)>);
   void AddMessageHandler(std::function<bool(const janus::Command&,
@@ -592,14 +554,14 @@ class Communicator {
       verify(0);
     }
   shared_ptr<GetLeaderQuorumEvent> BroadcastGetLeader(parid_t par_id, locid_t cur_pause);
-  shared_ptr<QuorumEvent> FailoverPauseSocketOut(parid_t par_id, locid_t loc_id);
-  shared_ptr<QuorumEvent> FailoverResumeSocketOut(parid_t par_id, locid_t loc_id);
+  rusty::Arc<QuorumEvent> FailoverPauseSocketOut(parid_t par_id, locid_t loc_id);
+  rusty::Arc<QuorumEvent> FailoverResumeSocketOut(parid_t par_id, locid_t loc_id);
   void SetNewLeaderProxy(parid_t par_id, locid_t loc_id);
   void SendSimpleCmd(groupid_t gid, SimpleCommand& cmd, std::vector<int32_t>& sids,
       const function<void(int)>& callback);
   
   /* Jetpack recovery begin */
-  shared_ptr<QuorumEvent> JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id, 
+  rusty::Arc<QuorumEvent> JetpackBroadcastBeginRecovery(parid_t par_id, locid_t loc_id,
                                                        const View& old_view, 
                                                        const View& new_view, 
                                                        epoch_t new_view_id);
@@ -610,7 +572,7 @@ class Communicator {
   // take Commands directly
   // (was vector<pair<key_t, shared_ptr<Marshallable>>>).  Callers
   // produce these from GetRecoveredCommands.
-  shared_ptr<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
+  rusty::Arc<QuorumEvent> JetpackBroadcastRecordCmd(parid_t par_id, locid_t loc_id,
                                                     epoch_t jepoch, epoch_t oepoch,
                                                     int sid, int rid,
                                                     const std::vector<std::pair<key_t, janus::Command>>& cmds);
@@ -620,13 +582,13 @@ class Communicator {
   shared_ptr<JetpackAcceptQuorumEvent> JetpackBroadcastAccept(parid_t par_id, locid_t loc_id, 
                                                             epoch_t jepoch, epoch_t oepoch, 
                                                             ballot_t max_seen_ballot, int sid, int set_size);
-  shared_ptr<QuorumEvent> JetpackBroadcastCommit(parid_t par_id, locid_t loc_id, 
+  rusty::Arc<QuorumEvent> JetpackBroadcastCommit(parid_t par_id, locid_t loc_id,
                                                  epoch_t jepoch, epoch_t oepoch, 
                                                  int sid, int set_size);
   shared_ptr<JetpackPullRecSetInsQuorumEvent> JetpackBroadcastPullRecSetIns(parid_t par_id, locid_t loc_id, 
                                                                            epoch_t jepoch, epoch_t oepoch, 
                                                                            int sid, int rid);
-  shared_ptr<QuorumEvent> JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch);
+  rusty::Arc<QuorumEvent> JetpackBroadcastFinishRecovery(parid_t par_id, locid_t loc_id, epoch_t oepoch);
   /* Jetpack recovery end */
 };
 

@@ -18,26 +18,26 @@ public:
     struct RpcTxnReadRequest {
         std::vector<rrr::i64> _req;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) {
-        ar << o._req;
-        return ar;
+    friend inline void serialize(const RpcTxnReadRequest& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o._req, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) {
-        ar >> o._req;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadRequest& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o._req, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadRequest& o) { deserialize(o, ar); return ar; }
 
     struct RpcTxnReadResponse {
         rrr::i32 val;
     };
-    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) {
-        ar << o.val;
-        return ar;
+    friend inline void serialize(const RpcTxnReadResponse& o, rrr::BinaryWriteArchive& ar) {
+        rrr::Serialize_::serialize(o.val, ar);
     }
-    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) {
-        ar >> o.val;
-        return ar;
+    friend inline rrr::BinaryWriteArchive& operator <<(rrr::BinaryWriteArchive& ar, const RpcTxnReadResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcTxnReadResponse& o, rrr::BinaryReadArchive& ar) {
+        rrr::Deserialize_::deserialize(o.val, ar);
     }
+    friend inline rrr::BinaryReadArchive& operator >>(rrr::BinaryReadArchive& ar, RpcTxnReadResponse& o) { deserialize(o, ar); return ar; }
 
     enum {
         TXN_READ = 0x4e5916a6,
@@ -72,15 +72,14 @@ private:
         // @unsafe
         {
             RpcTxnReadRequest __typed_req__;
-            rrr::MarshalSource __req_src__(&req->m);
-            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&__req_src__));
-            __req_ar__ >> __typed_req__._req;
+            rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+            rrr::Deserialize_::deserialize(__typed_req__._req, __req_ar__);
             auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
-            rrr::DeferredReply __defer__(
+            auto __defer__ = rrr::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
                 [__typed_resp__](rrr::BinaryWriteArchive& m) {
-                    m << __typed_resp__->val;
+                    rrr::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
             this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
@@ -120,9 +119,8 @@ public:
             }
             RpcTxnReadResponse __typed_resp__;
             auto __reply_guard__ = __fu__->get_reply();
-            rrr::MarshalSource __reply_src__(&*__reply_guard__);
-            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_src__));
-            __reply_ar__ >> __typed_resp__.val;
+            rrr::BinaryReadArchive __reply_ar__(rrr::make_source_proxy(&__reply_guard__->src));
+            rrr::Deserialize_::deserialize(__typed_resp__.val, __reply_ar__);
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
         auto operator co_await() const {
@@ -131,7 +129,7 @@ public:
     };
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::BinaryWriteArchive& __m__) {
-            __m__ << req._req;
+            rrr::Serialize_::serialize(req._req, __m__);
         });
         if (__fu_result__.is_err()) {
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());

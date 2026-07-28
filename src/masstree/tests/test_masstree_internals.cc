@@ -15,7 +15,6 @@
 
 #include <gtest/gtest.h>
 
-#include <rusty/hashset.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -24,6 +23,7 @@
 #include "masstree/kvthread.hh"
 
 import std;
+import rusty;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;

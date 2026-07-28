@@ -1,5 +1,3 @@
-#include <rusty/vec.hpp>
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
@@ -7,6 +5,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;
@@ -19,7 +18,7 @@ TEST(AndEventTest, BasicAndEvent) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
     // Create WaitAll that waits for both
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2};
+    rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> and_triggered{false};
@@ -47,7 +46,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2, event3};
+    rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2, event3};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<int> completion_value{0};
@@ -55,7 +54,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     reactor->create_run_fiber([and_event, event1, event2, event3, &completion_value]() {
         and_event->wait();
         // All three events should have their values set
-        completion_value = event1->value_ + event2->value_ + event3->value_;
+        completion_value = event1->value_.get() + event2->value_.get() + event3->value_.get();
     });
     
     // Set events in different order
@@ -78,7 +77,7 @@ TEST(AndEventTest, AndWithTimeout) {
     auto event1 = Reactor::create_sp_event<IntEvent>();
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
-    rusty::Vec<std::shared_ptr<Event>> events = {event1, event2};
+    rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> timed_out{false};
@@ -86,9 +85,9 @@ TEST(AndEventTest, AndWithTimeout) {
     
     reactor->create_run_fiber([and_event, &timed_out, &completed]() {
         // Wait with 50ms timeout
-        and_event->wait(50000);
+        and_event->wait_timeout(50000);
         completed = true;
-        if (and_event->status_.get() == Event::TIMEOUT) {
+        if (and_event->status_.get() == EventStatus::TIMEOUT) {
             timed_out = true;
         }
     });
@@ -102,7 +101,7 @@ TEST(AndEventTest, AndWithTimeout) {
 
     EXPECT_TRUE(completed);
     // Should have timed out since event2 was never set
-    EXPECT_TRUE(timed_out || and_event->status_.get() == Event::TIMEOUT);
+    EXPECT_TRUE(timed_out || and_event->status_.get() == EventStatus::TIMEOUT);
 }
 
 TEST(AndEventTest, VariadicConstructor) {
@@ -112,8 +111,10 @@ TEST(AndEventTest, VariadicConstructor) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
-    // Test variadic constructor
-    auto and_event = Reactor::create_sp_event<WaitAll>(event1, event2, event3);
+    // Test vector constructor (the 3-arg variadic ctor was dropped when WaitAll
+    // was flattened to a DSL struct)
+    rusty::Vec<rusty::Arc<EventPollable>> events = {event1, event2, event3};
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> completed{false};
     
@@ -138,7 +139,7 @@ TEST(AndEventTest, MixedEventTypes) {
     auto int_event = Reactor::create_sp_event<IntEvent>();
     auto timeout_event = Reactor::create_sp_event<TimeoutEvent>(100000); // 100ms
     
-    rusty::Vec<std::shared_ptr<Event>> events = {int_event, timeout_event};
+    rusty::Vec<rusty::Arc<EventPollable>> events = {int_event, timeout_event};
     auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> completed{false};

@@ -16,6 +16,15 @@
 #include <unistd.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.heartbeat;
+import rrr.reconnect_policy;
+
+// PollMode et al. live in rrr.epoll_wrapper (trimmed from the consumer
+// umbrella in 08b68144) — import directly.
+import rrr.epoll_wrapper;
 #include "benchmark_service.h"
 
 import std;
@@ -136,34 +145,35 @@ bool create_connected_tcp_pair(int sv[2]) {
     return true;
 }
 
-class ClosedFlagPollable : public Pollable {
+// Plain struct: consumed only via the typed-arc PollableArcShim<T>.
+class ClosedFlagPollable {
 public:
     explicit ClosedFlagPollable(int fd)
         : fd_(fd) {}
 
-    int fd() const override {
+    int fd() const {
         return fd_.load();
     }
 
-    int poll_mode() const override {
+    int poll_mode() const {
         return PollMode::READ;
     }
 
-    size_t content_size() override {
+    size_t content_size() const {
         return 0;
     }
 
-    bool handle_read() override {
+    bool handle_read() const {
         return true;
     }
 
-    int handle_write() override {
+    int handle_write() const {
         return PollMode::NO_CHANGE;
     }
 
-    void handle_error() override {}
+    void handle_error() const {}
 
-    void close() override {
+    void close() const {
         close_calls_.fetch_add(1);
         int fd = fd_.exchange(-1);
         if (fd >= 0) {
@@ -171,11 +181,11 @@ public:
         }
     }
 
-    bool check_pending_write_update() const override {
+    bool check_pending_write_update() const {
         return false;
     }
 
-    bool is_closed() const override {
+    bool is_closed() const {
         return closed_.load();
     }
 
@@ -188,9 +198,9 @@ public:
     }
 
 private:
-    std::atomic<int> fd_;
+    mutable std::atomic<int> fd_;
     mutable std::atomic<bool> closed_{false};
-    std::atomic<int> close_calls_{0};
+    mutable std::atomic<int> close_calls_{0};
 };
 
 }  // namespace
@@ -266,16 +276,16 @@ TEST_F(StateIntegrationTest, InitialStateNotConnected) {
 
 TEST_F(StateIntegrationTest, StateAfterSuccessfulConnect) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     EXPECT_FALSE(client->connected());
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -287,14 +297,14 @@ TEST_F(StateIntegrationTest, StateAfterSuccessfulConnect) {
 
 TEST_F(StateIntegrationTest, StateAfterDisconnect) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -313,7 +323,7 @@ TEST_F(StateIntegrationTest, StateAfterConnectionRefused) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Try to connect to non-existent server
-    int result = client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str());
+    int result = client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true);
     EXPECT_NE(result, 0);
 
     // Client should not be connected
@@ -324,15 +334,15 @@ TEST_F(StateIntegrationTest, StateAfterConnectionRefused) {
 
 TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
     auto service = service_box.get();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Should be connected during request
@@ -341,8 +351,8 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
     // Make request
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
 
@@ -361,21 +371,21 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
 }
 
 TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
     ASSERT_EQ(server->pending_request_count(), 0);
 
     constexpr double kSleepSeconds = 0.3;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
-        [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(kSleepSeconds, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -395,20 +405,20 @@ TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
 }
 
 TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
 
     constexpr double kSleepSeconds = 0.4;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
-        [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(kSleepSeconds, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -436,20 +446,20 @@ TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
 }
 
 TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     ASSERT_TRUE(client->connected());
 
     constexpr double kSleepSeconds = 0.5;
     auto fu_result = client->request(
-        benchmark::BenchmarkService::SLEEP,
-        [&](BinaryWriteArchive& m) { m << kSleepSeconds; }
+        benchmark::BenchmarkService::SLEEP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(kSleepSeconds, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -477,14 +487,14 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
 // channel-mode reliability tests).
 
 TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    ReconnectPolicy reconnect_policy;
+    auto reconnect_policy = ReconnectPolicy::new_();
     reconnect_policy.auto_reconnect = false;
     client->set_reconnect_policy(reconnect_policy);
 
@@ -504,15 +514,15 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     heartbeat.max_missed = 1;
     client->set_heartbeat(heartbeat);
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
     client->set_reconnect_policy(reconnect_policy);
     client->set_buffering_config(BufferingConfig::disabled());
 
     std::string input = "cb-warmup";
     auto warmup = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(warmup.is_ok());
     auto warmup_fu = warmup.unwrap();
@@ -529,25 +539,25 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // First disconnected request records a transport failure in the circuit.
     auto first_failure = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(first_failure.is_err());
     ASSERT_EQ(first_failure.unwrap_err(), ENOTCONN);
 
     // Circuit should now fail fast.
     auto fail_fast = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fail_fast.is_err());
     ASSERT_EQ(fail_fast.unwrap_err(), EBUSY);
 
     // Bring server back and reconnect transport.
-    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box2 = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box2));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box2));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     std::atomic<bool> reconnect_done{false};
     std::atomic<bool> reconnect_success{false};
@@ -561,8 +571,8 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // Still open before timeout expires.
     auto still_open = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(still_open.is_err());
     EXPECT_EQ(still_open.unwrap_err(), EBUSY);
@@ -571,8 +581,8 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     std::this_thread::sleep_for(milliseconds(500));
 
     auto probe = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(probe.is_ok());
     auto probe_fu = probe.unwrap();
@@ -581,8 +591,8 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 
     // success_threshold=1 should close the circuit for subsequent traffic.
     auto after = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(after.is_ok());
     auto after_fu = after.unwrap();
@@ -594,10 +604,10 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
 }
 
 TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
@@ -646,10 +656,10 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         record_event(success ? kReconnectedSuccess : kReconnectedFailure);
     });
 
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return has_event(kConnected); }, milliseconds(1000)));
 
-    ReconnectPolicy reconnect_policy;
+    auto reconnect_policy = ReconnectPolicy::new_();
     reconnect_policy.auto_reconnect = false;
     client->set_reconnect_policy(reconnect_policy);
     client->set_buffering_config(BufferingConfig::disabled());
@@ -662,10 +672,10 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
         return has_event(kError) && has_event(kDisconnected);
     }, milliseconds(2000)));
 
-    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box2 = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box2));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box2));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     std::atomic<bool> reconnect_done{false};
     std::atomic<bool> reconnect_success{false};
@@ -720,10 +730,10 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     const std::string bind_addr = "0.0.0.0:" + std::to_string(test_port_);
     const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
 
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(bind_addr.c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())), 0);
     const uint64_t first_server_id = server->instance_id();
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
@@ -731,7 +741,7 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     std::atomic<uint64_t> observed_old_id{0};
     std::atomic<uint64_t> observed_new_id{0};
 
-    ASSERT_EQ(client->connect(server_addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true), 0);
     ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
 
     client->set_on_server_restart([&](uint64_t old_id, uint64_t new_id) {
@@ -742,8 +752,8 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
     std::string input = "restart-detect";
     auto first = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(first.is_ok());
     auto first_fu = first.unwrap();
@@ -765,10 +775,10 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
     uint64_t second_server_id = 0;
     for (int attempt = 0; attempt < 20 && server == nullptr; ++attempt) {
-        auto candidate = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto candidate = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto candidate_service = rusty::make_box<StateTestService>();
-        candidate->reg_service(std::move(candidate_service));
-        if (candidate->start(bind_addr.c_str()) == 0) {
+        candidate->reg_service_typed(std::move(candidate_service));
+        if (candidate->start(reinterpret_cast<const int8_t*>(bind_addr.c_str())) == 0) {
             server = candidate;
             second_server_id = server->instance_id();
             break;
@@ -789,8 +799,8 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
     ASSERT_TRUE(reconnect_success.load(std::memory_order_acquire));
 
     auto second = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(second.is_ok());
     auto second_fu = second.unwrap();
@@ -812,14 +822,14 @@ TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
 
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -830,8 +840,8 @@ TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Try to make a request - should fail
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
 
     // Either request fails immediately or times out
@@ -891,10 +901,10 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
 
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     // Create two clients
     auto client1 = Client::create(poll_thread_.as_ref().unwrap());
@@ -905,7 +915,7 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     EXPECT_FALSE(client2->connected());
 
     // Connect client1
-    ASSERT_EQ(client1->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client1->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // client1 connected, client2 still not connected
@@ -913,7 +923,7 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     EXPECT_FALSE(client2->connected());
 
     // Connect client2
-    ASSERT_EQ(client2->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Both connected
@@ -938,16 +948,16 @@ TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
 
 TEST_F(StateIntegrationTest, RapidConnectDisconnectCycles) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     for (int i = 0; i < 5; i++) {
         auto client = Client::create(poll_thread_.as_ref().unwrap());
         EXPECT_FALSE(client->connected());
 
-        ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+        ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
         std::this_thread::sleep_for(milliseconds(20));
         EXPECT_TRUE(client->connected());
 
@@ -961,10 +971,10 @@ TEST_F(StateIntegrationTest, RapidConnectDisconnectCycles) {
 
 TEST_F(StateIntegrationTest, ConnectionObjectAccessible) {
     // Start server
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<StateTestService>();
-    server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    server->reg_service_typed(std::move(service_box));
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
@@ -973,7 +983,7 @@ TEST_F(StateIntegrationTest, ConnectionObjectAccessible) {
     EXPECT_TRUE(conn_before.is_none());
 
     // Connect
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(test_port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // After connect, connection() should return Some
