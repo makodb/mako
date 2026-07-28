@@ -185,8 +185,80 @@ Known debt inherited from the ports (pre-existing, tracked):
 
 Gap list from this campaign: *(append as W3+ surfaces them)*
 
+## W3 spike results (2026-07-28)
+
+The pinned transpiler (`10e42570`) ran `--crate` over `crates/srpc`
+(6 files): **0 transpile errors**, per-file `.cppm` modules with
+correct C++20 module names + generated CMakeLists + an honest
+hand-slot manifest. Compile census under the mako toolchain
+(clang 22, `-std=gnu++23 -stdlib=libc++`, rusty BMIs from the build
+tree — note BMIs require flag parity incl. `-march=native`):
+
+| module | default mode | notes |
+|---|---|---|
+| `srpc.wire.varint` | **compiles** | pure fns — clean |
+| `srpc.wire.archive` | **compiles** | needs `import rusty;` BMI |
+| `srpc.wire.frame` | fails | `clone_from_slice` overload → **#39** |
+| `srpc.wire.serde` | fails | cross-module `use` paths → **#38**; `fixed_scalar!` macro slots (use `--expand`) |
+| namespace mode (`--auto-namespace`) | fails | `::`-qualified crate-local calls → **#37** |
+| `--expand` whole-crate | fails | #38-family paths + primitive `to_le_bytes`/`from_le_bytes` → **#40** |
+
+Upstream issues filed (per the protocol; each with a minimal repro):
+[#37](https://github.com/shuaimu/rusty-cpp/issues/37) namespace-mode
+local-call qualification ·
+[#38](https://github.com/shuaimu/rusty-cpp/issues/38) cross-module
+`use`-import resolution ·
+[#39](https://github.com/shuaimu/rusty-cpp/issues/39)
+`copy_from_slice` on `[u8; N]` ·
+[#40](https://github.com/shuaimu/rusty-cpp/issues/40) primitive
+intrinsic byte-conversion methods.
+
+Design facts learned: `--expand` collapses the module tree into ONE
+`.cppm` (per-module structure is lost — for the rrr.* module-surface
+mapping we want per-module mode + macro support, or unrolled macros);
+emitted modules consume rusty via textual include or `import rusty;`
+depending on content, so the BMI closure and flag parity matter.
+
+**Verdict: the pipeline is real.** 2 of 4 wire modules compile
+push-button today; the 4 blockers are crisp, general transpiler
+features (not srpc-shaped hacks), exactly what the spike existed to
+surface while the crate is small.
+
+## W8 baselines (2026-07-28, this host, `taskset -c 2`)
+
+C++ `bench_marshal` (clang 22, `-O3 -march=native`) vs Rust
+`cargo bench -p srpc --bench wire_bench` (same scenarios, same
+methodology):
+
+| scenario | C++ ns/op | Rust ns/op | Rust vs C++ |
+|---|---:|---:|---|
+| write+read i64 (fresh archives) | 68.4 | 31.6 | **2.2× faster** |
+| write+read i64 (single, drains) | 29.4 | 12.1 | **2.4× faster** |
+| write 1024 i64 then read 1024 | 14284.7 | 5682.5 | **2.5× faster** |
+| raw write(8) + read(8) | 11.6 | 15.1 | 1.30× slower ⚠ |
+| write+read 1KB blob | 103.0 | 81.3 | 1.27× faster |
+| write+read String(100) | 160.4 | 145.6 | 1.10× faster |
+| 4×i32 + String(100) | 237.2 | 245.1 | ≈ parity (−3%) |
+| write 4KB + read 4KB | 258.9 | 272.1 | ≈ parity (−5%) |
+
+Six of eight at or better than C++; the varint/serde paths are
+2.2–2.5× faster (the C++ side pays SinkProxy virtual dispatch on that
+path). Watch item: the raw-8-byte case (15.1 vs 11.6 ns — Vec
+clear/extend vs the C++ sink's raw path); revisit when the transport
+pump design lands. The C++ table's extra scenario ("write 10×1KB then
+drain") is not yet mirrored. Parity gate: **on track**.
+
 ## Status log
 
+- **2026-07-28 — W3 spike + W8 first baselines** (this commit): see
+  the two sections above. Upstream issues #37–#40 filed. Transpiler
+  built at the pin inside the worktree submodule (`cargo build
+  --release -p rusty-cpp-transpiler`).
+- **2026-07-28 — W2 DONE** (`fcaf63e8`): frame codec (header/peek/
+  encode_into/FrameReader) byte-exact; BTreeMap `[v64 len][k,v...]`;
+  `WriteArchive::clear()`; `benches/wire_bench.rs` (bench_marshal
+  mirror). Corpus 58→62 cases (map + 3 frame cases) regenerated from
+  the C++ encoders; C++ verify PASSED, `cargo test` 15/15.
 - **2026-07-28 — W1 DONE** (`654b3a11`, branch `srpc-crate`): workspace
   + `crates/srpc` skeleton; wire layer (varint/archive/serde) ported
   byte-exact; 58-case bidirectional golden corpus — C++ verify PASSED,
