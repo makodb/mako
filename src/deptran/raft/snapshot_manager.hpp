@@ -32,14 +32,7 @@
 namespace janus {
 namespace raft {
 
-// Type aliases matching existing codebase
-// Use preprocessor guards to avoid conflict with macro definitions in constants.h
-#ifndef slotid_t
-using slotid_t = uint64_t;
-#endif
-#ifndef ballot_t
-using ballot_t = uint64_t;
-#endif
+// slotid_t and ballot_t come from janus::constants via the enclosing namespace.
 using c_char = char;
 
 /**

@@ -34,15 +34,6 @@ extern int _test_id_g;
 #define Failed(msg, ...) Print("TEST %d Failed: " msg, _test_id_g, ##__VA_ARGS__)
 #define Passed() Print("TEST %d Passed", _test_id_g)
 
-class CommitIndex {
- private:
-  uint64_t val_;
- public:
-  CommitIndex(uint64_t val) : val_(val) {}
-  uint64_t getval(void) { return val_; }
-  void setval(uint64_t val) { val_ = val; }
-};
-
 class RaftTestConfig {
 
  private:

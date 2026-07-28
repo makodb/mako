@@ -9,6 +9,7 @@
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/sync/atomic.hpp>
 #include "log_storage.hpp"
 #include "recovery_manager.hpp"
 #include "snapshot_manager.hpp"
@@ -567,29 +568,36 @@ inline bool server_observed_higher_term(uint64_t observed_term, uint64_t current
 }
 /*RUSTYCPP:GEN-END id=server.scalar_helpers*/
 
-// @safe - data struct with shared_ptr fields (shared_ptr marked @external)
-//
-// polymorphic command fields
-// (`accepted_cmd_` / `committed_cmd_` / `log_`) migrated from
-// `shared_ptr<Marshallable>` to `janus::Command`.  Internal storage
-// inside Command remains `shared_ptr<Marshallable>` (boundary calls
-// to APIs still taking `shared_ptr<Marshallable>` use
-// `cmd.inner_marshallable()`).  Wire format unchanged.  See
-// `docs/dev/l10-unblock-plan.md`.
+// @safe - value state for one Raft log instance. Command retains its existing
+// polymorphic storage boundary; the RaftData layout itself is DSL-owned.
+#if RUSTYCPP_RUST
+pub struct RaftData {
+    max_ballot_seen_: u64,
+    max_ballot_accepted_: u64,
+    accepted_cmd_: Command,
+    committed_cmd_: Command,
+    term: u64,
+    log_: Command,
+    prevTerm: u64,
+    slot_id: u64,
+    ballot: u64,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.4 version=1 rust_sha256=39c863730749d05e1d0b19708840cbcfe15b5b8aa19054d2feafb495343d9f4d*/
+struct RaftData;
+
 struct RaftData {
-  ballot_t max_ballot_seen_ = 0;
-  ballot_t max_ballot_accepted_ = 0;
-  Command accepted_cmd_{};
-  Command committed_cmd_{};
-
-  ballot_t term;
-  Command log_{};
-
-	//for retries
-	ballot_t prevTerm;
-	slotid_t slot_id;
-	ballot_t ballot;
+    uint64_t max_ballot_seen_;
+    uint64_t max_ballot_accepted_;
+    Command accepted_cmd_;
+    Command committed_cmd_;
+    uint64_t term;
+    Command log_;
+    uint64_t prevTerm;
+    uint64_t slot_id;
+    uint64_t ballot;
 };
+/*RUSTYCPP:GEN-END id=server.4*/
 
 // @safe - simple POD struct
 #if RUSTYCPP_RUST
@@ -1540,28 +1548,15 @@ class RaftServer : public TxLogServer {
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
-  // @unsafe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
-  // Arc only provides const access, so the atomic must be mutable to allow store().
-  // Uses C++ mutable for interior mutability (analogous to UnsafeCell in Rust).
-  struct AtomicFlag {
-    mutable std::atomic<bool> value{false}; // @unsafe { mutable field for interior mutability }
-    explicit AtomicFlag(bool v) : value(v) {}
-    void set(bool v, std::memory_order order = std::memory_order_release) const {
-      value.store(v, order);
-    }
-    bool get(std::memory_order order = std::memory_order_acquire) const {
-      return value.load(order);
-    }
-  };
-
   // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
   // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
   // when done, allowing us to prune finished threads at each new insertion to prevent
   // unbounded growth of thread handles.
-  // @unsafe - async persistence thread registry; uses std::thread plus an
-  // atomic completion flag to avoid use-after-free on shutdown.
+  // @unsafe - async persistence thread registry; uses std::thread plus the
+  // RustyCpp AtomicBool completion flag to avoid use-after-free on shutdown.
   std::mutex async_threads_mtx_;
-  std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> async_threads_;
+  std::vector<std::pair<std::thread,
+                        rusty::Arc<rusty::sync::atomic::AtomicBool>>> async_threads_;
 
   // Client notification callbacks
   // Key: log index, Value: callback to notify on commit status change
@@ -1698,14 +1693,14 @@ class RaftServer : public TxLogServer {
               async_threads_.erase(
                 std::remove_if(async_threads_.begin(), async_threads_.end(),
                   [](auto& entry) {
-                    if (entry.second->get()) {
+                  if (entry.second->load(rusty::sync::atomic::Ordering::Acquire)) {
                       if (entry.first.joinable()) entry.first.join();
                       return true;
                     }
                     return false;
                   }),
                 async_threads_.end());
-              auto done = rusty::Arc<AtomicFlag>::make(false);
+              auto done = rusty::Arc<rusty::sync::atomic::AtomicBool>::make(false);
               async_threads_.emplace_back(
                 std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy, done]() {
                   // Persist the vote durably
@@ -1716,7 +1711,7 @@ class RaftServer : public TxLogServer {
                   if (c != nullptr) {
                       c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
                   }
-                  done->set(true);
+                  done->store(true, rusty::sync::atomic::Ordering::Release);
               }), done);
             }
 

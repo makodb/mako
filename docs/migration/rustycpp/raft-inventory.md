@@ -13,29 +13,30 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 ## Scope
 
 - Files scanned: 35
-- Declarations scanned: 329
-- DSL-covered declarations/functions: 274
-- Unmigrated declarations/functions: 55
+- Declarations scanned: 323
+- DSL-covered declarations/functions: 275
+- Unmigrated declarations/functions: 42
+- Intentional C++ boundaries: 6
 
 ## Declaration Buckets
 
 | Bucket | Count | Meaning |
 | --- | ---: | --- |
-| `already-DSL` | 274 | Rust DSL source exists and has a generated region |
-| `trivial` | 14 | POD, enum, alias, or simple value candidate |
-| `refactor-then-DSL` | 34 | Needs ownership, inheritance, threading, or API reshaping first |
-| `needs-transpiler` | 7 | Contains a guide-listed syntax blocker |
-| `boundary` | 0 | No safe automatic bucket assignment; inspect manually |
+| `already-DSL` | 275 | Rust DSL source exists and has a generated region |
+| `trivial` | 6 | POD, enum, alias, or simple value candidate |
+| `refactor-then-DSL` | 30 | Needs ownership, inheritance, threading, or API reshaping first |
+| `needs-transpiler` | 6 | Contains a guide-listed syntax blocker |
+| `boundary` | 6 | Intentional C++ runtime/compatibility boundary; inspect manually |
 
 ## Blocker Histogram
 
 | Blocker | Count |
 | --- | ---: |
 | `I/O-or-FFI` | 60 |
-| `operator-overload` | 2 |
-| `raw-pointer` | 132 |
+| `operator-overload` | 1 |
+| `raw-pointer` | 128 |
 | `template` | 9 |
-| `threading` | 56 |
+| `threading` | 54 |
 | `void*` | 7 |
 
 ## Per-Declaration Status
@@ -46,13 +47,13 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | `src/deptran/raft/channel_transport.hpp` | 62 | `struct` | `Envelope` | `already-DSL` | `migrated` | template |
 | `src/deptran/raft/channel_transport.hpp` | 114 | `struct` | `ChannelFaults` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/channel_transport.hpp` | 145 | `fn` | `channel_faults_drop_matches` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/channel_transport.hpp` | 152 | `fn` | `channel_faults_partitions_block` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/channel_transport.hpp` | 157 | `fn` | `channel_envelope_matches_destination` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/channel_transport.hpp` | 152 | `fn` | `channel_faults_partitions_block` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/channel_transport.hpp` | 157 | `fn` | `channel_envelope_matches_destination` | `already-DSL` | `migrated` | raw-pointer |
 | `src/deptran/raft/channel_transport.hpp` | 205 | `struct` | `ChannelSwitchboardStateCore` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/channel_transport.hpp` | 283 | `class` | `ChannelSwitchboard` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/channel_transport.hpp` | 482 | `struct` | `ChannelTransportAdapterCore` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/channel_transport.hpp` | 662 | `class` | `ChannelTransportAdapter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/channel_transport.hpp` | 749 | `class` | `ChannelNodeWorker` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
+| `src/deptran/raft/channel_transport.hpp` | 267 | `class` | `ChannelSwitchboard` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
+| `src/deptran/raft/channel_transport.hpp` | 466 | `struct` | `ChannelTransportAdapterCore` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/channel_transport.hpp` | 646 | `class` | `ChannelTransportAdapter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/channel_transport.hpp` | 733 | `class` | `ChannelNodeWorker` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
 | `src/deptran/raft/commo.h` | 41 | `enum` | `NotifyRestartStatus` | `already-DSL` | `migrated` | threading |
 | `src/deptran/raft/commo.h` | 64 | `fn` | `commo_notify_restart_is_pending` | `already-DSL` | `migrated` | threading |
 | `src/deptran/raft/commo.h` | 68 | `fn` | `commo_notify_restart_is_acknowledged` | `already-DSL` | `migrated` | threading |
@@ -104,51 +105,49 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | `src/deptran/raft/coordinator.h` | 110 | `fn` | `coordinator_raft_append_should_cancel_on_term_change` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/coordinator.h` | 219 | `struct` | `CoordinatorRaftStateCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
 | `src/deptran/raft/coordinator.h` | 338 | `class` | `CoordinatorRaft` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/dispatcher.hpp` | 93 | `using` | `DispatcherProxy` | `trivial` | `unmigrated` | none |
-| `src/deptran/raft/exec.h` | 9 | `class` | `RaftExecutor` | `trivial` | `unmigrated` | none |
-| `src/deptran/raft/exec.h` | 11 | `using` | `Executor` | `trivial` | `unmigrated` | none |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 42 | `fn` | `file_snapshot_path` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 49 | `fn` | `file_snapshot_temp_path` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 84 | `fn` | `file_snapshot_advance_offset` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 88 | `fn` | `file_snapshot_reader_bytes_to_read` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 99 | `fn` | `file_snapshot_reader_is_complete` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 105 | `fn` | `file_snapshot_should_prune` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 110 | `fn` | `file_snapshot_has_latest` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 114 | `fn` | `file_snapshot_retention_start` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 123 | `fn` | `file_snapshot_should_delete_for_retention` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 129 | `fn` | `file_snapshot_metadata_from_name_parts` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 383 | `struct` | `FileSnapshotWriterCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 506 | `class` | `FileSnapshotWriter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 554 | `struct` | `FileSnapshotReaderCore` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 682 | `class` | `FileSnapshotReader` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 938 | `struct` | `FileSnapshotManagerCore` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/file_snapshot_manager.hpp` | 1133 | `class` | `FileSnapshotManager` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
+| `src/deptran/raft/dispatcher.hpp` | 94 | `using` | `DispatcherProxy` | `boundary` | `intentionally-cpp` | none |
+| `src/deptran/raft/exec.h` | 9 | `class` | `RaftExecutor` | `boundary` | `intentionally-cpp` | none |
+| `src/deptran/raft/exec.h` | 11 | `using` | `Executor` | `boundary` | `intentionally-cpp` | none |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 48 | `fn` | `file_snapshot_path` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 55 | `fn` | `file_snapshot_temp_path` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 90 | `fn` | `file_snapshot_advance_offset` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 94 | `fn` | `file_snapshot_reader_bytes_to_read` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 105 | `fn` | `file_snapshot_reader_is_complete` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 111 | `fn` | `file_snapshot_should_prune` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 116 | `fn` | `file_snapshot_has_latest` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 120 | `fn` | `file_snapshot_retention_start` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 129 | `fn` | `file_snapshot_should_delete_for_retention` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 135 | `fn` | `file_snapshot_metadata_from_name_parts` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 389 | `struct` | `FileSnapshotWriterCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 512 | `class` | `FileSnapshotWriter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 560 | `struct` | `FileSnapshotReaderCore` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 688 | `class` | `FileSnapshotReader` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 947 | `struct` | `FileSnapshotManagerCore` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/file_snapshot_manager.hpp` | 1142 | `class` | `FileSnapshotManager` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
 | `src/deptran/raft/frame.cc` | 27 | `fn` | `raft_frame_is_lab_test_config` | `already-DSL` | `migrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/frame.cc` | 32 | `fn` | `raft_frame_can_register_lab_scheduler` | `already-DSL` | `migrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/frame.cc` | 37 | `fn` | `raft_frame_all_schedulers_created` | `already-DSL` | `migrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/frame.cc` | 42 | `fn` | `raft_frame_all_commos_created` | `already-DSL` | `migrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/frame.cc` | 47 | `fn` | `raft_frame_should_create_test_fiber` | `already-DSL` | `migrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/frame.h` | 20 | `class` | `RaftFrame` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/log_storage.hpp` | 39 | `using` | `slotid_t` | `trivial` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/log_storage.hpp` | 42 | `using` | `ballot_t` | `needs-transpiler` | `unmigrated` | operator-overload, raw-pointer |
-| `src/deptran/raft/log_storage.hpp` | 66 | `struct` | `LogEntry` | `already-DSL` | `migrated` | operator-overload, raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 27 | `fn` | `memory_log_storage_is_usable` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 31 | `fn` | `memory_log_storage_range_valid` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 35 | `fn` | `memory_log_storage_empty_from_size` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 39 | `fn` | `memory_log_storage_index_or_zero` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 47 | `fn` | `memory_log_storage_metadata_found` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/memory_log_storage.hpp` | 323 | `struct` | `InMemoryLogStorageCore` | `already-DSL` | `migrated` | I/O-or-FFI |
-| `src/deptran/raft/memory_log_storage.hpp` | 557 | `class` | `InMemoryLogStorage` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 34 | `fn` | `memory_snapshot_metadata` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 55 | `fn` | `memory_snapshot_advance_offset` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 59 | `fn` | `memory_snapshot_reader_bytes_to_read` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 70 | `fn` | `memory_snapshot_reader_is_complete` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 168 | `struct` | `MemorySnapshotWriterCore` | `already-DSL` | `migrated` | raw-pointer, threading |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 293 | `class` | `MemorySnapshotWriter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 331 | `struct` | `MemorySnapshotReaderCore` | `already-DSL` | `migrated` | raw-pointer, threading |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 418 | `class` | `MemorySnapshotReader` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 532 | `struct` | `MemorySnapshotManagerCore` | `already-DSL` | `migrated` | raw-pointer, threading |
-| `src/deptran/raft/memory_snapshot_manager.hpp` | 715 | `class` | `MemorySnapshotManager` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/log_storage.hpp` | 62 | `struct` | `LogEntry` | `already-DSL` | `migrated` | operator-overload, raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 31 | `fn` | `memory_log_storage_is_usable` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 35 | `fn` | `memory_log_storage_range_valid` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 39 | `fn` | `memory_log_storage_empty_from_size` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 43 | `fn` | `memory_log_storage_index_or_zero` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 51 | `fn` | `memory_log_storage_metadata_found` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/memory_log_storage.hpp` | 327 | `struct` | `InMemoryLogStorageCore` | `already-DSL` | `migrated` | I/O-or-FFI |
+| `src/deptran/raft/memory_log_storage.hpp` | 561 | `class` | `InMemoryLogStorage` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 37 | `fn` | `memory_snapshot_metadata` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 58 | `fn` | `memory_snapshot_advance_offset` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 62 | `fn` | `memory_snapshot_reader_bytes_to_read` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 73 | `fn` | `memory_snapshot_reader_is_complete` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 171 | `struct` | `MemorySnapshotWriterCore` | `already-DSL` | `migrated` | raw-pointer, threading |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 296 | `class` | `MemorySnapshotWriter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 334 | `struct` | `MemorySnapshotReaderCore` | `already-DSL` | `migrated` | raw-pointer, threading |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 421 | `class` | `MemorySnapshotReader` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 538 | `struct` | `MemorySnapshotManagerCore` | `already-DSL` | `migrated` | raw-pointer, threading |
+| `src/deptran/raft/memory_snapshot_manager.hpp` | 721 | `class` | `MemorySnapshotManager` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading, I/O-or-FFI |
 | `src/deptran/raft/messages.hpp` | 45 | `struct` | `VoteReq` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/messages.hpp` | 52 | `struct` | `VoteReply` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/messages.hpp` | 57 | `struct` | `VoteDurableReq` | `already-DSL` | `migrated` | none |
@@ -256,70 +255,69 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | `src/deptran/raft/replicated_db.h` | 338 | `fn` | `replicated_db_snapshot_has_bytes` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/replicated_db.h` | 454 | `struct` | `ReplicatedDBStateCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
 | `src/deptran/raft/replicated_db.h` | 538 | `class` | `ReplicatedDB` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 57 | `fn` | `rocksdb_log_copy_slice` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 61 | `fn` | `rocksdb_log_make_log_key` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 65 | `fn` | `rocksdb_log_make_meta_key` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 69 | `fn` | `rocksdb_log_storage_ready` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 73 | `fn` | `rocksdb_log_range_valid` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 77 | `fn` | `rocksdb_log_empty_from_size` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 81 | `fn` | `rocksdb_log_value_present` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 85 | `fn` | `rocksdb_log_key_in_range` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 147 | `class` | `RocksDBLogStorageState` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 961 | `struct` | `RocksDBLogStorageCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/rocksdb_log_storage.hpp` | 1247 | `class` | `RocksDBLogStorage` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
-| `src/deptran/raft/rrr_transport.hpp` | 186 | `struct` | `RrrTransportAdapterCore` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/rrr_transport.hpp` | 360 | `class` | `RrrTransportAdapter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 61 | `fn` | `rocksdb_log_copy_slice` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 65 | `fn` | `rocksdb_log_make_log_key` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 69 | `fn` | `rocksdb_log_make_meta_key` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 73 | `fn` | `rocksdb_log_storage_ready` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 77 | `fn` | `rocksdb_log_range_valid` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 81 | `fn` | `rocksdb_log_empty_from_size` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 85 | `fn` | `rocksdb_log_value_present` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 89 | `fn` | `rocksdb_log_key_in_range` | `already-DSL` | `migrated` | raw-pointer, threading, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 151 | `class` | `RocksDBLogStorageState` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 965 | `struct` | `RocksDBLogStorageCore` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
+| `src/deptran/raft/rocksdb_log_storage.hpp` | 1251 | `class` | `RocksDBLogStorage` | `refactor-then-DSL` | `unmigrated` | I/O-or-FFI |
+| `src/deptran/raft/rrr_transport.hpp` | 185 | `struct` | `RrrTransportAdapterCore` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/rrr_transport.hpp` | 359 | `class` | `RrrTransportAdapter` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
 | `src/deptran/raft/server.cc` | 1432 | `struct` | `RaftServerPendingAppendEntries` | `already-DSL` | `migrated` | threading |
-| `src/deptran/raft/server.h` | 64 | `enum` | `StepDownReason` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 95 | `enum` | `CommitStatus` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 121 | `fn` | `server_step_down_reason_is_unsecured_failure` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 125 | `fn` | `server_step_down_reason_is_secured_failure` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 129 | `fn` | `server_step_down_reason_is_higher_term` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 133 | `fn` | `server_commit_status_is_durable` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 137 | `fn` | `server_log_index_at_or_below` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 141 | `fn` | `server_log_index_above` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 145 | `fn` | `server_preferred_leader_is_configured` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 149 | `fn` | `server_site_is_preferred_leader` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 155 | `fn` | `server_leadership_monitor_should_start` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 161 | `fn` | `server_leadership_transfer_preconditions_allow` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 168 | `fn` | `server_preferred_replica_is_caught_up` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 173 | `fn` | `server_local_commit_has_caught_up` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 178 | `fn` | `server_election_timeout_has_fired` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 184 | `fn` | `server_leadership_stable_window_elapsed` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 189 | `fn` | `server_random_range_needs_swap` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 193 | `fn` | `server_random_range_is_single_point` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 197 | `fn` | `server_random_range_cap` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 205 | `fn` | `server_election_in_startup_grace_period` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 211 | `fn` | `server_vote_term_is_stale` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 215 | `fn` | `server_vote_is_already_granted_to_other` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 222 | `fn` | `server_vote_is_idempotent` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 229 | `fn` | `server_candidate_log_is_at_least` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 237 | `fn` | `server_vote_request_is_eligible` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 254 | `fn` | `server_append_term_is_acceptable` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 258 | `fn` | `server_append_prefix_is_compacted_miss` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 264 | `fn` | `server_append_index_is_acceptable` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 270 | `fn` | `server_append_prev_term_is_acceptable` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 276 | `fn` | `server_append_backoff_next_index` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 293 | `fn` | `server_append_request_is_acceptable` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 306 | `fn` | `server_commit_index_clamp` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 314 | `fn` | `server_commit_index_should_advance` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 321 | `fn` | `server_log_entry_is_current_term` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 325 | `fn` | `server_snapshot_index_is_available` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 329 | `fn` | `server_snapshot_is_due` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 336 | `fn` | `server_compaction_index_clamp` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 345 | `fn` | `server_leadership_transition_to_leader` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 350 | `fn` | `server_leadership_transition_to_follower` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 355 | `fn` | `server_observed_higher_term` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 579 | `struct` | `RaftData` | `trivial` | `unmigrated` | none |
-| `src/deptran/raft/server.h` | 596 | `struct` | `KeyValue` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 617 | `struct` | `RaftServerTuningCore` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 722 | `struct` | `RaftServerLeadershipCore` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 865 | `struct` | `RaftServerMembershipCore` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 1006 | `struct` | `RaftServerSpeculativeCore` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 1192 | `struct` | `RaftServerVoteCore` | `already-DSL` | `migrated` | none |
-| `src/deptran/raft/server.h` | 1333 | `struct` | `RaftServerSnapshotProgressCore` | `already-DSL` | `migrated` | raw-pointer, threading |
-| `src/deptran/raft/server.h` | 1408 | `class` | `RaftServer` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/server.h` | 1546 | `struct` | `AtomicFlag` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
+| `src/deptran/raft/server.h` | 65 | `enum` | `StepDownReason` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 96 | `enum` | `CommitStatus` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 122 | `fn` | `server_step_down_reason_is_unsecured_failure` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 126 | `fn` | `server_step_down_reason_is_secured_failure` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 130 | `fn` | `server_step_down_reason_is_higher_term` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 134 | `fn` | `server_commit_status_is_durable` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 138 | `fn` | `server_log_index_at_or_below` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 142 | `fn` | `server_log_index_above` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 146 | `fn` | `server_preferred_leader_is_configured` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 150 | `fn` | `server_site_is_preferred_leader` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 156 | `fn` | `server_leadership_monitor_should_start` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 162 | `fn` | `server_leadership_transfer_preconditions_allow` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 169 | `fn` | `server_preferred_replica_is_caught_up` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 174 | `fn` | `server_local_commit_has_caught_up` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 179 | `fn` | `server_election_timeout_has_fired` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 185 | `fn` | `server_leadership_stable_window_elapsed` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 190 | `fn` | `server_random_range_needs_swap` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 194 | `fn` | `server_random_range_is_single_point` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 198 | `fn` | `server_random_range_cap` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 206 | `fn` | `server_election_in_startup_grace_period` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 212 | `fn` | `server_vote_term_is_stale` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 216 | `fn` | `server_vote_is_already_granted_to_other` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 223 | `fn` | `server_vote_is_idempotent` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 230 | `fn` | `server_candidate_log_is_at_least` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 238 | `fn` | `server_vote_request_is_eligible` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 255 | `fn` | `server_append_term_is_acceptable` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 259 | `fn` | `server_append_prefix_is_compacted_miss` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 265 | `fn` | `server_append_index_is_acceptable` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 271 | `fn` | `server_append_prev_term_is_acceptable` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 277 | `fn` | `server_append_backoff_next_index` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 294 | `fn` | `server_append_request_is_acceptable` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 307 | `fn` | `server_commit_index_clamp` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 315 | `fn` | `server_commit_index_should_advance` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 322 | `fn` | `server_log_entry_is_current_term` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 326 | `fn` | `server_snapshot_index_is_available` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 330 | `fn` | `server_snapshot_is_due` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 337 | `fn` | `server_compaction_index_clamp` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 346 | `fn` | `server_leadership_transition_to_leader` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 351 | `fn` | `server_leadership_transition_to_follower` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 356 | `fn` | `server_observed_higher_term` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 574 | `struct` | `RaftData` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 604 | `struct` | `KeyValue` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 625 | `struct` | `RaftServerTuningCore` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 730 | `struct` | `RaftServerLeadershipCore` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 873 | `struct` | `RaftServerMembershipCore` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 1014 | `struct` | `RaftServerSpeculativeCore` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 1200 | `struct` | `RaftServerVoteCore` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/server.h` | 1341 | `struct` | `RaftServerSnapshotProgressCore` | `already-DSL` | `migrated` | raw-pointer, threading |
+| `src/deptran/raft/server.h` | 1416 | `class` | `RaftServer` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
 | `src/deptran/raft/service.cc` | 19 | `using` | `rusty` | `trivial` | `unmigrated` | raw-pointer |
 | `src/deptran/raft/service.cc` | 22 | `fn` | `raft_service_server_unavailable` | `already-DSL` | `migrated` | raw-pointer |
 | `src/deptran/raft/service.cc` | 27 | `fn` | `raft_service_default_vote_granted` | `already-DSL` | `migrated` | raw-pointer |
@@ -357,23 +355,22 @@ The per-declaration CSV is regenerated at `docs/migration/rustycpp/raft-inventor
 | `src/deptran/raft/snapshot_format.hpp` | 488 | `fn` | `snapshot_serialize` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
 | `src/deptran/raft/snapshot_format.hpp` | 563 | `fn` | `snapshot_deserialize` | `already-DSL` | `migrated` | raw-pointer, I/O-or-FFI |
 | `src/deptran/raft/snapshot_format.hpp` | 654 | `class` | `SnapshotFormat` | `refactor-then-DSL` | `unmigrated` | raw-pointer, I/O-or-FFI |
-| `src/deptran/raft/snapshot_manager.hpp` | 32 | `using` | `slotid_t` | `trivial` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/snapshot_manager.hpp` | 35 | `using` | `ballot_t` | `trivial` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/snapshot_manager.hpp` | 37 | `using` | `c_char` | `trivial` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/snapshot_manager.hpp` | 50 | `struct` | `SnapshotMetadata` | `already-DSL` | `migrated` | raw-pointer |
-| `src/deptran/raft/snapshot_manager.hpp` | 250 | `struct` | `SnapshotConfig` | `already-DSL` | `migrated` | none |
+| `src/deptran/raft/snapshot_manager.hpp` | 36 | `using` | `c_char` | `trivial` | `unmigrated` | raw-pointer |
+| `src/deptran/raft/snapshot_manager.hpp` | 49 | `struct` | `SnapshotMetadata` | `already-DSL` | `migrated` | raw-pointer |
+| `src/deptran/raft/snapshot_manager.hpp` | 253 | `struct` | `SnapshotConfig` | `already-DSL` | `migrated` | none |
 | `src/deptran/raft/test.cc` | 1501 | `class` | `CSArgs` | `needs-transpiler` | `unmigrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/test.cc` | 1722 | `class` | `CAArgs` | `needs-transpiler` | `unmigrated` | void*, raw-pointer, threading |
 | `src/deptran/raft/test.h` | 9 | `class` | `RaftLabTest` | `refactor-then-DSL` | `unmigrated` | raw-pointer |
-| `src/deptran/raft/test_cluster.hpp` | 36 | `class` | `TestCluster` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
+| `src/deptran/raft/test_cluster.hpp` | 36 | `class` | `TestCluster` | `boundary` | `intentionally-cpp` | raw-pointer, threading |
 | `src/deptran/raft/testconf.cc` | 20 | `fn` | `raft_test_index_is_valid` | `already-DSL` | `migrated` | threading |
 | `src/deptran/raft/testconf.cc` | 24 | `fn` | `raft_test_wrapped_index` | `already-DSL` | `migrated` | raw-pointer, threading |
-| `src/deptran/raft/testconf.h` | 37 | `class` | `CommitIndex` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/testconf.h` | 46 | `class` | `RaftTestConfig` | `refactor-then-DSL` | `unmigrated` | raw-pointer, threading |
-| `src/deptran/raft/transport.hpp` | 119 | `using` | `TransportProxy` | `trivial` | `unmigrated` | none |
+| `src/deptran/raft/testconf.h` | 37 | `class` | `RaftTestConfig` | `boundary` | `intentionally-cpp` | raw-pointer, threading |
+| `src/deptran/raft/transport.hpp` | 121 | `using` | `TransportProxy` | `boundary` | `intentionally-cpp` | none |
 
 ## Interpretation
 
 `already-DSL` means only that a matching Rust source declaration was found. It does not mean the surrounding class is fully migrated; inspect the C++ class and its runtime boundaries separately.
+
+`intentionally-cpp` marks a reviewed compatibility, test, or runtime boundary that should remain C++ unless its API contract is deliberately redesigned.
 
 Raw pointers, threading, I/O, RocksDB, RPC, callbacks, and filesystem work are recorded as blockers or boundaries and should normally remain in C++ bridges unless a focused transpiler probe proves a safe shape.

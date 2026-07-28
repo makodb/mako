@@ -22,6 +22,18 @@ DEFAULT_MD = ROOT / "docs" / "migration" / "rustycpp" / "raft-inventory.md"
 DEFAULT_CSV = ROOT / "docs" / "migration" / "rustycpp" / "raft-inventory.csv"
 SOURCE_SUFFIXES = {".h", ".hh", ".hpp", ".cc", ".cpp", ".cxx"}
 
+# These declarations deliberately remain C++ integration boundaries. They are
+# not pending low-risk DSL migrations, even though the textual scanner cannot
+# infer that from their signatures alone.
+INTENTIONAL_CPP_BOUNDARIES = {
+    ("src/deptran/raft/dispatcher.hpp", "DispatcherProxy"),
+    ("src/deptran/raft/exec.h", "RaftExecutor"),
+    ("src/deptran/raft/exec.h", "Executor"),
+    ("src/deptran/raft/test_cluster.hpp", "TestCluster"),
+    ("src/deptran/raft/testconf.h", "RaftTestConfig"),
+    ("src/deptran/raft/transport.hpp", "TransportProxy"),
+}
+
 DECL_RE = re.compile(
     r"^(?P<prefix>pub\s+)?(?P<kind>class|struct|enum(?:\s+class)?|union|using|typedef)\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
@@ -146,6 +158,8 @@ def scan() -> list[Declaration]:
             body = "\n".join(lines[start:end])
             blockers = blocker_names(body)
             bucket, status = classify(kind, body, name in rust_names, blockers)
+            if (str(path.relative_to(ROOT)), name) in INTENTIONAL_CPP_BOUNDARIES:
+                bucket, status = "boundary", "intentionally-cpp"
             rows.append(Declaration(
                 file=str(path.relative_to(ROOT)),
                 line=number,
@@ -192,6 +206,7 @@ def write_markdown(rows: list[Declaration], path: Path, csv_path: Path) -> None:
         f"- Declarations scanned: {len(rows)}",
         f"- DSL-covered declarations/functions: {statuses.get('migrated', 0)}",
         f"- Unmigrated declarations/functions: {statuses.get('unmigrated', 0)}",
+        f"- Intentional C++ boundaries: {statuses.get('intentionally-cpp', 0)}",
         "",
         "## Declaration Buckets",
         "",
@@ -201,7 +216,7 @@ def write_markdown(rows: list[Declaration], path: Path, csv_path: Path) -> None:
         f"| `trivial` | {buckets.get('trivial', 0)} | POD, enum, alias, or simple value candidate |",
         f"| `refactor-then-DSL` | {buckets.get('refactor-then-DSL', 0)} | Needs ownership, inheritance, threading, or API reshaping first |",
         f"| `needs-transpiler` | {buckets.get('needs-transpiler', 0)} | Contains a guide-listed syntax blocker |",
-        f"| `boundary` | {buckets.get('boundary', 0)} | No safe automatic bucket assignment; inspect manually |",
+        f"| `boundary` | {buckets.get('boundary', 0)} | Intentional C++ runtime/compatibility boundary; inspect manually |",
         "",
         "## Blocker Histogram",
         "",
@@ -222,6 +237,8 @@ def write_markdown(rows: list[Declaration], path: Path, csv_path: Path) -> None:
         "## Interpretation",
         "",
         "`already-DSL` means only that a matching Rust source declaration was found. It does not mean the surrounding class is fully migrated; inspect the C++ class and its runtime boundaries separately.",
+        "",
+        "`intentionally-cpp` marks a reviewed compatibility, test, or runtime boundary that should remain C++ unless its API contract is deliberately redesigned.",
         "",
         "Raw pointers, threading, I/O, RocksDB, RPC, callbacks, and filesystem work are recorded as blockers or boundaries and should normally remain in C++ bridges unless a focused transpiler probe proves a safe shape.",
         "",
