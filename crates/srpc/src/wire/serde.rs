@@ -86,32 +86,128 @@ impl Deserialize for V64 {
 // ---------------------------------------------------------------------------
 // Fixed-width scalars: raw little-endian native bytes.
 
-macro_rules! fixed_scalar {
-    ($t:ty) => {
-        impl Serialize for $t {
-            fn serialize(&self, ar: &mut WriteArchive) {
-                ar.write_bytes(&self.to_le_bytes());
-            }
-        }
-        impl Deserialize for $t {
-            fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
-                let mut b = [0u8; core::mem::size_of::<$t>()];
-                ar.read_exact(&mut b)?;
-                Ok(<$t>::from_le_bytes(b))
-            }
-        }
-    };
+// Explicit per-type impls rather than a `macro_rules!` — this crate is
+// consumed through per-module Rust->C++ translation, which cannot see
+// macro bodies (and crate-level `--expand` collapses the module tree
+// we need for the rrr.* module surface). For wire-layout code the
+// explicitness is a feature; see docs/srpc-rust-port.md.
+
+impl Serialize for i8 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for i8 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<i8>()];
+        ar.read_exact(&mut b)?;
+        Ok(<i8>::from_le_bytes(b))
+    }
 }
 
-fixed_scalar!(i8);
-fixed_scalar!(i16);
-fixed_scalar!(i32);
-fixed_scalar!(i64);
-fixed_scalar!(u8);
-fixed_scalar!(u16);
-fixed_scalar!(u32);
-fixed_scalar!(u64);
-fixed_scalar!(f64);
+impl Serialize for i16 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for i16 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<i16>()];
+        ar.read_exact(&mut b)?;
+        Ok(<i16>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for i32 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for i32 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<i32>()];
+        ar.read_exact(&mut b)?;
+        Ok(<i32>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for i64 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for i64 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<i64>()];
+        ar.read_exact(&mut b)?;
+        Ok(<i64>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for u8 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for u8 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<u8>()];
+        ar.read_exact(&mut b)?;
+        Ok(<u8>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for u16 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for u16 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<u16>()];
+        ar.read_exact(&mut b)?;
+        Ok(<u16>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for u32 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for u32 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<u32>()];
+        ar.read_exact(&mut b)?;
+        Ok(<u32>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for u64 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for u64 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<u64>()];
+        ar.read_exact(&mut b)?;
+        Ok(<u64>::from_le_bytes(b))
+    }
+}
+
+impl Serialize for f64 {
+    fn serialize(&self, ar: &mut WriteArchive) {
+        ar.write_bytes(&self.to_le_bytes());
+    }
+}
+impl Deserialize for f64 {
+    fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
+        let mut b = [0u8; core::mem::size_of::<f64>()];
+        ar.read_exact(&mut b)?;
+        Ok(<f64>::from_le_bytes(b))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Strings: [V64 len][utf8 bytes].
