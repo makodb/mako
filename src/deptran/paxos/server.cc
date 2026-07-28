@@ -187,6 +187,21 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd.is_some());
+  // Defensive: reject an empty or incoherent batch instead of indexing
+  // ballots[0] into it. A malformed BulkAccept is broadcast to every acceptor,
+  // so an unchecked deref here takes down the whole replica group at once —
+  // this exact shape was the crash signature of the TLS-destructor UAF fixed
+  // in coordinator.h. Keep the blast door shut against future sender bugs.
+  if (bcmd.unwrap()->slots.empty() ||
+      bcmd.unwrap()->ballots.size() != bcmd.unwrap()->slots.size()) {
+    Log_error("OnBulkAccept: rejecting malformed BulkPaxosCmd "
+              "(slots={}, ballots={})",
+              bcmd.unwrap()->slots.size(), bcmd.unwrap()->ballots.size());
+    *ballot = cur_epoch;
+    *valid = 0;
+    cb();
+    return;
+  }
   *valid = 1;
   ballot_t cur_b = bcmd.unwrap()->ballots[0];
   slotid_t cur_slot = bcmd.unwrap()->slots[0];
@@ -268,6 +283,17 @@ void PaxosServer::OnSyncCommit(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd.is_some());
+  // Defensive: same malformed-batch blast door as OnBulkAccept.
+  if (bcmd.unwrap()->slots.empty() ||
+      bcmd.unwrap()->ballots.size() != bcmd.unwrap()->slots.size()) {
+    Log_error("OnSyncCommit: rejecting malformed BulkPaxosCmd "
+              "(slots={}, ballots={})",
+              bcmd.unwrap()->slots.size(), bcmd.unwrap()->ballots.size());
+    *ballot = cur_epoch;
+    *valid = 0;
+    cb();
+    return;
+  }
   *valid = 1;
   ballot_t cur_b = bcmd.unwrap()->ballots[0];
   slotid_t cur_slot = bcmd.unwrap()->slots[0];
@@ -377,6 +403,17 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
   verify(bcmd.is_some());
+  // Defensive: same malformed-batch blast door as OnBulkAccept.
+  if (bcmd.unwrap()->slots.empty() ||
+      bcmd.unwrap()->ballots.size() != bcmd.unwrap()->slots.size()) {
+    Log_error("OnBulkCommit: rejecting malformed PaxosPrepCmd "
+              "(slots={}, ballots={})",
+              bcmd.unwrap()->slots.size(), bcmd.unwrap()->ballots.size());
+    *ballot = cur_epoch;
+    *valid = 0;
+    cb();
+    return;
+  }
   *valid = 1;
   ballot_t cur_b = bcmd.unwrap()->ballots[0];
   slotid_t cur_slot = bcmd.unwrap()->slots[0];
