@@ -513,7 +513,7 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
     std::string server_addr = options.server_host + ":" + std::to_string(options.server_port);
 
     // Connect to server
-    int ret = client->connect(server_addr.c_str());
+    int ret = client->connect(reinterpret_cast<const int8_t*>(server_addr.c_str()), true);
     if (ret != 0) {
         delete db;
         return Status::IOError("Failed to connect to server: " + server_addr);

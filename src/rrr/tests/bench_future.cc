@@ -1,6 +1,5 @@
 #include <stddef.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/option.hpp>
 #include <rusty/box.hpp>
 #include <gtest/gtest.h>
@@ -9,6 +8,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace std::chrono;
@@ -39,13 +39,14 @@ private:
     void echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         i32 input;
-        req->m >> input;
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(input, __req_ar__);
 
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
             const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](BinaryWriteArchive& out) {
-                out << input;
+                rrr::Serialize_::serialize(input, out);
             });
         }
     }
@@ -61,14 +62,14 @@ protected:
     void SetUp() override {
         poll_thread_worker_ = rusty::Some(PollThread::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register service - server takes ownership via Box
-        server->reg_service(rusty::make_box<BenchService>());
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
+        server->reg_service_typed(rusty::make_box<BenchService>());
+        ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(base_port)).c_str())), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(base_port)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(base_port)).c_str()), true), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
@@ -95,12 +96,10 @@ protected:
 
         std::cout << "\n[BENCHMARK] " << name << "\n";
         std::cout << "  Iterations:  " << format_number(iterations) << "\n";
-        std::cout << "  Duration:    " << std::fixed << std::setprecision(3)
-                  << dur_sec << " sec\n";
+        { char _buf[64]; std::snprintf(_buf, sizeof(_buf), "  Duration:    %.3f sec\n", (double)dur_sec); std::cout << _buf; }
         std::cout << "  Throughput:  " << format_number((long long)ops_per_sec)
                   << " ops/sec\n";
-        std::cout << "  Latency:     " << std::fixed << std::setprecision(2)
-                  << ns_per_op << " ns/op\n";
+        { char _buf[64]; std::snprintf(_buf, sizeof(_buf), "  Latency:     %.2f ns/op\n", (double)ns_per_op); std::cout << _buf; }
     }
 };
 
@@ -113,7 +112,7 @@ TEST_F(FutureBenchmark, CreateReleaseThroughput) {
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
         auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << val;
+            rrr::Serialize_::serialize(val, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         // Arc auto-released (fire-and-forget)
@@ -134,7 +133,7 @@ TEST_F(FutureBenchmark, CreateWaitReleaseThroughput) {
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
         auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << val;
+            rrr::Serialize_::serialize(val, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -166,7 +165,7 @@ TEST_F(FutureBenchmark, BatchOperations) {
         for (int i = 0; i < batch_size; i++) {
             i32 val = batch * batch_size + i;
             auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-                m << val;
+                rrr::Serialize_::serialize(val, m);
             });
             ASSERT_TRUE(fu_result.is_ok());
             futures.push_back(fu_result.unwrap());
@@ -196,7 +195,7 @@ TEST_F(FutureBenchmark, RefCopyOverhead) {
     for (int i = 0; i < iterations; i++) {
         i32 val = i;
         auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](BinaryWriteArchive& m) {
-            m << val;
+            rrr::Serialize_::serialize(val, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -231,7 +230,7 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
 
         i32 val = i;
         auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, attr, [&](BinaryWriteArchive& m) {
-            m << val;
+            rrr::Serialize_::serialize(val, m);
         });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();

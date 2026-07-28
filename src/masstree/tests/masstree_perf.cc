@@ -2,7 +2,6 @@
 #include <stddef.h>
 
 #include <rusty/box.hpp>
-#include <rusty/hashmap.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -11,6 +10,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 // Required by Masstree's RCU machinery when concurrent_btree is used.
 volatile mrcu_epoch_type globalepoch = 1;

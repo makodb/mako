@@ -48,7 +48,7 @@ ResultSet Txn2PL::query(Table *tbl,
     verify(0);
     ResultSet rs = do_query(tbl, mb);
     return rs;
-//    Log_debug("query from buf, qb size: %d, pid: %lx, buf addr: %lx",
+//    Log_debug("query from buf, qb size: {}, pid: {:x}, buf addr: {:x}",
 //              qb.buf.size(), pid, &qb);
 //    verify(qb.buf.size() > 0);
 //    verify(qb.buf.size() > qb.retrieve_index);
@@ -56,7 +56,7 @@ ResultSet Txn2PL::query(Table *tbl,
 //    rs.reset();
 //    return rs;
   } else {
-//    Log_debug("query from table, qb size: %d, pid: %lx, buf addr: %lx",
+//    Log_debug("query from table, qb size: {}, pid: {:x}, buf addr: {:x}",
 //              qb.buf.size(), pid, &qb);
     ResultSet rs = do_query(tbl, mb);
 //    qb.buf.push_back(rs);

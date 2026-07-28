@@ -76,7 +76,7 @@ TpcaWorkload::TpcaWorkload(Config* config) : Workload(config) {
 ////    int k1 = RandomGenerator::rand(0, tpca_para_.n_customer_ - 1);
 ////    int k2 = RandomGenerator::rand(0, tpca_para_.n_teller_ - 1);
 ////    int k3 = RandomGenerator::rand(0, tpca_para_.n_branch_ - 1);
-////    Log_info("gen req, coo_id: %x \t k1: %x k2: %x, k3: %x", cid, k1, k2, k3);
+////    Log_info("gen req, coo_id: {:x} \t k1: {:x} k2: {:x}, k3: {:x}", cid, k1, k2, k3);
 //  } else if (dist == "zipf") {
 //    static auto theta = Config::GetConfig()->coeffcient_;
 //    static ZipfDist d1(theta, tpca_para_.n_customer_);
@@ -112,7 +112,7 @@ void TpcaWorkload::GetTxRequest(TxRequest* req, uint32_t cid) {
       key += (cid & 0xFFFFFFFF);
       key = key >= 0 ? key : -key;
       key %= tpca_para_.n_branch_;
-      Log_debug("choosing key, coo_id: %x \t key: %llx", cid, key);
+      Log_debug("choosing key, coo_id: {:x} \t key: {:x}", cid, key);
     }
     int32_t& key = key_ids_[cid];
     req->input_ = {
@@ -171,7 +171,7 @@ void TpcaWorkload::RegisterPrecedures() {
        DF_NO,
        PROC {
          for (int i = 0; i < BATCH; ++i) {
-//        Log::debug("output: %p, output_size: %p", output, output_size);
+//        Log_debug("output: {}, output_size: {}", output, output_size);
          Value buf;
          verify(cmd.input.size() >= 1);
 

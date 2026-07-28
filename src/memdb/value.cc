@@ -55,7 +55,7 @@ int Value::compare(const Value& o) const {
         break;
 
     default:
-        Log::fatal("unexpected value type %d", k_);
+        rrr::Log_fatal("unexpected value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -79,7 +79,7 @@ void Value::write_binary(char* buf) const {
         memcpy(buf, &((*p_str_)[0]), p_str_->size());
         break;
     default:
-        Log::fatal("cannot write_binary() on value type %d", k_);
+        rrr::Log_fatal("cannot write_binary() on value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -105,7 +105,7 @@ blob Value::get_blob() const {
         b.len = p_str_->size();
         break;
     default:
-        Log::fatal("cannot get_blob() on value type %d", k_);
+        rrr::Log_fatal("cannot get_blob() on value type {}", (int)k_);
         verify(0);
         break;
     }
@@ -130,7 +130,7 @@ std::ostream& operator<< (std::ostream& o, const Value& v) {
         o << "STR:" << *v.p_str_;
         break;
     default:
-        Log::fatal("unexpected value type %d", v.k_);
+        rrr::Log_fatal("unexpected value type {}", (int)v.k_);
         verify(0);
         break;
     }

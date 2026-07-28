@@ -14,7 +14,7 @@ bool SchedulerTapir::Guard(Tx &tx, Row *row, int col_id, bool write) {
 int SchedulerTapir::OnFastAccept(txid_t tx_id,
                                  const vector<TxPieceData> &txn_cmds) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("receive fast accept for cmd_id: %llx", tx_id);
+  Log_debug("receive fast accept for cmd_id: {:x}", tx_id);
   int ret = SUCCESS;
   // my understanding was that this is a wait-die locking for 2PC-prepare.
   // but to be safe, let us follow the stock protocol.

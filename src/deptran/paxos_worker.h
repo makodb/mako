@@ -22,7 +22,7 @@ namespace janus {
 	inline void read_log(const char* log, int length, const char* custom){
 		uint32_t cid = 0;
 		memcpy(&cid, log, sizeof(uint32_t));
-		Log_info("commit id %ld and length %d from %s", cid, length, custom);
+		Log_info("commit id {} and length {} from {}", cid, length, custom);
 	}
 
 	// removed `class SubmitPool` (~120 LOC) —
@@ -44,22 +44,22 @@ class BulkPrepareLog : public rrr::Serializable<BulkPrepareLog,
   BulkPrepareLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << static_cast<int32_t>(min_prepared_slots.size());
-    for (auto i : min_prepared_slots) ar << i;
-    ar << leader_id;
-    ar << epoch;
+    rrr::Serialize_::serialize(static_cast<int32_t>(min_prepared_slots.size()), ar);
+    for (auto i : min_prepared_slots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       pair<uint32_t, slotid_t> pr;
-      ar >> pr;
+      rrr::Deserialize_::deserialize(pr, ar);
       min_prepared_slots.push_back(pr);
     }
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
   }
 };
 
@@ -76,28 +76,28 @@ class PaxosPrepCmd : public rrr::Serializable<PaxosPrepCmd, MakoCommands> {
   // prefix is `slots.size()` instead of `ballots.size()` — wire
   // format byte-for-byte identical.
   void save(BinaryWriteArchive& ar) const {
-    ar << static_cast<int32_t>(slots.size());
-    for (auto i : slots) ar << i;
-    ar << static_cast<int32_t>(slots.size());
-    for (auto i : ballots) ar << i;
-    ar << leader_id;
+    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : slots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
+    for (auto i : ballots) rrr::Serialize_::serialize(i, ar);
+    rrr::Serialize_::serialize(leader_id, ar);
   }
 
   void load(BinaryReadArchive& ar) {
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       slots.push_back(x);
     }
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       ballot_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       ballots.push_back(x);
     }
-    ar >> leader_id;
+    rrr::Deserialize_::deserialize(leader_id, ar);
   }
 };
 
@@ -110,13 +110,13 @@ class HeartBeatLog : public rrr::Serializable<HeartBeatLog, MakoCommands> {
   HeartBeatLog() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << leader_id;
-    ar << epoch;
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
   }
 };
 
@@ -130,22 +130,22 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      ar << leader_id;
-      ar << epoch;
-      ar << static_cast<int32_t>(sync_commit_slot.size());
+      rrr::Serialize_::serialize(leader_id, ar);
+      rrr::Serialize_::serialize(epoch, ar);
+      rrr::Serialize_::serialize(static_cast<int32_t>(sync_commit_slot.size()), ar);
       for (size_t i = 0; i < sync_commit_slot.size(); i++) {
-        ar << sync_commit_slot[i];
+        rrr::Serialize_::serialize(sync_commit_slot[i], ar);
       }
     }
 
     void load(BinaryReadArchive& ar) {
-      ar >> leader_id;
-      ar >> epoch;
+      rrr::Deserialize_::deserialize(leader_id, ar);
+      rrr::Deserialize_::deserialize(epoch, ar);
       int32_t sz;
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         slotid_t x;
-        ar >> x;
+        rrr::Deserialize_::deserialize(x, ar);
         sync_commit_slot.push_back(x);
       }
     }
@@ -163,40 +163,41 @@ class SyncLogRequest : public rrr::Serializable<SyncLogRequest,
 class SyncLogResponse : public rrr::Serializable<SyncLogResponse,
                                                  MakoCommands> {
   public:
-    vector<shared_ptr<janus::Command>> sync_data;
+    vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
-      ar << static_cast<int32_t>(sync_data.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(sync_data.size()), ar);
       for (size_t i = 0; i < sync_data.size(); i++) {
-        ar << *sync_data[i];
+        rrr::Serialize_::serialize(*sync_data[i], ar);
       }
-      ar << static_cast<int32_t>(missing_slots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots.size()), ar);
       for (size_t i = 0; i < missing_slots.size(); i++) {
-        ar << static_cast<int32_t>(missing_slots[i].size());
+        rrr::Serialize_::serialize(static_cast<int32_t>(missing_slots[i].size()), ar);
         for (size_t j = 0; j < missing_slots[i].size(); j++) {
-          ar << missing_slots[i][j];
+          rrr::Serialize_::serialize(missing_slots[i][j], ar);
         }
       }
     }
 
     void load(BinaryReadArchive& ar) {
       int32_t sz;
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
-        auto x = std::make_shared<janus::Command>();
-        ar >> *x;
+        auto x = rusty::Arc<janus::Command>::make();
+        // @unsafe - unique-owner mutation window (factory-fresh Arc).
+        rrr::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
         sync_data.push_back(std::move(x));
       }
-      ar >> sz;
+      rrr::Deserialize_::deserialize(sz, ar);
       for (int i = 0; i < sz; i++) {
         int32_t sz1;
-        ar >> sz1;
+        rrr::Deserialize_::deserialize(sz1, ar);
         vector<slotid_t> cur;
         for (int j = 0; j < sz1; j++) {
           slotid_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           cur.push_back(x);
         }
         missing_slots.push_back(std::move(cur));
@@ -214,22 +215,22 @@ class SyncNoOpRequest : public rrr::Serializable<SyncNoOpRequest,
   SyncNoOpRequest() = default;
 
   void save(BinaryWriteArchive& ar) const {
-    ar << leader_id;
-    ar << epoch;
-    ar << static_cast<int32_t>(sync_slots.size());
+    rrr::Serialize_::serialize(leader_id, ar);
+    rrr::Serialize_::serialize(epoch, ar);
+    rrr::Serialize_::serialize(static_cast<int32_t>(sync_slots.size()), ar);
     for (size_t i = 0; i < sync_slots.size(); i++) {
-      ar << sync_slots[i];
+      rrr::Serialize_::serialize(sync_slots[i], ar);
     }
   }
 
   void load(BinaryReadArchive& ar) {
-    ar >> leader_id;
-    ar >> epoch;
+    rrr::Deserialize_::deserialize(leader_id, ar);
+    rrr::Deserialize_::deserialize(epoch, ar);
     int32_t sz;
-    ar >> sz;
+    rrr::Deserialize_::deserialize(sz, ar);
     for (int i = 0; i < sz; i++) {
       slotid_t x;
-      ar >> x;
+      rrr::Deserialize_::deserialize(x, ar);
       sync_slots.push_back(x);
     }
   }
@@ -281,7 +282,7 @@ public:
   int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<shared_ptr<janus::Command>> cmds{};
+  vector<rusty::Arc<janus::Command>> cmds{};
 
   BulkPaxosCmd() = default;
   ~BulkPaxosCmd() {
@@ -291,41 +292,42 @@ public:
   }
 
   void save(BinaryWriteArchive& ar) const {
-      ar << static_cast<int32_t>(leader_id);
-      ar << static_cast<int32_t>(slots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(leader_id), ar);
+      rrr::Serialize_::serialize(static_cast<int32_t>(slots.size()), ar);
       for (auto i : slots) {
-          ar << i;
+          rrr::Serialize_::serialize(i, ar);
       }
-      ar << static_cast<int32_t>(ballots.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(ballots.size()), ar);
       for (auto i : ballots) {
-          ar << i;
+          rrr::Serialize_::serialize(i, ar);
       }
-      ar << static_cast<int32_t>(cmds.size());
+      rrr::Serialize_::serialize(static_cast<int32_t>(cmds.size()), ar);
       for (const auto& sp : cmds) {
-          ar << *sp;
+          rrr::Serialize_::serialize(*sp, ar);
       }
   }
 
   void load(BinaryReadArchive& ar) {
       int32_t szs, szb, szc;
-      ar >> leader_id;
-      ar >> szs;
+      rrr::Deserialize_::deserialize(leader_id, ar);
+      rrr::Deserialize_::deserialize(szs, ar);
       for (int i = 0; i < szs; i++) {
           slotid_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           slots.push_back(x);
       }
-      ar >> szb;
+      rrr::Deserialize_::deserialize(szb, ar);
       // Read exactly the number of ballots that were serialized.
       for (int i = 0; i < szb; i++) {
           ballot_t x;
-          ar >> x;
+          rrr::Deserialize_::deserialize(x, ar);
           ballots.push_back(x);
       }
-      ar >> szc;
+      rrr::Deserialize_::deserialize(szc, ar);
       for (int i = 0; i < szc; i++) {
-          auto sp_md = std::make_shared<janus::Command>();
-          ar >> *sp_md;
+          auto sp_md = rusty::Arc<janus::Command>::make();
+          // @unsafe - unique-owner mutation window (factory-fresh Arc).
+          rrr::Deserialize_::deserialize(sp_md.get_mut().unwrap(), ar);
           cmds.push_back(std::move(sp_md));
       }
   }
@@ -450,8 +452,6 @@ class ElectionState {
 public: 
   std::recursive_mutex election_mutex{};
   pthread_t election_th_;
-  pthread_t heartbeat_th_;
-  pthread_t heartbeat_th_checking_;
   bool running = true;
   int timeout = 1; // in seconds
   int heartbeat_timeout = 300; // in milliseconds
@@ -514,7 +514,7 @@ public:
 
   int set_epoch(int val = -1){
     if(val == -1){
-      //Log_info("XXXXX current default epoch %d", cur_epoch);
+      //Log_info("XXXXX current default epoch {}", cur_epoch);
       return ++cur_epoch;
     } else{
       cur_epoch = val;
@@ -541,7 +541,7 @@ public:
 
   void set_leader(int val){
     //if(val != 0)
-//	Log_info("Leader being set %d", val);
+//	Log_info("Leader being set {}", val);
     leader_id = val;
   }
 

@@ -131,7 +131,9 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
   mdb::Row* r = nullptr;
   switch (mode) {
     case MODE_2PL:
-      r = mdb::FineLockedRow::create(schema, row_data);
+      // FineLockedRow/ALock were removed as dead code; 2PL fine-grained
+      // locking is no longer available.
+      verify(0);
       break;
     case MODE_RO6:
       r = RO6Row::create(schema, row_data);
@@ -277,8 +279,8 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
       break;
   }
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
-	Log_info("time of CreateTx on server: %d", end.tv_nsec-begin.tv_nsec);*/
-  Log_debug("exit CreateTx, Tx address=%p", sp_tx.get());
+	Log_info("time of CreateTx on server: {}", end.tv_nsec-begin.tv_nsec);*/
+  Log_debug("exit CreateTx, Tx address={}", (void*)sp_tx.get());
   return sp_tx;
 }
 
@@ -301,7 +303,7 @@ Executor* Frame::CreateExecutor(cmdid_t cmd_id, TxLogServer* sched) {
 }
 
 TxLogServer* Frame::CreateScheduler() {
-  Log_info("enter CreateScheduler, mode=%d", Config::GetConfig()->tx_proto_);
+  Log_info("enter CreateScheduler, mode={}", Config::GetConfig()->tx_proto_);
   auto mode = Config::GetConfig()->tx_proto_;
   TxLogServer *sch = nullptr;
   if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {

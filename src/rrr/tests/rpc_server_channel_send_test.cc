@@ -17,14 +17,12 @@
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-#include <rusty/hashmap.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/refcell.hpp>
-#include <rusty/vec.hpp>
 
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 namespace rrr {
 namespace {
@@ -95,14 +93,15 @@ inline rusty::Arc<RpcServiceContext> make_test_ctx() {
     rusty::Vec<rusty::RefCell<ServiceProxy>> services;
     auto pending = rusty::Arc<std::atomic<int>>::make(0);
     auto drop_heartbeats = rusty::Arc<std::atomic<bool>>::make(false);
-    return rusty::Arc<RpcServiceContext>::make(
-        std::move(rpc_to_service),
-        std::move(fast_rpc_ids),
-        std::move(services),
-        std::string("0.0.0.0:0"),
-        std::move(pending),
-        std::move(drop_heartbeats),
-        kFakeServerInstanceId);
+    return rusty::Arc<RpcServiceContext>::new_(
+        RpcServiceContext::new_(
+            std::move(rpc_to_service),
+            std::move(fast_rpc_ids),
+            std::move(services),
+            std::string("0.0.0.0:0"),
+            std::move(pending),
+            std::move(drop_heartbeats),
+            kFakeServerInstanceId));
 }
 
 class ServerChannelSendTest : public ::testing::Test {
@@ -151,25 +150,27 @@ TEST_F(ServerChannelSendTest, ReplyCapturesFrameWithExpectedBody) {
 
     const std::string user_payload = "hello";
     sconn().reply(req, /*error_code=*/0, [&](BinaryWriteArchive& out) {
-        out << user_payload;
+        rrr::Serialize_::serialize(user_payload, out);
     });
 
     ASSERT_EQ(stub->count(), 1u);
     const auto& bytes = stub->captured().front();
 
-    Marshal body;
-    body.write(bytes.data(), bytes.size());
+    rrr::BufferSource src(bytes.data(), bytes.size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
 
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    body >> v_xid >> v_err >> v_instance;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_instance, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 42);
     EXPECT_EQ(v_err.get(), 0);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
 
     std::string decoded;
-    body >> decoded;
+    rrr::Deserialize_::deserialize(decoded, rar);
     EXPECT_EQ(decoded, user_payload);
 }
 
@@ -186,13 +187,15 @@ TEST_F(ServerChannelSendTest, ReplyPropagatesErrorCode) {
     sconn().reply(req, /*error_code=*/ENOENT, [](BinaryWriteArchive&) {});
 
     ASSERT_EQ(stub->count(), 1u);
-    Marshal body;
-    body.write(stub->captured().front().data(),
+    rrr::BufferSource src(stub->captured().front().data(),
                stub->captured().front().size());
+    rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
     v64 v_xid;
     v32 v_err;
     v64 v_instance;
-    body >> v_xid >> v_err >> v_instance;
+    rrr::Deserialize_::deserialize(v_xid, rar);
+    rrr::Deserialize_::deserialize(v_err, rar);
+    rrr::Deserialize_::deserialize(v_instance, rar);
     EXPECT_EQ(static_cast<i64>(v_xid.get()), 7);
     EXPECT_EQ(v_err.get(), ENOENT);
     EXPECT_EQ(static_cast<uint64_t>(v_instance.get()), kFakeServerInstanceId);
@@ -210,22 +213,24 @@ TEST_F(ServerChannelSendTest, MultipleSequentialRepliesCaptureInOrder) {
         Request req;
         req.xid = xid;
         sconn().reply(req, 0, [&](BinaryWriteArchive& out) {
-            out << static_cast<i64>(xid * 10);
+            rrr::Serialize_::serialize(static_cast<i64>(xid * 10), out);
         });
     }
     ASSERT_EQ(stub->count(), 5u);
     for (std::size_t i = 0; i < 5u; ++i) {
-        Marshal body;
-        body.write(stub->captured()[i].data(),
+        rrr::BufferSource src(stub->captured()[i].data(),
                    stub->captured()[i].size());
+        rrr::BinaryReadArchive rar(rrr::make_source_proxy(&src));
         v64 v_xid;
         v32 v_err;
         v64 v_instance;
-        body >> v_xid >> v_err >> v_instance;
+        rrr::Deserialize_::deserialize(v_xid, rar);
+        rrr::Deserialize_::deserialize(v_err, rar);
+        rrr::Deserialize_::deserialize(v_instance, rar);
         EXPECT_EQ(static_cast<i64>(v_xid.get()), static_cast<i64>(i + 1));
         EXPECT_EQ(v_err.get(), 0);
         i64 user_value;
-        body >> user_value;
+        rrr::Deserialize_::deserialize(user_value, rar);
         EXPECT_EQ(user_value, static_cast<i64>((i + 1) * 10));
     }
 }

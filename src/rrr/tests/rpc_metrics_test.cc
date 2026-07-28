@@ -9,6 +9,11 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.circuit_breaker;
+import rrr.connection_metrics;
+import rrr.request_options;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -43,7 +48,7 @@ bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
 // ============================================================================
 
 TEST(ConnectionMetricsTest, InitialValuesZero) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
     EXPECT_EQ(metrics.requests_sent(), 0u);
     EXPECT_EQ(metrics.requests_completed(), 0u);
     EXPECT_EQ(metrics.requests_failed(), 0u);
@@ -63,7 +68,7 @@ TEST(ConnectionMetricsTest, InitialValuesZero) {
 }
 
 TEST(ConnectionMetricsTest, RequestSentIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     EXPECT_EQ(metrics.requests_sent(), 1u);
@@ -76,7 +81,7 @@ TEST(ConnectionMetricsTest, RequestSentIncrement) {
 }
 
 TEST(ConnectionMetricsTest, RequestCompletedWithLatency) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     metrics.record_request_completed_with_latency(1000);  // 1000 microseconds
@@ -89,7 +94,7 @@ TEST(ConnectionMetricsTest, RequestCompletedWithLatency) {
 }
 
 TEST(ConnectionMetricsTest, RequestCompletedWithoutLatency) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     metrics.record_request_completed();
@@ -100,7 +105,7 @@ TEST(ConnectionMetricsTest, RequestCompletedWithoutLatency) {
 }
 
 TEST(ConnectionMetricsTest, RequestFailedIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     metrics.record_request_failed();
@@ -110,7 +115,7 @@ TEST(ConnectionMetricsTest, RequestFailedIncrement) {
 }
 
 TEST(ConnectionMetricsTest, RequestTimeoutIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     metrics.record_request_timeout();
@@ -120,7 +125,7 @@ TEST(ConnectionMetricsTest, RequestTimeoutIncrement) {
 }
 
 TEST(ConnectionMetricsTest, ByteCountersAccumulate) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_bytes_sent(100);
     metrics.record_bytes_sent(200);
@@ -132,7 +137,7 @@ TEST(ConnectionMetricsTest, ByteCountersAccumulate) {
 }
 
 TEST(ConnectionMetricsTest, ReconnectCountIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_reconnect();
     EXPECT_EQ(metrics.reconnect_count(), 1u);
@@ -143,7 +148,7 @@ TEST(ConnectionMetricsTest, ReconnectCountIncrement) {
 }
 
 TEST(ConnectionMetricsTest, RetryAttemptIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_retry_attempt();
     EXPECT_EQ(metrics.retry_attempts(), 1u);
@@ -154,7 +159,7 @@ TEST(ConnectionMetricsTest, RetryAttemptIncrement) {
 }
 
 TEST(ConnectionMetricsTest, CircuitAndQueueCountersIncrement) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_queue_drop();
     metrics.record_queue_drop();
@@ -173,7 +178,7 @@ TEST(ConnectionMetricsTest, CircuitAndQueueCountersIncrement) {
 }
 
 TEST(ConnectionMetricsTest, SuccessRateCalculation) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     // No requests = 100% success
     EXPECT_EQ(metrics.success_rate_percent(), 100u);
@@ -193,7 +198,7 @@ TEST(ConnectionMetricsTest, SuccessRateCalculation) {
 }
 
 TEST(ConnectionMetricsTest, AverageLatencyCalculation) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     // No completions = 0 avg
     EXPECT_EQ(metrics.avg_latency_us(), 0u);
@@ -208,7 +213,7 @@ TEST(ConnectionMetricsTest, AverageLatencyCalculation) {
 }
 
 TEST(ConnectionMetricsTest, MinMaxLatencyTracking) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_completed_with_latency(500);
     EXPECT_EQ(metrics.min_latency_us(), 500u);
@@ -224,7 +229,7 @@ TEST(ConnectionMetricsTest, MinMaxLatencyTracking) {
 }
 
 TEST(ConnectionMetricsTest, Reset) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     metrics.record_request_sent();
     metrics.record_request_completed_with_latency(1000);
@@ -259,7 +264,7 @@ TEST(ConnectionMetricsTest, Reset) {
 }
 
 TEST(ConnectionMetricsTest, ConnectTimeRecorded) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     EXPECT_EQ(metrics.connect_time_ms(), 0u);
 
@@ -271,7 +276,7 @@ TEST(ConnectionMetricsTest, ConnectTimeRecorded) {
 }
 
 TEST(ConnectionMetricsTest, ThreadSafety) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
     std::vector<std::thread> threads;
     const int num_threads = 4;
     const int ops_per_thread = 100;
@@ -299,7 +304,7 @@ TEST(ConnectionMetricsTest, ThreadSafety) {
 }
 
 TEST(ConnectionMetricsTest, InFlightNeverNegativeAndReturnsToZero) {
-    ConnectionMetrics metrics;
+    auto metrics = ConnectionMetrics::new_();
 
     // Terminal events without a prior send should saturate at zero.
     metrics.record_request_failed();
@@ -385,7 +390,8 @@ public:
         }
 
         v32 payload;
-        req->m >> payload;
+        rrr::BinaryReadArchive __req_ar__(rrr::make_source_proxy(&req->src));
+        rrr::Deserialize_::deserialize(payload, __req_ar__);
 
         int call = call_count.fetch_add(1) + 1;
         if (call <= drops_before_reply_) {
@@ -399,7 +405,7 @@ public:
 
         auto sconn = sconn_opt.unwrap();
         const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](BinaryWriteArchive& m) {
-            m << payload;
+            rrr::Serialize_::serialize(payload, m);
         });
     }
 
@@ -425,10 +431,10 @@ protected:
     Server* start_server() {
         constexpr int kMaxPortBindAttempts = 16;
         for (int attempt = 0; attempt < kMaxPortBindAttempts; ++attempt) {
-            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
             auto service_box = rusty::make_box<MetricsTestService>();
-            server->reg_service(std::move(service_box));
-            if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) == 0) {
+            server->reg_service_typed(std::move(service_box));
+            if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) == 0) {
                 return server;
             }
             delete server;
@@ -447,7 +453,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     EXPECT_TRUE(client->connected());
@@ -462,8 +468,8 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     for (int i = 0; i < 5; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -489,7 +495,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     const auto& metrics = client->metrics();
@@ -498,8 +504,8 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     for (int i = 0; i < 3; i++) {
         std::string input = "before_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_ok()) {
             fu_result.unwrap()->wait();
@@ -530,8 +536,8 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
         for (int i = 0; i < 2; i++) {
             std::string input = "after_" + std::to_string(i);
             auto fu_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP,
-                [&](BinaryWriteArchive& m) { m << input; }
+                benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+                [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
             );
             if (fu_result.is_ok()) {
                 fu_result.unwrap()->wait();
@@ -550,7 +556,7 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     const auto& metrics = client->metrics();
@@ -561,8 +567,8 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     // Make a request
     std::string input = "test_data";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
     fu_result.unwrap()->wait();
@@ -587,18 +593,18 @@ TEST_F(ConnectionMetricsIntegrationTest, ClientWithoutConnection) {
 }
 
 TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1);
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     const auto& metrics = client->metrics();
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 30;
     opts.max_retries = 1;
     opts.base_delay_ms = 10;
@@ -608,7 +614,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
 
     auto fu_result = client->request_with_options(
         RetryMetricsRpcService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(11); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(11), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -629,25 +635,25 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
 }
 
 TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdatesTimeoutMetric) {
-    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
     auto service_box = rusty::make_box<RetryMetricsRpcService>(1000);  // Never reply in this test.
     auto* service = service_box.get();
     server->reg_service(std::move(service_box));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())), 0);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     const auto& metrics = client->metrics();
 
-    RequestOptions opts;
+    auto opts = RequestOptions::defaults();
     opts.timeout_ms = 30;
     opts.max_retries = 0;
     opts.idempotent = true;
 
     auto fu_result = client->request_with_options(
         RetryMetricsRpcService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { m << v32(29); });
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(v32(29), m); });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
@@ -670,7 +676,7 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     BufferingConfig buffering;
@@ -687,15 +693,15 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto queued_ok = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [](BinaryWriteArchive& m) { m << std::string("queued_ok"); }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(std::string("queued_ok"), m); }
     );
     ASSERT_TRUE(queued_ok.is_ok());
     auto queued_future = queued_ok.unwrap();
 
     auto queued_rejected = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [](BinaryWriteArchive& m) { m << std::string("queued_reject"); }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(std::string("queued_reject"), m); }
     );
     ASSERT_TRUE(queued_rejected.is_err());
     EXPECT_EQ(queued_rejected.unwrap_err(), kRequestQueueRejectedError);
@@ -721,7 +727,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     client->set_buffering_config(BufferingConfig::disabled());
@@ -733,16 +739,16 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto first = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [](BinaryWriteArchive& m) { m << std::string("first"); }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(std::string("first"), m); }
     );
     ASSERT_TRUE(first.is_err());
     EXPECT_EQ(first.unwrap_err(), ENOTCONN);
     EXPECT_EQ(metrics.circuit_open_transitions(), 1u);
 
     auto second = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [](BinaryWriteArchive& m) { m << std::string("second"); }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(std::string("second"), m); }
     );
     ASSERT_TRUE(second.is_err());
     EXPECT_EQ(second.unwrap_err(), EBUSY);
@@ -751,8 +757,8 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     std::this_thread::sleep_for(milliseconds(20));
 
     auto third = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [](BinaryWriteArchive& m) { m << std::string("third"); }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [](BinaryWriteArchive& m) { rrr::Serialize_::serialize(std::string("third"), m); }
     );
     ASSERT_TRUE(third.is_err());
     EXPECT_EQ(third.unwrap_err(), ENOTCONN);

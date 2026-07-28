@@ -784,7 +784,7 @@ class Graph {
 //          if (scc_set.find(vt) != scc_set.end()) {
 //            type2 = true;
 //          } else {
-//            // Log::debug("parent type greater than 2 but not in the same scc");
+//            // Log_debug("parent type greater than 2 but not in the same scc");
 //          }
 //        }
 //      }
@@ -925,14 +925,14 @@ class Graph {
       auto i = this->vertex_index().find(v->data_->id());
 
       if (i == vertex_index().end()) {
-        //       Log::debug("union: insert a new node in to the graph. node id:
-        // %llx", v->data_.id());
+        //       Log_debug("union: insert a new node in to the graph. node id:
+        // {:x}", v->data_.id());
         new_ov = new V(v->data_->id());
         new_ov->data_ = v->data_;
         vertex_index()[new_ov->data_->id()] = new_ov;
       } else {
-        //       Log::debug("union: the node is already in the graph. node id:
-        // %llx", v->data_.id());
+        //       Log_debug("union: the node is already in the graph. node id:
+        // {:x}", v->data_.id());
         new_ov = i->second;
         new_ov->data_->union_data(*(v->data_), false, is_server);
       }
@@ -963,83 +963,5 @@ class Graph {
     }
   }
 
-  Marshal &to_marshal(Marshal &m) const {
-    verify(managing_memory_);
-    uint64_t n = size();
-    verify(n >= 0 && n < 10000);
-    m << n;
-    int i = 0;
-    for (auto &pair : const_cast<Graph *>(this)->vertex_index()) {
-      auto &v = pair.second;
-      i++;
-//      int32_t n_out_edge = v->outgoing_.size();
-      m << v->id();
-      m << *v;
-//      m << n_out_edge;
-//      for (auto &it : v->outgoing_) {
-//        V* vv = static_cast<V*>(it.first);
-//        verify(vv != nullptr);
-//        uint64_t id = vv->id();
-//        int8_t weight = it.second;
-//        m << id << weight;
-//      }
-    }
-//    verify(i == n);
-    return m;
-  }
-
-  Marshal &from_marshal(Marshal &m) {
-    verify(managing_memory_);
-    verify(size() == 0);
-    uint64_t n;
-    m >> n;
-    verify(n >= 0 && n < 10000);
-    map<uint64_t, shared_ptr<V>> ref;
-//    map<uint64_t, map<int64_t, int8_t> > v_to;
-
-    // Log::debug("marshalling gra, graph size: %d", (int) n);
-
-    int nn = n;
-
-    while (nn-- > 0) {
-      uint64_t v_id;
-      m >> v_id;
-      ref[v_id].reset(new V(v_id)); // TODO? can new RccDTxn?
-      m >> *(ref[v_id]);
-//      int32_t n_out_edge;
-//      m >> n_out_edge;
-//
-//      while (n_out_edge-- > 0) {
-//        uint64_t child_id;
-//        int8_t weight;
-//        m >> child_id;
-//        m >> weight;
-//        v_to[v_id][child_id] = weight;
-//      }
-    }
-    // insert vertexes into graph.
-    verify(ref.size() == n);
-    for (auto &kv : ref) {
-      vertex_index()[kv.first] = kv.second;
-    }
-    // build edge pointers.
-//    for (auto &kv : v_to) {
-//      uint64_t v_id = kv.first;
-//      map<int64_t, int8_t>& o_to = kv.second;
-//      V *v = ref[v_id];
-//
-//      for (auto &tokv : o_to) {
-//        uint64_t child_vid = tokv.first;
-//        int8_t weight = tokv.second;
-//        V *child_v = ref[child_vid];
-//        v->outgoing_[child_v] = weight;
-//        child_v->incoming_[v] = weight;
-//        child_v->parents_.insert(v->id());
-//      }
-//    }
-
-//    verify(size() > 0);
-    return m;
-  }
 };
 }  // namespace janus

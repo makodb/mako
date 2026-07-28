@@ -15,17 +15,9 @@ namespace janus {
 
 class RccTx: public Tx, public Vertex<RccTx> {
  public:
-  class StatusBox : public BoxEvent<int> {
-   public:
-    int& Get() {
-      verify(is_set_);
-      return BoxEvent<int>::get();
-    }
-    void Set(const int& x) {
-//      verify(x != REJECT);
-      BoxEvent<int>::set(x);
-    }
-  };
+  // (StatusBox removed — it was a dead-convenience subclass of BoxEvent<int>;
+  //  every call site uses BoxEvent<int>'s own set/get/wait/status_/is_set_
+  //  directly, so local_validated_/global_validated_ are now Arc<BoxEvent<int>>.)
   bool mocking_janus_{false};
 
   void __DebugCheckParents(rank_t rank);
@@ -93,12 +85,12 @@ class RccTx: public Tx, public Vertex<RccTx> {
    public:
     int value_{};
 //  vector<shared_ptr<IntEvent>> events_{};
-    vector<shared_ptr<IntEvent>> events_{}; // waiting for commits
+    vector<rusty::Arc<IntEvent>> events_{}; // waiting for commits
     void set(const int& v) {
       value_ = v;
       if (v >= TXN_CMT) {
         for (auto& sp_ev: events_) {
-          verify(sp_ev->target_ == TXN_CMT);
+          verify(sp_ev->target_.get() == TXN_CMT);
           sp_ev->set(v);
         }
         events_.clear();
@@ -112,11 +104,11 @@ class RccTx: public Tx, public Vertex<RccTx> {
         return;
       }
       auto sp_ev =  Reactor::create_sp_event<IntEvent>();
-      sp_ev->value_ = value_;
-      sp_ev->target_ = x;
+      sp_ev->value_.set(value_);
+      sp_ev->target_.set(x);
       events_.push_back(sp_ev);
-//  sp_ev->wait(1000*1000*1000);
-//  verify(sp_ev->status_ != Event::TIMEOUT);
+//  sp_ev->wait_timeout(1000*1000*1000);
+//  verify(sp_ev->status_ != EventStatus::TIMEOUT);
       sp_ev->wait();
     }
   };
@@ -133,7 +125,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
     RccTx* traverse_path_start_{nullptr};
     RccTx* traverse_path_waitingon_{nullptr};
     TraverseStatus traverse_path_waiting_status_{ERROR};
-    shared_ptr<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
+    rusty::Arc<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
     TxnOutput *p_output_reply_ = nullptr;
     TxnOutput output_ = {};
     bool log_apply_started_{false}; // compared to ???
@@ -142,9 +134,9 @@ class RccTx: public Tx, public Vertex<RccTx> {
     bool waiting_all_anc_committing_{false};
     SharedIntEvent wait_all_anc_commit_done_{};
     bool __debug_local_validated_foreign_{false};
-    shared_ptr<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
-    shared_ptr<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
-    shared_ptr<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
+    rusty::Arc<BoxEvent<int>> local_validated_{Reactor::create_sp_event<BoxEvent<int>>()};
+    rusty::Arc<BoxEvent<int>> global_validated_{Reactor::create_sp_event<BoxEvent<int>>()};
+    rusty::Arc<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
 //  bool fully_dispatched_{false};
     vector<SimpleCommand> dreqs_ = {};
     // hopefully this makes involve checks faster
@@ -240,7 +232,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
       auto it = partition_.begin();
       std::advance(it, i);
       uint32_t id = *(partition_.begin());
-      Log::debug("random a related server, id: %x", id);
+      Log_debug("random a related server, id: {:x}", id);
       return id;
     }
 
@@ -340,42 +332,20 @@ class RccTx: public Tx, public Vertex<RccTx> {
 typedef vector<pair<txid_t, ParentEdge<RccTx>>> parent_set_t;
 
 
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const ParentEdge<RccTx> &e) {
-  m << e.partitions_;
-  return m;
-}
-
-inline rrr::Marshal &operator>>(rrr::Marshal &m, ParentEdge<RccTx> &e) {
-  m >> e.partitions_;
-  return m;
-}
-
-// archive operators for ParentEdge<RccTx>
-// (mirrors the Marshal-based pair byte-for-byte). Used by rcc_rpc.h's
+// archive operators for ParentEdge<RccTx>. Used by rcc_rpc.h's
 // archive emission to serialize parent_set_t fields (a typedef for
-// vector<pair<txid_t, ParentEdge<RccTx>>>).
-inline rrr::BinaryWriteArchive &operator<<(rrr::BinaryWriteArchive &ar, const ParentEdge<RccTx> &e) {
-  ar << e.partitions_;
-  return ar;
+// vector<pair<txid_t, ParentEdge<RccTx>>>). (Marshal-form mirrors
+// deleted — Marshal-deprecation slice A.)
+inline void serialize(const ParentEdge<RccTx> &e, rrr::BinaryWriteArchive& ar) {
+  rrr::Serialize_::serialize(e.partitions_, ar);
 }
 
-inline rrr::BinaryReadArchive &operator>>(rrr::BinaryReadArchive &ar, ParentEdge<RccTx> &e) {
-  ar >> e.partitions_;
-  return ar;
+inline rrr::BinaryWriteArchive& operator<<(rrr::BinaryWriteArchive& ar, const ParentEdge<RccTx> &e) { serialize(e, ar); return ar; }
+
+inline void deserialize(ParentEdge<RccTx> &e, rrr::BinaryReadArchive& ar) {
+  rrr::Deserialize_::deserialize(e.partitions_, ar);
 }
 
-inline rrr::Marshal &operator<<(rrr::Marshal &m, const RccTx &ti) {
-//  m << ti.tid_ << ti.status() << ti.partition_ << ti.parents_;
-  verify(0);
-  return m;
-}
-
-inline rrr::Marshal &operator>>(rrr::Marshal &m, RccTx &ti) {
-  int8_t status;
-  verify(0);
-//  m >> ti.tid_ >> status >> ti.partition_ >> ti.parents_;
-//  ti.union_status(status);
-  return m;
-}
+inline rrr::BinaryReadArchive& operator>>(rrr::BinaryReadArchive& ar, ParentEdge<RccTx> &e) { deserialize(e, ar); return ar; }
 
 } // namespace janus

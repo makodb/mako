@@ -92,22 +92,34 @@ class Distribution {
     return sum / data_.size();
   }
   string statistics() {
-    std::ostringstream oss;
-    oss << std::setw(7) << "count" << std::setw(9) << count();
-    oss << std::setw(7) << " 0pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.0);
-    oss << std::setw(7) << "50pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.5);
-    oss << std::setw(7) << "90pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.9);
-    oss << std::setw(7) << "99pct" << std::setw(9) << std::fixed << std::setprecision(2) << pct(0.99);
-    oss << std::setw(7) << "  ave" << std::setw(9) << std::fixed << std::setprecision(2) << ave();
-    return oss.str();
+    // snprintf instead of iomanip manipulators: under clang-22
+    // `import std`, the <iomanip> operator<< overloads are not reliably
+    // reachable in module TUs (same fix as rrr base/common.h).
+    char buf[64];
+    string out;
+    snprintf(buf, sizeof(buf), "%7s%9zu", "count", count());
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", " 0pct", pct(0.0));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "50pct", pct(0.5));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "90pct", pct(0.9));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "99pct", pct(0.99));
+    out += buf;
+    snprintf(buf, sizeof(buf), "%7s%9.2f", "  ave", ave());
+    out += buf;
+    return out;
   }
   string distribution() {
-    std::ostringstream oss;
+    // snprintf instead of iomanip manipulators (see statistics()).
+    char buf[32];
+    string out;
     for (int i = 0; i <= 100; i += 10) {
-      // oss << i << "pct ";
-      oss << std::setw(9) << std::fixed << std::setprecision(2) << pct(i / 100.0);
+      snprintf(buf, sizeof(buf), "%9.2f", pct(i / 100.0));
+      out += buf;
     }
-    return oss.str();
+    return out;
   }
 };
 
@@ -136,7 +148,10 @@ class Frequency {
     std::stringstream ss;
     int i = 0;
     for (set<pair<int, int>>::iterator it = frequency.begin(); it != frequency.end() && i < 10; it++, i++) {
-      ss << std::fixed << std::setprecision(6) << -it->first * 100.0 / count() << " (" << it->second << "), ";
+      // snprintf for the %.6f part instead of iomanip (see statistics()).
+      char buf[48];
+      snprintf(buf, sizeof(buf), "%.6f", -it->first * 100.0 / count());
+      ss << buf << " (" << it->second << "), ";
     }
     return ss.str();
   }
@@ -183,9 +198,9 @@ class Witness {
       pair<int32_t, int32_t> cmd_id = SimpleRWCommand::GetCmdID(cmd_);
       uint64_t cmd_id_combined = SimpleRWCommand::GetCombinedCmdID(cmd_);
       if (operation_ == 0) {
-        Log_info("Log %.2f size %d suc %d key %" PRId32 " push_back %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key {} push_back {} {} {}", time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else if (operation_ == 1) {
-        Log_info("Log %.2f size %d suc %d key %" PRId32 " remove %" PRId32 " %" PRId32 " %" PRId64, time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
+        Log_info("Log {:.2f} size {} suc {} key {} remove {} {} {}", time_ - init_time, size_, success_, SimpleRWCommand::GetKey(cmd_), cmd_id.first, cmd_id.second, cmd_id_combined);
       } else {
         verify(0);
       }
@@ -237,7 +252,7 @@ class Witness {
   janus::Command cmd_to_recover(key_t key) {
     return candidates_[key].cmd_to_recover();
   }
-  shared_ptr<VecRecData> id_set();
+  rusty::Arc<VecRecData> id_set();
   void reset();
   /* Recover related end */
 #ifdef WITNESS_LOG_DEBUG
@@ -272,7 +287,7 @@ class RecentAverage {
     return filled_once_;
   }
   double ave() {
-    // Log_info("RecentAverage ave %d %d", filled_once_, pointer_);
+    // Log_info("RecentAverage ave {} {}", filled_once_, pointer_);
     verify(filled_once_ || pointer_ > 0);
     return filled_once_ ? sum / size_ : sum / pointer_;
   }
@@ -566,7 +581,7 @@ class TxLogServer {
   // SimpleRWCommand which still takes the legacy shape.
   void ApplyToDatabase(const janus::Command& cmd) {
     SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
-    // Log_info("Apply Write %d key %d value %d", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
+    // Log_info("Apply Write {} key {} value {}", parsed_cmd.IsWrite(), parsed_cmd.key_, parsed_cmd.value_);
     if (parsed_cmd.IsWrite()) {
       database_[parsed_cmd.key_] = parsed_cmd.value_;
       database_operation_count_++;
@@ -574,7 +589,7 @@ class TxLogServer {
   }
 
   uint32_t ChecksumXor() {
-    Log_info("database_operation_count_ %d", database_operation_count_);
+    Log_info("database_operation_count_ {}", database_operation_count_);
     uint32_t checksum = 0;
     for (const auto& kv : database_) {
         checksum ^= static_cast<uint32_t>(kv.first);
@@ -638,7 +653,7 @@ class TxLogServer {
   // take janus::Command;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
-  void DispatchRecoveredCommand(const janus::Command& cmd, shared_ptr<IntEvent> recovery_event = nullptr);
+  void DispatchRecoveredCommand(const janus::Command& cmd, rusty::Option<rusty::Arc<IntEvent>> recovery_event = rusty::None);
   
   void OnJetpackBeginRecovery(const janus::Command& old_view,
                               const janus::Command& new_view, 
@@ -651,7 +666,7 @@ class TxLogServer {
                           epoch_t* reply_oepoch,
                           janus::Command* reply_old_view,
                           janus::Command* reply_new_view,
-                          shared_ptr<VecRecData> id_set);
+                          VecRecData& id_set);
   
   // @unsafe
   virtual void OnJetpackPullCmd(const epoch_t& jepoch,
@@ -662,13 +677,13 @@ class TxLogServer {
                         epoch_t* reply_oepoch,
                         janus::Command* reply_old_view,
                         janus::Command* reply_new_view,
-                        shared_ptr<KeyCmdBatchData>& batch);
+                        KeyCmdBatchData& batch);
   
   void OnJetpackRecordCmd(const epoch_t& jepoch, 
                           const epoch_t& oepoch, 
                           const int32_t& sid, 
                           const int32_t& rid, 
-                          shared_ptr<KeyCmdBatchData>& batch);
+                          const KeyCmdBatchData& batch);
   
   void OnJetpackPrepare(const epoch_t& jepoch, 
                         const epoch_t& oepoch, 

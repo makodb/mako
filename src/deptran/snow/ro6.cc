@@ -86,7 +86,7 @@ void commit(
 ////    ro_list.insert(ro_list.end(), ro_.begin(), ro_.end());
 //
 ////    ro_list.resize(1);
-////    Log::debug("read only tx list size %d carried in start_ack.", ro_.size());
+////    Log_debug("read only tx list size {} carried in start_ack.", ro_.size());
 //}
 
 void TxSnow::kiss(mdb::Row *r, int col, bool immediate) {

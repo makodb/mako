@@ -1,0 +1,80 @@
+PLEASE submit a bug report to https://github.com/Homebrew/homebrew-core/issues and include the crash backtrace, preprocessed source, and associated run script.
+Stack dump:
+0.	Program arguments: /var/tmp/mako-srpc/llvm/bin/clang++ -DMASSTREE_CONFIG_H=\"/var/tmp/mako-srpc/tree/build_clang22/generated/masstree/config.h\" -DMASSTREE_SUPPORT_HEADER=\"/var/tmp/mako-srpc/tree/src/mako/masstree_btree.h\" -DRAFT_DEFAULT_SINGLE_GROUP=1 -DRPC_TEST_HOOKS -DRUSTY_PORTABLE_INTRINSICS=1 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX20_REMOVED_BINDER_TYPEDEFS -D_LIBCPP_ENABLE_CXX20_REMOVED_TYPE_TRAITS -D_LIBCPP_NO_ABI_TAG -I/var/tmp/mako-srpc/tree/src/compat -I/var/tmp/mako-srpc/tree/src -I/var/tmp/mako-srpc/tree/src/rrr -I/var/tmp/mako-srpc/tree/third-party/rusty-cpp/include -I/var/tmp/mako-srpc/tree/src/mako -x c++ -stdlib=libc++ -std=gnu++23 -fPIC -stdlib=libc++ -w -Wreturn-type -I/var/tmp/mako-srpc/tree/build_clang22/generated/masstree -I/var/tmp/mako-srpc/tree/build_clang22/generated -Isrc/mako -MD -MP -I/var/tmp/mako-srpc/tree/third-party/lz4 -Isrc -I/var/tmp/mako-srpc/tree -DCONFIG_H=\"/var/tmp/mako-srpc/tree/src/mako/config/config-perf.h\" -DRUSTYCPP_DISABLE_ARC_LOG -DREUSE_FIBER -I/var/tmp/mako-srpc/tree/third-party/erpc/src -DERPC_FAKE=true -march=native -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0 -O2 -g -DFAIL_NEW_VERSION -DREAD_MY_WRITES=OFF -DHASHTABLE=OFF -DSTO_OPACITY=OFF -I/usr/include -DUSE_JEMALLOC -fno-omit-frame-pointer -MD -MT CMakeFiles/cluster.dir/src/cluster/shard_manager.h.o -MF CMakeFiles/cluster.dir/src/cluster/shard_manager.h.o.d @CMakeFiles/cluster.dir/src/cluster/shard_manager.h.o.modmap -o CMakeFiles/cluster.dir/src/cluster/shard_manager.h.o -c /var/tmp/mako-srpc/tree/src/cluster/shard_manager.h
+1.	<eof> parser at end of file
+2.	Per-file LLVM IR generation
+3.	/var/tmp/mako-srpc/tree/third-party/rusty-cpp/include/rusty/slice.hpp:2015:16: Generating code for declaration 'rusty::for_in'
+4.	/var/tmp/mako-srpc/tree/third-party/rusty-cpp/include/rusty/slice.hpp:2042:7: LLVM IR generation of compound statement ('{}')
+5.	/var/tmp/mako-srpc/tree/third-party/rusty-cpp/include/rusty/slice.hpp:1821:13: LLVM IR generation of declaration '(lambda)::operator()'
+6.	/var/tmp/mako-srpc/tree/third-party/rusty-cpp/include/rusty/slice.hpp:1821:13: Mangling declaration '(lambda)::operator()'
+ #0 0x000079acafb262b2 llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) (/var/tmp/mako-srpc/llvm/bin/../lib/libLLVM.so.22.1+0xd262b2)
+ #1 0x000079acafb23d5c llvm::sys::CleanupOnSignal(unsigned long) (/var/tmp/mako-srpc/llvm/bin/../lib/libLLVM.so.22.1+0xd23d5c)
+ #2 0x000079acaf9f81d8 CrashRecoverySignalHandler(int) CrashRecoveryContext.cpp:0:0
+ #3 0x000079acae84bdf0 (/lib/x86_64-linux-gnu/libc.so.6+0x3fdf0)
+ #4 0x000079acbaa9a3c9 (anonymous namespace)::CXXNameMangler::mangleSourceName(clang::IdentifierInfo const*) (.isra.0) ItaniumMangle.cpp:0:0
+ #5 0x000079acbaaaffb0 (anonymous namespace)::CXXNameMangler::mangleUnqualifiedName(clang::GlobalDecl, clang::DeclarationName, clang::DeclContext const*, unsigned int, llvm::SmallVector<llvm::StringRef, 4u> const*) (.constprop.0.isra.0) ItaniumMangle.cpp:0:0
+ #6 0x000079acbaab0ec1 (anonymous namespace)::CXXNameMangler::manglePrefix(clang::DeclContext const*, bool) ItaniumMangle.cpp:0:0
+ #7 0x000079acbaab0eac (anonymous namespace)::CXXNameMangler::manglePrefix(clang::DeclContext const*, bool) ItaniumMangle.cpp:0:0
+ #8 0x000079acbaab0fc5 (anonymous namespace)::CXXNameMangler::mangleTemplatePrefix(clang::GlobalDecl, bool) ItaniumMangle.cpp:0:0
+ #9 0x000079acbaab114c (anonymous namespace)::CXXNameMangler::mangleNestedName(clang::GlobalDecl, clang::DeclContext const*, llvm::SmallVector<llvm::StringRef, 4u> const*, bool) ItaniumMangle.cpp:0:0
+#10 0x000079acbaab37a5 (anonymous namespace)::CXXNameMangler::mangleFunctionEncoding(clang::GlobalDecl) ItaniumMangle.cpp:0:0
+#11 0x000079acbaab6f71 (anonymous namespace)::ItaniumMangleContextImpl::mangleCXXName(clang::GlobalDecl, llvm::raw_ostream&) ItaniumMangle.cpp:0:0
+#12 0x000079acbbc7bb86 getMangledNameImpl(clang::CodeGen::CodeGenModule&, clang::GlobalDecl, clang::NamedDecl const*, bool) CodeGenModule.cpp:0:0
+#13 0x000079acbbc8e6a1 clang::CodeGen::CodeGenModule::getMangledName(clang::GlobalDecl) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x268e6a1)
+#14 0x000079acbbca3dc3 clang::CodeGen::CodeGenModule::EmitGlobal(clang::GlobalDecl) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26a3dc3)
+#15 0x000079acbbcab7a7 clang::CodeGen::CodeGenModule::EmitTopLevelDecl(clang::Decl*) (.part.0) CodeGenModule.cpp:0:0
+#16 0x000079acbbd392e1 (anonymous namespace)::CodeGeneratorImpl::HandleTopLevelDecl(clang::DeclGroupRef) ModuleBuilder.cpp:0:0
+#17 0x000079acbbc3a078 clang::BackendConsumer::HandleInterestingDecl(clang::DeclGroupRef) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x263a078)
+#18 0x000079acbc645a70 clang::MultiplexConsumer::HandleInterestingDecl(clang::DeclGroupRef) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x3045a70)
+#19 0x000079acbc437f4e clang::ASTReader::PassInterestingDeclsToConsumer() (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2e37f4e)
+#20 0x000079acbc428445 clang::ASTReader::GetExternalDeclStmt(unsigned long) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2e28445)
+#21 0x000079acba5a144f clang::FunctionDecl::getBody(clang::FunctionDecl const*&) const (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0xfa144f)
+#22 0x000079acba778813 (anonymous namespace)::ExprEvaluatorBase<(anonymous namespace)::RecordExprEvaluator>::handleCallExpr(clang::CallExpr const*, clang::APValue&, (anonymous namespace)::LValue const*) ExprConstant.cpp:0:0
+#23 0x000079acba72b719 EvaluateInPlace(clang::APValue&, (anonymous namespace)::EvalInfo&, (anonymous namespace)::LValue const&, clang::Expr const*, bool) (.part.0) ExprConstant.cpp:0:0
+#24 0x000079acba7ad64b (anonymous namespace)::LValueExprEvaluator::VisitMaterializeTemporaryExpr(clang::MaterializeTemporaryExpr const*) ExprConstant.cpp:0:0
+#25 0x000079acba74eff0 Evaluate(clang::APValue&, (anonymous namespace)::EvalInfo&, clang::Expr const*) ExprConstant.cpp:0:0
+#26 0x000079acba72d8aa EvaluateCallArg(clang::ParmVarDecl const*, clang::Expr const*, (anonymous namespace)::CallRef, (anonymous namespace)::EvalInfo&, bool, clang::APValue**) (.isra.0) ExprConstant.cpp:0:0
+#27 0x000079acba72db87 EvaluateArgs(llvm::ArrayRef<clang::Expr const*>, (anonymous namespace)::CallRef, (anonymous namespace)::EvalInfo&, clang::FunctionDecl const*, bool, (anonymous namespace)::LValue*) (.isra.0) ExprConstant.cpp:0:0
+#28 0x000079acba7784da (anonymous namespace)::ExprEvaluatorBase<(anonymous namespace)::RecordExprEvaluator>::handleCallExpr(clang::CallExpr const*, clang::APValue&, (anonymous namespace)::LValue const*) ExprConstant.cpp:0:0
+#29 0x000079acba74fa2e Evaluate(clang::APValue&, (anonymous namespace)::EvalInfo&, clang::Expr const*) ExprConstant.cpp:0:0
+#30 0x000079acba74fb5c EvaluateAsRValue((anonymous namespace)::EvalInfo&, clang::Expr const*, clang::APValue&) ExprConstant.cpp:0:0
+#31 0x000079acba757742 clang::Expr::EvaluateAsRValue(clang::Expr::EvalResult&, clang::ASTContext const&, bool) const (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x1157742)
+#32 0x000079acba757797 clang::Expr::isEvaluatable(clang::ASTContext const&, clang::Expr::SideEffectsKind) const (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x1157797)
+#33 0x000079acbbbc964b clang::CodeGen::CodeGenFunction::EmitReturnStmt(clang::ReturnStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25c964b)
+#34 0x000079acbbbd85bb clang::CodeGen::CodeGenFunction::EmitCompoundStmtWithoutScope(clang::CompoundStmt const&, bool, clang::CodeGen::AggValueSlot) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d85bb)
+#35 0x000079acbbbd88e4 clang::CodeGen::CodeGenFunction::EmitCompoundStmt(clang::CompoundStmt const&, bool, clang::CodeGen::AggValueSlot) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d88e4)
+#36 0x000079acbbbd8b5a clang::CodeGen::CodeGenFunction::EmitSimpleStmt(clang::Stmt const*, llvm::ArrayRef<clang::Attr const*>) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d8b5a)
+#37 0x000079acbbbd0768 clang::CodeGen::CodeGenFunction::EmitStmt(clang::Stmt const*, llvm::ArrayRef<clang::Attr const*>) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d0768)
+#38 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#39 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#40 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#41 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#42 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#43 0x000079acbbbd77eb clang::CodeGen::CodeGenFunction::EmitIfStmt(clang::IfStmt const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d77eb)
+#44 0x000079acbbbd85bb clang::CodeGen::CodeGenFunction::EmitCompoundStmtWithoutScope(clang::CompoundStmt const&, bool, clang::CodeGen::AggValueSlot) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x25d85bb)
+#45 0x000079acbbc4fd6b clang::CodeGen::CodeGenFunction::EmitFunctionBody(clang::Stmt const*) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x264fd6b)
+#46 0x000079acbbc60eab clang::CodeGen::CodeGenFunction::GenerateCode(clang::GlobalDecl, llvm::Function*, clang::CodeGen::CGFunctionInfo const&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2660eab)
+#47 0x000079acbbca71e1 clang::CodeGen::CodeGenModule::EmitGlobalFunctionDefinition(clang::GlobalDecl, llvm::GlobalValue*) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26a71e1)
+#48 0x000079acbbca37bd clang::CodeGen::CodeGenModule::EmitGlobalDefinition(clang::GlobalDecl, llvm::GlobalValue*) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26a37bd)
+#49 0x000079acbbcac9eb clang::CodeGen::CodeGenModule::EmitDeferred() (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26ac9eb)
+#50 0x000079acbbcaeeb6 clang::CodeGen::CodeGenModule::Release() (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26aeeb6)
+#51 0x000079acbbd388d1 (anonymous namespace)::CodeGeneratorImpl::HandleTranslationUnit(clang::ASTContext&) ModuleBuilder.cpp:0:0
+#52 0x000079acbbc492f5 clang::BackendConsumer::HandleTranslationUnit(clang::ASTContext&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x26492f5)
+#53 0x000079acbc645ab0 clang::MultiplexConsumer::HandleTranslationUnit(clang::ASTContext&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x3045ab0)
+#54 0x000079acba2487cc clang::ParseAST(clang::Sema&, bool, bool) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0xc487cc)
+#55 0x000079acbc5f6c5e clang::FrontendAction::Execute() (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2ff6c5e)
+#56 0x000079acbc576523 clang::CompilerInstance::ExecuteAction(clang::FrontendAction&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2f76523)
+#57 0x000079acbc6a363f clang::ExecuteCompilerInvocation(clang::CompilerInstance*) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x30a363f)
+#58 0x00006179e9e9ca85 cc1_main(llvm::ArrayRef<char const*>, char const*, void*) (/var/tmp/mako-srpc/llvm/bin/clang+++0x18a85)
+#59 0x00006179e9e93fca ExecuteCC1Tool(llvm::SmallVectorImpl<char const*>&, llvm::ToolContext const&, llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem>) driver.cpp:0:0
+#60 0x00006179e9e94025 int llvm::function_ref<int (llvm::SmallVectorImpl<char const*>&)>::callback_fn<clang_main(int, char**, llvm::ToolContext const&)::'lambda'(llvm::SmallVectorImpl<char const*>&)>(long, llvm::SmallVectorImpl<char const*>&) driver.cpp:0:0
+#61 0x000079acbc174c1d void llvm::function_ref<void ()>::callback_fn<clang::driver::CC1Command::Execute(llvm::ArrayRef<std::optional<llvm::StringRef>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>*, bool*) const::'lambda'()>(long) Job.cpp:0:0
+#62 0x000079acaf9f8607 llvm::CrashRecoveryContext::RunSafely(llvm::function_ref<void ()>) (/var/tmp/mako-srpc/llvm/bin/../lib/libLLVM.so.22.1+0xbf8607)
+#63 0x000079acbc175311 clang::driver::CC1Command::Execute(llvm::ArrayRef<std::optional<llvm::StringRef>>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>*, bool*) const (.part.0) Job.cpp:0:0
+#64 0x000079acbc12b656 clang::driver::Compilation::ExecuteCommand(clang::driver::Command const&, clang::driver::Command const*&, bool) const (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2b2b656)
+#65 0x000079acbc12c6b9 clang::driver::Compilation::ExecuteJobs(clang::driver::JobList const&, llvm::SmallVectorImpl<std::pair<int, clang::driver::Command const*>>&, bool) const (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2b2c6b9)
+#66 0x000079acbc14ae8c clang::driver::Driver::ExecuteCompilation(clang::driver::Compilation&, llvm::SmallVectorImpl<std::pair<int, clang::driver::Command const*>>&) (/var/tmp/mako-srpc/llvm/bin/../lib/libclang-cpp.so.22.1+0x2b4ae8c)
+#67 0x00006179e9e98f21 clang_main(int, char**, llvm::ToolContext const&) (/var/tmp/mako-srpc/llvm/bin/clang+++0x14f21)
+#68 0x00006179e9e9399a main (/var/tmp/mako-srpc/llvm/bin/clang+++0xf99a)
+#69 0x000079acae835ca8 __libc_start_call_main ./csu/../sysdeps/nptl/libc_start_call_main.h:74:3
+#70 0x000079acae835d65 call_init ./csu/../csu/libc-start.c:128:20

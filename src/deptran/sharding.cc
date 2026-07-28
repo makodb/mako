@@ -526,13 +526,13 @@ int index_increase(std::map<uint32_t, std::pair<uint32_t, uint32_t> > &index) {
 Value random_value(Value::kind k) {
   switch (k) {
     case Value::I32:
-      return Value((i32) RandomGenerator::rand());
+      return Value((i32) RandomGenerator::rand(0, RAND_MAX));
 
     case Value::I64:
-      return Value((i64) RandomGenerator::rand());
+      return Value((i64) RandomGenerator::rand(0, RAND_MAX));
 
     case Value::DOUBLE:
-      return Value(RandomGenerator::rand_double());
+      return Value(RandomGenerator::rand_double(0.0, (double)RAND_MAX));
 
     case Value::STR:
       return Value(RandomGenerator::int2str_n(RandomGenerator::rand(0, 999), 3));

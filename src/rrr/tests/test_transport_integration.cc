@@ -2,7 +2,6 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <rusty/rc.hpp>
 #include <rusty/arc.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
@@ -25,6 +24,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace std::chrono;
 
@@ -187,7 +187,7 @@ protected:
         poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
 
         // Create server
-        server_ = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
 
         // Register TestRangeService to handle test request types
         auto svc = rusty::make_box<TestRangeService>(
@@ -201,13 +201,13 @@ protected:
 
         // Start server
         std::string addr = "0.0.0.0:" + std::to_string(port_);
-        ASSERT_EQ(server_->start(addr.c_str()), 0) << "Failed to start server on " << addr;
+        ASSERT_EQ(server_->start(reinterpret_cast<const int8_t*>(addr.c_str())), 0) << "Failed to start server on " << addr;
         server_running_ = true;
 
         // Create client
         client_ = rusty::Some(rrr::Client::create(poll_thread_worker_.as_ref().unwrap()));
         std::string connect_addr = "127.0.0.1:" + std::to_string(port_);
-        ASSERT_EQ(client_.as_ref().unwrap()->connect(connect_addr.c_str()), 0)
+        ASSERT_EQ(client_.as_ref().unwrap()->connect(reinterpret_cast<const int8_t*>(connect_addr.c_str()), true), 0)
             << "Failed to connect to " << connect_addr;
 
         // Wait for connection to establish
@@ -242,10 +242,10 @@ protected:
         auto sconn = sconn_opt.unwrap();
 
         // Read request data
-        size_t req_size = req->m.content_size();
+        size_t req_size = req->src.remaining();
         std::vector<char> req_data(req_size);
         if (req_size > 0) {
-            req->m.read(req_data.data(), req_size);
+            req->src.read_bytes(reinterpret_cast<uint8_t*>(req_data.data()), req_size);
         }
 
         // Prepare response: echo back request type and size
@@ -260,7 +260,7 @@ protected:
 
         // Send response
         const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::BinaryWriteArchive& out) {
-            out.write_bytes(&response, sizeof(response));
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&response), sizeof(response));
         });
     }
 };
@@ -269,7 +269,7 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
     // Send a simple request
     std::string request_data = "Hello, Transport!";
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(request_data.data(), request_data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(request_data.data()), request_data.size());
     });
     ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request";
     auto fu = fu_result.unwrap();
@@ -287,7 +287,7 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
         uint32_t req_size;
         uint32_t magic;
     } response;
-    fu->get_reply()->read(&response, sizeof(response));
+    fu->get_reply()->src.read_bytes(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
     EXPECT_EQ(response.req_type, TEST_REQ_TYPE_START);
     EXPECT_EQ(response.req_size, request_data.size());
@@ -299,7 +299,7 @@ TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
     for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
         std::string data = "Request_" + std::to_string(req_type);
         auto fu_result = client_.as_ref().unwrap()->request(req_type, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(data.data(), data.size());
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
         });
         ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request type " << (int)req_type;
         auto fu = fu_result.unwrap();
@@ -312,7 +312,7 @@ TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
             uint32_t req_size;
             uint32_t magic;
         } response;
-        fu->get_reply()->read(&response, sizeof(response));
+        fu->get_reply()->src.read_bytes(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
         EXPECT_EQ(response.req_type, req_type);
     }
@@ -328,7 +328,7 @@ TEST_F(RrrRpcDirectTest, ConcurrentRequests) {
     for (int i = 0; i < num_requests; i++) {
         std::string data = "Concurrent_" + std::to_string(i);
         auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(data.data(), data.size());
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
         });
         ASSERT_TRUE(fu_result.is_ok());
         futures.push_back(fu_result.unwrap());
@@ -349,7 +349,7 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
     std::vector<char> large_data(payload_size, 'X');
 
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(large_data.data(), large_data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(large_data.data()), large_data.size());
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -362,7 +362,7 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
         uint32_t req_size;
         uint32_t magic;
     } response;
-    fu->get_reply()->read(&response, sizeof(response));
+    fu->get_reply()->src.read_bytes(reinterpret_cast<uint8_t*>(&response), sizeof(response));
 
     EXPECT_EQ(response.req_size, payload_size);
 }
@@ -377,7 +377,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
         threads.emplace_back([this, t, requests_per_thread, &success_count]() {
             // Each thread creates its own client
             auto thread_client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-            int ret = thread_client->connect(("127.0.0.1:" + std::to_string(port_)).c_str());
+            int ret = thread_client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true);
             if (ret != 0) return;
 
             std::this_thread::sleep_for(milliseconds(50));
@@ -385,7 +385,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
             for (int i = 0; i < requests_per_thread; i++) {
                 std::string data = "Thread_" + std::to_string(t) + "_" + std::to_string(i);
                 auto fu_result = thread_client->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-                    m.write_bytes(data.data(), data.size());
+                    m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
                 });
                 if (fu_result.is_err()) continue;
                 auto fu = fu_result.unwrap();
@@ -411,7 +411,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
 TEST_F(RrrRpcDirectTest, RequestWithTimeout) {
     std::string data = "Timeout_Test";
     auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-        m.write_bytes(data.data(), data.size());
+        m.write_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
     });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
@@ -432,7 +432,7 @@ TEST_F(RrrRpcDirectTest, StressThroughput) {
     for (int i = 0; i < num_requests; i++) {
         uint32_t seq = i;
         auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-            m.write_bytes(&seq, sizeof(seq));
+            m.write_bytes(reinterpret_cast<const std::uint8_t*>(&seq), sizeof(seq));
         });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
@@ -466,7 +466,7 @@ TEST_F(RrrRpcDirectTest, StressPipelined) {
         for (int i = 0; i < batch_size; i++) {
             uint32_t seq = batch * batch_size + i;
             auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::BinaryWriteArchive& m) {
-                m.write_bytes(&seq, sizeof(seq));
+                m.write_bytes(reinterpret_cast<const std::uint8_t*>(&seq), sizeof(seq));
             });
             if (fu_result.is_err()) continue;
             futures.push_back(fu_result.unwrap());
@@ -511,7 +511,7 @@ protected:
 
 TEST_F(ConnectionResilienceTest, ConnectToNonExistentServer) {
     auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    int result = client->connect("127.0.0.1:19999");
+    int result = client->connect(reinterpret_cast<const int8_t*>("127.0.0.1:19999"), true);
     EXPECT_NE(result, 0);
     client->close();
 }
@@ -520,21 +520,21 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::atomic<int> request_count{0};
 
     // Start server
-    auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+    auto server = new rrr::Server(rrr::Server::new_(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone())));
     auto svc = rusty::make_box<TestSingleService>(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, rrr::ServerReplyFn{});
         }
     });
     server->reg_service(std::move(svc));
-    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(port_)).c_str())), 0);
 
     // Connect client
     auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
     // Send request - use no-op lambda to avoid template overload issues
@@ -552,7 +552,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::this_thread::sleep_for(milliseconds(100));
 
     auto client2 = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
-    ASSERT_EQ(client2->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
+    ASSERT_EQ(client2->connect(reinterpret_cast<const int8_t*>(("127.0.0.1:" + std::to_string(port_)).c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
     // Send another request

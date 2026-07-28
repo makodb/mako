@@ -42,7 +42,7 @@ int Schema::do_add_column(const char* name, Value::kind type, bool key) {
             fixed_part_size_ += sizeof(double);
             break;
         default:
-            Log::fatal("value type %d not recognized", (int) type);
+            rrr::Log_fatal("value type {} not recognized", (int) type);
             verify(0);
             break;
         }

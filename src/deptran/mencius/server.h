@@ -54,7 +54,7 @@ class MenciusServer : public TxLogServer {
   }
 
   ~MenciusServer() {
-    Log_info("site par %d, loc %d: prepare %d, accept %d, commit %d", partition_id_, loc_id_, n_prepare_, n_suggest_, n_commit_);
+    Log_info("site par {}, loc {}: prepare {}, accept {}, commit {}", partition_id_, loc_id_, n_prepare_, n_suggest_, n_commit_);
   }
 
   bool IsLeader() override {
@@ -66,7 +66,7 @@ class MenciusServer : public TxLogServer {
     verify(id >= min_active_slot_);
     auto& sp_instance = logs_[id];
     // for (auto const& x : logs_) {
-    //   Log_info("GetInstance slot_id: %llu on loc_id_:%d [logs]", x.first, this->loc_id_);
+    //   Log_info("GetInstance slot_id: {} on loc_id_:{} [logs]", x.first, this->loc_id_);
     // }
 
     if(!sp_instance)

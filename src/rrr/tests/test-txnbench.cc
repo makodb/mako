@@ -101,13 +101,13 @@ import std;
 //        delete ch;
 //
 //        if (txn_id_ % 1000 == 0) {
-//            Log::info("%u transactions done, avg qps = %d", txn_id_, (int) (txn_id_ / (timer.elapsed())));
+//            Log_info("{} transactions done, avg qps = {}", txn_id_, (int) (txn_id_ / (timer.elapsed())));
 //        }
 //
 //        txn_id_++;
 //    }
 //
-//    Log::info("%d seconds passed, stop benchmark", benchmark_sec);
+//    Log_info("{} seconds passed, stop benchmark", benchmark_sec);
 //
 //    // free resources
 //    TxnRunner::fini();
@@ -207,13 +207,13 @@ import std;
 //        delete ch;
 //
 //        if (txn_id_ % 1000 == 0) {
-//            Log::info("%u transactions done, avg qps = %d", txn_id_, (int) (txn_id_ / (timer.elapsed())));
+//            Log_info("{} transactions done, avg qps = {}", txn_id_, (int) (txn_id_ / (timer.elapsed())));
 //        }
 //
 //        txn_id_++;
 //    }
 //
-//    Log::info("%d seconds passed, stop benchmark", benchmark_sec);
+//    Log_info("{} seconds passed, stop benchmark", benchmark_sec);
 //
 //    // free resources
 //    TxnRunner::fini();
@@ -250,7 +250,7 @@ import std;
 //        DecrWorker(struct sync_stat& s_stat, ThreadPool* thrpool): decr_runs(0), s_stat(s_stat), thrpool(thrpool) {}
 //
 //        void operator() () {
-//            //Log::info("callede");
+//            //Log_info("callede");
 //            while (s_stat.counter.peek_next() <= 0) {
 //                s_stat.m.lock();
 //                s_stat.cv.wait(s_stat.m);
@@ -283,5 +283,5 @@ import std;
 //
 //    thrpool->release();
 //
-//    Log::info("thread sync = %ld/s", long(n_total_ops / timer.elapsed()));
+//    Log_info("thread sync = {}/s", long(n_total_ops / timer.elapsed()));
 //}

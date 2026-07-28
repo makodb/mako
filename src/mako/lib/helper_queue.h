@@ -1,7 +1,14 @@
 #ifndef _LIB_HELPER_QUEUE_H_
 #define _LIB_HELPER_QUEUE_H_
 
+// Only the OFF (rrr-transport) build must avoid pulling eRPC's <queue>-heavy
+// headers in here: under clang-22 + import-std they redeclare std::queue with
+// mismatched abi_tags. HelperQueue uses erpc::ReqHandle only through pointers,
+// so the forward declaration below is sufficient; the full type is included
+// only when eRPC is actually enabled.
+#ifdef MAKO_ENABLE_ERPC
 #include "rpc.h"
+#endif
 
 // Forward declare erpc::ReqHandle to break a circular include cycle:
 //   rpc.h → cc/timing_wheel.h → cc/timely.h → "common.h"

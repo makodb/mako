@@ -14,35 +14,45 @@
 #include <rusty/mutex.hpp>
 #include "../rrr.hpp"
 
+// PollMode et al. live in rrr.epoll_wrapper (trimmed from the consumer
+// umbrella in 08b68144) — import directly.
+import rrr.epoll_wrapper;
+
 import std;
 
 using namespace rrr;
 using namespace std::chrono;
 
-// Concrete implementation of Pollable for testing
+// Concrete test double consumed through `PollableArcShim<TestPollable>`
+// (make_pollable_proxy_from_typed_arc), so it does NOT inherit the
+// `Pollable` trait base — the shim provides the trait; this class only
+// needs matching const-callable hooks (the shim reaches it through
+// `Arc<T>`'s const access). Removal/mode updates go through the
+// fd-based PollThread API (`remove_fd` / `update_mode(fd, mode)`).
 // @unsafe - Uses mutable fields for interior mutability in test scenarios
-class TestPollable : public Pollable {
+class TestPollable {
 private:
-    int fd_;
+    mutable int fd_;  // mutable: close() clears it through const access
     mutable int mode_;  // mutable to allow modification through const methods
     mutable rusty::Function<void()> read_handler_;  // mutable handler
     mutable rusty::Function<void()> write_handler_;  // mutable handler
     mutable rusty::Function<void()> error_handler_;  // mutable handler
 
 public:
-    // No user-declared destructor: Pollable's `virtual ~Pollable() = default;`
-    // covers polymorphic deletion, and omitting our own destructor keeps
-    // the implicit move constructor / move assignment available — required
-    // since `read_handler_` / `write_handler_` / `error_handler_` are
-    // move-only (`rusty::Function` is non-copyable).
     explicit TestPollable(int fd, int mode = PollMode::READ)
         : fd_(fd), mode_(mode) {}
 
-    int fd() const override {
+    TestPollable(TestPollable&& o) noexcept
+        : fd_(o.fd_), mode_(o.mode_),
+          read_handler_(std::move(o.read_handler_)),
+          write_handler_(std::move(o.write_handler_)),
+          error_handler_(std::move(o.error_handler_)) {}
+
+    int fd() const {
         return fd_;
     }
 
-    int poll_mode() const override {
+    int poll_mode() const {
         return mode_;
     }
 
@@ -54,12 +64,12 @@ public:
     }
 
     // Required by Pollable interface
-    size_t content_size() override {
+    size_t content_size() const {
         return 0;  // Test implementation
     }
 
     // @unsafe - Uses mutable field
-    bool handle_read() override {
+    bool handle_read() const {
         // @unsafe {
         if (read_handler_) {
             read_handler_();
@@ -70,7 +80,7 @@ public:
 
     // @unsafe - Uses mutable field
     // Returns MODE_NO_CHANGE since test doesn't need mode updates
-    int handle_write() override {
+    int handle_write() const {
         // @unsafe {
         if (write_handler_) {
             write_handler_();
@@ -80,7 +90,7 @@ public:
     }
 
     // @unsafe - Uses mutable field
-    void handle_error() override {
+    void handle_error() const {
         // @unsafe {
         if (error_handler_) {
             error_handler_();
@@ -89,7 +99,7 @@ public:
     }
 
     // @unsafe - Closes the file descriptor
-    void close() override {
+    void close() const {
         // @unsafe {
         if (fd_ >= 0) {
             ::close(fd_);
@@ -99,12 +109,12 @@ public:
     }
 
     // @safe - Check if closed (fd_ == -1)
-    bool is_closed() const override {
+    bool is_closed() const {
         return fd_ < 0;
     }
 
     // @safe - Test class doesn't use pending write updates
-    bool check_pending_write_update() const override {
+    bool check_pending_write_update() const {
         return false;
     }
 
@@ -175,8 +185,7 @@ TEST_F(ReactorTest, AddRemoveFd) {
     std::this_thread::sleep_for(milliseconds(50));
 
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
 
     // Allow worker thread time to process the remove command
@@ -213,8 +222,7 @@ TEST_F(ReactorTest, PollReadEvent) {
     EXPECT_TRUE(read_triggered);
 
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
     close(fd1);
     close(fd2);
@@ -240,8 +248,7 @@ TEST_F(ReactorTest, PollWriteEvent) {
     EXPECT_TRUE(write_triggered);
 
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
     close(fd1);
     close(fd2);
@@ -281,10 +288,8 @@ TEST_F(ReactorTest, MultipleEvents) {
     EXPECT_EQ(events_triggered, 2);
 
     {
-        Pollable& pollable_ref1 = const_cast<Pollable&>(static_cast<const Pollable&>(*p1));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref1);
-        Pollable& pollable_ref2 = const_cast<Pollable&>(static_cast<const Pollable&>(*p2));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref2);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p1).fd());
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p2).fd());
     }
 
     close(fd1);
@@ -322,16 +327,14 @@ TEST_F(ReactorTest, UpdateMode) {
     // Change to WRITE mode
     p->set_mode(PollMode::WRITE);
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref, PollMode::WRITE);
+        poll_thread_worker_.as_ref().unwrap()->update_mode((*p).fd(), PollMode::WRITE);
     }
 
     std::this_thread::sleep_for(milliseconds(100));
     EXPECT_TRUE(write_triggered);
 
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
     close(fd1);
     close(fd2);
@@ -363,8 +366,7 @@ TEST_F(ReactorTest, ErrorHandling) {
     // This test may not reliably trigger error on all systems
 
     {
-        Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
     close(fd1);
 }
@@ -386,7 +388,7 @@ TEST_F(ReactorTest, EventCreation) {
     // Trigger the event
     event.set(1);
     EXPECT_TRUE(event.is_ready());
-    EXPECT_EQ(event.value_, 1);
+    EXPECT_EQ(event.value_.get(), 1);
 }
 
 TEST_F(ReactorTest, FiberBasic) {
@@ -451,14 +453,14 @@ TEST_F(ReactorTest, QuorumEvent) {
     EXPECT_FALSE(sp_event->is_ready());
     
     // Vote once
-    sp_event->n_voted_yes_ = 1;
+    sp_event->n_voted_yes_.set(1);
     EXPECT_FALSE(sp_event->is_ready());
     
     // Vote again - should trigger
-    sp_event->n_voted_yes_ = 2;
+    sp_event->n_voted_yes_.set(2);
     EXPECT_TRUE(sp_event->is_ready());
     EXPECT_TRUE(sp_event->yes());
-    EXPECT_EQ(sp_event->n_voted_yes_, 2);
+    EXPECT_EQ(sp_event->n_voted_yes_.get(), 2);
 }
 
 TEST_F(ReactorTest, StressTest) {
@@ -505,8 +507,7 @@ TEST_F(ReactorTest, StressTest) {
     // Cleanup
     {
         for (auto p : pollables) {
-            Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
         }
     }
 
@@ -540,8 +541,9 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         socket_pairs.push_back(create_socket_pair());
     }
 
-    // Reset the static remove counter
-    Epoll::remove_count_ = 0;
+    // Reset the global remove counter (was Epoll::remove_count_ static member;
+    // hoisted to rrr::epoll_remove_count when Epoll moved to the DSL).
+    rrr::epoll_remove_count = 0;
 
     {
         auto test_poll_worker = PollThread::create();
@@ -556,7 +558,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         std::this_thread::sleep_for(milliseconds(100));
 
         // Verify no removes happened yet
-        EXPECT_EQ(Epoll::remove_count_.load(), 0);
+        EXPECT_EQ(rrr::epoll_remove_count.load(), 0);
 
         // Destroy PollThread WITHOUT calling remove() on pollables
         // With the FIX, the destructor will:
@@ -569,8 +571,8 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
 
     }
 
-    // Now check the static remove counter
-    int final_remove_count = Epoll::remove_count_.load();
+    // Now check the global remove counter
+    int final_remove_count = rrr::epoll_remove_count.load();
 
     std::cout << "Remove count after destruction: " << final_remove_count << std::endl;
     std::cout << "Expected (correct behavior): " << NUM_POLLABLES << std::endl;

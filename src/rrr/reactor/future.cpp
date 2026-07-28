@@ -5,11 +5,30 @@
 // (FiberFuture) blocks in `get()` until the value is delivered.
 // Wraps `rrr::BoxEvent<T>` for the underlying wait/notify; see
 // rrr.reactor for the event primitive.
+//
+// Authored as inline Rust DSL: each struct's `#if RUSTYCPP_RUST` block
+// is the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ template + members.
+// Both structs are *generic* and *move-only* one-shot handles. The DSL
+// derives copyability from fields, so a `rusty::Cell<bool>` field (which
+// is itself move-only: copy `= delete`, move `= default`) is what keeps
+// each struct non-copyable — mirroring the hand-written classes' deleted
+// copy ctors without needing an `impl Drop`. For FiberPromise that field
+// is the genuine `future_retrieved_` flag; FiberFuture has no natural
+// second field, so it carries a `nc_` marker purely for move-only-ness.
+//
+// The state is a `rusty::Option<rusty::Arc<BoxEvent<T>>>` (nullable: a
+// default/moved-from handle is `None`; the reactor hands out `Arc` from
+// `create_sp_event`). Every operation that drives `->set` / `->wait` /
+// `->get` is an `@unsafe` Arc deref (through a const-view handle), so each
+// lives in a generic free function below rather than in the DSL struct body.
 module;
 
 #include <cstddef>
 #include <cstdint>
 
+#include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
 export module rrr.future;
@@ -18,207 +37,257 @@ import std;
 import rrr.reactor;
 
 // @safe - FiberPromise<T> / FiberFuture<T>: one-shot async value
-// delivery between fibers. State is a `std::shared_ptr<BoxEvent<T>>`.
-// The methods that drive `state_->set`/`state_->wait`/`state_->get`
-// (and the `const_cast<BoxEvent<T>*>` shim in the const FiberFuture::
-// get) carry per-method `// @unsafe` because the rusty event types
-// aren't fully @safe-annotated yet.
+// delivery between fibers. See the file header for the state model and
+// the move-only-via-Cell convention.
 export namespace rrr {
 
-// Forward declaration
+// Forward declarations (the DSL GEN blocks below also self-declare;
+// `struct` to match the transpiler's emitted tag).
 template <typename T>
-class FiberFuture;
+struct FiberPromise;
+template <typename T>
+struct FiberFuture;
+
+// =============================================================================
+// @unsafe free functions backing the Arc-deref method bodies.
+//
+// Pointer parameters (`const rusty::Option<rusty::Arc<BoxEvent<T>>>* state`)
+// are deliberate: the DSL lowers `&self.state_` to `&this->state_`, i.e. an
+// address-of yielding a pointer. Events are const-view Arc handles — every
+// BoxEvent method reached through `(*state).as_ref().unwrap()->…` is already
+// `const` (set/wait/get and the `is_set_` Cell), so no const_cast is needed
+// (unlike the old const FiberFuture::get shim).
+// =============================================================================
+
+// @unsafe - constructs a BoxEvent<T> as an Arc via Reactor internals.
+template <typename T>
+rusty::Arc<BoxEvent<T>> fiber_make_state() {
+  return Reactor::create_sp_event<BoxEvent<T>>();
+}
+
+// @safe - the empty (None) state, for a default/invalid FiberFuture.
+template <typename T>
+rusty::Option<rusty::Arc<BoxEvent<T>>> fiber_null_state() {
+  return rusty::None;
+}
+
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()` /
+// `->set(value)`. Takes the value by `const T&` (BoxEvent::set copies
+// regardless), so there is no extra copy for lvalue callers.
+template <typename T>
+void fiber_promise_set_value(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, const T& value) {
+  if (state->is_none()) {
+    throw std::logic_error("FiberPromise has no state (moved-from?)");
+  }
+  if ((*state).as_ref().unwrap()->is_set_.get()) {
+    throw std::logic_error("FiberPromise value already set");
+  }
+  (*state).as_ref().unwrap()->set(value);
+}
+
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
+template <typename T>
+bool fiber_promise_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
+}
+
+// @unsafe - blocks in `wait()` then returns a copy of the shared value.
+template <typename T>
+T fiber_future_get(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  if (state->is_none()) {
+    throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
+  }
+  if (!(*state).as_ref().unwrap()->is_set_.get()) {
+    (*state).as_ref().unwrap()->wait();
+  }
+  return (*state).as_ref().unwrap()->get();
+}
+
+// @unsafe - bounded wait; Arc deref through `(*state).as_ref().unwrap()->wait_timeout(timeout_us)`.
+// `timeout_us == 0` blocks indefinitely (Event::wait's default).
+template <typename T>
+bool fiber_future_wait_for(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state, uint64_t timeout_us) {
+  if (state->is_none()) {
+    return false;
+  }
+  if ((*state).as_ref().unwrap()->is_set_.get()) {
+    return true;
+  }
+  (*state).as_ref().unwrap()->wait_timeout(timeout_us);
+  return (*state).as_ref().unwrap()->is_set_.get();
+}
+
+// @unsafe - Arc deref through `(*state).as_ref().unwrap()->is_set_.get()`.
+template <typename T>
+bool fiber_future_is_ready(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some() && (*state).as_ref().unwrap()->is_set_.get();
+}
+
+// @safe - presence check on the shared state (Option is_some, no deref).
+template <typename T>
+bool fiber_future_valid(const rusty::Option<rusty::Arc<BoxEvent<T>>>* state) {
+  return state->is_some();
+}
+
+// @unsafe - throws if already retrieved, then shares the state into a fresh
+// FiberFuture. Takes the promise by reference (the DSL lowers a bare `self`
+// argument to `(*this)`). Defined after FiberFuture below.
+template <typename T>
+FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self);
 
 // =============================================================================
 // FiberPromise<T> - Producer side of async value delivery
 // =============================================================================
-
-/**
- * FiberPromise<T> represents the producer side of a one-shot async channel.
- *
- * A FiberPromise can set a value exactly once, which will unblock any fiber
- * waiting on the associated FiberFuture.
- *
- * @tparam T The type of value to deliver (must be copyable)
- *
- * Example:
- *   FiberPromise<std::string> promise;
- *   auto future = promise.get_future();
- *
- *   // Later...
- *   promise.set_value("hello");  // Unblocks future.get()
- */
+//
+// Producer side of a one-shot async channel. `set_value` may be called
+// exactly once; `get_future` may be retrieved exactly once. Move-only
+// (each promise is the unique producer): the `future_retrieved_`
+// rusty::Cell<bool> makes the struct non-copyable.
+//
+//   FiberPromise<std::string> promise;
+//   auto future = promise.get_future();
+//   promise.set_value("hello");        // unblocks future.get()
+//
 // @safe - see file header.
-template <typename T>
-class FiberPromise {
- public:
-  // @unsafe - Reactor::create_sp_event constructs through shared_ptr
-  // and depends on Reactor internals not fully @safe-annotated.
-  FiberPromise() : state_(Reactor::create_sp_event<BoxEvent<T>>()) {}
+#if RUSTYCPP_RUST
+struct FiberPromise<T> {
+    state_: rusty::Option<rusty::Arc<BoxEvent<T>>>,
+    future_retrieved_: rusty::Cell<bool>,
+}
 
-  // Non-copyable (each promise is unique)
-  FiberPromise(const FiberPromise&) = delete;
-  FiberPromise& operator=(const FiberPromise&) = delete;
-
-  // Movable
-  FiberPromise(FiberPromise&& other) noexcept : state_(std::move(other.state_)) {}
-  FiberPromise& operator=(FiberPromise&& other) noexcept {
-    state_ = std::move(other.state_);
-    return *this;
-  }
-
-  /**
-   * Get the FiberFuture associated with this FiberPromise. Can only be
-   * called once per FiberPromise; subsequent calls throw.
-   */
-  FiberFuture<T> get_future() {
-    if (future_retrieved_) {
-      throw std::logic_error("FiberFuture already retrieved from FiberPromise");
+impl<T> FiberPromise<T> {
+    // Constructs the shared BoxEvent up front (matches the old default ctor).
+    #[cpp_ctor]
+    fn new() -> FiberPromise<T> {
+        FiberPromise { state_: fiber_make_state::<T>(), future_retrieved_: rusty::Cell::new(false) }
     }
-    future_retrieved_ = true;
-    return FiberFuture<T>(state_);
-  }
 
-  /**
-   * Set the value, fulfilling the promise. Can only be called once;
-   * subsequent calls throw. Unblocks any fiber waiting on the future.
-   */
-  // @unsafe - shared_ptr deref through `state_->is_set_` and
-  // `state_->set(value)` (BoxEvent::set not annotated @safe).
-  void set_value(const T& value) {
-    if (!state_) {
-      throw std::logic_error("FiberPromise has no state (moved-from?)");
+    fn get_future(&mut self) -> FiberFuture<T> {
+        fiber_promise_get_future(self)
     }
-    if (state_->is_set_) {
-      throw std::logic_error("FiberPromise value already set");
-    }
-    state_->set(value);
-  }
 
-  /** Move-flavoured `set_value`. */
-  // @unsafe - shared_ptr deref through `state_->is_set_` and
-  // `state_->set(std::move(value))`.
-  void set_value(T&& value) {
-    if (!state_) {
-      throw std::logic_error("FiberPromise has no state (moved-from?)");
+    fn set_value(&mut self, value: &T) {
+        fiber_promise_set_value(&self.state_, value);
     }
-    if (state_->is_set_) {
-      throw std::logic_error("FiberPromise value already set");
+
+    fn is_ready(&self) -> bool {
+        fiber_promise_is_ready(&self.state_)
     }
-    state_->set(std::move(value));
-  }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_promise version=1 rust_sha256=8a5a93c7106ab1f3f75bef45dace581e334f58a7ba23d67fcb1981b77abff2e4*/
+template<typename T>
+struct FiberPromise;
 
-  bool is_ready() const noexcept {
-    return state_ && state_->is_set_;
-  }
+template<typename T>
+struct FiberPromise {
+    rusty::Option<rusty::Arc<BoxEvent<T>>> state_;
+    rusty::Cell<bool> future_retrieved_;
 
- private:
-  std::shared_ptr<BoxEvent<T>> state_;
-  bool future_retrieved_{false};
+    FiberPromise()
+        : state_(fiber_make_state<T>())
+        , future_retrieved_(rusty::Cell<bool>::new_(false))
+    {}
+    FiberFuture<T> get_future() {
+        return fiber_promise_get_future((*this));
+    }
+    void set_value(const T& value) {
+        fiber_promise_set_value(&this->state_, value);
+    }
+    bool is_ready() const {
+        return fiber_promise_is_ready(&this->state_);
+    }
 };
+/*RUSTYCPP:GEN-END id=future.fiber_promise*/
 
 // =============================================================================
 // FiberFuture<T> - Consumer side of async value delivery
 // =============================================================================
-
-/**
- * FiberFuture<T> represents the consumer side of a one-shot async channel.
- *
- * A FiberFuture waits for and retrieves a value set by its paired
- * FiberPromise. `get()` blocks the current fiber until the value is
- * available.
- *
- * @tparam T The type of value to receive
- */
+//
+// Consumer side of a one-shot async channel. `get()` blocks the current
+// fiber until the paired FiberPromise sets a value (and may be called
+// repeatedly — it returns the same value each time). Move-only: the `nc_`
+// rusty::Cell<bool> marker carries no state; it exists solely to make the
+// struct non-copyable, preserving the hand-written class's deleted copy
+// ctor (a FiberFuture is a single consumer handle).
+//
 // @safe - see file header.
-template <typename T>
-class FiberFuture {
- public:
-  // Default constructor creates invalid future
-  FiberFuture() = default;
+#if RUSTYCPP_RUST
+struct FiberFuture<T> {
+    state_: rusty::Option<rusty::Arc<BoxEvent<T>>>,
+    nc_: rusty::Cell<bool>,
+}
 
-  // Non-copyable (use shared_future for multiple consumers)
-  FiberFuture(const FiberFuture&) = delete;
-  FiberFuture& operator=(const FiberFuture&) = delete;
-
-  // Movable
-  FiberFuture(FiberFuture&& other) noexcept : state_(std::move(other.state_)) {}
-  FiberFuture& operator=(FiberFuture&& other) noexcept {
-    state_ = std::move(other.state_);
-    return *this;
-  }
-
-  /**
-   * Wait for and retrieve the value. Blocks the current fiber until the
-   * paired FiberPromise sets a value. Can be called multiple times —
-   * returns the same value each time.
-   */
-  // @unsafe - shared_ptr deref + `state_->wait()` (Event::wait not
-  // annotated @safe) + `state_->get()` returns a reference into the
-  // shared state.
-  T& get() {
-    if (!state_) {
-      throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
+impl<T> FiberFuture<T> {
+    // Default: an invalid future (null shared state).
+    #[cpp_ctor]
+    fn new() -> FiberFuture<T> {
+        FiberFuture { state_: fiber_null_state::<T>(), nc_: rusty::Cell::new(false) }
     }
-    if (!state_->is_set_) {
-      state_->wait();
+
+    fn get(&mut self) -> T {
+        fiber_future_get(&self.state_)
     }
-    return state_->get();
-  }
 
-  /** Const-flavoured `get`. */
-  // @unsafe - `const_cast<BoxEvent<T>*>(state_.get())` through the
-  // shared_ptr + `->wait()` invocation.
-  const T& get() const {
-    if (!state_) {
-      throw std::logic_error("FiberFuture has no state (invalid or moved-from?)");
+    fn wait_for(&mut self, timeout_us: u64) -> bool {
+        fiber_future_wait_for(&self.state_, timeout_us)
     }
-    if (!state_->is_set_) {
-      const_cast<BoxEvent<T>*>(state_.get())->wait();
+
+    fn is_ready(&self) -> bool {
+        fiber_future_is_ready(&self.state_)
     }
-    return state_->get();
-  }
 
-  /**
-   * Wait for the value with timeout. Returns true if ready, false if
-   * timed out. `timeout_us == 0` means no timeout (block indefinitely).
-   */
-  // @unsafe - shared_ptr deref + `state_->wait(timeout_us)`.
-  bool wait_for(uint64_t timeout_us) {
-    if (!state_) {
-      return false;
+    fn valid(&self) -> bool {
+        fiber_future_valid(&self.state_)
     }
-    if (state_->is_set_) {
-      return true;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=future.fiber_future version=1 rust_sha256=460e6ad6219c674869c16a1d8ab1c4f080ded853de712f930a7c13ff950d2cc9*/
+template<typename T>
+struct FiberFuture;
+
+template<typename T>
+struct FiberFuture {
+    rusty::Option<rusty::Arc<BoxEvent<T>>> state_;
+    rusty::Cell<bool> nc_;
+
+    FiberFuture()
+        : state_(fiber_null_state<T>())
+        , nc_(rusty::Cell<bool>::new_(false))
+    {}
+    T get() {
+        return fiber_future_get(&this->state_);
     }
-    state_->wait(timeout_us);
-    return state_->is_set_;
-  }
-
-  bool is_ready() const noexcept {
-    return state_ && state_->is_set_;
-  }
-
-  bool valid() const noexcept {
-    return state_ != nullptr;
-  }
-
- private:
-  friend class FiberPromise<T>;
-
-  // Private constructor — only FiberPromise can create valid Futures.
-  explicit FiberFuture(std::shared_ptr<BoxEvent<T>> state) : state_(std::move(state)) {}
-
-  std::shared_ptr<BoxEvent<T>> state_;
+    bool wait_for(uint64_t timeout_us) {
+        return fiber_future_wait_for(&this->state_, std::move(timeout_us));
+    }
+    bool is_ready() const {
+        return fiber_future_is_ready(&this->state_);
+    }
+    bool valid() const {
+        return fiber_future_valid(&this->state_);
+    }
 };
+/*RUSTYCPP:GEN-END id=future.fiber_future*/
+
+// @unsafe - shares the promise's BoxEvent into a new FiberFuture; throws on a
+// second retrieval. The state clone is the only @unsafe step (Arc refcount).
+template <typename T>
+FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self) {
+  if (self.future_retrieved_.get()) {
+    throw std::logic_error("FiberFuture already retrieved from FiberPromise");
+  }
+  self.future_retrieved_.set(true);
+  FiberFuture<T> f;
+  f.state_ = self.state_.clone();
+  return f;
+}
 
 // =============================================================================
 // Convenience Factory Functions
 // =============================================================================
 
-/**
- * Create a FiberPromise/FiberFuture pair in one call.
- */
+// @safe - create a FiberPromise/FiberFuture pair in one call.
 template <typename T>
 std::pair<FiberPromise<T>, FiberFuture<T>> make_promise() {
   FiberPromise<T> promise;
@@ -226,15 +295,12 @@ std::pair<FiberPromise<T>, FiberFuture<T>> make_promise() {
   return {std::move(promise), std::move(future)};
 }
 
-/**
- * Create a FiberFuture that is immediately ready with a value.
- * Useful for returning computed values from async interfaces.
- */
+// @safe - create a FiberFuture that is immediately ready with `value`.
 template <typename T>
 FiberFuture<T> make_ready_future(T value) {
   FiberPromise<T> promise;
   FiberFuture<T> future = promise.get_future();
-  promise.set_value(std::move(value));
+  promise.set_value(value);
   return future;
 }
 

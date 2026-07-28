@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -16,69 +16,68 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
 endif()
 
-# Mako pins its compiler to Clang 21 specifically. Different minor
-# versions of clang 21 are fine (21.0 .. 21.x), but anything else is
-# rejected — see the explicit version check after project() below.
-# The reason for pinning rather than "21 or newer":
-#   * Clang 22's libc++ moved __hash_memory out of line, which leaks
-#     into hashing-heavy link surfaces and breaks every gtest-based
-#     binary on this codebase.
+# Mako pins its compiler to Clang 22 (or newer). Clang 21 and earlier
+# frontend-crash compiling reactor.cpp's C++20-module codegen (the
+# `rrr.reactor` named module); Clang 22 fixes it — see the explicit
+# version check after project() below.
+# The reasons for requiring >= 22:
+#   * Clang 21 SIGSEGVs in the frontend on rrr.reactor's module codegen.
 #   * Clang 20 and earlier lack alias-template CTAD support that
 #     rusty-cpp's platform::threading aliases depend on.
-#   * CI standardizes on clang-21 (apt.llvm.org noble repo).
+#   * CI standardizes on clang-22 (apt.llvm.org noble repo).
 #
 # To install on Ubuntu:
-#     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 21
-#     sudo apt install -y clang-21 libc++-21-dev libc++abi-21-dev
+#     wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s 22
+#     sudo apt install -y clang-22 libc++-22-dev libc++abi-22-dev
 #
 # If the caller pre-set CMAKE_CXX_COMPILER (e.g. `cmake -DCMAKE_CXX_COMPILER=...`),
 # respect that — but still gate it on the version check below.
-# Search hints for the brew llvm@21 keg. Brew on macOS / Linuxbrew
-# doesn't symlink versioned names (clang++-21) — it only installs
-# `clang` / `clang++` inside the keg, which points at clang-21. So
+# Search hints for the brew llvm@22 keg. Brew on macOS / Linuxbrew
+# doesn't symlink versioned names (clang++-22) — it only installs
+# `clang` / `clang++` inside the keg, which points at clang-22. So
 # we add the keg's bin dir as an explicit HINT, and accept both
-# `clang++-21` (apt.llvm.org convention) and `clang++` from inside
-# the llvm@21 keg.
-set(MAKO_CLANG21_HINTS
-    /home/linuxbrew/.linuxbrew/opt/llvm@21/bin
-    $ENV{HOMEBREW_PREFIX}/opt/llvm@21/bin
-    /opt/homebrew/opt/llvm@21/bin
-    /usr/local/opt/llvm@21/bin
+# `clang++-22` (apt.llvm.org convention) and `clang++` from inside
+# the llvm@22 keg.
+set(MAKO_CLANG22_HINTS
+    /home/linuxbrew/.linuxbrew/opt/llvm@22/bin
+    $ENV{HOMEBREW_PREFIX}/opt/llvm@22/bin
+    /opt/homebrew/opt/llvm@22/bin
+    /usr/local/opt/llvm@22/bin
 )
 # Many users have a per-user brew root under their home dir.
 if(DEFINED ENV{HOME})
-    list(APPEND MAKO_CLANG21_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@21/bin)
+    list(APPEND MAKO_CLANG22_HINTS $ENV{HOME}/.linuxbrew/opt/llvm@22/bin)
 endif()
 
 if(NOT DEFINED CMAKE_C_COMPILER)
-    find_program(MAKO_CLANG_21 NAMES clang-21 clang HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
-    if(NOT MAKO_CLANG_21)
-        find_program(MAKO_CLANG_21 NAMES clang-21)
+    find_program(MAKO_CLANG_22 NAMES clang-22 clang HINTS ${MAKO_CLANG22_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANG_22)
+        find_program(MAKO_CLANG_22 NAMES clang-22)
     endif()
-    if(NOT MAKO_CLANG_21)
+    if(NOT MAKO_CLANG_22)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang-21` on PATH or in "
+            "Mako requires Clang 22 (could not find `clang-22` on PATH or in "
             "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
-            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
-            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-21 to cmake. "
+            "(`apt install -y clang-22`) or brew (`brew install llvm@22`), or "
+            "pass explicit -DCMAKE_C_COMPILER=/path/to/clang-22 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
-    set(CMAKE_C_COMPILER "${MAKO_CLANG_21}" CACHE STRING "C compiler")
+    set(CMAKE_C_COMPILER "${MAKO_CLANG_22}" CACHE STRING "C compiler")
 endif()
 if(NOT DEFINED CMAKE_CXX_COMPILER)
-    find_program(MAKO_CLANGXX_21 NAMES clang++-21 clang++ HINTS ${MAKO_CLANG21_HINTS} NO_DEFAULT_PATH)
-    if(NOT MAKO_CLANGXX_21)
-        find_program(MAKO_CLANGXX_21 NAMES clang++-21)
+    find_program(MAKO_CLANGXX_22 NAMES clang++-22 clang++ HINTS ${MAKO_CLANG22_HINTS} NO_DEFAULT_PATH)
+    if(NOT MAKO_CLANGXX_22)
+        find_program(MAKO_CLANGXX_22 NAMES clang++-22)
     endif()
-    if(NOT MAKO_CLANGXX_21)
+    if(NOT MAKO_CLANGXX_22)
         message(FATAL_ERROR
-            "Mako requires Clang 21 (could not find `clang++-21` on PATH or in "
+            "Mako requires Clang 22 (could not find `clang++-22` on PATH or in "
             "common Homebrew/Linuxbrew keg paths). Install via apt.llvm.org "
-            "(`apt install -y clang-21`) or brew (`brew install llvm@21`), or "
-            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-21 to cmake. "
+            "(`apt install -y clang-22`) or brew (`brew install llvm@22`), or "
+            "pass explicit -DCMAKE_CXX_COMPILER=/path/to/clang++-22 to cmake. "
             "See the comment at CMakeLists.txt:19 for the rationale.")
     endif()
-    set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_21}" CACHE STRING "C++ compiler")
+    set(CMAKE_CXX_COMPILER "${MAKO_CLANGXX_22}" CACHE STRING "C++ compiler")
 endif()
 
 # Enable compile_commands.json generation for language servers (clangd, etc.)
@@ -151,11 +150,11 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         message(FATAL_ERROR "GCC version 13.1 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
     endif()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17.0)
-        message(FATAL_ERROR "Clang version 17.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}")
+    if (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 22.0)
+        message(FATAL_ERROR "Clang version 22.0 or higher is required. Found ${CMAKE_CXX_COMPILER_VERSION}. (clang-21 frontend-crashes compiling reactor.cpp's C++20-module codegen; clang-22 fixes it.)")
     endif()
 else()
-    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated (requires GCC >= 13.1 or Clang >= 17).")
+    message(WARNING "Compiler ${CMAKE_CXX_COMPILER_ID} is unvalidated (requires GCC >= 13.1 or Clang >= 22).")
 endif()
 
 # Auto-detect the latest available libclang for rusty-cpp-checker.
@@ -249,6 +248,35 @@ set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
 set(YAML_CPP_INSTALL OFF CACHE BOOL "Disable yaml-cpp install targets" FORCE)
 add_subdirectory(third-party/yaml-cpp)
 
+# rusty-cpp main HEAD retired the hand-written hashmap/btreemap/btreeset/rc/vec
+# headers in favor of transpiled C++20 modules (vec_port.vec, btree_port.btree.*,
+# rc_port, hashbrown_port, plus the umbrella rusty.cppm). Pull in those targets
+# via add_subdirectory so rrr can `import rusty;`. EXCLUDE_FROM_ALL keeps
+# rusty-cpp's test/bench targets out of the default build — they only build
+# if explicitly requested via `cmake --build build --target <name>.out`.
+#
+# rusty-cpp's top-level CMakeLists.txt sets CMAKE_CXX_EXTENSIONS=OFF
+# (it uses -std=c++23 strict). Mako uses -std=gnu++23 (see line ~45
+# above: CMAKE_CXX_EXTENSIONS=ON, to match the GNU-extensions setting
+# CMake bakes into std.pcm for `import std;`). PCM consumption checks
+# these flags strictly: rusty.cppm + the port PCMs (built strict) can't
+# be imported from gnu++23 TUs ("GNU extensions was disabled in
+# precompiled file"). Force the port modules onto gnu++23 just for
+# this subdirectory so rrr can consume them.
+add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
+# rusty-cpp's CMakeLists.txt locally sets CMAKE_CXX_EXTENSIONS=OFF.
+# Override on each port target so rrr (gnu++23) can `import` them
+# without the "GNU extensions was disabled" PCM-config mismatch.
+foreach(_rusty_port_target IN ITEMS
+    vec_port btree_port rc_port hashbrown_port rusty_async rusty
+    binary_heap_port binary_heap_tests_port linked_list_tests_port
+    eq_diff_len_tests_port vec_deque_port cell_port string_port
+    arc_port linked_list_port borrow_port ascii_port)
+    if(TARGET ${_rusty_port_target})
+        set_target_properties(${_rusty_port_target} PROPERTIES CXX_EXTENSIONS ON)
+    endif()
+endforeach()
+
 # RUST
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
@@ -277,30 +305,29 @@ add_custom_target(rust_build ALL DEPENDS ${RUST_LIB_PATH})
 # rrr module files and the `rrr` target are defined in src/rrr/CMakeLists.txt.
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    # Mako pins to Clang 21 specifically (not "21 or newer"). See the
-    # rationale in the comment at CMakeLists.txt:19. Accept any 21.x
-    # minor version; reject everything else.
-    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "21.0"
-        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0")
+    # Mako targets Clang 22.x (see the rationale at CMakeLists.txt:19 and the
+    # >= 22.0 gate after project()). Accept any 22.x minor version; reject
+    # everything else. Clang 21 and earlier frontend-crash on rrr.reactor's
+    # C++20-module codegen; Clang 23+ is untested.
+    if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "22.0"
+        OR CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "23.0")
         message(FATAL_ERROR
-            "Mako requires Clang 21 exactly (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
-            "Newer Clang (22+) ships a libc++ that moves __hash_memory out of line, "
-            "which breaks linking of gtest-based binaries against system libc++. "
-            "Older Clang (<21) lacks alias-template CTAD support that rusty-cpp's "
-            "platform::threading aliases depend on. "
-            "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+            "Mako requires Clang 22.x (found ${CMAKE_CXX_COMPILER_VERSION} at ${CMAKE_CXX_COMPILER}). "
+            "Clang 21 and earlier SIGSEGV in the frontend on rrr.reactor's C++20-module "
+            "codegen; Clang 23+ is untested. "
+            "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
     endif()
 else()
     # Reject GCC, AppleClang, Intel, MSVC: the project's safety
     # annotations, `import std;` integration, and rusty-cpp are all
-    # exercised only against Clang 21.
+    # exercised only against Clang 22.
     message(FATAL_ERROR
-        "Mako requires Clang 21 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
+        "Mako requires Clang 22 (found ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} "
         "at ${CMAKE_CXX_COMPILER}). Other compilers are untested and unsupported. "
-        "Install clang-21 via apt.llvm.org (Ubuntu) or use the CI image.")
+        "Install clang-22 via apt.llvm.org (Ubuntu) or use the CI image.")
 endif()
 # The remaining libc++/codegen flags below run only after we've established
-# we are on Clang 21. The original `if (...Clang)` block continues to gate
+# we are on Clang 22. The original `if (...Clang)` block continues to gate
 # them in case someone widens the supported compiler set later — but for
 # now the FATAL_ERROR above guarantees we never reach the else-branch.
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -1102,7 +1129,7 @@ target_include_directories(cluster PUBLIC
     ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
 )
 target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
-target_link_libraries(cluster PUBLIC rrr pthread)
+target_link_libraries(cluster PUBLIC rrr pthread btree_port vec_port rc_port hashbrown_port)
 
 # Build txlog in layers:
 #   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
@@ -2024,23 +2051,30 @@ if(BUILD_TESTS)
     add_test(NAME test_transport_integration COMMAND test_transport_integration)
     set_tests_properties(test_transport_integration PROPERTIES TIMEOUT 120)
 
-    # eRPC Integration Tests (uses socket-based "fake" transport - no RDMA required)
-    add_executable(test_erpc_integration tests/test_erpc_integration.cc)
-    target_include_directories(test_erpc_integration PRIVATE
-        ${TEST_INCLUDE_DIRS}
-        ${GTEST_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
-    )
-    target_compile_options(test_erpc_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_erpc_integration
-        erpc
-        ${GTEST_LIBRARIES}
-        ${GTEST_MAIN_LIBRARIES}
-        pthread
-        numa
-    )
-    add_test(NAME test_erpc_integration COMMAND test_erpc_integration)
-    set_tests_properties(test_erpc_integration PROPERTIES TIMEOUT 120)
+    # eRPC Integration Tests — EXCLUDED from the default build/run.
+    # Despite the "fake" transport, eRPC's HugeAlloc requires configured
+    # hugepages and SIGSEGVs without them; CI already skips erpc
+    # (ctest -E 'erpc'). Opt in with -DBUILD_ERPC_TESTS=ON on a host with
+    # hugepages/RDMA set up.
+    option(BUILD_ERPC_TESTS "Build eRPC integration tests (require hugepages/RDMA)" OFF)
+    if(BUILD_ERPC_TESTS)
+        add_executable(test_erpc_integration tests/test_erpc_integration.cc)
+        target_include_directories(test_erpc_integration PRIVATE
+            ${TEST_INCLUDE_DIRS}
+            ${GTEST_INCLUDE_DIRS}
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
+        )
+        target_compile_options(test_erpc_integration PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(test_erpc_integration
+            erpc
+            ${GTEST_LIBRARIES}
+            ${GTEST_MAIN_LIBRARIES}
+            pthread
+            numa
+        )
+        add_test(NAME test_erpc_integration COMMAND test_erpc_integration)
+        set_tests_properties(test_erpc_integration PROPERTIES TIMEOUT 120)
+    endif()
 
     # ============================================================================
     # RPC Reliability Unit Tests (Phase 7.1)

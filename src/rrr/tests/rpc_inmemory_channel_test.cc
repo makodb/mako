@@ -30,9 +30,10 @@ namespace {
 class InMemoryChannelTest : public ::testing::Test {
  protected:
     void SetUp() override {
-        switchboard_ = rusty::Some(rusty::Arc<InMemorySwitchboard>::make());
+        switchboard_ = rusty::Some(
+            rusty::Arc<InMemorySwitchboard>::new_(InMemorySwitchboard::new_()));
         factory_arc_ = rusty::Some(
-            rusty::Arc<InMemoryFactory>::make(switchboard_.as_ref().unwrap().clone()));
+            rusty::Arc<InMemoryFactory>::new_(InMemoryFactory::new_(switchboard_.as_ref().unwrap().clone())));
         factory_ = rusty::Some(
             make_inmemory_factory_proxy(factory_arc_.as_ref().unwrap().clone()));
     }
@@ -57,7 +58,7 @@ class InMemoryChannelTest : public ::testing::Test {
 // ---------------------------------------------------------------------------
 
 TEST_F(InMemoryChannelTest, BackendName) {
-    EXPECT_STREQ(factory().backend_name(), "inmemory");
+    EXPECT_EQ(factory().backend_name(), "inmemory");
 }
 
 TEST_F(InMemoryChannelTest, ConnectToUnboundAddrReturnsRefused) {
@@ -506,7 +507,7 @@ inline void send_byte(ChannelConnectionBase& proxy, std::uint8_t b) {
 TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(3);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 3);
 
     // First 3 sends from A → silently dropped.
     fault_test_helpers::send_byte(p->a_proxy_ref(), 1);
@@ -531,7 +532,7 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsDropsThenResumes) {
 TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(2);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 2);
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 1);  // dropped
     fault_test_helpers::send_byte(p->b_proxy_ref(), 2);  // delivered (B-side has no drop)
@@ -552,7 +553,7 @@ TEST_F(InMemoryChannelTest, InjectDropNextSendsIsPerSide) {
 TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_send_error(ChannelError::WouldBlock, 2);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::WouldBlock, 2);
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
@@ -573,8 +574,8 @@ TEST_F(InMemoryChannelTest, InjectSendErrorReturnsErrThenResumes) {
 TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(2);
-    p->mut_a().inject_send_error(ChannelError::ConnectionReset, 2);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 2);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::ConnectionReset, 2);
 
     std::uint8_t b = 0;
     ChannelFrame f{&b, 1};
@@ -598,9 +599,9 @@ TEST_F(InMemoryChannelTest, DropTakesPrecedenceOverError) {
 TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(5);
-    p->mut_a().inject_send_error(ChannelError::WouldBlock, 5);
-    p->mut_a().clear_fault_injection();
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 5);
+    inmemory_channel_inject_send_error(p->mut_a(), ChannelError::WouldBlock, 5);
+    inmemory_channel_clear_fault_injection(p->mut_a());
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 7);
     ASSERT_EQ(p->b_received.size(), 1u);
@@ -615,7 +616,7 @@ TEST_F(InMemoryChannelTest, ClearFaultInjectionResets) {
 TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(10);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 10);
     p->mut_a().close();
 
     std::uint8_t b = 0;
@@ -632,8 +633,8 @@ TEST_F(InMemoryChannelTest, FaultInjectionRespectsClose) {
 TEST_F(InMemoryChannelTest, InjectDropZeroClears) {
     auto p = fault_test_helpers::make_pair_with_capture("addr-A", "addr-B");
 
-    p->mut_a().inject_drop_next_sends(3);
-    p->mut_a().inject_drop_next_sends(0);  // clears the counter
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 3);
+    inmemory_channel_inject_drop_next_sends(p->mut_a(), 0);  // clears the counter
 
     fault_test_helpers::send_byte(p->a_proxy_ref(), 9);
     ASSERT_EQ(p->b_received.size(), 1u);

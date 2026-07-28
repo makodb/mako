@@ -11,13 +11,14 @@ module;
 export module rrr.debugging;
 
 import std;
-import rrr.misc; // for get_exec_path
+import rusty;
 
 // @safe - debugging primitives. `verify()` is a pure precondition
 // check; `likely`/`unlikely` are `__builtin_expect` wrappers. The
 // `print_stack_trace` impls (both __APPLE__ and Linux branches) use
-// backtrace + popen/pclose + raw char arrays + reinterpret_cast and
-// carry per-method `// @unsafe` below.
+// backtrace/backtrace_symbols raw char arrays and carry per-method
+// `// @unsafe` below. Symbol resolution is IN-PROCESS only (no
+// external binaries are executed).
 export namespace rrr {
 
 // Restored after modularization: deptran code (RW_command.cc,
@@ -72,9 +73,8 @@ namespace rrr {
 
 #ifdef __APPLE__
 
-// @unsafe - backtrace/backtrace_symbols, popen/pclose, fprintf,
-// reinterpret_cast<std::istream*>, raw `char**` from backtrace_symbols,
-// `free(str_frames)`. Heavy libc + raw-pointer plumbing.
+// @unsafe - backtrace/backtrace_symbols, fprintf, raw `char**`,
+// `free(str_frames)`. In-process libc only.
 void print_stack_trace(FILE* fp) {
     const int max_trace = 1024;
     void* callstack[max_trace];
@@ -89,26 +89,9 @@ void print_stack_trace(FILE* fp) {
 
     fprintf(fp, "  *** begin stack trace ***\n");
     for (int i = 0; i < frames - 1; i++) {
-        std::string trace = str_frames[i];
-        size_t idx = trace.rfind(' ');
-        size_t idx2 = trace.rfind(' ', idx - 1);
-        idx = trace.rfind(' ', idx2 - 1) + 1;
-        std::string mangled = trace.substr(idx, idx2 - idx);
-        std::string left = trace.substr(0, idx);
-        std::string right = trace.substr(idx2);
-
-        std::string cmd = "c++filt -n ";
-        cmd += mangled;
-
-        auto demangle = popen(cmd.c_str(), "r");
-        if (demangle) {
-            std::string demangled;
-            std::getline(*reinterpret_cast<std::istream*>(demangle), demangled);
-            fprintf(fp, "%s%s%s\n", left.c_str(), demangled.c_str(), right.c_str());
-            pclose(demangle);
-        } else {
-            fprintf(fp, "%s\n", str_frames[i]);
-        }
+        // In-process symbols only (backtrace_symbols); no external
+        // binaries are executed for symbol resolution.
+        fprintf(fp, "%s\n", str_frames[i]);
     }
     fprintf(fp, "  ***  end stack trace  ***\n");
 
@@ -117,84 +100,109 @@ void print_stack_trace(FILE* fp) {
 
 #else // no __APPLE__
 
-namespace {
-// @unsafe - fgets into a raw `char[4096]` buffer from libc FILE*.
-inline std::string read_line_from_pipe(FILE* fp) {
-    char buf[4096];
-    if (fgets(buf, sizeof(buf), fp) == nullptr) {
-        return std::string();
-    }
-    std::string s(buf);
-    if (!s.empty() && s.back() == '\n') {
-        s.pop_back();
-    }
-    return s;
-}
-}
+// Reshaped for the DSL (H-category shrink) and — per the no-external-
+// binaries rule — resolved entirely IN-PROCESS: symbols come from
+// libc's backtrace_symbols only. The former popen("addr2line ...")
+// resolution (an external binary executed inside an abort path) is
+// deleted, along with its pipe reader and the get_exec_path helper it
+// existed for.
 
-// @unsafe - backtrace/backtrace_symbols, popen/pclose, fprintf,
-// snprintf into raw `char[32]`, raw `char**` from backtrace_symbols,
-// `free(str_frames)`. Heavy libc + raw-pointer plumbing.
-void print_stack_trace(FILE* fp) {
+// Raw capture: the backtrace_symbols strings, minus the last frame
+// (legacy loop bound). ok=false when backtrace_symbols itself failed.
+// Move-only (rusty::Vec field).
+struct BtCapture {
+    bool ok = false;
+    rusty::Vec<std::string> symbols;
+};
+
+// @unsafe - backtrace/backtrace_symbols raw `char**` + free.
+BtCapture bt_capture();
+
+// @unsafe - snprintf left-justified frame index ("%-3d  ").
+std::string bt_index_prefix(int i);
+
+// @unsafe - trivial factory; std::string default construction has no
+// DSL spelling.
+std::string bt_empty_string();
+
+// DSL core: report assembly over the captured symbol strings.
+#if RUSTYCPP_RUST
+fn bt_render(cap: &BtCapture) -> std::string {
+    let mut out = bt_empty_string();
+    if !cap.ok {
+        out.append("  *** failed to obtain stack trace!\n");
+        return out;
+    }
+    out.append("  *** begin stack trace ***\n");
+    let mut k = 0;
+    while k < cap.symbols.len() {
+        out.append(bt_index_prefix(k));
+        out.append(cap.symbols[k]);
+        out.append("\n");
+        k += 1;
+    }
+    out.append("  ***  end stack trace  ***\n");
+    out
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=debugging.bt_render version=1 rust_sha256=5e566583a7c846c8e5883cd8599f2ef651e682549caba5738cd579ebad1007f8*/
+std::string bt_render(const BtCapture& cap) {
+    auto out = bt_empty_string();
+    if (rusty::detail::rust_not(cap.ok)) {
+        out.append("  *** failed to obtain stack trace!\n");
+        return std::move(out);
+    }
+    out.append("  *** begin stack trace ***\n");
+    auto k = 0;
+    while (rusty::detail::deref_if_pointer_like(k) < rusty::len(cap.symbols)) {
+        out.append(bt_index_prefix(std::move(k)));
+        out.append(cap.symbols[k]);
+        out.append("\n");
+        rusty::detail::deref_if_pointer_like(k) += 1;
+    }
+    out.append("  ***  end stack trace  ***\n");
+    return std::move(out);
+}
+/*RUSTYCPP:GEN-END id=debugging.bt_render*/
+
+// @unsafe - backtrace/backtrace_symbols raw `char**` + free. Drops the
+// last frame (the pre-reshape loop ran to `frames - 1`).
+BtCapture bt_capture() {
+    BtCapture cap;
     const int max_trace = 1024;
     void* callstack[max_trace];
     memset(callstack, 0, sizeof(callstack));
     int frames = backtrace(callstack, max_trace);
 
-    char **str_frames = backtrace_symbols(callstack, frames);
+    char** str_frames = backtrace_symbols(callstack, frames);
     if (str_frames == nullptr) {
-        fprintf(fp, "  *** failed to obtain stack trace!\n");
-        return;
+        return cap;
     }
-
-    fprintf(fp, "  *** begin stack trace ***\n");
-    const char* exec_path = get_exec_path();
-    rusty::Vec<std::pair<std::string, std::string>> fmt_output;
-    size_t max_func_length = 0;
+    cap.ok = true;
     for (int i = 0; i < frames - 1; i++) {
-        bool addr2line_ok = false;
-        if (exec_path != nullptr) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "addr2line %p -e ", callstack[i]);
-            std::string cmd = buf;
-            cmd += exec_path;
-            cmd += " -f -C 2>&1";
-            auto addr2line = popen(cmd.c_str(), "r");
-            if (addr2line) {
-                addr2line_ok = true;
-                std::string demangled_func_name = read_line_from_pipe(addr2line);
-                if (demangled_func_name.empty() || demangled_func_name[0] == '?') {
-                    addr2line_ok = false;
-                } else {
-                    max_func_length = std::max(max_func_length, demangled_func_name.size());
-                    std::string file_line = read_line_from_pipe(addr2line);
-                    fmt_output.push(std::make_pair(demangled_func_name, file_line));
-                }
-                pclose(addr2line);
-            }
-        }
-        if (!addr2line_ok) {
-            max_func_length = std::max(max_func_length, strlen(str_frames[i]));
-            fmt_output.push(std::make_pair(std::string(str_frames[i]), std::string()));
-        }
+        cap.symbols.push(std::string(str_frames[i]));
     }
-    for (size_t i = 0; i < fmt_output.size(); i++) {
-        fprintf(fp, "%-3lu  %s", i, fmt_output[i].first.c_str());
-        if (fmt_output[i].second.size() > 0) {
-            int padding = max_func_length - fmt_output[i].first.size() + 4;
-            while (padding > 0) {
-                padding--;
-                fputc(' ', fp);
-            }
-            fprintf(fp, "%s\n", fmt_output[i].second.c_str());
-        } else {
-            fputc('\n', fp);
-        }
-    }
-
-    fprintf(fp, "  ***  end stack trace  ***\n");
-
     free(str_frames);
+    return cap;
+}
+
+// @unsafe - snprintf into a raw `char[16]`.
+std::string bt_index_prefix(int i) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%-3d  ", i);
+    return std::string(buf);
+}
+
+// @unsafe - trivial factory for the DSL.
+std::string bt_empty_string() {
+    return std::string();
+}
+
+// @unsafe - fputs of the rendered report to the caller-supplied FILE*.
+void print_stack_trace(FILE* fp) {
+    BtCapture cap = bt_capture();
+    std::string report = bt_render(cap);
+    fputs(report.c_str(), fp);
 }
 
 #endif // ifdef __APPLE__

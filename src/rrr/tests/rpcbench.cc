@@ -1,3 +1,4 @@
+#include <rusty/thread.hpp>
 #include <stddef.h>
 
 
@@ -98,7 +99,7 @@ static i64 total_req_count() {
 }
 
 static void signal_handler(int sig) {
-    Log_info("caught signal %d, stopping server now", sig);
+    Log_info("caught signal {}, stopping server now", sig);
     should_stop = true;
     Pthread_mutex_lock(&g_stop_mutex);
     Pthread_cond_signal(&g_stop_cond);
@@ -113,7 +114,7 @@ static void* stat_proc(void*) {
         i64 cnt = total_req_count();
         if (last_cnt != 0) {
             long int qps = cnt - last_cnt;
-            Log_info("qps: %ld", cnt - last_cnt);
+            Log_info("qps: {}", cnt - last_cnt);
             summary.push_back(qps);
         }
         last_cnt = cnt;
@@ -127,7 +128,7 @@ static void* stat_proc(void*) {
     if (summary.empty()) {
         Log_info("avg qps: 0.00");
     } else {
-        Log_info("avg qps: %2.2f", ((float)sum)/summary.size());
+        Log_info("avg qps: {:2.2f}", ((float)sum)/summary.size());
     }
     return nullptr;
 }
@@ -207,7 +208,7 @@ static void* client_proc(void* arg_ptr) {
     int thread_idx = arg->thread_idx;
     auto poll_thread_worker = PollThread::create();
     auto cl = Client::create(poll_thread_worker);
-    verify(cl->connect(svr_addr) == 0);
+    verify(cl->connect(reinterpret_cast<const int8_t*>(svr_addr), true) == 0);
     FutureAttr fu_attr;
     i32 rpc_id;
 
@@ -259,14 +260,14 @@ static void* client_proc(void* arg_ptr) {
             if (rpc_id == BenchmarkService::FAST_NOP ||
                 rpc_id == BenchmarkService::NOP ||
                 rpc_id == BenchmarkService::ASYNC_NOP) {
-                m << request_str;
+                rrr::Serialize_::serialize(request_str, m);
             } else if (rpc_id == BenchmarkService::FAST_VEC) {
-                m << rpc_bench_vector_size;
+                rrr::Serialize_::serialize(rpc_bench_vector_size, m);
             } else if (rpc_id == BenchmarkService::DEFERRED_ECHO) {
-                m << static_cast<rrr::i32>(1);
+                rrr::Serialize_::serialize(static_cast<rrr::i32>(1), m);
             }
         };
-        rrr::ClientConnection::AsyncReplyCallback on_reply{
+        rrr::AsyncReplyCallback on_reply{
             [thread_idx, &do_work_holder](rrr::i32 err,
                                           const std::uint8_t*,
                                           std::size_t) {
@@ -341,7 +342,7 @@ int main(int argc, char **argv) {
         case 'm': {
             BenchRpcMode parsed_mode;
             if (!parse_rpc_mode(optarg, &parsed_mode)) {
-                Log_error("invalid rpc mode '%s' (expected: fast|fiber|defer|async|fast_vec)", optarg);
+                Log_error("invalid rpc mode '{}' (expected: fast|fiber|defer|async|fast_vec)", optarg);
                 exit(1);
             }
             rpc_mode = parsed_mode;
@@ -388,27 +389,27 @@ int main(int argc, char **argv) {
 
     verify(is_server || is_client);
     if (is_server) {
-        Log_info("server will start at     %s", svr_addr);
+        Log_info("server will start at     {}", svr_addr);
     } else {
-        Log_info("client will connect to   %s", svr_addr);
+        Log_info("client will connect to   {}", svr_addr);
     }
-    Log_info("packet byte size:        %d", byte_size);
-    Log_info("epoll instances:         %d", epoll_instances);
-    Log_info("fast reqeust:            %s", fast_requests ? "true" : "false");
-    Log_info("rpc mode:                %s", rpc_mode_name(rpc_mode));
-    Log_info("await mode:              %s", await_mode ? "true" : "false");
-    Log_info("running seconds:         %d", seconds);
-    Log_info("outgoing requests:       %d", outgoing_requests);
-    Log_info("client threads:          %d", client_threads);
-    Log_info("worker threads:          %d", worker_threads);
-    Log_info("vector size:             %d", rpc_bench_vector_size);
+    Log_info("packet byte size:        {}", byte_size);
+    Log_info("epoll instances:         {}", epoll_instances);
+    Log_info("fast reqeust:            {}", fast_requests ? "true" : "false");
+    Log_info("rpc mode:                {}", rpc_mode_name(rpc_mode));
+    Log_info("await mode:              {}", await_mode ? "true" : "false");
+    Log_info("running seconds:         {}", seconds);
+    Log_info("outgoing requests:       {}", outgoing_requests);
+    Log_info("client threads:          {}", client_threads);
+    Log_info("worker threads:          {}", worker_threads);
+    Log_info("vector size:             {}", rpc_bench_vector_size);
 
     request_str = string(byte_size, 'x');
     if (is_server) {
         auto server_poll_thread = rusty::Some(PollThread::create());
-        Server svr(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
-        svr.reg_service(rusty::make_box<BenchmarkService>());
-        verify(svr.start(svr_addr) == 0);
+        auto svr = Server::new_(std::move(server_poll_thread));  // Server takes Option<Arc<...>>
+        svr.reg_service_typed(rusty::make_box<BenchmarkService>());
+        verify(svr.start(reinterpret_cast<const int8_t*>(svr_addr)) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);
         Pthread_cond_init(&g_stop_cond, nullptr);
@@ -435,23 +436,23 @@ int main(int argc, char **argv) {
             g_client_req_counters[i].store(0, std::memory_order_relaxed);
         }
 
-        pthread_t* client_th = new pthread_t[client_threads];
+        std::vector<rusty::thread::JoinHandle<void>> client_th;
+        client_th.reserve(client_threads);
         ClientThreadArg* client_args = new ClientThreadArg[client_threads];
         for (int i = 0; i < client_threads; i++) {
             client_args[i].thread_idx = i;
-            Pthread_create(&client_th[i], nullptr, client_proc, &client_args[i]);
+            ClientThreadArg* arg = &client_args[i];
+            client_th.push_back(rusty::thread::spawn([arg]() { client_proc(arg); }));
         }
-        pthread_t stat_th;
-        Pthread_create(&stat_th, nullptr, stat_proc, nullptr);
-        Pthread_join(stat_th, nullptr);
-        for (int i = 0; i < client_threads; i++) {
-            Pthread_join(client_th[i], nullptr);
+        auto stat_th = rusty::thread::spawn([]() { stat_proc(nullptr); });
+        stat_th.join().unwrap();
+        for (auto& th : client_th) {
+            th.join().unwrap();
         }
         delete[] g_client_req_counters;
         g_client_req_counters = nullptr;
         g_client_req_counter_count = 0;
         delete[] client_args;
-        delete[] client_th;
     }
 
     return 0;

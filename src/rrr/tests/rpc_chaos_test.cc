@@ -113,11 +113,11 @@ protected:
     }
 
     Server* create_server(int port) {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ChaosTestService>();
         server->reg_service(std::move(service_box));
         std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (server->start(addr.c_str()) != 0) {
+        if (server->start(reinterpret_cast<const int8_t*>(addr.c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -137,7 +137,7 @@ protected:
         std::string input = "chaos_test";
         auto fu_result = client->request(
             BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();
@@ -452,7 +452,7 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
     ASSERT_NE(current_server_, nullptr);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
     // Verify initial connectivity
@@ -488,7 +488,7 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
             // CI resilience where CPU contention can slow things down
             std::this_thread::sleep_for(milliseconds(200));
             client->close();
-            client->connect(addr.c_str());
+            client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
             std::this_thread::sleep_for(milliseconds(100));
         }
 
@@ -509,7 +509,7 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
     ChaosVerifier verifier(3000);
     verifier.set_connectivity_check([&client, &addr]() {
         if (!client->connected()) {
-            client->connect(addr.c_str());
+            client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
             std::this_thread::sleep_for(milliseconds(100));
         }
         return client->connected();
@@ -539,7 +539,7 @@ TEST_F(ChaosTest, IntegrationConnectionChurn) {
     std::vector<rusty::Arc<Client>> clients;
     for (int i = 0; i < 5; i++) {
         auto client = create_client();
-        EXPECT_EQ(client->connect(addr.c_str()), 0);
+        EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
         clients.push_back(std::move(client));
     }
     std::this_thread::sleep_for(milliseconds(100));
@@ -556,7 +556,7 @@ TEST_F(ChaosTest, IntegrationConnectionChurn) {
         clients[idx]->close();
         // Reconnect immediately
         std::this_thread::sleep_for(milliseconds(20));
-        clients[idx]->connect(addr.c_str());
+        clients[idx]->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
     });
 
     controller.start();
@@ -605,7 +605,7 @@ TEST_F(ChaosTest, IntegrationLatencySpikes) {
     ASSERT_NE(current_server_, nullptr);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     ChaosConfig config;
@@ -662,7 +662,7 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
     ASSERT_NE(current_server_, nullptr);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     ChaosConfig config;
@@ -696,7 +696,7 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
             case FailureType::SERVER_KILL:
                 std::this_thread::sleep_for(milliseconds(200));
                 client->close();
-                client->connect(addr.c_str());
+                client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
                 std::this_thread::sleep_for(milliseconds(100));
                 break;
 
@@ -709,7 +709,7 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
 
             case FailureType::CONNECTION_RESET:
                 std::this_thread::sleep_for(milliseconds(100));
-                client->connect(addr.c_str());
+                client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
                 std::this_thread::sleep_for(milliseconds(100));
                 break;
 
@@ -740,7 +740,7 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
     ChaosVerifier verifier(3000);
     verifier.set_connectivity_check([&client, &addr]() {
         if (!client->connected()) {
-            client->connect(addr.c_str());
+            client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
             std::this_thread::sleep_for(milliseconds(100));
         }
         return client->connected();
@@ -768,7 +768,7 @@ TEST_F(ChaosTest, IntegrationRecoveryVerification) {
     ASSERT_NE(current_server_, nullptr);
 
     auto client = create_client();
-    ASSERT_EQ(client->connect(addr.c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Kill server
@@ -783,7 +783,7 @@ TEST_F(ChaosTest, IntegrationRecoveryVerification) {
 
     // Reconnect
     client->close();
-    EXPECT_EQ(client->connect(addr.c_str()), 0);
+    EXPECT_EQ(client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify recovery

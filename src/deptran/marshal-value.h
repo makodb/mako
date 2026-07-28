@@ -5,12 +5,12 @@
 
 namespace rrr {
 
-Marshal& operator << (Marshal& m, const mdb::Value &value);
+// Marshal-deprecation slice A: archive serde free functions own the
+// mdb::Value wire format (Marshal-form mirrors deleted).
+void serialize(const mdb::Value &value, BinaryWriteArchive &ar);
+void deserialize(mdb::Value &value, BinaryReadArchive &ar);
 
-Marshal& operator >> (Marshal& m, mdb::Value &value);
-
-// archive operators for mdb::Value, mirroring
-// the Marshal-based ones byte-for-byte. Used by Phase 4 type
+// archive operators for mdb::Value. Used by Phase 4 type
 // migrations (TxWorkspace, SimpleCommand) that need to write Value
 // fields through BinaryWriteArchive / BinaryReadArchive.
 BinaryWriteArchive& operator << (BinaryWriteArchive& ar, const mdb::Value &value);

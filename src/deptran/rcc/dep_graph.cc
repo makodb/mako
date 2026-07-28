@@ -136,7 +136,7 @@ uint64_t RccGraph::MinItfrGraph(RccTx& tx,
 //    SelectGraph(vertex_set, new_graph);
 //  } else {
 //    verify(0);
-//// Log_debug("compute for sub graph, tid: %llx parent size: %d",
+//// Log_debug("compute for sub graph, tid: {:x} parent size: {}",
 ////     tid, (int) source->from_.size());
 ////  auto &ret_set = gra_m.ret_set;
 ////  unordered_set<RccVertex *> ret_set;
@@ -198,7 +198,7 @@ uint64_t RccGraph::MinItfrGraph(RccTx& tx,
 #endif
 
   auto sz = new_graph->size();
-//  Log_debug("return graph size: %llx", sz);
+//  Log_debug("return graph size: {:x}", sz);
 //  verify(new_graph->FindV(tid) != nullptr);
   return sz;
 */
@@ -283,14 +283,14 @@ shared_ptr<RccTx> RccGraph::AggregateVertex(shared_ptr<RccTx> rhs_dtxn) {
     RccSched::__DebugCheckParentSetSize(vertex->id(), vertex->parents_.size());
   }
   if (status2 >= TXN_CMT) {
-//    Log_info("aggregating gt CMT, txnid: %llx, parent size: %d",
+//    Log_info("aggregating gt CMT, txnid: {:x}, parent size: {}",
 //             rhs_v->id(), (int) rhs_v->parents_.size());
     RccSched::__DebugCheckParentSetSize(rhs_v->id(), rhs_v->parents_.size());
   }
   if (status1 >= TXN_CMT && status2 >= TXN_CMT) {
     // they should have the same parents.
     if (parent_set1 != parent_set2) {
-      Log_fatal("failed in aggregating, txnid: %llx, parent size: %d",
+      Log_fatal("failed in aggregating, txnid: {:x}, parent size: {}",
                 rhs_v->id(), (int) rhs_v->parents_.size());
       verify(0);
     }

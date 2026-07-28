@@ -106,15 +106,15 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
 int SchedulerJanus::OnPreAccept(const txid_t txn_id,
                                 const rank_t rank,
                                 const vector<SimpleCommand> &cmds,
-                                shared_ptr<RccGraph> graph,
-                                shared_ptr<RccGraph> res_graph) {
+                                rusty::Arc<RccGraph> graph,
+                                rusty::Arc<RccGraph> res_graph) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(0);
   return 0;
 /**
-//  Log_info("on preaccept: %llx par: %d", txn_id, (int)partition_id_);
+//  Log_info("on preaccept: {:x} par: {}", txn_id, (int)partition_id_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on pre-accept graph size: %d", graph.size());
+//    Log_info("on pre-accept graph size: {}", graph.size());
   verify(txn_id > 0);
   verify(cmds[0].root_id_ == txn_id);
   if (graph) {
@@ -145,7 +145,7 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
         }
       }
     }
-    verify(!subtx.fully_dispatched_->value_);
+    verify(!subtx.fully_dispatched_->value_.get());
     subtx.fully_dispatched_->set(1);
     MinItfrGraph(*dtxn, res_graph, false, 1);
     ret = SUCCESS;
@@ -157,7 +157,7 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
 void SchedulerJanus::OnAccept(const txnid_t txn_id,
                               int rank,
                               const ballot_t &ballot,
-                              shared_ptr<RccGraph> graph,
+                              rusty::Arc<RccGraph> graph,
                               int32_t *res) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(txn_id, rank));
@@ -169,7 +169,10 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
   } else {
     subtx.max_accepted_ballot_ = ballot;
     subtx.max_seen_ballot_ = ballot;
-    Aggregate(*graph);
+    // @unsafe { Aggregate takes RccGraph& (non-const, internal
+    //   aggregation); the Arc payload is const-view and freshly
+    //   unpacked from the wire, so mutating this local view is sound }
+    Aggregate(*const_cast<RccGraph*>(graph.get()));
     *res = SUCCESS;
   }
 }
@@ -181,7 +184,7 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 //                             TxnOutput *output) {
 //  std::lock_guard<std::recursive_mutex> lock(mtx_);
 ////  if (RandomGenerator::rand(1, 2000) <= 1)
-////    Log_info("on commit graph size: %d", graph.size());
+////    Log_info("on commit graph size: {}", graph.size());
 //  int ret = SUCCESS;
 //  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
 //  dtxn->need_validation_ = need_validation;
@@ -191,11 +194,11 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 //  if (dtxn->HasLogApplyStarted()) {
 //    ret = SUCCESS; // TODO no return output?
 //  } else {
-////    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+////    Log_info("on commit: {:x} par: {}", cmd_id, (int)partition_id_);
 ////    dtxn->commit_request_received_ = true;
 //    if (!sp_graph) {
 //      // quick path without graph, no contention.
-//      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
+//      verify(dtxn->fully_dispatched_->value_.get()); //cannot handle non-dispatched now.
 //      UpgradeStatus(*dtxn, TXN_DCD);
 //      Execute(dtxn);
 //    } else {

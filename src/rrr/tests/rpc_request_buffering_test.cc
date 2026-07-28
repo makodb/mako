@@ -37,7 +37,7 @@ TEST(BufferingConfigTest, DisabledConfig) {
 }
 
 TEST(BufferingConfigTest, ToQueueConfig) {
-    BufferingConfig bc;
+    auto bc = BufferingConfig::defaults();
     bc.max_pending = 500;
     bc.default_ttl_ms = 10000;
     bc.overflow = OverflowStrategy::DROP_NEWEST;
@@ -93,7 +93,7 @@ TEST_F(RequestBufferingTest, BufferingConfigMethods) {
     EXPECT_TRUE(default_config.enabled);
 
     // Set new config
-    BufferingConfig new_config;
+    auto new_config = BufferingConfig::defaults();
     new_config.behavior = DisconnectBehavior::FAIL_FAST;
     new_config.max_pending = 100;
     conn->set_buffering_config(new_config);
@@ -119,7 +119,7 @@ TEST_F(RequestBufferingTest, DISABLED_RequestWhenDisconnectedQueues) {
     // Make a request - should be queued since buffering is enabled by default
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     // Should succeed (request queued)
@@ -141,7 +141,7 @@ TEST_F(RequestBufferingTest, RequestWhenDisconnectedFailsFast) {
     // Make a request - should fail immediately
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     // Should fail with ENOTCONN
@@ -158,7 +158,7 @@ TEST_F(RequestBufferingTest, DISABLED_MultipleRequestsQueued) {
     // Make multiple requests
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         EXPECT_TRUE(result.is_ok());
     }
@@ -177,7 +177,7 @@ TEST_F(RequestBufferingTest, DISABLED_ClearPendingRequests) {
     EXPECT_EQ(conn->pending_request_count(), 3u);
 
     // Clear all pending
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
 
     EXPECT_EQ(conn->pending_request_count(), 0u);
 }
@@ -194,7 +194,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsOldest) {
     // Queue 5 requests
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         EXPECT_TRUE(result.is_ok());
     }
@@ -217,7 +217,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueueOverflowDropsNewest) {
     int ok_count = 0;
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) ok_count++;
     }
@@ -239,7 +239,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
     int err_count = 0;
     for (int i = 0; i < 5; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) {
             ok_count++;
@@ -256,7 +256,7 @@ TEST_F(RequestBufferingTest, DISABLED_DropNewestOverflowDoesNotLeakPendingFuture
     EXPECT_EQ(conn->pending_request_count(), 3u);
     EXPECT_EQ(conn->pending_future_count(), 3u);
 
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
     EXPECT_EQ(conn->pending_request_count(), 0u);
     EXPECT_EQ(conn->pending_future_count(), 0u);
 }
@@ -271,7 +271,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayReenqueueRejectDoesNotLeaveFuturePen
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
     ASSERT_TRUE(result.is_ok());
     auto future = result.unwrap();
@@ -309,7 +309,7 @@ TEST_F(RequestBufferingTest, DISABLED_ReplayExpiredRequestUsesTimeoutErrorCode) 
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 7;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
     ASSERT_TRUE(result.is_ok());
     auto future = result.unwrap();
@@ -346,7 +346,7 @@ TEST_F(RequestBufferingTest, DISABLED_OverflowAndExpiryDoNotLeavePendingFutures)
     int unexpected_err = 0;
     for (int i = 0; i < 128; i++) {
         auto result = conn->request(i, FutureAttr(), [i](BinaryWriteArchive& m) {
-            m << i;
+            rrr::Serialize_::serialize(i, m);
         });
         if (result.is_ok()) {
             accepted.push_back(result.unwrap());
@@ -403,7 +403,7 @@ TEST_F(RequestBufferingTest, ClientBufferingConfig) {
 
     // Set config should be safe even without connection
     client->set_buffering_config(BufferingConfig::disabled());
-    client->clear_pending_requests();
+    client->clear_pending_requests(ECONNABORTED);
 }
 
 // ============================================================================
@@ -415,7 +415,7 @@ TEST_F(RequestBufferingTest, DISABLED_QueuedRequestReturnsFuture) {
 
     auto result = conn->request(1, FutureAttr(), [](BinaryWriteArchive& m) {
         i32 val = 42;
-        m << val;
+        rrr::Serialize_::serialize(val, m);
     });
 
     ASSERT_TRUE(result.is_ok());
@@ -448,7 +448,8 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueing) {
         threads.emplace_back([&conn, &success_count, t, requests_per_thread]() {
             for (int i = 0; i < requests_per_thread; i++) {
                 auto result = conn->request(t * 1000 + i, FutureAttr(), [t, i](BinaryWriteArchive& m) {
-                    m << t << i;
+                    rrr::Serialize_::serialize(t, m);
+                    rrr::Serialize_::serialize(i, m);
                 });
                 if (result.is_ok()) {
                     success_count++;
@@ -489,7 +490,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
     // Clearer thread continuously drains pending queue while producers run.
     std::thread clearer([&conn, &stop_clearer]() {
         while (!stop_clearer.load()) {
-            conn->clear_pending_requests();
+            conn->clear_pending_requests(ECONNABORTED);
             std::this_thread::yield();
         }
     });
@@ -524,7 +525,7 @@ TEST_F(RequestBufferingTest, DISABLED_ConcurrentQueueAndClearHasNoStuckFutures) 
     clearer.join();
 
     // Final sweep to ensure queue is drained and callbacks fired.
-    conn->clear_pending_requests();
+    conn->clear_pending_requests(ECONNABORTED);
 
     // Wait briefly for pending map to settle to zero under concurrent callbacks.
     for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {

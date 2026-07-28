@@ -5,16 +5,15 @@ module;
 
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
-#include <rusty/hashmap.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/rusty.hpp>
 
 export module rrr.idempotency;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
-import rrr.marshal;
 import rrr.serializable;
 import rrr.threading;
 
@@ -26,66 +25,137 @@ export namespace rrr {
 // ===========================================================================
 
 /**
- * @safe - POD struct for idempotency keys
+ * @safe - Aggregate POD for idempotency keys.
  *
- * Uniquely identifies a request for duplicate detection.
- * Combines client ID with sequence number for global uniqueness.
+ * Uniquely identifies a request for duplicate detection. Combines
+ * client ID with sequence number for global uniqueness.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a static `IdempotencyKey::new_(client_id, sequence)` factory; the
+ * `fn empty()` lowers to a static `IdempotencyKey::empty()` factory
+ * (returning a zero-valued key).
+ *
+ * The DSL emits a pure C++20 aggregate (public fields, no user-
+ * declared ctors). Call sites continue to compile via aggregate
+ * paren-init (`IdempotencyKey(cid, seq)`), brace-init
+ * (`IdempotencyKey{cid, seq}`), and designated-init
+ * (`IdempotencyKey{.client_id = cid, .sequence = seq}`); the last
+ * form is what `IdempotencyKeyGenerator::next()` (DSL-emitted) uses.
+ *
+ * `operator==`, `operator!=`, `IdempotencyKeyHash`, and the archive
+ * `operator<<` / `operator>>` overloads stay outside the DSL block
+ * (the DSL grammar does not model operator overloading).
  */
+#if RUSTYCPP_RUST
 struct IdempotencyKey {
-    uint64_t client_id = 0;   // Client identifier
-    uint64_t sequence = 0;    // Monotonically increasing sequence number
-
-    // @safe - Default constructor
-    IdempotencyKey() = default;
-
-    // @safe - Explicit constructor
-    IdempotencyKey(uint64_t cid, uint64_t seq)
-        : client_id(cid), sequence(seq) {}
-
-    // @safe - Equality comparison
-    bool operator==(const IdempotencyKey& other) const {
-        return client_id == other.client_id && sequence == other.sequence;
-    }
-
-    // @safe - Inequality comparison
-    bool operator!=(const IdempotencyKey& other) const {
-        return !(*this == other);
-    }
-
-    // @safe - Check if key is valid (non-zero)
-    bool is_valid() const {
-        return client_id != 0 || sequence != 0;
-    }
-
-    // @safe - Create an empty/invalid key
-    static IdempotencyKey empty() {
-        return IdempotencyKey{0, 0};
-    }
-};
-
-// Hash function for IdempotencyKey (for use in unordered_map)
-struct IdempotencyKeyHash {
-    // @unsafe { hash computation }
-    std::size_t operator()(const IdempotencyKey& key) const noexcept {
-        // Combine client_id and sequence using FNV-1a style mixing
-        std::size_t h1 = std::hash<uint64_t>{}(key.client_id);
-        std::size_t h2 = std::hash<uint64_t>{}(key.sequence);
-        return h1 ^ (h2 * 0x9e3779b97f4a7c15ULL);  // Golden ratio constant
-    }
-};
-
-// Marshal operators for IdempotencyKey
-// @safe - Marshal::operator<< / operator>> overloads are @safe via the
-// rrr namespace + class annotation.
-inline Marshal& operator<<(Marshal& m, const IdempotencyKey& key) {
-    m << key.client_id << key.sequence;
-    return m;
+    client_id: u64,
+    sequence: u64,
 }
 
-// @safe - see operator<< above.
-inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
-    m >> key.client_id >> key.sequence;
-    return m;
+impl IdempotencyKey {
+    fn new(client_id: u64, sequence: u64) -> IdempotencyKey {
+        IdempotencyKey { client_id, sequence }
+    }
+
+    fn empty() -> IdempotencyKey {
+        IdempotencyKey { client_id: 0u64, sequence: 0u64 }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.client_id != 0u64 || self.sequence != 0u64
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=b30b49bf92b45a1e3fe177126b5097c83a8c77174e2f341f33bb64bb279dbd6c*/
+struct IdempotencyKey;
+
+struct IdempotencyKey {
+    uint64_t client_id;
+    uint64_t sequence;
+
+    static IdempotencyKey new_(uint64_t client_id, uint64_t sequence);
+    static IdempotencyKey empty();
+    bool is_valid() const;
+};
+
+
+IdempotencyKey IdempotencyKey::new_(uint64_t client_id, uint64_t sequence) {
+    return IdempotencyKey{.client_id = std::move(client_id), .sequence = std::move(sequence)};
+}
+
+IdempotencyKey IdempotencyKey::empty() {
+    return IdempotencyKey{.client_id = static_cast<uint64_t>(0), .sequence = static_cast<uint64_t>(0)};
+}
+
+bool IdempotencyKey::is_valid() const {
+    return (rusty::detail::deref_if_pointer_like(this->client_id) != static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(this->sequence) != static_cast<uint64_t>(0));
+}
+/*RUSTYCPP:GEN-END id=idempotency.0a*/
+
+// @safe - Equality comparison (operator overloading lives outside the
+// DSL block; the DSL grammar does not model operator overloading).
+inline bool operator==(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
+    return lhs.client_id == rhs.client_id && lhs.sequence == rhs.sequence;
+}
+
+// @safe - Inequality comparison
+inline bool operator!=(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
+    return !(lhs == rhs);
+}
+
+// Hash function for IdempotencyKey. Only the hashbrown-style
+// `hash_one()` is provided — that is what `rusty::HashMap` (the
+// transpiled hashbrown port) calls; the previous `operator()`
+// (intended for std::unordered_map) had no in-tree user beyond a unit
+// test, so we removed it to clear the DSL operator-overload blocker.
+// The single test caller now reaches in via `hash_one(key)`.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below
+// is the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// The hash body is identity-of-client_id XOR golden-ratio-mix-of-sequence.
+// This matches the original C++ behavior exactly: libc++'s
+// `std::hash<uint64_t>` is the identity on unsigned-integer inputs, so
+// `h1 = std::hash{}(client_id)` simplifies to `client_id` and likewise
+// for `h2`. Unsigned multiplication wraps in both languages.
+#if RUSTYCPP_RUST
+struct IdempotencyKeyHash {
+}
+
+impl IdempotencyKeyHash {
+    fn hash_one(&self, key: &IdempotencyKey) -> u64 {
+        key.client_id ^ key.sequence.wrapping_mul(0x9e3779b97f4a7c15u64)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.key_hash version=1 rust_sha256=a159b426da97ec7baa50fa5fac23869a8d9959f967c3f7b4209f849091789249*/
+struct IdempotencyKeyHash;
+
+struct IdempotencyKeyHash {
+
+    uint64_t hash_one(const IdempotencyKey& key) const;
+};
+
+
+uint64_t IdempotencyKeyHash::hash_one(const IdempotencyKey& key) const {
+    return rusty::detail::deref_if_pointer_like(key.client_id) ^ rusty::wrapping_mul(key.sequence, static_cast<std::remove_cvref_t<decltype(key.sequence)>>(static_cast<uint64_t>(11400714819323198485)));
+}
+/*RUSTYCPP:GEN-END id=idempotency.key_hash*/
+
+// Archive serde for IdempotencyKey.
+// @safe - field-by-field dispatch to the archive leaf impls.
+inline void serialize(const IdempotencyKey& key, BinaryWriteArchive& m) {
+    rrr::Serialize_::serialize(key.client_id, m);
+    rrr::Serialize_::serialize(key.sequence, m);
+}
+
+// @safe - see serialize above.
+inline void deserialize(IdempotencyKey& key, BinaryReadArchive& m) {
+    rrr::Deserialize_::deserialize(key.client_id, m);
+    rrr::Deserialize_::deserialize(key.sequence, m);
 }
 
 // ===========================================================================
@@ -93,50 +163,81 @@ inline Marshal& operator>>(Marshal& m, IdempotencyKey& key) {
 // ===========================================================================
 
 /**
- * @safe - POD configuration struct for IdempotencyCache
+ * @safe - POD configuration struct for IdempotencyCache.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a `static IdempotencyConfig new_()` factory. Callers construct via
+ * the factory presets (`IdempotencyConfig::defaults()`, `::small()`,
+ * `::large()`, `::disabled()`) or via brace-init / designated-init
+ * (which still works because the emitted struct is a C++20 aggregate).
  */
+#if RUSTYCPP_RUST
 struct IdempotencyConfig {
-    uint64_t ttl_ms = 60000;        // Time-to-live for cached entries (60 seconds)
-    size_t max_entries = 10000;     // Maximum cache size
-    bool enabled = true;            // Enable/disable caching
+    ttl_ms: u64,
+    max_entries: usize,
+    enabled: bool,
+}
 
-    // @safe - Default constructor
-    IdempotencyConfig() = default;
-
-    // @safe - Copy constructor
-    IdempotencyConfig(const IdempotencyConfig&) = default;
-
-    // @safe - Copy assignment
-    IdempotencyConfig& operator=(const IdempotencyConfig&) = default;
-
-    // @safe - Default preset
-    static IdempotencyConfig defaults() {
-        return IdempotencyConfig{};
+impl IdempotencyConfig {
+    fn new() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 60000u64, max_entries: 10000usize, enabled: true }
     }
 
-    // @safe - Small cache preset (fewer entries, shorter TTL)
-    static IdempotencyConfig small() {
-        IdempotencyConfig cfg;
-        cfg.ttl_ms = 30000;      // 30 seconds
-        cfg.max_entries = 1000;
-        return cfg;
+    fn defaults() -> IdempotencyConfig {
+        IdempotencyConfig::new()
     }
 
-    // @safe - Large cache preset (more entries, longer TTL)
-    static IdempotencyConfig large() {
-        IdempotencyConfig cfg;
-        cfg.ttl_ms = 300000;     // 5 minutes
-        cfg.max_entries = 100000;
-        return cfg;
+    fn small() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 30000u64, max_entries: 1000usize, enabled: true }
     }
 
-    // @safe - Disabled preset
-    static IdempotencyConfig disabled() {
-        IdempotencyConfig cfg;
-        cfg.enabled = false;
-        return cfg;
+    fn large() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 300000u64, max_entries: 100000usize, enabled: true }
     }
+
+    fn disabled() -> IdempotencyConfig {
+        IdempotencyConfig { ttl_ms: 60000u64, max_entries: 10000usize, enabled: false }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0 version=1 rust_sha256=1a5b1ac0a005df2a0c5315a4fd51b32cfe1d146ba48349b643063dfd7ba42d38*/
+struct IdempotencyConfig;
+
+struct IdempotencyConfig {
+    uint64_t ttl_ms;
+    size_t max_entries;
+    bool enabled;
+
+    static IdempotencyConfig new_();
+    static IdempotencyConfig defaults();
+    static IdempotencyConfig small();
+    static IdempotencyConfig large();
+    static IdempotencyConfig disabled();
 };
+
+
+IdempotencyConfig IdempotencyConfig::new_() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(10000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::defaults() {
+    return IdempotencyConfig::new_();
+}
+
+IdempotencyConfig IdempotencyConfig::small() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(30000), .max_entries = static_cast<size_t>(1000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::large() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(300000), .max_entries = static_cast<size_t>(100000), .enabled = true};
+}
+
+IdempotencyConfig IdempotencyConfig::disabled() {
+    return IdempotencyConfig{.ttl_ms = static_cast<uint64_t>(60000), .max_entries = static_cast<size_t>(10000), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=idempotency.0*/
 
 // ===========================================================================
 // CachedResponse
@@ -145,50 +246,87 @@ struct IdempotencyConfig {
 /**
  * @safe - Cached response entry for idempotency cache
  *
- * Uses rusty::Vec<char> for response data since Marshal is non-copyable.
+ * Holds the reply payload as raw bytes (Vec<u8>).
  */
+
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block.
+//
+// The fields drop their NSDMI defaults — `CachedResponse{}` still
+// zero-initializes everything (the aggregate-init route the DSL
+// emits): `IdempotencyKey{0, 0}` matches the previous
+// `IdempotencyKey::empty()`, `i32 = 0`, `Vec` is an empty
+// default, `u64 = 0`. The defaulted move ctor / assignment are
+// implicit on the aggregate.
+//
+// `is_expired` lives in the DSL impl (pure arithmetic + short-circuit
+// on `ttl_ms == 0`). The byte-copy helpers (`cached_response_set` /
+// `cached_response_get`) stay free functions: raw memcpy kernels.
+#if RUSTYCPP_RUST
+struct CachedResponse {
+    key: IdempotencyKey,
+    error_code: i32,
+    response_data: Vec<u8>,
+    timestamp_ms: u64,
+}
+
+impl CachedResponse {
+    fn is_expired(&self, current_time_ms: u64, ttl_ms: u64) -> bool {
+        if ttl_ms == 0u64 {
+            return false;
+        }
+        current_time_ms > self.timestamp_ms + ttl_ms
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cached_response version=1 rust_sha256=cba09e91267728fbbff1ea9e791bd32e89404c66570982534db40cb8c2a0e7b8*/
+struct CachedResponse;
+
 struct CachedResponse {
     IdempotencyKey key;
-    int32_t error_code = 0;             // Response error code
-    rusty::Vec<char> response_data;    // Serialized response payload
-    uint64_t timestamp_ms = 0;          // When the response was cached
+    int32_t error_code;
+    rusty::Vec<uint8_t> response_data;
+    uint64_t timestamp_ms;
 
-    // @safe - Default constructor
-    CachedResponse() = default;
-
-    // @safe - Move constructor
-    CachedResponse(CachedResponse&&) = default;
-
-    // @safe - Move assignment
-    CachedResponse& operator=(CachedResponse&&) = default;
-
-    // @safe - Check if entry has expired
-    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
-        if (ttl_ms == 0) return false;  // No expiration
-        return current_time_ms > timestamp_ms + ttl_ms;
-    }
-
-    // @unsafe - Copy response data from Marshal
-    void set_response_data(const Marshal& m) {
-        const size_t size = m.content_size();
-        response_data.clear();
-        response_data.reserve(size);
-        if (size > 0) {
-            response_data.set_len(size);
-            // Use Marshal's peek method to copy data without consuming
-            // peek takes T& which we cast from char* to char& for raw access
-            Marshal& non_const_m = const_cast<Marshal&>(m);
-            non_const_m.peek(response_data[0], size);
-        }
-    }
-
-    // @unsafe - Copy response data to Marshal
-    void get_response_data(Marshal* out) const {
-        if (out && !response_data.is_empty()) {
-            out->write(response_data.data(), response_data.len());
-        }
-    }
+    bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
 };
+
+
+bool CachedResponse::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const {
+    if (rusty::detail::deref_if_pointer_like(ttl_ms) == static_cast<uint64_t>(0)) {
+        return false;
+    }
+    return rusty::detail::deref_if_pointer_like(current_time_ms) > (rusty::detail::deref_if_pointer_like(this->timestamp_ms) + rusty::detail::deref_if_pointer_like(ttl_ms));
+}
+/*RUSTYCPP:GEN-END id=idempotency.cached_response*/
+
+// @unsafe - raw byte copy (reserve + memcpy + set_len) into the entry.
+inline void cached_response_set(CachedResponse& self,
+                                const rusty::Vec<std::uint8_t>& bytes) {
+    const size_t size = bytes.len();
+    self.response_data.clear();
+    self.response_data.reserve(size);
+    if (size > 0) {
+        self.response_data.set_len(size);
+        std::memcpy(&self.response_data[0], bytes.data(), size);
+    }
+}
+
+// @unsafe - raw byte copy out of the entry (replaces `out` contents).
+inline void cached_response_get(const CachedResponse& self,
+                                rusty::Vec<std::uint8_t>* out) {
+    if (out == nullptr) {
+        return;
+    }
+    out->clear();
+    const size_t size = self.response_data.len();
+    out->reserve(size);
+    if (size > 0) {
+        out->set_len(size);
+        std::memcpy(&(*out)[0], self.response_data.data(), size);
+    }
+}
 
 // ===========================================================================
 // IdempotencyKeyGenerator
@@ -198,40 +336,98 @@ struct CachedResponse {
  * Thread-safe generator for unique idempotency keys.
  *
  * Each client should have its own generator with a unique client_id.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `/*RUSTYCPP:GEN-BEGIN ... END*\/` block. The `fn new(client_id)`
+ * lowers to a static `IdempotencyKeyGenerator::new_(client_id)`
+ * factory; call sites construct via that factory rather than direct
+ * ctor syntax.
+ *
+ * Behavioral diffs from the original C++ class:
+ *   * `next()` and `set_client_id()` become `const`. Both only mutate
+ *     `Cell<u64>` fields, which is allowed on a const method. Callers
+ *     holding a non-const ref keep working.
+ *   * Fields are no longer marked `private` — the DSL emits all fields
+ *     as public. No callers reach into them. The trailing `_` on each
+ *     field is replaced with `_field` because the transpiler considers
+ *     `client_id_` to collide with the `client_id()` accessor; the
+ *     rename moves the field out of the way and keeps the public
+ *     method name unchanged. `sequence_` doesn't collide with any
+ *     method, but it's renamed for consistency.
  */
 // @safe - Uses rusty::Cell for thread-safe interior mutability;
 // no raw pointers, syscalls, or operator-overload chains.
-class IdempotencyKeyGenerator {
-    rusty::Cell<uint64_t> client_id_{0};
-    rusty::Cell<uint64_t> sequence_{0};
+#if RUSTYCPP_RUST
+struct IdempotencyKeyGenerator {
+    client_id_field: Cell<u64>,
+    sequence_field: Cell<u64>,
+}
 
-public:
-    // @safe - Constructor with client ID
-    explicit IdempotencyKeyGenerator(uint64_t client_id)
-        : client_id_(client_id) {}
-
-    // @safe - Generate the next unique key
-    IdempotencyKey next() {
-        uint64_t seq = sequence_.get();
-        sequence_.set(seq + 1);
-        return IdempotencyKey{client_id_.get(), seq};
+impl IdempotencyKeyGenerator {
+    fn new(client_id: u64) -> IdempotencyKeyGenerator {
+        IdempotencyKeyGenerator {
+            client_id_field: Cell::<u64>::new(client_id),
+            sequence_field: Cell::<u64>::new(0u64),
+        }
     }
 
-    // @safe - Get current client ID
-    uint64_t client_id() const {
-        return client_id_.get();
+    fn next(&self) -> IdempotencyKey {
+        let seq: u64 = self.sequence_field.get();
+        self.sequence_field.set(seq + 1u64);
+        IdempotencyKey { client_id: self.client_id_field.get(), sequence: seq }
     }
 
-    // @safe - Set client ID (usually done once at initialization)
-    void set_client_id(uint64_t id) {
-        client_id_.set(id);
+    fn client_id(&self) -> u64 {
+        self.client_id_field.get()
     }
 
-    // @safe - Get current sequence (for debugging)
-    uint64_t current_sequence() const {
-        return sequence_.get();
+    fn set_client_id(&self, id: u64) {
+        self.client_id_field.set(id);
     }
+
+    fn current_sequence(&self) -> u64 {
+        self.sequence_field.get()
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.1 version=1 rust_sha256=ebc8b3697c9536bec8cbbece4b4020d05d010907b3d0ef3b1b47163b43e00a32*/
+struct IdempotencyKeyGenerator;
+
+struct IdempotencyKeyGenerator {
+    rusty::Cell<uint64_t> client_id_field;
+    rusty::Cell<uint64_t> sequence_field;
+
+    static IdempotencyKeyGenerator new_(uint64_t client_id);
+    IdempotencyKey next() const;
+    uint64_t client_id() const;
+    void set_client_id(uint64_t id) const;
+    uint64_t current_sequence() const;
 };
+
+
+IdempotencyKeyGenerator IdempotencyKeyGenerator::new_(uint64_t client_id) {
+    return IdempotencyKeyGenerator{.client_id_field = rusty::Cell<uint64_t>::new_(std::move(client_id)), .sequence_field = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0))};
+}
+
+IdempotencyKey IdempotencyKeyGenerator::next() const {
+    uint64_t seq = this->sequence_field.get();
+    this->sequence_field.set(rusty::detail::deref_if_pointer_like(seq) + static_cast<uint64_t>(1));
+    return IdempotencyKey{.client_id = this->client_id_field.get(), .sequence = std::move(seq)};
+}
+
+uint64_t IdempotencyKeyGenerator::client_id() const {
+    return this->client_id_field.get();
+}
+
+void IdempotencyKeyGenerator::set_client_id(uint64_t id) const {
+    this->client_id_field.set(std::move(id));
+}
+
+uint64_t IdempotencyKeyGenerator::current_sequence() const {
+    return this->sequence_field.get();
+}
+/*RUSTYCPP:GEN-END id=idempotency.1*/
 
 // ===========================================================================
 // IdempotencyCache
@@ -250,259 +446,355 @@ public:
  *   5. Return response
  */
 // @safe - LRU cache backed by rusty::Mutex<State> with rusty::Cell for
-// config. The Marshal-bearing cached response is moved through @unsafe
-// blocks at the boundary; the rest of the class is @safe.
-class IdempotencyCache {
-    // Configuration (Cell for interior mutability)
-    rusty::Cell<IdempotencyConfig> config_;
+// config. Cached responses are raw byte vectors.
+// Free-fn implementations of the byte-copy / reference-out-param
+// methods; the DSL methods below delegate to these. Defined after the GEN
+// block. (lookup writes through `int32_t&`/`Vec<u8>&` out-params + copies
+// via cached_response_get; store copies via cached_response_set.)
+struct IdempotencyCache;  // defined by the GEN block below
+bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
+                 uint64_t current_time_ms, int32_t& out_error_code,
+                 rusty::Vec<std::uint8_t>& out_response);
+void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
+                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
+                uint64_t current_time_ms);
 
-    // Cache data structure protected by mutex
-    // Key -> iterator in LRU list
-    using LruList = std::list<CachedResponse>;
-    using CacheMap = rusty::HashMap<IdempotencyKey, typename LruList::iterator,
-                                         IdempotencyKeyHash>;
+// LRU idempotency cache. Reshaped away from `std::list<CachedResponse>` +
+// `HashMap<IdempotencyKey, std::list::iterator>` (the opaque non-Copy
+// iterator was the migration blocker) to a single
+// `Mutex<VecDeque<CachedResponse>>`: each entry already carries its `key`,
+// so the index map is unnecessary and lookups are linear scans (front =
+// MRU). This is a test-only cache, so the O(n) scan is irrelevant, and it
+// makes the whole class DSL-expressible (the scan + remove(i)/push_front
+// pattern mirrors CompletionTracker).
+//
+// @safe - all state is rusty interior-mutability (Cell / Mutex); the
+// byte-copy bodies live in the `idem_*` free fns the methods delegate to.
+#if RUSTYCPP_RUST
+struct IdempotencyCache {
+    config_: Cell<IdempotencyConfig>,
+    cache_: Mutex<VecDeque<CachedResponse>>,
+    hits_: Cell<u64>,
+    misses_: Cell<u64>,
+    evictions_: Cell<u64>,
+}
 
-    rusty::Mutex<LruList> lru_list_;
-    rusty::Mutex<CacheMap> cache_map_;
-
-    // Statistics (Cell for lock-free reads)
-    rusty::Cell<uint64_t> hits_{0};
-    rusty::Cell<uint64_t> misses_{0};
-    rusty::Cell<uint64_t> evictions_{0};
-
-public:
-    // @safe - Constructor with configuration
-    explicit IdempotencyCache(const IdempotencyConfig& config = IdempotencyConfig::defaults())
-        : config_(config), lru_list_(LruList{}), cache_map_(CacheMap{}) {}
-
-    // @safe - Check if caching is enabled
-    bool enabled() const {
-        return config_.get().enabled;
-    }
-
-    // @safe - Get current configuration
-    IdempotencyConfig config() const {
-        return config_.get();
-    }
-
-    // @safe - Update configuration
-    void set_config(const IdempotencyConfig& config) {
-        config_.set(config);
-    }
-
-    /**
-     * @unsafe - Look up a cached response
-     *
-     * Returns true if a cached response was found and copied to output.
-     * Returns false if not found or cache disabled.
-     *
-     * @param key The idempotency key to look up
-     * @param current_time_ms Current time for TTL check
-     * @param out_error_code Output: cached error code
-     * @param out_response Output: cached response data
-     */
-    bool lookup(const IdempotencyKey& key, uint64_t current_time_ms,
-                int32_t* out_error_code, Marshal* out_response) {
-        auto cfg = config_.get();
-        if (!cfg.enabled || !key.is_valid()) {
-            misses_.set(misses_.get() + 1);
-            return false;
+impl IdempotencyCache {
+    #[cpp_ctor] fn new() -> IdempotencyCache {
+        IdempotencyCache {
+            config_: Cell::new(IdempotencyConfig::defaults()),
+            cache_: Mutex::<VecDeque<CachedResponse>>::new(VecDeque::<CachedResponse>::new()),
+            hits_: Cell::new(0u64),
+            misses_: Cell::new(0u64),
+            evictions_: Cell::new(0u64),
         }
-
-        // Lock cache map
-        auto map_guard = cache_map_.lock().unwrap();
-
-        auto map_it = map_guard->get(key);
-        if (map_it.is_none()) {
-            misses_.set(misses_.get() + 1);
-            return false;
-        }
-        auto list_it = map_it.unwrap();
-
-        // Check TTL
-        auto& entry = *list_it;
-        if (entry.is_expired(current_time_ms, cfg.ttl_ms)) {
-            // Entry expired - remove it
-            auto list_guard = lru_list_.lock().unwrap();
-            list_guard->erase(list_it);
-            map_guard->remove(key);
-            misses_.set(misses_.get() + 1);
-            return false;
-        }
-
-        // Cache hit - move to front of LRU list
-        {
-            auto list_guard = lru_list_.lock().unwrap();
-            list_guard->splice(list_guard->begin(), *list_guard, list_it);
-        }
-
-        // Copy response data
-        if (out_error_code) {
-            *out_error_code = entry.error_code;
-        }
-        if (out_response) {
-            // Copy the cached response data
-            entry.get_response_data(out_response);
-        }
-
-        hits_.set(hits_.get() + 1);
-        return true;
     }
 
-    /**
-     * @unsafe - Store a response in the cache
-     *
-     * @param key The idempotency key
-     * @param error_code The response error code
-     * @param response The response data to cache
-     * @param current_time_ms Current time for timestamp
-     */
-    void store(const IdempotencyKey& key, int32_t error_code,
-               const Marshal& response, uint64_t current_time_ms) {
-        auto cfg = config_.get();
-        if (!cfg.enabled || !key.is_valid()) {
-            return;
+    #[cpp_ctor] fn with_config(config: IdempotencyConfig) -> IdempotencyCache {
+        IdempotencyCache {
+            config_: Cell::new(config),
+            cache_: Mutex::<VecDeque<CachedResponse>>::new(VecDeque::<CachedResponse>::new()),
+            hits_: Cell::new(0u64),
+            misses_: Cell::new(0u64),
+            evictions_: Cell::new(0u64),
         }
+    }
 
-        // Lock both structures
-        auto map_guard = cache_map_.lock().unwrap();
-        auto list_guard = lru_list_.lock().unwrap();
+    fn enabled(&self) -> bool {
+        self.config_.get().enabled
+    }
 
-        // Check if key already exists
-        auto existing = map_guard->get(key);
-        if (existing.is_some()) {
-            auto list_it = existing.unwrap();
-            // Update existing entry
-            auto& entry = *list_it;
-            entry.error_code = error_code;
-            entry.set_response_data(response);
-            entry.timestamp_ms = current_time_ms;
-            // Move to front
-            list_guard->splice(list_guard->begin(), *list_guard, list_it);
-            return;
+    fn config(&self) -> IdempotencyConfig {
+        self.config_.get()
+    }
+
+    fn set_config(&self, config: &IdempotencyConfig) {
+        self.config_.set(config)
+    }
+
+    fn lookup(&self, key: &IdempotencyKey, current_time_ms: u64,
+              out_error_code: &mut i32, out_response: &mut Vec<u8>) -> bool {
+        idem_lookup(self, key, current_time_ms, out_error_code, out_response)
+    }
+
+    fn store(&self, key: &IdempotencyKey, error_code: i32,
+             response: &Vec<u8>, current_time_ms: u64) {
+        idem_store(self, key, error_code, response, current_time_ms)
+    }
+
+    fn remove(&self, key: &IdempotencyKey) -> bool {
+        let guard = self.cache_.lock().unwrap();
+        let n = guard.len();
+        let mut i: usize = 0usize;
+        while i < n {
+            if guard[i].key.client_id == key.client_id && guard[i].key.sequence == key.sequence {
+                guard.remove(i);
+                return true;
+            }
+            i = i + 1usize;
         }
+        false
+    }
 
-        // Evict if at capacity
-        while (list_guard->size() >= cfg.max_entries && !list_guard->empty()) {
-            auto& oldest = list_guard->back();
-            map_guard->remove(oldest.key);
-            list_guard->pop_back();
-            evictions_.set(evictions_.get() + 1);
+    fn clear(&self) {
+        let guard = self.cache_.lock().unwrap();
+        guard.clear();
+    }
+
+    fn size(&self) -> usize {
+        let guard = self.cache_.lock().unwrap();
+        guard.len()
+    }
+
+    fn hits(&self) -> u64 {
+        self.hits_.get()
+    }
+
+    fn misses(&self) -> u64 {
+        self.misses_.get()
+    }
+
+    fn evictions(&self) -> u64 {
+        self.evictions_.get()
+    }
+
+    fn hit_rate(&self) -> f64 {
+        let h = self.hits_.get();
+        let m = self.misses_.get();
+        let total = h + m;
+        if total == 0u64 {
+            return 0.0f64;
         }
-
-        // Create new entry
-        CachedResponse entry;
-        entry.key = key;
-        entry.error_code = error_code;
-        entry.set_response_data(response);
-        entry.timestamp_ms = current_time_ms;
-
-        // Insert at front
-        list_guard->push_front(std::move(entry));
-        map_guard->insert(key, list_guard->begin());
+        (h as f64) / (total as f64)
     }
 
-    /**
-     * @unsafe - Remove an entry from the cache
-     *
-     * Useful for invalidating cached responses.
-     */
-    bool remove(const IdempotencyKey& key) {
-        auto map_guard = cache_map_.lock().unwrap();
+    fn reset_stats(&self) {
+        self.hits_.set(0u64);
+        self.misses_.set(0u64);
+        self.evictions_.set(0u64);
+    }
 
-        auto map_it = map_guard->get(key);
-        if (map_it.is_none()) {
-            return false;
+    fn evict_expired(&self, current_time_ms: u64) -> usize {
+        let cfg = self.config_.get();
+        if !cfg.enabled || cfg.ttl_ms == 0u64 {
+            return 0usize;
         }
-        auto list_it = map_it.unwrap();
-
-        auto list_guard = lru_list_.lock().unwrap();
-        list_guard->erase(list_it);
-        map_guard->remove(key);
-        return true;
-    }
-
-    /**
-     * @safe - Clear all cached entries
-     */
-    void clear() {
-        auto map_guard = cache_map_.lock().unwrap();
-        auto list_guard = lru_list_.lock().unwrap();
-
-        map_guard->clear();
-        list_guard->clear();
-    }
-
-    // === Statistics ===
-
-    // @safe - Get cache size
-    size_t size() const {
-        auto guard = cache_map_.lock().unwrap();
-        return guard->len();
-    }
-
-    // @safe - Get hit count
-    uint64_t hits() const {
-        return hits_.get();
-    }
-
-    // @safe - Get miss count
-    uint64_t misses() const {
-        return misses_.get();
-    }
-
-    // @safe - Get eviction count
-    uint64_t evictions() const {
-        return evictions_.get();
-    }
-
-    // @safe - Get hit rate (0.0 to 1.0)
-    double hit_rate() const {
-        uint64_t h = hits_.get();
-        uint64_t m = misses_.get();
-        uint64_t total = h + m;
-        if (total == 0) return 0.0;
-        return static_cast<double>(h) / static_cast<double>(total);
-    }
-
-    // @safe - Reset statistics
-    void reset_stats() {
-        hits_.set(0);
-        misses_.set(0);
-        evictions_.set(0);
-    }
-
-    /**
-     * @unsafe - Evict expired entries
-     *
-     * Call periodically to clean up stale entries.
-     * Returns number of entries evicted.
-     */
-    size_t evict_expired(uint64_t current_time_ms) {
-        auto cfg = config_.get();
-        if (!cfg.enabled || cfg.ttl_ms == 0) {
-            return 0;
-        }
-
-        auto map_guard = cache_map_.lock().unwrap();
-        auto list_guard = lru_list_.lock().unwrap();
-
-        size_t evicted = 0;
-        auto it = list_guard->begin();
-        while (it != list_guard->end()) {
-            if (it->is_expired(current_time_ms, cfg.ttl_ms)) {
-                map_guard->remove(it->key);
-                it = list_guard->erase(it);
-                evicted++;
+        let guard = self.cache_.lock().unwrap();
+        let mut evicted: usize = 0usize;
+        let mut i: usize = 0usize;
+        while i < guard.len() {
+            if guard[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                guard.remove(i);
+                evicted = evicted + 1usize;
             } else {
-                ++it;
+                i = i + 1usize;
             }
         }
-
-        evictions_.set(evictions_.get() + evicted);
-        return evicted;
+        self.evictions_.set(self.evictions_.get() + (evicted as u64));
+        evicted
     }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=e4ee22bc6d5a77c26f7bc14cb52b5b6742c3a9ef62e440d5d25a8f7e52162a43*/
+struct IdempotencyCache;
+
+struct IdempotencyCache {
+    rusty::Cell<IdempotencyConfig> config_;
+    rusty::Mutex<rusty::VecDeque<CachedResponse>> cache_;
+    rusty::Cell<uint64_t> hits_;
+    rusty::Cell<uint64_t> misses_;
+    rusty::Cell<uint64_t> evictions_;
+
+    IdempotencyCache();
+    IdempotencyCache(IdempotencyConfig config);
+    bool enabled() const;
+    IdempotencyConfig config() const;
+    void set_config(const IdempotencyConfig& config) const;
+    bool lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const;
+    void store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const;
+    bool remove(const IdempotencyKey& key) const;
+    void clear() const;
+    size_t size() const;
+    uint64_t hits() const;
+    uint64_t misses() const;
+    uint64_t evictions() const;
+    double hit_rate() const;
+    void reset_stats() const;
+    size_t evict_expired(uint64_t current_time_ms) const;
 };
+
+
+IdempotencyCache::IdempotencyCache()
+    : config_(rusty::Cell<IdempotencyConfig>::new_(IdempotencyConfig::defaults()))
+    , cache_(rusty::Mutex<rusty::VecDeque<CachedResponse>>::new_(rusty::VecDeque<CachedResponse>::new_()))
+    , hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , misses_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+{}
+
+IdempotencyCache::IdempotencyCache(IdempotencyConfig config)
+    : config_(rusty::Cell<IdempotencyConfig>::new_(std::move(config)))
+    , cache_(rusty::Mutex<rusty::VecDeque<CachedResponse>>::new_(rusty::VecDeque<CachedResponse>::new_()))
+    , hits_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , misses_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+    , evictions_(rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)))
+{}
+
+bool IdempotencyCache::enabled() const {
+    return this->config_.get().enabled;
+}
+
+IdempotencyConfig IdempotencyCache::config() const {
+    return this->config_.get();
+}
+
+void IdempotencyCache::set_config(const IdempotencyConfig& config) const {
+    this->config_.set(std::move(config));
+}
+
+bool IdempotencyCache::lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const {
+    return idem_lookup((*this), key, std::move(current_time_ms), out_error_code, out_response);
+}
+
+void IdempotencyCache::store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const {
+    idem_store((*this), key, std::move(error_code), response, std::move(current_time_ms));
+}
+
+bool IdempotencyCache::remove(const IdempotencyKey& key) const {
+    auto guard = this->cache_.lock().unwrap();
+    const auto n = rusty::len(guard);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::detail::deref_if_pointer_like(n)) {
+        if ((rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }(guard[i]).client_id) == rusty::detail::deref_if_pointer_like(key.client_id)) && (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }(guard[i]).sequence) == rusty::detail::deref_if_pointer_like(key.sequence))) {
+            (*guard).remove(i);
+            return true;
+        }
+        i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+    }
+    return false;
+}
+
+void IdempotencyCache::clear() const {
+    auto guard = this->cache_.lock().unwrap();
+    (*guard).clear();
+}
+
+size_t IdempotencyCache::size() const {
+    auto guard = this->cache_.lock().unwrap();
+    return rusty::len(guard);
+}
+
+uint64_t IdempotencyCache::hits() const {
+    return this->hits_.get();
+}
+
+uint64_t IdempotencyCache::misses() const {
+    return this->misses_.get();
+}
+
+uint64_t IdempotencyCache::evictions() const {
+    return this->evictions_.get();
+}
+
+double IdempotencyCache::hit_rate() const {
+    const auto h = this->hits_.get();
+    const auto m = this->misses_.get();
+    const auto total = rusty::detail::deref_if_pointer_like(h) + rusty::detail::deref_if_pointer_like(m);
+    if (rusty::detail::deref_if_pointer_like(total) == static_cast<uint64_t>(0)) {
+        return 0.0;
+    }
+    return ((static_cast<double>(h))) / ((static_cast<double>(total)));
+}
+
+void IdempotencyCache::reset_stats() const {
+    this->hits_.set(static_cast<uint64_t>(0));
+    this->misses_.set(static_cast<uint64_t>(0));
+    this->evictions_.set(static_cast<uint64_t>(0));
+}
+
+size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
+    const auto cfg = this->config_.get();
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)) == static_cast<uint64_t>(0))) {
+        return static_cast<size_t>(0);
+    }
+    auto guard = this->cache_.lock().unwrap();
+    size_t evicted = static_cast<size_t>(0);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(guard)) {
+        if (guard[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
+            (*guard).remove(i);
+            evicted = rusty::detail::deref_if_pointer_like(evicted) + static_cast<size_t>(1);
+        } else {
+            i = rusty::detail::deref_if_pointer_like(i) + static_cast<size_t>(1);
+        }
+    }
+    this->evictions_.set(this->evictions_.get() + ((static_cast<uint64_t>(evicted))));
+    return std::move(evicted);
+}
+/*RUSTYCPP:GEN-END id=idempotency.cache*/
+
+// @unsafe - linear scan of the LRU VecDeque + TTL check + move-to-front +
+// byte copy through the `Vec<u8>&` out-param.
+bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
+                 uint64_t current_time_ms, int32_t& out_error_code,
+                 rusty::Vec<std::uint8_t>& out_response) {
+    auto cfg = self.config_.get();
+    if (!cfg.enabled || !key.is_valid()) {
+        self.misses_.set(self.misses_.get() + 1);
+        return false;
+    }
+    auto guard = self.cache_.lock().unwrap();
+    for (size_t i = 0; i < guard->len(); ++i) {
+        if ((*guard)[i].key == key) {
+            if ((*guard)[i].is_expired(current_time_ms, cfg.ttl_ms)) {
+                guard->remove(i);
+                self.misses_.set(self.misses_.get() + 1);
+                return false;
+            }
+            out_error_code = (*guard)[i].error_code;
+            cached_response_get((*guard)[i], &out_response);
+            // Move to front (MRU).
+            auto entry = guard->remove(i).unwrap();
+            guard->push_front(std::move(entry));
+            self.hits_.set(self.hits_.get() + 1);
+            return true;
+        }
+    }
+    self.misses_.set(self.misses_.get() + 1);
+    return false;
+}
+
+// @unsafe - scan for an existing entry (update + move-to-front) else evict
+// LRU at capacity and push the new entry; byte copy via cached_response_set.
+void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
+                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
+                uint64_t current_time_ms) {
+    auto cfg = self.config_.get();
+    if (!cfg.enabled || !key.is_valid()) {
+        return;
+    }
+    auto guard = self.cache_.lock().unwrap();
+    for (size_t i = 0; i < guard->len(); ++i) {
+        if ((*guard)[i].key == key) {
+            (*guard)[i].error_code = error_code;
+            cached_response_set((*guard)[i], response);
+            (*guard)[i].timestamp_ms = current_time_ms;
+            auto entry = guard->remove(i).unwrap();
+            guard->push_front(std::move(entry));
+            return;
+        }
+    }
+    while (guard->len() >= cfg.max_entries && guard->len() > 0) {
+        (void)guard->pop_back();
+        self.evictions_.set(self.evictions_.get() + 1);
+    }
+    CachedResponse entry;
+    entry.key = key;
+    entry.error_code = error_code;
+    cached_response_set(entry, response);
+    entry.timestamp_ms = current_time_ms;
+    guard->push_front(std::move(entry));
+}
 
 
 }  // export namespace rrr
