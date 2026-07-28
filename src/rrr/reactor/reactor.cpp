@@ -281,9 +281,11 @@ void event_state_seed(const EventState& st);
 struct NeverEvent;
 struct TimeoutEvent;
 struct IntEvent;
+struct WaitAny;
 rusty::Arc<NeverEvent> never_event_make();
 rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us);
 rusty::Arc<IntEvent> int_event_make(int32_t target);
+rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);
 template <typename Ev, typename... Args>
 rusty::Arc<Ev> event_make(Args&&... args) {
   if constexpr (std::is_same_v<Ev, NeverEvent>) {
@@ -298,6 +300,8 @@ rusty::Arc<Ev> event_make(Args&&... args) {
     }
   } else if constexpr (std::is_same_v<Ev, janus::QuorumEvent>) {
     return janus::quorum_event_make(std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Ev, WaitAny>) {
+    return waitany_make(std::forward<Args>(args)...);
   } else {
     return rusty::Arc<Ev>::make(std::forward<Args>(args)...);
   }
@@ -967,59 +971,170 @@ inline bool timeout_event_is_ready(const TimeoutEvent& self) {
 
 // `WaitAny` — a composite event that is ready as soon as ANY of its child
 // events is ready (polled in the reactor loop via `is_composite_event()`).
-// FLATTENED (S4): a hand-written bridge deriving EventPollable directly
-// (no longer `: public Event`), carrying the five event-core fields inline
-// and driven by the shared event_wait_impl / event_test_impl / event_core_*
-// kernels — the same duck-typed surface the flattened DSL structs use. It
-// stays hand-written C++ (not inline-Rust DSL) because it owns a child
-// vector and, for WaitAll, a variadic ctor the DSL cannot express.
-// @unsafe - bridges the DSL trait to the composite child-event vector.
-class WaitAny : public EventPollable {
- public:
-  // Event core — same fields/order as the flattened DSL structs so the
-  // shared kernels see an identical duck-typed surface.
-  rusty::Cell<EventStatus> status_{EventStatus::INIT};
-  rusty::thread::ThreadId owner_thread_{rusty::thread::current_id()};
-  EventState state_{};
-  rusty::Cell<bool> prunable_{true};
-  rusty::sync::Weak<EventPollable> self_;
-  rusty::Vec<rusty::Arc<EventPollable>> events_;
+// FLATTENED (S4): an inline-Rust DSL struct deriving EventPollable via
+// `#[cpp_inherit]` (its Arc<WaitAny> is upcast to Arc<EventPollable> at the
+// create_sp_event site), carrying the five event-core fields inline plus the
+// child-event vector, driven by the shared event_wait_impl / event_test_impl /
+// event_core_* kernels. Construction (the former 2-arg ctor) is the
+// `waitany_make` factory, wired into event_make. Unlike WaitAll it has no
+// variadic ctor, so it converts cleanly; the any-ready predicate is a plain
+// DSL loop over the child vector.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
+// source of truth; the transpiler regenerates the matching GEN block.
+#if RUSTYCPP_RUST
+struct WaitAny {
+    status_: Cell<EventStatus>,
+    owner_thread_: rusty::thread::ThreadId,
+    state_: EventState,
+    prunable_: Cell<bool>,
+    self_: rusty::sync::Weak<EventPollable>,
+    events_: rusty::Vec<rusty::Arc<EventPollable>>,
+}
 
-  WaitAny(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
-    event_state_seed(state_);
-    events_.push(std::move(a));
-    events_.push(std::move(b));
-  }
+impl WaitAny {
+    fn wait(&self) {
+        event_wait_impl(self, 0u64)
+    }
+    fn wait_timeout(&self, timeout: u64) {
+        event_wait_impl(self, timeout)
+    }
+    fn is_composite_event(&self) -> bool {
+        true
+    }
+    fn get_self(&self) -> rusty::Option<rusty::Arc<EventPollable>> {
+        event_core_self_lock(self)
+    }
+    fn set_self(&mut self, self_ptr: rusty::sync::Weak<EventPollable>) {
+        event_core_set_self(self, self_ptr)
+    }
+}
 
-  // Concrete event surface (matches the flattened structs' inherent fns).
-  void wait() const { event_wait_impl(*this, static_cast<uint64_t>(0)); }
-  void wait_timeout(uint64_t timeout) const { event_wait_impl(*this, timeout); }
-  bool is_composite_event() const { return true; }
-  rusty::Option<rusty::Arc<EventPollable>> get_self() const { return event_core_self_lock(*this); }
-  void set_self(rusty::sync::Weak<EventPollable> p) { event_core_set_self(*this, std::move(p)); }
+#[cpp_inherit]
+impl EventPollable for WaitAny {
+    fn test(&self) -> bool {
+        event_test_impl(self)
+    }
+    fn is_ready(&self) -> bool {
+        for e in self.events_.iter() {
+            if (*e).is_ready() {
+                return true;
+            }
+        }
+        false
+    }
+    fn log(&self) {}
+    fn status(&self) -> EventStatus {
+        self.status_.get()
+    }
+    fn set_status(&self, s: EventStatus) {
+        self.status_.set(s)
+    }
+    fn wakeup_time(&self) -> u64 {
+        event_core_wakeup_time(self)
+    }
+    fn prunable(&self) -> bool {
+        self.prunable_.get()
+    }
+    fn set_prunable(&self, v: bool) {
+        self.prunable_.set(v)
+    }
+    fn upgrade_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        event_core_upgrade_fiber(self)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_any version=1 rust_sha256=88cb434be8cb78f9f0b9c117c1c3ec9d374e8c7548a83171687bff129e8e713c*/
+struct WaitAny;
 
-  // EventPollable trait surface.
-  bool test() const override { return event_test_impl(*this); }
-  // @safe - ready as soon as any child event is ready.
-  bool is_ready() const override {
-    for (const auto& e : events_) {
-      // @unsafe { child virtual dispatch through EventPollable }
-      if (e->is_ready()) {
-        return true;
-      }
+struct WaitAny : public EventPollable {
+    rusty::Cell<EventStatus> status_;
+    rusty::thread::ThreadId owner_thread_;
+    EventState state_;
+    rusty::Cell<bool> prunable_;
+    rusty::sync::Weak<EventPollable> self_;
+    rusty::Vec<rusty::Arc<EventPollable>> events_;
+    WaitAny(rusty::Cell<EventStatus> status__init, rusty::thread::ThreadId owner_thread__init, EventState state__init, rusty::Cell<bool> prunable__init, rusty::sync::Weak<EventPollable> self__init, rusty::Vec<rusty::Arc<EventPollable>> events__init) : EventPollable(), status_(std::move(status__init)), owner_thread_(std::move(owner_thread__init)), state_(std::move(state__init)), prunable_(std::move(prunable__init)), self_(std::move(self__init)), events_(std::move(events__init)) {}
+    WaitAny(WaitAny&& other) noexcept : EventPollable(), status_(std::move(other.status_)), owner_thread_(std::move(other.owner_thread_)), state_(std::move(other.state_)), prunable_(std::move(other.prunable_)), self_(std::move(other.self_)), events_(std::move(other.events_)) {}
+
+
+    void wait() const;
+    void wait_timeout(uint64_t timeout) const;
+    bool is_composite_event() const;
+    rusty::Option<rusty::Arc<EventPollable>> get_self() const;
+    void set_self(rusty::sync::Weak<EventPollable> self_ptr);
+    bool test() const;
+    bool is_ready() const;
+    void log() const;
+    EventStatus status() const;
+    void set_status(EventStatus s) const;
+    uint64_t wakeup_time() const;
+    bool prunable() const;
+    void set_prunable(bool v) const;
+    rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const;
+};
+
+
+void WaitAny::wait() const {
+    event_wait_impl((*this), static_cast<uint64_t>(0));
+}
+
+void WaitAny::wait_timeout(uint64_t timeout) const {
+    event_wait_impl((*this), std::move(timeout));
+}
+
+bool WaitAny::is_composite_event() const {
+    return true;
+}
+
+rusty::Option<rusty::Arc<EventPollable>> WaitAny::get_self() const {
+    return event_core_self_lock((*this));
+}
+
+void WaitAny::set_self(rusty::sync::Weak<EventPollable> self_ptr) {
+    event_core_set_self((*this), std::move(self_ptr));
+}
+
+bool WaitAny::test() const {
+    return event_test_impl((*this));
+}
+
+bool WaitAny::is_ready() const {
+    for (auto&& e : rusty::for_in(rusty::iter(this->events_))) {
+        if (((rusty::detail::deref_if_pointer_like(e))).is_ready()) {
+            return true;
+        }
     }
     return false;
-  }
-  void log() const override {}
-  EventStatus status() const override { return status_.get(); }
-  void set_status(EventStatus s) const override { status_.set(s); }
-  uint64_t wakeup_time() const override { return event_core_wakeup_time(*this); }
-  bool prunable() const override { return prunable_.get(); }
-  void set_prunable(bool v) const override { prunable_.set(v); }
-  rusty::Option<rusty::Rc<Fiber>> upgrade_fiber() const override {
-    return event_core_upgrade_fiber(*this);
-  }
-};
+}
+
+void WaitAny::log() const {
+}
+
+EventStatus WaitAny::status() const {
+    return this->status_.get();
+}
+
+void WaitAny::set_status(EventStatus s) const {
+    this->status_.set(std::move(s));
+}
+
+uint64_t WaitAny::wakeup_time() const {
+    return event_core_wakeup_time((*this));
+}
+
+bool WaitAny::prunable() const {
+    return this->prunable_.get();
+}
+
+void WaitAny::set_prunable(bool v) const {
+    this->prunable_.set(std::move(v));
+}
+
+rusty::Option<rusty::Rc<Fiber>> WaitAny::upgrade_fiber() const {
+    return event_core_upgrade_fiber((*this));
+}
+/*RUSTYCPP:GEN-END id=reactor.wait_any*/
 
 // `WaitAll` — composite event ready once ALL child events are ready (or DONE).
 // Flattened the same way as WaitAny; keeps its default/vector/variadic ctors.
@@ -2793,6 +2908,24 @@ rusty::Arc<IntEvent> int_event_make(int32_t target) {
       rusty::sync::Weak<EventPollable>(),
       rusty::Cell<int32_t>::new_(0),        // value_
       rusty::Cell<int32_t>::new_(target));
+  event_state_seed(sp->state_);
+  return sp;
+}
+
+// Flattened (S4): the former WaitAny(a, b) ctor, as the aggregate factory
+// rrr::event_make dispatches to. Build the child vector, then the aggregate,
+// then seed the event-core state.
+rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
+  rusty::Vec<rusty::Arc<EventPollable>> events;
+  events.push(std::move(a));
+  events.push(std::move(b));
+  auto sp = rusty::Arc<WaitAny>::make(
+      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
+      rusty::thread::current_id(),                        // owner_thread_
+      EventState{},                                       // state_
+      rusty::Cell<bool>::new_(true),                      // prunable_
+      rusty::sync::Weak<EventPollable>(),                 // self_
+      std::move(events));                                 // events_
   event_state_seed(sp->state_);
   return sp;
 }
