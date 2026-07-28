@@ -77,6 +77,10 @@ pub fn write_header(
     if payload_size < 0 {
         return false;
     }
+    // Vacuous while MAX_FRAME_PAYLOAD_SIZE == i32::MAX, but kept for
+    // line-parity with the C++ kernel and against the constant ever
+    // being lowered.
+    #[allow(clippy::absurd_extreme_comparisons)]
     if payload_size > MAX_FRAME_PAYLOAD_SIZE {
         return false;
     }
