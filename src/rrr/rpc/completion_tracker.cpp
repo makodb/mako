@@ -260,7 +260,9 @@ impl CompletionTracker {
         }
         let list_guard = self.lru_list_.lock().unwrap();
         while list_guard.len() >= cfg.max_entries && list_guard.len() > 0usize {
-            let oldest_xid: i64 = list_guard.back().xid;
+            // Loop condition guarantees non-empty; VecDeque::back()
+            // returns Option<&T> in real Rust.
+            let oldest_xid: i64 = list_guard.back().unwrap().xid;
             set_guard.remove(oldest_xid);
             list_guard.pop_back();
             self.evictions_.set(self.evictions_.get() + 1u64);
@@ -382,7 +384,7 @@ impl CompletionTracker {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=completion_tracker.tracker version=1 rust_sha256=e0228c274c10531fd46b2b942e217eeef711e71805f5a18c8f3cc03d1c763b55*/
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.tracker version=1 rust_sha256=ad88fddf217dfa56bb4e686a0ab08e23eb77f902d20551585794bee074759536*/
 struct CompletionTracker;
 
 struct CompletionTracker {
@@ -457,7 +459,7 @@ void CompletionTracker::mark_completed(int64_t xid, uint64_t current_time_ms) {
     }
     auto list_guard = this->lru_list_.lock().unwrap();
     while ((rusty::len(list_guard) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.max_entries); }) { return (__r.max_entries); } else if constexpr (requires { (__r.max_entries_field); }) { return (__r.max_entries_field); } else if constexpr (requires { ((*__r).max_entries); }) { return ((*__r).max_entries); } else { return ((*__r).max_entries_field); } }(cfg))) && (rusty::len(list_guard) > static_cast<size_t>(0))) {
-        int64_t oldest_xid = (*list_guard).back().xid;
+        int64_t oldest_xid = (*list_guard).back().unwrap().xid;
         (*set_guard).remove(std::move(oldest_xid));
         (*list_guard).pop_back();
         this->evictions_.set(this->evictions_.get() + static_cast<uint64_t>(1));

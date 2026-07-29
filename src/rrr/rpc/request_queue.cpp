@@ -352,11 +352,9 @@ impl RequestQueue {
     }
 
     fn dequeue(&mut self) -> Option<QueuedRequest> {
+        // VecDeque::pop_front() already returns Option in real Rust.
         let guard = self.queue_.lock().unwrap();
-        if guard.size() == 0usize {
-            return None;
-        }
-        Some(guard.pop_front())
+        guard.pop_front()
     }
 
     fn expire_stale(&self) -> usize {
@@ -408,7 +406,7 @@ impl RequestQueue {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=033c3ea224c0b4f3cd04086cadbc2e50ea40018f47da0a0e0e49a592b8427116*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=737edc878ff54d80587f342a1054d9af90da1b9224818d27ebabe6ec7d14009c*/
 struct RequestQueue;
 
 struct RequestQueue {
@@ -448,10 +446,7 @@ bool RequestQueue::enqueue(QueuedRequest request) const {
 
 rusty::Option<QueuedRequest> RequestQueue::dequeue() {
     auto guard = this->queue_.lock().unwrap();
-    if ((*guard).size() == static_cast<size_t>(0)) {
-        return rusty::Option<QueuedRequest>{rusty::None};
-    }
-    return rusty::Option<QueuedRequest>((*guard).pop_front());
+    return (*guard).pop_front();
 }
 
 size_t RequestQueue::expire_stale() const {
@@ -525,7 +520,7 @@ inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
         switch (self.config_.overflow_strategy) {
             case OverflowStrategy::DROP_OLDEST:
                 if ((*guard).size() > 0) {
-                    auto oldest = (*guard).pop_front();
+                    auto oldest = (*guard).pop_front().unwrap();
                     rq_invoke_callback_safely(std::move(oldest.callback), kRequestQueueRejectedError);
                 }
                 break;
@@ -554,7 +549,7 @@ inline size_t rq_expire_stale(const RequestQueue& self) {
                 [](const QueuedRequest& r) { return r.is_expired(); }));
         removed = expired.size();
         while (expired.size() > 0) {
-            auto req = expired.pop_front();
+            auto req = expired.pop_front().unwrap();
             if (req.callback) {
                 callbacks_to_invoke.push(std::move(req.callback));
             }

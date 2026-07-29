@@ -392,7 +392,53 @@ first.
 
 ## Status log
 
-- **2026-07-28 — blocker-map recon** (this commit): five parallel
+- **2026-07-28/29 — pin → `verify-stack` (4cbf628f)** (this commit):
+  user-approved deviation from the pin-main rule: the submodule now
+  pins the `verify-stack` branch of shuaimu/rusty-cpp (= upstream
+  main + the srpc fix stack), with a standing instruction to
+  **frequently re-sync it with upstream main** so we inherit
+  upstream bug fixes promptly. CLAUDE.md's submodule rule amended;
+  pinned SHAs must stay reachable from a pushed branch.
+
+  This first sync (main 654745b6, the vec_deque-104/104 upstream
+  campaign) surfaced and fixed TWO upstream regressions against
+  mako, both root-caused to first principles:
+  1. **Move-only value args of `write()` bound const**
+     (`fix-write-value-arg-const-binding`, cad712d8): the emitter
+     always move-wraps `write`'s value argument, but `("write", 0)`
+     was missing from the value-slot consumption heuristic, so the
+     binding stayed `const` and the forced move decayed to a deleted
+     copy — broke `BTreeMap<u32, Shard>::remove()` through the
+     stdlib-btree merge path (upstream suites only use copyable
+     payloads). Fix + regression test + vendored btree_port sites
+     codified; transpiler suite 1913/1913.
+  2. **`rusty::for_in` consumed lvalue containers**
+     (`fix-for-in-lvalue-consume`, 3494c3a6): the upstream campaign
+     dropped the `&&` qualifier from port-module `into_iter()`, so
+     for_in's into_iter-first dispatch silently gutted still-live
+     containers (btree: emptied tree with STALE `len()`; vec: double
+     free at scope end) — surfaced as 6 `test_shard_manager`
+     migration-checksum failures. Fix gates the consuming arm on
+     rvalues, with a guarded last-resort arm for consume-only
+     lvalues; runtime regression test added
+     (`rusty_for_in_lvalue_borrow_test.cpp`). Verification gotcha
+     worth remembering: a header fix CANNOT be validated against
+     BMIs built from old headers — module GMF definitions ODR-merge
+     over the TU's textual include; only a full rebuild is honest.
+  Plus two mako-side DSL corrections (invalid real Rust leaning on
+  old lowerings, same class as the sweep rule): `completion_tracker`
+  `back().unwrap()` and `request_queue` `pop_front()` → `Option` (3
+  sites), regenerated with the pinned transpiler.
+
+  Gate at 4cbf628f: full-target build clean; `test_shard_manager`
+  30/30; migration-dance probe checksums match; srpc 6/6 module
+  compile re-verified; transpiler bin suite 1913/1913. Also resolved
+  a naming question: `crates/srpc/src/wire/serde.rs` is NOT the
+  serde crate (zero deps) — it ports rrr's own Phase-8 serde
+  free-function surface (`rrr::Serialize_`/`Deserialize_`), keeping
+  the C++ side's naming and trait shape.
+
+- **2026-07-28 — blocker-map recon** (18d1fd62): five parallel
   read-only audits (port surface, consumer API, rpcgen scope, swap
   path, transpiler hazards) → the Blocker map section above. Headline
   findings: ~28k LOC of `src/rrr` remain (reactor hardest at ~23%

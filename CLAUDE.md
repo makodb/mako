@@ -210,7 +210,15 @@ Exceptions that stay std:
  - Pre-existing code not in your change's blast radius. File a
    follow-up if it's blocking something.
 
-**IMPORTANT**: Always keep the `third-party/rusty-cpp` submodule on the `main` branch with the latest commit. Do not switch to other branches.
+**IMPORTANT**: The `third-party/rusty-cpp` submodule is pinned to the
+`verify-stack` branch of shuaimu/rusty-cpp (upstream `main` + the srpc
+transpiler fixes not yet landed on main — see
+`docs/srpc-rust-port.md` § Translator work). Keep that branch
+**frequently synced with upstream `main`** (merge main in, run the
+transpiler test suite, push, bump the pin) so we never fall behind
+upstream bug fixes. Do not re-pin to `main` until the fix branches
+land there; do not carry uncommitted local patches — every pinned SHA
+must be reachable from a pushed branch.
 
 #### Required Safety Annotations
 Every function and significant code block must have safety annotations:
