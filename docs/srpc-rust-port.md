@@ -486,6 +486,92 @@ visible until the modules are re-emitted — validate only after a full
 rebuild (`spike_reverify/run.sh all`, which now also emits objects and
 runs the golden phase).
 
+## Goal-1 execution plan (2026-07-29, five-audit recon)
+
+Grounded by parallel audits of the wire protocol, transport surface,
+fiber necessity, perf harness and interop options. **The naive order
+— envelope → transport → fibers → channels → client/server → rpcgen →
+perf — is wrong in four places.**
+
+### What changed, and why
+
+1. **Fibers move from third to nearly last.** They are not required
+   for a working client *or* for a useful server. Client blocking
+   waits are a `Mutex`+`Condvar` on an OS thread, not a fiber
+   (`client.cpp:601-623`), and the production connect path
+   deliberately BYPASSES `FiberChannel`, decoding replies inline on
+   the poll thread. `fast`/`prefix`/`async`/`raw` dispatch needs no
+   fiber; even `defer` replies immediately in the common case (it is
+   classified `reg_rpc`, so C++ pays a fiber spawn it does not need —
+   do not infer a requirement from that).
+2. **A Tier-0 interop probe comes FIRST.** ~300 lines of
+   blocking-socket Rust drives the *live, unmodified* production C++
+   server (`rpcbench -s`) through real typed RPCs. There is no
+   handshake — `connect(2)` writes zero bytes — and the rpc_ids are
+   frozen checked-in constants, so nothing stands between the current
+   crate and a real exchange except a socket. This is the transport
+   equivalent of the golden corpus.
+3. **The C++ half of the perf work moves to FIRST, in parallel.** The
+   gate is "parity against *measured* baselines", and no pinned
+   rpcbench baseline exists — the only numbers are unpinned, from one
+   kernel version ago, and the latency percentile code in the tree is
+   entirely commented out. Half the gate is currently undefined.
+4. **Cross-stack replaces whole-stack A/B.** Because the wire is
+   byte-exact and golden-pinned, Rust-client ↔ C++-server and
+   C++-client ↔ Rust-server isolate one side at a time against an
+   identical peer. That turns an unassignable "the Rust stack is 12%
+   slower" into "the Rust *server* is 12% slower, the client is at
+   parity".
+
+Also dissolved: the **envelope** stage (there is no handshake, no
+version negotiation, no control frames — the whole envelope is
+`[v64 xid][i32 rpc_id]` out and `[v64 xid][v32 err][v64 instance_id]`
+back), most of the **channels** stage (`FiberChannel` is bypassed in
+production as a known-fragile path; `inmemory_channel` is a test
+convenience), and **rpcgen**, which moves after the perf gate because
+a client needs only 12 hardcoded id literals.
+
+### Stages
+
+| # | stage | ~LOC | riskiest element |
+|---|---|---:|---|
+| S0 | Tier-0 blocking-socket interop probe | 300 | `connect(2)` takes `struct sockaddr*` — the exact self-declaration-collides-with-the-header case; needs a distinctly-named wrapper kernel |
+| S1 | Pinned C++ baseline + latency instrumentation (parallel, no Rust dep) | 250 | whether per-request timestamping perturbs the throughput measured beside it |
+| S2 | Epoll wrapper + poll thread | 700 | the `Pollable` trait must be `&self` + interior mutability — user threads call `send_frame` on the object the poll thread is reading |
+| S3 | TcpConnection pumps + connect ladder | 900 | the frame callback hands out a zero-copy view aliasing the reader's buffer: a split-borrow problem whose easy escape (copy per frame) is a hot-path tax |
+| S4 | Client endpoint + demux + Future | 800 | send-path economics — C++ re-arms inside the reply callback on the poll thread, so there is no wakeup syscall per request |
+| S5 | Rust rpcbench + first cross-stack perf gate | 450 | harness-semantics divergence deciding the outcome silently |
+| S6 | Server endpoint + registry + listener | 1100 | teardown/registration races — the four epoll errno tolerances ARE the historical CI flake fixes |
+| S7 | Stackless async executor | 350 | zero deps means hand-writing the `RawWaker` vtable; drain cadence must match the C++ loop |
+| S8 | Stackful fiber runtime + reactor events | 1400 | **both `thread_local!` and `asm!` lower to nothing in rusty-cpp, silently** — Goal 1 and Goal 2 can diverge here without a diagnostic |
+| S9 | Perf parity closeout | 300 | attribution, not measurement |
+| S10 | rpcgen Rust backend | 800 | rpc_id drift — ids are frozen by regex-scraping the previous header; never re-roll them |
+
+### Fix before building on top of it
+
+Two divergences already shipped in the ported wire layer, both
+per-frame costs on the hottest path: `FrameReader::next_frame` copies
+each payload into a fresh `Vec` where C++ returns a zero-copy view,
+and the Rust compaction rule (`pos>4096 && pos*2>=len`) memmoves far
+more often than the C++ 64 KiB consumed-prefix rule.
+
+### Perf risks to measure EARLY
+
+- **No latency harness exists** — half the gate is undefined until S1.
+- **The 1 ms epoll tick**: there is no wakeup fd anywhere; a Rust port
+  using `eventfd` + `epoll_wait(-1)` will beat C++ on latency and idle
+  CPU, i.e. look "wrong" in the good direction.
+- **Nagle is ON** (nothing in `src/rrr` sets `TCP_NODELAY`); enabling
+  it in Rust "because obviously" invalidates the comparison.
+- **Build-flag and allocator asymmetry**: C++ is `-O2 -march=native` +
+  jemalloc; Rust is the stock bench profile with glibc malloc. Three
+  uncontrolled variables, each plausibly larger than the effect being
+  measured.
+- **The SinkProxy tax is being misread as a language win** — C++
+  heap-allocates and dispatches through a pure virtual per archive,
+  including once per RPC in the production client path. That is an
+  abstraction delta, not a Rust-versus-C++ result.
+
 ## Status log
 
 - **2026-07-29 — S3: `rpc::connection_metrics`** (this commit), which
