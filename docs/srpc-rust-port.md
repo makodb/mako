@@ -488,6 +488,31 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::load_balancer`** (this commit). The four
+  selection policies. The C++ version is a template over an opaque
+  client vector that reaches through each handle for
+  `client->metrics()`; here the balancer declares what it needs as a
+  `Candidate` trait, so the policies are testable against plain
+  structs and the connection type stays out of the module. Selection
+  returns `Option<usize>`, since the C++ `0`-for-empty-pool is
+  indistinguishable from "picked peer 0", and the round-robin cursor
+  is taken modulo the CURRENT pool size so a shrinking pool cannot
+  yield an out-of-range index.
+
+  The subtle rule, pinned: least-latency SKIPS peers that have
+  completed nothing rather than reading their zero latency as
+  "fastest" — otherwise an untried peer absorbs all traffic on the
+  strength of no evidence. 106 crate tests.
+
+  It also surfaced a translator bug worth the trip: everything in a
+  `#[cfg(test)]` module was omitted from output, but the declaration
+  COLLECTORS still descended into it, so a test-only
+  `impl Trait for LocalType` emitted adapter specialisations and UFCS
+  free functions naming a struct whose definition had been dropped.
+  Fixed by gating every collector descent on the emitter's own
+  `should_skip_cfg_attrs`, so collection and emission cannot disagree
+  about what is compiled out. Gate: **20/20 modules, golden 64/64**.
+
 - **2026-07-29 — upstream sync #2** (this commit): `verify-stack`
   merged upstream `main` again (the vec-suite work: move-relocating
   `collect`, `assert!` panicking rather than aborting, `ptr::copy`

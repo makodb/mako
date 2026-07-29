@@ -8,5 +8,6 @@ pub mod circuit_breaker;
 pub mod connection_state;
 pub mod errors;
 pub mod heartbeat;
+pub mod load_balancer;
 pub mod reconnect;
 pub mod request_options;
