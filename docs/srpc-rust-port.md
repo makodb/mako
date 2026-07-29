@@ -488,6 +488,29 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3 begins: `rpc::errors`** (this commit): the RPC
+  error taxonomy, with **every wire-visible discriminant pinned by
+  test** — a client and server may be different builds (or different
+  languages, during the strangle) and exchange these as raw `i32`, so
+  changing one is a protocol break. Classification reads the code's
+  band (100s connection, 200s protocol, …) rather than listing
+  members, so a new code is categorised by construction; the
+  retryable set is stated explicitly with its judgement calls
+  guarded (`NotConnected` means reconnect rather than resend,
+  `CircuitOpen` is the breaker's whole point). Unknown codes decode
+  to `None` rather than silently becoming `UnknownError`, so "peer
+  sent something this build does not know" stays distinguishable.
+  35 crate tests; gate holds at **12/12 modules, golden 64/64**.
+
+  One more translator fix it required: a C-like enum's inherent
+  methods lower to FREE functions (C++ enums cannot have members),
+  and the call was emitted UNQUALIFIED for a same-file enum — so
+  `let code = self.code();` became
+  `const auto code = code(self_);`, a variable in its own
+  initializer. Idiomatic Rust (methods and variables are separate
+  namespaces there) that could not translate. Now qualified with the
+  module's namespace.
+
 - **2026-07-29 — S1 datapath core landed + five more translator fixes**
   (this commit): `crates/srpc/src/base/{time,sync,log}.rs` — the
   foundation the rest of the port stands on. `Timer`/`Deadline` over

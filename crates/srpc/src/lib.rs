@@ -24,3 +24,5 @@
 pub mod wire;
 
 pub mod base;
+
+pub mod rpc;
