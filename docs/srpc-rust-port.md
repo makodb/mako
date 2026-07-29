@@ -574,6 +574,39 @@ more often than the C++ 64 KiB consumed-prefix rule.
 
 ## Status log
 
+- **2026-07-29 — S2 (first half): `sys` kernels + epoll wrapper**
+  (this commit). `crates/srpc/src/sys/` is the crate's ENTIRE syscall
+  surface — every `unsafe` block lives there under a scoped
+  `#![allow(unsafe_code)]`, so the rest of the crate stays ordinary
+  safe Rust and the FFI boundary is one file to audit. That settles
+  the unsafe-policy decision the plan required before S2 code.
+
+  `runtime::epoll` ports `epoll_wrapper.cc` faithfully where
+  faithfulness is load-bearing: edge-triggered throughout; **ADD arms
+  `EPOLLIN` unconditionally while MOD is conditional** (making ADD
+  "consistent" would stop arming reads for write-only registrations);
+  mode changes deduplicated so `epoll_ctl(MOD)` fires only on a real
+  change — which, with "return READ once the outbound queue drains",
+  is jointly what re-arms the edge-triggered write; and the four errno
+  tolerances (ADD/EEXIST → DEL+retry, ADD/EBADF → report,
+  MOD+DEL/ENOENT+EBADF → success) that ARE the historical CI-flake
+  fixes. `epoll_create(10)` not `epoll_create1`, and the 1 ms
+  `epoll_wait` timeout with no wakeup fd, both kept for comparability
+  and labelled as such. 131 crate tests, including registration,
+  readiness decode and mode transitions against real sockets.
+
+  **Two more libc-macro collisions**, both the S1 rule recurring: a
+  function named `errno` expands to `int (*__errno_location())()`, and
+  `pub const EAGAIN` becomes `constexpr int32_t 11 = 11`. Fixed on
+  both sides — the transpiler now escapes `errno`/`stdin`/`stdout`/
+  `stderr` (it already escaped `NAN`/`NULL` for the same reason), and
+  the crate prefixes its errno constants. Also upstream:
+  `rusty::io::Error` gained `last_os_error`/`raw_os_error`, the
+  standard way a Rust port reads a syscall failure — and the way to
+  avoid declaring `__errno_location`, which is ill-formed because
+  `import std;` declares that name in the global module after the
+  purview.
+
 - **2026-07-29 — ★ S0 GREEN: the Rust wire layer talks to the LIVE
   production C++ server** (this commit). `crates/srpc/tests/
   interop_cpp_server.rs` drives an unmodified `rpcbench -s` process
