@@ -973,7 +973,7 @@ Json::streaming_parser::consume_string(const uint8_t* first,
     if (first != last) {
         if (!sa.empty())
             str_ = sa.take_string();
-        else if (prev >= str.ubegin() && first <= str.uend())
+        else if (str.length() && prev >= str.ubegin() && first <= str.uend())
             str_ = str.fast_substring(prev, first);
         else
             str_ = String(prev, first);
@@ -1237,7 +1237,7 @@ Json::streaming_parser::consume_number(const uint8_t* first,
 
     if (state_ & st_partmask)
         str_.append(prev, first);
-    else if (prev >= str.ubegin() && first <= str.uend())
+    else if (str.length() && prev >= str.ubegin() && first <= str.uend())
         str_ = str.substring(prev, first);
     else
         str_ = String(prev, first);

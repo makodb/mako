@@ -302,9 +302,11 @@ class Json {
 
     // Parsing
     inline bool assign_parse(const String& str);
+    inline bool assign_parse(const char* cstr);
     inline bool assign_parse(const char* first, const char* last);
 
     static inline Json parse(const String& str);
+    static inline Json parse(const char* cstr);
     static inline Json parse(const char* first, const char* last);
 
     // Assignment
@@ -2909,12 +2911,22 @@ inline bool Json::assign_parse(const String &str) {
     return assign_parse(str.begin(), str.end(), str);
 }
 
+/** @brief Parse @a cstr as UTF-8 JSON into this Json object.
+    @return true iff the parse succeeded.
+
+    An unsuccessful parse does not modify *this. */
+inline bool Json::assign_parse(const char *cstr) {
+    String source(cstr);
+    return assign_parse(source.begin(), source.end(), source);
+}
+
 /** @brief Parse [@a first, @a last) as UTF-8 JSON into this Json object.
     @return true iff the parse succeeded.
 
     An unsuccessful parse does not modify *this. */
 inline bool Json::assign_parse(const char *first, const char *last) {
-    return assign_parse(first, last, String());
+    String source(first, last);
+    return assign_parse(source.begin(), source.end(), source);
 }
 
 /** @brief Return @a str parsed as UTF-8 JSON.
@@ -2923,6 +2935,15 @@ inline bool Json::assign_parse(const char *first, const char *last) {
 inline Json Json::parse(const String &str) {
     Json j;
     (void) j.assign_parse(str);
+    return j;
+}
+
+/** @brief Return @a cstr parsed as UTF-8 JSON.
+
+    Returns a null JSON object if the parse fails. */
+inline Json Json::parse(const char *cstr) {
+    Json j;
+    (void) j.assign_parse(cstr);
     return j;
 }
 
