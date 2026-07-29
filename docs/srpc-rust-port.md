@@ -604,10 +604,34 @@ more often than the C++ 64 KiB consumed-prefix rule.
   port should decide deliberately (an S0 open question) whether to
   reproduce abort semantics or return errors.
 
-- **2026-07-29 — S1 in progress**: pinned C++ baselines. Noted while
-  standing the server up: `rpcbench -c ... -m fast_vec` reports
-  `avg qps: 0.00`, so that mode needs investigation before it can
-  contribute a baseline number.
+- **2026-07-29 — wire-layer divergences fixed before transport lands
+  on them** (this commit). Both were flagged by the plan as per-frame
+  costs on the hottest path, invisible to correctness tests:
+  `FrameReader` gained `with_next_frame`, which hands the payload to a
+  callback WITHOUT copying (the C++ `FrameView` shape; `next_frame`
+  remains as the owned convenience form), and compaction now uses the
+  C++ 64 KiB consumed-prefix rule instead of a ratio heuristic that
+  memmoved far more often on a busy connection.
+
+  The callback returns `()`, matching the C++
+  `Function<void(const ChannelFrame&)>`. The first cut returned a
+  generic `R`, which Rust deduces from the closure but C++ cannot —
+  it lowered to a `template<typename R>` with `R` only in the return
+  type, undeducible at the call site. Capturing the result in the
+  closure is both the faithful shape and the translatable one.
+
+- **2026-07-29 — S1 in progress**: pinned C++ rpcbench baselines
+  capturing across {fast, fiber, defer, async} x {depth 1, 100} x
+  {10, 100, 1024 bytes} x 3 trials, server pinned to one core and
+  client to four, all on the NUMA node with locally-attached memory.
+  Harness semantics frozen rather than fixed, so the Rust side mirrors
+  them: `-n N` yields N-1 samples (the first is discarded), callback
+  mode counts successful SENDS while await mode counts OK RESPONSES.
+
+  Corrected an earlier note: `rpcbench -m fast_vec` reporting
+  `avg qps: 0.00` was not a mode defect — with `-n 2` the sampler
+  discards the first reading and pushes nothing, so the average is
+  over an empty set.
 
 - **2026-07-29 — S3: `rpc::connection_metrics`** (this commit), which
   closes the loop with the load balancer by implementing its

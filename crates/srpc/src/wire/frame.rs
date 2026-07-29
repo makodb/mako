@@ -128,6 +128,11 @@ pub fn encode_into(out: &mut Vec<u8>, payload: &[u8], extended_header_flag: bool
     true
 }
 
+/// Consumed-prefix size at which the reader shifts unread bytes to the
+/// front. Matches `kCompactThresholdBytes` in
+/// `src/rrr/rpc/frame_codec.cpp`.
+pub const COMPACT_THRESHOLD_BYTES: usize = 64 * 1024;
+
 /// Streaming frame assembler (the `FrameStreamReader` role): feed
 /// transport bytes with [`append`](FrameReader::append), pull complete
 /// frames with [`next_frame`](FrameReader::next_frame).
@@ -162,34 +167,64 @@ impl FrameReader {
         self.buf.len() - self.pos
     }
 
-    /// Decode the next complete frame, if fully buffered. Returns the
-    /// header + payload (copied out; the C++ FrameView aliases the
-    /// internal buffer, but a safe owned copy keeps this layer simple —
-    /// the transport port revisits zero-copy if the benchmarks demand
-    /// it). `Malformed` surfaces as `Err(())` like the C++ status.
+    /// Decode the next complete frame and hand its payload to `f`
+    /// WITHOUT copying — the C++ `FrameView` shape, and the form the
+    /// transport uses on its hot path.
+    ///
+    /// The payload is borrowed from the internal buffer, so `f` cannot
+    /// append to the reader while holding it; that is the same
+    /// restriction the C++ callback has, expressed by the borrow
+    /// checker instead of by convention.
+    ///
+    /// Returns `Ok(false)` when no complete frame is buffered, and
+    /// `Err(())` for a malformed header (the C++ `Malformed` status).
+    ///
+    /// The callback returns nothing, mirroring the C++
+    /// `Function<void(const ChannelFrame&)>`: a caller that needs a
+    /// value out captures it, which also keeps the signature free of a
+    /// return-position generic (undeducible once lowered to C++).
     #[allow(clippy::result_unit_err)]
-    pub fn next_frame(&mut self) -> Result<Option<(FrameHeader, Vec<u8>)>, ()> {
+    pub fn with_next_frame(&mut self, f: impl FnOnce(FrameHeader, &[u8])) -> Result<bool, ()> {
         let rem = &self.buf[self.pos..];
         let (status, header) = peek_header(rem);
         match status {
-            FrameDecodeStatus::NeedMoreBytes => return Ok(None),
+            FrameDecodeStatus::NeedMoreBytes => return Ok(false),
             FrameDecodeStatus::Malformed => return Err(()),
             FrameDecodeStatus::Complete => {}
         }
         let total = header.total_frame_size() as usize;
         if rem.len() < total {
-            return Ok(None);
+            return Ok(false);
         }
-        let payload = rem[FRAME_HEADER_SIZE..total].to_vec();
+        f(header, &rem[FRAME_HEADER_SIZE..total]);
         self.pos += total;
         self.compact_if_needed();
-        Ok(Some((header, payload)))
+        Ok(true)
     }
 
-    /// Drop consumed bytes once they dominate the buffer (mirrors
-    /// `fsr_compact_if_needed`'s amortization intent).
+    /// Owned-payload form of [`with_next_frame`], for callers that want
+    /// to keep the bytes past the borrow. Costs one allocation and a
+    /// copy per frame, so the transport should prefer
+    /// [`with_next_frame`].
+    #[allow(clippy::result_unit_err)]
+    pub fn next_frame(&mut self) -> Result<Option<(FrameHeader, Vec<u8>)>, ()> {
+        let mut out: Option<(FrameHeader, Vec<u8>)> = None;
+        self.with_next_frame(|header, payload| {
+            out = Some((header, payload.to_vec()));
+        })?;
+        Ok(out)
+    }
+
+    /// Drop consumed bytes once the consumed prefix passes
+    /// [`COMPACT_THRESHOLD_BYTES`].
+    ///
+    /// Deliberately the C++ rule rather than a ratio: an earlier
+    /// `pos > 4096 && pos * 2 >= len` heuristic here memmoved far more
+    /// often on a busy connection, which is pure cost on the hottest
+    /// path and is exactly the kind of silent divergence that shows up
+    /// as a benchmark gap rather than a test failure.
     fn compact_if_needed(&mut self) {
-        if self.pos > 4096 && self.pos * 2 >= self.buf.len() {
+        if self.pos >= COMPACT_THRESHOLD_BYTES {
             self.buf.drain(..self.pos);
             self.pos = 0;
         }
@@ -199,6 +234,61 @@ impl FrameReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The zero-copy path must see the same bytes as the owned one, and
+    /// must not require the caller to keep the payload alive.
+    #[test]
+    fn with_next_frame_borrows_without_copying() {
+        let mut out: Vec<u8> = Vec::new();
+        assert!(encode_into(&mut out, b"hello", false));
+        assert!(encode_into(&mut out, b"world!", false));
+
+        let mut r = FrameReader::new();
+        r.append(&out);
+
+        let mut seen = 0usize;
+        let got = r
+            .with_next_frame(|h, p| {
+                assert_eq!(h.payload_size, 5);
+                assert_eq!(p, b"hello");
+                seen = p.len();
+            })
+            .unwrap();
+        assert!(got, "a complete frame was available");
+        assert_eq!(seen, 5, "the callback saw the payload");
+
+        let (h, p) = r.next_frame().unwrap().unwrap();
+        assert_eq!(h.payload_size, 6);
+        assert_eq!(p, b"world!");
+        assert!(!r.with_next_frame(|_, _| ()).unwrap(), "drained");
+    }
+
+    /// Compaction follows the C++ 64 KiB consumed-prefix rule. An
+    /// earlier ratio heuristic here memmoved far more often, which is
+    /// invisible to correctness tests and shows up only as throughput.
+    #[test]
+    fn compaction_waits_for_the_64k_consumed_prefix() {
+        let payload = vec![0xABu8; 1024];
+        let mut r = FrameReader::new();
+
+        let mut consumed = 0usize;
+        while consumed + FRAME_HEADER_SIZE + payload.len() < COMPACT_THRESHOLD_BYTES {
+            let mut out: Vec<u8> = Vec::new();
+            assert!(encode_into(&mut out, &payload, false));
+            r.append(&out);
+            assert!(r.next_frame().unwrap().is_some());
+            consumed += out.len();
+        }
+        assert!(r.pos > 0, "consumed bytes are still held, not compacted");
+        assert_eq!(r.buffered(), 0);
+
+        let mut out: Vec<u8> = Vec::new();
+        assert!(encode_into(&mut out, &payload, false));
+        r.append(&out);
+        assert!(r.next_frame().unwrap().is_some());
+        assert_eq!(r.pos, 0, "consumed prefix past 64 KiB is dropped");
+        assert!(r.buf.is_empty());
+    }
 
     #[test]
     fn header_layout() {
