@@ -15,5 +15,6 @@
 //!     `Arc<dyn Fn>` makes unnecessary.
 
 pub mod log;
+pub mod rand;
 pub mod sync;
 pub mod time;

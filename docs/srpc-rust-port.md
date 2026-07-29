@@ -488,6 +488,45 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3 continues: `base::rand` + `rpc::reconnect`** (this
+  commit). The reconnect backoff needs jitter, which forced the
+  cross-cutting **PRNG decision** the ledger flagged: glibc `rand_r`
+  is neither portable nor reproducible, and this crate takes no
+  dependencies, so it ships **xorshift64\*** — a dozen lines of
+  integer math whose sequence is *frozen* by a test, with the pinned
+  values cross-checked against an independent implementation of the
+  reference algorithm so the test pins the ALGORITHM rather than
+  whatever the file happens to compute.
+
+  `rpc::reconnect` preserves two C++ behaviours deliberately, both
+  pinned by test because they look like bugs and are not:
+  `max_retries == 0` means UNLIMITED (not "never"), and jitter is
+  applied AFTER clamping, so a delay can exceed `max_delay_ms` by up
+  to 50% — clamping after jitter would suppress the upper half of the
+  spread exactly at the ceiling, where breaking up a thundering herd
+  matters most. Jitter is injectable (`with_seed`) so the curve is
+  reproducible in tests.
+
+  52 crate tests; gate at **15/15 modules, golden 64/64**.
+
+  Two more translator fixes, both in the import machinery this slice
+  exercised hard:
+  - An ITEM import resolved its module from the path's FIRST segment,
+    so `use crate::base::rand::Rng;` imported `srpc.base` and emitted
+    `using ::srpc::base::Rng;`. Importing a parent re-exports the
+    child MODULE, which made the import look harmless, but C++
+    namespaces do not merge across modules and that name did not
+    exist. Now resolved from the path minus its final segment.
+  - Calls to a C-like enum's inherent methods (lowered to free
+    functions) are namespace-qualified, so `let code = self.code();`
+    no longer becomes a variable in its own initializer.
+
+  Still open upstream, worked around idiomatically: an INLINE
+  fully-qualified path (`crate::base::time::wall_us()` used directly
+  in an expression rather than through a `use`) emits `::base::time::…`
+  with no import and no requalification. A `use` declaration is the
+  idiomatic form and translates correctly.
+
 - **2026-07-29 — S3 begins: `rpc::errors`** (this commit): the RPC
   error taxonomy, with **every wire-visible discriminant pinned by
   test** — a client and server may be different builds (or different

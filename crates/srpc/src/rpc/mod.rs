@@ -5,3 +5,4 @@
 //! and [`crate::wire`], never on the transport or the fiber runtime.
 
 pub mod errors;
+pub mod reconnect;
