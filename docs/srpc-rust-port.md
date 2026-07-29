@@ -488,6 +488,20 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::connection_state`** (this commit). The
+  connection lifecycle FSM. `transition_to` REFUSES an illegal move
+  and reports it rather than performing it, so a caller that gets the
+  lifecycle wrong finds out; `force_state` is the deliberate escape
+  hatch for teardown paths.
+
+  The exhaustive table test (all 36 from/to pairs stated once) caught
+  an error in the module doc I had written from reading the C++:
+  `Failed` is reachable only from the ACTIVE states — the settled ones
+  (`New`, `Disconnected`, `Failed`) have nothing in flight to fail and
+  re-enter only by connecting. Worth noting because the wrong rule
+  read perfectly plausibly; enumerating the table is what disproved
+  it. 73 crate tests; gate at **17/17 modules, golden 64/64**.
+
 - **2026-07-29 — S3: `rpc::circuit_breaker`** (this commit). The
   three-state breaker (Closed → Open → HalfOpen), including the
   one-probe-at-a-time rule that keeps a recovering peer from being hit
