@@ -574,6 +574,41 @@ more often than the C++ 64 KiB consumed-prefix rule.
 
 ## Status log
 
+- **2026-07-29 — ★ S0 GREEN: the Rust wire layer talks to the LIVE
+  production C++ server** (this commit). `crates/srpc/tests/
+  interop_cpp_server.rs` drives an unmodified `rpcbench -s` process
+  through 9 tests: varints both ways (`fast_add`), raw scalars
+  (`fast_prime`), structs and doubles (`fast_dot_prod`), containers
+  (`fast_vec`), empty-body replies on both the fast and slow dispatch
+  paths (`fast_nop`/`nop`), the deferred-reply path
+  (`deferred_echo`), an unknown rpc_id returning ENOENT with the
+  connection surviving, 200 sequential calls staying in sync, and a
+  drift guard on the frozen rpc_ids.
+
+  Reached in one session because the recon was right about the three
+  things that mattered: there is no handshake, the ids are frozen
+  checked-in constants, and the server already exists as a process.
+  The test is `#[cfg(test)]` — which now correctly never translates —
+  so it uses `std::net::TcpStream` and needs none of the syscall
+  kernels; that decision moves to S2 where the epoll transport
+  actually requires it.
+
+  Both initial failures were MY assumptions, not the implementation:
+  `compute_prime` short-circuits `n <= 3` to "prime", and `fast_vec`
+  asserts `n > 0`. The second is worth recording: rrr's `verify()`
+  ABORTS the process, so a handler precondition failure is a
+  **remotely-triggerable process kill** — one malformed argument from
+  any client killed the whole server. It is a benchmark service, so
+  the blast radius is tests; but the same abort-on-bad-input pattern
+  exists in the framework's own deserialization path, and the Rust
+  port should decide deliberately (an S0 open question) whether to
+  reproduce abort semantics or return errors.
+
+- **2026-07-29 — S1 in progress**: pinned C++ baselines. Noted while
+  standing the server up: `rpcbench -c ... -m fast_vec` reports
+  `avg qps: 0.00`, so that mode needs investigation before it can
+  contribute a baseline number.
+
 - **2026-07-29 — S3: `rpc::connection_metrics`** (this commit), which
   closes the loop with the load balancer by implementing its
   `Candidate` trait directly.
