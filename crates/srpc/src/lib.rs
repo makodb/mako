@@ -22,3 +22,5 @@
 //! the C++ implementation.
 
 pub mod wire;
+
+pub mod base;

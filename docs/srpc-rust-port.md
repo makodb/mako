@@ -413,6 +413,7 @@ tests mirroring the pinned C++ assertions + transpile-gate re-run.
 | slice | ~LOC | members | riskiest element |
 |---|---:|---|---|
 | S1 foundation | 2,159 | base/{callback_wrapper→evaporates, debugging, logging, misc, strop, threading} + misc/{rand, stat, cpuinfo} | glibc `rand_r` sequence not portable → crate ships its own PRNG with frozen sequence from day one |
+| *(S1 datapath core landed: `base::{time, sync, log}` — see the S1 entry in the status log)* | | | |
 | S2 envelope | 759 | misc/any_message + misc/serializable_envelope | typeid/dynamic_cast surface → redesign on `std::any::TypeId`; deptran reads the cached public `kind_` field |
 | S3 RPC leaf FSMs | 4,433 | rpc/{errors, channel, callbacks, connection_state, connection_metrics, circuit_breaker, heartbeat, reconnect_policy, request_options, load_balancer, request_queue} | wire-visible i32 error discriminants + EAGAIN/ETIMEDOUT numerics must be hardcoded + golden-pinned |
 | S4 fiber runtime + reactor core | 3,755 | fiber_context_{x86_64,aarch64} + fiber.cpp + future.cpp + reactor.cpp#{fiber-machinery, tls-state, events, timers, reactor-core} | asm via `global_asm!` with the FiberContext offset table as an ABI contract shared with transpiled C++; mmap/mprotect guard-page stacks; the thread_local decision lands here |
@@ -486,6 +487,61 @@ rebuild (`spike_reverify/run.sh all`, which now also emits objects and
 runs the golden phase).
 
 ## Status log
+
+- **2026-07-29 — S1 datapath core landed + five more translator fixes**
+  (this commit): `crates/srpc/src/base/{time,sync,log}.rs` — the
+  foundation the rest of the port stands on. `Timer`/`Deadline` over
+  `std::time` (monotonic, so an NTP step cannot produce a negative
+  interval — the C++ original timed with the wall clock), `SpinLock`
+  with the C++ backoff shape, `Counter`, and the level-filtered logger
+  (its three C++ micro-kernels — basename, timestamp, level tag —
+  are ordinary Rust here; the timestamp is a dozen lines of
+  civil-from-days arithmetic rather than a `chrono` dependency).
+  29 crate tests green, clippy/fmt clean.
+
+  Mechanism probing BEFORE writing the slice paid for itself — five
+  gaps found, each fixed upstream with tests rather than worked
+  around:
+  1. `std::hint::spin_loop` had no lowering (the other `std::hint`
+     entries take an operand and lower to identity; this one takes
+     none) — leaked into C++ as `std::hint::spin_loop()`. Added
+     `rusty::hint::spin_loop()` to the runtime.
+  2. The helper preamble DEFINES `rusty::time`, but `rusty::time::`
+     was missing from the marker list gating the preamble's emission,
+     so a time-using crate got the type reference with nothing
+     defining it.
+  3. `rusty::time` was a STUB — no `elapsed()`, no
+     `as_millis/as_micros/as_nanos`, no arithmetic, no
+     checked/saturating forms. Completed to the std::time surface,
+     keeping Rust's semantics (Duration is unsigned: underflow
+     saturates or returns None, never wraps).
+  4. `rusty::saturating_{add,sub,mul}` static_asserted on integral
+     operands, rejecting Duration; they now dispatch to a member when
+     the receiver has one.
+  5. `std::thread::sleep` emitted as `rusty::thread::sleep_`: the
+     libc-collision rename (guarding UNQUALIFIED user functions from
+     `::sleep`) was being applied to QUALIFIED runtime paths, where
+     it names a function that does not exist.
+  Plus a portability fix: `str_runtime::parse<bool>` compared a
+  `string_view` against string literals, ambiguous under
+  g++/libstdc++ — emitted code now compiles under g++ as well as
+  clang.
+
+  **Two open translator gaps** (worked around in-crate, both worth
+  fixing before the port grows): a `use` path naming a sibling MODULE
+  mis-resolves — `use crate::base::time;` imports the PARENT module
+  (creating an illegal C++20 import cycle, since the parent
+  re-exports its children) and `use super::time;` imports nothing at
+  all. Importing ITEMS (`use super::time::wall_us;`) works and is
+  what the crate does today.
+
+  Also recorded: two verification traps that cost real time here —
+  translated `.pcm`/`.o` and the `rusty` module BMI embed the headers
+  they were built against, so a runtime fix is invisible until the
+  whole tree is rebuilt; and a regex "keep both sides" merge
+  resolution silently spliced two test functions together, after
+  which an empty test-output grep read as a pass. Verify compile
+  output explicitly.
 
 - **2026-07-29 — ★ RUNTIME PROOF GREEN + two upstream runtime bugs**
   (this commit): the translated-module golden test
