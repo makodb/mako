@@ -620,8 +620,9 @@ more often than the C++ 64 KiB consumed-prefix rule.
   type, undeducible at the call site. Capturing the result in the
   closure is both the faithful shape and the translatable one.
 
-- **2026-07-29 — S1 in progress**: pinned C++ rpcbench baselines
-  capturing across {fast, fiber, defer, async} x {depth 1, 100} x
+- **2026-07-29 — ★ S1 DONE: pinned C++ baselines captured**
+  (`docs/dev/srpc_rpcbench_baseline.md`, harness in
+  `scripts/capture_rpcbench_baseline.sh`). 72 runs across {fast, fiber, defer, async} x {depth 1, 100} x
   {10, 100, 1024 bytes} x 3 trials, server pinned to one core and
   client to four, all on the NUMA node with locally-attached memory.
   Harness semantics frozen rather than fixed, so the Rust side mirrors
@@ -632,6 +633,24 @@ more often than the C++ 64 KiB consumed-prefix rule.
   `avg qps: 0.00` was not a mode defect — with `-n 2` the sampler
   discards the first reading and pushes nothing, so the average is
   over an empty set.
+
+  Two results that shape the gate itself:
+  - **Depth 1 is mode- and payload-insensitive** (every cell 36–40k
+    qps whether fast or fiber, 10 B or 1 KiB). At depth 1 only the
+    wakeup path is being measured — the 1 ms `epoll_wait` tick with no
+    eventfd. A Rust port that adds a wakeup fd will beat this for
+    reasons unrelated to Rust, so depth-1 parity needs a like-for-like
+    wakeup model or must be excluded.
+  - **Depth-1 run-to-run noise is 5–18%**, which meets or exceeds the
+    10% parity criterion by itself. A single depth-1 comparison
+    therefore cannot decide parity. Recorded BEFORE any Rust number
+    exists, so the gate cannot be quietly redefined later to fit a
+    result.
+
+  At depth 100 the modes separate cleanly (fast 1.03M, async 898k,
+  fiber 667k, defer 595k at 10 B): the fiber runtime costs ~35%
+  against fast, which is the gap S8 will be judged on and is invisible
+  in any wire-level benchmark.
 
 - **2026-07-29 — S3: `rpc::connection_metrics`** (this commit), which
   closes the loop with the load balancer by implementing its
