@@ -8,3 +8,4 @@ pub mod circuit_breaker;
 pub mod connection_state;
 pub mod errors;
 pub mod reconnect;
+pub mod request_options;

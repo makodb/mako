@@ -488,6 +488,21 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::request_options`** (this commit).
+  Per-request timeout and retry policy. The load-bearing rule is that
+  **retries require idempotence** — `max_retries` alone never
+  authorises one, because a lost reply is indistinguishable from a
+  lost request and re-sending can execute the operation twice. The
+  default options are therefore non-idempotent with zero retries.
+
+  Its jitter is bounded by `max_delay_ms`, deliberately UNLIKE
+  `rpc::reconnect`, which jitters past its ceiling on purpose: a
+  per-request delay feeds the caller's own deadline, whereas
+  reconnect jitter exists to smear a herd. Both behaviours are
+  pinned, and the contrast is documented in both modules so neither
+  gets "fixed" into the other. 82 crate tests; gate at **18/18
+  modules, golden 64/64**.
+
 - **2026-07-29 — S3: `rpc::connection_state`** (this commit). The
   connection lifecycle FSM. `transition_to` REFUSES an illegal move
   and reports it rather than performing it, so a caller that gets the
