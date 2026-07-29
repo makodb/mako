@@ -488,6 +488,26 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::circuit_breaker`** (this commit). The
+  three-state breaker (Closed → Open → HalfOpen), including the
+  one-probe-at-a-time rule that keeps a recovering peer from being hit
+  by full load the instant its timeout expires.
+
+  The port makes it **testable without sleeping**: every
+  clock-consulting method has an `_at` twin taking the instant
+  explicitly, so the tests drive transitions directly — timeout
+  boundaries (29,999 ms vs 30,000 ms), probe exclusion, a failed probe
+  restarting the timeout from the NEW trip, and a late probe result
+  arriving after the breaker reopened (which must not leave the probe
+  slot claimed forever). The C++ version could only be exercised
+  against the real clock, so none of these were covered.
+
+  `opened_at` is `Option<Instant>` rather than a `u64` sentinel of 0,
+  so "never tripped" is a state the type can express; the state
+  machine uses the monotonic clock, and the wall-clock timestamp is
+  kept for logging only. 64 crate tests; gate at **16/16 modules,
+  golden 64/64**.
+
 - **2026-07-29 — S3 continues: `base::rand` + `rpc::reconnect`** (this
   commit). The reconnect backoff needs jitter, which forced the
   cross-cutting **PRNG decision** the ledger flagged: glibc `rand_r`
