@@ -74,7 +74,8 @@ pub fn val_size(val: i64) -> usize {
 /// Encode `val` into `buf`; returns the number of bytes the caller
 /// copies to the wire. (Not the number of bytes written for the
 /// 8-length quirk case — see the module docs.)
-pub fn dump32(val: i32, buf: &mut [u8; VARINT_BUF_LEN]) -> usize {
+pub fn dump32(val: i32, buf: &mut [u8]) -> usize {
+    debug_assert!(buf.len() >= VARINT_BUF_LEN);
     let u = val as u32;
     if (-64..=63).contains(&val) {
         buf[0] = (u & 0xFF) as u8;
@@ -114,7 +115,8 @@ pub fn dump32(val: i32, buf: &mut [u8; VARINT_BUF_LEN]) -> usize {
 /// Encode `val` into `buf`; returns the number of bytes the caller
 /// copies to the wire (8-length quirk: nine bytes are written but 8
 /// is returned — see the module docs).
-pub fn dump64(val: i64, buf: &mut [u8; VARINT_BUF_LEN]) -> usize {
+pub fn dump64(val: i64, buf: &mut [u8]) -> usize {
+    debug_assert!(buf.len() >= VARINT_BUF_LEN);
     let u = val as u64;
     let n = val_size(val);
     if n <= 7 {
@@ -163,9 +165,12 @@ pub fn dump64(val: i64, buf: &mut [u8; VARINT_BUF_LEN]) -> usize {
 }
 
 /// Decode an i32 from `buf` (first byte determines the length; the
-/// buffer must hold `buf_size(buf[0])` valid bytes, zero-padded to
-/// [`VARINT_BUF_LEN`] like the C++ decode path's buffer).
-pub fn load32(buf: &[u8; VARINT_BUF_LEN]) -> i32 {
+/// buffer must hold at least [`VARINT_BUF_LEN`] bytes, zero-padded
+/// past the encoded length like the C++ decode path's buffer).
+/// Slice params (not `&[u8; N]`): the idiomatic Rust surface, and the
+/// uniform lowering shape for the C++ translation (rusty-cpp #44).
+pub fn load32(buf: &[u8]) -> i32 {
+    debug_assert!(buf.len() >= VARINT_BUF_LEN);
     let bsize = buf_size(buf[0]);
     let mut u: u32 = 0;
     if bsize < 5 {
@@ -196,7 +201,8 @@ pub fn load32(buf: &[u8; VARINT_BUF_LEN]) -> i32 {
 }
 
 /// Decode an i64 from `buf` (same buffer contract as [`load32`]).
-pub fn load64(buf: &[u8; VARINT_BUF_LEN]) -> i64 {
+pub fn load64(buf: &[u8]) -> i64 {
+    debug_assert!(buf.len() >= VARINT_BUF_LEN);
     let bsize = buf_size(buf[0]);
     let mut u: u64 = 0;
     if bsize < 8 {

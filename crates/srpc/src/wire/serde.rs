@@ -41,7 +41,7 @@ pub struct V64(pub i64);
 impl Serialize for V32 {
     fn serialize(&self, ar: &mut WriteArchive) {
         let mut b = [0u8; VARINT_BUF_LEN];
-        let bsize = varint::dump32(self.0, &mut b);
+        let bsize = varint::dump32(self.0, &mut b[..]);
         ar.write_bytes(&b[..bsize]);
     }
 }
@@ -49,7 +49,7 @@ impl Serialize for V32 {
 impl Serialize for V64 {
     fn serialize(&self, ar: &mut WriteArchive) {
         let mut b = [0u8; VARINT_BUF_LEN];
-        let bsize = varint::dump64(self.0, &mut b);
+        let bsize = varint::dump64(self.0, &mut b[..]);
         ar.write_bytes(&b[..bsize]);
     }
 }
@@ -101,7 +101,7 @@ impl Deserialize for i8 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<i8>()];
         ar.read_exact(&mut b)?;
-        Ok(<i8>::from_le_bytes(b))
+        Ok(i8::from_le_bytes(b))
     }
 }
 
@@ -114,7 +114,7 @@ impl Deserialize for i16 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<i16>()];
         ar.read_exact(&mut b)?;
-        Ok(<i16>::from_le_bytes(b))
+        Ok(i16::from_le_bytes(b))
     }
 }
 
@@ -127,7 +127,7 @@ impl Deserialize for i32 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<i32>()];
         ar.read_exact(&mut b)?;
-        Ok(<i32>::from_le_bytes(b))
+        Ok(i32::from_le_bytes(b))
     }
 }
 
@@ -140,7 +140,7 @@ impl Deserialize for i64 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<i64>()];
         ar.read_exact(&mut b)?;
-        Ok(<i64>::from_le_bytes(b))
+        Ok(i64::from_le_bytes(b))
     }
 }
 
@@ -153,7 +153,7 @@ impl Deserialize for u8 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<u8>()];
         ar.read_exact(&mut b)?;
-        Ok(<u8>::from_le_bytes(b))
+        Ok(u8::from_le_bytes(b))
     }
 }
 
@@ -166,7 +166,7 @@ impl Deserialize for u16 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<u16>()];
         ar.read_exact(&mut b)?;
-        Ok(<u16>::from_le_bytes(b))
+        Ok(u16::from_le_bytes(b))
     }
 }
 
@@ -179,7 +179,7 @@ impl Deserialize for u32 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<u32>()];
         ar.read_exact(&mut b)?;
-        Ok(<u32>::from_le_bytes(b))
+        Ok(u32::from_le_bytes(b))
     }
 }
 
@@ -192,7 +192,7 @@ impl Deserialize for u64 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<u64>()];
         ar.read_exact(&mut b)?;
-        Ok(<u64>::from_le_bytes(b))
+        Ok(u64::from_le_bytes(b))
     }
 }
 
@@ -205,7 +205,7 @@ impl Deserialize for f64 {
     fn deserialize(ar: &mut ReadArchive<'_>) -> Result<Self, WireError> {
         let mut b = [0u8; core::mem::size_of::<f64>()];
         ar.read_exact(&mut b)?;
-        Ok(<f64>::from_le_bytes(b))
+        Ok(f64::from_le_bytes(b))
     }
 }
 
