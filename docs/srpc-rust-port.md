@@ -432,7 +432,76 @@ Cross-cutting decisions to settle in S1:
 - **PRNG freeze**: replace `rand_r` with an in-crate PRNG and pin
   its sequence in a golden (bench workloads consume it).
 
+## Runtime proof (2026-07-29) — why compile-green is not enough
+
+The 6/6 whole-crate compile proved the translation *builds*. It could
+not prove the translated code *behaves*. Closing that gap immediately
+found a silent wrong-answer bug, which is the case for treating the
+runtime proof as a standing gate rather than a one-off:
+
+`src/rrr/tests/wire_golden_translated_test.cc` imports the TRANSLATED
+`srpc.wire.*` modules and asserts the same 62-case corpus the Rust
+crate and the production C++ encoders already agree on — the third
+side of the triangle. On its first run, ten v64 cases and three
+decode round-trips failed: values needing 5–9 bytes encoded as ONE
+byte (`17179869183` → `7f`, i.e. the encoding of `-1`).
+
+Root cause was in the rusty runtime, not in srpc: Rust's
+`RangeBounds::contains` compares item and bounds with no conversion,
+and integer-literal inference makes `(-64..=63).contains(&x)` a range
+of `i64` when `x: i64`. C++ has no such inference, so the translation
+emits `range_inclusive<int>` and the `bool contains(const T&)`
+parameter **silently narrowed** the `int64_t` argument — `17179869183`
+truncates to `-1`, which really is inside `[-64, 63]`, so `val_size`
+returned 1. Fixed upstream on `fix-range-contains-width` by comparing
+mixed integer widths/signedness through the C++20 `std::cmp_*` safe
+comparisons in all five range forms (same-type and non-integer bounds
+keep their natural operators); regression test covers the srpc
+`val_size` shape and every range form — 8 failures before, 0 after.
+
+With that fixed the proof is **GREEN: 64 cases, 0 failures** — all 62
+corpus encodings plus decode round-trips, so the translated modules,
+the Rust crate, and the production C++ encoders now agree at runtime,
+not just at compile time. Goal 2's riskiest link is proven end to end
+for the wire layer.
+
+One case changed on both sides rather than being "fixed": the
+**8-length quirk** is lossy by design (`dump64` reports 8, so the
+ninth payload byte never reaches the wire and `36028797018963967`
+decodes back as `36028797018963712`). The Rust round-trip helper had
+been skipping it; it is now pinned explicitly on both sides
+(`wire::varint::tests::quirk_8_length_loses_low_byte` and the same
+numbers in the translated test), turning an untested corner into a
+documented contract.
+
+Standing lesson recorded: **a compile gate cannot catch a wrong-value
+bug; every ported layer needs its behavior re-asserted through the
+translated modules.** Each conversion slice therefore lands with its
+Rust tests AND its translated-module runtime assertions.
+
+Second gotcha, hit twice now: translated `.pcm`/`.o` artifacts embed
+the runtime headers they were built against, so a header fix is NOT
+visible until the modules are re-emitted — validate only after a full
+rebuild (`spike_reverify/run.sh all`, which now also emits objects and
+runs the golden phase).
+
 ## Status log
+
+- **2026-07-29 — ★ RUNTIME PROOF GREEN + two upstream runtime bugs**
+  (this commit): the translated-module golden test
+  (`src/rrr/tests/wire_golden_translated_test.cc`) passes 64/64,
+  closing the three-way triangle at runtime. Getting there found a
+  silent wrong-answer bug in the rusty runtime (`range contains`
+  narrowed the queried item → srpc varint encoded 5-byte values as
+  1 byte) and, in the same session, a translation defect where
+  `impl Trait for (A, B)` emitted `self_._0` instead of
+  `std::get<0>` (template body only checked on instantiation, so the
+  whole-crate compile stayed green). Both fixed author-quality
+  upstream on `fix-range-contains-width` and
+  `fix-tuple-self-field-access`, merged into `verify-stack`; pin
+  bumped to 0fa13631. Full mako build + transpiler suites
+  (1914/1914 bin, 32/32 e2e) green at the pin. See the runtime-proof
+  section above for the mechanism and the two verification gotchas.
 
 - **2026-07-28/29 — pin → `verify-stack` (4cbf628f)** (this commit):
   user-approved deviation from the pin-main rule: the submodule now

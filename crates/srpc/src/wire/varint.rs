@@ -321,6 +321,49 @@ mod tests {
         }
     }
 
+    /// The 8-length quirk, pinned end-to-end: only the reported 8 bytes
+    /// reach the wire, so the lowest payload byte is LOST and decoding
+    /// what the wire actually carried does not return the original
+    /// value. `roundtrip64` skips these; this pins exactly what the
+    /// legacy format does, on both sides of the translation boundary
+    /// (the same numbers are asserted by
+    /// src/rrr/tests/wire_golden_translated_test.cc).
+    #[test]
+    fn quirk_8_length_loses_low_byte() {
+        let mut buf = [0u8; VARINT_BUF_LEN];
+
+        // Positive boundary: the dropped byte is 0xFF, so the decode
+        // differs from the input by exactly 255.
+        let val = 36028797018963967i64; // 0x007FFFFFFFFFFFFF
+        assert_eq!(val_size(val), 8);
+        assert_eq!(dump64(val, &mut buf), 8, "reports 8");
+        assert_eq!(&buf[..8], &[0xFE, 0x00, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(buf[8], 0xFF, "ninth byte written but never sent");
+
+        // Decode what the WIRE carried: eight bytes into a zeroed buffer.
+        let mut wire = [0u8; VARINT_BUF_LEN];
+        let mut i = 0;
+        while i < 8 {
+            wire[i] = buf[i];
+            i += 1;
+        }
+        assert_eq!(load64(&wire), 36028797018963712, "low byte lost");
+
+        // Negative boundary round-trips only by luck: its dropped byte
+        // is 0x00.
+        let neg = -36028797018963968i64; // 0xFF80000000000000
+        assert_eq!(val_size(neg), 8);
+        assert_eq!(dump64(neg, &mut buf), 8);
+        assert_eq!(buf[8], 0x00, "dropped byte happens to be zero");
+        let mut wire_neg = [0u8; VARINT_BUF_LEN];
+        let mut j = 0;
+        while j < 8 {
+            wire_neg[j] = buf[j];
+            j += 1;
+        }
+        assert_eq!(load64(&wire_neg), neg, "negative case survives");
+    }
+
     #[test]
     fn known_encodings() {
         // Hand-derived from the layout (locked against the golden
