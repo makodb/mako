@@ -183,9 +183,15 @@ Known debt inherited from the ports (pre-existing, tracked):
 - btree port: broken `btree_internal` clone templates (the reason
   `PollThreadWorker::jobs_` is `std::set` today).
 
+Submission protocol: fixes live on named branches in the
+/var/tmp/rusty-cpp-fix clone (pushed to origin); **no PRs are opened
+without explicit user instruction** (the four early PRs #41/#42/#43/#45
+were closed per that rule — branches retained). Landing route is the
+user's call: merge directly, review, or request PRs.
+
 Gap list from this campaign:
-- **#37 — FIXED upstream, PR open**: [rusty-cpp PR #41](https://github.com/shuaimu/rusty-cpp/pull/41)
-  (branch `fix-37-namespace-crate-root-items`, commit f3328c22 — 1910/1910
+- **#37 — FIXED on branch `fix-37-namespace-crate-root-items`**
+  (commit f3328c22 — 1910/1910
   bin suite + new e2e regression green): the
   `--cxx-namespace` wrap-close now re-qualifies bare `::<item>`
   crate-root references via the boundary-aware
@@ -196,13 +202,22 @@ Gap list from this campaign:
   Verified against srpc: namespace-mode `varint` **and** `archive`
   now compile; e2e regression test added
   (`test_cxx_namespace_requalifies_crate_root_item_refs`).
-- **#38 narrowed**: with #37 fixed and auto-namespace sibling aliases,
-  path-qualified sibling refs (`archive::WireError`) resolve; the
-  remaining shape is *bare-name* `use` imports
-  (`use super::varint::VARINT_BUF_LEN` → bare `VARINT_BUF_LEN` with no
-  using-declaration). Clang's fix-it even names the resolution.
-- **#39 / #40**: unchanged on current main (re-verified at cb0c14b9);
-  still open.
+- **#38 — FIXED on branch `fix-38-sibling-imports-namespace-mode`**
+  (634fff08): the sibling-import site in `emit_items.rs` now emits
+  `namespace <seg> = ::<sibling::ns>;` aliases plus per-item
+  using-declarations when `cxx_namespace` is set.
+- **#39 — FIXED on branch `fix-39-clone-from-slice-array-operands`**
+  (04d0cd4e): `clone_from_slice` adapter overloads in
+  `include/rusty/array.hpp` for `std::array` dst/src operands.
+- **#40 — FIXED on branch `fix-40-primitive-self-and-float-bytes`**
+  (2 commits + e2e test): bare-`self` typing for primitive impl
+  receivers via `current_impl_method_self_tys`, float
+  `to_le/be_bytes` lowerings, and the UFCS free-fn emitter pushing
+  `method_spec.self_ty` around body emission.
+- **#44 — issue filed, open**: array-ref param vs argument lowering
+  inconsistency; srpc sidestepped via the (idiomatic) slice-param API.
+- Branch `verify-stack` = main + all four fixes; this is the build
+  that produced the 6/6 whole-crate compile.
 
 ## W3 spike results (2026-07-28)
 
@@ -267,7 +282,126 @@ path). Watch item: the raw-8-byte case (15.1 vs 11.6 ns — Vec
 clear/extend vs the C++ sink's raw path); revisit when the transport
 pump design lands. Parity gate: **on track**.
 
+## Blocker map (2026-07-28 recon — five parallel audits: port
+surface, consumer API, rpcgen, swap path, transpiler hazards)
+
+### Goal 1 — what remains to port (ranked)
+
+The wire layer (~1.3k LOC Rust) covers a small fraction of the
+surface. Remaining `src/rrr` by subsystem (LOC = hand-written C++ in
+the srpc-shape worktree; DSL share = how much is already inline-Rust,
+i.e. mechanical to port):
+
+| subsystem | LOC | DSL share | port character |
+|---|---:|---|---|
+| `rpc/` | 18,036 | ~44% | most portable; client/server/tcp_channel/inmemory ≈ 61% DSL |
+| `reactor/` | 6,171 | ~23% | **hardest**: 5,021-LOC reactor.cpp; mmap fiber stacks; per-arch asm context switch (56+91 LOC); epoll kernels |
+| `misc/` | 1,807 | ~31% | serializable_envelope (285) likely subsumed by the W2 registry port |
+| `base/` | 1,438 | ~34% | pthread/time kernels → std Rust; easy |
+| `utils/` | 762 | dead | zero consumers — exclude from port |
+| `pylib/` | 1,744 (py) | n/a | W7: new `lang_rust.py` backend (`lang_python.py` is prior art); 4 `.rpc` files, 12 services / 109 methods |
+
+Perf-gate honesty: the 9-scenario table above is wire-layer only. The
+real Goal-1 gate is rpcbench end-to-end parity, which needs W4+W5+W6
+first.
+
+### Goal 2 — blockers in dependency order
+
+1. **User decision (blocking now):** the four rusty-cpp fix branches
+   are verified but unlanded; no pin bump → no translated output can
+   be checked in. Issue #44 also awaits a call (fix vs. leave).
+2. **Runtime proof missing:** 6/6 is compile-only. Cheapest de-risk:
+   a C++ test importing translated `srpc.wire.serde` asserting the
+   62-case corpus — runnable TODAY against the verify-stack build,
+   no pin bump needed for the proof itself.
+3. **First-swap mechanics** (`rrr.frame_codec` ← `srpc.wire.frame` —
+   chosen because it has ONE real consumer TU, `tcp_channel.cpp`,
+   plus an existing golden-byte test; `rrr.serializable` has 7
+   importers + the whole rpcgen surface):
+   - *naming*: crate mode hard-codes `srpc.*` module names
+     (`map_rs_to_cppm` from the Cargo package name; `--module-name`
+     is single-file-mode only). Route: a thin **bridge module**
+     (`export module rrr.frame_codec; import srpc.wire.frame;` +
+     exported using-declarations/adapters). Non-exported
+     module-linkage constants must be redefined in the bridge.
+   - *API divergence*: Rust `FrameReader::next_frame` is pop-style
+     (owned `Vec<u8>` per frame) vs tcp_channel's peek/consume split;
+     `reset()`/`buffered_bytes()` missing from the Rust surface —
+     add them crate-side (W2 scope).
+   - *hot-path perf*: owned-Vec-per-frame = extra alloc+copy per RPC
+     inbound; bench gate before landing.
+   - *check-in home*: existing transpiled ports live inside the
+     rusty-cpp submodule repo; srpc's translated output needs an
+     in-mako vendored location + drift guard (regen-script pattern).
+     No precedent yet — decide at first swap.
+4. **Transpiler hazards for the growth phases (W4/W5/W6), ranked:**
+   - **HIGH — `thread_local!`/LocalKey**: lowered SILENTLY to a
+     `// TODO` comment; no runtime type exists. The reactor
+     architecture is thread-local-centric (`sp_reactor_th_` etc.).
+     Must be resolved BEFORE the W5 design freezes: either
+     author-quality LocalKey support upstream, or keep thread-local
+     access inside a small hand-C++ kernel via the twin-kernel seam.
+   - **HIGH — `asm!`**: also silently dropped, but defused by the
+     already-planned twin asm kernels (hand-C++ call resolution via
+     CppModuleSymbolIndex is first-class).
+   - **HIGH — HashMap**: the hashbrown port carries the two live
+     clang-22 bugs (mangler crash on serialize paths + runtime
+     resize null-deref). Either fix hashbrown upstream (parallel
+     track) or use BTreeMap for the fd→conn / xid→Future maps
+     initially.
+   - MEDIUM: BTreeMap at 10× current scale; libc syscalls (the
+     extern-fn declaration route is mechanical and supported); mpsc
+     never exercised end-to-end through translation.
+   - LOW (proven): Rc/RefCell+Weak graphs, Mutex/Arc/Condvar/
+     atomics, `Box<dyn Fn>`, VecDeque, Cell status machines,
+     `thread::spawn`.
+   - *Cross-cutting transpiler debt*: unknown macros lower to
+     `// TODO` comments instead of hard errors — both HIGH hazards
+     fail silently. A `--deny-todo-lowering`-style opt-in flag is a
+     general, author-quality upstream improvement worth proposing.
+
+### Consumer-API reality (shrinks W6/W9)
+
+- **mako-proper's narrow waist ≈ 10 symbols in 4 files (~1.4k
+  LOC)** — `rrr_rpc_backend.cc/.h`, cluster_bootstrap,
+  shard_failure_controller: PollThread create/clone/shutdown; Server
+  new_/reg_service_typed/start; the UNTYPED Service trait
+  (`__reg_to__`/`__dispatch__` on raw byte blobs); Client
+  create/connect/request(write_bytes)/close; Future
+  timed_wait/get_error_code/get_reply. No fibers, no events, no
+  typed serde — a mako-first swap of the RPC layer needs no rpcgen.
+- **deptran is the heavy consumer**: DeferredReply 318 sites, Fiber
+  370, Reactor/IntEvent 336, generated proxies 194, serde 368,
+  Log_* 2,380.
+- Droppable now: ClientPool (zero consumers), legacy Marshal (39
+  declining sites, already scheduled for deprecation).
+
+### Execution order
+
+1. (user) land the fix branches → pin bump → re-verify 6/6 at pin
+2. Runtime three-way golden proof (translated serde vs corpus) —
+   doable now on verify-stack
+3. Decide thread_local + HashMap strategy (shapes W5/W6 code)
+4. W2 completion: envelope/registry + FrameReader surface parity
+   (reset/buffered_bytes/peek-consume)
+5. First swap: `rrr.frame_codec` bridge + check-in home + drift guard
+6. W4 transport (libc kernels) → W5 fibers (twin asm) → W6 RPC core
+7. W7 `lang_rust.py` (12 services / 109 methods)
+8. W8 rpcbench end-to-end parity; W9 dependency-order swaps; W10
+   retire `src/rrr`
+
 ## Status log
+
+- **2026-07-28 — blocker-map recon** (this commit): five parallel
+  read-only audits (port surface, consumer API, rpcgen scope, swap
+  path, transpiler hazards) → the Blocker map section above. Headline
+  findings: ~28k LOC of `src/rrr` remain (reactor hardest at ~23%
+  DSL; `utils/` dead); mako-proper's rrr dependency is a ~10-symbol
+  untyped byte-blob waist; first swap should be `rrr.frame_codec` via
+  a bridge module; two silent-failure transpiler hazards
+  (thread_local!, asm!) must be designed around or fixed upstream
+  before the fiber runtime; upstream PRs were closed per the no-PR
+  rule — fixes live on branches awaiting the user's landing decision.
 
 - **2026-07-28 — ★ 6/6: THE ENTIRE CRATE TRANSPILES AND COMPILES AS
   C++20 MODULES** (`c732a460` + rusty-cpp fix stack): with upstream
