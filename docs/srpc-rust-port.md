@@ -488,6 +488,20 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — upstream sync #2** (this commit): `verify-stack`
+  merged upstream `main` again (the vec-suite work: move-relocating
+  `collect`, `assert!` panicking rather than aborting, `ptr::copy`
+  double-drop, `repr(align)`, checked `Index`). Clean merge,
+  re-validated end to end at the new pin **3d1a642c**: transpiler
+  suites 1923/1923 bin + 32/32 e2e + 2/2 runtime-time, all **19
+  translated modules compile**, runtime golden **64/64**, full mako
+  build clean with the ctest failure set unchanged from baseline
+  (63 never-wired port-test binaries, no mako test among them).
+
+  This is the cadence the pin policy asks for: sync often, and let
+  the whole stack — not just the unit suites — decide whether the
+  sync is good.
+
 - **2026-07-29 — S3: `rpc::heartbeat`** (this commit). Keepalive with
   one ping outstanding at a time; `check_timeout` counts a missed pong
   and declares the connection dead exactly once after `max_missed`.
