@@ -390,6 +390,48 @@ first.
 8. W8 rpcbench end-to-end parity; W9 dependency-order swaps; W10
    retire `src/rrr`
 
+## Goal-1 conversion ledger + slice plan (2026-07-29 census)
+
+Six-auditor file-level census of all of `src/rrr` (166 ledger
+entries; full JSON preserved in the session record). Motion totals:
+
+| motion | files | LOC | meaning |
+|---|---:|---:|---|
+| lift-dsl | 27 | 18,524 | logic already in inline-Rust DSL blocks → lift into crate |
+| rewrite-std | 14 | 4,242 | hand C++ whose job Rust std does (threads/time/log/backtrace) |
+| kernel-libc | 5 | 3,092 | syscall surface → small unsafe extern-libc kernels |
+| kernel-asm | 2 | 147 | context switch → in-crate asm! twins |
+| subsumed-by-wire | 4 | 5,049 | already ported (basetypes varints, serializable, frame_codec, internal_protocol) — verify, don't re-port |
+| dead | 33 | 3,980 | zero consumers — incl. **completion_tracker + idempotency** (test-only), all of `utils/`, marshal-era tests |
+| generated | 3 | 1,684 | rpcgen output → `lang_rust.py` target, never hand-ported |
+| stays-cpp-test | 78 | 33,249 | C++ suites remain the acceptance harness; each slice mirrors its assertions in Rust tests |
+
+**Port surface ≈ 26k LOC in 7 bottom-up slices** (S2 ∥ S3; the rest
+a strict chain). Each slice lands as: crate module(s) + Rust unit
+tests mirroring the pinned C++ assertions + transpile-gate re-run.
+
+| slice | ~LOC | members | riskiest element |
+|---|---:|---|---|
+| S1 foundation | 2,159 | base/{callback_wrapper→evaporates, debugging, logging, misc, strop, threading} + misc/{rand, stat, cpuinfo} | glibc `rand_r` sequence not portable → crate ships its own PRNG with frozen sequence from day one |
+| S2 envelope | 759 | misc/any_message + misc/serializable_envelope | typeid/dynamic_cast surface → redesign on `std::any::TypeId`; deptran reads the cached public `kind_` field |
+| S3 RPC leaf FSMs | 4,433 | rpc/{errors, channel, callbacks, connection_state, connection_metrics, circuit_breaker, heartbeat, reconnect_policy, request_options, load_balancer, request_queue} | wire-visible i32 error discriminants + EAGAIN/ETIMEDOUT numerics must be hardcoded + golden-pinned |
+| S4 fiber runtime + reactor core | 3,755 | fiber_context_{x86_64,aarch64} + fiber.cpp + future.cpp + reactor.cpp#{fiber-machinery, tls-state, events, timers, reactor-core} | asm via `global_asm!` with the FiberContext offset table as an ABI contract shared with transpiled C++; mmap/mprotect guard-page stacks; the thread_local decision lands here |
+| S5 epoll transport | 2,290 | epoll_wrapper + epoll_platform_{linux,kqueue} + pollable_proxy + reactor.cpp#{poll-thread, stackless-tasks} + rpc/utils | errno race-tolerance is load-bearing (EEXIST del-then-re-add on ADD, EBADF teardown tolerance, ENOENT/EBADF on MOD); kqueue path lands unverified on Linux CI |
+| S6 channel backends | 4,254 | rpc/{tcp_channel, inmemory_channel, fiber_channel} | tcp partial-send/recv kernel with 64KiB TLS scratch + exact errno→ChannelError map — `std::net` hides too much; stays a libc kernel behind the S5 Pollable trait |
+| S7 client/server endpoints | 7,881 | rpc/{client, server} + reactor.cpp#quorum-event | the transpile-fidelity crucible: typed-future generics + co_await awaiter surface must regenerate an API-compatible C++ layer for deptran call sites |
+
+Cross-cutting decisions to settle in S1:
+- **`sys` module**: one tiny module isolating ALL libc/syscall
+  kernels (clock_gettime coarse, localtime_r, sysconf, mmap, socket,
+  epoll, errno constants) — keeps `#![deny(unsafe_code)]` on
+  everything else and mirrors the kernel-libc classification.
+- **panic-vs-Result policy**: future.cpp throws logic_error,
+  callbacks swallow with catch(...) — decide the crate-wide rule
+  once (Result + explicit poison paths; no panics across the
+  transpile boundary).
+- **PRNG freeze**: replace `rand_r` with an in-crate PRNG and pin
+  its sequence in a golden (bench workloads consume it).
+
 ## Status log
 
 - **2026-07-28/29 — pin → `verify-stack` (4cbf628f)** (this commit):
