@@ -27,6 +27,7 @@
 
 #include <rusty/option.hpp>
 
+#include "../constants.h"
 #include "rrr/rrr.hpp"
 
 namespace janus {

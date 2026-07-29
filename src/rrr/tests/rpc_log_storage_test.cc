@@ -55,7 +55,7 @@ TEST_F(LogEntryTest, FullConstruction) {
     // test fixture; the test exercises LogEntry's command-carrying
     // shape, the choice of T doesn't matter beyond "is a valid
     // Command payload".
-    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
+    auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
     LogEntry entry = LogEntry::with_command(10, 3, cmd, true);
 
     EXPECT_EQ(entry.slot_id, 10u);
@@ -109,7 +109,7 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 }
 
 TEST_F(LogEntryTest, SerializationWithCommand) {
-    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
+    auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
     LogEntry original = LogEntry::with_command(100, 20, cmd, true);
 
     // see SerializationWithoutCommand for

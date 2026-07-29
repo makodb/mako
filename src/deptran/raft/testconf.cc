@@ -756,7 +756,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
   }
 
   // Record startup timestamp for grace period logic (same as Setup())
-  frame->svr_->leadership_core_.set_startup_timestamp(Time::now());
+  frame->svr_->leadership_core_.set_startup_timestamp(Time::now(false));
 
   // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
   // This prevents double-initialization of persistence which would reset the loaded state

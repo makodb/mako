@@ -25,6 +25,7 @@
 #include <rusty/mutex.hpp>
 #include <rusty/cell.hpp>
 
+#include "../constants.h"
 #include "rrr/rrr.hpp"
 #include "../mako_commands.h"  // janus::Command (SerializableEnvelope<MakoCommands>)
 

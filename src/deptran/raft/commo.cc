@@ -12,6 +12,7 @@
 #include <rusty/vec.hpp>
 
 import std;
+import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -283,7 +284,7 @@ namespace janus
     {
       n = Config::GetConfig()->GetPartitionSize(par_id);
     }
-    auto e = Reactor::create_sp_event<RaftVoteQuorumEvent>(n, n / 2);
+    auto e = std::make_shared<RaftVoteQuorumEvent>(n, n / 2);
     auto proxies = rpc_par_proxies_[par_id];
     WAN_WAIT;
     for (auto &p : proxies)
@@ -838,7 +839,7 @@ namespace janus
           proxy = (RaftProxy *)p.second;
         }
         FutureAttr fuattr;
-        
+
         // @unsafe - callback runs later through the legacy RPC runtime.
         // Captures only copyable values/shared ownership.
         fuattr.callback = [callback_ptr, site_id](rusty::Arc<Future> fu)
