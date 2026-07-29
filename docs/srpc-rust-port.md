@@ -497,7 +497,9 @@ runs the golden phase).
   (its three C++ micro-kernels — basename, timestamp, level tag —
   are ordinary Rust here; the timestamp is a dozen lines of
   civil-from-days arithmetic rather than a `chrono` dependency).
-  29 crate tests green, clippy/fmt clean.
+  29 crate tests green, clippy/fmt clean, and the full gate holds:
+  all **10 translated modules compile** and the runtime golden still
+  passes **64/64** with the new base layer in the crate.
 
   Mechanism probing BEFORE writing the slice paid for itself — five
   gaps found, each fixed upstream with tests rather than worked
@@ -527,13 +529,22 @@ runs the golden phase).
   g++/libstdc++ — emitted code now compiles under g++ as well as
   clang.
 
-  **Two open translator gaps** (worked around in-crate, both worth
-  fixing before the port grows): a `use` path naming a sibling MODULE
-  mis-resolves — `use crate::base::time;` imports the PARENT module
-  (creating an illegal C++20 import cycle, since the parent
-  re-exports its children) and `use super::time;` imports nothing at
-  all. Importing ITEMS (`use super::time::wall_us;`) works and is
-  what the crate does today.
+  6. A `use` path naming a sibling MODULE mis-resolved in two
+     different ways: `use super::time;` emitted NOTHING (the bare
+     lowercase name was dismissed as unresolved), and
+     `use crate::base::time;` imported the PARENT module — an illegal
+     C++20 import CYCLE, since the parent re-exports its children.
+     Now resolved against the crate's module list by FULL path,
+     refusing ancestors. The first cut of that fix matched a path
+     PREFIX too, which turned item imports
+     (`use super::varint::VARINT_BUF_LEN`) into namespace aliases of
+     the item's own name and broke `wire.serde` — caught by the
+     10-module gate within minutes, fixed, and pinned by a test.
+
+  Still open upstream (not blocking, worked around in-crate):
+  `rusty::io::Stderr` has no `lock()` guard, so `stderr().lock()` +
+  `writeln!` does not translate. The logger uses `eprintln!`, which
+  is the idiomatic form for whole-line output anyway.
 
   Also recorded: two verification traps that cost real time here —
   translated `.pcm`/`.o` and the `rusty` module BMI embed the headers

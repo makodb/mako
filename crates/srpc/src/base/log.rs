@@ -10,7 +10,7 @@
 //! `file!()`/`line!()` and — importantly — do not format their
 //! arguments unless the level is enabled.
 
-use super::time::wall_us;
+use super::time;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// Severity, ordered as the C++ enum: lower is more severe, and a
@@ -112,7 +112,7 @@ pub fn log_line(level: Level, file: &str, line: u32, msg: &str) {
         level.tag(),
         basename(file),
         line,
-        timestamp(wall_us()),
+        timestamp(time::wall_us()),
         msg
     );
     sink_write(&out);
@@ -120,12 +120,11 @@ pub fn log_line(level: Level, file: &str, line: u32, msg: &str) {
 
 /// Where decorated lines go.
 ///
-/// Errors are dropped on purpose: a logger that panics because stderr
-/// closed is worse than one that goes quiet.
+/// One whole line per call, so `eprintln!` is both the idiomatic form
+/// and enough: taking an explicit `stderr().lock()` guard only pays off
+/// across repeated writes.
 fn sink_write(line: &str) {
-    use std::io::Write;
-    let mut err = std::io::stderr().lock();
-    let _ = writeln!(err, "{line}");
+    eprintln!("{line}");
 }
 
 #[macro_export]
