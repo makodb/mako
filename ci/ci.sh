@@ -280,8 +280,13 @@ compile() {
     echo "Using ${jobs} parallel build jobs"
     echo "Configuring CMake generator='${generator}', build_type='${build_type}', build_dir='${BUILD_DIR}'"
     set -o pipefail
-    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" 2>&1 | tee build.log
-    cmake --build "${BUILD_DIR}" --parallel "${jobs}" 2>&1 | tee -a build.log
+    # -DCMAKE_POLICY_VERSION_MINIMUM=3.5: CMake 4.x removed compatibility with
+    # cmake_minimum_required(VERSION < 3.5); third-party/erpc pins an ancient one.
+    # (The local/dev configure passes this same flag.)
+    cmake -S . -B "${BUILD_DIR}" -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 2>&1 | tee build.log
+    # -- -k 0: keep going past the first failure so one build surfaces ALL
+    # compile errors (ninja default stops at the first batch).
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" -- -k 0 2>&1 | tee -a build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }
@@ -690,7 +695,12 @@ run_rrr_unit_tests() {
 
     cd ${BUILD_DIR}
     # Exclude eRPC tests in CI due transport/environment instability on shared runners.
-    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc'
+    # Exclude rusty-cpp's own test suite: third-party/rusty-cpp is added
+    # EXCLUDE_FROM_ALL so its ~60 test binaries are never built, yet its CMake
+    # still registers them -> ctest counts the missing binaries as "Not Run"
+    # failures. Those tests belong to rusty-cpp's own CI, not mako's. (Verified
+    # no mako test name matches these patterns.)
+    MAKO_CONFIG="$tmp_config" ctest --output-on-failure -E 'erpc|_port|rusty_|async_module_test|dispatch_test|test_channel|test_mutex|test_thread|test_traits|test_external_annotations|test_simplified_external|test_stl_lifetimes|test_unified_annotations'
     local test_result=$?
     cd ..
     rm -f "$tmp_config"

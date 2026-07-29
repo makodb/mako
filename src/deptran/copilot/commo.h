@@ -7,15 +7,15 @@
 
 namespace janus {
 
-class CopilotFastAcceptQuorumEvent : public QuorumEvent {
+class CopilotFastAcceptQuorumEvent : public QuorumEventWrapper {
   // TODO: use WaitAny to express fastpath vs. slowpath?
   vector<uint64_t> ret_deps_;
   int32_t n_fastac_ok_{0};
   int32_t n_fastac_reply_{0};
  public:
-  // using QuorumEvent::QuorumEvent;
+  // using QuorumEventWrapper::QuorumEventWrapper;
   CopilotFastAcceptQuorumEvent(int n_total, int quorum)
-      : QuorumEvent(n_total, quorum) {
+      : QuorumEventWrapper(n_total, quorum) {
     ret_deps_.reserve(n_total);
   }
 
@@ -27,9 +27,9 @@ class CopilotFastAcceptQuorumEvent : public QuorumEvent {
   bool FastNo();
 };
 
-class CopilotAcceptQuorumEvent : public QuorumEvent {
+class CopilotAcceptQuorumEvent : public QuorumEventWrapper {
  public:
-  using QuorumEvent::QuorumEvent;
+  using QuorumEventWrapper::QuorumEventWrapper;
 
   void FeedResponse(bool y) {
     if (y)
@@ -39,14 +39,16 @@ class CopilotAcceptQuorumEvent : public QuorumEvent {
   }
 };
 
-class CopilotPrepareQuorumEvent : public QuorumEvent {
+class CopilotPrepareQuorumEvent : public QuorumEventWrapper {
   vector<vector<CopilotData> > ret_cmds_by_status_;
 
  public:
-  // using QuorumEvent::QuorumEvent;
-  bool committed_seen_ = false;
+  // committed_seen_ + the readiness short-circuit now live on QuorumEvent
+  // as QuorumPolicy::COMMITTED_SHORT (S3).
   CopilotPrepareQuorumEvent(int n_total, int quorum)
-      : QuorumEvent(n_total, quorum), ret_cmds_by_status_(n_status) {}
+      : QuorumEventWrapper(n_total, quorum), ret_cmds_by_status_(n_status) {
+    q().policy_.set(QuorumPolicy::COMMITTED_SHORT);
+  }
 
   void FeedResponse(bool y) {
     if (y)
@@ -64,7 +66,6 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
                   enum Status status);
   size_t GetCount(enum Status status);
   vector<CopilotData>& GetCmds(enum Status status);
-  bool is_ready() override;
   void Show();
 };
 
@@ -72,13 +73,15 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
  * A "Quorum Event" which has no quorum
  * Used for those who don't need quorum reply
  */
-class CopilotFakeQuorumEvent : public QuorumEvent {
+class CopilotFakeQuorumEvent : public QuorumEventWrapper {
  public:
+  // Readiness now lives on QuorumEvent as QuorumPolicy::ALWAYS_READY (S3).
   CopilotFakeQuorumEvent(int n_total)
-    : QuorumEvent(n_total, 0) {}
+    : QuorumEventWrapper(n_total, 0) {
+    q().policy_.set(QuorumPolicy::ALWAYS_READY);
+  }
 
   void FeedResponse() { vote_yes(); }
-  bool is_ready() override { return true; }
 };
 
 class CopilotCommo : public Communicator {

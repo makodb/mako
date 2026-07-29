@@ -12,100 +12,274 @@ module;
 export module rrr.request_queue;
 
 import std;
+import rusty;
 import rrr.basetypes;
-import rrr.marshal;
 import rrr.threading;
 
 export namespace rrr {
 
 
-/**
- * Strategy for handling queue overflow.
- */
+// `OverflowStrategy` — categorical tag for how the queue should
+// handle a push when at capacity. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block with the C++ `enum class`.
+#if RUSTYCPP_RUST
+enum OverflowStrategy {
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.overflow_strategy version=1 rust_sha256=bf9f48db6809a04afbd718314f92b36dbe612714d96e1a75115ad2bb39673b15*/
+enum class OverflowStrategy;
+constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();
+constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST();
+constexpr OverflowStrategy OverflowStrategy_FAIL_FAST();
+
 enum class OverflowStrategy {
-    DROP_OLDEST,   // Remove oldest request to make room
-    DROP_NEWEST,   // Reject new request if queue full
-    FAIL_FAST      // Immediately fail the request with error callback
+    DROP_OLDEST,
+    DROP_NEWEST,
+    FAIL_FAST
 };
+inline constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST() { return OverflowStrategy::DROP_OLDEST; }
+inline constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST() { return OverflowStrategy::DROP_NEWEST; }
+inline constexpr OverflowStrategy OverflowStrategy_FAIL_FAST() { return OverflowStrategy::FAIL_FAST; }
+/*RUSTYCPP:GEN-END id=request_queue.overflow_strategy*/
 
 // Canonical queue callback errors for caller observability.
-inline constexpr int kRequestQueueRejectedError = EAGAIN;
-inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block with the C++ constexpr. Same
+// shape as the wire-protocol constants in internal_protocol.cpp —
+// libc-macro RHS values (EAGAIN / ETIMEDOUT) get emitted verbatim.
+#if RUSTYCPP_RUST
+const kRequestQueueRejectedError: i32 = EAGAIN;
+const kRequestQueueExpiredError: i32 = ETIMEDOUT;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.err_codes version=1 rust_sha256=f0652fbb44002bbb667042a6bbb01ba5cd204496acc11bf10713b53ab4321f2d*/
+extern const int32_t kRequestQueueRejectedError;
+extern const int32_t kRequestQueueExpiredError;
+
+constexpr int32_t kRequestQueueRejectedError = EAGAIN;
+
+constexpr int32_t kRequestQueueExpiredError = ETIMEDOUT;
+/*RUSTYCPP:GEN-END id=request_queue.err_codes*/
+
+// Type alias for QueuedRequest's completion callback. Defined outside
+// the DSL block so the inline-Rust source can refer to it by an
+// opaque type name (the DSL transpiler does not parse C++ function-
+// template arguments like `<void(int)>`).
+using QueuedRequestCallback = rusty::Function<void(int)>;
+
+// Wrapper around rusty::sys::time::clock_monotonic_us, named so the
+// DSL block below can call it as a simple identifier rather than the
+// fully-qualified path. Authored as inline Rust DSL: the
+// `#if RUSTYCPP_RUST` block below is the source of truth; the
+// transpiler regenerates the matching `RUSTYCPP:GEN-BEGIN ... END`
+// block. Same shape as `heartbeat_time_us` (heartbeat.cpp) and
+// `current_time_us` (circuit_breaker.cpp).
+#if RUSTYCPP_RUST
+fn queued_request_time_us() -> u64 {
+    rusty::sys::time::clock_monotonic_us()
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queued_request_time_us version=1 rust_sha256=75814fdd205b8de30a538e2f38098e5f2c23f97f12f2952d426174ea0864a759*/
+uint64_t queued_request_time_us();
+
+uint64_t queued_request_time_us() {
+    return rusty::sys::time::clock_monotonic_us();
+}
+/*RUSTYCPP:GEN-END id=request_queue.queued_request_time_us*/
 
 /**
  * A queued RPC request awaiting transmission.
+ *
+ * Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+ * the source of truth; the transpiler regenerates the matching
+ * `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+ * a static `QueuedRequest::new_()` factory.
+ *
+ * Behavioral diffs from the original C++ struct:
+ *   * No user-defined default constructor — callers that previously
+ *     default-constructed (`QueuedRequest req;`) now write
+ *     `auto req = QueuedRequest::new_();` explicitly. The factory
+ *     does the same field-init work the original ctor did
+ *     (`timestamp_us = queued_request_time_us()`,
+ *     `ttl_ms = 30000`).
+ *   * Fields no longer marked private (the DSL emits all fields
+ *     public); no callers reach into them through anything other
+ *     than the public field names that were already public-by-
+ *     designation in the aggregate-style original.
  */
+#if RUSTYCPP_RUST
 struct QueuedRequest {
-    i64 xid;                           // Request transaction ID
-    i32 rpc_id;                        // RPC method ID
-    std::uint64_t timestamp_us;        // When queued, monotonic microseconds
-    uint32_t retry_count;              // Number of retries
-    rusty::Arc<Marshal> payload;       // Serialized request data
-    rusty::Function<void(int)> callback; // Completion callback (error_code)
-    uint32_t ttl_ms;                   // TTL in milliseconds
+    xid: i64,
+    rpc_id: i32,
+    timestamp_us: u64,
+    retry_count: u32,
+    callback: QueuedRequestCallback,
+    ttl_ms: u32,
+}
 
-    // @safe - rusty::sys::time::clock_monotonic_us is @safe.
-    QueuedRequest()
-        : xid(0)
-        , rpc_id(0)
-        , timestamp_us(rusty::sys::time::clock_monotonic_us())
-        , retry_count(0)
-        , payload(rusty::Arc<Marshal>::make())
-        , ttl_ms(30000)
-    {}
-
-    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
-    bool is_expired() const {
-        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        const std::uint64_t elapsed_us = now_us - timestamp_us;
-        return (elapsed_us / 1000) > ttl_ms;
+impl QueuedRequest {
+    fn new() -> QueuedRequest {
+        QueuedRequest {
+            xid: 0i64,
+            rpc_id: 0i32,
+            timestamp_us: queued_request_time_us(),
+            retry_count: 0u32,
+            callback: QueuedRequestCallback {},
+            ttl_ms: 30000u32,
+        }
     }
 
-    // @safe - delegates to rusty::sys::time::clock_monotonic_us.
-    uint32_t age_ms() const {
-        const std::uint64_t now_us = rusty::sys::time::clock_monotonic_us();
-        return static_cast<uint32_t>((now_us - timestamp_us) / 1000);
+    fn is_expired(&self) -> bool {
+        let now_us: u64 = queued_request_time_us();
+        let elapsed_us: u64 = now_us - self.timestamp_us;
+        (elapsed_us / 1000u64) > (self.ttl_ms as u64)
     }
+
+    fn age_ms(&self) -> u32 {
+        let now_us: u64 = queued_request_time_us();
+        ((now_us - self.timestamp_us) / 1000u64) as u32
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.2 version=1 rust_sha256=7c5fc9b4686d94756ad85ce30fcf1ae36d88a924d7b1e36ea8c202985ae25bcd*/
+struct QueuedRequest;
+
+struct QueuedRequest {
+    int64_t xid;
+    int32_t rpc_id;
+    uint64_t timestamp_us;
+    uint32_t retry_count;
+    QueuedRequestCallback callback;
+    uint32_t ttl_ms;
+
+    static QueuedRequest new_();
+    bool is_expired() const;
+    uint32_t age_ms() const;
 };
 
-/**
- * Configuration for RequestQueue.
- */
+
+QueuedRequest QueuedRequest::new_() {
+    return QueuedRequest{.xid = static_cast<int64_t>(0), .rpc_id = static_cast<int32_t>(0), .timestamp_us = queued_request_time_us(), .retry_count = static_cast<uint32_t>(0), .callback = QueuedRequestCallback{}, .ttl_ms = static_cast<uint32_t>(30000)};
+}
+
+bool QueuedRequest::is_expired() const {
+    const uint64_t now_us = queued_request_time_us();
+    const uint64_t elapsed_us = rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(this->timestamp_us);
+    return ((rusty::detail::deref_if_pointer_like(elapsed_us) / static_cast<uint64_t>(1000))) > ((static_cast<uint64_t>(this->ttl_ms)));
+}
+
+uint32_t QueuedRequest::age_ms() const {
+    const uint64_t now_us = queued_request_time_us();
+    return static_cast<uint32_t>((((rusty::detail::deref_if_pointer_like(now_us) - rusty::detail::deref_if_pointer_like(this->timestamp_us))) / static_cast<uint64_t>(1000)));
+}
+/*RUSTYCPP:GEN-END id=request_queue.2*/
+
+// Configuration for RequestQueue.
+//
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `RUSTYCPP:GEN-BEGIN ... END` block. The plain `fn new()` lowers to
+// a `static RequestQueueConfig new_()` factory. Callers construct via
+// the factory (`auto config = RequestQueueConfig::new_();`) or one of
+// the `defaults()` / `small()` / `large()` / `disabled()` presets.
+//
+// Now that there is no cpp_ctor, RequestQueueConfig is a pure
+// aggregate; the preset bodies use the populated DSL literal form
+// `RequestQueueConfig { max_size: ..., ... }` which lowers to a clean
+// designated initializer `RequestQueueConfig{.max_size = ...}`.
+#if RUSTYCPP_RUST
 struct RequestQueueConfig {
-    size_t max_size = 1000;            // Maximum queue entries
-    uint32_t default_ttl_ms = 30000;   // 30 second default TTL
-    OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
-    bool enabled = true;
+    max_size: usize,
+    default_ttl_ms: u32,
+    overflow_strategy: OverflowStrategy,
+    enabled: bool,
+}
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig defaults() {
-        return RequestQueueConfig{};
+impl RequestQueueConfig {
+    fn new() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 1000usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig small() {
-        RequestQueueConfig config;
-        config.max_size = 10;
-        config.default_ttl_ms = 5000;
-        return config;
+    fn defaults() -> RequestQueueConfig {
+        RequestQueueConfig::new()
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig large() {
-        RequestQueueConfig config;
-        config.max_size = 10000;
-        config.default_ttl_ms = 60000;
-        return config;
+    fn small() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 10usize,
+            default_ttl_ms: 5000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
 
-    // @safe - Aggregate-initialized POD factory.
-    static RequestQueueConfig disabled() {
-        RequestQueueConfig config;
-        config.enabled = false;
-        config.max_size = 0;
-        return config;
+    fn large() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 10000usize,
+            default_ttl_ms: 60000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: true,
+        }
     }
+
+    fn disabled() -> RequestQueueConfig {
+        RequestQueueConfig {
+            max_size: 0usize,
+            default_ttl_ms: 30000u32,
+            overflow_strategy: OverflowStrategy::DROP_OLDEST,
+            enabled: false,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.1 version=1 rust_sha256=18bf9469715694e84270d5bde4d97e4b7daa0b11880dbefa385105d079f4294f*/
+struct RequestQueueConfig;
+
+struct RequestQueueConfig {
+    size_t max_size;
+    uint32_t default_ttl_ms;
+    OverflowStrategy overflow_strategy;
+    bool enabled;
+
+    static RequestQueueConfig new_();
+    static RequestQueueConfig defaults();
+    static RequestQueueConfig small();
+    static RequestQueueConfig large();
+    static RequestQueueConfig disabled();
 };
+
+
+RequestQueueConfig RequestQueueConfig::new_() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::defaults() {
+    return RequestQueueConfig::new_();
+}
+
+RequestQueueConfig RequestQueueConfig::small() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10), .default_ttl_ms = static_cast<uint32_t>(5000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::large() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10000), .default_ttl_ms = static_cast<uint32_t>(60000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+}
+
+RequestQueueConfig RequestQueueConfig::disabled() {
+    return RequestQueueConfig{.max_size = static_cast<size_t>(0), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
+}
+/*RUSTYCPP:GEN-END id=request_queue.1*/
 
 /**
  * Thread-safe queue for pending RPC requests.
@@ -130,226 +304,298 @@ struct RequestQueueConfig {
  *       // Process request
  *   }
  */
-// @safe - SpinMutex<VecDeque<QueuedRequest>>-backed pending-request queue.
+// @safe - rusty::Mutex<VecDeque<QueuedRequest>>-backed pending-request queue.
 // All public methods are already explicitly @safe from Tier 2; class-level
 // annotation lets the constructor and any future unannotated helpers
 // inherit @safe by default.
-class RequestQueue {
-private:
+// `RequestQueue` — buffers outgoing RPC requests for reconnect/replay, with
+// overflow + TTL-expiry policy, thread-safe via a rusty::Mutex<VecDeque>. Authored
+// as inline-Rust DSL: the struct + two `#[cpp_ctor]` factories + the simple
+// locking/accessor methods are DSL; the methods whose bodies use try/catch +
+// callback invocation + range-for (not expressible in inline-Rust) delegate to
+// hand-written free functions below. RequestQueueConfig / OverflowStrategy /
+// QueuedRequest are already DSL aggregates (above). The locking methods are
+// `&mut self` (non-const): the C++ original used `mutable rusty::Mutex` to lock
+// from const methods; there are no `const RequestQueue` call sites
+// (ClientConnection holds it in a `mutable` field), so non-const is equivalent
+// and avoids a mutable-field annotation. `clear_all`'s default arg (-3) is
+// dropped (callers pass it explicitly; the one 0-arg test call is updated).
+struct RequestQueue;
+inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
+inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
+inline size_t rq_expire_stale(const RequestQueue& self);
+inline void rq_clear_all(const RequestQueue& self, int error_code);
+inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config);
+#if RUSTYCPP_RUST
+struct RequestQueue {
+    config_: RequestQueueConfig,
+    queue_: rusty::Mutex<VecDeque<QueuedRequest>>,
+}
+
+impl RequestQueue {
+    #[cpp_ctor] fn new() -> RequestQueue {
+        RequestQueue {
+            config_: RequestQueueConfig::defaults(),
+            queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
+        }
+    }
+
+    #[cpp_ctor] fn with_config(config: RequestQueueConfig) -> RequestQueue {
+        RequestQueue {
+            config_: config,
+            queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
+        }
+    }
+
+    fn enqueue(&self, request: QueuedRequest) -> bool {
+        rq_enqueue(self, request)
+    }
+
+    fn dequeue(&mut self) -> Option<QueuedRequest> {
+        let guard = self.queue_.lock().unwrap();
+        if guard.size() == 0usize {
+            return None;
+        }
+        Some(guard.pop_front())
+    }
+
+    fn expire_stale(&self) -> usize {
+        rq_expire_stale(self)
+    }
+
+    fn size(&self) -> usize {
+        let guard = self.queue_.lock().unwrap();
+        guard.size()
+    }
+
+    fn empty(&self) -> bool {
+        let guard = self.queue_.lock().unwrap();
+        guard.size() == 0usize
+    }
+
+    fn full(&mut self) -> bool {
+        let guard = self.queue_.lock().unwrap();
+        guard.size() >= self.config_.max_size
+    }
+
+    fn remaining_capacity(&mut self) -> usize {
+        let guard = self.queue_.lock().unwrap();
+        if self.config_.max_size > guard.size() {
+            self.config_.max_size - guard.size()
+        } else {
+            0usize
+        }
+    }
+
+    fn clear_all(&self, error_code: i32) {
+        rq_clear_all(self, error_code)
+    }
+
+    fn config(&self) -> RequestQueueConfig {
+        self.config_
+    }
+
+    fn enabled(&self) -> bool {
+        self.config_.enabled
+    }
+
+    fn max_size(&self) -> usize {
+        self.config_.max_size
+    }
+
+    fn update_config(&self, config: RequestQueueConfig) {
+        rq_update_config(self, config)
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=033c3ea224c0b4f3cd04086cadbc2e50ea40018f47da0a0e0e49a592b8427116*/
+struct RequestQueue;
+
+struct RequestQueue {
     RequestQueueConfig config_;
-    // VecDeque ring-buffer wrapped in SpinMutex for thread-safe access.
-    // SpinMutex owns its T, replacing the prior `mutex_ + queue_` pair
-    // pattern with a single rusty-style "data inside the lock" container.
-    // The VecDeque's placement-new ring-buffer preserves the same
-    // "no move-assignment of QueuedRequest's Marshal-bearing payload
-    // after enqueue" property the prior std::list comment cited.
-    mutable SpinMutex<rusty::VecDeque<QueuedRequest>> queue_;
+    rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;
 
-public:
-    // @safe - Default ctor argument is the @safe defaults() factory; the
-    // RequestQueueConfig POD copy is trivially safe.
-    explicit RequestQueue(RequestQueueConfig config = RequestQueueConfig::defaults())
-        : config_(config)
-    {}
-
-    // === Enqueue/Dequeue Operations ===
-
-    // @safe - SpinMutex::lock, VecDeque ops, and rusty::Function::operator()
-    // are all @safe in the library; the body's try/catch is not analyzed.
-    // Returns true if queued, false if rejected
-    bool enqueue(QueuedRequest request) {
-        if (!config_.enabled) {
-            if (request.callback) {
-                try {
-                    request.callback(kRequestQueueRejectedError);
-                } catch (...) {}
-            }
-            return false;
-        }
-
-        auto guard = queue_.lock().unwrap();
-
-        if (guard->size() >= config_.max_size) {
-            switch (config_.overflow_strategy) {
-                case OverflowStrategy::DROP_OLDEST:
-                    // Remove oldest and proceed
-                    if (!guard->is_empty()) {
-                        auto oldest = guard->pop_front();
-                        // Invoke callback outside lock would be better,
-                        // but for simplicity we do it here with error code
-                        if (oldest.callback) {
-                            try {
-                                oldest.callback(kRequestQueueRejectedError);
-                            } catch (...) {}
-                        }
-                    }
-                    break;
-
-                case OverflowStrategy::DROP_NEWEST:
-                    if (request.callback) {
-                        try {
-                            request.callback(kRequestQueueRejectedError);
-                        } catch (...) {}
-                    }
-                    return false;  // Reject new request
-
-                case OverflowStrategy::FAIL_FAST:
-                    if (request.callback) {
-                        try {
-                            request.callback(kRequestQueueRejectedError);
-                        } catch (...) {}
-                    }
-                    return false;
-            }
-        }
-
-        // Set default TTL if not specified
-        if (request.ttl_ms == 0) {
-            request.ttl_ms = config_.default_ttl_ms;
-        }
-
-        guard->push_back(std::move(request));
-        return true;
-    }
-
-    // @safe - SpinMutex::lock + VecDeque ops are all @safe in the library.
-    rusty::Option<QueuedRequest> dequeue() {
-        auto guard = queue_.lock().unwrap();
-
-        if (guard->is_empty()) {
-            return rusty::None;
-        }
-
-        return rusty::Some(guard->pop_front());
-    }
-
-    // removed `peek(QueuedRequest&)` — its `out = guard->front();`
-    // copy-assignment relied on QueuedRequest being copyable, which is
-    // no longer the case after the callback field migrated from
-    // std::function to move-only rusty::Function.  The method had no
-    // production callers (tests-only, used for inspection of xid
-    // post-enqueue); coverage moved to size()/empty().
-
-    // === Expiration ===
-
-    // @safe - SpinMutex::lock + VecDeque::extract_if/size/is_empty/pop_front
-    // and rusty::Function ops are all @safe in the library.
-    size_t expire_stale() {
-        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
-        size_t removed = 0;
-
-        {
-            auto guard = queue_.lock().unwrap();
-
-            // Extract expired elements via extract_if. The predicate is
-            // const-only (rusty::Function<bool(const T&)>) and cannot mutate
-            // the element, so we drain callbacks via pop_front afterward.
-            auto expired = guard->extract_if(
-                rusty::Function<bool(const QueuedRequest&)>(
-                    [](const QueuedRequest& r) { return r.is_expired(); }));
-            removed = expired.size();
-            while (!expired.is_empty()) {
-                auto req = expired.pop_front();
-                if (req.callback) {
-                    callbacks_to_invoke.push(std::move(req.callback));
-                }
-            }
-        }
-
-        // Invoke callbacks outside lock.  rusty::Function::operator()
-        // is non-const, so iterate by mutable reference.
-        for (auto& cb : callbacks_to_invoke) {
-            try {
-                cb(kRequestQueueExpiredError);
-            } catch (...) {}
-        }
-
-        return removed;
-    }
-
-    // === Size and State ===
-
-    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
-    size_t size() const {
-        auto guard = queue_.lock().unwrap();
-        return guard->size();
-    }
-
-    // @safe - SpinMutex::lock + VecDeque::is_empty are @safe in the library.
-    bool empty() const {
-        auto guard = queue_.lock().unwrap();
-        return guard->is_empty();
-    }
-
-    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
-    bool full() const {
-        auto guard = queue_.lock().unwrap();
-        return guard->size() >= config_.max_size;
-    }
-
-    // @safe - SpinMutex::lock + VecDeque::size are @safe in the library.
-    size_t remaining_capacity() const {
-        auto guard = queue_.lock().unwrap();
-        return config_.max_size > guard->size() ?
-               config_.max_size - guard->size() : 0;
-    }
-
-    // === Clear and Reset ===
-
-    // @safe - SpinMutex::lock + VecDeque ops + rusty::Function are @safe.
-    void clear_all(int error_code = -3) {
-        rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
-
-        {
-            auto guard = queue_.lock().unwrap();
-
-            for (auto& req : *guard) {
-                if (req.callback) {
-                    callbacks_to_invoke.push(std::move(req.callback));
-                }
-            }
-            guard->clear();
-        }
-
-        // Invoke callbacks outside lock.  rusty::Function::operator()
-        // is non-const, so iterate by mutable reference.
-        for (auto& cb : callbacks_to_invoke) {
-            try {
-                cb(error_code);
-            } catch (...) {}
-        }
-    }
-
-    // === Configuration ===
-
-    // @safe - Get configuration (read-only)
-    // @lifetime: (&'a) -> &'a
-    const RequestQueueConfig& config() const {
-        return config_;
-    }
-
-    // @safe - Check if queue is enabled
-    bool enabled() const {
-        return config_.enabled;
-    }
-
-    // @safe - Get maximum queue size
-    size_t max_size() const {
-        return config_.max_size;
-    }
-
-    // @safe - SpinMutex::lock is @safe; the body only assigns a
-    // RequestQueueConfig POD into the member field under the lock.
-    void update_config(const RequestQueueConfig& config) {
-        // Take the queue's lock to serialize against in-flight enqueue/dequeue
-        // operations so config_ updates are observed atomically with respect
-        // to those operations.
-        auto guard = queue_.lock().unwrap();
-        (void)guard;
-        config_ = config;
-        // Note: Caller should clear queue before calling if needed.
-    }
+    RequestQueue();
+    RequestQueue(RequestQueueConfig config);
+    bool enqueue(QueuedRequest request) const;
+    rusty::Option<QueuedRequest> dequeue();
+    size_t expire_stale() const;
+    size_t size() const;
+    bool empty() const;
+    bool full();
+    size_t remaining_capacity();
+    void clear_all(int32_t error_code) const;
+    RequestQueueConfig config() const;
+    bool enabled() const;
+    size_t max_size() const;
+    void update_config(RequestQueueConfig config) const;
 };
+
+
+RequestQueue::RequestQueue()
+    : config_(RequestQueueConfig::defaults())
+    , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
+{}
+
+RequestQueue::RequestQueue(RequestQueueConfig config)
+    : config_(std::move(config))
+    , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
+{}
+
+bool RequestQueue::enqueue(QueuedRequest request) const {
+    return rq_enqueue((*this), std::move(request));
+}
+
+rusty::Option<QueuedRequest> RequestQueue::dequeue() {
+    auto guard = this->queue_.lock().unwrap();
+    if ((*guard).size() == static_cast<size_t>(0)) {
+        return rusty::Option<QueuedRequest>{rusty::None};
+    }
+    return rusty::Option<QueuedRequest>((*guard).pop_front());
+}
+
+size_t RequestQueue::expire_stale() const {
+    return rq_expire_stale((*this));
+}
+
+size_t RequestQueue::size() const {
+    auto guard = this->queue_.lock().unwrap();
+    return (*guard).size();
+}
+
+bool RequestQueue::empty() const {
+    auto guard = this->queue_.lock().unwrap();
+    return (*guard).size() == static_cast<size_t>(0);
+}
+
+bool RequestQueue::full() {
+    auto guard = this->queue_.lock().unwrap();
+    return (*guard).size() >= rusty::detail::deref_if_pointer_like(this->config_.max_size);
+}
+
+size_t RequestQueue::remaining_capacity() {
+    auto guard = this->queue_.lock().unwrap();
+    if (rusty::detail::deref_if_pointer_like(this->config_.max_size) > (*guard).size()) {
+        return rusty::detail::deref_if_pointer_like(this->config_.max_size) - (*guard).size();
+    } else {
+        return static_cast<size_t>(0);
+    }
+}
+
+void RequestQueue::clear_all(int32_t error_code) const {
+    rq_clear_all((*this), std::move(error_code));
+}
+
+RequestQueueConfig RequestQueue::config() const {
+    return this->config_;
+}
+
+bool RequestQueue::enabled() const {
+    return this->config_.enabled;
+}
+
+size_t RequestQueue::max_size() const {
+    return this->config_.max_size;
+}
+
+void RequestQueue::update_config(RequestQueueConfig config) const {
+    rq_update_config((*this), std::move(config));
+}
+/*RUSTYCPP:GEN-END id=request_queue.queue*/
+
+// @safe - Invoke a queued-request callback, swallowing any exception. No-op if
+// the callback is null. Consumes the callback. The try/catch is not expressible
+// in inline-Rust, so callback invocation lives here (the callbacks.cpp pattern).
+inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err) {
+    if (cb) {
+        // @unsafe { invoking a stored rusty::Function + swallowing exceptions }
+        try { cb(err); } catch (...) {}
+    }
+}
+
+// @unsafe - enqueue: overflow policy + try/catch callback invocation (the
+// try/catch and the interleaved rejection callbacks are not DSL-expressible).
+inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
+    if (!self.config_.enabled) {
+        rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
+        return false;
+    }
+    auto guard = self.queue_.lock().unwrap();
+    if ((*guard).size() >= self.config_.max_size) {
+        switch (self.config_.overflow_strategy) {
+            case OverflowStrategy::DROP_OLDEST:
+                if ((*guard).size() > 0) {
+                    auto oldest = (*guard).pop_front();
+                    rq_invoke_callback_safely(std::move(oldest.callback), kRequestQueueRejectedError);
+                }
+                break;
+            case OverflowStrategy::DROP_NEWEST:
+            case OverflowStrategy::FAIL_FAST:
+                rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
+                return false;
+        }
+    }
+    if (request.ttl_ms == 0) {
+        request.ttl_ms = self.config_.default_ttl_ms;
+    }
+    (*guard).push_back(std::move(request));
+    return true;
+}
+
+// @unsafe - expire_stale: extract_if + drain callbacks outside the lock with
+// try/catch (the try/catch is not DSL-expressible).
+inline size_t rq_expire_stale(const RequestQueue& self) {
+    rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
+    size_t removed = 0;
+    {
+        auto guard = self.queue_.lock().unwrap();
+        auto expired = (*guard).extract_if(
+            rusty::Function<bool(const QueuedRequest&)>(
+                [](const QueuedRequest& r) { return r.is_expired(); }));
+        removed = expired.size();
+        while (expired.size() > 0) {
+            auto req = expired.pop_front();
+            if (req.callback) {
+                callbacks_to_invoke.push(std::move(req.callback));
+            }
+        }
+    }
+    for (auto& cb : callbacks_to_invoke) {
+        // @unsafe { invoking + swallowing exceptions }
+        try { cb(kRequestQueueExpiredError); } catch (...) {}
+    }
+    return removed;
+}
+
+// @unsafe - clear_all: drain callbacks (range-for over the guarded deque) +
+// clear, invoke outside the lock with try/catch.
+inline void rq_clear_all(const RequestQueue& self, int error_code) {
+    rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
+    {
+        auto guard = self.queue_.lock().unwrap();
+        for (auto& req : *guard) {
+            if (req.callback) {
+                callbacks_to_invoke.push(std::move(req.callback));
+            }
+        }
+        (*guard).clear();
+    }
+    for (auto& cb : callbacks_to_invoke) {
+        // @unsafe { invoking + swallowing exceptions }
+        try { cb(error_code); } catch (...) {}
+    }
+}
+
+// @safe - update_config: lock to serialize with in-flight enqueue/dequeue, then
+// assign the POD config. (The lock-for-side-effect `(void)guard` reads cleaner
+// as a free fn than in the DSL.)
+inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config) {
+    auto guard = self.queue_.lock().unwrap();
+    (void)guard;
+    // config_ is a plain (non-interior-mut) field; const_cast under the queue
+    // lock matches the prior `mutable RequestQueue` access pattern. @unsafe.
+    const_cast<RequestQueue&>(self).config_ = config;
+}
 
 // @safe - Convert overflow strategy to string
 inline const char* overflow_strategy_to_string(OverflowStrategy strategy) {

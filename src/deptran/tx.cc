@@ -127,7 +127,10 @@ mdb::Row* Tx::CreateRow(const mdb::Schema *schema,
   Row* r;
   switch (Config::config_s->tx_proto_) {
     case MODE_2PL:
-      r = mdb::FineLockedRow::create(schema, row_data);
+      // FineLockedRow/ALock were removed as dead code; 2PL fine-grained
+      // locking is no longer available.
+      verify(0);
+      r = nullptr;
       break;
     case MODE_OCC:
     case MODE_NONE:

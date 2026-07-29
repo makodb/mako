@@ -27,9 +27,13 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
 
 import std;
 
@@ -123,7 +127,7 @@ class FakeChannelFactory {
         // Not exercised by these tests.
         return rusty::None;
     }
-    const char* backend_name() const { return "fake"; }
+    std::string backend_name() const { return "fake"; }
 
     // Test introspection.
     std::size_t connect_count() {
@@ -160,7 +164,7 @@ class FakeChannelFactoryAdapter : public ChannelFactoryBase {
         : f_(std::move(p)) {}
     ConnectResult                       connect(std::string_view a) override { return f_->connect(a); }
     rusty::Option<ChannelListenerProxy> make_listener() override             { return f_->make_listener(); }
-    const char*                         backend_name() const override        { return f_->backend_name(); }
+    std::string                         backend_name() const override        { return f_->backend_name(); }
  private:
     std::shared_ptr<FakeChannelFactory> f_;
 };
@@ -216,7 +220,7 @@ TEST_F(ClientChannelFactoryTest, ConnectRoutesThroughFactory) {
     EXPECT_FALSE(mut_conn().is_channel_mode());
     EXPECT_EQ(factory_->connect_count(), 0u);
 
-    int rc = mut_conn().connect("fake-addr:0");
+    int rc = mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0"));
 
     EXPECT_EQ(rc, 0);
     EXPECT_TRUE(mut_conn().is_channel_mode());
@@ -226,14 +230,14 @@ TEST_F(ClientChannelFactoryTest, ConnectRoutesThroughFactory) {
 }
 
 TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
-    ASSERT_EQ(mut_conn().connect("fake-addr:0"), 0);
+    ASSERT_EQ(mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0")), 0);
     auto stub = factory_->last_stub();
     ASSERT_NE(stub, nullptr);
 
     // Issue a request — it should land on the stub the factory
     // produced (channel-mode dispatch).
     auto fr = mut_conn().request(0x42, FutureAttr{}, [](BinaryWriteArchive& m) {
-        m << static_cast<i32>(0xABCD);
+        rrr::Serialize_::serialize(static_cast<i32>(0xABCD), m);
     });
     ASSERT_TRUE(fr.is_ok());
     EXPECT_EQ(stub->send_count(), 1u);
@@ -242,7 +246,7 @@ TEST_F(ClientChannelFactoryTest, ConnectViaFactoryEnablesRequestDispatch) {
 TEST_F(ClientChannelFactoryTest, ConnectFailureSurfacesAsErrno) {
     factory_->set_next_error(ChannelError::ConnectionRefused);
 
-    int rc = mut_conn().connect("fake-addr:0");
+    int rc = mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0"));
 
     EXPECT_EQ(rc, ECONNREFUSED);
     EXPECT_FALSE(mut_conn().is_channel_mode());
@@ -253,11 +257,11 @@ TEST_F(ClientChannelFactoryTest, ConnectFailureSurfacesAsErrno) {
 TEST_F(ClientChannelFactoryTest,
        OnClosedReconnectReusesFactoryAndProducesNewStub) {
     // Configure auto-reconnect + factory-driven reconnect.
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 
-    ASSERT_EQ(mut_conn().connect("fake-addr:0"), 0);
+    ASSERT_EQ(mut_conn().connect(reinterpret_cast<const int8_t*>("fake-addr:0")), 0);
     ASSERT_EQ(factory_->connect_count(), 1u);
 
     auto first_stub = factory_->last_stub();

@@ -2,15 +2,18 @@ module;
 
 #include <cstdint>
 
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
+
 export module rrr.serializable_envelope;
 
 import std;
+import rusty;
 import rrr.basetypes;
 import rrr.debugging;
-import rrr.marshal;
 import rrr.serializable;
 
-// @safe - SerializableEnvelope: shared_ptr-backed sum type carried
+// @safe - SerializableEnvelope: rusty::Arc-backed sum type carried
 // over the Marshal wire. The kind/has_value/operator bool/operator==
 // accessors and `refresh_kind` are pure pointer-equality and integer
 // reads. The dynamic_cast-heavy unpack family, `marshallable_cast`'s
@@ -26,30 +29,30 @@ class SerializableEnvelope {
  public:
   SerializableEnvelope() = default;
 
-  // Templated ctor for `shared_ptr<T>` where T is in TypeList.  Stores
-  // an aliased shared_ptr<T> inside the proxy — `unpack_shared<T>()`
-  // returns the same shared_ptr<T> instance, and the underlying T
-  // outlives any envelope copy via the shared_ptr's refcount.
+  // Templated ctor for `Arc<T>` where T is in TypeList.  Stores an
+  // aliased Arc<T> inside the proxy — `unpack_shared<T>()` returns a
+  // refcount-shared copy of the same Arc<T>, and the underlying T
+  // outlives any envelope copy via the Arc's refcount.
   template<typename T>
-  SerializableEnvelope(std::shared_ptr<T> sp) {
+  SerializableEnvelope(rusty::Arc<T> sp) {
     static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope(shared_ptr<T>): T is not in TypeList. "
+                  "SerializableEnvelope(Arc<T>): T is not in TypeList. "
                   "Add T to the TypeList declaration.");
-    verify(sp != nullptr);
-    inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
-        std::move(sp));
+    inner_ = rusty::Option<SerializableProxy>(
+        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
+            std::move(sp)));
     refresh_kind();
   }
 
   // Templated assignment: same aliased-storage semantics.
   template<typename T>
-  SerializableEnvelope& operator=(std::shared_ptr<T> sp) {
+  SerializableEnvelope& operator=(rusty::Arc<T> sp) {
     static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::operator=(shared_ptr<T>): T is not "
+                  "SerializableEnvelope::operator=(Arc<T>): T is not "
                   "in TypeList.");
-    verify(sp != nullptr);
-    inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
-        std::move(sp));
+    inner_ = rusty::Option<SerializableProxy>(
+        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
+            std::move(sp)));
     refresh_kind();
     return *this;
   }
@@ -65,8 +68,9 @@ class SerializableEnvelope {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::pack<T>: T is not in TypeList.");
     SerializableEnvelope env;
-    env.inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
-        std::make_shared<T>(value));
+    env.inner_ = rusty::Option<SerializableProxy>(
+        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
+            rusty::Arc<T>::make(value)));
     env.refresh_kind();
     return env;
   }
@@ -77,19 +81,24 @@ class SerializableEnvelope {
   // instance.  `unpack_shared<T>()` returns a refcount-shared
   // shared_ptr<T>.
   template<typename T>
-  static SerializableEnvelope pack_aliased(std::shared_ptr<T> sp) {
+  static SerializableEnvelope pack_aliased(rusty::Arc<T> sp) {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::pack_aliased<T>: T is not in "
                   "TypeList.");
-    verify(sp != nullptr);
     SerializableEnvelope env;
-    env.inner_ = std::make_shared<details::SerializableSharedPtrHolder<T>>(
-        std::move(sp));
+    env.inner_ = rusty::Option<SerializableProxy>(
+        rusty::Arc<details::SerializableSharedPtrHolder<T>>::make(
+            std::move(sp)));
     env.refresh_kind();
     return env;
   }
 
   // -- Typed accessors ---------------------------------------------------
+  // INVARIANT: `inner_` is always holder-shaped — every construction
+  // path above and every SerializableRegistry factory wraps the payload
+  // in a SerializableSharedPtrHolder<T>; no proxy IS its payload
+  // directly. The accessors below rely on this: one holder downcast,
+  // no direct-SerializableBase fallback.
   // Recover the carried payload as a `T*`, or nullptr if the carried
   // type is not T (or the envelope is empty). Aliases the envelope-
   // owned T.
@@ -98,70 +107,42 @@ class SerializableEnvelope {
   T* unpack() {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    if (!inner_) return nullptr;
-    if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
-      return h->ptr.get();
-    }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<T*>(inner_.get())) return p;
+    // @unsafe - as_ptr(): mutable escape from the const-view Arc. The
+    // non-const unpack keeps its historical T* contract; new code
+    // should prefer the const overload or unpack_shared.
+    if (auto* h = holder_of<T>()) {
+      return const_cast<details::SerializableSharedPtrHolder<T>*>(h)
+          ->ptr.as_ptr();
     }
     return nullptr;
   }
 
-  // @unsafe - dynamic_cast through `inner_.get()` returning raw `const T*`.
+  // @unsafe - dynamic_cast through the held base pointer.
   template<typename T>
   const T* unpack() const {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack<T>: T is not in TypeList.");
-    if (!inner_) return nullptr;
-    if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
+    if (auto* h = holder_of<T>()) {
       return h->ptr.get();
     }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<const T*>(inner_.get())) return p;
-    }
     return nullptr;
   }
 
-  // Recover the carried payload as `shared_ptr<T>`.
-  //   * For `pack_aliased`-constructed envelopes: returns the original
-  //     shared_ptr<T> (refcount-shared with the caller's pointer).
-  //   * For `pack`-constructed envelopes: returns a `shared_ptr<T>`
-  //     with a no-op deleter — the pointer aliases the envelope-owned
-  //     T and the caller is responsible for keeping the envelope alive.
-  // @unsafe - dynamic_cast + raw `T*` lambda-deleter shared_ptr build.
+  // Recover the carried payload as a refcount-shared `Arc<T>` (for
+  // `pack_aliased` envelopes this shares the caller's original Arc;
+  // for `pack` envelopes the envelope-owned copy). None on empty or
+  // type mismatch. (Arc access is const-view by design, so a single
+  // Option<Arc<T>> return serves both const and non-const callers —
+  // no Arc<const T> variant.)
+  // @unsafe - dynamic_cast through the held base pointer.
   template<typename T>
-  std::shared_ptr<T> unpack_shared() {
+  rusty::Option<rusty::Arc<T>> unpack_shared() const {
     static_assert(TypeList::template contains<T>(),
                   "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
-    if (!inner_) return nullptr;
-    if (auto* h = dynamic_cast<details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
-      return h->ptr;
+    if (auto* h = holder_of<T>()) {
+      return rusty::Option<rusty::Arc<T>>(h->ptr.clone());
     }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<T*>(inner_.get())) {
-        // No-op deleter: caller responsibility for envelope lifetime.
-        return std::shared_ptr<T>(p, [](T*){});
-      }
-    }
-    return nullptr;
-  }
-
-  // @unsafe - dynamic_cast + raw `const T*` lambda-deleter shared_ptr build.
-  template<typename T>
-  std::shared_ptr<const T> unpack_shared() const {
-    static_assert(TypeList::template contains<T>(),
-                  "SerializableEnvelope::unpack_shared<T>: T is not in TypeList.");
-    if (!inner_) return nullptr;
-    if (auto* h = dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(inner_.get())) {
-      return std::const_pointer_cast<const T>(h->ptr);
-    }
-    if constexpr (std::is_base_of_v<SerializableBase, T>) {
-      if (auto* p = dynamic_cast<const T*>(inner_.get())) {
-        return std::shared_ptr<const T>(p, [](const T*){});
-      }
-    }
-    return nullptr;
+    return rusty::Option<rusty::Arc<T>>(rusty::None);
   }
 
   // @unsafe - dispatches to const-unpack which dynamic_casts to raw `const T*`.
@@ -175,10 +156,10 @@ class SerializableEnvelope {
 
   // -- Discriminator + state ---------------------------------------------
   int32_t kind() const {
-    return inner_ ? inner_->kind() : 0;
+    return inner_.is_some() ? base_ptr()->kind() : 0;
   }
 
-  bool has_value() const noexcept { return static_cast<bool>(inner_); }
+  bool has_value() const noexcept { return inner_.is_some(); }
   explicit operator bool() const noexcept { return has_value(); }
 
   // Identity comparison.  For empty envelopes: equal iff both empty.
@@ -188,9 +169,9 @@ class SerializableEnvelope {
   // share a holder and thus compare equal; `pack(v)` copies own
   // their own holder and compare unequal.
   bool operator==(const SerializableEnvelope& other) const noexcept {
-    if (!inner_ && !other.inner_) return true;
-    if (!inner_ || !other.inner_) return false;
-    return inner_.get() == other.inner_.get();
+    if (inner_.is_none() && other.inner_.is_none()) return true;
+    if (inner_.is_none() || other.inner_.is_none()) return false;
+    return base_ptr() == other.base_ptr();
   }
   bool operator!=(const SerializableEnvelope& other) const noexcept {
     return !(*this == other);
@@ -203,16 +184,19 @@ class SerializableEnvelope {
   void save(BinaryWriteArchive& ar) const {
     verify(has_value() &&
            "SerializableEnvelope::save: empty envelope cannot be encoded.");
-    ar << v32(inner_->kind());
-    inner_->save(ar);
+    rrr::Serialize_::serialize(v32(base_ptr()->kind()), ar);
+    base_ptr()->save(ar);
   }
 
   // @unsafe - Marshal `operator>>` chain on the binary archive.
   void load(BinaryReadArchive& ar) {
     v32 kind_v;
-    ar >> kind_v;
-    inner_ = SerializableRegistry::create(kind_v.get());
-    inner_->load(ar);
+    rrr::Deserialize_::deserialize(kind_v, ar);
+    auto proxy = SerializableRegistry::create(kind_v.get());
+    // @unsafe - unique-owner mutation window: the proxy is factory-
+    // fresh (strong_count 1); a shared proxy here would panic loudly.
+    proxy.get_mut().unwrap().load(ar);
+    inner_ = rusty::Option<SerializableProxy>(std::move(proxy));
     refresh_kind();
   }
 
@@ -224,82 +208,78 @@ class SerializableEnvelope {
 
  private:
   void refresh_kind() noexcept {
-    kind_ = inner_ ? inner_->kind() : 0;
+    kind_ = inner_.is_some() ? base_ptr()->kind() : 0;
   }
 
-  SerializableProxy inner_;
+  // Borrow the held base pointer (nullptr when empty). Const-only —
+  // the Arc is const-view; mutation goes through the load() window.
+  const SerializableBase* base_ptr() const noexcept {
+    return inner_.is_some() ? std::as_const(inner_).unwrap().get() : nullptr;
+  }
+
+  // Downcast the held proxy to the holder for T (nullptr on miss).
+  template<typename T>
+  const details::SerializableSharedPtrHolder<T>* holder_of() const {
+    return dynamic_cast<const details::SerializableSharedPtrHolder<T>*>(
+        base_ptr());
+  }
+
+  rusty::Option<SerializableProxy> inner_{rusty::None};
 };
 
 // Migration compat: `marshallable_cast<T>` overload for envelopes.
+// Returns Option<Arc<T>> — None on empty envelope / type mismatch.
+// (unpack_shared is const now; the old const_cast overload collapsed.)
 template<typename T, typename TypeList>
-inline std::shared_ptr<T> marshallable_cast(
-    SerializableEnvelope<TypeList>& env) {
+inline rusty::Option<rusty::Arc<T>> marshallable_cast(
+    const SerializableEnvelope<TypeList>& env) {
   return env.template unpack_shared<T>();
 }
 
-// @unsafe - `const_cast<SerializableEnvelope&>(env)` to call the
-// non-const `unpack_shared`.
 template<typename T, typename TypeList>
-inline std::shared_ptr<T> marshallable_cast(
-    const SerializableEnvelope<TypeList>& env) {
-  return const_cast<SerializableEnvelope<TypeList>&>(env)
-      .template unpack_shared<T>();
-}
-
-template<typename T, typename TypeList>
-inline std::shared_ptr<T> marshallable_cast(
+inline rusty::Option<rusty::Arc<T>> marshallable_cast(
     SerializableEnvelope<TypeList>* env) {
-  if (env == nullptr) return nullptr;
+  if (env == nullptr) return rusty::Option<rusty::Arc<T>>(rusty::None);
   return env->template unpack_shared<T>();
 }
 
 // Free archive operators — let SerializableEnvelope ride directly in
 // rpcgen-emitted RPC struct fields the same way any other Serializable
 // type does.
+// Phase 8 batch 4: serde free functions own the envelope wire format; the
+// operators below are forwarders kept until the operator layer is deleted.
 // @unsafe - forwards to `env.save(ar)` which drives a Marshal
 // operator<< chain.
 template<typename TypeList>
+inline void serialize(const SerializableEnvelope<TypeList>& env,
+                      BinaryWriteArchive& ar) {
+  env.save(ar);
+}
+
+template<typename TypeList>
 inline BinaryWriteArchive& operator<<(BinaryWriteArchive& ar,
                                       const SerializableEnvelope<TypeList>& env) {
-  env.save(ar);
+  serialize(env, ar);
   return ar;
 }
 
 // @unsafe - forwards to `env.load(ar)` which drives a Marshal
 // operator>> chain.
 template<typename TypeList>
+inline void deserialize(SerializableEnvelope<TypeList>& env,
+                        BinaryReadArchive& ar) {
+  env.load(ar);
+}
+
+template<typename TypeList>
 inline BinaryReadArchive& operator>>(BinaryReadArchive& ar,
                                      SerializableEnvelope<TypeList>& env) {
-  env.load(ar);
+  deserialize(env, ar);
   return ar;
 }
 
-// Legacy `Marshal&` archive operators.  Wire format identical to the
-// archive path: `[v32 kind] [payload bytes]`.  Used by procedure.cc
-// TxReply / classic/tpc_command.cc TpcCommitCommand archive operators
-// in the legacy RPC reply path that still drives `Marshal&`.
-// @unsafe - constructs MarshalSink + BinaryWriteArchive and drives a
-// Marshal operator<< chain via `env.save(ar)`.
-template<typename TypeList>
-inline Marshal& operator<<(Marshal& m,
-                           const SerializableEnvelope<TypeList>& env) {
-  verify(env.has_value());
-  MarshalSink sink(&m);
-  BinaryWriteArchive ar(make_sink_proxy(&sink));
-  env.save(ar);
-  return m;
-}
-
-// @unsafe - constructs MarshalSource + BinaryReadArchive and drives a
-// Marshal operator>> chain via `env.load(ar)`.
-template<typename TypeList>
-inline Marshal& operator>>(Marshal& m,
-                           SerializableEnvelope<TypeList>& env) {
-  MarshalSource source(&m);
-  BinaryReadArchive ar(make_source_proxy(&source));
-  env.load(ar);
-  return m;
-}
+// Marshal-deprecation slice C: the legacy `Marshal&` envelope operators
+// are deleted — the archive save/load path above is the only surface.
 
 
 }  // export namespace rrr

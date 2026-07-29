@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/memory_log_storage.hpp"
@@ -14,6 +15,7 @@
 #include "../rrr.hpp"
 
 import std;
+import rusty;
 
 using namespace rrr;
 using namespace janus::raft;
@@ -53,7 +55,7 @@ TEST_F(LogEntryTest, FullConstruction) {
     // test fixture; the test exercises LogEntry's command-carrying
     // shape, the choice of T doesn't matter beyond "is a valid
     // Command payload".
-    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
+    auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
     LogEntry entry(10, 3, cmd, true);
 
     EXPECT_EQ(entry.slot_id, 10u);
@@ -81,19 +83,18 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 
     // LogEntry's `to_marshal`/`from_marshal`
     // were replaced with `save(BinaryWriteArchive&)` /
-    // `load(BinaryReadArchive&)`. Drive bytes through the same backing
-    // Marshal via MarshalSink/MarshalSource so this test continues to
+    // `load(BinaryReadArchive&)`. Drive bytes through a
+    // BufferSink/BufferSource pair so this test continues to
     // exercise an on-wire round-trip.
-    Marshal m;
+    rrr::BufferSink sink;
     {
-        rrr::MarshalSink sink(&m);
         rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 
     LogEntry restored;
     {
-        rrr::MarshalSource src(&m);
+        rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
         rrr::BinaryReadArchive reader(make_source_proxy(&src));
         restored.load(reader);
     }
@@ -108,27 +109,28 @@ TEST_F(LogEntryTest, SerializationWithoutCommand) {
 }
 
 TEST_F(LogEntryTest, SerializationWithCommand) {
-    auto cmd = std::make_shared<janus::TpcEmptyCommand>();
+    auto cmd = rusty::Arc<janus::TpcEmptyCommand>::make();
     LogEntry original(100, 20, cmd, true);
 
     // see SerializationWithoutCommand for
     // the to_marshal → save migration rationale.
-    Marshal m;
+    rrr::BufferSink sink;
     {
-        rrr::MarshalSink sink(&m);
         rrr::BinaryWriteArchive writer(make_sink_proxy(&sink));
         original.save(writer);
     }
 
     // Verify serialization produced data
-    EXPECT_GT(m.content_size(), 0u);
+    EXPECT_GT(sink.bytes.len(), 0u);
 
     // Note: Full deserialization of custom commands requires MarshallDeputy registration
     // which is done at application startup. Here we just verify serialization works.
     // The basic fields can still be deserialized:
     LogEntry partial;
-    m >> partial.slot_id;
-    m >> partial.term;
+    rrr::BufferSource src(sink.bytes.data(), sink.bytes.len());
+    rrr::BinaryReadArchive rar(make_source_proxy(&src));
+    rrr::Deserialize_::deserialize(partial.slot_id, rar);
+    rrr::Deserialize_::deserialize(partial.term, rar);
 
     EXPECT_EQ(partial.slot_id, 100u);
     EXPECT_EQ(partial.term, 20u);

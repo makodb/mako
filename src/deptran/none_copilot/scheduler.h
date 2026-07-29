@@ -1,4 +1,6 @@
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 #include "../none/scheduler.h"
 #include "../classic/tx.h"
@@ -11,7 +13,7 @@ class SchedulerNoneCopilot : public SchedulerNone {
 	using SchedulerNone::SchedulerNone;
 
 	bool in_waiting_ = false;
-	vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
+	vector<rusty::Arc<TpcCommitCommand> > batch_buffer_;
 
 	uint64_t total_ = 0;
 	uint64_t submit_ = 0;

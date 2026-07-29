@@ -14,7 +14,7 @@ void MenciusServer::OnPrepare(slotid_t slot_id,
                             rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  Log_debug("mencius scheduler receives prepare for slot_id: %llx",
+  Log_debug("mencius scheduler receives prepare for slot_id: {:x}",
             slot_id);
   auto instance = GetInstance(slot_id);
   verify(ballot != instance->max_ballot_seen_);
@@ -46,7 +46,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
                            uint64_t* coro_id,
                            rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  //Log_info("mencius scheduler suggest for slot_id: %llu", slot_id);
+  //Log_info("mencius scheduler suggest for slot_id: {}", slot_id);
   auto instance = GetInstance(slot_id);
 
   //TODO: might need to optimize this. we can vote yes on duplicates at least for now
@@ -79,9 +79,9 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
                            const janus::Command& cmd,
                            bool is_skip) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  //Log_info("mencius scheduler decide for slot: %d on loc_id_:%d", slot_id, this->loc_id_);
+  //Log_info("mencius scheduler decide for slot: {} on loc_id_:{}", slot_id, this->loc_id_);
   // SimpleRWCommand parsed_cmd = SimpleRWCommand(cmd);
-  // Log_info("OnCommit loc_id_=%d cmd_id=<%d, %d>", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
+  // Log_info("OnCommit loc_id_={} cmd_id=<{}, {}>", loc_id_, parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second);
   auto instance = GetInstance(slot_id);
   // MenciusData::committed_cmd_ is now Command;
   // assignment from shared_ptr<Marshallable>& works via the
@@ -133,11 +133,11 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
         SimpleRWCommand parsed_cmd = SimpleRWCommand(next_instance->committed_cmd_);
         c_mutex.lock();
         unexecuted_keys_[parsed_cmd.key_] -= 1;
-        // Log_info("[-1] cmd %d %d cnt %d", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
+        // Log_info("[-1] cmd {} {} cnt {}", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
         verify(unexecuted_keys_[parsed_cmd.key_]>=0);
         c_mutex.unlock();
       }
-      Log_debug("mencius par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+      Log_debug("mencius par:{} loc:{} executed slot {:x} now", partition_id_, loc_id_, id);
       max_executed_slot_++;
       n_commit_++;
     } else {
@@ -157,11 +157,11 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
         
         c_mutex.lock();
         unexecuted_keys_[parsed_cmd.key_] -= 1;
-        // Log_info("[-1]] cmd %d %d cnt %d", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
+        // Log_info("[-1]] cmd {} {} cnt {}", parsed_cmd.cmd_id_.first, parsed_cmd.cmd_id_.second, unexecuted_keys_[parsed_cmd.key_].load());
         verify(unexecuted_keys_[parsed_cmd.key_]>=0);
         c_mutex.unlock();
       } else {
-        // Log_info("out-of-order execute fail since %d %d", !next_instance->executed_, unexecuted_keys_[parsed_cmd.key_]==0);
+        // Log_info("out-of-order execute fail since {} {}", !next_instance->executed_, unexecuted_keys_[parsed_cmd.key_]==0);
       }
     }
   }
@@ -185,7 +185,7 @@ void MenciusServer::OnCommit(const slotid_t slot_id,
 
 void MenciusServer::Setup() {
   SimpleRWCommand::SetZeroTime();
-  Log_info("Setup this=%p, this->loc_id_=%d, this->commo_==%p", 
+  Log_info("Setup this={}, this->loc_id_={}, this->commo_=={}", 
         (void*)this, this->loc_id_, (void*)this->commo_);
 }
 

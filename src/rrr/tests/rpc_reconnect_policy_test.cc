@@ -8,6 +8,9 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
+
 import std;
 
 using namespace rrr;
@@ -17,7 +20,7 @@ using namespace rrr;
 // ============================================================================
 
 TEST(ReconnectPolicyTest, DefaultValues) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     EXPECT_TRUE(policy.auto_reconnect);
     EXPECT_EQ(policy.max_retries, 5u);
     EXPECT_EQ(policy.initial_delay_ms, 1000u);  // 1 second
@@ -57,17 +60,17 @@ TEST(ReconnectPolicyTest, NoRetryPreset) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, InitialState) {
-    ReconnectPolicy policy;
-    ReconnectCalculator calc(policy);
+    auto policy = ReconnectPolicy::new_();
+    auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_EQ(calc.retry_count(), 0u);
     EXPECT_TRUE(calc.should_retry());
 }
 
 TEST(ReconnectCalculatorTest, ShouldRetryCountsDown) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_TRUE(calc.should_retry());
     calc.next_delay_ms();  // Retry 1
@@ -82,8 +85,8 @@ TEST(ReconnectCalculatorTest, ShouldRetryCountsDown) {
 }
 
 TEST(ReconnectCalculatorTest, RetryCountIncrementsOnNextDelay) {
-    ReconnectPolicy policy;
-    ReconnectCalculator calc(policy);
+    auto policy = ReconnectPolicy::new_();
+    auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_EQ(calc.retry_count(), 0u);
 
@@ -95,8 +98,8 @@ TEST(ReconnectCalculatorTest, RetryCountIncrementsOnNextDelay) {
 }
 
 TEST(ReconnectCalculatorTest, ResetClearsRetryCount) {
-    ReconnectPolicy policy;
-    ReconnectCalculator calc(policy);
+    auto policy = ReconnectPolicy::new_();
+    auto calc = ReconnectCalculator::new_(policy);
 
     calc.next_delay_ms();
     calc.next_delay_ms();
@@ -112,14 +115,14 @@ TEST(ReconnectCalculatorTest, ResetClearsRetryCount) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, ExponentialBackoffNoJitter) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
     policy.jitter_enabled = false;
     policy.max_retries = 10;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First retry: initial_delay
     EXPECT_EQ(calc.next_delay_ms(), 100u);
@@ -138,14 +141,14 @@ TEST(ReconnectCalculatorTest, ExponentialBackoffNoJitter) {
 }
 
 TEST(ReconnectCalculatorTest, MaxDelayEnforced) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1000;
     policy.backoff_multiplier = 10.0;
     policy.max_delay_ms = 5000;
     policy.jitter_enabled = false;
     policy.max_retries = 10;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First: 1000
     EXPECT_EQ(calc.next_delay_ms(), 1000u);
@@ -162,7 +165,7 @@ TEST(ReconnectCalculatorTest, MaxDelayEnforced) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, JitterAddRandomness) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1000;
     policy.backoff_multiplier = 1.0;  // No backoff, just jitter
     policy.max_delay_ms = 10000;
@@ -172,7 +175,7 @@ TEST(ReconnectCalculatorTest, JitterAddRandomness) {
     std::set<uint32_t> delays;
 
     for (int i = 0; i < 20; i++) {
-        ReconnectCalculator calc(policy);
+        auto calc = ReconnectCalculator::new_(policy);
         uint32_t delay = calc.next_delay_ms();
         delays.insert(delay);
 
@@ -186,14 +189,14 @@ TEST(ReconnectCalculatorTest, JitterAddRandomness) {
 }
 
 TEST(ReconnectCalculatorTest, JitterWithBackoff) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
     policy.jitter_enabled = true;
     policy.max_retries = 10;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First: around 100 (±50%)
     uint32_t d1 = calc.next_delay_ms();
@@ -211,11 +214,11 @@ TEST(ReconnectCalculatorTest, JitterWithBackoff) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, ZeroMaxRetriesIsUnlimited) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 0;  // 0 = unlimited
     policy.auto_reconnect = true;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Even after many retries, should_retry returns true
     for (int i = 0; i < 100; i++) {
@@ -226,20 +229,20 @@ TEST(ReconnectCalculatorTest, ZeroMaxRetriesIsUnlimited) {
 }
 
 TEST(ReconnectCalculatorTest, AutoReconnectDisabled) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = false;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
     EXPECT_FALSE(calc.should_retry());
 }
 
 TEST(ReconnectCalculatorTest, ZeroInitialDelay) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 0;
     policy.jitter_enabled = false;
     policy.max_retries = 5;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Should return 0 for first delay
     uint32_t delay = calc.next_delay_ms();
@@ -247,14 +250,14 @@ TEST(ReconnectCalculatorTest, ZeroInitialDelay) {
 }
 
 TEST(ReconnectCalculatorTest, BackoffMultiplierOne) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 1.0;
     policy.max_delay_ms = 10000;
     policy.jitter_enabled = false;
     policy.max_retries = 5;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // All delays should be the same
     EXPECT_EQ(calc.next_delay_ms(), 100u);
@@ -263,14 +266,14 @@ TEST(ReconnectCalculatorTest, BackoffMultiplierOne) {
 }
 
 TEST(ReconnectCalculatorTest, VeryHighBackoffMultiplier) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 1;
     policy.backoff_multiplier = 100.0;
     policy.max_delay_ms = 1000;
     policy.jitter_enabled = false;
     policy.max_retries = 10;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First: 1
     EXPECT_EQ(calc.next_delay_ms(), 1u);
@@ -287,11 +290,11 @@ TEST(ReconnectCalculatorTest, VeryHighBackoffMultiplier) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, PolicyIsReference) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
     policy.auto_reconnect = true;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Exhaust retries
     calc.next_delay_ms();
@@ -311,13 +314,13 @@ TEST(ReconnectCalculatorTest, PolicyIsReference) {
 // ============================================================================
 
 TEST(ReconnectCalculatorTest, PeekDoesNotIncrement) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.jitter_enabled = false;
     policy.max_retries = 10;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // Peek should return same value multiple times
     EXPECT_EQ(calc.peek_delay_ms(), 100u);

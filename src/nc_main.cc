@@ -342,7 +342,7 @@ void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
     rrr::PollThread *pm = new rrr::PollThread();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
-    while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
+    while (client->connect(reinterpret_cast<const int8_t*>((std::string(server_ip)+":"+port_s).c_str()), true)!=0) {
       usleep(100 * 1000); // retry to connect
     }
     NetworkClientProxy *nc_client_proxy = new NetworkClientProxy(client);

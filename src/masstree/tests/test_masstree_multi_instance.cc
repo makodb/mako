@@ -20,7 +20,6 @@
 #include <gtest/gtest.h>
 
 #include <rusty/box.hpp>
-#include <rusty/hashset.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
@@ -37,6 +36,7 @@
 #include "masstree/masstree_tcursor.hh"
 
 import std;
+import rusty;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;
@@ -96,6 +96,7 @@ inline bool pure_search(const PureTable& t, threadinfo& ti,
 
 class MasstreeMultiInstanceTest : public ::testing::Test {
 protected:
+    ~MasstreeMultiInstanceTest() noexcept {}  // rusty::Vec member -> force noexcept dtor
     void SetUp() override {
         // Create two separate contexts
         ctx1_ = MasstreeContext::Create();

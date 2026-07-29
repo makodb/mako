@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <rusty/arc.hpp>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -63,7 +64,7 @@ TEST_F(ExtendedReactorTest, SingleFiberEvent) {
     });
     
     EXPECT_EQ(completed_count, 1);
-    EXPECT_EQ(sp_event->value_, 1);
+    EXPECT_EQ(sp_event->value_.get(), 1);
 }
 
 // Test 3: Nested fibers
@@ -116,28 +117,28 @@ TEST_F(ExtendedReactorTest, EventChain) {
     auto sp_event2 = Reactor::create_sp_event<IntEvent>();
     auto sp_event3 = Reactor::create_sp_event<IntEvent>();
     
-    sp_event1->target_ = 10;
-    sp_event2->target_ = 20;
-    sp_event3->target_ = 40;
+    sp_event1->target_.set(10);
+    sp_event2->target_.set(20);
+    sp_event3->target_.set(40);
     
     std::atomic<int> result{0};
     
     // Create a chain of dependent fibers
     reactor->create_run_fiber([sp_event1, sp_event2, &result]() {
         sp_event1->wait();
-        result += sp_event1->value_;
-        sp_event2->set(sp_event1->value_ * 2);
+        result += sp_event1->value_.get();
+        sp_event2->set(sp_event1->value_.get() * 2);
     });
     
     reactor->create_run_fiber([sp_event2, sp_event3, &result]() {
         sp_event2->wait();
-        result += sp_event2->value_;
-        sp_event3->set(sp_event2->value_ * 2);
+        result += sp_event2->value_.get();
+        sp_event3->set(sp_event2->value_.get() * 2);
     });
     
     reactor->create_run_fiber([sp_event3, &result]() {
         sp_event3->wait();
-        result += sp_event3->value_;
+        result += sp_event3->value_.get();
     });
     
     // Start the chain
@@ -146,14 +147,14 @@ TEST_F(ExtendedReactorTest, EventChain) {
     // Process events - with our fix, one Loop() should process the whole chain!
     reactor->loop(false);
     
-    std::cout << "Event1 value: " << sp_event1->value_ << " (expected 10)" << std::endl;
-    std::cout << "Event2 value: " << sp_event2->value_ << " (expected 20)" << std::endl;
-    std::cout << "Event3 value: " << sp_event3->value_ << " (expected 40)" << std::endl;
+    std::cout << "Event1 value: " << sp_event1->value_.get() << " (expected 10)" << std::endl;
+    std::cout << "Event2 value: " << sp_event2->value_.get() << " (expected 20)" << std::endl;
+    std::cout << "Event3 value: " << sp_event3->value_.get() << " (expected 40)" << std::endl;
     std::cout << "Result: " << result << " (expected 70)" << std::endl;
     
-    EXPECT_EQ(sp_event1->value_, 10);
-    EXPECT_EQ(sp_event2->value_, 20);
-    EXPECT_EQ(sp_event3->value_, 40);
+    EXPECT_EQ(sp_event1->value_.get(), 10);
+    EXPECT_EQ(sp_event2->value_.get(), 20);
+    EXPECT_EQ(sp_event3->value_.get(), 40);
     EXPECT_EQ(result, 70); // 10 + 20 + 40
 }
 
@@ -187,7 +188,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     auto reactor = Reactor::get_reactor();
     
     const int num_events = 20; // Reduced number for simpler test
-    std::vector<std::shared_ptr<IntEvent>> events;
+    std::vector<rusty::Arc<IntEvent>> events;
     std::atomic<int> processed_count{0};
     
     // Create and trigger all events first (all use default target=1)
@@ -278,7 +279,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
     
     // Create and destroy many events to test memory management
     for (int iteration = 0; iteration < 10; iteration++) {
-        std::vector<std::shared_ptr<IntEvent>> events;
+        std::vector<rusty::Arc<IntEvent>> events;
         
         // Create batch
         for (int i = 0; i < 100; i++) {

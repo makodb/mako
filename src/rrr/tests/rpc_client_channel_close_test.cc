@@ -24,9 +24,13 @@
 
 
 #include <rusty/arc.hpp>
+#include <rusty/sync/weak.hpp>  // rusty::sync::downgrade
 #include <rusty/box.hpp>
 
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
 
 import std;
 
@@ -122,7 +126,7 @@ class ClientChannelCloseTest : public ::testing::Test {
         // would also work, but sharing an Arc lets the test (a)
         // register before bind_channel and (b) read the registered
         // callbacks back if needed.
-        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::make());
+        callback_manager_ = rusty::Some(rusty::Arc<CallbackManager>::new_(CallbackManager::new_()));
         mut_conn().set_callback_manager(callback_manager_.as_ref().unwrap());
 
         callback_manager_.as_ref().unwrap()->add_on_error([this](RpcError e, const std::string&) {
@@ -235,7 +239,7 @@ TEST_F(ClientChannelCloseTest, OnClosedAttemptsReconnectWhenPolicyAllows) {
     // legacy fd reconnect path by aborting it via reconnect_abort_
     // *inside* the spawned thread (we observe the spawn via the
     // counter, then immediately abort to avoid hitting socket(2)).
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     mut_conn().set_reconnect_policy(policy);
 

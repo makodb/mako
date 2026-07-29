@@ -157,7 +157,7 @@ class FakeFactory {
     rusty::Option<ChannelListenerProxy> make_listener() {
         return rusty::Some(make_fake_listener_proxy(std::make_shared<FakeListener>()));
     }
-    const char* backend_name() const { return "fake"; }
+    std::string backend_name() const { return "fake"; }
 
     void set_connect_result(ChannelError e) { connect_result_ = e; }
     const std::string& last_connect_addr() const { return last_connect_addr_; }
@@ -174,7 +174,7 @@ class FakeFactoryAdapter : public ChannelFactoryBase {
 
     ConnectResult                       connect(std::string_view addr) override { return factory_->connect(addr); }
     rusty::Option<ChannelListenerProxy> make_listener() override                { return factory_->make_listener(); }
-    const char*                         backend_name() const override           { return factory_->backend_name(); }
+    std::string                         backend_name() const override           { return factory_->backend_name(); }
 
  private:
     std::shared_ptr<FakeFactory> factory_;
@@ -300,7 +300,7 @@ TEST(RpcChannelFacadeTest, FactoryProducesConnectionsAndListeners) {
     auto fake_factory = std::make_shared<FakeFactory>();
     auto factory = make_fake_factory_proxy(fake_factory);
 
-    EXPECT_STREQ(factory->backend_name(), "fake");
+    EXPECT_EQ(factory->backend_name(), "fake");
 
     auto ok = factory->connect("127.0.0.1:1");
     EXPECT_EQ(ok.error, ChannelError::None);

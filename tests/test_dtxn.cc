@@ -17,7 +17,7 @@
 //                               std::vector<TxnInfo *> *conflict_txns
 //                               //cell_entry_map_t *entry_map
 //                               ) {
-//        Log::info("Hello from TxnRegistry");
+//        Log_info("Hello from TxnRegistry");
 //    });
 //
 //    RequestHeader header;

@@ -1,9 +1,12 @@
 module;
 #include <string>
+#include <rusty/array.hpp>   // c529cd3d: BTreeMap::len() free-fn decl
 #include <rusty/option.hpp>         // KvStore::get returns rusty::Option<std::string>
-#include <btree_port/btreemap.hpp>  // native-API ordered map (replaces std::map)
 export module cluster:in_memory_kv_store;
+import btree_port.btree.map;   // c529cd3d: btree_port is now a C++20 module (retired the .hpp header)
 import :kv_store;
+
+namespace btree_port { using btree::map::BTreeMap; }  // compat: flat name the DSL/GEN expect
 
 namespace janus {
 
@@ -27,7 +30,7 @@ public:
     rusty::Option<std::string> get(const std::string& key) override {
         auto found = store_.get(key);
         if (found.is_none()) return rusty::None;
-        return rusty::Some(std::string(found.unwrap().get()));
+        return rusty::Some(std::string(found.unwrap()));
     }
 
     void put(const std::string& key, const std::string& value) override {
@@ -37,14 +40,18 @@ public:
     void remove(const std::string& key) override { store_.remove(key); }
 
     // ---- Test helpers (not part of the KvStore port) ----
-    size_t size() const { return store_.size(); }
+    size_t size() const { return store_.len(); }
     bool contains(const std::string& key) const {
         return store_.contains_key(key);
     }
     void clear() { store_.clear(); }
 
 private:
-    btree_port::BTreeMap<std::string, std::string> store_;
+    // Default member initializer so InMemoryKvStore stays default-constructible:
+    // the c529cd3d btree_port module BTreeMap has no default ctor, and gtest
+    // fixtures hold an InMemoryKvStore by value (`InMemoryKvStore kv_;`).
+    btree_port::BTreeMap<std::string, std::string> store_ =
+        btree_port::BTreeMap<std::string, std::string>::new_();
 };
 
 }  // namespace janus

@@ -33,9 +33,9 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
                                  slotid_t slot_id,
                                  ballot_t ballot,
                                  const janus::Command& cmd) {
-  //Log_info("invoke BroadcastSuggest, slot_id:%d", slot_id);
+  //Log_info("invoke BroadcastSuggest, slot_id:{}", slot_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n/2+1);
+  auto e = std::make_shared<MenciusSuggestQuorumEvent>(n, n/2+1);
 //  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n);
 
   auto src_coroid = e->get_fiber_id();
@@ -123,11 +123,11 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
       }
       ballot_t b = 0;
       uint64_t coro_id = 0;
-      fu->get_reply() >> b >> coro_id;
+      rrr::deserialize_from(fu->get_reply(), b, coro_id);
       e->FeedResponse(b==ballot);
       // auto end = chrono::system_clock::now();
       // auto duration = chrono::duration_cast<chrono::microseconds>(end-start2).count();
-      //Log_info("The duration of Suggest() for %d is: %d", follower_id, duration); // 20029
+      //Log_info("The duration of Suggest() for {} is: {}", follower_id, duration); // 20029
       // e->deps[leader_id][src_coroid][follower_id].erase(-1);
       // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
     };
@@ -172,7 +172,7 @@ void MenciusCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
                                       const ballot_t ballot,
                                       const janus::Command& cmd) {
-  //Log_info("invoke BroadcastDecide, slot_id:%d", slot_id);
+  //Log_info("invoke BroadcastDecide, slot_id:{}", slot_id);
   auto proxies = rpc_par_proxies_[par_id];
   int n = proxies.size();
   auto leader_id = LeaderProxyForPartition(par_id, (slot_id-1)%n).first;

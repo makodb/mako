@@ -44,7 +44,7 @@ AvgStat* StatsRegistry::get_stat(const std::string& name) {
     auto guard = stats_->lock().unwrap();
     auto& stat = guard->stats[name];
     if (stat == nullptr) {
-        stat = new AvgStat();
+        stat = new AvgStat(AvgStat::new_());
     }
     return stat;
 }

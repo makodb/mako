@@ -87,5 +87,5 @@
 #define Call_Async(proxy, name, ...) { \
   auto f = proxy->async##_##name(__VA_ARGS__); \
   _RPC_COUNT(); \
-  Future::safe_release(f); \
+  (void)f; \
 }

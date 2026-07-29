@@ -43,7 +43,7 @@ class CoordinatorMencius : public Coordinator {
   bool IsLeader(int slot_id_) {
     int n = n_replica();
     if ((slot_id_-1)%n!=this->loc_id_){
-      Log_warn("IsLeader slot_id_:%d, slot_id_: %d, loc_id_:%d", (slot_id_-1)%n, slot_id_, this->loc_id_);
+      Log_warn("IsLeader slot_id_:{}, slot_id_: {}, loc_id_:{}", (slot_id_-1)%n, slot_id_, this->loc_id_);
     }
     return (slot_id_-1)%n==this->loc_id_;
   }

@@ -8,6 +8,9 @@
 #include <gtest/gtest.h>
 #include "../rrr.hpp"
 
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.heartbeat;
+
 import std;
 
 using namespace rrr;
@@ -18,7 +21,7 @@ using namespace std::chrono;
 // ============================================================================
 
 TEST(HeartbeatConfigTest, DefaultValues) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     EXPECT_TRUE(config.enabled);
     EXPECT_EQ(config.interval_ms, 10000u);
     EXPECT_EQ(config.timeout_ms, 5000u);
@@ -51,14 +54,14 @@ TEST(HeartbeatConfigTest, DisabledPreset) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, InitialState) {
-    HeartbeatManager hb(HeartbeatConfig{});
+    auto hb = HeartbeatManager::new_(HeartbeatConfig{});
     EXPECT_FALSE(hb.is_pending_pong());
     EXPECT_FALSE(hb.is_timed_out());
     EXPECT_EQ(hb.missed_count(), 0u);
 }
 
 TEST(HeartbeatManagerTest, DisabledDoesNotSend) {
-    HeartbeatManager hb(HeartbeatConfig::disabled());
+    auto hb = HeartbeatManager::new_(HeartbeatConfig::disabled());
 
     // Should never send heartbeat when disabled
     EXPECT_FALSE(hb.should_send_heartbeat());
@@ -69,9 +72,9 @@ TEST(HeartbeatManagerTest, DisabledDoesNotSend) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, ShouldSendAfterInterval) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 10;  // Very short for testing
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     // Initially should send (no previous heartbeat)
     EXPECT_TRUE(hb.should_send_heartbeat());
@@ -94,11 +97,11 @@ TEST(HeartbeatManagerTest, ShouldSendAfterInterval) {
 }
 
 TEST(HeartbeatManagerTest, PongReceiveResetsMissedCount) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 10;
     config.timeout_ms = 5;
     config.max_missed = 5;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     // Send heartbeat
     hb.on_heartbeat_sent();
@@ -120,11 +123,11 @@ TEST(HeartbeatManagerTest, PongReceiveResetsMissedCount) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, TimeoutAfterMaxMissed) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 5;  // Very short timeout for testing
     config.max_missed = 2;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {
@@ -148,11 +151,11 @@ TEST(HeartbeatManagerTest, TimeoutAfterMaxMissed) {
 }
 
 TEST(HeartbeatManagerTest, NoTimeoutIfPongReceived) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 50;
     config.max_missed = 2;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {
@@ -173,11 +176,11 @@ TEST(HeartbeatManagerTest, NoTimeoutIfPongReceived) {
 }
 
 TEST(HeartbeatManagerTest, TimeoutCallbackOnlyOnce) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 5;
     config.max_missed = 1;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {
@@ -202,7 +205,7 @@ TEST(HeartbeatManagerTest, TimeoutCallbackOnlyOnce) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, DisabledNeverTimesOut) {
-    HeartbeatManager hb(HeartbeatConfig::disabled());
+    auto hb = HeartbeatManager::new_(HeartbeatConfig::disabled());
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {
@@ -222,11 +225,11 @@ TEST(HeartbeatManagerTest, DisabledNeverTimesOut) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, ResetClearsState) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 5;
     config.max_missed = 1;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     // Trigger timeout
     hb.on_heartbeat_sent();
@@ -243,11 +246,11 @@ TEST(HeartbeatManagerTest, ResetClearsState) {
 }
 
 TEST(HeartbeatManagerTest, PongResetsTimeout) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 5;
     config.max_missed = 1;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     // Trigger timeout
     hb.on_heartbeat_sent();
@@ -266,9 +269,9 @@ TEST(HeartbeatManagerTest, PongResetsTimeout) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, TimeUntilNextHeartbeat) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     // Initially 0 (never sent)
     EXPECT_EQ(hb.time_until_next_heartbeat_ms(), 0u);
@@ -283,9 +286,9 @@ TEST(HeartbeatManagerTest, TimeUntilNextHeartbeat) {
 }
 
 TEST(HeartbeatManagerTest, TimeUntilNextWithPendingPong) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     hb.on_heartbeat_sent();
 
@@ -298,10 +301,10 @@ TEST(HeartbeatManagerTest, TimeUntilNextWithPendingPong) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, ConfigAccess) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 1234;
     config.timeout_ms = 5678;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     EXPECT_EQ(hb.config().interval_ms, 1234u);
     EXPECT_EQ(hb.config().timeout_ms, 5678u);
@@ -312,11 +315,11 @@ TEST(HeartbeatManagerTest, ConfigAccess) {
 // ============================================================================
 
 TEST(HeartbeatManagerTest, ImmediateTimeout) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 0;  // Immediate timeout
     config.max_missed = 1;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {
@@ -334,11 +337,11 @@ TEST(HeartbeatManagerTest, ImmediateTimeout) {
 }
 
 TEST(HeartbeatManagerTest, MaxMissedOne) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 5;
     config.max_missed = 1;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     hb.on_heartbeat_sent();
     std::this_thread::sleep_for(milliseconds(10));
@@ -349,11 +352,11 @@ TEST(HeartbeatManagerTest, MaxMissedOne) {
 }
 
 TEST(HeartbeatManagerTest, VeryHighMaxMissed) {
-    HeartbeatConfig config;
+    auto config = HeartbeatConfig::defaults();
     config.interval_ms = 100;
     config.timeout_ms = 1;
     config.max_missed = 1000;
-    HeartbeatManager hb(config);
+    auto hb = HeartbeatManager::new_(config);
 
     std::atomic<int> timeout_count{0};
     hb.set_on_timeout([&]() {

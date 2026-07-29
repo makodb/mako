@@ -14,11 +14,11 @@ CopilotFrame::CopilotFrame(int mode) : Frame(mode) {
 
 CopilotFrame::~CopilotFrame() {
   Log_info(
-      "server %d, "
-      "[FAST_ACCEPT] %u (fast %u regular %u) "
-      "[ACCEPT] %u "
-      "[COMMIT] %u "
-      "[PREPARE] %u",
+      "server {}, "
+      "[FAST_ACCEPT] {} (fast {} regular {}) "
+      "[ACCEPT] {} "
+      "[COMMIT] {} "
+      "[PREPARE] {}",
       site_info_->id, n_fast_accept_, n_fast_path_, n_regular_path_, n_accept_, n_commit_, n_prepare_);
 }
 
@@ -34,7 +34,7 @@ Coordinator *CopilotFrame::CreateCoordinator(cooid_t coo_id,
 
   setupCoordinator(coord, config);  
 
-  Log_debug("create new copilot coord, coo_id: %d", (int)coord->coo_id_);
+  Log_debug("create new copilot coord, coo_id: {}", (int)coord->coo_id_);
   return coord;
 }
 
@@ -45,7 +45,7 @@ TxLogServer *CopilotFrame::CreateScheduler() {
     verify(0);
   }
 
-  Log_debug("create copilot sched loc: %d", this->site_info_->locale_id);
+  Log_debug("create copilot sched loc: {}", this->site_info_->locale_id);
   return sch_;
 }
 

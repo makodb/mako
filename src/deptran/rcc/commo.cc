@@ -10,7 +10,7 @@ namespace janus {
 void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
                             const function<void(int res,
                                                 TxnOutput&,
-                                                RccGraph&)>& callback) {
+                                                const RccGraph&)>& callback) {
   rrr::FutureAttr fuattr;
   auto tid = cmd[0].root_id_;
   auto par_id = cmd[0].partition_id_;
@@ -23,7 +23,7 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
         int res;
         TxnOutput output;
         rrr::AnyMessage am;
-        fu->get_reply() >> res >> output >> am;
+        rrr::deserialize_from(fu->get_reply(), res, output, am);
         // graph field rides directly as AnyMessage.
         if (am.is_a<EmptyGraph>()) {
           RccGraph rgraph;
@@ -33,14 +33,14 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
           verify(rgraph.vertex_index().size() > 0);
           callback(res, output, rgraph);
         } else if (auto sp_graph = am.unpack<RccGraph>()) {
-          callback(res, output, *sp_graph);
+          callback(res, output, *sp_graph.as_ref().unwrap());
         } else {
           verify(0);
         }
       };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(cmd[0].PartitionId()).second;
-  Log_debug("dispatch to %ld", cmd[0].PartitionId());
+  Log_debug("dispatch to {}", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
 //  verify(cmd.root_type_ > 0);
   ClassicProxy::RpcJanusDispatchRequest req;
@@ -67,16 +67,16 @@ void RccCommo::SendFinish(parid_t pid,
       return;
     }
     map<innid_t, map<int32_t, Value>> outputs;
-    fu->get_reply() >> outputs;
+    rrr::deserialize_from(fu->get_reply(), outputs);
     callback(outputs);
   };
   fuattr.callback = cb;
   auto proxy = NearestProxyForPartition(pid).second;
   // graph field is `AnyMessage` directly.
-  auto sp_graph = std::make_shared<RccGraph>(*graph);
+  auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
   ClassicProxy::RpcRccFinishRequest req;
   req.id = tid;
-  req.md_graph = *rrr::AnyMessage::pack(sp_graph);
+  req.md_graph = rrr::AnyMessage::pack(std::move(sp_graph));
   auto fu_result = proxy->async_RccFinish(req, fuattr);
   // Arc auto-released
 }
@@ -93,7 +93,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
       return;
     }
 //    janus::Command md;
-    fu->get_reply() >> *ret;
+    rrr::deserialize_from(fu->get_reply(), *ret);
     ev->set(1);
   };
   fuattr.callback = cb;
@@ -103,8 +103,8 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
   req.rank = rank;
   auto fu_result = proxy->async_RccInquire(req, fuattr);
   // Arc auto-released
-//  ev->wait(60*1000*1000);
-//  verify(ev->status_ != Event::TIMEOUT);
+//  ev->wait_timeout(60*1000*1000);
+//  verify(ev->status_ != EventStatus::TIMEOUT);
   ev->wait();
   return ret;
 }
@@ -112,7 +112,7 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
 void RccCommo::SendInquire(parid_t pid,
                            epoch_t epoch,
                            txnid_t tid,
-                           const function<void(RccGraph& graph)>& callback) {
+                           const function<void(const RccGraph& graph)>& callback) {
   FutureAttr fuattr;
   function<void(rusty::Arc<Future>)> cb = [callback] (rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {
@@ -120,10 +120,10 @@ void RccCommo::SendInquire(parid_t pid,
       return;
     }
     rrr::AnyMessage am;
-    fu->get_reply() >> am;
-    auto sp_graph = am.unpack<RccGraph>();
-    verify(sp_graph);
-    callback(*sp_graph);
+    rrr::deserialize_from(fu->get_reply(), am);
+    const auto sp_graph = am.unpack<RccGraph>();
+    verify(sp_graph.is_some());
+    callback(*sp_graph.unwrap());
   };
   fuattr.callback = cb;
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
@@ -154,7 +154,7 @@ void RccCommo::BroadcastCommit(parid_t par_id,
                         }
                         int32_t res;
                         TxnOutput output;
-                        fu->get_reply() >> res >> output;
+                        rrr::deserialize_from(fu->get_reply(), res, output);
                         callback(res, output);
                       };
     verify(cmd_id > 0);
@@ -167,12 +167,12 @@ void RccCommo::BroadcastCommit(parid_t par_id,
       // Arc auto-released
     } else {
       // graph field is `AnyMessage` directly.
-      auto sp_graph = std::make_shared<RccGraph>(*graph);
+      auto sp_graph = rusty::Arc<RccGraph>::make(*graph);
       ClassicProxy::RpcJanusCommitRequest req;
       req.id = cmd_id;
       req.rank = RANK_UNDEFINED;
       req.need_validation = need_validation;
-      req.graph = *rrr::AnyMessage::pack(sp_graph);
+      req.graph = rrr::AnyMessage::pack(std::move(sp_graph));
       auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }

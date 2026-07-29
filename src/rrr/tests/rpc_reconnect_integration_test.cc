@@ -6,6 +6,9 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
 #include "../rrr.hpp"
+
+// Trimmed from the consumer umbrella (08b68144) — import directly.
+import rrr.reconnect_policy;
 #include "benchmark_service.h"
 #include "rpc_test_ports.h"
 
@@ -92,10 +95,10 @@ protected:
 
     // Helper to start a server
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto server = new Server(Server::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone())));
         auto service_box = rusty::make_box<ReconnectTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
+        server->reg_service_typed(std::move(service_box));
+        if (server->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + std::to_string(test_port_)).c_str())) != 0) {
             delete server;
             return nullptr;
         }
@@ -142,7 +145,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -153,7 +156,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     delete server;  // Ensure reconnect attempts fail.
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -161,7 +164,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = false;
     policy.max_retries = 5;
     policy.initial_delay_ms = 200;
@@ -171,7 +174,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyWithoutAutoRetryFailsFa
     client->set_reconnect_policy(policy);
 
     auto start = steady_clock::now();
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
 
     EXPECT_NE(result, 0);
@@ -184,7 +187,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -195,7 +198,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     delete server;  // Ensure reconnect attempts fail.
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -203,7 +206,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 2;
     policy.initial_delay_ms = 80;
@@ -213,7 +216,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectPolicyAppliesRetryDelays) {
     client->set_reconnect_policy(policy);
 
     auto start = steady_clock::now();
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
 
     EXPECT_NE(result, 0);
@@ -229,7 +232,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectAfterDisconnect) {
 
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -269,7 +272,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     // Connect client
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     client->set_reconnect_policy(ReconnectPolicy::aggressive());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
@@ -280,8 +283,8 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     // Try a request - should fail
     std::string input = "test";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     if (fu_result.is_ok()) {
         auto fu = fu_result.unwrap();
@@ -314,8 +317,8 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
     if (reconnect_complete && reconnect_success) {
         // Make a request on the new connection
         auto fu2_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (fu2_result.is_ok()) {
             auto fu2 = fu2_result.unwrap();
@@ -333,7 +336,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 50;
     policy.initial_delay_ms = 20;
@@ -341,12 +344,12 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     policy.backoff_multiplier = 1.0;
     policy.jitter_enabled = false;
     client->set_reconnect_policy(policy);
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     std::string input = "auto_reconnect";
     auto warmup = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(warmup.is_ok());
     auto warmup_fu = warmup.unwrap();
@@ -368,8 +371,8 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
     bool observed_failure = false;
     for (int attempt = 0; attempt < 6 && !observed_failure; ++attempt) {
         auto failing = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         if (!failing.is_ok()) {
             observed_failure = true;
@@ -393,8 +396,8 @@ TEST_F(ReconnectIntegrationTest, DISABLED_AutoReconnectTriggeredAfterConnectionF
                                    milliseconds(1500)));
 
     auto after = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](BinaryWriteArchive& m) { m << input; }
+        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(after.is_ok());
     auto after_fu = after.unwrap();
@@ -410,7 +413,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
 
     client->close();
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -422,7 +425,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
     server = nullptr;
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -430,7 +433,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_ReconnectCallbackMatchesEachCallResult
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 200;
     policy.initial_delay_ms = 20;
@@ -491,7 +494,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     client->close();
 
     ASSERT_TRUE(wait_for_condition([&]() {
@@ -504,7 +507,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
 
     ASSERT_TRUE(wait_for_condition([&]() {
         auto probe = Client::create(poll_thread_.as_ref().unwrap());
-        int rc = probe->connect(server_addr().c_str());
+        int rc = probe->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true);
         if (rc == 0) {
             probe->close();
             return false;
@@ -512,7 +515,7 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
         return true;
     }, milliseconds(1500)));
 
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.auto_reconnect = true;
     policy.max_retries = 0;  // unlimited
     policy.initial_delay_ms = 20;
@@ -567,14 +570,14 @@ TEST_F(ReconnectIntegrationTest, DISABLED_UnlimitedReconnectRetriesUntilServerRe
 // ============================================================================
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorBackoff) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.initial_delay_ms = 100;
     policy.backoff_multiplier = 2.0;
     policy.max_delay_ms = 10000;
     policy.jitter_enabled = false;
     policy.max_retries = 5;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     // First delay should be initial
     EXPECT_EQ(calc.next_delay_ms(), 100u);
@@ -587,11 +590,11 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorBackoff) {
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorMaxRetries) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
     policy.auto_reconnect = true;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     EXPECT_TRUE(calc.should_retry());
     calc.next_delay_ms();  // Retry 1
@@ -606,10 +609,10 @@ TEST_F(ReconnectIntegrationTest, ReconnectCalculatorMaxRetries) {
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectCalculatorReset) {
-    ReconnectPolicy policy;
+    auto policy = ReconnectPolicy::new_();
     policy.max_retries = 3;
 
-    ReconnectCalculator calc(policy);
+    auto calc = ReconnectCalculator::new_(policy);
 
     calc.next_delay_ms();
     calc.next_delay_ms();
@@ -656,7 +659,7 @@ TEST_F(ReconnectIntegrationTest, ReconnectWithoutPreviousConnection) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
     // Try to reconnect without ever connecting - should fail
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
 
     // Reconnect should fail because there's no address to reconnect to
     // (depends on implementation - might return error code or succeed with no-op)
@@ -668,12 +671,12 @@ TEST_F(ReconnectIntegrationTest, ReconnectWhileConnected) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
-    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
     EXPECT_TRUE(client->connected());
 
     // Try to reconnect while already connected - should be no-op or fail
-    int result = client->reconnect();
+    int result = client->reconnect(rrr::OnReconnectCompleteCallbackFn{});
     // Either succeeds silently or returns an error
 
     EXPECT_TRUE(client->connected());  // Still connected
@@ -692,7 +695,7 @@ TEST_F(ReconnectIntegrationTest, MultipleReconnectAttempts) {
     // Connect and disconnect multiple times
     for (int i = 0; i < 3; i++) {
         if (!client->connected()) {
-            ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+            ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
         }
         std::this_thread::sleep_for(milliseconds(30));
         EXPECT_TRUE(client->connected());
@@ -700,8 +703,8 @@ TEST_F(ReconnectIntegrationTest, MultipleReconnectAttempts) {
         // Make a request to verify connection works
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP,
-            [&](BinaryWriteArchive& m) { m << input; }
+            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            [&](BinaryWriteArchive& m) { rrr::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();

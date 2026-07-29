@@ -47,36 +47,11 @@ mdb::Txn* Scheduler2pl::get_mdb_txn(const i64 tid) {
 
 
 bool Scheduler2pl::Guard(Tx &tx_box, Row *row, int col_idx, bool write) {
-  mdb::FineLockedRow* fl_row = (mdb::FineLockedRow*) row;
-  ALock* lock = fl_row->get_alock(col_idx);
-  auto sp_tx = dynamic_pointer_cast<Tx2pl>(tx_box.shared_from_this());
-  verify(!sp_tx->aborted_);
-  verify(!sp_tx->committed_);
-  if (sp_tx->wounded_) {
-    return false;
-  }
-  sp_tx->_debug_n_lock_requested_++;
-  uint64_t lock_req_id = lock->lock_sync(0, ALock::WLOCK, tx_box.tid_, [sp_tx]()->int{
-    if (sp_tx->woundable_) {
-      sp_tx->wounded_ = true;
-      return 0;
-    } else {
-      return 1;
-    }
-  });
-  verify(!sp_tx->committed_);
-  if (lock_req_id > 0) {
-    sp_tx->_debug_n_lock_granted_++;
-    if (sp_tx->aborted_) {
-      lock->abort(lock_req_id);
-      return false;
-    } else {
-      sp_tx->locked_locks_.emplace_back(lock, lock_req_id);
-      return true;
-    }
-  } else {
-    return false;
-  }
+  // The rrr ALock family (and FineLockedRow's per-column locks) was
+  // removed as dead code, so 2PL fine-grained locking has no lock
+  // implementation anymore. Abort loudly if this path is ever taken.
+  verify(0);
+  return false;
 }
 
 bool Scheduler2pl::DoPrepare(txnid_t tx_id) {
@@ -97,9 +72,6 @@ bool Scheduler2pl::DoPrepare(txnid_t tx_id) {
 
 void Scheduler2pl::DoCommit(Tx& tx_box) {
   Tx2pl& tpl_tx_box = dynamic_cast<Tx2pl&>(tx_box);
-  for (auto& pair : tpl_tx_box.locked_locks_) {
-    pair.first->abort(pair.second);
-  }
   tpl_tx_box.committed_ = true;
   auto mdb_txn = RemoveMTxn(tx_box.tid_);
   verify(mdb_txn == tx_box.mdb_txn_);
@@ -112,9 +84,6 @@ void Scheduler2pl::DoCommit(Tx& tx_box) {
 void Scheduler2pl::DoAbort(Tx& tx_box) {
   Tx2pl& tpl_tx_box = dynamic_cast<Tx2pl&>(tx_box);
   tpl_tx_box.aborted_ = true;
-  for (auto& pair : tpl_tx_box.locked_locks_) {
-    pair.first->abort(pair.second);
-  }
   auto mdb_txn = RemoveMTxn(tx_box.tid_);
   verify(mdb_txn == tx_box.mdb_txn_);
   mdb_txn->abort();

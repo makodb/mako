@@ -17,9 +17,9 @@ CoordinatorFpgaRaft::CoordinatorFpgaRaft(uint32_t coo_id,
 }
 
 CoordinatorFpgaRaft::~CoordinatorFpgaRaft() {
-  // Log_info("coordinator loc_id_=%d, client2leader_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_.pct50(), client2leader_.pct90(), client2leader_.pct99());
-  // Log_info("coordinator loc_id_=%d, client2test_point_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2test_point_.pct50(), client2test_point_.pct90(), client2test_point_.pct99());
-  // Log_info("coordinator loc_id_=%d, client2leader_send_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_send_.pct50(), client2leader_send_.pct90(), client2leader_send_.pct99());
+  // Log_info("coordinator loc_id_={}, client2leader_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2leader_.pct50(), client2leader_.pct90(), client2leader_.pct99());
+  // Log_info("coordinator loc_id_={}, client2test_point_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2test_point_.pct50(), client2test_point_.pct90(), client2test_point_.pct99());
+  // Log_info("coordinator loc_id_={}, client2leader_send_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2leader_send_.pct50(), client2leader_send_.pct90(), client2leader_send_.pct99());
 }
 
 bool CoordinatorFpgaRaft::IsLeader() {
@@ -43,7 +43,7 @@ void CoordinatorFpgaRaft::Submit(const janus::Command& cmd,
                                    rusty::Function<void()> func,
                                    rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
-  Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <{}, {}> arrive svr {} Submit: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   // client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
   if (!IsLeader()) {
@@ -73,7 +73,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
     // verify(this->sch_->IsLeader()); TODO del it yidawu
     in_append_entries = true;
     Log_debug("fpga-raft coordinator broadcasts append entries, "
-                  "par_id_: %lx, slot_id: %llx, lastLogIndex: %d",
+                  "par_id_: {:x}, slot_id: {:x}, lastLogIndex: {}",
               par_id_, slot_id_, this->sch_->lastLogIndex);
     /* Should we use slot_id instead of lastLogIndex and balot instead of term? */
     uint64_t prevLogIndex = this->sch_->lastLogIndex;
@@ -89,7 +89,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
 		this->sch_->SetLocalAppend(cmd_, &prevLogTerm, &prevLogIndex, slot_id_, curr_ballot_) ;
 
 #ifdef LATENCY_LOG_DEBUG
-    Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+    Log_info("Time of cmd <{}, {}> arrive svr {} Before BroadcastAppendEntries: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     auto sp_quorum = commo()->BroadcastAppendEntries(par_id_,
                                                      this->sch_->site_id_,
@@ -111,7 +111,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
 		clock_gettime(CLOCK_MONOTONIC, &end_);
 
 		// quorum_events_.push_back(sp_quorum);
-		// Log_info("time of Wait(): %d", (end_.tv_sec-start_.tv_sec)*1000000000 + end_.tv_nsec-start_.tv_nsec);
+		// Log_info("time of Wait(): {}", (end_.tv_sec-start_.tv_sec)*1000000000 + end_.tv_nsec-start_.tv_nsec);
 		slow_ = sp_quorum->is_slow();
 		
 		long leader_time;
@@ -119,7 +119,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
 		int total_ob = 0;
 		int avg_ob = 0;
-		//Log_info("begin_index: %d", commo()->begin_index);
+		//Log_info("begin_index: {}", commo()->begin_index);
 		if (commo()->begin_index >= 1000) {
 			if (commo()->ob_index < 100) {
 				commo()->outbounds[commo()->ob_index] = commo()->outbound;
@@ -139,24 +139,24 @@ void CoordinatorFpgaRaft::AppendEntries() {
 		avg_ob = total_ob/100;
 
 		for (auto it = commo()->rpc_clients_.begin(); it != commo()->rpc_clients_.end(); it++) {
-			if (avg_ob > 0 && it->second->time() > 0) Log_info("time for %d is: %d", it->first, it->second->time()/avg_ob);
+			if (avg_ob > 0 && it->second->time() > 0) Log_info("time for {} is: {}", it->first, it->second->time()/avg_ob);
 			if (it->first != loc_id_) {
 				follower_times.push_back(it->second->time());
 			}
 		}
 		if (avg_ob > 0 && !slow_) {
-			Log_debug("number of rpcs: %d", avg_ob);
-			Log_debug("%d and %d", follower_times[0]/avg_ob, follower_times[1]/avg_ob);
+			Log_debug("number of rpcs: {}", avg_ob);
+			Log_debug("{} and {}", follower_times[0]/avg_ob, follower_times[1]/avg_ob);
 			slow_ = follower_times[0]/avg_ob > 80000 && follower_times[1]/avg_ob > 80000;
 		}
 
-		//Log_info("slow?: %d", slow_);
+		//Log_info("slow?: {}", slow_);
     if (sp_quorum->yes()) {
         minIndex = sp_quorum->minIndex;
-				//Log_info("%d vs %d", minIndex, this->sch_->commitIndex);
+				//Log_info("{} vs {}", minIndex, this->sch_->commitIndex);
         verify(minIndex >= this->sch_->commitIndex) ;
         committed_ = true;
-        Log_debug("fpga-raft append commited loc:%d minindex:%d", loc_id_, minIndex ) ;
+        Log_debug("fpga-raft append commited loc:{} minindex:{}", loc_id_, minIndex ) ;
     }
     else if (sp_quorum->no()) {
         verify(0);
@@ -171,14 +171,14 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
 void CoordinatorFpgaRaft::Commit() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // Log_info("About to commit slot %d <%d, %d> key %d", slot_id_,
+  // Log_info("About to commit slot {} <{}, {}> key {}", slot_id_,
   //   SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, SimpleRWCommand::GetKey(cmd_));
   commit_callback_();
-  Log_debug("fpga-raft broadcast commit for partition: %d, slot %d",
+  Log_debug("fpga-raft broadcast commit for partition: {}, slot {}",
             (int) par_id_, (int) slot_id_);
 #ifdef LATENCY_LOG_DEBUG
   // GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <{}, {}> arrive svr {} Before BroadcastDecide: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
   commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
   verify(phase_ == Phase::COMMIT);
@@ -191,7 +191,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     uint64_t prevCommitIndex = this->sch_->commitIndex;
     verify(minIndex >= prevCommitIndex);
     this->sch_->commitIndex = std::max(this->sch_->commitIndex, minIndex);
-    Log_debug("fpga-raft commit for partition: %d, slot %d, commit %d minIndex %d in loc:%d", 
+    Log_debug("fpga-raft commit for partition: {}, slot {}, commit {} minIndex {} in loc:{}", 
       (int) par_id_, (int) slot_id_, sch_->commitIndex, minIndex, loc_id_);
 
     /* if (prevCommitIndex < this->sch_->commitIndex) { */
@@ -200,7 +200,7 @@ void CoordinatorFpgaRaft::LeaderLearn() {
     /* } */
 #ifdef LATENCY_LOG_DEBUG
     // GetCmdID still takes shared_ptr<Marshallable>.
-  Log_info("Time of cmd <%d, %d> arrive svr %d Before BroadcastDecide: %.2fms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
+  Log_info("Time of cmd <{}, {}> arrive svr {} Before BroadcastDecide: {:.2f}ms", SimpleRWCommand::GetCmdID(cmd_).first, SimpleRWCommand::GetCmdID(cmd_).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
     commo()->BroadcastDecide(par_id_, slot_id_, dep_id_, curr_ballot_, cmd_);
     verify(phase_ == Phase::COMMIT);

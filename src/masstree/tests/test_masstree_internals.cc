@@ -25,6 +25,7 @@
 #include "masstree/kvthread.hh"
 
 import std;
+import rusty;
 
 // Provide globalepoch definition for this test file
 volatile mrcu_epoch_type globalepoch = 1;

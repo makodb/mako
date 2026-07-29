@@ -93,7 +93,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
   auto seconds = chrono::duration_cast<chrono::seconds>(start-midn);
 
   auto start_ = chrono::duration_cast<chrono::microseconds>(start-midn-hours-minutes).count();
-  //Log_info("Duration of RPC is: %d", start_-time);
+  //Log_info("Duration of RPC is: {}", start_-time);
 
   auto coro = Fiber::create_run([&] () {
     sched_->OnAccept(slot,
@@ -108,8 +108,8 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 
   auto end = chrono::system_clock::now();
   auto duration = chrono::duration_cast<chrono::microseconds>(end-start);
-  //Log_info("Duration of Accept() at Follower's side is: %d", duration.count());
-  //Log_info("coro id on service side: %d", coro->id);
+  //Log_info("Duration of Accept() at Follower's side is: {}", duration.count());
+  //Log_info("coro id on service side: {}", coro->id);
 }
 
 void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
@@ -169,26 +169,22 @@ void MultiPaxosServiceImpl::SyncLog(const janus::Command& md_cmd,
                                      janus::Command* ret,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  *ret = std::make_shared<SyncLogResponse>();
-  auto response = marshallable_cast<SyncLogResponse>(ret);
-  Fiber::create_run([&] () {
-    sched_->OnSyncLog(md_cmd,
-                      ballot,
-                      valid,
-                      response,
-                      [defer = std::move(defer)]() mutable { defer.reply(); });
-  //  auto rpx = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
-  //   auto xx = (int32_t)rpx->missing_slots.size();
-  //   Log_info("received a OnSyncLog2,xxx: %d",xx);
-  //   for(int i = 0; i < rpx->missing_slots.size(); i++){
-  //      Log_info("yy2: %d", (int32_t)rpx->missing_slots[i].size());
-  //      for(int j = 0; j < rpx->missing_slots[i].size(); j++){
-  //         Log_info("yy2 a OnSyncLog2,xxx: %d",j);
-  //      }
-  //   }
+  // Default reply payload (the OnSyncLog early-return path keeps it) —
+  // byte-identical to the pre-reshape empty pack.
+  *ret = rusty::Arc<SyncLogResponse>::make();
+  Fiber::create_run([&, defer = std::move(defer)] () mutable {
+    // Fill-then-wrap: the response lives on the fiber stack and is
+    // packed into *ret only after OnSyncLog completes; the reply then
+    // fires explicitly. (Previously the response was packed EMPTY up
+    // front and filled through the packed handle, and the reply fired
+    // from the dead cb-lambda's DeferredReply destructor.)
+    SyncLogResponse response;
+    sched_->OnSyncLog(md_cmd, ballot, valid, response);
+    if (*valid == 1) {
+      *ret = rusty::Arc<SyncLogResponse>::make(std::move(response));
+    }
     defer.reply();
   });
-
 }
 
 void MultiPaxosServiceImpl::SyncCommit(const janus::Command& md_cmd,

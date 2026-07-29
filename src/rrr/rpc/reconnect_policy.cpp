@@ -14,55 +14,115 @@ import rrr.rand;
 // backoff math). No raw pointers, syscalls, or operator-overload chains.
 export namespace rrr {
 
-// ReconnectPolicy is a plain aggregate POD: no user-declared
-// constructors, fields carry in-class default initializers that the
-// `conservative()` preset matches. This shape is intentionally kept
-// in plain C++ rather than migrated to the inline-Rust DSL because
-// the DSL does not emit per-field in-class `= default` initializers
-// (`bool auto_reconnect = true;`). ~20 callers / tests rely on the
-// `ReconnectPolicy policy; policy.X = ...;` default-mutate-customize
-// pattern that needs those documented defaults present after default
-// construction; patching all of them is bigger than its DSL-migration
-// payoff (the struct is already a pure aggregate after dropping the
-// user-defined ctors).
+// `ReconnectPolicy` — plain copyable aggregate of backoff knobs.
+// Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
+// the source of truth; the transpiler regenerates the matching
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block.
 //
-// The previous user-defined default and parameterized ctors were
-// dropped — the one external caller that wrote `ReconnectPolicy()`
-// was switched to `ReconnectPolicy::conservative()` (identical
-// values), and the parameterized ctor was never called from outside
-// this file.
+// Behavioral diffs from the original C++ struct:
+//   * The DSL can't emit per-field in-class default initializers
+//     (`bool auto_reconnect = true;`), so the defaults moved into the
+//     `fn new()` factory (== the old defaults == `conservative()`).
+//     Every former `ReconnectPolicy policy;` default-construct site was
+//     swept to `auto policy = ReconnectPolicy::new_();` — a bare
+//     `ReconnectPolicy{}` now VALUE-INITIALIZES (all fields zero/false),
+//     so never default-construct one directly; go through the factory
+//     or a preset.
+//   * The presets keep their names/signatures (static member fns).
+#if RUSTYCPP_RUST
 struct ReconnectPolicy {
-    bool auto_reconnect = true;
-    uint32_t max_retries = 5;
-    uint32_t initial_delay_ms = 1000;
-    uint32_t max_delay_ms = 30000;
-    double backoff_multiplier = 2.0;
-    bool jitter_enabled = true;
+    auto_reconnect: bool,
+    max_retries: u32,
+    initial_delay_ms: u32,
+    max_delay_ms: u32,
+    backoff_multiplier: f64,
+    jitter_enabled: bool,
+}
 
-    static ReconnectPolicy aggressive() {
-        return ReconnectPolicy{true, 0, 100, 5000, 1.5, true};
+impl ReconnectPolicy {
+    // The documented defaults (identical to `conservative()`).
+    fn new() -> ReconnectPolicy {
+        ReconnectPolicy {
+            auto_reconnect: true,
+            max_retries: 5u32,
+            initial_delay_ms: 1000u32,
+            max_delay_ms: 30000u32,
+            backoff_multiplier: 2.0,
+            jitter_enabled: true,
+        }
     }
 
-    static ReconnectPolicy conservative() {
-        return ReconnectPolicy{true, 5, 1000, 30000, 2.0, true};
+    fn aggressive() -> ReconnectPolicy {
+        ReconnectPolicy {
+            auto_reconnect: true,
+            max_retries: 0u32,
+            initial_delay_ms: 100u32,
+            max_delay_ms: 5000u32,
+            backoff_multiplier: 1.5,
+            jitter_enabled: true,
+        }
     }
 
-    static ReconnectPolicy no_retry() {
-        return ReconnectPolicy{false, 0, 0, 0, 1.0, false};
+    fn conservative() -> ReconnectPolicy {
+        ReconnectPolicy::new()
     }
+
+    fn no_retry() -> ReconnectPolicy {
+        ReconnectPolicy {
+            auto_reconnect: false,
+            max_retries: 0u32,
+            initial_delay_ms: 0u32,
+            max_delay_ms: 0u32,
+            backoff_multiplier: 1.0,
+            jitter_enabled: false,
+        }
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reconnect_policy.policy version=1 rust_sha256=30e1267bb211e3941b7f8f7e43b68c08fb943c930b87ecdf10fe83e4436ad12f*/
+struct ReconnectPolicy;
+
+struct ReconnectPolicy {
+    bool auto_reconnect;
+    uint32_t max_retries;
+    uint32_t initial_delay_ms;
+    uint32_t max_delay_ms;
+    double backoff_multiplier;
+    bool jitter_enabled;
+
+    static ReconnectPolicy new_();
+    static ReconnectPolicy aggressive();
+    static ReconnectPolicy conservative();
+    static ReconnectPolicy no_retry();
 };
+
+
+ReconnectPolicy ReconnectPolicy::new_() {
+    return ReconnectPolicy{.auto_reconnect = true, .max_retries = static_cast<uint32_t>(5), .initial_delay_ms = static_cast<uint32_t>(1000), .max_delay_ms = static_cast<uint32_t>(30000), .backoff_multiplier = 2.0, .jitter_enabled = true};
+}
+
+ReconnectPolicy ReconnectPolicy::aggressive() {
+    return ReconnectPolicy{.auto_reconnect = true, .max_retries = static_cast<uint32_t>(0), .initial_delay_ms = static_cast<uint32_t>(100), .max_delay_ms = static_cast<uint32_t>(5000), .backoff_multiplier = 1.5, .jitter_enabled = true};
+}
+
+ReconnectPolicy ReconnectPolicy::conservative() {
+    return ReconnectPolicy::new_();
+}
+
+ReconnectPolicy ReconnectPolicy::no_retry() {
+    return ReconnectPolicy{.auto_reconnect = false, .max_retries = static_cast<uint32_t>(0), .initial_delay_ms = static_cast<uint32_t>(0), .max_delay_ms = static_cast<uint32_t>(0), .backoff_multiplier = 1.0, .jitter_enabled = false};
+}
+/*RUSTYCPP:GEN-END id=reconnect_policy.policy*/
 
 // `ReconnectCalculator` — exponential-backoff state machine over a
 // `const ReconnectPolicy&` and a `rusty::Cell<u32>` retry counter.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
-// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The constructor uses the
-// `#[cpp_ctor]` attribute (added in `shuaimu/rusty-cpp@9703c1d`) to
-// lower to a real `ReconnectCalculator(const ReconnectPolicy&)` ctor
-// instead of the default `static ReconnectCalculator new_(...)`
-// factory, so all ~20 call sites (`ReconnectCalculator calc(policy);`)
-// keep compiling unchanged.
+// `/*RUSTYCPP:GEN-BEGIN ... END*/` block. The plain `fn new(policy)`
+// lowers to a `static ReconnectCalculator new_(const ReconnectPolicy&)`
+// factory; callers construct via the factory rather than direct ctor
+// syntax (`auto calc = ReconnectCalculator::new_(policy);`).
 //
 // Field rename note: the original C++ class used a private member
 // `retry_count_` alongside a public method `retry_count()`. The DSL
@@ -91,15 +151,14 @@ struct ReconnectPolicy {
 #if RUSTYCPP_RUST
 struct ReconnectCalculator<'p> {
     policy: &'p ReconnectPolicy,
-    retries: rusty::Cell<u32>,
+    retries: Cell<u32>,
 }
 
 impl<'p> ReconnectCalculator<'p> {
-    #[cpp_ctor]
     fn new(policy: &'p ReconnectPolicy) -> ReconnectCalculator<'p> {
         ReconnectCalculator {
             policy: policy,
-            retries: rusty::Cell::new(0u32),
+            retries: Cell::new(0u32),
         }
     }
 
@@ -179,14 +238,14 @@ impl<'p> ReconnectCalculator<'p> {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=ab86f9333e140938a67528059e3a66f12f5242e96fa76475071c226225e0dc9e*/
+/*RUSTYCPP:GEN-BEGIN id=reconnect_calculator.1 version=1 rust_sha256=54c0a4cbba7cb91cdd16c0d6c5fe650673562ed05bcd904245a484a850fe649a*/
 struct ReconnectCalculator;
 
 struct ReconnectCalculator {
     const ReconnectPolicy& policy;
     rusty::Cell<uint32_t> retries;
 
-    ReconnectCalculator(const ReconnectPolicy& policy);
+    static ReconnectCalculator new_(const ReconnectPolicy& policy);
     bool should_retry() const;
     uint32_t next_delay_ms() const;
     uint32_t peek_delay_ms() const;
@@ -196,13 +255,12 @@ struct ReconnectCalculator {
 };
 
 
-ReconnectCalculator::ReconnectCalculator(const ReconnectPolicy& policy)
-    : policy(policy)
-    , retries(rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)))
-{}
+ReconnectCalculator ReconnectCalculator::new_(const ReconnectPolicy& policy) {
+    return ReconnectCalculator{.policy = policy, .retries = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0))};
+}
 
 bool ReconnectCalculator::should_retry() const {
-    if (!this->policy.auto_reconnect) {
+    if (rusty::detail::rust_not(this->policy.auto_reconnect)) {
         return false;
     }
     if (rusty::detail::deref_if_pointer_like(this->policy.max_retries) == static_cast<uint32_t>(0)) {
@@ -230,7 +288,7 @@ uint32_t ReconnectCalculator::next_delay_ms() const {
     if (rusty::detail::deref_if_pointer_like(this->policy.jitter_enabled) && (rusty::detail::deref_if_pointer_like(delay) > 0.0)) {
         delay *= RandomGenerator::rand_double(0.5, 1.5);
     }
-    return static_cast<uint32_t>(delay);
+    return rusty::float_to_int_cast<uint32_t>(delay);
 }
 
 uint32_t ReconnectCalculator::peek_delay_ms() const {
@@ -248,7 +306,7 @@ uint32_t ReconnectCalculator::peek_delay_ms() const {
     if (rusty::detail::deref_if_pointer_like(delay) > ((static_cast<double>(this->policy.max_delay_ms)))) {
         delay = static_cast<double>(this->policy.max_delay_ms);
     }
-    return static_cast<uint32_t>(delay);
+    return rusty::float_to_int_cast<uint32_t>(delay);
 }
 
 void ReconnectCalculator::reset() const {
@@ -260,7 +318,7 @@ uint32_t ReconnectCalculator::retry_count() const {
 }
 
 bool ReconnectCalculator::retries_exhausted() const {
-    if (!this->policy.auto_reconnect) {
+    if (rusty::detail::rust_not(this->policy.auto_reconnect)) {
         return true;
     }
     if (rusty::detail::deref_if_pointer_like(this->policy.max_retries) == static_cast<uint32_t>(0)) {

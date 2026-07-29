@@ -33,7 +33,7 @@
 //
 //    timer.stop();
 //
-//    Log::info("std random performance: %f", timer.elapsed());
+//    Log_info("std random performance: {:f}", timer.elapsed());
 //}
 //
 //TEST(RandomGenerator, std_rand_perf) {
@@ -58,7 +58,7 @@
 //
 //    timer.stop();
 //
-//    Log::info("std random performance: %f", timer.elapsed());
+//    Log_info("std random performance: {:f}", timer.elapsed());
 //}
 //
 //TEST(RandomGenerator, rand_performance) {
@@ -83,7 +83,7 @@
 //
 //    timer.stop();
 //
-//    Log::info("random generator performance: %f", timer.elapsed());
+//    Log_info("random generator performance: {:f}", timer.elapsed());
 //}
 //
 //
@@ -202,7 +202,7 @@
 //void *rand_helper(void *) {
 //    for (int i = 0; i < num_generate; i++) {
 //        int r = RandomGenerator::rand(min, max);
-//        Log::info("rand: %d", r);
+//        Log_info("rand: {}", r);
 //        pthread_mutex_lock(&mutex);
 //        rand_set.insert(r);
 //        pthread_mutex_unlock(&mutex);

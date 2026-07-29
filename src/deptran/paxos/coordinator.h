@@ -39,9 +39,9 @@ class CoordinatorMultiPaxos : public Coordinator {
                         uint32_t thread_id);
   ~CoordinatorMultiPaxos() {
 #ifdef LATENCY_DEBUG
-    Log_info("coordinator loc_id_=%d, client2leader_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_.pct50(), client2leader_.pct90(), client2leader_.pct99());
-    // Log_info("coordinator loc_id_=%d, client2test_point_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2test_point_.pct50(), client2test_point_.pct90(), client2test_point_.pct99());
-    Log_info("coordinator loc_id_=%d, client2leader_send_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_send_.pct50(), client2leader_send_.pct90(), client2leader_send_.pct99());
+    Log_info("coordinator loc_id_={}, client2leader_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2leader_.pct50(), client2leader_.pct90(), client2leader_.pct99());
+    // Log_info("coordinator loc_id_={}, client2test_point_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2test_point_.pct50(), client2test_point_.pct90(), client2test_point_.pct99());
+    Log_info("coordinator loc_id_={}, client2leader_send_ 50pct: {:.2f} 90pct: {:.2f} 99pct: {:.2f}", loc_id_, client2leader_send_.pct50(), client2leader_send_.pct90(), client2leader_send_.pct99());
 #endif
   }
   ballot_t curr_ballot_ = 1; // TODO

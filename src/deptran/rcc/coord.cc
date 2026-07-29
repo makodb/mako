@@ -68,7 +68,7 @@ void RccCoord::DispatchAsync() {
 void RccCoord::DispatchAck(phase_t phase,
                            int res,
                            TxnOutput& output,
-                           RccGraph &graph) {
+                           const RccGraph& graph) {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   verify(phase == phase_); // cannot proceed without all acks.
   verify(tx_data().root_id_ == tx_data().id_);
@@ -88,12 +88,12 @@ void RccCoord::DispatchAck(phase_t phase,
     verify(dispatch_acks_[pair.first] == false);
     dispatch_acks_[pair.first] = true;
     tx_data().Merge(pair.first, pair.second);
-    Log_debug("get start ack %ld/%ld for cmd_id: %lx, inn_id: %d",
+    Log_debug("get start ack {}/{} for cmd_id: {:x}, inn_id: {}",
               n_dispatch_ack_, n_dispatch_, tx_data().id_, pair.first);
   }
 
   // where should I store this graph?
-//  Log_debug("start response graph size: %d", (int)graph.size());
+//  Log_debug("start response graph size: {}", (int)graph.size());
 //  verify(graph.size() > 0);
 
 //  sp_graph_->Aggregate(0, graph);
@@ -102,13 +102,13 @@ void RccCoord::DispatchAck(phase_t phase,
 //  if (graph.size() > 1) tx_data().disable_early_return();
 
   if (tx_data().HasMoreUnsentPiece()) {
-    Log_debug("command has more sub-cmd, cmd_id: %lx,"
-                  " n_started_: %d, n_pieces: %d",
+    Log_debug("command has more sub-cmd, cmd_id: {:x},"
+                  " n_started_: {}, n_pieces: {}",
               tx_data().id_,
               tx_data().n_pieces_dispatched_, tx_data().GetNPieceAll());
     DispatchAsync();
   } else if (AllDispatchAcked()) {
-    Log_debug("receive all start acks, txn_id: %llx; START PREPARE", cmd_->id_);
+    Log_debug("receive all start acks, txn_id: {:x}; START PREPARE", cmd_->id_);
     verify(!tx_data().do_early_return());
     GotoNextPhase();
   }
@@ -149,7 +149,7 @@ void RccCoord::FinishAck(phase_t phase,
 //  verify(phase_ == phase);
 //  n_finish_ack_++;
 //
-//  Log_debug("receive finish response. tid: %llx", cmd_->id_);
+//  Log_debug("receive finish response. tid: {:x}", cmd_->id_);
 //  tx_data().outputs_.insert(output.begin(), output.end());
 //
 //  verify(!tx_data().do_early_return());
@@ -157,7 +157,7 @@ void RccCoord::FinishAck(phase_t phase,
 ////  verify(all_acked == txn().OutputReady());
 //  if (all_acked) {
 //    // generate a reply and callback.
-//    Log_debug("deptran callback, %llx", cmd_->id_);
+//    Log_debug("deptran callback, {:x}", cmd_->id_);
 //    committed_ = true;
 //    GotoNextPhase();
 //  }
@@ -230,7 +230,7 @@ void RccCoord::DispatchRo() {
 //    verify(subcmd->root_id_ == cmd_->id_);
 //    n_dispatch_++;
 //    cnt++;
-//    Log_debug("send out start request %ld, cmd_id: %lx, inn_id: %d, pie_id: %lx",
+//    Log_debug("send out start request {}, cmd_id: {:x}, inn_id: {}, pie_id: {:x}",
 //              n_dispatch_, cmd_->id_, subcmd->inn_id_, subcmd->id_);
 //    dispatch_acks_[subcmd->inn_id()] = false;
 //    commo()->SendHandoutRo(*subcmd,
@@ -254,7 +254,7 @@ void RccCoord::DispatchRoAck(phase_t phase,
   cmd_->Merge(cmd);
   curr_vers_.insert(vers.begin(), vers.end());
 
-  Log_debug("receive deptran RO start response, tid: %llx, pid: %llx, ",
+  Log_debug("receive deptran RO start response, tid: {:x}, pid: {:x}, ",
              cmd_->id_,
              cmd.inn_id_);
 

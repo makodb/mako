@@ -72,7 +72,7 @@ public:
      * Request: <client_id: u64>
      * Response: <txn_id: u64> <status: i32>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandleBeginTxn(rusty::Box<rrr::Request> req,
                         rrr::WeakServerConnection sconn);
 
@@ -81,7 +81,7 @@ public:
      * Request: <txn_id: u64>
      * Response: <status: i32>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandleCommit(rusty::Box<rrr::Request> req,
                       rrr::WeakServerConnection sconn);
 
@@ -90,7 +90,7 @@ public:
      * Request: <txn_id: u64>
      * Response: <status: i32>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandleRollback(rusty::Box<rrr::Request> req,
                         rrr::WeakServerConnection sconn);
 
@@ -99,7 +99,7 @@ public:
      * Request: <txn_id: u64> <table_id: i32> <key: string> <value: string>
      * Response: <status: i32>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandlePut(rusty::Box<rrr::Request> req,
                    rrr::WeakServerConnection sconn);
 
@@ -108,7 +108,7 @@ public:
      * Request: <txn_id: u64> <table_id: i32> <key: string>
      * Response: <status: i32> <value: string>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandleGet(rusty::Box<rrr::Request> req,
                    rrr::WeakServerConnection sconn);
 
@@ -117,7 +117,7 @@ public:
      * Request: <txn_id: u64> <table_id: i32> <key: string>
      * Response: <status: i32>
      */
-    // @safe - Uses Marshal for serialization
+    // @safe - archive serde over the request body cursor
     void HandleDelete(rusty::Box<rrr::Request> req,
                       rrr::WeakServerConnection sconn);
 

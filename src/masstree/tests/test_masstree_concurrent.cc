@@ -24,6 +24,7 @@
 #include "mako/varkey.h"
 
 import std;
+import rusty;
 
 // Required by Masstree's RCU machinery when concurrent_btree is used.
 volatile mrcu_epoch_type globalepoch = 1;
@@ -241,9 +242,11 @@ TEST(MasstreeConcurrent, ScannersSeeSortedOutputUnderInserters) {
     threads.push(rusty::thread::spawn([&tree, &stop, &bad_order, &bad_value, &scans_run]() {
       class Cb : public TestTree::search_range_callback {
        public:
-        // uint64_t is trivially destructible, so rusty::Vec<uint64_t>'s
-        // destructor is noexcept and satisfies the base class's
-        // implicitly-noexcept virtual ~callback().
+        // Explicit noexcept dtor: rusty::Vec's destructor is now
+        // unconditionally noexcept(false) (even for trivial T like uint64_t),
+        // so the implicit dtor would be more lax than the base callback's
+        // noexcept virtual ~callback(). The Vec destructors never throw.
+        ~Cb() noexcept {}
         rusty::Vec<uint64_t> keys_seen;
         rusty::Vec<uint64_t> values_seen;
         bool invoke(const TestTree::string_type& k, TestTree::value_type v) override {
