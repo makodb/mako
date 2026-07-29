@@ -269,6 +269,22 @@ pump design lands. Parity gate: **on track**.
 
 ## Status log
 
+- **2026-07-28 — ★ 6/6: THE ENTIRE CRATE TRANSPILES AND COMPILES AS
+  C++20 MODULES** (`c732a460` + rusty-cpp fix stack): with upstream
+  fixes #41 (crate-root requalification), #42 (sibling aliases +
+  using-declarations), #43 (clone_from_slice array operands), and the
+  #40 fix pair (primitive-impl `self` typing + float byte-conversion
+  lowerings; UFCS emitter exposes the concrete self type), plus three
+  srpc-side idiomatic-Rust shape improvements (slice-param varint API,
+  explicit `&mut b[..]` reslices, plain-path `from_le_bytes` — each
+  filed or noted as #44 context), `--auto-namespace` crate translation
+  emits six modules that ALL compile under mako's clang-22/C++23
+  toolchain: `srpc.wire.{varint,archive,frame,serde}`, `srpc.wire`,
+  `srpc`. Goal 2's riskiest link — the no-FFI translation pipeline —
+  is proven at compile level. Next: runtime proof (three-way golden
+  corpus through the translated modules), then check-in + drift guard
+  once the upstream PRs merge and the pin bumps.
+
 - **2026-07-28 — W3 spike + W8 first baselines** (this commit): see
   the two sections above. Upstream issues #37–#40 filed. Transpiler
   built at the pin inside the worktree submodule (`cargo build
