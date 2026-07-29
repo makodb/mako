@@ -488,6 +488,20 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::heartbeat`** (this commit). Keepalive with
+  one ping outstanding at a time; `check_timeout` counts a missed pong
+  and declares the connection dead exactly once after `max_missed`.
+  Timestamps are `Option<Instant>`, so "never pinged" is a state the
+  type expresses rather than timestamp 0 — which also makes the first
+  ping due immediately, since nothing yet proves the peer is alive.
+  Driven by `_at` twins in tests, so the miss-accumulation path is
+  covered without waiting real seconds. 94 crate tests; gate at
+  **19/19 modules, golden 64/64**.
+
+  With this, S3's connection-policy set is complete: errors,
+  reconnect backoff, circuit breaker, connection lifecycle, request
+  options and keepalive.
+
 - **2026-07-29 — S3: `rpc::request_options`** (this commit).
   Per-request timeout and retry policy. The load-bearing rule is that
   **retries require idempotence** — `max_retries` alone never
