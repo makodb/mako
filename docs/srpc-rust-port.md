@@ -488,6 +488,31 @@ runs the golden phase).
 
 ## Status log
 
+- **2026-07-29 — S3: `rpc::connection_metrics`** (this commit), which
+  closes the loop with the load balancer by implementing its
+  `Candidate` trait directly.
+
+  **The port fixes a real defect rather than reproducing it.** The C++
+  increments are `load(Relaxed)` → add → `store(Relaxed)`: a
+  read-modify-write that is NOT atomic even though every field is an
+  atomic, so two threads completing requests at the same moment can
+  read the same value and store the same result, silently losing a
+  count. This uses `fetch_add`/`fetch_min`/`fetch_max`/`fetch_update`,
+  and a four-thread test would catch any regression to the old shape.
+  In-flight decrements saturate at zero: a stray completion must not
+  wrap the gauge to `u64::MAX` and make the connection look infinitely
+  busy to the balancer. 118 crate tests; gate at **21/21 modules,
+  golden 64/64**.
+
+  Two supporting pieces: the runtime gained `fetch_min`/`fetch_max`/
+  `fetch_update` (std atomics with no `std::atomic` counterpart —
+  each is the standard CAS loop, comparing in the atomic's own type
+  since `U` deduces to `int` from a literal). And two srpc-side
+  translation idioms are now settled: always reach siblings through a
+  `use` declaration rather than an inline `crate::a::b::f()` path, and
+  avoid `&[&AtomicU64]` arrays, which lower to `reference_wrapper` and
+  do not auto-deref to the atomic's methods.
+
 - **2026-07-29 — S3: `rpc::load_balancer`** (this commit). The four
   selection policies. The C++ version is a template over an opaque
   client vector that reaches through each handle for
