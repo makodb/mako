@@ -574,6 +574,44 @@ more often than the C++ 64 KiB consumed-prefix rule.
 
 ## Status log
 
+- **2026-07-29/30 — S2 second half: the poll thread** (this commit).
+  `runtime::poll_thread` ports `pollworker_poll_loop` and its command
+  channel. **Goal 1 complete: 7/7 poll-thread tests, 138 crate tests**
+  — reads delivered, writable dispatched with the returned mode
+  applied (so `EPOLLOUT` is dropped rather than spinning), peer hangup
+  reaching `handle_error` and deregistering, data arriving WITH a
+  hangup parsed before teardown, `remove` stopping delivery, and eight
+  connections multiplexed.
+
+  The port's biggest design decision is settled here: **`Pollable`
+  takes `&self`**, with interior mutability inside implementors. A
+  user thread calls `send_frame` on the same object the poll thread is
+  reading, so `&mut self` would need external synchronisation at every
+  call site. The C++ reaches the same shape by making everything
+  `const` and mutating through members.
+
+  The 1 ms `epoll_wait` with no wakeup fd, and the non-blocking
+  command drain after it, are reproduced deliberately — the baseline
+  showed depth-1 throughput is entirely this path.
+
+  Upstream fix it required: **`Arc<dyn Trait>` / `Rc<dyn Trait>` now
+  map to the interface type.** `Box<dyn Trait>` already did; the
+  shared pointers fell through to `rusty::Arc<void*>`, so every method
+  call on a trait object failed. Bin suite 1927/1927.
+
+  **Two Goal-2 gaps remain open on this module** (it translates but
+  does not yet compile; Goal 1, the current target, is unaffected):
+  1. An interface class is emitted AFTER its first use — `Pollable` is
+     declared at line 5014 but referenced at 4946 — so interface
+     classes need a forward declaration hoisted above the types that
+     hold them.
+  2. An inherent method on a newtype tuple struct is dropped at a call
+     site reached through tuple indexing: `r.readable()` where
+     `r = ready[i].1` emits just `r`, giving "not contextually
+     convertible to bool".
+  Both are narrow and reproducible; the rest of the crate (24 modules)
+  still compiles and the runtime golden is still 64/64.
+
 - **2026-07-29 — S2 (first half): `sys` kernels + epoll wrapper**
   (this commit). `crates/srpc/src/sys/` is the crate's ENTIRE syscall
   surface — every `unsafe` block lives there under a scoped
