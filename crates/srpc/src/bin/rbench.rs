@@ -39,6 +39,7 @@
 
 use srpc::rpc::client::ClientConnection;
 use srpc::rpc::server::{Registry, Server};
+use srpc::rpc::task::{spawn, RpcFuture};
 use srpc::runtime::poll_thread::PollThread;
 use srpc::wire::{Serialize, WriteArchive};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -56,6 +57,8 @@ struct Config {
     threads: usize,
     depth: usize,
     bytes: usize,
+    /// `block` = one park per request; `await` = the executor.
+    mode: String,
 }
 
 fn usage() -> ! {
@@ -78,6 +81,7 @@ fn parse_args() -> Config {
         threads: 4,
         depth: 1,
         bytes: 10,
+        mode: "block".to_string(),
     };
     let argv: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -98,6 +102,7 @@ fn parse_args() -> Config {
             "-t" => cfg.threads = need(i).parse().unwrap_or_else(|_| usage()),
             "-o" => cfg.depth = need(i).parse().unwrap_or_else(|_| usage()),
             "-b" => cfg.bytes = need(i).parse().unwrap_or_else(|_| usage()),
+            "-m" => cfg.mode = need(i),
             _ => usage(),
         }
         i += 2;
@@ -153,6 +158,8 @@ fn main() {
     let poll = PollThread::start();
 
     let mut workers = Vec::new();
+    let mut handles = Vec::new();
+    let mut conns = Vec::new();
     for t in 0..cfg.threads {
         let conn = match ClientConnection::connect(&cfg.addr, &poll) {
             Ok(c) => c,
@@ -161,6 +168,33 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        if cfg.mode == "await" {
+            // The executor path: `depth` tasks per connection, each
+            // looping call -> await -> count. The continuation runs on
+            // the POLL THREAD inside the reply callback, so a request
+            // costs no park/unpark — which is the entire reason S7
+            // exists. Nothing is spawned on a user thread here.
+            let args = nop_args(cfg.bytes);
+            for _ in 0..cfg.depth {
+                let conn = Arc::clone(&conn);
+                let stop = Arc::clone(&stop);
+                let ok_count = Arc::clone(&ok_count);
+                let args = args.clone();
+                handles.push(spawn(async move {
+                    while !stop.load(Ordering::Relaxed) {
+                        let Ok(fu) = conn.call(FAST_NOP, &args) else {
+                            break;
+                        };
+                        if RpcFuture::new(fu).await.is_ok() {
+                            ok_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }));
+            }
+            conns.push(conn);
+            continue;
+        }
+
         let stop = Arc::clone(&stop);
         let ok_count = Arc::clone(&ok_count);
         let args = nop_args(cfg.bytes);
@@ -225,6 +259,12 @@ fn main() {
 
     for w in workers {
         let _ = w.join();
+    }
+    for h in &handles {
+        h.join();
+    }
+    for c in &conns {
+        c.close();
     }
     poll.shutdown();
 }

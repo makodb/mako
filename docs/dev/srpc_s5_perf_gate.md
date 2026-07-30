@@ -92,3 +92,37 @@ read pump), and every reply allocates a fresh `Vec` and takes the
 outbound mutex. Neither has been profiled; recording the number now so
 the investigation starts from a measurement rather than a guess. This is
 a SERVER-side figure and does not affect the S5 client gate above.
+
+## S7 addendum — the executor (2026-07-30)
+
+Same server, same session, same pinning. `-m await` uses the stackless
+executor (continuations resume on the poll thread); `-m block` is the
+S5 path (one park/unpark per request).
+
+| depth | C++ | Rust await | Rust block |
+|---:|---:|---:|---:|
+| 1 | 38,076 | **45,794 (120.3%)** | 26,518 (69.6%) |
+| 100 | 1,031,949 | 427,253 (41.4%) | **1,003,906 (97.3%)** |
+
+**S7 achieved what it was built for.** Depth 1 went from 69.6% to
+120.3% — the park/unpark per request was the whole gap, exactly as
+predicted, and removing it overshoots the C++.
+
+**And it introduced a new one.** At depth 100 the executor is 41.4%,
+against 97.3% for the blocking path — a 2.4x regression on the cell that
+IS the gate.
+
+The likely cause, unprofiled: every continuation runs inline in the
+frame callback, and `decode_buffered` holds the connection's reader lock
+across that callback. So decode → dispatch → send serialize per frame on
+a single poll thread, where the blocking path spreads the send work
+across four user threads and leaves the poll thread doing only reads and
+completions. At depth 1 there is nothing to serialize and the win is
+pure; at depth 100 the poll thread becomes the bottleneck.
+
+**The gate is not being re-cut to fit this.** Picking `await` for
+depth 1 and `block` for depth 100 would produce a table where every cell
+passes and would mean nothing. The honest statement is: the blocking
+path passes the depth-100 gate and fails depth-1; the executor inverts
+that; neither passes both, and the next task is the reader-lock
+serialization rather than a mode selection.

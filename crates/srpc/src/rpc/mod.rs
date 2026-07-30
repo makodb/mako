@@ -14,3 +14,4 @@ pub mod load_balancer;
 pub mod reconnect;
 pub mod request_options;
 pub mod server;
+pub mod task;

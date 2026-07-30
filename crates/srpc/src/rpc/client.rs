@@ -49,6 +49,11 @@ pub struct Future {
     error_code: AtomicI32,
     state: Mutex<FutureState>,
     ready: Condvar,
+    /// Set when this future is awaited by a task rather than blocked
+    /// on. Invoked by [`Future::complete`] on the POLL THREAD, so the
+    /// continuation runs there instead of costing a park/unpark on a
+    /// user thread — the whole point of the executor.
+    waker: Mutex<Option<std::task::Waker>>,
 }
 
 #[derive(Default)]
@@ -58,12 +63,13 @@ struct FutureState {
 }
 
 impl Future {
-    fn new(xid: i64) -> Future {
+    pub(crate) fn new(xid: i64) -> Future {
         Future {
             xid,
             error_code: AtomicI32::new(0),
             state: Mutex::new(FutureState::default()),
             ready: Condvar::new(),
+            waker: Mutex::new(None),
         }
     }
 
@@ -87,6 +93,34 @@ impl Future {
         guard.done = true;
         drop(guard);
         self.ready.notify_all();
+        // AFTER releasing the state lock: waking re-polls the task
+        // inline, and that continuation may touch this future again.
+        let waker = self.waker.lock().unwrap().take();
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+
+    /// Register the waker to invoke on completion, and report whether
+    /// the future is already done — the caller must not park if so, or
+    /// it parks forever against a wake that already happened.
+    pub(crate) fn register_waker(&self, w: &std::task::Waker) -> bool {
+        let guard = self.state.lock().unwrap();
+        if guard.done {
+            return true;
+        }
+        *self.waker.lock().unwrap() = Some(w.clone());
+        false
+    }
+
+    /// Take the completed result. Only valid once done.
+    pub(crate) fn take_result(&self) -> Result<Vec<u8>, i32> {
+        let mut guard = self.state.lock().unwrap();
+        let err = self.error_code.load(Ordering::Acquire);
+        if err != 0 {
+            return Err(err);
+        }
+        Ok(std::mem::take(&mut guard.reply))
     }
 
     /// Block until the reply arrives. Returns the result payload, or the
@@ -128,6 +162,13 @@ impl Future {
 
     pub fn is_done(&self) -> bool {
         self.state.lock().unwrap().done
+    }
+
+    /// Complete this future directly. Test-only: outside tests a future
+    /// is completed by the reply path or by teardown, never by hand.
+    #[cfg(test)]
+    pub(crate) fn complete_for_test(&self, err: i32, reply: Vec<u8>) {
+        self.complete(err, reply);
     }
 }
 
