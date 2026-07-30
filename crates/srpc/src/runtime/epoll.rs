@@ -231,7 +231,7 @@ impl Epoll {
         timeout_ms: i32,
         mut on_ready: impl FnMut(i32, Readiness),
     ) -> Result<usize, EpollError> {
-        let n = sys::epoll_wait_fd(self.fd, &mut self.events, timeout_ms);
+        let n = sys::epoll_wait_fd(self.fd, &mut self.events[..], timeout_ms);
         if n == -sys::ERRNO_EINTR {
             return Ok(0);
         }

@@ -595,6 +595,9 @@ more often than the C++ 64 KiB consumed-prefix rule.
   and labelled as such. 131 crate tests, including registration,
   readiness decode and mode transitions against real sockets.
 
+  Gate at pin e658ba7a: **24/24 translated modules compile**, golden
+  64/64, mako build clean.
+
   **Two more libc-macro collisions**, both the S1 rule recurring: a
   function named `errno` expands to `int (*__errno_location())()`, and
   `pub const EAGAIN` becomes `constexpr int32_t 11 = 11`. Fixed on
@@ -605,7 +608,14 @@ more often than the C++ 64 KiB consumed-prefix rule.
   standard way a Rust port reads a syscall failure — and the way to
   avoid declaring `__errno_location`, which is ill-formed because
   `import std;` declares that name in the global module after the
-  purview.
+  purview. A third upstream gap surfaced here too: `vec![elem; n]` —
+  the REPEAT form — had never been lowered, falling through to raw
+  token pass-through that emitted the macro's semicolon verbatim
+  (`rusty::Vec{...zeroed() ; MAX_EVENTS}`). Now lowered the way Rust
+  implements it, as `alloc::vec::from_elem`, with a matching
+  `rusty::vec_from_elem` in the rusty MODULE rather than a header —
+  it names `Vec`, which is a module alias a header in the global
+  module fragment cannot see.
 
 - **2026-07-29 — ★ S0 GREEN: the Rust wire layer talks to the LIVE
   production C++ server** (this commit). `crates/srpc/tests/
