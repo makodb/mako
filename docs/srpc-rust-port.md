@@ -613,16 +613,31 @@ more often than the C++ 64 KiB consumed-prefix rule.
      names it — possibly before it is defined. A smart pointer needs
      only an incomplete type.
 
-  **One gap remains, and it is a single coherent family**: access and
-  inference THROUGH `Arc<dyn Trait>`. The type now maps correctly
-  (`rusty::Arc<Pollable>`), but the receiver-access paths do not yet
-  treat `Arc<Interface>` as pointer-like — method calls emit `.`
-  instead of `->`, and `Option<&Arc<dyn T>>::unwrap()` infers as
-  `const Interface&` rather than `const Arc<Interface>&`. This is the
-  other half of the `Arc<dyn Trait>` support added above: the mapping
-  landed, the access paths still need it. Goal 1 is unaffected (138
-  crate tests green) and the other 24 modules still compile with the
-  runtime golden at 64/64.
+  **What remains is one family: types that inference must CARRY rather
+  than read off a declaration.** Minimal repros are preserved at
+  `/var/tmp/mako-srpc/segv/s2_gaps_saved`. Where the type is written
+  down, translation is already correct — `&Arc<dyn Worker>` as a
+  parameter emits `a->work()`. Where it must be inferred through a
+  chain, it is lost:
+
+  | shape | emitted | needed |
+  |---|---|---|
+  | `Arc::clone(map.get(&k).unwrap())` then call | `p.work()` | `p->work()` |
+  | `let (tx, rx) = channel()` | `Receiver<Unit>` | `Receiver<Command>` |
+  | `guard.take()` on `MutexGuard<Option<T>>` | `.take()` | `->take()` |
+
+  An explicit annotation fixes the FIRST (`let p: Arc<dyn Pollable> =
+  …` emits `p->work()`, and the crate now writes it that way), but not
+  the other two: a destructured `let (tx, rx): (Sender<C>, Receiver<C>)`
+  does not reach the emission, and the guard case needs the
+  method-call path to treat a guard as pointer-like the way field
+  access already does. There is also a runtime requirement with no
+  Rust counterpart: `rusty::sync::mpsc` demands an explicit
+  `is_send` marker on the channel's element type, which nothing emits
+  for a Rust type that is simply `Send`.
+
+  Goal 1 — the current target — is unaffected: 138 crate tests green,
+  the other 24 modules compile, runtime golden 64/64.
 
 - **2026-07-29 — S2 (first half): `sys` kernels + epoll wrapper**
   (this commit). `crates/srpc/src/sys/` is the crate's ENTIRE syscall

@@ -80,7 +80,10 @@ pub struct PollThread {
 impl PollThread {
     /// Start a poll thread.
     pub fn start() -> Arc<PollThread> {
-        let (tx, rx) = channel();
+        // Annotated for the same reason as the lookup in poll_loop: a
+        // channel's element type is inferred from later use, which does
+        // not survive the translation boundary.
+        let (tx, rx): (Sender<Command>, Receiver<Command>) = channel();
         let join = std::thread::spawn(move || poll_loop(rx));
         Arc::new(PollThread {
             tx: Mutex::new(tx),
@@ -106,7 +109,9 @@ impl PollThread {
     /// Stop the loop and join. Idempotent.
     pub fn shutdown(&self) {
         self.post(Command::Shutdown);
-        let handle = self.join.lock().unwrap().take();
+        let mut guard = self.join.lock().unwrap();
+        let handle = (*guard).take();
+        drop(guard);
         if let Some(h) = handle {
             let _ = h.join();
         }
@@ -169,7 +174,11 @@ fn poll_loop(rx: Receiver<Command>) {
             if found.is_none() {
                 continue;
             }
-            let p = Arc::clone(found.unwrap());
+            // Annotated rather than inferred: the type of a `dyn` value
+            // pulled out of a map does not survive inference through the
+            // translation boundary, and without it the emitted call uses
+            // `.` where the Arc needs `->`.
+            let p: Arc<dyn Pollable> = Arc::clone(found.unwrap());
             // READ, then WRITE, then ERROR: data delivered alongside a
             // half-close is parsed before the connection is torn down.
             if r.readable() {
