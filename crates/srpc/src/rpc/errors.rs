@@ -370,3 +370,73 @@ mod tests {
         assert_eq!(names.len(), before, "names must be unique");
     }
 }
+
+/// Transport-level failure, distinct from [`RpcError`].
+///
+/// `RpcError` travels on the wire in a reply's error field; this never
+/// does. It says what the *channel* did — so its discriminants are free
+/// to be a local convention, unlike `RpcError`'s, which are pinned by
+/// the C++ peer. The values still match the C++ `ChannelError` so the
+/// two enums stay readable side by side.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(i32)]
+pub enum ChannelError {
+    /// Not an error: the operation completed, or the peer closed
+    /// cleanly. Named as the C++ names it.
+    None = 0,
+    /// Bytes remain queued; the poll thread owns the rest.
+    WouldBlock = 1,
+    ConnectionRefused = 2,
+    ConnectionReset = 3,
+    Timeout = 4,
+    AddressInUse = 5,
+    AddressInvalid = 6,
+    PermissionDenied = 7,
+    TooManyOpenFiles = 8,
+    Internal = 9,
+}
+
+impl ChannelError {
+    pub fn is_ok(self) -> bool {
+        self == ChannelError::None
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChannelError::None => "None",
+            ChannelError::WouldBlock => "WouldBlock",
+            ChannelError::ConnectionRefused => "ConnectionRefused",
+            ChannelError::ConnectionReset => "ConnectionReset",
+            ChannelError::Timeout => "Timeout",
+            ChannelError::AddressInUse => "AddressInUse",
+            ChannelError::AddressInvalid => "AddressInvalid",
+            ChannelError::PermissionDenied => "PermissionDenied",
+            ChannelError::TooManyOpenFiles => "TooManyOpenFiles",
+            ChannelError::Internal => "Internal",
+        }
+    }
+}
+
+#[cfg(test)]
+mod channel_error_tests {
+    use super::*;
+
+    #[test]
+    fn discriminants_match_the_cpp_enum() {
+        // Not wire-visible, but kept aligned so the two enums read the
+        // same way side by side.
+        assert_eq!(ChannelError::None as i32, 0);
+        assert_eq!(ChannelError::WouldBlock as i32, 1);
+        assert_eq!(ChannelError::ConnectionRefused as i32, 2);
+        assert_eq!(ChannelError::ConnectionReset as i32, 3);
+        assert_eq!(ChannelError::Timeout as i32, 4);
+        assert_eq!(ChannelError::AddressInUse as i32, 5);
+        assert_eq!(ChannelError::AddressInvalid as i32, 6);
+        assert_eq!(ChannelError::PermissionDenied as i32, 7);
+        assert_eq!(ChannelError::TooManyOpenFiles as i32, 8);
+        assert_eq!(ChannelError::Internal as i32, 9);
+        assert!(ChannelError::None.is_ok());
+        assert!(!ChannelError::WouldBlock.is_ok());
+        assert_eq!(ChannelError::Timeout.as_str(), "Timeout");
+    }
+}
