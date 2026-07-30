@@ -219,6 +219,87 @@ Gap list from this campaign:
 - Branch `verify-stack` = main + all four fixes; this is the build
   that produced the 6/6 whole-crate compile.
 
+### Send/Sync: the auto traits the port cannot express (2026-07-30)
+
+Rust derives `Send`/`Sync` from a type's fields. C++ has no
+reflection, so `rusty::is_send` defaults to **false**, and every
+ported struct arrives un-sendable. That default is backwards from the
+language being ported, and it bites exactly where a port arrives
+last: `thread::spawn` constrains every argument on `Send`, and
+`mpsc::channel<T>` constrains its element. Neither is expressible in
+the Rust source — a plain struct simply *is* Send there — so the
+translation of correct Rust did not build, with no source-level fix
+available.
+
+Six changes, library and translator:
+
+1. **`traits.hpp`: the documented member opt-in was never
+   implemented.** `mpsc.hpp` tells the user "Add: `static constexpr
+   bool is_send = true;` to your type", and the `ChannelState`
+   `static_assert` repeats that advice — but nothing read the member.
+   Only a hand-written full specialization worked. The member is now
+   read (not merely detected, so `is_send = false` is an expressible
+   opt-OUT), and `is_sync` gained the same member, without which the
+   two never compose through an `Arc`.
+2. **`traits.hpp`: enumerations are Send + Sync.** A C++ enumeration
+   has no member to mark, and the Rust fieldless enum it came from has
+   nothing in it to be otherwise.
+3. **`send_impls.hpp`: the structural composites.** `std::variant`
+   (the load-bearing one — a transpiled data enum lowers to a variant
+   of one struct per variant), plus `pair`, `array`, `optional`, and
+   the Sync halves, which did not exist at all.
+4. **Translator: derive and state the markers.** Every emitted struct,
+   data-enum variant struct (including the empty ones) carries the
+   derivation. Conservative in ONE direction: an unknown field type
+   emits *nothing*. A false negative reproduces the old behaviour; a
+   false positive would let a `!Send` type cross a thread boundary,
+   which is the bug the trait exists to catch. `Rc`, raw pointers and
+   references are therefore withheld, not guessed.
+5. **Generic and recursive types.** `struct Wrapper<T>` emits
+   `is_send = rusty::is_send<T>::value` — as conditional as its Rust
+   original. Recursion is coinductive, matching Rust: a type reachable
+   from its own fields does not thereby lose Send.
+6. **Trait objects.** `Arc<dyn Pollable>` is Send because `trait
+   Pollable: Send + Sync` says so. That supertrait is dropped
+   everywhere else in emission, so it is now recorded during
+   collection — crate-wide, since the `dyn` field is normally in a
+   different file from the trait.
+
+Separately, and in the same family of "the C++ overload set silently
+means something else":
+
+7. **`mpsc::channel()` now carries its element type.** Alongside the
+   `template<Send T> channel()` the headers define a NON-template
+   `channel()` returning a unit channel, so a bare call does not fail
+   to compile — it silently resolves to `Sender<std::tuple<>>` and
+   errors later, naming a type the Rust source never wrote. The
+   element type is recovered from the binding
+   (`(Sender<T>, Receiver<T>)`), the same lateral recovery the
+   `Box::new_uninit` case already used, gated on the crate not
+   defining its own `channel`.
+
+Bin suite 1939/1939 (10 new tests); pin `b48c4135`.
+
+**Three poll_thread compile gaps remain**, all pre-dating this work and
+all independent of it (the markers and `channel<Command>()` compile):
+
+1. `Arc::clone` through a match arm strips the Arc. In `poll_loop`,
+   `Command::Add(p) => …` emits
+   `deref_if_pointer(deref_if_pointer_like(std::get<0>(_m)._0))`, so `p`
+   is `const Pollable&` where the following `insert` wants
+   `Arc<Pollable>`. Same family as the lookup case: a type that
+   inference must CARRY rather than one that is DECLARED.
+2. `JoinHandle<()>` maps inconsistently — `thread::spawn` returns
+   `JoinHandle<void>` while the annotation position produces
+   `JoinHandle<rusty::Unit>` (= `JoinHandle<std::tuple<>>`), and the two
+   do not convert.
+3. A guard bound by an **if-let** loses its pointer-like-ness. The Drop
+   impl's `if let Ok(g) = self.join.lock()` emits
+   `decltype(auto) g = …unwrap();` and then `g.take()` rather than
+   `(*g).take()`. The plain `let mut g = …lock().unwrap();` form
+   already lowers correctly, so this is specific to the if-let binding
+   having no recorded type.
+
 ## W3 spike results (2026-07-28)
 
 The pinned transpiler (`10e42570`) ran `--crate` over `crates/srpc`

@@ -110,7 +110,7 @@ impl PollThread {
     pub fn shutdown(&self) {
         self.post(Command::Shutdown);
         let mut guard = self.join.lock().unwrap();
-        let handle = (*guard).take();
+        let handle = guard.take();
         drop(guard);
         if let Some(h) = handle {
             let _ = h.join();
