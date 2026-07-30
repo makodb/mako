@@ -687,6 +687,47 @@ more often than the C++ 64 KiB consumed-prefix rule.
   including once per RPC in the production client path. That is an
   abstraction delta, not a Rust-versus-C++ result.
 
+## S3 + S4 as built (2026-07-30)
+
+**S3 — transport.** `sys` gained the socket syscalls; `runtime::tcp`
+has the pumps and the connect ladder. Frames are handed to the callback
+BY REFERENCE (`&[u8]` into the reader's buffer), which is why it is a
+callback and not a returned value. Read drains before it decodes.
+
+Two things the C++ does that are easy to miss:
+`poll_mode()` is READ|WRITE while bytes are queued, and a `send_frame`
+returning WouldBlock re-arms the write interest through the poll thread
+(weak handle — the poll thread holds an Arc to every pollable, so a
+strong one back is a cycle). Dropping the re-arm is the wedge the C++
+records against its 100-thread stress test.
+
+One deliberate deviation: the connect timeout uses `poll(2)` where the
+C++ uses `select(2)`. Identical for one descriptor, and it avoids
+`fd_set`'s bitmask ABI — a latent stack-smash on the C++ side for any
+fd at or above FD_SETSIZE. Connect path only, never per request.
+
+**S4 — client.** `rpc::client` has the request envelope, the reply
+head, the xid demux and the `Future`. Replies are parsed and futures
+completed ON THE POLL THREAD inside the frame callback, so a reply
+costs no extra wakeup; sends go inline from the calling thread and only
+defer when the socket pushes back. Futures are registered BEFORE the
+bytes go out — on loopback a reply can beat the registration.
+
+**Verified live, against the unmodified C++ `rpcbench -s`:** fast_add
+round trip, 200 concurrent requests demuxed by xid, 16 threads x 50
+requests sharing one connection, and an unknown rpc_id failing the
+future with ENOENT. Plus `tests/tcp_loopback.rs` for the transport
+itself, whose backpressure case was confirmed to DETECT the missing
+re-arm (fails on a 30s stall without it).
+
+Two harness facts worth keeping:
+ - **Interop tests must run with `--test-threads=1`.** They share one
+   server process; in parallel they interfere and fail pre-existing
+   tests, which reads as a regression that is not one.
+ - `fast_add`'s arguments and result are **V32 varints, not raw i32**.
+   Encoding them raw still frames correctly and still gets a reply — it
+   just gets the wrong answer. Assert on the VALUE, not the shape.
+
 ## Status log
 
 - **2026-07-29/30 — S2 second half: the poll thread** (this commit).

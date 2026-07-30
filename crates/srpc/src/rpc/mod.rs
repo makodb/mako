@@ -5,6 +5,7 @@
 //! and [`crate::wire`], never on the transport or the fiber runtime.
 
 pub mod circuit_breaker;
+pub mod client;
 pub mod connection_metrics;
 pub mod connection_state;
 pub mod errors;

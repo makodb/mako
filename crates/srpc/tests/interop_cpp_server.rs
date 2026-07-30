@@ -331,3 +331,163 @@ fn ids_match_the_generated_header() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// S4: the same server, driven through the REAL client endpoint.
+//
+// The tests above hand-roll each request over a std TcpStream, which
+// proves the wire layer. These drive `ClientConnection` — the connect
+// ladder, the poll thread, the edge-triggered read pump, the xid
+// demux and the Future — against the same unmodified C++ process. That
+// is the difference between "our encoder agrees" and "our client
+// works".
+// ---------------------------------------------------------------------
+
+mod client_endpoint {
+    use super::ids as rpc_id;
+    use srpc::rpc::client::ClientConnection;
+    use srpc::runtime::poll_thread::PollThread;
+    use srpc::wire::{Deserialize, ReadArchive, Serialize, WriteArchive, V32};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn interop_addr() -> Option<String> {
+        std::env::var("SRPC_INTEROP_ADDR").ok()
+    }
+
+    fn client() -> Option<(Arc<PollThread>, Arc<ClientConnection>)> {
+        let addr = interop_addr()?;
+        let poll = PollThread::start();
+        let c = ClientConnection::connect(&addr, &poll)
+            .unwrap_or_else(|e| panic!("connect {addr}: {e:?} (is `rpcbench -s {addr}` running?)"));
+        Some((poll, c))
+    }
+
+    /// `fast_add(a, b)` — arguments and result are V32 VARINTS, not raw
+    /// i32s. Encoding them raw still frames correctly and still gets a
+    /// reply; it just gets the wrong answer, which is exactly why this
+    /// asserts on the SUM rather than on the reply's shape.
+    fn add_args(a: i32, b: i32) -> Vec<u8> {
+        let mut ar = WriteArchive::new();
+        V32(a).serialize(&mut ar);
+        V32(b).serialize(&mut ar);
+        ar.into_bytes()
+    }
+
+    fn sum_of(reply: &[u8]) -> i32 {
+        let mut ar = ReadArchive::new(reply);
+        V32::deserialize(&mut ar)
+            .expect("reply should carry a v32 sum")
+            .0
+    }
+
+    #[test]
+    fn fast_add_round_trips_through_the_client() {
+        let Some((poll, c)) = client() else {
+            return;
+        };
+        let fu = c.call(rpc_id::FAST_ADD, &add_args(7, 35)).expect("call");
+        let reply = fu
+            .wait_timeout(Duration::from_secs(10))
+            .expect("fast_add should succeed");
+        assert_eq!(
+            sum_of(&reply),
+            42,
+            "the C++ server computed a different sum"
+        );
+
+        c.close();
+        poll.shutdown();
+    }
+
+    /// Many requests in flight at once: the demux must return each reply
+    /// to ITS OWN future. A demux keyed wrongly still completes every
+    /// future, so the failure is a wrong VALUE, not a hang — which is
+    /// why each request uses a distinct pair.
+    #[test]
+    fn concurrent_requests_demux_by_xid() {
+        let Some((poll, c)) = client() else {
+            return;
+        };
+        const N: i32 = 200;
+        let mut futures = Vec::new();
+        for i in 0..N {
+            futures.push((
+                i,
+                c.call(rpc_id::FAST_ADD, &add_args(i, i * 3)).expect("call"),
+            ));
+        }
+        for (i, fu) in futures {
+            let reply = fu
+                .wait_timeout(Duration::from_secs(20))
+                .unwrap_or_else(|e| panic!("request {i} failed: {e}"));
+            assert_eq!(
+                sum_of(&reply),
+                i * 4,
+                "request {i} got another request's reply"
+            );
+        }
+        assert_eq!(c.pending_count(), 0, "futures leaked after completion");
+
+        c.close();
+        poll.shutdown();
+    }
+
+    /// Requests issued from many threads on one connection. This is the
+    /// shape that wedged the C++ before it re-armed the write interest
+    /// from the sending thread.
+    #[test]
+    fn many_threads_share_one_connection() {
+        let Some((poll, c)) = client() else {
+            return;
+        };
+        const THREADS: i32 = 16;
+        const PER_THREAD: i32 = 50;
+        let mut joins = Vec::new();
+        for t in 0..THREADS {
+            let c = Arc::clone(&c);
+            joins.push(std::thread::spawn(move || {
+                for k in 0..PER_THREAD {
+                    let a = t * 1000 + k;
+                    let fu = c.call(rpc_id::FAST_ADD, &add_args(a, 1)).expect("call");
+                    let reply = fu
+                        .wait_timeout(Duration::from_secs(30))
+                        .unwrap_or_else(|e| panic!("thread {t} request {k} failed: {e}"));
+                    assert_eq!(
+                        sum_of(&reply),
+                        a + 1,
+                        "thread {t} request {k} got the wrong reply"
+                    );
+                }
+            }));
+        }
+        for j in joins {
+            j.join().expect("worker thread");
+        }
+        assert_eq!(c.pending_count(), 0);
+
+        c.close();
+        poll.shutdown();
+    }
+
+    /// An unknown rpc_id must come back as an ERROR on the future, not a
+    /// dropped reply that hangs the caller.
+    #[test]
+    fn an_unknown_rpc_id_fails_the_future() {
+        let Some((poll, c)) = client() else {
+            return;
+        };
+        let fu = c.call(rpc_id::UNKNOWN, &[]).expect("call");
+        let err = fu
+            .wait_timeout(Duration::from_secs(10))
+            .expect_err("an unknown rpc_id should fail");
+        assert_eq!(
+            err,
+            super::ENOENT,
+            "the server reports ENOENT for an unknown id"
+        );
+
+        c.close();
+        poll.shutdown();
+    }
+}
