@@ -599,18 +599,30 @@ more often than the C++ 64 KiB consumed-prefix rule.
   shared pointers fell through to `rusty::Arc<void*>`, so every method
   call on a trait object failed. Bin suite 1927/1927.
 
-  **Two Goal-2 gaps remain open on this module** (it translates but
-  does not yet compile; Goal 1, the current target, is unaffected):
-  1. An interface class is emitted AFTER its first use — `Pollable` is
-     declared at line 5014 but referenced at 4946 — so interface
-     classes need a forward declaration hoisted above the types that
-     hold them.
-  2. An inherent method on a newtype tuple struct is dropped at a call
-     site reached through tuple indexing: `r.readable()` where
-     `r = ready[i].1` emits just `r`, giving "not contextually
-     convertible to bool".
-  Both are narrow and reproducible; the rest of the crate (24 modules)
-  still compiles and the runtime golden is still 64/64.
+  **Both originally-reported gaps are now FIXED upstream**, and one of
+  them was a wrong-code bug rather than a compile failure:
+  1. A name-matched identity rule treated ANY zero-arg call named
+     `readable` or `compact` as the identity function and DELETED it,
+     whatever the receiver's type. It exists for serde_test's
+     `Configure` adapters, but matching on the NAME alone meant
+     `Readiness::readable()` vanished, leaving `if (r)` — which still
+     compiles and means something else. Now elided only when the crate
+     defines no method of that name itself.
+  2. Trait interfaces are now forward-declared. A trait lowers to an
+     abstract class, and anything holding `Arc<dyn T>`/`Box<dyn T>`
+     names it — possibly before it is defined. A smart pointer needs
+     only an incomplete type.
+
+  **One gap remains, and it is a single coherent family**: access and
+  inference THROUGH `Arc<dyn Trait>`. The type now maps correctly
+  (`rusty::Arc<Pollable>`), but the receiver-access paths do not yet
+  treat `Arc<Interface>` as pointer-like — method calls emit `.`
+  instead of `->`, and `Option<&Arc<dyn T>>::unwrap()` infers as
+  `const Interface&` rather than `const Arc<Interface>&`. This is the
+  other half of the `Arc<dyn Trait>` support added above: the mapping
+  landed, the access paths still need it. Goal 1 is unaffected (138
+  crate tests green) and the other 24 modules still compile with the
+  runtime golden at 64/64.
 
 - **2026-07-29 — S2 (first half): `sys` kernels + epoll wrapper**
   (this commit). `crates/srpc/src/sys/` is the crate's ENTIRE syscall

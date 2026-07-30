@@ -200,28 +200,29 @@ fn poll_loop(rx: Receiver<Command>) {
 
         // Non-blocking drain, exactly as the C++ try_recv sweep: there
         // is no wakeup fd, so this is why the timeout above is 1 ms.
-        loop {
-            match rx.try_recv() {
-                Ok(Command::Add(p)) => {
+        //
+        // `while let Ok(..)` rather than matching TryRecvError: an
+        // empty channel and a disconnected one both end this drain, and
+        // the loop exits on the next Shutdown or when the epoll wait
+        // fails. Distinguishing them would buy nothing here.
+        while let Ok(cmd) = rx.try_recv() {
+            match cmd {
+                Command::Add(p) => {
                     let fd = p.fd();
                     if ep.add(fd, p.poll_mode()).is_ok() {
                         pollables.insert(fd, p);
                     }
                 }
-                Ok(Command::UpdateMode(fd, mode)) => {
+                Command::UpdateMode(fd, mode) => {
                     if pollables.contains_key(&fd) {
                         let _ = ep.update_mode(fd, mode);
                     }
                 }
-                Ok(Command::Remove(fd)) => {
+                Command::Remove(fd) => {
                     let _ = ep.remove(fd);
                     pollables.remove(&fd);
                 }
-                Ok(Command::Shutdown) => return,
-                // Disconnected means every sender is gone, so no
-                // further work can arrive.
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Command::Shutdown => return,
             }
         }
     }
