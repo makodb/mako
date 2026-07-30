@@ -69,3 +69,26 @@ taskset -c 4-7 build_clang22/rpcbench  -c 127.0.0.1:19401 -n 6 -t 4 -o 100 -b 10
 covers latency, no harness exists, and half the gate stays undefined
 until one does. The depth-1 throughput gap above is a proxy for it, not
 a substitute.
+
+## S6 addendum — reverse interop (2026-07-30)
+
+The unmodified C++ `rpcbench -c` driving **this crate's server**
+(`rbench -s`, serving `fast_nop`), same pinning, `-t 4 -o 100 -b 10`:
+
+| direction | qps |
+|---|---:|
+| Rust client → C++ server | 995,406 |
+| C++ client → **Rust server** | **690,243** |
+| C++ client → C++ server | 1,014,676 |
+
+The C++ client counts OK RESPONSES, so 690k means it parsed 690k of our
+reply envelopes as valid — the strongest available check that the reply
+side is correct, since that peer did not come from this source tree.
+
+**The Rust server is ~32% down and that is not yet explained.** Two
+candidates worth measuring before assuming either: dispatch runs
+synchronously on the poll thread (so a handler's cost is inline with the
+read pump), and every reply allocates a fresh `Vec` and takes the
+outbound mutex. Neither has been profiled; recording the number now so
+the investigation starts from a measurement rather than a guess. This is
+a SERVER-side figure and does not affect the S5 client gate above.

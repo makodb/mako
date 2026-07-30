@@ -38,6 +38,7 @@
 //! ```
 
 use srpc::rpc::client::ClientConnection;
+use srpc::rpc::server::{Registry, Server};
 use srpc::runtime::poll_thread::PollThread;
 use srpc::wire::{Serialize, WriteArchive};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -50,6 +51,7 @@ const FAST_NOP: i32 = 0x4b921bd9;
 
 struct Config {
     addr: String,
+    serve: bool,
     seconds: u32,
     threads: usize,
     depth: usize,
@@ -59,6 +61,7 @@ struct Config {
 fn usage() -> ! {
     eprintln!(
         "usage: rbench -c ADDR [-n SECONDS] [-t THREADS] [-o DEPTH] [-b BYTES]\n\
+         \x20      rbench -s ADDR   (serve fast_nop, for the C++ client to drive)\n\
          \n\
          Mirrors rpcbench's client mode (fast/fast_nop only).\n\
          Counting, sampling and Nagle match the C++ harness — see the\n\
@@ -70,6 +73,7 @@ fn usage() -> ! {
 fn parse_args() -> Config {
     let mut cfg = Config {
         addr: String::new(),
+        serve: false,
         seconds: 8,
         threads: 4,
         depth: 1,
@@ -86,6 +90,10 @@ fn parse_args() -> Config {
         };
         match argv[i].as_str() {
             "-c" => cfg.addr = need(i),
+            "-s" => {
+                cfg.addr = need(i);
+                cfg.serve = true;
+            }
             "-n" => cfg.seconds = need(i).parse().unwrap_or_else(|_| usage()),
             "-t" => cfg.threads = need(i).parse().unwrap_or_else(|_| usage()),
             "-o" => cfg.depth = need(i).parse().unwrap_or_else(|_| usage()),
@@ -109,8 +117,35 @@ fn nop_args(bytes: usize) -> Vec<u8> {
     ar.into_bytes()
 }
 
+/// Serve `fast_nop` and block. The point is to let the UNMODIFIED C++
+/// `rpcbench -c` drive this crate's server — the reverse of the client
+/// interop, and the only way to check the reply envelope against a peer
+/// that did not come from the same source tree.
+///
+/// `fast fast_nop(string)` returns nothing, so the reply carries empty
+/// results; the envelope around them is what is being tested.
+fn serve(cfg: &Config) -> ! {
+    let mut reg = Registry::new();
+    reg.register(FAST_NOP, Box::new(|_args| Ok(Vec::new())));
+    let server = Server::new(reg, 1);
+    let poll = PollThread::start();
+    match server.listen(&cfg.addr, &poll) {
+        Ok(port) => eprintln!("rbench: serving fast_nop on {}:{}", cfg.addr, port),
+        Err(e) => {
+            eprintln!("listen {}: {e:?}", cfg.addr);
+            std::process::exit(1);
+        }
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
 fn main() {
     let cfg = parse_args();
+    if cfg.serve {
+        serve(&cfg);
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let ok_count = Arc::new(AtomicU64::new(0));
 
