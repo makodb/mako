@@ -280,8 +280,12 @@ means something else":
 
 Bin suite 1939/1939 (10 new tests); pin `b48c4135`.
 
-**Three poll_thread compile gaps remain**, all pre-dating this work and
-all independent of it (the markers and `channel<Command>()` compile):
+**Compile-gate state: 21 of 24 modules compile.** `poll_thread` fails
+with the three gaps below, and takes `srpc.runtime` and `srpc` (which
+import it) with it; the other 21 are green. All three pre-date this
+work and are independent of it — the derived markers and
+`channel<Command>()` compile, which is what the Send/Sync work was
+for:
 
 1. `Arc::clone` through a match arm strips the Arc. In `poll_loop`,
    `Command::Add(p) => …` emits
@@ -297,8 +301,24 @@ all independent of it (the markers and `channel<Command>()` compile):
    impl's `if let Ok(g) = self.join.lock()` emits
    `decltype(auto) g = …unwrap();` and then `g.take()` rather than
    `(*g).take()`. The plain `let mut g = …lock().unwrap();` form
-   already lowers correctly, so this is specific to the if-let binding
-   having no recorded type.
+   already lowers correctly.
+
+   Diagnosis (2026-07-30, both ends located): the consuming site is
+   `emit_receiver_member_call` (`mod.rs`, the `MutexGuard |
+   SpinMutexGuard | RwLockReadGuard | RwLockWriteGuard` arm), which
+   keys purely on `infer_simple_expr_type(receiver)`. So the fix is to
+   give the if-let binding a recorded type. Recording it at the
+   `decltype(auto)` emission in `emit_if_let_body` (`emit_stmt.rs`,
+   the `simple_ident` branch) is **not** sufficient — attempted, and
+   the entry does not reach the consumer, so something between that
+   point and `emit_block(then_branch)` re-registers the binding
+   untyped. That re-registration is the thing to find. The attempt was
+   reverted rather than left in as unverified surface; it is
+   reconstructible from this paragraph in a few minutes.
+
+Repros for all three: `/var/tmp/mako-srpc/segv/s2_gaps_saved/src/gaps3.rs`
+(`dispatch` / `make` / `Holder::drop`), with `take_plain` alongside as
+the working control for gap 3.
 
 ## W3 spike results (2026-07-28)
 
