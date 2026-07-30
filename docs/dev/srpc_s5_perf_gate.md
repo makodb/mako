@@ -95,34 +95,46 @@ a SERVER-side figure and does not affect the S5 client gate above.
 
 ## S7 addendum — the executor (2026-07-30)
 
-Same server, same session, same pinning. `-m await` uses the stackless
-executor (continuations resume on the poll thread); `-m block` is the
-S5 path (one park/unpark per request).
+### CORRECTION: the first version of this section was wrong
 
-| depth | C++ | Rust await | Rust block |
-|---:|---:|---:|---:|
-| 1 | 38,076 | **45,794 (120.3%)** | 26,518 (69.6%) |
-| 100 | 1,031,949 | 427,253 (41.4%) | **1,003,906 (97.3%)** |
+It reported the executor at **41.4% at depth 100** and attributed it to
+continuations serializing under the connection's reader lock. **Both the
+number and the explanation were artifacts of the harness.**
 
-**S7 achieved what it was built for.** Depth 1 went from 69.6% to
-120.3% — the park/unpark per request was the whole gap, exactly as
-predicted, and removing it overshoots the C++.
+`rbench` created ONE poll thread and shared it across all `-t`
+connections. The C++ does not: `rpcbench.cc`'s `client_proc` calls
+`PollThread::create()` *inside each client thread*, so `-t 4` is four
+poll threads. In `-m await` the continuation runs on the poll thread, so
+one shared poll thread funnelled every task's send through a single
+thread while the C++ spread them across four.
 
-**And it introduced a new one.** At depth 100 the executor is 41.4%,
-against 97.3% for the blocking path — a 2.4x regression on the cell that
-IS the gate.
+With the structure matched, the regression does not exist. The reader
+lock was never implicated; that hypothesis was never profiled and should
+not have been written down as a cause.
 
-The likely cause, unprofiled: every continuation runs inline in the
-frame callback, and `decode_buffered` holds the connection's reader lock
-across that callback. So decode → dispatch → send serialize per frame on
-a single poll thread, where the blocking path spreads the send work
-across four user threads and leaves the poll thread doing only reads and
-completions. At depth 1 there is nothing to serialize and the win is
-pure; at depth 100 the poll thread becomes the bottleneck.
+**This is the second time the harness decided a result in this file**
+(the first: batch-and-drain vs sliding window, S5). Both times the wrong
+number was the plausible one, and both times the fix was in the harness,
+not the system under test. The standing rule is now: before attributing
+a perf result to a design property, check that the harness matches the
+C++ structurally — thread counts, poll threads, and concurrency shape.
 
-**The gate is not being re-cut to fit this.** Picking `await` for
-depth 1 and `block` for depth 100 would produce a table where every cell
-passes and would mean nothing. The honest statement is: the blocking
-path passes the depth-100 gate and fails depth-1; the executor inverts
-that; neither passes both, and the next task is the reader-lock
-serialization rather than a mode selection.
+### Result (one poll thread per connection, matching the C++)
+
+`-m await` uses the stackless executor (continuations resume on the poll
+thread); `-m block` is the S5 path (one park/unpark per request).
+
+| depth | payload | C++ | await | block |
+|---:|---:|---:|---:|---:|
+| 1 | 10 B | 36,552 | **39,034 (106.8%)** | 26,182 (71.6%) |
+| 100 | 10 B | 1,010,425 | **1,063,391 (105.2%)** | 978,982 (96.9%) |
+| 100 | 100 B | 921,540 | **991,539 (107.6%)** | — |
+| 100 | 1024 B | 689,435 | **756,473 (109.7%)** | — |
+
+**The executor passes every cell**, depth 1 and depth 100, across all
+three payloads — 105–110% of the C++. The blocking path passes depth 100
+and fails depth 1 (71.6%), which is what S7 was built to fix and did:
+the park/unpark per request was the entire gap.
+
+`await` is therefore the parity path, and this is not a mode chosen per
+cell to flatter the table — it is the same mode in every row.

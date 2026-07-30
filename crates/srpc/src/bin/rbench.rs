@@ -154,13 +154,24 @@ fn main() {
     let stop = Arc::new(AtomicBool::new(false));
     let ok_count = Arc::new(AtomicU64::new(0));
 
-    // One poll thread, matching the C++ server shape being measured.
-    let poll = PollThread::start();
+    // ONE POLL THREAD PER CONNECTION, because that is what the C++
+    // client does — `rpcbench.cc`'s `client_proc` calls
+    // `PollThread::create()` inside each client thread, so `-t 4` is
+    // four poll threads, not one shared one.
+    //
+    // This is not a detail. In `-m await` the continuation runs on the
+    // poll thread, so a single shared poll thread funnels every task's
+    // send through one thread while the C++ spreads them across four.
+    // Sharing one measured the executor at 41% of C++ at depth 100; it
+    // was the harness, not the executor.
+    let mut polls = Vec::new();
 
     let mut workers = Vec::new();
     let mut handles = Vec::new();
     let mut conns = Vec::new();
     for t in 0..cfg.threads {
+        let poll = PollThread::start();
+        polls.push(Arc::clone(&poll));
         let conn = match ClientConnection::connect(&cfg.addr, &poll) {
             Ok(c) => c,
             Err(e) => {
@@ -266,5 +277,7 @@ fn main() {
     for c in &conns {
         c.close();
     }
-    poll.shutdown();
+    for p in &polls {
+        p.shutdown();
+    }
 }
