@@ -280,7 +280,17 @@ means something else":
 
 Bin suite 1939/1939 (10 new tests); pin `b48c4135`.
 
-**Compile-gate state: 21 of 24 modules compile.** `poll_thread` fails
+**Compile-gate state: 21 of 24 modules compile** (poll_thread now has
+TWO errors, not three — gap 2 below is fixed).
+
+Gaps 1 and 3 share ONE root cause: **a match-arm or if-let binding
+carries no recorded type**. Gap 1 forces an `Arc` unwrap up front
+because the arm calls a method on the binding (`p.fd()`), which the
+`arm_pointer_wrapper_value_bindings` scan classifies as *forcing* — the
+right answer is to keep the Arc and deref at the call, which needs the
+binding's type at the use site. Gap 3 needs the same thing for a
+MutexGuard. Fix the binding-type plumbing once and both close.
+ `poll_thread` fails
 with the three gaps below, and takes `srpc.runtime` and `srpc` (which
 import it) with it; the other 21 are green. All three pre-date this
 work and are independent of it — the derived markers and
@@ -293,10 +303,14 @@ for:
    is `const Pollable&` where the following `insert` wants
    `Arc<Pollable>`. Same family as the lookup case: a type that
    inference must CARRY rather than one that is DECLARED.
-2. `JoinHandle<()>` maps inconsistently — `thread::spawn` returns
-   `JoinHandle<void>` while the annotation position produces
-   `JoinHandle<rusty::Unit>` (= `JoinHandle<std::tuple<>>`), and the two
-   do not convert.
+2. ~~`JoinHandle<()>` maps inconsistently~~ — **FIXED** (`1c43bee0`).
+   Rust has no `void`: a closure returning nothing returns `()`, which
+   is `std::tuple<>` throughout this port, but `spawn` derived its
+   handle from `std::invoke_result_t` and so produced
+   `JoinHandle<void>`. `spawn` now normalizes through
+   `detail::SpawnResultType`, so `handle.join()` yields `Result<(),
+   JoinError>` as Rust's does. `JoinHandle<void>` stays supported for
+   code naming it directly.
 3. A guard bound by an **if-let** loses its pointer-like-ness. The Drop
    impl's `if let Ok(g) = self.join.lock()` emits
    `decltype(auto) g = …unwrap();` and then `g.take()` rather than
