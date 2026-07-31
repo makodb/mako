@@ -516,6 +516,29 @@ constexpr size_t kCompactThresholdBytes = static_cast<size_t>(64) * static_cast<
 // frame_codec_encode_into
 // ---------------------------------------------------------------------------
 
+// DEFERRED — the last hand-written function in this file, blocked on a
+// data-structure migration rather than on anything about the codec.
+//
+// The `(const uint8_t* payload, i32 payload_size)` half is the same
+// slice-in-disguise that write_header/peek_header turned out to be, and
+// converts the same way. The blocker is `out`: a DSL `&mut Vec<u8>`
+// lowers to `rusty::Vec<uint8_t>&`, which is the transpiled rustc Vec,
+// NOT `std::vector`. Every caller passes `std::vector<std::uint8_t>`
+// (`TcpOutBuf`, and `rusty::Mutex<std::vector<uint8_t>> outbound_`).
+//
+// So the rule-2 rewrite here is not a call-site edit, it is migrating
+// the transport's outbound buffer type. `rusty::Vec` does offer
+// data()/size()/clear()/resize(n, v), but tcp_channel drains that buffer
+// with `buf.erase(buf.begin(), buf.begin() + offset)` — iterator-pair
+// erase, which rustc's Vec does not have (it has `drain`). Converting
+// therefore means rewriting the drain path on the hot outbound path of a
+// branch whose stated Goal 1 is performance parity, which deserves its
+// own change with its own measurements — not a side effect of porting a
+// codec function.
+//
+// Enabling unit: migrate TcpOutBuf -> rusty::Vec<uint8_t> (drain via
+// `drain`), then this function converts mechanically.
+//
 // @unsafe - see export declaration: raw `const uint8_t*` payload +
 // `out.data() + offset` arithmetic + memcpy.
 bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
