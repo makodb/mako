@@ -1369,13 +1369,20 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
 
 // @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
 // wire `self_weak_` before publishing the listener.
+// @unsafe - Arc::get_mut mint window (see below).
 rusty::Option<ChannelListenerProxy> inmemory_factory_make_listener(const InMemoryFactory& self) {
     auto listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(self.switchboard_));
     // Wire the self-weak so the listener can register itself in the
     // switchboard. Mirrors TcpFactory::make_listener.
+    //
+    // get_mut(), not const_cast: the Arc was just minted and is still
+    // uniquely owned here, which is precisely when Rust's Arc::get_mut
+    // hands back a &mut. Casting away const on a shared Arc is a lie
+    // about aliasing; get_mut is the same operation with the uniqueness
+    // actually checked.
     {
-        auto& mut_l = const_cast<InMemoryListener&>(*listener.get());
-        mut_l.set_self_weak(rusty::sync::downgrade(listener));
+        auto mut_l = listener.get_mut();
+        mut_l.unwrap().set_self_weak(rusty::sync::downgrade(listener));
     }
     return rusty::Some(make_inmemory_listener_proxy(std::move(listener)));
 }

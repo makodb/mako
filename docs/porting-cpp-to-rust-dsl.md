@@ -1077,3 +1077,30 @@ Note the semantic difference if these are ever wired up: `str_runtime`
 returns `rusty::Option<std::size_t>`, not `npos`. DSL written against
 the C++ member functions compares against `std::string::npos`, and would
 need rewriting rather than just relinking.
+
+### 7.15 `let mut guard` is correct Rust, not a transpiler wart
+
+Assigning through a lock guard needs a `mut` binding:
+
+```rust
+let mut guard = mutex.lock().unwrap();
+(*guard).field = value;          // needs `mut`
+```
+
+Without it the transpiler emits `const auto&& guard` and the assignment
+fails to compile. That is the RIGHT behaviour and should not be "fixed":
+Rust requires `let mut guard` here too, because mutating through a
+`MutexGuard` goes via `DerefMut`, which needs a `&mut` binding.
+
+This is worth stating explicitly because it looks identical to a real
+deviation recorded elsewhere, and conflating them would lead someone to
+patch the transpiler in the wrong direction:
+
+| shape | needs `mut` in real Rust? | verdict |
+|---|---|---|
+| `let g = m.lock().unwrap(); (*g).f = v;` | yes (DerefMut) | correct as-is |
+| `let cb = opt.unwrap(); takes_by_value(cb);` | **no** (a move out of a non-mut binding is legal) | genuine transpiler bug |
+
+So: `let mut guard` — write it and move on. `let mut cb` — a workaround
+for the consumed-binding inference gap, and the `mut` should disappear
+once that is fixed.
