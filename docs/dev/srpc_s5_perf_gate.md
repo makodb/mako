@@ -298,3 +298,26 @@ command channel.
 **S8a-3 fiber gate re-measured on the new baseline**, 1 KiB:
 inline 1,492,384 vs fiber 1,209,277 = **81.0%**, still well clear of the
 60% gate.
+
+### The coalescing change COST the client ~12 points
+
+It is a trade, not a free win, and the cost is on the other side of the
+system from the gain.
+
+Client depth 100, 10 B, three trials after the change: 93.8 / 93.3 /
+92.3% of C++ (spread under 2%). Before it: 105.2%. That is well outside
+the 1-7% depth-100 noise this file records, so it is real.
+
+Mechanism, and this part is NOT verified: in `-m await` the task
+continuation runs on the poll thread, so a follow-up `call()` now
+accumulates instead of writing, and the request does not leave until the
+whole read batch has been decoded. That should be a pipeline bubble —
+the server sits idle while we finish decoding — which coalescing does
+not repay on the client, because a client's sends are spread over time
+where a server's replies arrive in a burst.
+
+Both sides still pass their gates (93% client, and the server went from
+40k to 1.48M at 1 KiB), so the trade is heavily positive overall. But it
+is recorded as a trade: an asymmetry between the two roles that one
+shared `send_frame` cannot serve optimally, and a candidate for a
+per-connection policy if the client number ever needs to come back.
