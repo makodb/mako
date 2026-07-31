@@ -25,6 +25,41 @@
 
 #![allow(unsafe_code)]
 
+// ## OPEN Goal-2 DEFECT: the socket family collides with libc
+//
+// The compile gate (scripts/srpc_cpp_gate.sh) fails this module with
+// `conflicting types for 'connect' / 'bind' / 'accept' / 'recv'`. Our
+// self-declared `extern "C"` socket fns collide with libc's real ones,
+// because `<sys/socket.h>` IS reachable in the emitted TU — the same
+// fact that made `AF_INET` a macro and forced the `SYS_` prefixes
+// below. Signatures differ (`SockAddrIn*` vs `struct sockaddr*`), so it
+// is a hard error, not a benign redeclaration.
+//
+// This is rule 1 above, violated for the whole socket family. epoll and
+// mmap are fine: those headers genuinely are not reachable.
+//
+// Three ways out, and the choice is not obvious:
+//
+//  1. MATCH LIBC EXACTLY. Cannot be expressed: any Rust struct we
+//     define lowers to a namespaced C++ type, so `srpc::sys::sockaddr*`
+//     still conflicts with `::sockaddr*`.
+//  2. `#[link_name]` to keep a distinct Rust name over the libc symbol.
+//     NOT VIABLE TODAY — the transpiler does not read the attribute
+//     (`grep -rn link_name transpiler/src/` is empty), so the emitted
+//     C++ would call a symbol that does not exist.
+//  3. A HAND-WRITTEN KERNEL exporting distinct names (`srpc_connect`,
+//     `srpc_bind`, …), compiled by both toolchains. This is exactly the
+//     pattern the fiber context switch already uses — one shared source
+//     of truth, reached through `extern "C"`, with a link error if it
+//     is absent. Consistent, and it sidesteps the collision by not
+//     naming libc's symbols at all.
+//
+// RECOMMENDED: (3), for consistency with the fiber seam. The general
+// fix is teaching the transpiler `#[link_name]`, which would make (2)
+// work and help every future FFI surface — worth doing, but it is a
+// transpiler feature rather than a port change, so it is recorded
+// rather than assumed.
+
 /// `struct epoll_event`. **Packed on x86_64** — the layout is ABI, not
 /// a choice: an unpacked version would put `data` at offset 8 and every
 /// registration would read the wrong field.
