@@ -101,6 +101,20 @@ So of frame_codec's 102 "kernel" lines, ~28 are probably DSL-able and
 are more genuinely kernel. Classify by what the body DOES, not by what
 the signature takes — a raw-pointer parameter is often just an old API.
 
+## The whole file is blocked on this, not just the stringifier
+
+`encode_into` (the ~74 genuinely-kernel lines) calls
+`frame_codec_write_header`, which calls `encode_response_size` — DSL in
+another module. So it cascades exactly like write_header does.
+
+There is no piece of frame_codec.cpp that can be converted without
+answering the question, because every non-scaffolding line reaches
+DSL-side logic through the call graph. Converting any of it to C
+converts that logic to C too.
+
+That is the answer to "can we start somewhere easy and decide later":
+no. The first file is the decision.
+
 ## Settled
 
 - **Module scaffolding is exempt** (`module;`, includes,
