@@ -1104,3 +1104,45 @@ patch the transpiler in the wrong direction:
 So: `let mut guard` — write it and move on. `let mut cb` — a workaround
 for the consumed-binding inference gap, and the `mut` should disappear
 once that is fixed.
+
+### 7.16 const_cast taxonomy: fix the runtime, not the call site
+
+A `const_cast` in this tree is one of two things, and a grep cannot tell
+them apart. Sorting them was worth three upstream commits.
+
+**Removable — the method never needed exclusive access.** Rust spells it
+`&self`; ours did not, so every caller holding a shared handle had to
+cast. Fixed upstream, and the casts evaporate at every call site at once:
+
+| method | Rust | fixed in |
+|---|---|---|
+| `Mutex::lock` | `&self` | already had a `lock() const` overload — the casts were simply unnecessary |
+| `mpsc::Sender::send` / `try_send` | `&self` | rusty-cpp `ec173e55` |
+| `net::TcpListener::accept` | `&self` | rusty-cpp `90cc8977` |
+| `net::{TcpListener,TcpStream}::set_nonblocking` | `&self` | rusty-cpp `90cc8977` |
+
+The tell: the body only READS the object (an fd, a shared_ptr) and the
+real state change happens elsewhere — in the kernel, or behind a mutex
+the callee takes itself.
+
+**Genuine — a real mutation through a const path.** `self.listener_ = x`,
+or calling a non-const method on an `Arc` that is actually shared.
+Deleting the cast here just moves the lie; the SIGNATURE has to change.
+Leave it and keep it `// @unsafe`.
+
+**Counting note.** Grep over-reports badly: of 55 `const_cast<` matches in
+`src/rrr` production files, 27 are inside `RUSTYCPP:GEN` blocks — emitted
+by the transpiler as `const_cast<uint8_t*>(reinterpret_cast<const
+uint8_t*>(p))`, a no-op round trip, not something to hand-edit. The real
+hand-written figure is **28**. Always split by GEN-block membership before
+quoting a number (the census script does this for lines; do the same here).
+
+**One removable cluster remains**: five casts of the shape
+`const_cast<std::atomic<int32_t>*>(arc.get())->fetch_add(..)` in
+`server.cpp`. `std::atomic`'s `fetch_add`/`store` are non-const, whereas
+`rusty::sync::atomic::Atomic` already declares both `const` (matching
+Rust). Retyping `ServerPendingRequestsAtomic` /
+`ServerDropHeartbeatRepliesAtomic` onto the rusty atomics removes all
+five — but note `std::atomic<i32>` also appears INSIDE DSL blocks and in
+`Request::attach_pending_guard`'s signature, so it needs a regen and a
+signature change, not just an alias swap.
