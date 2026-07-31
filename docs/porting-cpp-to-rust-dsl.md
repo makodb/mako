@@ -923,3 +923,58 @@ a deliberate short read, spell it — `std::span<const std::uint8_t>(got).first(
    enumerator. Fixed in rusty-cpp `78a0d9a7` (sibling enums are fed
    through `cross_file_enums`). If you see a cross-block type resolve
    oddly, check the pin before redesigning the DSL around it.
+
+### 7.12 Blocker: integer-returning fn + uppercase-named callee (July 2026)
+
+A DSL fn whose return type is an **integer** mis-qualifies calls to any
+free function whose name starts with an uppercase letter — it prefixes
+them with the mapped return type, emitting a call to something that does
+not exist:
+
+```rust
+fn f(x: bool) -> i32 {
+    if x {
+        Log_warn("empty");   // -> int32_t::Log_warn("empty");  ✗
+        return 5i32;
+    }
+    0i32
+}
+```
+
+```
+error: no member named 'Log_warn' in namespace ... / not a class or namespace
+```
+
+Characterized against the transpiler at the pin recorded in this repo:
+
+| return type | callee            | emitted            |
+|-------------|-------------------|--------------------|
+| `i32`       | `Log_warn(..)`    | `int32_t::Log_warn(..)`  ✗ |
+| `()`        | `Log_warn(..)`    | `Log_warn(..)`      ✓ |
+| `bool`      | `Log_warn(..)`    | `Log_warn(..)`      ✓ |
+| `i32`       | `log_warn(..)`    | `log_warn(..)`      ✓ |
+
+So it needs BOTH an integer return type and an uppercase-initial callee;
+`bool` does not trigger it, and a lowercase name never does. Wrapping the
+call in `unsafe { .. }` makes no difference. The heuristic being hit is
+"uppercase-initial name in a typed position looks like an enum variant of
+the expected type" — but nothing verifies the expected type is an enum,
+and `i32` is not.
+
+**Why this matters for the burndown:** it blocks a whole shape, not one
+function. Every `Log_debug/info/warn/error/fatal` is uppercase-initial,
+and plenty of rrr functions return `int` status codes — so any such
+function that logs cannot be converted until this is fixed. It is why
+`sconn_run_async` (9 lines, otherwise trivial: an emptiness check, a
+call, a status return) is still a C++ kernel.
+
+Do NOT work around it by renaming the logger or reshaping the function
+to return `()`; that is exactly the "rewrite our own counterpart"
+failure the policy doc warns about. Fix the qualification guard, then
+convert.
+
+Not yet located in the transpiler: it is not
+`try_emit_data_enum_variant_call_with_expected` (needs >= 2 path
+segments), not `path_matches_c_like_enum_const` (properly guarded), and
+not `try_emit_path_constructor_with_expected` (emits `T{}`, not `T::x`).
+The repro above reproduces in one file with no dependencies.
