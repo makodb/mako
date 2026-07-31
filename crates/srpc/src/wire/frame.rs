@@ -151,8 +151,7 @@ impl Default for FrameReader {
 /// throughput cliff at larger payloads. Diagnostic only — it is a
 /// relaxed store on a path that already touches a lock, and it answers
 /// a question that repeated guessing did not.
-static BUFFER_HIGH_WATER: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+static BUFFER_HIGH_WATER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn record_high_water(n: usize) {
     BUFFER_HIGH_WATER.fetch_max(n, std::sync::atomic::Ordering::Relaxed);

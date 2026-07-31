@@ -261,7 +261,40 @@ rest. **`TCP_NODELAY` is NOT enabled** — nothing in `src/rrr` sets it,
 so enabling it would invalidate every comparison in this file. It is
 available as `SRPC_DIAG_NODELAY=1`, diagnostic only.
 
-Still open. Next candidates worth MEASURING (not assuming): reply
-batching per poll iteration (the C++ may coalesce where we do one
-`send` per reply, which is exactly what Nagle punishes), and the
-per-frame reader lock in `decode_buffered`.
+**RESOLVED (2026-07-31) — it was reply coalescing.** The C++
+`send_frame` (tcp_channel.cpp:1285-1303) never writes inline: it encodes
+into ONE contiguous `outbound_` buffer and only arms the write interest.
+So N replies produced in one poll iteration leave as ONE `send`. Ours
+held a `VecDeque<Vec<u8>>` and called `send` per frame — at depth 400,
+400 syscalls and 400 small segments where the C++ does one, which is
+also precisely what Nagle punishes (tying hypothesis 4 to the cause).
+
+Fixed by adopting the C++ shape: one contiguous buffer, accumulate while
+on the poll thread, and flush once at the end of the read pump. Off the
+poll thread the write still happens inline, because there is no
+iteration to piggyback on and no eventfd to make a deferral cheap.
+
+| payload | before | after |
+|---:|---:|---:|
+| 10 B | 671,835 | **2,060,785** |
+| 1024 B | 40,405 | **1,479,627** |
+
+The cliff is gone (36x at 1 KiB), and **this also explains the S6 ~32%
+server deficit** — same missing coalescing. The Rust server now measures
+roughly 2x the C++ server in the same cells (C++: 1,014,676 at 10 B,
+689,435 at 1 KiB).
+
+Correctness re-verified after the change, not assumed: 186 lib tests,
+5 server round-trip, 4 loopback, 3 fiber-seam, and 13 interop against
+the live C++ `rpcbench -s` including the value-checking `fast_add`
+cases.
+
+Note a correction this turned up: the C++ comment at tcp_channel.cpp
+says posting `update_mode` writes to the mpsc channel's EVENTFD, which
+wakes `epoll_wait` immediately. The earlier claim in this file that
+there is "no eventfd anywhere" is true of the epoll timeout, not of the
+command channel.
+
+**S8a-3 fiber gate re-measured on the new baseline**, 1 KiB:
+inline 1,492,384 vs fiber 1,209,277 = **81.0%**, still well clear of the
+60% gate.

@@ -167,7 +167,20 @@ impl Drop for PollThread {
     }
 }
 
+thread_local! {
+    /// Whether this thread is the poll thread. Lets a frame callback
+    /// know it can accumulate a reply instead of writing it — the C++
+    /// `pollworker_is_on_poll_thread()`.
+    static IS_POLL_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True on a poll thread.
+pub fn on_poll_thread() -> bool {
+    IS_POLL_THREAD.with(|f| f.get())
+}
+
 fn poll_loop(rx: Receiver<Command>) {
+    IS_POLL_THREAD.with(|f| f.set(true));
     // Install this thread's fiber runtime for the life of the loop, so a
     // handler can spawn from inside a frame callback.
     with_runtime_installed(|| poll_loop_inner(rx))

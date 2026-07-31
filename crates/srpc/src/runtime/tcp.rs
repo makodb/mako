@@ -29,7 +29,6 @@ use crate::runtime::epoll::PollMode;
 use crate::runtime::poll_thread::{PollThread, Pollable};
 use crate::sys;
 use crate::wire::frame::{FrameHeader, FrameReader};
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -126,15 +125,36 @@ pub struct TcpConnection {
 
 #[derive(Default)]
 struct Outbound {
-    /// A DEQUE, not a Vec. Retiring the head with `Vec::remove(0)`
-    /// shifts every remaining entry, so a queue that actually backs up
-    /// costs O(n) per send and O(n^2) per drain. That is invisible at
-    /// small payloads — the socket accepts each reply immediately and
-    /// the queue never exceeds one entry — and it cost a 16x throughput
-    /// collapse at 1 KiB, where backpressure lets it grow.
-    queue: VecDeque<Vec<u8>>,
-    /// Bytes of `queue[0]` already written.
+    /// ONE contiguous buffer, not a queue of frames — the C++ shape
+    /// (`frame_codec_encode_into(buf, …)` appends into a single
+    /// `outbound_`).
+    ///
+    /// This is what lets N replies produced in one poll iteration leave
+    /// as ONE `send`. A queue of separate frames cannot coalesce, so it
+    /// costs a syscall and a small TCP segment per reply — which Nagle
+    /// then punishes. At depth 400 that is 400 syscalls where the C++
+    /// does one, and it was most of a 16x throughput collapse at 1 KiB.
+    buf: Vec<u8>,
+    /// Bytes of `buf` already written.
     offset: usize,
+}
+
+impl Outbound {
+    fn pending(&self) -> usize {
+        self.buf.len() - self.offset
+    }
+
+    /// Drop the written prefix once it dominates the buffer, so the
+    /// offset cannot grow without bound on a long-lived connection.
+    fn compact(&mut self) {
+        if self.offset == self.buf.len() {
+            self.buf.clear();
+            self.offset = 0;
+        } else if self.offset >= 64 * 1024 {
+            self.buf.drain(..self.offset);
+            self.offset = 0;
+        }
+    }
 }
 
 impl TcpConnection {
@@ -202,8 +222,20 @@ impl TcpConnection {
         }
         let result = {
             let mut guard = self.outbound.lock().unwrap();
-            guard.queue.push_back(bytes);
-            self.drain_outbound_locked(&mut guard)
+            guard.buf.extend_from_slice(&bytes);
+            if crate::runtime::poll_thread::on_poll_thread() {
+                // On the poll thread the caller is inside a frame
+                // callback, and more replies are likely to follow in
+                // this same iteration. Accumulate and let the read pump
+                // flush once — that is the coalescing.
+                ChannelError::WouldBlock
+            } else {
+                // Off the poll thread there is no iteration to
+                // piggyback on, so write now; deferring would cost a
+                // wakeup per request and the poll loop has no eventfd
+                // to make that cheap.
+                self.drain_outbound_locked(&mut guard)
+            }
         };
         if result == ChannelError::WouldBlock {
             // Bytes remain: hand the rest to the poll thread. Dropping
@@ -222,17 +254,11 @@ impl TcpConnection {
         if fd < 0 {
             return ChannelError::ConnectionReset;
         }
-        while !out.queue.is_empty() {
-            let n = {
-                let head = &out.queue[0];
-                sys::send_fd(fd, &head[out.offset..])
-            };
+        while out.pending() > 0 {
+            let n = sys::send_fd(fd, &out.buf[out.offset..]);
             if n > 0 {
                 out.offset += n as usize;
-                if out.offset >= out.queue[0].len() {
-                    out.queue.pop_front();
-                    out.offset = 0;
-                }
+                out.compact();
                 continue;
             }
             // send() returning 0 on a stream socket means it accepted
@@ -249,7 +275,24 @@ impl TcpConnection {
             }
             return errno_to_channel_error(err);
         }
+        out.compact();
         ChannelError::None
+    }
+
+    /// Write whatever has accumulated. Called by the read pump once per
+    /// iteration, after every frame in the batch has been dispatched.
+    pub fn flush(&self) {
+        let mut guard = self.outbound.lock().unwrap();
+        if guard.pending() == 0 {
+            return;
+        }
+        let rc = self.drain_outbound_locked(&mut guard);
+        drop(guard);
+        if rc == ChannelError::WouldBlock {
+            self.arm_write_interest();
+        } else if rc != ChannelError::None {
+            self.close_with(rc);
+        }
     }
 
     /// Deliver the close callback at most once.
@@ -331,7 +374,7 @@ impl Pollable for TcpConnection {
         // READ always; WRITE only while bytes are queued. Registration
         // reads this, so a connection registered with a backlog already
         // pending comes up with EPOLLOUT armed.
-        let queued = !self.outbound.lock().unwrap().queue.is_empty();
+        let queued = self.outbound.lock().unwrap().pending() > 0;
         if queued {
             PollMode::READ_WRITE
         } else {
@@ -388,6 +431,8 @@ impl Pollable for TcpConnection {
         drop(scratch);
 
         self.decode_buffered();
+        // ONE write for every reply this iteration produced.
+        self.flush();
     }
 
     fn handle_write(&self) -> PollMode {
@@ -395,13 +440,13 @@ impl Pollable for TcpConnection {
             return PollMode::NO_CHANGE;
         }
         let mut guard = self.outbound.lock().unwrap();
-        if guard.queue.is_empty() {
+        if guard.pending() == 0 {
             return PollMode::READ;
         }
         let result = self.drain_outbound_locked(&mut guard);
         if result == ChannelError::None {
-            // Drop EPOLLOUT only once the queue is actually empty.
-            if guard.queue.is_empty() {
+            // Drop EPOLLOUT only once the buffer is actually empty.
+            if guard.pending() == 0 {
                 return PollMode::READ;
             }
             return PollMode::NO_CHANGE;
