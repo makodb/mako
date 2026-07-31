@@ -233,3 +233,35 @@ Likely the same defect as the S6 ~32% Rust-server deficit, which is also
 unattributed. Both are server-side and neither is S8. Profile before
 theorizing — this file has twice recorded a plausible explanation that
 measurement then refuted.
+
+### Investigation (2026-07-31) — two more hypotheses dead, one partial hit
+
+**The knee, measured:** 100 B 655k · 200 B 655k · 400 B 645k · 600 B
+627k · **800 B 297k** · **1024 B 58k**. Ratios 1x / 2.1x / 10.8x — not a
+cost curve, a collapse.
+
+**Hypothesis 2 — quadratic outbound drain (`Vec::remove(0)`). DEAD.**
+Real latent bug, fixed (it is a `VecDeque` now), but the numbers did not
+move.
+
+**Hypothesis 3 — compaction feedback loop.** The collapse shape
+suggested falling behind grows the buffer, which makes the O(buffer)
+`drain` slower, which… **DEAD, killed by instrumentation**: reader
+high-water is 127 KB at 600 B and 169 KB at 1024 B. Bounded and modest,
+so the buffer is not running away and compaction is not the cost.
+(`frame::buffer_high_water()` is the instrument, kept.)
+
+**Hypothesis 4 — Nagle / delayed-ACK. PARTIAL HIT.** With
+`TCP_NODELAY` on accepted connections, 1 KiB goes 44,037 → **112,052
+(2.5x)**. Real, and not sufficient: still ~6x below the small-payload
+number and far below the C++'s 689k in the same cell.
+
+So Nagle explains part of the cliff and something else explains the
+rest. **`TCP_NODELAY` is NOT enabled** — nothing in `src/rrr` sets it,
+so enabling it would invalidate every comparison in this file. It is
+available as `SRPC_DIAG_NODELAY=1`, diagnostic only.
+
+Still open. Next candidates worth MEASURING (not assuming): reply
+batching per poll iteration (the C++ may coalesce where we do one
+`send` per reply, which is exactly what Nagle punishes), and the
+per-frame reader lock in `decode_buffered`.

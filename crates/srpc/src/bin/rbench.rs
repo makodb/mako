@@ -157,8 +157,18 @@ fn serve(cfg: &Config) -> ! {
             std::process::exit(1);
         }
     }
+    // Report the reader high-water mark once a second. The 1 KiB
+    // throughput cliff looks like a feedback loop (falling behind grows
+    // the buffer, which makes compaction slower, which…), and this is
+    // the measurement that confirms or kills that.
+    let mut last = 0usize;
     loop {
-        std::thread::sleep(Duration::from_secs(3600));
+        std::thread::sleep(Duration::from_secs(1));
+        let hw = srpc::wire::frame::buffer_high_water();
+        if hw != last {
+            eprintln!("reader high-water: {hw} bytes");
+            last = hw;
+        }
     }
 }
 

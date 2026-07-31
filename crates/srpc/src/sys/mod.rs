@@ -115,6 +115,8 @@ pub const AF_INET: i32 = 2;
 pub const SOCK_STREAM: i32 = 1;
 
 pub const SOL_SOCKET: i32 = 1;
+pub const IPPROTO_TCP: i32 = 6;
+pub const TCP_NODELAY: i32 = 1;
 pub const SO_REUSEADDR: i32 = 2;
 pub const SO_ERROR: i32 = 4;
 

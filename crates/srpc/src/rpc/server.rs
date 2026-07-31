@@ -174,6 +174,15 @@ impl Pollable for Listener {
                 continue;
             }
 
+            // DIAGNOSTIC ONLY, off by default. Nagle is ON throughout
+            // this port deliberately (nothing in src/rrr sets
+            // TCP_NODELAY), so this must never become the default — it
+            // would invalidate every comparison. It exists to test
+            // whether the 1 KiB throughput cliff is a Nagle/delayed-ACK
+            // interaction.
+            if std::env::var("SRPC_DIAG_NODELAY").is_ok() {
+                sys::setsockopt_int(cfd, sys::IPPROTO_TCP, sys::TCP_NODELAY, 1);
+            }
             let conn = Arc::new(TcpConnection::from_fd(cfd));
             let shared = Arc::clone(&self.shared);
             let reply_to = Arc::downgrade(&conn);

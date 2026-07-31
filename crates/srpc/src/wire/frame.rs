@@ -147,6 +147,22 @@ impl Default for FrameReader {
     }
 }
 
+/// High-water mark of any reader's buffer, for diagnosing the
+/// throughput cliff at larger payloads. Diagnostic only — it is a
+/// relaxed store on a path that already touches a lock, and it answers
+/// a question that repeated guessing did not.
+static BUFFER_HIGH_WATER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn record_high_water(n: usize) {
+    BUFFER_HIGH_WATER.fetch_max(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Largest reader buffer seen so far, in bytes.
+pub fn buffer_high_water() -> usize {
+    BUFFER_HIGH_WATER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl FrameReader {
     pub fn new() -> FrameReader {
         FrameReader {
@@ -160,6 +176,7 @@ impl FrameReader {
             return;
         }
         self.buf.extend_from_slice(data);
+        record_high_water(self.buf.len());
     }
 
     /// Bytes buffered but not yet consumed as frames.
