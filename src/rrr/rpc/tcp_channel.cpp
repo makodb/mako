@@ -1970,7 +1970,7 @@ ChannelError tcplistener_listen(const TcpListener& self, std::string_view addr) 
     // documented localized-const_cast pattern (listen runs once).
     const_cast<TcpListener&>(self).listener_ = bind_result.unwrap();
 
-    auto nonblock_result = const_cast<rusty::net::TcpListener&>(self.listener_).set_nonblocking(true);
+    auto nonblock_result = self.listener_.set_nonblocking(true);
     if (nonblock_result.is_err()) {
         ChannelError ch = io_kind_to_channel_error(
             nonblock_result.unwrap_err().kind());
@@ -2135,7 +2135,7 @@ bool tcplistener_is_bound(const TcpListener& self) {
 
 // @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
 int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
-    auto accept_result = const_cast<rusty::net::TcpListener&>(self.listener_).accept();
+    auto accept_result = self.listener_.accept();
     if (accept_result.is_err()) {
         auto err = accept_result.unwrap_err();
         auto kind = err.kind();
