@@ -66,6 +66,41 @@ worse, and this file is where that first becomes visible.
 Stringifiers are common enough to be worth a lowering. But this is a
 scope call, not a code call.
 
+## Kernels are not leaves — "move it to C" cascades
+
+`frame_codec_write_header` (28 lines) reads like kernel material: a raw
+`std::uint8_t*` and a `memcpy`. It is not self-contained. It calls
+`encode_response_size`, which is defined in **DSL** in another module,
+and uses `kMaxFramePayloadSize`, which is generated.
+
+C cannot call a function that lives in a C++ module. So moving this one
+function to external C requires one of:
+
+ - cascade `encode_response_size` into C as well (and whatever it calls);
+ - change the signature to take the already-encoded value, pushing the
+   logic to every caller;
+ - duplicate the encoding in C, which is a divergence waiting to happen.
+
+Budget for this when sizing the remaining 7,106 lines: the kernel
+boundary is not where the raw pointers are, it is where the *call graph*
+can be cut.
+
+## The first triage was too pessimistic
+
+`write_header` was classified as kernel from its signature. Its BODY is
+validate -> encode -> store 4 bytes; the only raw-pointer act is a
+4-byte store. `crates/srpc/src/wire/frame.rs` already expresses exactly
+this safely over a slice, under `deny(unsafe_code)`.
+
+Its callers are four test sites passing `hdr.data()` from a
+`std::array`. Taking a slice instead costs a 4-line test change and
+makes the function **Rust rather than C**.
+
+So of frame_codec's 102 "kernel" lines, ~28 are probably DSL-able and
+~74 (`encode_into`: vector resize plus a memcpy of an arbitrary payload)
+are more genuinely kernel. Classify by what the body DOES, not by what
+the signature takes — a raw-pointer parameter is often just an old API.
+
 ## Settled
 
 - **Module scaffolding is exempt** (`module;`, includes,
