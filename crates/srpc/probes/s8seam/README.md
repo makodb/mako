@@ -50,8 +50,27 @@ gap, not a style choice. Rust coerces `&mut T` to `*mut T` implicitly at
 an FFI call; C++ has no `T&` -> `T*` conversion, so a `&mut` wrapper
 emits `srpc_fiber_swap(from, to)` against `Ctx*` params and fails to
 compile. Raw pointers at an `extern "C"` boundary are idiomatic anyway,
-so this is a comfortable shape — but the missing coercion is real and
-deserves its own fix.
+so this is a comfortable shape.
+
+**An attempt to close it upstream FAILED and was reverted (2026-07-31).**
+Adding the coercion to `emit_expr_to_string_with_expected` — the generic
+"expected type" path — was wrong in BOTH directions at once: it did not
+fire for the FFI call it targeted (the expected pointer type does not
+reach that path the way the parameter list does), and it DID fire
+somewhere it should not, breaking
+`test_leaf41543333331_typed_raw_pointer_local_does_not_emit_duplicate_const`
+by adding an address-of to a local that was already a pointer.
+
+That failure is the useful part: the generic expected-type path is the
+wrong home for this. Every expression in the crate flows through it, so
+a rule keyed on "expected is a pointer, argument is a reference" has an
+enormous blast radius and no way to know it is looking at a call
+argument. The right home is the CALL-ARGUMENT site, keyed on the
+callee's declared parameter types (`function_arg_expected_types`), where
+the context is unambiguous. Anyone retrying should start there, and
+should run the whole ~1946-test suite rather than the new tests — one of
+the two failures was a pre-existing test, and only the full run showed
+it.
 
 ## Reproduce
 
