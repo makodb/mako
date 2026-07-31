@@ -4,5 +4,6 @@
 //! then the poll thread, then connections and endpoints.
 
 pub mod epoll;
+pub mod fiber;
 pub mod poll_thread;
 pub mod tcp;

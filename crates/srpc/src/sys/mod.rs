@@ -167,6 +167,60 @@ extern "C" {
     fn poll(fds: *mut PollFd, nfds: u64, timeout: i32) -> i32;
 }
 
+pub const PROT_NONE: i32 = 0;
+pub const PROT_READ: i32 = 1;
+pub const PROT_WRITE: i32 = 2;
+pub const MAP_PRIVATE: i32 = 0x02;
+pub const MAP_ANONYMOUS: i32 = 0x20;
+/// `mmap` reports failure as `(void*)-1`, not null.
+pub const MAP_FAILED: usize = usize::MAX;
+
+extern "C" {
+    fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, off: i64) -> *mut u8;
+    fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+    fn munmap(addr: *mut u8, len: usize) -> i32;
+}
+
+/// Anonymous private mapping of `len` bytes, readable and writable.
+/// Returns the base address, or `MAP_FAILED`.
+pub fn map_anonymous(len: usize) -> usize {
+    // @unsafe { libc }
+    let p = unsafe {
+        mmap(
+            core::ptr::null_mut(),
+            len,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    p as usize
+}
+
+/// Make `[addr, addr+len)` inaccessible — the guard page. A stack
+/// overflow then faults on a known address instead of quietly
+/// scribbling on whatever was mapped below it.
+pub fn protect_none(addr: usize, len: usize) -> i32 {
+    // @unsafe { libc }
+    let rc = unsafe { mprotect(addr as *mut u8, len, PROT_NONE) };
+    if rc < 0 {
+        -last_errno()
+    } else {
+        0
+    }
+}
+
+pub fn unmap(addr: usize, len: usize) -> i32 {
+    // @unsafe { libc }
+    let rc = unsafe { munmap(addr as *mut u8, len) };
+    if rc < 0 {
+        -last_errno()
+    } else {
+        0
+    }
+}
+
 /// `socket(2)`, returning the fd or `-errno`.
 pub fn socket_fd(domain: i32, ty: i32, protocol: i32) -> i32 {
     // @unsafe { libc }
