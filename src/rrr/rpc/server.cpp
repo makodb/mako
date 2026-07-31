@@ -70,14 +70,26 @@ enum ShutdownPhase {
     CLOSING,
     STOPPED,
 }
+
+fn shutdown_phase_to_string(phase: ShutdownPhase) -> &'static str {
+    match phase {
+        ShutdownPhase::RUNNING => "RUNNING",
+        ShutdownPhase::STOP_ACCEPTING => "STOP_ACCEPTING",
+        ShutdownPhase::DRAINING => "DRAINING",
+        ShutdownPhase::CLOSING => "CLOSING",
+        ShutdownPhase::STOPPED => "STOPPED",
+        _ => "UNKNOWN",
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.shutdown_phase version=1 rust_sha256=81e13454ca98eab16f2d19f5ffc68ccdd723a3fa26e9a3324485b87e0b21fd8d*/
+/*RUSTYCPP:GEN-BEGIN id=server.shutdown_phase version=1 rust_sha256=03547ba09ca4503ae51b144ca0a574c58b13aed97af72b34726b70428ad7d8dc*/
 enum class ShutdownPhase;
 constexpr ShutdownPhase ShutdownPhase_RUNNING();
 constexpr ShutdownPhase ShutdownPhase_STOP_ACCEPTING();
 constexpr ShutdownPhase ShutdownPhase_DRAINING();
 constexpr ShutdownPhase ShutdownPhase_CLOSING();
 constexpr ShutdownPhase ShutdownPhase_STOPPED();
+std::string_view shutdown_phase_to_string(ShutdownPhase phase);
 
 enum class ShutdownPhase {
     RUNNING,
@@ -91,19 +103,11 @@ inline constexpr ShutdownPhase ShutdownPhase_STOP_ACCEPTING() { return ShutdownP
 inline constexpr ShutdownPhase ShutdownPhase_DRAINING() { return ShutdownPhase::DRAINING; }
 inline constexpr ShutdownPhase ShutdownPhase_CLOSING() { return ShutdownPhase::CLOSING; }
 inline constexpr ShutdownPhase ShutdownPhase_STOPPED() { return ShutdownPhase::STOPPED; }
-/*RUSTYCPP:GEN-END id=server.shutdown_phase*/
 
-// @safe - Convert ShutdownPhase to string for logging
-inline const char* shutdown_phase_to_string(ShutdownPhase phase) {
-    switch (phase) {
-        case ShutdownPhase::RUNNING: return "RUNNING";
-        case ShutdownPhase::STOP_ACCEPTING: return "STOP_ACCEPTING";
-        case ShutdownPhase::DRAINING: return "DRAINING";
-        case ShutdownPhase::CLOSING: return "CLOSING";
-        case ShutdownPhase::STOPPED: return "STOPPED";
-        default: return "UNKNOWN";
-    }
+std::string_view shutdown_phase_to_string(ShutdownPhase phase) {
+    return ({ auto&& _m = phase; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == ShutdownPhase::RUNNING)) { _match_value.emplace(std::move(std::string_view("RUNNING"))); _m_matched = true; } if (!_m_matched && (_m == ShutdownPhase::STOP_ACCEPTING)) { _match_value.emplace(std::move(std::string_view("STOP_ACCEPTING"))); _m_matched = true; } if (!_m_matched && (_m == ShutdownPhase::DRAINING)) { _match_value.emplace(std::move(std::string_view("DRAINING"))); _m_matched = true; } if (!_m_matched && (_m == ShutdownPhase::CLOSING)) { _match_value.emplace(std::move(std::string_view("CLOSING"))); _m_matched = true; } if (!_m_matched && (_m == ShutdownPhase::STOPPED)) { _match_value.emplace(std::move(std::string_view("STOPPED"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }
+/*RUSTYCPP:GEN-END id=server.shutdown_phase*/
 
 // Shutdown hook callback type. rusty::Function is move-only; the
 // hooks are stored in `Vec<ShutdownHook>` (no clone()), pushed via
@@ -997,12 +1001,12 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
 /*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=8d707e5e9c97cee76c4b56dc00050cbd39f40e07524d0051dfe6397a96426d9d*/
 bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
     const auto current_phase = phase.get();
-    if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::RUNNING)) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase::STOP_ACCEPTING))) {
+    if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_RUNNING())) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_STOP_ACCEPTING()))) {
         Log_debug("Server::drain: already past the draining phases");
         return server_atomic_load_int(pending) == 0;
     }
     Log_info("Server::drain: transitioning to DRAINING, pending={}", server_atomic_load_int(pending));
-    phase.set(rusty::clone(rusty::clone(ShutdownPhase::DRAINING)));
+    phase.set(rusty::clone(rusty::clone(ShutdownPhase_DRAINING())));
     const auto start_us = rusty::sys::time::clock_monotonic_us();
     const auto timeout_us = rusty::detail::deref_if_pointer_like(timeout_ms) * 1000;
     while (server_atomic_load_int(pending) > 0) {
@@ -1393,7 +1397,7 @@ Server::~Server() noexcept(false) {
 }
 
 Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
-    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::Box<rusty::Condvar>::new_(rusty::Condvar{}), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase::RUNNING))), rusty::Mutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()));
+    return Server(rusty::Vec<ServiceProxy>(), rusty::HashMap<int32_t, size_t>(), rusty::HashSet<int32_t>(), rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None}, server_resolve_poll_thread(std::move(poll_thread_worker)), rusty::Mutex<ShutdownState>(ShutdownState{}), rusty::Box<rusty::Condvar>::new_(rusty::Condvar{}), rusty::Cell<ShutdownPhase>::new_(rusty::clone(rusty::clone(ShutdownPhase_RUNNING()))), rusty::Mutex<rusty::Vec<ShutdownHook>>::new_(rusty::Vec<ShutdownHook>()), rusty::Arc<ServerPendingRequestsAtomic>::make(static_cast<int32_t>(0)), rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false), server_generate_instance_id(), rusty::Option<ChannelFactoryProxy>{rusty::None}, rusty::Option<ChannelListenerProxy>{rusty::None}, rusty::Mutex<rusty::Vec<rusty::Arc<ServerConnection>>>::new_(rusty::Vec<rusty::Arc<ServerConnection>>()));
 }
 
 void Server::set_channel_factory(ChannelFactoryProxy factory) {
@@ -1457,10 +1461,10 @@ void Server::add_shutdown_hook(ShutdownHook hook) const {
 }
 
 void Server::stop_accepting() {
-    if (((static_cast<int32_t>(this->shutdown_phase_field.get()))) != ((static_cast<int32_t>(ShutdownPhase::RUNNING)))) {
+    if (((static_cast<int32_t>(this->shutdown_phase_field.get()))) != ((static_cast<int32_t>(ShutdownPhase_RUNNING())))) {
         return;
     }
-    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::STOP_ACCEPTING)));
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase_STOP_ACCEPTING())));
     server_close_channel_listener_if_bound(this->channel_listener_field);
 }
 
@@ -1471,10 +1475,10 @@ bool Server::drain(uint64_t timeout_ms) const {
 void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
     this->stop_accepting();
     this->drain(std::move(drain_timeout_ms));
-    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::CLOSING)));
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase_CLOSING())));
     server_run_shutdown_hooks(this->shutdown_hooks_field);
     this->do_shutdown();
-    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase::STOPPED)));
+    this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase_STOPPED())));
 }
 
 ShutdownPhase Server::phase() const {
