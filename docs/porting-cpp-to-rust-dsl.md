@@ -865,3 +865,61 @@ finally `event_wait_impl`). The fixes, in order landed:
 
 `event_core_record_place` stays hand-C++: it is a genuine `sprintf`/`char[]`
 kernel, not a transpiler gap.
+
+### 7.11 Raw pointer + length is usually a slice, not a kernel (July 2026)
+
+A `(T* buf, size_t len)` signature *looks* like permanent floor. Usually
+it is not: it is a slice that lost its length at the C boundary. Under
+the rule-2 half of `docs/dev/rrr_migration_policy.md`, rewrite the call
+site rather than teaching the DSL to emit pointer arithmetic.
+
+`frame_codec` is the worked example — both "kernels" dissolved:
+
+```rust
+fn frame_codec_write_header(out_buf: &mut [u8], payload_size: i32, ext: bool) -> bool
+fn frame_codec_peek_header(buf: &[u8], out_header: &mut FrameHeader) -> FrameDecodeStatus
+```
+
+`&[u8]` / `&mut [u8]` lower to `std::span<const uint8_t>` / `std::span<uint8_t>`.
+Two things fall out for free, and both are why this is worth doing:
+
+ - a span cannot be null, so the old `if (buf == nullptr) return false`
+   null check becomes a real **bounds** check;
+ - a span carries its length, so a separate `available` / `len`
+   parameter **disappears from the signature** — the caller can no
+   longer pass a length that disagrees with the buffer.
+
+The `memcpy` pair that reads/writes a scalar through the pointer is not
+floor either: `to_ne_bytes()` lowers to
+`std::bit_cast<std::array<uint8_t, N>>` and `from_ne_bytes` to
+`rusty::from_ne_bytes<T>`, both byte-for-byte identical to the memcpy
+they replace, and both host-order (so `Marshal::write_bookmark`
+semantics are preserved without an endianness decision).
+
+Call sites: `std::array` and `std::vector` convert to `std::span`
+implicitly, so most sites go from `x.data(), x.size()` to plain `x`. For
+a deliberate short read, spell it — `std::span<const std::uint8_t>(got).first(4)`
+— rather than passing a mismatched length.
+
+**Two mechanical gotchas, both cost a build cycle:**
+
+1. A *new* DSL block must be followed by its GEN scaffold carrying an
+   explicit `id=`:
+
+   ```
+   /*RUSTYCPP:GEN-BEGIN id=<file>.<name> version=1 rust_sha256=<64 zeros>*/
+   /*RUSTYCPP:GEN-END id=<file>.<name>*/
+   ```
+
+   Without it the rewriter auto-numbers the block by *position*
+   (`<stem>.<index>`), which collides with any existing explicit id at
+   that index — `duplicate inline block id=frame_codec.4`. The sha is
+   rewritten for you; zeros are fine.
+
+2. Blocks are transpiled **one at a time**. Historically a block could
+   not see types declared in a sibling block, so a unit variant of an
+   enum declared elsewhere in the same file was guessed to be an
+   external data enum and emitted as `E::Variant()` — a call on an
+   enumerator. Fixed in rusty-cpp `78a0d9a7` (sibling enums are fed
+   through `cross_file_enums`). If you see a cross-block type resolve
+   oddly, check the pin before redesigning the DSL around it.
