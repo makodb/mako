@@ -98,18 +98,30 @@ std::string log_basename(const int8_t* fpath);
 // @unsafe - wraps the char-buffer time_now_str kernel.
 std::string log_time_now();
 
-// @unsafe - single-character level indicator lookup.
-std::string log_level_tag(int level);
-
 // DSL core: level filter + line decoration + sink routing. Everything
 // here is plain control flow over std::string.
 #if RUSTYCPP_RUST
+// The level indicator. Was a C++ kernel indexing a `static const char[]`
+// and returning a freshly-allocated 2-char std::string on EVERY log
+// line; as `&'static str` it is a static lookup with no allocation.
+fn log_level_tag(level: i32) -> &'static str {
+    match level {
+        0 => "F ",
+        1 => "E ",
+        2 => "W ",
+        3 => "I ",
+        4 => "D ",
+        _ => "? ",
+    }
+}
+
 fn log_line(level: i32, line: i32, file: *const i8, msg: &std::string) {
     if level > 4 {
         verify(false);
     }
     if level <= Log::level_now() {
-        let mut out = log_level_tag(level);
+        let mut out = std::string();
+        out.append(log_level_tag(level));
         out.append("[");
         out.append(log_basename(file));
         out.append(":");
@@ -122,15 +134,21 @@ fn log_line(level: i32, line: i32, file: *const i8, msg: &std::string) {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=logging.log_line version=1 rust_sha256=15088c7c623dcfafebb4a23a02468adc68e7775a38bee9230863f3712e8dad3f*/
+/*RUSTYCPP:GEN-BEGIN id=logging.log_line version=1 rust_sha256=e3f331d0f1e8b724ac7c5607f8392e9840e08bb562248056f2e9f698348c7828*/
+std::string_view log_level_tag(int32_t level);
 void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg);
+
+std::string_view log_level_tag(int32_t level) {
+    return ({ auto&& _m = level; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == 0)) { _match_value.emplace(std::move(std::string_view("F "))); _m_matched = true; } if (!_m_matched && (_m == 1)) { _match_value.emplace(std::move(std::string_view("E "))); _m_matched = true; } if (!_m_matched && (_m == 2)) { _match_value.emplace(std::move(std::string_view("W "))); _m_matched = true; } if (!_m_matched && (_m == 3)) { _match_value.emplace(std::move(std::string_view("I "))); _m_matched = true; } if (!_m_matched && (_m == 4)) { _match_value.emplace(std::move(std::string_view("D "))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("? "))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
 
 void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg) {
     if (rusty::detail::deref_if_pointer_like(level) > 4) {
         verify(false);
     }
     if (rusty::detail::deref_if_pointer_like(level) <= Log::level_now()) {
-        auto out = log_level_tag(std::move(level));
+        auto out = std::string();
+        out.append(log_level_tag(std::move(level)));
         out.append("[");
         out.append(log_basename(file));
         out.append(":");
@@ -183,14 +201,6 @@ std::string log_time_now() {
     char now_str[kTimeNowStrSize];
     time_now_str(now_str);
     return std::string(now_str);
-}
-
-// @unsafe - level indicator lookup on a fixed table.
-std::string log_level_tag(int level) {
-    static const char indicator[] = { 'F', 'E', 'W', 'I', 'D' };
-    std::string tag(1, (level >= 0 && level <= 4) ? indicator[level] : '?');
-    tag.append(" ");
-    return tag;
 }
 
 } // namespace rrr
