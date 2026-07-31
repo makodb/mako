@@ -316,8 +316,19 @@ the server sits idle while we finish decoding — which coalescing does
 not repay on the client, because a client's sends are spread over time
 where a server's replies arrive in a burst.
 
-Both sides still pass their gates (93% client, and the server went from
-40k to 1.48M at 1 KiB), so the trade is heavily positive overall. But it
-is recorded as a trade: an asymmetry between the two roles that one
-shared `send_frame` cannot serve optimally, and a candidate for a
-per-connection policy if the client number ever needs to come back.
+**RESOLVED — the mechanism was right, and the trade is gone.** Making
+the write policy PER CONNECTION (coalesce on the server, immediate on
+the client) restores the client fully: 104.8 / 107.2 / 105.8% across
+three trials, against 105.2% before coalescing existed. The server keeps
+its gain (1,972,484 at 10 B, 1,476,408 at 1 KiB).
+
+So the asymmetry was real and is now expressed in the design rather than
+paid for: a server's replies are produced in a burst by one read batch
+and want one write; a client's sends are spread over time and want to
+leave immediately. One shared `send_frame` cannot serve both, and now it
+does not have to.
+
+This also confirms the mechanism that was marked unverified above — the
+bubble was the batching, not something else — which is worth noting
+because four earlier hypotheses in this file did not survive their
+test.

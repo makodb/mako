@@ -282,6 +282,10 @@ impl ClientConnection {
             }
         }));
 
+        // A client's sends are spread over time, not produced in a
+        // burst, so batching them until the read batch finishes only
+        // adds a bubble. Measured: 93% vs 105% of C++ at depth 100.
+        conn.set_write_immediate();
         conn.attach_poll_thread(poll);
         poll.add(Arc::clone(&conn) as Arc<dyn Pollable>);
 

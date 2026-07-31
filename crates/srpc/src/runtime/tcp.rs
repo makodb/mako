@@ -113,6 +113,13 @@ pub struct TcpConnection {
     /// ends — peer close, read error, write error, or an explicit
     /// `close()`.
     closed_delivered: AtomicBool,
+    /// Whether to accumulate replies and flush once per poll iteration.
+    ///
+    /// On by default (the server shape, and the C++'s). A CLIENT wants
+    /// it off: its sends are spread over time rather than produced in a
+    /// burst, so holding a request until the read batch finishes is a
+    /// pipeline bubble the coalescing does not repay.
+    coalesce: AtomicBool,
     /// The poll thread driving this connection, for re-arming the write
     /// interest after a partial send.
     ///
@@ -169,6 +176,7 @@ impl TcpConnection {
             on_frame: Mutex::new(None),
             on_closed: Mutex::new(None),
             closed_delivered: AtomicBool::new(false),
+            coalesce: AtomicBool::new(true),
             poll_thread: Mutex::new(None),
         }
     }
@@ -187,6 +195,12 @@ impl TcpConnection {
     /// flush them.
     pub fn attach_poll_thread(&self, poll: &Arc<PollThread>) {
         *self.poll_thread.lock().unwrap() = Some(Arc::downgrade(poll));
+    }
+
+    /// Write each frame as it is queued instead of batching. See
+    /// [`Self::coalesce`].
+    pub fn set_write_immediate(&self) {
+        self.coalesce.store(false, Ordering::Release);
     }
 
     pub fn is_closed(&self) -> bool {
@@ -223,7 +237,9 @@ impl TcpConnection {
         let result = {
             let mut guard = self.outbound.lock().unwrap();
             guard.buf.extend_from_slice(&bytes);
-            if crate::runtime::poll_thread::on_poll_thread() {
+            if self.coalesce.load(Ordering::Acquire)
+                && crate::runtime::poll_thread::on_poll_thread()
+            {
                 // On the poll thread the caller is inside a frame
                 // callback, and more replies are likely to follow in
                 // this same iteration. Accumulate and let the read pump
