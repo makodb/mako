@@ -2247,8 +2247,17 @@ inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nul
 // =============================================================================
 // Type aliases so the DSL can spell the angle-bracketed field types.
 using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
+// `rusty::Unit` (= std::tuple<>), NOT `void`: Rust has no void, so a
+// closure returning nothing returns `()`, and thread::spawn DEDUCES
+// `JoinHandle<std::tuple<>>` (see detail::SpawnResultType in
+// rusty/thread.hpp). `JoinHandle<void>` still exists for code that names
+// it directly, but there is no conversion between the two — so storing a
+// spawn result into an `Option<JoinHandle<void>>` selected Option's
+// incompatible-type ctor, which panics at RUNTIME rather than failing to
+// compile ("invalid Option conversion with value" out of
+// pollthread_create, taking every TcpFactoryTest down in SetUp).
 using PollJoinSlot =
-    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<void>>>;
+    rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;
 
 struct PollThread;
 

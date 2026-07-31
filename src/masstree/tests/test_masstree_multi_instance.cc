@@ -145,7 +145,7 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     rusty::Mutex<rusty::Vec<threadinfo*>> ctx2_threads(rusty::Vec<threadinfo*>::new_());
 
     // Create threads bound to ctx1
-    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(3);
+    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(3);
     for (int i = 0; i < 3; ++i) {
         threads1.push(rusty::thread::spawn([this, i, &ctx1_threads]() {
             MasstreeContext::BindCurrentThread(ctx1_);
@@ -157,7 +157,7 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     }
 
     // Create threads bound to ctx2
-    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(3);
+    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(3);
     for (int i = 0; i < 3; ++i) {
         threads2.push(rusty::thread::spawn([this, i, &ctx2_threads]() {
             MasstreeContext::BindCurrentThread(ctx2_);
@@ -255,7 +255,7 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
     });
 
     // Spawn threads for ctx1
-    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS_PER_CTX);
+    auto threads1 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS_PER_CTX);
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
         threads1.push(rusty::thread::spawn([this, i, &ctx1_completed, &rcu_worker]() {
             rcu_worker(ctx1_, 3000 + i, ctx1_completed, OPS_PER_THREAD);
@@ -263,7 +263,7 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
     }
 
     // Spawn threads for ctx2
-    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS_PER_CTX);
+    auto threads2 = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS_PER_CTX);
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
         threads2.push(rusty::thread::spawn([this, i, &ctx2_completed, &rcu_worker]() {
             rcu_worker(ctx2_, 4000 + i, ctx2_completed, OPS_PER_THREAD);
@@ -509,7 +509,7 @@ TEST_F(MasstreeMultiInstanceTest, ManyContextsScale) {
     for (int i = 0; i < kContexts; ++i) trees.push(PureTable{});
     std::atomic<int> failures{0};
 
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kContexts);
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kContexts);
     for (int i = 0; i < kContexts; ++i) {
         workers.push(rusty::thread::spawn([i, &trees, &contexts, &failures]() {
             MasstreeContext::BindCurrentThread(contexts[i]);
@@ -598,7 +598,7 @@ TEST_F(MasstreeMultiInstanceTest, DefaultContextFallbackIsStable) {
     std::atomic<int> ready{0};
     std::atomic<bool> go{false};
 
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
     for (int i = 0; i < kThreads; ++i) {
         workers.push(rusty::thread::spawn([i, &observed, &ready, &go]() {
             ready.fetch_add(1, std::memory_order_release);

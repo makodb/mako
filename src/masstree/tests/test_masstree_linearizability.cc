@@ -245,7 +245,7 @@ void RunLinearizabilitySession(uint64_t seed) {
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(kThreads);
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(kThreads);
   for (int t = 0; t < kThreads; ++t) {
     threads.push(rusty::thread::spawn(thread_body, t));
   }

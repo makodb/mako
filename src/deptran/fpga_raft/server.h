@@ -64,7 +64,11 @@ class FpgaRaftServer : public TxLogServer {
 	static bool looping;
 	bool heartbeat_ = false;
 	enum { STOPPED, RUNNING } status_;
-	rusty::Option<rusty::thread::JoinHandle<void>> loop_th_;
+	// `rusty::Unit`, not `void`: thread::spawn deduces
+	// JoinHandle<std::tuple<>> for a void closure, and Option's
+	// incompatible-type ctor panics at runtime rather than failing to
+	// compile. server.cc:40 assigns a spawn result here.
+	rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>> loop_th_;
 
   // Distribution client2follower_;
   

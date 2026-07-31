@@ -35,7 +35,13 @@ export namespace janus {
 struct ConfigWatcher;  // forward (the poll thread calls owner->poll())
 
 using CwCallback = rusty::Function<void(const ClusterConfig&)>;
-using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<void>>;
+// `rusty::Unit`, not `void`: thread::spawn DEDUCES JoinHandle<std::tuple<>>
+// for a closure returning nothing (detail::SpawnResultType in
+// rusty/thread.hpp), and there is no conversion to JoinHandle<void>. The
+// mismatch selects Option's incompatible-type ctor, which panics at
+// RUNTIME instead of failing to compile — so `start()` would have thrown
+// "invalid Option conversion with value" on first use.
+using CwJoinHandle = rusty::Option<rusty::thread::JoinHandle<rusty::thread::Unit>>;
 
 #if RUSTYCPP_RUST
 pub struct ConfigWatcher {

@@ -115,7 +115,7 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   std::atomic<uint64_t> reader_failures{0};
   std::atomic<uint64_t> reader_ops{0};
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kReaders);
   for (int w = 0; w < kWriters; ++w) {
     threads.push(rusty::thread::spawn([&, w]() {

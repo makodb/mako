@@ -436,7 +436,7 @@ int main(int argc, char **argv) {
             g_client_req_counters[i].store(0, std::memory_order_relaxed);
         }
 
-        std::vector<rusty::thread::JoinHandle<void>> client_th;
+        std::vector<rusty::thread::JoinHandle<rusty::thread::Unit>> client_th;
         client_th.reserve(client_threads);
         ClientThreadArg* client_args = new ClientThreadArg[client_threads];
         for (int i = 0; i < client_threads; i++) {

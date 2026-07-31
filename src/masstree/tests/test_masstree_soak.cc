@@ -150,7 +150,7 @@ TEST(MasstreeSoak, MixedWorkloadHoldsInvariants) {
     }
   };
 
-  auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
+  auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(
       kWriters + kRemovers + kReaders + kScanners);
   for (int w = 0; w < kWriters; ++w) threads.push(rusty::thread::spawn(writer_body, w));
   for (int r = 0; r < kRemovers; ++r) threads.push(rusty::thread::spawn(remover_body, r));

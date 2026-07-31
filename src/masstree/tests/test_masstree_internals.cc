@@ -231,7 +231,7 @@ TEST_F(MasstreeInternalsTest, ThreadPurposes) {
 // Test 10: Multi-threaded ThreadInfo Creation
 TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
     std::atomic<int> created{0};
     auto thread_infos = rusty::Vec<threadinfo*>::with_capacity(NUM_THREADS);
     for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push(nullptr);
@@ -268,7 +268,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
 // Test 11: Multi-threaded RCU Operations
 TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
     const int NUM_THREADS = 4;
-    auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
+    auto threads = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(NUM_THREADS);
     std::atomic<int> completed{0};
 
     for (int i = 0; i < NUM_THREADS; ++i) {

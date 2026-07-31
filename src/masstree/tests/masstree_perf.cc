@@ -271,7 +271,7 @@ class BenchmarkHarness {
   template <typename WorkerFn>
   static std::chrono::nanoseconds RunParallel(size_t threads, WorkerFn&& fn) {
     std::atomic<bool> go{false};
-    auto workers = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(threads);
+    auto workers = rusty::Vec<rusty::thread::JoinHandle<rusty::thread::Unit>>::with_capacity(threads);
     for (size_t t = 0; t < threads; ++t) {
       workers.push(rusty::thread::spawn([&, t]() {
         while (!go.load(std::memory_order_acquire)) {
