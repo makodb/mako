@@ -18,7 +18,7 @@
 //!     the first tick covers connection setup.
 //!   - **`-o depth` is outstanding requests per THREAD**, so total
 //!     concurrency is `threads * depth`.
-//!   - **Nagle stays ON.** Nothing in `src/rrr` sets `TCP_NODELAY`, so
+//!   - **Nagle stays ON.** Nothing in `src/rrr` sets `SYS_TCP_NODELAY`, so
 //!     nothing here does either. Enabling it "because obviously" would
 //!     invalidate the comparison.
 //!   - **`fast` mode is `fast_nop(request_str)`** where `request_str`

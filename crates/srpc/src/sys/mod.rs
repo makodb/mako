@@ -94,7 +94,7 @@ impl SockAddrIn {
     /// `addr` and `port` in HOST order; converted here.
     pub fn new(addr: u32, port: u16) -> SockAddrIn {
         SockAddrIn {
-            family: AF_INET as u16,
+            family: SYS_AF_INET as u16,
             port: port.to_be(),
             addr: addr.to_be(),
             zero: [0; 8],
@@ -111,18 +111,24 @@ pub struct PollFd {
     pub revents: i16,
 }
 
-pub const AF_INET: i32 = 2;
+// SYS_-prefixed because the bare names are libc MACROS: `AF_INET`
+// emitted verbatim becomes `constexpr int32_t 2 = 2;`. Same rule as
+// `ERRNO_*` above and `last_errno` — and violated when these were
+// added, which broke sys and every module importing it. Only the eight
+// that actually collide are prefixed; EPOLL* and MAP*/PROT* do not,
+// because <sys/epoll.h> and <sys/mman.h> are never reachable here.
+pub const SYS_AF_INET: i32 = 2;
 pub const SOCK_STREAM: i32 = 1;
 
-pub const SOL_SOCKET: i32 = 1;
+pub const SYS_SOL_SOCKET: i32 = 1;
 pub const IPPROTO_TCP: i32 = 6;
-pub const TCP_NODELAY: i32 = 1;
-pub const SO_REUSEADDR: i32 = 2;
-pub const SO_ERROR: i32 = 4;
+pub const SYS_TCP_NODELAY: i32 = 1;
+pub const SYS_SO_REUSEADDR: i32 = 2;
+pub const SYS_SO_ERROR: i32 = 4;
 
-pub const F_GETFL: i32 = 3;
-pub const F_SETFL: i32 = 4;
-pub const O_NONBLOCK: i32 = 0o4000;
+pub const SYS_F_GETFL: i32 = 3;
+pub const SYS_F_SETFL: i32 = 4;
+pub const SYS_O_NONBLOCK: i32 = 0o4000;
 
 /// Suppress SIGPIPE on `send` to a closed peer. Linux-only; macOS uses
 /// `setsockopt(SO_NOSIGPIPE)` at socket-creation time instead, which is
@@ -329,7 +335,7 @@ pub fn setsockopt_int(fd: i32, level: i32, name: i32, value: i32) -> i32 {
 }
 
 /// `getsockopt(2)` for an `int`-valued option. Returns the value, or
-/// `-errno` on failure — used for `SO_ERROR`, where the VALUE is itself
+/// `-errno` on failure — used for `SYS_SO_ERROR`, where the VALUE is itself
 /// an errno, so a caller must check the syscall's own failure first.
 pub fn getsockopt_int(fd: i32, level: i32, name: i32) -> Result<i32, i32> {
     let mut value: i32 = 0;
@@ -346,12 +352,12 @@ pub fn getsockopt_int(fd: i32, level: i32, name: i32) -> Result<i32, i32> {
 /// Put `fd` into non-blocking mode. 0 or `-errno`.
 pub fn set_nonblocking(fd: i32) -> i32 {
     // @unsafe { libc }
-    let flags = unsafe { fcntl(fd, F_GETFL, 0) };
+    let flags = unsafe { fcntl(fd, SYS_F_GETFL, 0) };
     if flags < 0 {
         return -last_errno();
     }
     // @unsafe { libc }
-    let rc = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+    let rc = unsafe { fcntl(fd, SYS_F_SETFL, flags | SYS_O_NONBLOCK) };
     if rc < 0 {
         -last_errno()
     } else {

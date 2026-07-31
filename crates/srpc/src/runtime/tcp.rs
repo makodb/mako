@@ -514,7 +514,7 @@ impl TcpFactory {
     pub fn connect(&self, addr: &str) -> Result<TcpConnection, ChannelError> {
         let sa = parse_addr_v4(addr).ok_or(ChannelError::AddressInvalid)?;
 
-        let fd = sys::socket_fd(sys::AF_INET, sys::SOCK_STREAM, 0);
+        let fd = sys::socket_fd(sys::SYS_AF_INET, sys::SOCK_STREAM, 0);
         if fd < 0 {
             return Err(errno_to_channel_error(-fd));
         }
@@ -552,7 +552,7 @@ impl TcpFactory {
     ///
     /// Writability alone does NOT mean success: a refused connection
     /// also reports writable, and the real outcome only appears in
-    /// `SO_ERROR`. Skipping that check yields a "connected" socket whose
+    /// `SYS_SO_ERROR`. Skipping that check yields a "connected" socket whose
     /// first write fails.
     fn await_connect(&self, fd: i32) -> Result<(), ChannelError> {
         let rc = sys::wait_writable(fd, self.connect_timeout_ms);
@@ -562,7 +562,7 @@ impl TcpFactory {
         if rc < 0 {
             return Err(errno_to_channel_error(-rc));
         }
-        match sys::getsockopt_int(fd, sys::SOL_SOCKET, sys::SO_ERROR) {
+        match sys::getsockopt_int(fd, sys::SYS_SOL_SOCKET, sys::SYS_SO_ERROR) {
             Err(e) => Err(errno_to_channel_error(e)),
             Ok(0) => Ok(()),
             Ok(so_err) => Err(errno_to_channel_error(so_err)),
@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn parses_dotted_quad_and_port() {
         let sa = parse_addr_v4("127.0.0.1:8080").expect("should parse");
-        assert_eq!(sa.family, sys::AF_INET as u16);
+        assert_eq!(sa.family, sys::SYS_AF_INET as u16);
         // Both fields are network order on the wire.
         assert_eq!(sa.port, 8080u16.to_be());
         assert_eq!(sa.addr, 0x7f00_0001u32.to_be());

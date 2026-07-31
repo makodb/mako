@@ -176,12 +176,12 @@ impl Pollable for Listener {
 
             // DIAGNOSTIC ONLY, off by default. Nagle is ON throughout
             // this port deliberately (nothing in src/rrr sets
-            // TCP_NODELAY), so this must never become the default — it
+            // SYS_TCP_NODELAY), so this must never become the default — it
             // would invalidate every comparison. It exists to test
             // whether the 1 KiB throughput cliff is a Nagle/delayed-ACK
             // interaction.
             if std::env::var("SRPC_DIAG_NODELAY").is_ok() {
-                sys::setsockopt_int(cfd, sys::IPPROTO_TCP, sys::TCP_NODELAY, 1);
+                sys::setsockopt_int(cfd, sys::IPPROTO_TCP, sys::SYS_TCP_NODELAY, 1);
             }
             let conn = Arc::new(TcpConnection::from_fd(cfd));
             let shared = Arc::clone(&self.shared);
@@ -317,11 +317,11 @@ impl Server {
     pub fn listen(&self, addr: &str, poll: &Arc<PollThread>) -> Result<u16, ChannelError> {
         let sa = parse_addr_v4(addr).ok_or(ChannelError::AddressInvalid)?;
 
-        let fd = sys::socket_fd(sys::AF_INET, sys::SOCK_STREAM, 0);
+        let fd = sys::socket_fd(sys::SYS_AF_INET, sys::SOCK_STREAM, 0);
         if fd < 0 {
             return Err(errno_to_channel_error(-fd));
         }
-        sys::setsockopt_int(fd, sys::SOL_SOCKET, sys::SO_REUSEADDR, 1);
+        sys::setsockopt_int(fd, sys::SYS_SOL_SOCKET, sys::SYS_SO_REUSEADDR, 1);
 
         let rc = sys::bind_fd(fd, &sa);
         if rc < 0 {
