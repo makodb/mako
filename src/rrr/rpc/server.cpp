@@ -1165,30 +1165,15 @@ inline void server_run_shutdown_hooks(
     }
 }
 
-// @unsafe - std::stoi / std::string ops / try/catch.
-inline int32_t server_get_bound_port_impl(
-        const rusty::Option<ChannelListenerProxy>& listener_opt) {
-    if (listener_opt.is_none()) {
-        return -1;
-    }
-    std::string local;
-    {
-        auto* listener = listener_opt.as_ref().unwrap().get();
-        local = listener->local_address();
-    }
-    auto colon = local.rfind(':');
-    if (colon == std::string::npos) {
-        Log_error("Server::get_bound_port: malformed local_address {}",
-                  local.c_str());
-        return -1;
-    }
+// @unsafe - std::stoi throws on bad input. Rust has no exceptions, so the
+// catch is the only genuinely irreducible part; returning Option keeps the
+// failure signal distinct from a legitimately parsed value (the old code
+// folded both into -1, so a literal "-5" was indistinguishable from a throw).
+inline rusty::Option<int32_t> server_parse_port(const std::string& text) {
     try {
-        int port = std::stoi(local.substr(colon + 1));
-        return port;
+        return rusty::Some(static_cast<int32_t>(std::stoi(text)));
     } catch (const std::exception&) {
-        Log_error("Server::get_bound_port: failed to parse port from {}",
-                  local.c_str());
-        return -1;
+        return rusty::None;
     }
 }
 
@@ -1426,7 +1411,29 @@ impl Server {
     }
 
     fn get_bound_port(&self) -> i32 {
-        server_get_bound_port_impl(self.channel_listener_field)
+        if self.channel_listener_field.is_none() {
+            return -1;
+        }
+        // Named Box type so local_address() lowers to `->` (playbook §7.13).
+        let listener: &Box<ChannelListenerBase> =
+            self.channel_listener_field.as_ref().unwrap();
+        let local: std::string = listener.local_address();
+        // find_last_of, not rfind: `rfind` matches Rust's str::rfind
+        // signature, so the transpiler maps it to rusty::str_runtime::rfind
+        // — a namespace that only exists in whole-file cppm boilerplate, not
+        // in the headers the DSL path sees (playbook §7.14). find_last_of has
+        // no Rust counterpart, so it lowers as a plain member call.
+        let colon = local.find_last_of(":");
+        if colon == std::string::npos {
+            Log_error("Server::get_bound_port: malformed local_address {}", local.c_str());
+            return -1;
+        }
+        let parsed = server_parse_port(local.substr(colon + 1));
+        if parsed.is_none() {
+            Log_error("Server::get_bound_port: failed to parse port from {}", local.c_str());
+            return -1;
+        }
+        parsed.unwrap()
     }
 
     fn reg_service_typed<T>(&mut self, svc: Box<T>) {
@@ -1440,7 +1447,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=ebfb907c7ef1c98046439f04d47a1174585419d388f9b116c858f72d60e87c83*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2ba1051c7d197d13ddbd1991f7297e05386a8c1cfa66bcb74d7bbd126a3751b1*/
 struct Server;
 
 struct Server {
@@ -1648,7 +1655,22 @@ int32_t Server::start(const int8_t* bind_addr) {
 }
 
 int32_t Server::get_bound_port() const {
-    return server_get_bound_port_impl(this->channel_listener_field);
+    if (this->channel_listener_field.is_none()) {
+        return -1;
+    }
+    const rusty::Box<ChannelListenerBase>& listener = this->channel_listener_field.as_ref().unwrap();
+    const std::string local = listener->local_address();
+    const auto colon = local.find_last_of(":");
+    if (rusty::detail::deref_if_pointer_like(colon) == rusty::detail::deref_if_pointer_like(std::string::npos)) {
+        Log_error("Server::get_bound_port: malformed local_address {}", local.c_str());
+        return -1;
+    }
+    auto parsed = server_parse_port(local.substr(rusty::detail::deref_if_pointer_like(colon) + 1));
+    if (parsed.is_none()) {
+        Log_error("Server::get_bound_port: failed to parse port from {}", local.c_str());
+        return -1;
+    }
+    return parsed.unwrap();
 }
 
 template<typename T>

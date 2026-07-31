@@ -1034,3 +1034,46 @@ gap — guard types not carrying their element type through
 `as_mut().unwrap()` — is the same inference weakness behind the
 `let mut cb` note in DeferredReply::reply (§ commit 1e32afe9); fixing
 that inference would retire both workarounds.
+
+### 7.14 `rusty::str_runtime` does not exist for the DSL path
+
+Rust `str` methods lower to `rusty::str_runtime::*`, and the transpiler
+emits calls to twelve of them:
+
+```
+char_indices  chars  eq_ignore_ascii_case  find  from_utf
+is_char_boundary  lines  matches  parse  replace  replacen  rfind
+```
+
+None are declared in `include/rusty/`. They are emitted as part of the
+per-cppm runtime boilerplate, so whole-file transpilation is
+self-consistent — but an inline-DSL block rewritten in place gets the
+call with nothing defining it:
+
+```
+error: no member named 'rfind' in namespace 'rusty::str_runtime'
+```
+
+This is the same shape as the `unreachable` bug fixed in `6e34c151`:
+boilerplate-only surface that the DSL path cannot reach. The proper fix
+is the same — give these a home in a header both paths include — but it
+is a larger job (twelve functions, several with char/str overloads, and
+they return `rusty::Option<size_t>` rather than `npos`).
+
+**Until then**, in DSL bodies working on a C++ `std::string`, prefer
+member functions with no Rust counterpart, so no mapping applies:
+
+| avoid (maps to str_runtime) | use instead            |
+|-----------------------------|------------------------|
+| `s.rfind(x)`                | `s.find_last_of(x)`    |
+| `s.find(x)` (1 arg)         | `s.find(x, 0)` (2 args)|
+
+The arity matters: `content.find("\n", pos)` already works everywhere in
+`cpuinfo.cpp` precisely because two arguments do not match Rust's
+`str::find(pat)`, so it falls through to a plain member call. One
+argument does match, and gets remapped.
+
+Note the semantic difference if these are ever wired up: `str_runtime`
+returns `rusty::Option<std::size_t>`, not `npos`. DSL written against
+the C++ member functions compares against `std::string::npos`, and would
+need rewriting rather than just relinking.
