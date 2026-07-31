@@ -4745,7 +4745,7 @@ void pollthread_shutdown(const PollThread& self) {
 
   // Send shutdown command via channel
   Log_debug("[PollThread::shutdown] Sending CmdShutdown");
-  const_cast<PollCmdSender&>(self.sender_).send(CmdShutdown{});
+  self.sender_.send(CmdShutdown{});
   Log_debug("[PollThread::shutdown] CmdShutdown sent");
 
   // Check if we're on the poll thread (atomic load for thread-safe read)
@@ -4775,19 +4775,19 @@ void pollthread_shutdown(const PollThread& self) {
 }
 
 void pollthread_add_proxy(const PollThread& self, PollableProxy poll) {
-  const_cast<PollCmdSender&>(self.sender_).send(CmdAddPollable{std::move(poll)});
+  self.sender_.send(CmdAddPollable{std::move(poll)});
 }
 
 void pollthread_remove(const PollThread& self, Pollable& poll) {
-  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{poll.fd()});
+  self.sender_.send(CmdRemovePollable{poll.fd()});
 }
 
 void pollthread_remove_fd(const PollThread& self, int fd) {
-  const_cast<PollCmdSender&>(self.sender_).send(CmdRemovePollable{fd});
+  self.sender_.send(CmdRemovePollable{fd});
 }
 
 void pollthread_request_close(const PollThread& self, int fd) {
-  const_cast<PollCmdSender&>(self.sender_).send(CmdClosePollable{fd});
+  self.sender_.send(CmdClosePollable{fd});
 }
 
 // @safe - Sends update mode command via channel (send wrapped @unsafe)
@@ -4795,7 +4795,7 @@ void pollthread_request_close(const PollThread& self, int fd) {
 void pollthread_update_mode(const PollThread& self, int fd, int new_mode) {
   // @unsafe { mpsc::Sender::send is not borrow-checked }
   {
-  auto result = const_cast<PollCmdSender&>(self.sender_).send(CmdUpdateMode{fd, new_mode});
+  auto result = self.sender_.send(CmdUpdateMode{fd, new_mode});
   if (result.is_err()) {
     Log_error("PollThread::update_mode: send failed! Channel disconnected?");
   }
@@ -4803,7 +4803,7 @@ void pollthread_update_mode(const PollThread& self, int fd, int new_mode) {
 }
 
 void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job) {
-  const_cast<PollCmdSender&>(self.sender_).send(CmdAddJob{std::move(job)});
+  self.sender_.send(CmdAddJob{std::move(job)});
 }
 
 
