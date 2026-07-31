@@ -4516,8 +4516,10 @@ int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* a
     auto* bound = (*guard).as_ref().unwrap().get();
     ConnectResult result = bound->connect(std::string_view(addr));
     if (result.error != ChannelError::None || result.connection.is_none()) {
+      // channel_error_to_string is DSL now and returns std::string_view,
+      // which has no operator+ with std::string (rule-2 call-site fix).
       const auto err_str = std::string("factory connect failed: ")
-          + channel_error_to_string(result.error);
+          .append(channel_error_to_string(result.error));
       Log_error("rrr::ClientConnection: {} (addr={})", err_str.c_str(), addr);
       self.state_machine_.transition_to(ConnectionState::FAILED);
       // Map the channel error onto an errno-shaped value the legacy

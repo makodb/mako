@@ -188,13 +188,17 @@ inline ChannelFactoryProxy make_fake_factory_proxy(std::shared_ptr<FakeFactory> 
 // Tests
 // ===========================================================================
 
+// EXPECT_EQ, not EXPECT_STREQ: channel_error_to_string is now DSL, and
+// `&'static str` lowers to std::string_view rather than const char*.
+// Per docs/dev/rrr_migration_policy.md that is a rule-2 call-site
+// rewrite, not a reason to bend the DSL into returning a raw pointer.
 TEST(RpcChannelFacadeTest, ErrorEnumStringification) {
-    EXPECT_STREQ("None",              channel_error_to_string(ChannelError::None));
-    EXPECT_STREQ("WouldBlock",        channel_error_to_string(ChannelError::WouldBlock));
-    EXPECT_STREQ("ConnectionRefused", channel_error_to_string(ChannelError::ConnectionRefused));
-    EXPECT_STREQ("ConnectionReset",   channel_error_to_string(ChannelError::ConnectionReset));
-    EXPECT_STREQ("Timeout",           channel_error_to_string(ChannelError::Timeout));
-    EXPECT_STREQ("Internal",          channel_error_to_string(ChannelError::Internal));
+    EXPECT_EQ("None",              channel_error_to_string(ChannelError::None));
+    EXPECT_EQ("WouldBlock",        channel_error_to_string(ChannelError::WouldBlock));
+    EXPECT_EQ("ConnectionRefused", channel_error_to_string(ChannelError::ConnectionRefused));
+    EXPECT_EQ("ConnectionReset",   channel_error_to_string(ChannelError::ConnectionReset));
+    EXPECT_EQ("Timeout",           channel_error_to_string(ChannelError::Timeout));
+    EXPECT_EQ("Internal",          channel_error_to_string(ChannelError::Internal));
 }
 
 TEST(RpcChannelFacadeTest, ConnectionDispatchForwardsAllOps) {

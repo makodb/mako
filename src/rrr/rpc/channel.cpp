@@ -4,6 +4,12 @@ module;
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/function.hpp>
+// A DSL `match` lowers its fallthrough arm to
+// `rusty::intrinsics::unreachable_panic()`. inline-rust rewrites a block
+// in place and cannot add includes, so any file with a DSL `match` must
+// reach intrinsics itself — either via this header or the <rusty/rusty.hpp>
+// umbrella (which is what frame_codec.cpp uses).
+#include <rusty/intrinsics.hpp>
 #include <rusty/option.hpp>
 
 export module rrr.channel;
@@ -39,8 +45,24 @@ enum ChannelError {
     TooManyOpenFiles = 8,
     Internal = 9,
 }
+
+fn channel_error_to_string(e: ChannelError) -> &'static str {
+    match e {
+        ChannelError::None => "None",
+        ChannelError::WouldBlock => "WouldBlock",
+        ChannelError::ConnectionRefused => "ConnectionRefused",
+        ChannelError::ConnectionReset => "ConnectionReset",
+        ChannelError::Timeout => "Timeout",
+        ChannelError::AddressInUse => "AddressInUse",
+        ChannelError::AddressInvalid => "AddressInvalid",
+        ChannelError::PermissionDenied => "PermissionDenied",
+        ChannelError::TooManyOpenFiles => "TooManyOpenFiles",
+        ChannelError::Internal => "Internal",
+        _ => "Unknown",
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=channel.channel_error version=1 rust_sha256=a17eae07b8ee684b8064e36c651b23a17d2afd98e4f9d2cfa194f222b6212597*/
+/*RUSTYCPP:GEN-BEGIN id=channel.channel_error version=1 rust_sha256=fbe83cdf22d13d028f2e8fed567ed912ce9f2c169fb527ef06c6bf722a355eb0*/
 enum class ChannelError;
 constexpr ChannelError ChannelError_None();
 constexpr ChannelError ChannelError_WouldBlock();
@@ -52,6 +74,7 @@ constexpr ChannelError ChannelError_AddressInvalid();
 constexpr ChannelError ChannelError_PermissionDenied();
 constexpr ChannelError ChannelError_TooManyOpenFiles();
 constexpr ChannelError ChannelError_Internal();
+std::string_view channel_error_to_string(ChannelError e);
 
 enum class ChannelError {
     None = 0,
@@ -75,23 +98,12 @@ inline constexpr ChannelError ChannelError_AddressInvalid() { return ChannelErro
 inline constexpr ChannelError ChannelError_PermissionDenied() { return ChannelError::PermissionDenied; }
 inline constexpr ChannelError ChannelError_TooManyOpenFiles() { return ChannelError::TooManyOpenFiles; }
 inline constexpr ChannelError ChannelError_Internal() { return ChannelError::Internal; }
+
+std::string_view channel_error_to_string(ChannelError e) {
+    return ({ auto&& _m = e; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == ChannelError::None)) { _match_value.emplace(std::move(std::string_view("None"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::WouldBlock)) { _match_value.emplace(std::move(std::string_view("WouldBlock"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::ConnectionRefused)) { _match_value.emplace(std::move(std::string_view("ConnectionRefused"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::ConnectionReset)) { _match_value.emplace(std::move(std::string_view("ConnectionReset"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::Timeout)) { _match_value.emplace(std::move(std::string_view("Timeout"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::AddressInUse)) { _match_value.emplace(std::move(std::string_view("AddressInUse"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::AddressInvalid)) { _match_value.emplace(std::move(std::string_view("AddressInvalid"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::PermissionDenied)) { _match_value.emplace(std::move(std::string_view("PermissionDenied"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::TooManyOpenFiles)) { _match_value.emplace(std::move(std::string_view("TooManyOpenFiles"))); _m_matched = true; } if (!_m_matched && (_m == ChannelError::Internal)) { _match_value.emplace(std::move(std::string_view("Internal"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("Unknown"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
 /*RUSTYCPP:GEN-END id=channel.channel_error*/
 
-inline constexpr const char* channel_error_to_string(ChannelError e) {
-    switch (e) {
-        case ChannelError::None:               return "None";
-        case ChannelError::WouldBlock:         return "WouldBlock";
-        case ChannelError::ConnectionRefused:  return "ConnectionRefused";
-        case ChannelError::ConnectionReset:    return "ConnectionReset";
-        case ChannelError::Timeout:            return "Timeout";
-        case ChannelError::AddressInUse:       return "AddressInUse";
-        case ChannelError::AddressInvalid:     return "AddressInvalid";
-        case ChannelError::PermissionDenied:   return "PermissionDenied";
-        case ChannelError::TooManyOpenFiles:   return "TooManyOpenFiles";
-        case ChannelError::Internal:           return "Internal";
-    }
-    return "Unknown";
-}
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -145,6 +157,8 @@ pub trait ChannelConnectionBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel.2 version=1 rust_sha256=894b849f6f600fe181394b093c2fc7f0b7960d8219710fcac56ff8398d61fdd2*/
+class ChannelConnectionBase;
+
 class ChannelConnectionBase {
 public:
     virtual ~ChannelConnectionBase() noexcept(false) {}
@@ -189,6 +203,8 @@ pub trait ChannelListenerBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel.3 version=1 rust_sha256=3d86b3cd57d06df5430ae80d838e0bee7b9318ea9e8b467b5d10832684aa91fa*/
+class ChannelListenerBase;
+
 class ChannelListenerBase {
 public:
     virtual ~ChannelListenerBase() noexcept(false) {}
@@ -255,6 +271,8 @@ pub trait ChannelFactoryBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=channel.4 version=1 rust_sha256=46c44a281cc328cf55cb46fcbdfc3a64b6e07227c560428d445abeb2f5f9bd8b*/
+class ChannelFactoryBase;
+
 class ChannelFactoryBase {
 public:
     virtual ~ChannelFactoryBase() noexcept(false) {}
