@@ -138,3 +138,55 @@ the park/unpark per request was the entire gap.
 
 `await` is therefore the parity path, and this is not a mode chosen per
 cell to flatter the table — it is the same mode in every row.
+
+## S9 (part) — latency (2026-07-30)
+
+`rbench -l` records per-request round-trip times per worker (merged at
+exit, so the hot path touches no shared state) and reports percentiles.
+
+**Timestamping does not perturb the throughput measured beside it** —
+the S1 question, now answered: depth 1 38,721 → 38,373 (−0.9%), depth
+100 1,068,684 → 1,066,370 (−0.2%). Both inside run-to-run noise, so
+`-l` numbers and qps from the same run are usable together.
+
+### Rust client latency, `-m await`, 10 B (µs)
+
+| depth | n | mean | p50 | p90 | p99 | p99.9 | max |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 223,765 | 107.2 | 78.1 | 155.3 | 159.0 | 233.1 | 5,412.9 |
+| 100 | 6,356,098 | 379.2 | 381.7 | 465.7 | 616.1 | 771.1 | 51,625.9 |
+
+Internal consistency check: at `-t 2 -o 1`, Little's Law predicts
+2 / 19,210 qps = 104 µs and the measured mean was 103.6 µs.
+
+### Mean latency, both stacks (Little's Law, from measured throughput)
+
+| depth | concurrency | C++ | Rust | ratio |
+|---:|---:|---:|---:|---:|
+| 1 | 4 | 109.4 | 107.5 | **98.2%** |
+| 100 | 400 | 395.9 | 377.1 | **95.2%** |
+
+Mean latency is derivable for both without touching the C++, because
+concurrency is fixed and known. **Both cells are inside 10%**, matching
+the throughput result.
+
+### What is still missing, and the decision it needs
+
+**C++ latency PERCENTILES.** Little's Law gives the mean only; it says
+nothing about the tail, and the criterion plausibly cares about the
+tail. The only percentile code in the C++ tree is
+`src/rrr/tests/rpc_microbench.cc` — **all 282 lines commented out, no
+build target, written against an older API.**
+
+Reviving it is not free and is not obviously the right call:
+
+ - it changes a measured binary in `src/rrr`, and the pinned throughput
+   baseline was captured from the current one;
+ - `src/rrr` is legacy-until-strangled, so investing in its test
+   harness may be wasted;
+ - the alternative — accept mean-latency parity plus Rust-side
+   percentiles, and treat C++ tail latency as unmeasured — leaves a
+   real hole in the criterion.
+
+Flagging rather than choosing: this is a scope decision about the C++
+tree, not a port implementation detail.

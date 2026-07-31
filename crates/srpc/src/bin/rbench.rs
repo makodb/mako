@@ -43,7 +43,7 @@ use srpc::rpc::task::{spawn, RpcFuture};
 use srpc::runtime::poll_thread::PollThread;
 use srpc::wire::{Serialize, WriteArchive};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// `BenchmarkService::FAST_NOP`, from `benchmark_service.h`. rpcgen
@@ -59,12 +59,15 @@ struct Config {
     bytes: usize,
     /// `block` = one park per request; `await` = the executor.
     mode: String,
+    /// Record per-request latency and print percentiles.
+    latency: bool,
 }
 
 fn usage() -> ! {
     eprintln!(
         "usage: rbench -c ADDR [-n SECONDS] [-t THREADS] [-o DEPTH] [-b BYTES]\n\
          \x20      rbench -s ADDR   (serve fast_nop, for the C++ client to drive)\n\
+         \x20  -l  also report latency percentiles\n\
          \n\
          Mirrors rpcbench's client mode (fast/fast_nop only).\n\
          Counting, sampling and Nagle match the C++ harness — see the\n\
@@ -82,9 +85,11 @@ fn parse_args() -> Config {
         depth: 1,
         bytes: 10,
         mode: "block".to_string(),
+        latency: false,
     };
     let argv: Vec<String> = std::env::args().collect();
     let mut i = 1;
+    #[allow(clippy::needless_range_loop)]
     while i < argv.len() {
         let need = |i: usize| -> String {
             if i + 1 >= argv.len() {
@@ -103,6 +108,10 @@ fn parse_args() -> Config {
             "-o" => cfg.depth = need(i).parse().unwrap_or_else(|_| usage()),
             "-b" => cfg.bytes = need(i).parse().unwrap_or_else(|_| usage()),
             "-m" => cfg.mode = need(i),
+            "-l" => {
+                cfg.latency = true;
+                i -= 1; // flag, no value
+            }
             _ => usage(),
         }
         i += 2;
@@ -146,6 +155,42 @@ fn serve(cfg: &Config) -> ! {
     }
 }
 
+/// Per-request round-trip samples, in nanoseconds.
+///
+/// Recorded per worker and merged at the end, so the hot path touches
+/// no shared state — a shared collector would serialize the very thing
+/// being measured and inflate what it reports.
+type Latencies = Arc<Mutex<Vec<u64>>>;
+
+/// Percentile by nearest-rank on a sorted slice.
+fn pct(sorted: &[u64], p: f64) -> u64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = ((p / 100.0) * sorted.len() as f64).ceil() as usize;
+    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
+}
+
+fn report_latency(mut samples: Vec<u64>) {
+    if samples.is_empty() {
+        println!("latency: no samples");
+        return;
+    }
+    samples.sort_unstable();
+    let n = samples.len();
+    let mean = samples.iter().sum::<u64>() as f64 / n as f64;
+    println!(
+        "latency us: n={} mean={:.1} p50={:.1} p90={:.1} p99={:.1} p99.9={:.1} max={:.1}",
+        n,
+        mean / 1000.0,
+        pct(&samples, 50.0) as f64 / 1000.0,
+        pct(&samples, 90.0) as f64 / 1000.0,
+        pct(&samples, 99.0) as f64 / 1000.0,
+        pct(&samples, 99.9) as f64 / 1000.0,
+        samples[n - 1] as f64 / 1000.0,
+    );
+}
+
 fn main() {
     let cfg = parse_args();
     if cfg.serve {
@@ -169,6 +214,7 @@ fn main() {
     let mut workers = Vec::new();
     let mut handles = Vec::new();
     let mut conns = Vec::new();
+    let all_latencies: Latencies = Arc::new(Mutex::new(Vec::new()));
     for t in 0..cfg.threads {
         let poll = PollThread::start();
         polls.push(Arc::clone(&poll));
@@ -191,14 +237,24 @@ fn main() {
                 let stop = Arc::clone(&stop);
                 let ok_count = Arc::clone(&ok_count);
                 let args = args.clone();
+                let record = cfg.latency;
+                let sink = Arc::clone(&all_latencies);
                 handles.push(spawn(async move {
+                    let mut local: Vec<u64> = Vec::new();
                     while !stop.load(Ordering::Relaxed) {
+                        let started = record.then(std::time::Instant::now);
                         let Ok(fu) = conn.call(FAST_NOP, &args) else {
                             break;
                         };
                         if RpcFuture::new(fu).await.is_ok() {
                             ok_count.fetch_add(1, Ordering::Relaxed);
+                            if let Some(t0) = started {
+                                local.push(t0.elapsed().as_nanos() as u64);
+                            }
                         }
+                    }
+                    if !local.is_empty() {
+                        sink.lock().unwrap().extend(local);
                     }
                 }));
             }
@@ -273,6 +329,12 @@ fn main() {
     }
     for h in &handles {
         h.join();
+    }
+    // AFTER the join: each worker flushes its buffer when it exits, so
+    // reporting earlier prints an empty or partial sample set.
+    if cfg.latency {
+        let merged = std::mem::take(&mut *all_latencies.lock().unwrap());
+        report_latency(merged);
     }
     for c in &conns {
         c.close();
