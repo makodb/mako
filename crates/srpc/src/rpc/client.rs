@@ -251,7 +251,11 @@ impl ClientConnection {
         let factory = TcpFactory::new();
         let conn = Arc::new(factory.connect(addr)?);
 
-        let pending: Arc<Mutex<HashMap<i64, Arc<Future>>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Inner type spelled out as well as outer: deduction does not
+        // reach through nested constructors once lowered, so the
+        // annotation on the binding alone leaves `HashMap<auto, auto>`.
+        let pending: Arc<Mutex<HashMap<i64, Arc<Future>>>> =
+            Arc::new(Mutex::new(HashMap::<i64, Arc<Future>>::new()));
 
         // The reply path runs ON THE POLL THREAD, inside the frame
         // callback, which is what keeps a reply from costing a wakeup.

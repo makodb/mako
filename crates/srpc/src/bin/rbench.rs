@@ -140,7 +140,11 @@ fn nop_args(bytes: usize) -> Vec<u8> {
 /// results; the envelope around them is what is being tested.
 fn serve(cfg: &Config) -> ! {
     let mut reg = Registry::new();
-    reg.register(FAST_NOP, Box::new(|_args| Ok(Vec::new())));
+    // Annotated: `Vec::new()` in a closure return has no deducible
+    // element type once lowered, and the transpiler rejects
+    // `Vec<auto>` rather than emitting it. fast_nop returns nothing,
+    // so the empty result is a Vec<u8>.
+    reg.register(FAST_NOP, Box::new(|_args| Ok(Vec::<u8>::new())));
     // `-m fiber` serves every request from its own fiber; anything else
     // dispatches inline. That single choice is what the C++ measures as
     // reg_rpc vs reg_fast_rpc, and it is the whole of the ~35% gap.
@@ -226,12 +230,19 @@ fn main() {
     // send through one thread while the C++ spreads them across four.
     // Sharing one measured the executor at 41% of C++ at depth 100; it
     // was the harness, not the executor.
-    let mut polls = Vec::new();
+    // Annotated throughout: a bare `Vec::new()` whose element type is
+    // only fixed by a later `push` does not survive lowering — the
+    // transpiler refuses `Vec<auto>` rather than emitting it, which is
+    // the right call and is why these say what they hold.
+    let mut polls: Vec<Arc<PollThread>> = Vec::new();
 
-    let mut workers = Vec::new();
-    let mut handles = Vec::new();
-    let mut conns = Vec::new();
-    let all_latencies: Latencies = Arc::new(Mutex::new(Vec::new()));
+    let mut workers: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    let mut handles: Vec<srpc::rpc::task::JoinHandle> = Vec::new();
+    let mut conns: Vec<Arc<ClientConnection>> = Vec::new();
+    // The type alias annotates the OUTER type; the inner Vec still
+    // needs its own, because deduction does not reach through the
+    // nesting once lowered.
+    let all_latencies: Latencies = Arc::new(Mutex::new(Vec::<u64>::new()));
     for t in 0..cfg.threads {
         let poll = PollThread::start();
         polls.push(Arc::clone(&poll));
