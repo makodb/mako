@@ -69,6 +69,14 @@
 // call is then wrong. The natural fix is to emit `extern "C"` blocks at
 // global scope, which is also how every C header declares them.
 //
+// LOCATED: the namespace is applied as a POST-PROCESSING WRAP —
+// `wrap_module_purview_in_crate_namespace` (transpiler codegen/mod.rs
+// ~2409) sweeps the whole purview inside it, extern blocks included. So
+// the fix goes there: hoist `extern "C" { ... }` spans out of the wrap,
+// which matches how C headers behave and keeps the `::` on call sites
+// correct. Same function fix #37 touched for crate-root
+// requalification — run the full suite.
+//
 // (The s8seam probe compiled because its extern block landed at file
 // scope; that is why this did not surface there.)
 //
