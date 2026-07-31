@@ -64,12 +64,21 @@ enum FrameDecodeStatus {
     Complete = 1,
     Malformed = 2,
 }
+
+fn frame_decode_status_to_string(s: FrameDecodeStatus) -> &'static str {
+    match s {
+        FrameDecodeStatus::NeedMoreBytes => "NeedMoreBytes",
+        FrameDecodeStatus::Complete => "Complete",
+        FrameDecodeStatus::Malformed => "Malformed",
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=frame_codec.decode_status version=1 rust_sha256=d3e1ec610533207465603ff52cd7106252ec8cf46fa0ea3a9ffc4e26dcb993f6*/
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.decode_status version=1 rust_sha256=a551fc663d1f39de8aa705d886078b3ccd672134ae82bf29b0944f59b80ada57*/
 enum class FrameDecodeStatus;
 constexpr FrameDecodeStatus FrameDecodeStatus_NeedMoreBytes();
 constexpr FrameDecodeStatus FrameDecodeStatus_Complete();
 constexpr FrameDecodeStatus FrameDecodeStatus_Malformed();
+std::string_view frame_decode_status_to_string(FrameDecodeStatus s);
 
 enum class FrameDecodeStatus {
     NeedMoreBytes = 0,
@@ -79,16 +88,11 @@ enum class FrameDecodeStatus {
 inline constexpr FrameDecodeStatus FrameDecodeStatus_NeedMoreBytes() { return FrameDecodeStatus::NeedMoreBytes; }
 inline constexpr FrameDecodeStatus FrameDecodeStatus_Complete() { return FrameDecodeStatus::Complete; }
 inline constexpr FrameDecodeStatus FrameDecodeStatus_Malformed() { return FrameDecodeStatus::Malformed; }
-/*RUSTYCPP:GEN-END id=frame_codec.decode_status*/
 
-inline constexpr const char* frame_decode_status_to_string(FrameDecodeStatus s) {
-    switch (s) {
-        case FrameDecodeStatus::NeedMoreBytes: return "NeedMoreBytes";
-        case FrameDecodeStatus::Complete:      return "Complete";
-        case FrameDecodeStatus::Malformed:     return "Malformed";
-    }
-    return "Unknown";
+std::string_view frame_decode_status_to_string(FrameDecodeStatus s) {
+    return ({ auto&& _m = s; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == FrameDecodeStatus::NeedMoreBytes)) { _match_value.emplace(std::move(std::string_view("NeedMoreBytes"))); _m_matched = true; } if (!_m_matched && (_m == FrameDecodeStatus::Complete)) { _match_value.emplace(std::move(std::string_view("Complete"))); _m_matched = true; } if (!_m_matched && (_m == FrameDecodeStatus::Malformed)) { _match_value.emplace(std::move(std::string_view("Malformed"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
 }
+/*RUSTYCPP:GEN-END id=frame_codec.decode_status*/
 
 // ---------------------------------------------------------------------------
 // Frame header
@@ -130,6 +134,9 @@ struct FrameHeader {
     bool extended_header_flag;
 
     int32_t total_frame_size() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -439,8 +446,6 @@ namespace {
 const kCompactThresholdBytes: usize = 64 * 1024;
 #endif
 /*RUSTYCPP:GEN-BEGIN id=frame_codec.2 version=1 rust_sha256=ade771f22e7be5d8311223bfcb4465698724808595170a67078906b947aaff5e*/
-extern const size_t kCompactThresholdBytes;
-
 constexpr size_t kCompactThresholdBytes = static_cast<size_t>(64) * static_cast<size_t>(1024);
 /*RUSTYCPP:GEN-END id=frame_codec.2*/
 

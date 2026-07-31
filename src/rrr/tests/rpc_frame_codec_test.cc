@@ -477,12 +477,17 @@ TEST(RpcFrameCodecTest, EncoderProducesBytesParseableByInternalProtocolHelpers) 
 }
 
 TEST(RpcFrameCodecTest, FrameDecodeStatusStringification) {
-    EXPECT_STREQ("NeedMoreBytes",
-                 frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
-    EXPECT_STREQ("Complete",
-                 frame_decode_status_to_string(FrameDecodeStatus::Complete));
-    EXPECT_STREQ("Malformed",
-                 frame_decode_status_to_string(FrameDecodeStatus::Malformed));
+    // EXPECT_EQ, not EXPECT_STREQ: the function is authored as inline
+    // Rust DSL now, and Rust's `&'static str` lowers to
+    // std::string_view rather than const char*. That lowering is
+    // correct, so the call site changes rather than the translator —
+    // rule 2 of docs/dev/rrr_migration_policy.md.
+    EXPECT_EQ("NeedMoreBytes",
+              frame_decode_status_to_string(FrameDecodeStatus::NeedMoreBytes));
+    EXPECT_EQ("Complete",
+              frame_decode_status_to_string(FrameDecodeStatus::Complete));
+    EXPECT_EQ("Malformed",
+              frame_decode_status_to_string(FrameDecodeStatus::Malformed));
 }
 
 }  // namespace
