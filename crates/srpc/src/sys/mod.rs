@@ -54,6 +54,26 @@
 //     is absent. Consistent, and it sidesteps the collision by not
 //     naming libc's symbols at all.
 //
+// STATUS 2026-07-31: thunks IMPLEMENTED (srpc_sys_x86_64.S). The
+// collision is gone — no more "conflicting types for 'connect'". The
+// module now fails one step further on, with:
+//
+//     no member named 'srpc_mmap' in the global namespace;
+//     did you mean simply 'srpc_mmap'?
+//
+// The `extern "C"` block is emitted INSIDE `namespace srpc::sys` while
+// the call sites are qualified `::srpc_mmap`. Declaration and use
+// disagree about scope, and that is a transpiler bug, not a port one:
+// C linkage does not imply global SCOPE in C++, so a block emitted
+// inside a namespace really is namespace-scoped, and the `::` on the
+// call is then wrong. The natural fix is to emit `extern "C"` blocks at
+// global scope, which is also how every C header declares them.
+//
+// (The s8seam probe compiled because its extern block landed at file
+// scope; that is why this did not surface there.)
+//
+// ORIGINAL ANALYSIS, still accurate:
+//
 // RECOMMENDED: (3) — and specifically as ASSEMBLY THUNKS, not a C
 // file. `srpc_sys_x86_64.S` holding one `jmp connect@PLT` per symbol:
 //
@@ -209,24 +229,28 @@ pub const ERRNO_EPERM: i32 = 1;
 pub const ERRNO_EMFILE: i32 = 24;
 pub const ERRNO_ENFILE: i32 = 23;
 
-extern "C" {
-    fn epoll_create(size: i32) -> i32;
-    fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut EpollEvent) -> i32;
-    fn epoll_wait(epfd: i32, events: *mut EpollEvent, maxevents: i32, timeout: i32) -> i32;
-    fn close(fd: i32) -> i32;
+// Assembled by both toolchains; see the file header for why the
+// symbols are renamed rather than declared directly.
+core::arch::global_asm!(include_str!("srpc_sys_x86_64.S"), options(att_syntax));
 
-    fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
-    fn connect(sockfd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;
-    fn bind(sockfd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;
-    fn listen(sockfd: i32, backlog: i32) -> i32;
-    fn accept(sockfd: i32, addr: *mut SockAddrIn, addrlen: *mut u32) -> i32;
-    fn shutdown(sockfd: i32, how: i32) -> i32;
-    fn recv(sockfd: i32, buf: *mut u8, len: usize, flags: i32) -> isize;
-    fn send(sockfd: i32, buf: *const u8, len: usize, flags: i32) -> isize;
-    fn setsockopt(sockfd: i32, level: i32, name: i32, val: *const i32, len: u32) -> i32;
-    fn getsockopt(sockfd: i32, level: i32, name: i32, val: *mut i32, len: *mut u32) -> i32;
-    fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
-    fn poll(fds: *mut PollFd, nfds: u64, timeout: i32) -> i32;
+extern "C" {
+    fn srpc_epoll_create(size: i32) -> i32;
+    fn srpc_epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut EpollEvent) -> i32;
+    fn srpc_epoll_wait(epfd: i32, events: *mut EpollEvent, maxevents: i32, timeout: i32) -> i32;
+    fn srpc_close(fd: i32) -> i32;
+
+    fn srpc_socket(domain: i32, ty: i32, protocol: i32) -> i32;
+    fn srpc_connect(sockfd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;
+    fn srpc_bind(sockfd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;
+    fn srpc_listen(sockfd: i32, backlog: i32) -> i32;
+    fn srpc_accept(sockfd: i32, addr: *mut SockAddrIn, addrlen: *mut u32) -> i32;
+    fn srpc_shutdown(sockfd: i32, how: i32) -> i32;
+    fn srpc_recv(sockfd: i32, buf: *mut u8, len: usize, flags: i32) -> isize;
+    fn srpc_send(sockfd: i32, buf: *const u8, len: usize, flags: i32) -> isize;
+    fn srpc_setsockopt(sockfd: i32, level: i32, name: i32, val: *const i32, len: u32) -> i32;
+    fn srpc_getsockopt(sockfd: i32, level: i32, name: i32, val: *mut i32, len: *mut u32) -> i32;
+    fn srpc_fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
+    fn srpc_poll(fds: *mut PollFd, nfds: u64, timeout: i32) -> i32;
 }
 
 pub const PROT_NONE: i32 = 0;
@@ -238,9 +262,9 @@ pub const MAP_ANONYMOUS: i32 = 0x20;
 pub const MAP_FAILED: usize = usize::MAX;
 
 extern "C" {
-    fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, off: i64) -> *mut u8;
-    fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
-    fn munmap(addr: *mut u8, len: usize) -> i32;
+    fn srpc_mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, off: i64) -> *mut u8;
+    fn srpc_mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+    fn srpc_munmap(addr: *mut u8, len: usize) -> i32;
 }
 
 /// Anonymous private mapping of `len` bytes, readable and writable.
@@ -248,7 +272,7 @@ extern "C" {
 pub fn map_anonymous(len: usize) -> usize {
     // @unsafe { libc }
     let p = unsafe {
-        mmap(
+        srpc_mmap(
             core::ptr::null_mut(),
             len,
             PROT_READ | PROT_WRITE,
@@ -265,7 +289,7 @@ pub fn map_anonymous(len: usize) -> usize {
 /// scribbling on whatever was mapped below it.
 pub fn protect_none(addr: usize, len: usize) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { mprotect(addr as *mut u8, len, PROT_NONE) };
+    let rc = unsafe { srpc_mprotect(addr as *mut u8, len, PROT_NONE) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -275,7 +299,7 @@ pub fn protect_none(addr: usize, len: usize) -> i32 {
 
 pub fn unmap(addr: usize, len: usize) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { munmap(addr as *mut u8, len) };
+    let rc = unsafe { srpc_munmap(addr as *mut u8, len) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -286,7 +310,7 @@ pub fn unmap(addr: usize, len: usize) -> i32 {
 /// `socket(2)`, returning the fd or `-errno`.
 pub fn socket_fd(domain: i32, ty: i32, protocol: i32) -> i32 {
     // @unsafe { libc }
-    let fd = unsafe { socket(domain, ty, protocol) };
+    let fd = unsafe { srpc_socket(domain, ty, protocol) };
     if fd < 0 {
         -last_errno()
     } else {
@@ -298,7 +322,7 @@ pub fn socket_fd(domain: i32, ty: i32, protocol: i32) -> i32 {
 /// non-blocking socket is the normal path, not a failure.
 pub fn connect_fd(fd: i32, addr: &SockAddrIn) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { connect(fd, addr, core::mem::size_of::<SockAddrIn>() as u32) };
+    let rc = unsafe { srpc_connect(fd, addr, core::mem::size_of::<SockAddrIn>() as u32) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -309,7 +333,7 @@ pub fn connect_fd(fd: i32, addr: &SockAddrIn) -> i32 {
 /// `bind(2)`, returning 0 or `-errno`.
 pub fn bind_fd(fd: i32, addr: &SockAddrIn) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { bind(fd, addr, core::mem::size_of::<SockAddrIn>() as u32) };
+    let rc = unsafe { srpc_bind(fd, addr, core::mem::size_of::<SockAddrIn>() as u32) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -320,7 +344,7 @@ pub fn bind_fd(fd: i32, addr: &SockAddrIn) -> i32 {
 /// `listen(2)`, returning 0 or `-errno`.
 pub fn listen_fd(fd: i32, backlog: i32) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { listen(fd, backlog) };
+    let rc = unsafe { srpc_listen(fd, backlog) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -332,7 +356,7 @@ pub fn listen_fd(fd: i32, backlog: i32) -> i32 {
 /// discarded, matching the C++ (which passes null).
 pub fn accept_fd(fd: i32) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { accept(fd, core::ptr::null_mut(), core::ptr::null_mut()) };
+    let rc = unsafe { srpc_accept(fd, core::ptr::null_mut(), core::ptr::null_mut()) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -343,7 +367,7 @@ pub fn accept_fd(fd: i32) -> i32 {
 /// `shutdown(2)`, returning 0 or `-errno`.
 pub fn shutdown_fd(fd: i32, how: i32) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { shutdown(fd, how) };
+    let rc = unsafe { srpc_shutdown(fd, how) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -355,7 +379,7 @@ pub fn shutdown_fd(fd: i32, how: i32) -> i32 {
 /// `-errno`. Zero is NOT an error and must stay distinguishable.
 pub fn recv_fd(fd: i32, buf: &mut [u8]) -> isize {
     // @unsafe { libc — `buf` supplies both pointer and capacity }
-    let n = unsafe { recv(fd, buf.as_mut_ptr(), buf.len(), 0) };
+    let n = unsafe { srpc_recv(fd, buf.as_mut_ptr(), buf.len(), 0) };
     if n < 0 {
         -(last_errno() as isize)
     } else {
@@ -369,7 +393,7 @@ pub fn recv_fd(fd: i32, buf: &mut [u8]) -> isize {
 /// raises SIGPIPE and kills the process rather than returning EPIPE.
 pub fn send_fd(fd: i32, buf: &[u8]) -> isize {
     // @unsafe { libc }
-    let n = unsafe { send(fd, buf.as_ptr(), buf.len(), MSG_NOSIGNAL) };
+    let n = unsafe { srpc_send(fd, buf.as_ptr(), buf.len(), MSG_NOSIGNAL) };
     if n < 0 {
         -(last_errno() as isize)
     } else {
@@ -380,7 +404,8 @@ pub fn send_fd(fd: i32, buf: &[u8]) -> isize {
 /// `setsockopt(2)` for an `int`-valued option, returning 0 or `-errno`.
 pub fn setsockopt_int(fd: i32, level: i32, name: i32, value: i32) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { setsockopt(fd, level, name, &value, core::mem::size_of::<i32>() as u32) };
+    let rc =
+        unsafe { srpc_setsockopt(fd, level, name, &value, core::mem::size_of::<i32>() as u32) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -395,7 +420,7 @@ pub fn getsockopt_int(fd: i32, level: i32, name: i32) -> Result<i32, i32> {
     let mut value: i32 = 0;
     let mut len: u32 = core::mem::size_of::<i32>() as u32;
     // @unsafe { libc }
-    let rc = unsafe { getsockopt(fd, level, name, &mut value, &mut len) };
+    let rc = unsafe { srpc_getsockopt(fd, level, name, &mut value, &mut len) };
     if rc < 0 {
         Err(last_errno())
     } else {
@@ -406,12 +431,12 @@ pub fn getsockopt_int(fd: i32, level: i32, name: i32) -> Result<i32, i32> {
 /// Put `fd` into non-blocking mode. 0 or `-errno`.
 pub fn set_nonblocking(fd: i32) -> i32 {
     // @unsafe { libc }
-    let flags = unsafe { fcntl(fd, SYS_F_GETFL, 0) };
+    let flags = unsafe { srpc_fcntl(fd, SYS_F_GETFL, 0) };
     if flags < 0 {
         return -last_errno();
     }
     // @unsafe { libc }
-    let rc = unsafe { fcntl(fd, SYS_F_SETFL, flags | SYS_O_NONBLOCK) };
+    let rc = unsafe { srpc_fcntl(fd, SYS_F_SETFL, flags | SYS_O_NONBLOCK) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -435,7 +460,7 @@ pub fn wait_writable(fd: i32, timeout_ms: i32) -> i32 {
         revents: 0,
     };
     // @unsafe { libc }
-    let rc = unsafe { poll(&mut pfd, 1, timeout_ms) };
+    let rc = unsafe { srpc_poll(&mut pfd, 1, timeout_ms) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -460,7 +485,7 @@ pub fn last_errno() -> i32 {
 /// ignored by Linux since 2.6.8; rrr passes 10.
 pub fn epoll_create_fd(size: i32) -> i32 {
     // @unsafe { libc }
-    let fd = unsafe { epoll_create(size) };
+    let fd = unsafe { srpc_epoll_create(size) };
     if fd < 0 {
         -last_errno()
     } else {
@@ -476,7 +501,7 @@ pub fn epoll_ctl_fd(epfd: i32, op: i32, fd: i32, events: u32) -> i32 {
         data: fd as u64,
     };
     // @unsafe { libc }
-    let rc = unsafe { epoll_ctl(epfd, op, fd, &mut ev) };
+    let rc = unsafe { srpc_epoll_ctl(epfd, op, fd, &mut ev) };
     if rc < 0 {
         -last_errno()
     } else {
@@ -487,7 +512,7 @@ pub fn epoll_ctl_fd(epfd: i32, op: i32, fd: i32, events: u32) -> i32 {
 /// `epoll_wait`, returning the event count or `-errno`.
 pub fn epoll_wait_fd(epfd: i32, out: &mut [EpollEvent], timeout_ms: i32) -> i32 {
     // @unsafe { libc — `out` supplies both pointer and capacity }
-    let n = unsafe { epoll_wait(epfd, out.as_mut_ptr(), out.len() as i32, timeout_ms) };
+    let n = unsafe { srpc_epoll_wait(epfd, out.as_mut_ptr(), out.len() as i32, timeout_ms) };
     if n < 0 {
         -last_errno()
     } else {
@@ -498,7 +523,7 @@ pub fn epoll_wait_fd(epfd: i32, out: &mut [EpollEvent], timeout_ms: i32) -> i32 
 /// `close`, returning 0 or `-errno`.
 pub fn close_fd(fd: i32) -> i32 {
     // @unsafe { libc }
-    let rc = unsafe { close(fd) };
+    let rc = unsafe { srpc_close(fd) };
     if rc < 0 {
         -last_errno()
     } else {
