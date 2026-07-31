@@ -180,7 +180,7 @@ struct PendingRequestGuard {
         new (this) PendingRequestGuard(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->pending_counter); }
 
 
     ~PendingRequestGuard() noexcept(false);
@@ -275,6 +275,8 @@ pub trait Service {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=server.service version=1 rust_sha256=b614182f7824c551d93fd9d265efc7369734a5e86ebac38004bf7badb39dbb4f*/
+class Service;
+
 class Service {
 public:
     virtual ~Service() noexcept(false) {}
@@ -352,6 +354,9 @@ struct ServiceBoxShim : public Service {
     void __dispatch__(int32_t rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) {
         this->svc_->__dispatch__(std::move(rpc_id), std::move(req), std::move(sconn));
     }
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = rusty::is_send<T>::value;
+    static constexpr bool is_sync = rusty::is_sync<T>::value;
 };
 /*RUSTYCPP:GEN-END id=server.service_shim*/
 
@@ -761,7 +766,7 @@ struct DeferredReply {
         new (this) DeferredReply(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->req_field); rusty::detail::mark_forgotten_if_supported(this->weak_sconn_field); rusty::detail::mark_forgotten_if_supported(this->archive_reply_field); rusty::detail::mark_forgotten_if_supported(this->cleanup_field); }
 
 
     static DeferredReply new_(rusty::Box<Request> req, WeakServerConnection weak_sconn, rusty::Function<void(BinaryWriteArchive&)> archive_reply, rusty::Function<void()> cleanup);
@@ -832,6 +837,9 @@ struct ShutdownState;
 
 struct ShutdownState {
     bool shutdown;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 /*RUSTYCPP:GEN-END id=server.shutdown_state*/
 
@@ -1308,7 +1316,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=4ae026ddb9ff9e56e9f9327aa0261a8f4685d7cf76043f3a76468ce9ccf62908*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=ee898bcb16de95c4e08aaa7881f3009ebf5ed1d52433c4c153965b76bbbb4816*/
 struct Server;
 
 struct Server {
@@ -1343,7 +1351,7 @@ struct Server {
         new (this) Server(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->pending_services_field); rusty::detail::mark_forgotten_if_supported(this->pending_rpc_to_service_field); rusty::detail::mark_forgotten_if_supported(this->pending_fast_rpc_ids_field); rusty::detail::mark_forgotten_if_supported(this->ctx_field); rusty::detail::mark_forgotten_if_supported(this->poll_thread_field); rusty::detail::mark_forgotten_if_supported(this->shutdown_state_field); rusty::detail::mark_forgotten_if_supported(this->shutdown_cond_field); rusty::detail::mark_forgotten_if_supported(this->shutdown_phase_field); rusty::detail::mark_forgotten_if_supported(this->shutdown_hooks_field); rusty::detail::mark_forgotten_if_supported(this->pending_requests_field); rusty::detail::mark_forgotten_if_supported(this->drop_heartbeat_replies_field); rusty::detail::mark_forgotten_if_supported(this->instance_id_field); rusty::detail::mark_forgotten_if_supported(this->channel_factory_field); rusty::detail::mark_forgotten_if_supported(this->channel_listener_field); rusty::detail::mark_forgotten_if_supported(this->channel_sconns_field); }
 
 
     ~Server() noexcept(false);

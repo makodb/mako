@@ -323,6 +323,9 @@ struct KeepaliveConfig {
     static KeepaliveConfig aggressive();
     static KeepaliveConfig relaxed();
     static KeepaliveConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -1060,6 +1063,9 @@ struct ReconnectState {
     rusty::sync::atomic::AtomicBool reconnecting_;
     rusty::sync::atomic::AtomicBool reconnect_abort_;
     rusty::sync::atomic::AtomicU64 channel_reconnect_attempts_;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 /*RUSTYCPP:GEN-END id=client.reconnect_state*/
 
@@ -1797,7 +1803,7 @@ struct ClientConnection {
         new (this) ClientConnection(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->poll_thread_worker_); rusty::detail::mark_forgotten_if_supported(this->fiber_channel_); rusty::detail::mark_forgotten_if_supported(this->direct_channel_); rusty::detail::mark_forgotten_if_supported(this->channel_mode_); rusty::detail::mark_forgotten_if_supported(this->factory_); rusty::detail::mark_forgotten_if_supported(this->xid_counter_); rusty::detail::mark_forgotten_if_supported(this->pending_fu_); rusty::detail::mark_forgotten_if_supported(this->pending_cb_slots_); rusty::detail::mark_forgotten_if_supported(this->state_machine_); rusty::detail::mark_forgotten_if_supported(this->reconnect_policy_); rusty::detail::mark_forgotten_if_supported(this->reconnect_); rusty::detail::mark_forgotten_if_supported(this->reconnect_address_); rusty::detail::mark_forgotten_if_supported(this->buffering_config_); rusty::detail::mark_forgotten_if_supported(this->pending_queue_); rusty::detail::mark_forgotten_if_supported(this->server_instance_id_); rusty::detail::mark_forgotten_if_supported(this->on_server_restart_); rusty::detail::mark_forgotten_if_supported(this->keepalive_config_); rusty::detail::mark_forgotten_if_supported(this->heartbeat_manager_); rusty::detail::mark_forgotten_if_supported(this->circuit_breaker_); rusty::detail::mark_forgotten_if_supported(this->callback_manager_); rusty::detail::mark_forgotten_if_supported(this->last_activity_time_); rusty::detail::mark_forgotten_if_supported(this->metrics_); rusty::detail::mark_forgotten_if_supported(this->weak_self_); rusty::detail::mark_forgotten_if_supported(this->host_); rusty::detail::mark_forgotten_if_supported(this->packets_); rusty::detail::mark_forgotten_if_supported(this->paused_); rusty::detail::mark_forgotten_if_supported(this->is_client_mode_); }
 
 
     ~ClientConnection() noexcept(false);
@@ -3070,7 +3076,7 @@ impl Client {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=4da731001473baf2a718168b1d42706fdb811cb40f214b9d2344283ee466ffaa*/
+/*RUSTYCPP:GEN-BEGIN id=client.1 version=1 rust_sha256=e909790c93a0b7e470f3b1323ced8e1b10a6975a91c18e50e3e7283b6df9adcd*/
 struct Client;
 
 struct Client {
@@ -3103,7 +3109,7 @@ struct Client {
         new (this) Client(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->connection_field); rusty::detail::mark_forgotten_if_supported(this->poll_thread_worker_field); rusty::detail::mark_forgotten_if_supported(this->is_client_mode_field); rusty::detail::mark_forgotten_if_supported(this->time_field); rusty::detail::mark_forgotten_if_supported(this->timeout_field); rusty::detail::mark_forgotten_if_supported(this->rpc_id_field); rusty::detail::mark_forgotten_if_supported(this->pending_keepalive_config_field); rusty::detail::mark_forgotten_if_supported(this->pending_heartbeat_config_field); rusty::detail::mark_forgotten_if_supported(this->pending_circuit_breaker_config_field); rusty::detail::mark_forgotten_if_supported(this->pending_reconnect_policy_field); rusty::detail::mark_forgotten_if_supported(this->callback_manager_field); rusty::detail::mark_forgotten_if_supported(this->pending_factory_field); rusty::detail::mark_forgotten_if_supported(this->empty_metrics_field); }
 
 
     ~Client() noexcept(false);
@@ -3712,7 +3718,7 @@ struct ClientPool {
         new (this) ClientPool(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->poll_thread_worker_); rusty::detail::mark_forgotten_if_supported(this->state_); rusty::detail::mark_forgotten_if_supported(this->config_); }
 
 
     ~ClientPool() noexcept(false);
