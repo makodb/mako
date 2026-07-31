@@ -20,14 +20,19 @@ import rrr.logging;
 import rrr.threading;
 
 // @safe - in-memory channel backend. Switchboard + Listener bodies use
-// rusty::Mutex + rusty::HashMap + rusty::Weak (all safe). InMemoryChannel
-// and the four `*Adapter` shims thread through const_cast helpers
-// (`mut_state` / `mut_conn` / `mut_listener` / `mut_factory`) and
-// `send_frame` does raw `uint8_t*` byte slicing — those methods carry
-// per-method `// @unsafe` below. InMemoryListener::accept_for_connect,
-// InMemoryFactory::connect/make_listener, and the test helper
-// make_channel_pair_for_testing also const_cast inline and are
-// `// @unsafe`.
+// rusty::Mutex + rusty::HashMap + rusty::Weak (all safe), and
+// `send_frame` does raw `uint8_t*` byte slicing — that method carries a
+// per-method `// @unsafe` below.
+//
+// The const_cast helpers this comment used to describe are gone. Almost
+// all of them existed to reach `state_.inner.lock()` through a shared
+// Arc, which never needed a cast: rusty::Mutex has a `lock() const`
+// overload returning a mutable guard (interior mutability, as Rust's
+// Mutex does). make_listener now uses Arc::get_mut on the freshly-minted
+// Arc instead of casting. ONE genuine cast remains, on
+// InMemoryFactory::connect's path into accept_for_connect, where a
+// non-const method is called on an Arc that is genuinely shared — that
+// one is still `// @unsafe`.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
 RUSTY_METHOD_DISPATCH(unwrap)
@@ -478,9 +483,9 @@ void InMemoryChannel::set_on_error(OnErrorCallback cb) const {
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.channel*/
 
-// Free functions (non-DSL) — see definitions further down. Each
-// inlines the `const_cast<InMemoryConnectionState&>(*self.state_.
-// get())` pattern that the legacy `const_cast<InMemoryConnectionState&>(*self.state_.get())` helper performed.
+// Free functions — see definitions further down. They reach the shared
+// state via `(*self.state_).inner.lock()`; no cast is involved (see the
+// file header).
 // ChannelConnectionBase methods.
 // Fault injection (test-only).
 // `InMemoryChannelShim` — Arc-holding ChannelConnectionBase
@@ -1085,7 +1090,9 @@ ChannelError inmemory_channel_send_frame(const InMemoryChannel& self, const Chan
     // counter — if both are set, drops fire first while the drop
     // counter is positive.
     {
-        auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
+        // rusty::Mutex::lock() has a const overload returning a mutable
+        // guard, so the shared Arc view suffices — no const_cast.
+        auto guard = (*self.state_).inner.lock().unwrap();
         if (self.is_a_side_) {
             self_already_closed = (*guard).a_closed;
             peer_already_closed = (*guard).b_closed;
@@ -1292,8 +1299,7 @@ inmemory_listener_accept_for_connect(const InMemoryListener& self, const std::st
     {
         // No external mutators yet — but the rusty::Mutex-owned inner
         // requires going through the lock guard for any access.
-        auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
-        auto guard = mut_state->inner.lock().unwrap();
+        auto guard = (*state).inner.lock().unwrap();
         (*guard).a_peer_address = client_address;  // A is the client
         (*guard).b_peer_address = server_address;  // B is the server
     }
@@ -1357,8 +1363,10 @@ make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
     auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{
         .inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(InMemoryConnectionStateInner{})});
     {
-        auto* mut_state = const_cast<InMemoryConnectionState*>(state.get());
-        auto guard = mut_state->inner.lock().unwrap();
+        // No const_cast: rusty::Mutex::lock() has a const overload that hands
+        // back a mutable guard (interior mutability, as Rust's Mutex does), so
+        // the Arc's const view is enough to seed the peer addresses.
+        auto guard = (*state).inner.lock().unwrap();
         (*guard).a_peer_address = std::move(a_addr);
         (*guard).b_peer_address = std::move(b_addr);
     }
