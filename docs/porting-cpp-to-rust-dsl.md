@@ -924,7 +924,7 @@ a deliberate short read, spell it — `std::span<const std::uint8_t>(got).first(
    through `cross_file_enums`). If you see a cross-block type resolve
    oddly, check the pin before redesigning the DSL around it.
 
-### 7.12 Blocker: integer-returning fn + uppercase-named callee (July 2026)
+### 7.12 RESOLVED: integer-returning fn + uppercase-named callee (July 2026)
 
 A DSL fn whose return type is an **integer** mis-qualifies calls to any
 free function whose name starts with an uppercase letter — it prefixes
@@ -973,8 +973,22 @@ to return `()`; that is exactly the "rewrite our own counterpart"
 failure the policy doc warns about. Fix the qualification guard, then
 convert.
 
-Not yet located in the transpiler: it is not
-`try_emit_data_enum_variant_call_with_expected` (needs >= 2 path
-segments), not `path_matches_c_like_enum_const` (properly guarded), and
-not `try_emit_path_constructor_with_expected` (emits `T{}`, not `T::x`).
-The repro above reproduces in one file with no dependencies.
+**Fixed** in rusty-cpp `b1d7a7c1`. It WAS
+`try_emit_data_enum_variant_call_with_expected` — reached through a
+single-segment fallback branch, not the >= 2-segment one I first checked.
+`emit_call_expr_to_string` passes `expected_ty.or(current_return_type_hint())`,
+so a bare call with no expected type inherits the fn's return type as its
+candidate enum owner, and nothing rejected a primitive.
+
+The near-miss worth remembering: the existing `owner_maps_to_bare_ident`
+guard already covered `bool` and `char`, purely because their C++ spelling
+is unchanged (`mapped_owner == owner_tail`). `i32` maps to `int32_t`, so
+the guard did not fire. Same bug, and whether you saw it depended only on
+whether the primitive gets renamed — which is why the `-> bool` probe came
+back clean and sent me looking in the wrong place.
+
+Finding it took instrumenting rather than reading: wrapping the emitters
+in a backtrace probe showed nothing (they were not the producer), while a
+probe on `escape_cpp_keyword` for the callee name landed exactly on the
+branch. When a grep-hunt across ~200 candidate sites stalls, probe the
+narrowest thing the bad output must have passed through.

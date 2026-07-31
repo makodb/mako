@@ -487,7 +487,6 @@ void sconn_reply(const ServerConnection& self, const Request& req,
                  i32 error_code, ServerReplyFn write_fn);
 void sconn_close(ServerConnection& self);
 void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy);
-int  sconn_run_async(const ServerConnection& self, ServerRunAsyncFn f);
 void sconn_decode_request_and_dispatch(ServerConnection& self,
                                        const std::uint8_t* bytes, std::size_t size);
 void sconn_dispatch_response_frame_via_channel(const ServerConnection& self,
@@ -573,11 +572,16 @@ impl ServerConnection {
     }
 
     fn run_async(&self, f: ServerRunAsyncFn) -> i32 {
-        sconn_run_async(self, f)
+        if !f {
+            Log_warn("rrr::ServerConnection::run_async called with empty callback");
+            return EINVAL;
+        }
+        f();
+        0i32
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=c9b7a83514ebd6e3d885be659dbf385affd71ac3828dee02da62fcf222301cb3*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=bf5c8ec12d4c8a005925664f3ea515e985491d1ae49c2e1902b2cb9a80c4b219*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -648,7 +652,12 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
 }
 
 int32_t ServerConnection::run_async(ServerRunAsyncFn f) const {
-    return sconn_run_async((*this), std::move(f));
+    if (rusty::detail::rust_not(f)) {
+        Log_warn("rrr::ServerConnection::run_async called with empty callback");
+        return EINVAL;
+    }
+    f();
+    return static_cast<int32_t>(0);
 }
 /*RUSTYCPP:GEN-END id=server.server_connection*/
 
@@ -1933,15 +1942,6 @@ void sconn_dispatch_response_frame_via_channel(
 }
 
 // @unsafe - Executes callback inline for API compatibility.
-int sconn_run_async(const ServerConnection& self, ServerRunAsyncFn f) {
-  (void)self;
-  if (!f) {
-    Log_warn("rrr::ServerConnection::run_async called with empty callback");
-    return EINVAL;
-  }
-  f();
-  return 0;
-}
 
 // @safe - Closes connection.
 //
