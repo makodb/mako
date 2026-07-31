@@ -124,22 +124,22 @@ using ShutdownHook = rusty::Function<void()>;
  * other fields are already consumed.
  */
 // Pending-request counter helpers. The counter is an Arc-shared
-// std::atomic; Arc hands out a const pointer, so bumping the atomic
+// rusty::sync::atomic; its ops are const (Rust's &self), so bumping
 // needs a const_cast (the const is Arc's shared-ownership const, not the
 // atomic's — atomics are interior-mutable). These two are the only
 // places the counter moves.
 // @unsafe - const_cast through Arc's shared const to the interior-mutable atomic.
-inline void pending_guard_acquire(const rusty::Arc<std::atomic<int32_t>>& counter) {
+inline void pending_guard_acquire(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter) {
     if (counter.is_valid()) {
-        const_cast<std::atomic<int32_t>*>(counter.get())->fetch_add(1, std::memory_order_relaxed);
+        counter.get()->fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 // @unsafe - mirror of pending_guard_acquire; runs from PendingRequestGuard's
 // drop. Takes a pointer because the DSL lowers `&self.field` to `&this->field`
 // (an address-of), whereas a `&T` param (acquire's caller) lowers to a reference.
-inline void pending_guard_release(const rusty::Arc<std::atomic<int32_t>>* counter) {
+inline void pending_guard_release(const rusty::Arc<rusty::sync::atomic::AtomicI32>* counter) {
     if (counter->is_valid()) {
-        const_cast<std::atomic<int32_t>*>(counter->get())->fetch_sub(1, std::memory_order_relaxed);
+        counter->get()->fetch_sub(1, rusty::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -154,7 +154,7 @@ inline void pending_guard_release(const rusty::Arc<std::atomic<int32_t>>* counte
 // deleted copy ctor is not load-bearing.)
 #if RUSTYCPP_RUST
 struct PendingRequestGuard {
-    pending_counter: rusty::Arc<std::atomic<i32>>,
+    pending_counter: rusty::Arc<rusty::sync::atomic::AtomicI32>,
 }
 
 impl Drop for PendingRequestGuard {
@@ -163,13 +163,13 @@ impl Drop for PendingRequestGuard {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.pending_guard version=1 rust_sha256=2162d7cc4e2a4fb08b01e160d91b6da40128a7a26a7a3e4bc6bebcc072194e84*/
+/*RUSTYCPP:GEN-BEGIN id=server.pending_guard version=1 rust_sha256=574c3120408a5e3fbdd024cd070db6352638343560d2f03ae615c51bcae2f4ed*/
 struct PendingRequestGuard;
 
 struct PendingRequestGuard {
-    rusty::Arc<std::atomic<int32_t>> pending_counter;
+    rusty::Arc<rusty::sync::atomic::AtomicI32> pending_counter;
     mutable bool _rusty_forgotten = false;
-    PendingRequestGuard(rusty::Arc<std::atomic<int32_t>> pending_counter_init) : pending_counter(std::move(pending_counter_init)) {}
+    PendingRequestGuard(rusty::Arc<rusty::sync::atomic::AtomicI32> pending_counter_init) : pending_counter(std::move(pending_counter_init)) {}
     PendingRequestGuard(const PendingRequestGuard&) = default;
     PendingRequestGuard(PendingRequestGuard&& other) noexcept : pending_counter(std::move(other.pending_counter)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -188,6 +188,9 @@ struct PendingRequestGuard {
 
 
     ~PendingRequestGuard() noexcept(false);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -223,7 +226,7 @@ struct Request {
 }
 
 impl Request {
-    fn attach_pending_guard(&mut self, counter: &rusty::Arc<std::atomic<i32>>) {
+    fn attach_pending_guard(&mut self, counter: &rusty::Arc<rusty::sync::atomic::AtomicI32>) {
         if self.pending_guard.is_none() && counter.is_valid() {
             pending_guard_acquire(counter);
             self.pending_guard = rusty::Some(rusty::make_box::<PendingRequestGuard>(counter.clone()));
@@ -231,7 +234,7 @@ impl Request {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=3e5493db42aff1286a5353efb3b1d0ccbba2e92b342d6e6695a2c669199e3636*/
+/*RUSTYCPP:GEN-BEGIN id=server.request version=1 rust_sha256=27de6493b0c289aae05d0eeadf949726306af32842dab10517c614005ceb4dc8*/
 struct Request;
 
 struct Request {
@@ -240,11 +243,11 @@ struct Request {
     int64_t xid;
     rusty::Option<rusty::Box<PendingRequestGuard>> pending_guard;
 
-    void attach_pending_guard(const rusty::Arc<std::atomic<int32_t>>& counter);
+    void attach_pending_guard(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter);
 };
 
 
-void Request::attach_pending_guard(const rusty::Arc<std::atomic<int32_t>>& counter) {
+void Request::attach_pending_guard(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter) {
     if (this->pending_guard.is_none() && counter.is_valid()) {
         pending_guard_acquire(counter);
         this->pending_guard = rusty::Option<rusty::Box<PendingRequestGuard>>(rusty::make_box<PendingRequestGuard>(rusty::clone(counter)));
@@ -373,10 +376,10 @@ inline ServiceProxy make_service_proxy_from_typed_box(rusty::Box<T> svc) {
 // Forward-declared atomic typedefs (full definitions repeated below near
 // Server, where the original definitions live). Hoisted here because
 // RpcServiceContext lowered to inline-Rust DSL references them in its
-// field types, and the DSL grammar can't parse `std::atomic<...>`.
+// field types. (The DSL does spell rusty::sync::atomic directly.)
 // C++ allows redundant identical `using` declarations at namespace scope.
-using ServerPendingRequestsAtomic = std::atomic<int32_t>;
-using ServerDropHeartbeatRepliesAtomic = std::atomic<bool>;
+using ServerPendingRequestsAtomic = rusty::sync::atomic::AtomicI32;
+using ServerDropHeartbeatRepliesAtomic = rusty::sync::atomic::AtomicBool;
 
 /**
  * Shared context for RPC service dispatch.
@@ -686,7 +689,7 @@ int32_t ServerConnection::run_async(ServerRunAsyncFn f) const {
 // @safe - DeferredReply (RAII wrapper for deferred RPC replies) and
 // Server (which owns the channel listener + accepted ServerConnection
 // Arcs). Both classes carry their own descriptive `// @safe` blocks
-// with per-method `// @unsafe` overrides on the socket / std::atomic
+// with per-method `// @unsafe` overrides on the socket
 // / rusty::Mutex-extraction paths.
 export namespace rrr {
 
@@ -960,10 +963,10 @@ class Server;
 
 // Type aliases for the atomic counters carried inside the DSL Server
 // struct. Defined outside the DSL block so the inline-Rust grammar
-// doesn't have to parse `std::atomic<...>` (the DSL grammar does
+// keeps one name for the counter type (the DSL grammar does
 // not yet recognize that template).
-using ServerPendingRequestsAtomic = std::atomic<int32_t>;
-using ServerDropHeartbeatRepliesAtomic = std::atomic<bool>;
+using ServerPendingRequestsAtomic = rusty::sync::atomic::AtomicI32;
+using ServerDropHeartbeatRepliesAtomic = rusty::sync::atomic::AtomicBool;
 
 // Helper free functions that the DSL `Server` method bodies delegate
 // to. Defined out-of-line in plain C++ because the DSL grammar can't
@@ -1060,37 +1063,34 @@ inline void server_wait_for_shutdown_impl(
     Log_debug("Server::wait_for_shutdown - done");
 }
 
-// @unsafe - std::atomic::load (modeled as non-safe by rusty-cpp).
+// @safe - rusty::sync::atomic::Atomic::load is const (Rust's &self).
 inline int32_t server_atomic_load_int(
         const rusty::Arc<ServerPendingRequestsAtomic>& a) {
-    return a->load(std::memory_order_relaxed);
+    return a->load(rusty::sync::atomic::Ordering::Relaxed);
 }
 
-// @unsafe - const_cast + std::atomic::fetch_add.
+// @safe - fetch_add is const on rusty atomics, so no cast is needed.
 inline void server_atomic_fetch_add_int(
         const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
-    auto* ptr = const_cast<ServerPendingRequestsAtomic*>(a.get());
-    ptr->fetch_add(delta, std::memory_order_relaxed);
+    a->fetch_add(delta, rusty::sync::atomic::Ordering::Relaxed);
 }
 
-// @unsafe - const_cast + std::atomic::fetch_sub.
+// @safe - fetch_sub is const on rusty atomics, so no cast is needed.
 inline void server_atomic_fetch_sub_int(
         const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
-    auto* ptr = const_cast<ServerPendingRequestsAtomic*>(a.get());
-    ptr->fetch_sub(delta, std::memory_order_relaxed);
+    a->fetch_sub(delta, rusty::sync::atomic::Ordering::Relaxed);
 }
 
-// @unsafe - const_cast + std::atomic::store.
+// @safe - store is const on rusty atomics, so no cast is needed.
 inline void server_atomic_store_bool(
         const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a, bool v) {
-    auto* ptr = const_cast<ServerDropHeartbeatRepliesAtomic*>(a.get());
-    ptr->store(v, std::memory_order_release);
+    a->store(v, rusty::sync::atomic::Ordering::Release);
 }
 
-// @unsafe - std::atomic::load.
+// @safe - load is const on rusty atomics.
 inline bool server_atomic_load_bool(
         const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a) {
-    return a->load(std::memory_order_acquire);
+    return a->load(rusty::sync::atomic::Ordering::Acquire);
 }
 
 // Drain phase-FSM + timed busy-wait, authored as inline Rust DSL (the
@@ -1231,7 +1231,7 @@ inline void server_for_each_service_impl(const Server& self, F&& callback);
 //     the DSL grammar can't express template methods.
 //
 // @safe - Methods that genuinely cross into unsafe ops (socket I/O via the
-// channel-layer's TcpListener, Pthread / std::atomic primitives, raw
+// channel-layer's TcpListener, Pthread primitives, raw
 // pointer extraction from ChannelListenerProxy, etc.) carry their own
 // `// @unsafe` overrides; the rest of the class is now analyzed as @safe
 // by default. Mirrors the Tier-4 flip on `Client`.
@@ -1929,8 +1929,8 @@ void sconn_decode_request_and_dispatch(
     i32 rpc_id;
     rrr::Deserialize_::deserialize(rpc_id, header_ar);
     if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
-        // @unsafe - std::atomic::load
-        if (!self.ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
+        // @safe - rusty atomic load is const
+        if (!self.ctx_->drop_heartbeat_replies->load(rusty::sync::atomic::Ordering::Acquire)) {
             sconn_reply(self, req, 0, ServerReplyFn{});
         }
         return;
