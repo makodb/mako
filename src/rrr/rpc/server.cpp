@@ -472,6 +472,11 @@ RpcServiceContext RpcServiceContext::new_(rusty::HashMap<int32_t, size_t> rpc_ma
 using ServerReplyFn = rusty::Function<void(BinaryWriteArchive&)>;
 using ServerRunAsyncFn = rusty::Function<void()>;
 
+// Hand-bridge (playbook 7.2), same shape as channel.cpp's
+// empty_on_frame_callback: rusty::Function's default ctor is a `{}` the
+// DSL cannot spell, so reply_error gets its "no writer" argument here.
+inline ServerReplyFn empty_server_reply_fn() { return {}; }
+
 // Free-fn implementations of the channel-dispatch / Marshal-operator /
 // fiber / closure-heavy methods; the DSL methods below delegate to these.
 // The private decode/dispatch helpers take raw `const std::uint8_t*`
@@ -669,8 +674,6 @@ using DeferredReplyCleanupCb = rusty::Function<void()>;
 // definitions live in the impl namespace at the bottom of the file
 // alongside the rest of the `*_impl` escape hatches.
 class DeferredReply;
-void deferred_reply_dispatch_reply(DeferredReply& self);
-void deferred_reply_dispatch_reply_error(DeferredReply& self, int32_t error_code);
 
 // `DeferredReply` — once-fire async-reply handle handed to user
 // service handlers. Holds the inbound request, a weak handle on
@@ -730,11 +733,42 @@ impl DeferredReply {
     }
 
     fn reply(&mut self) {
-        deferred_reply_dispatch_reply(self);
+        let cb_opt = self.archive_reply_field.take();
+        if cb_opt.is_none() {
+            unsafe { Log_warn("DeferredReply::reply() called multiple times, ignoring") };
+            return;
+        }
+        // `mut` is redundant in Rust (a non-mut binding can still be moved
+        // out of) and rustc will warn about it. It is here because the
+        // transpiler only drops `const` for locals it can prove are
+        // consumed, and it cannot follow this one: the move target is a
+        // method whose receiver type comes from
+        // `weak_sconn_field.upgrade().unwrap()`. Without `mut` it emits
+        // `const auto cb` and then `std::move(cb)`, which selects
+        // rusty::Function's deleted copy ctor. TODO: teach the consumed
+        // detector this receiver chain, then drop the `mut`.
+        let mut cb = cb_opt.unwrap();
+        let sconn_opt = self.weak_sconn_field.upgrade();
+        if sconn_opt.is_some() {
+            let sconn = sconn_opt.unwrap();
+            (*sconn).reply(&*self.req_field, 0, cb);
+        } else {
+            unsafe { Log_debug("Connection closed before reply sent, dropping reply") };
+        }
     }
 
     fn reply_error(&mut self, error_code: i32) {
-        deferred_reply_dispatch_reply_error(self, error_code);
+        if self.archive_reply_field.take().is_none() {
+            unsafe { Log_warn("DeferredReply::reply_error() called multiple times, ignoring") };
+            return;
+        }
+        let sconn_opt = self.weak_sconn_field.upgrade();
+        if sconn_opt.is_some() {
+            let sconn = sconn_opt.unwrap();
+            (*sconn).reply(&*self.req_field, error_code, empty_server_reply_fn());
+        } else {
+            unsafe { Log_debug("Connection closed before error reply sent, dropping reply") };
+        }
     }
 }
 
@@ -746,7 +780,7 @@ impl Drop for DeferredReply {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=68beb6cf0b92dcff1bb3cf09458261b9fd0a583f570e016db4bb08a7577123eb*/
+/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=a9899d77cc7192b2594f26059e6e7219ef3e3a8ecda366a54dfd372f6a42192d*/
 struct DeferredReply;
 
 struct DeferredReply {
@@ -791,11 +825,45 @@ int32_t DeferredReply::run_async(rusty::Function<void()> f) {
 }
 
 void DeferredReply::reply() {
-    deferred_reply_dispatch_reply((*this));
+    auto cb_opt = this->archive_reply_field.take();
+    if (cb_opt.is_none()) {
+        // @unsafe
+        {
+            Log_warn("DeferredReply::reply() called multiple times, ignoring");
+        }
+        return;
+    }
+    auto cb = cb_opt.unwrap();
+    auto sconn_opt = this->weak_sconn_field.upgrade();
+    if (sconn_opt.is_some()) {
+        const auto sconn = sconn_opt.unwrap();
+        ((rusty::detail::deref_if_pointer_like(sconn))).reply(rusty::detail::deref_if_pointer_like(this->req_field), 0, std::move(cb));
+    } else {
+        // @unsafe
+        {
+            Log_debug("Connection closed before reply sent, dropping reply");
+        }
+    }
 }
 
 void DeferredReply::reply_error(int32_t error_code) {
-    deferred_reply_dispatch_reply_error((*this), std::move(error_code));
+    if (this->archive_reply_field.take().is_none()) {
+        // @unsafe
+        {
+            Log_warn("DeferredReply::reply_error() called multiple times, ignoring");
+        }
+        return;
+    }
+    auto sconn_opt = this->weak_sconn_field.upgrade();
+    if (sconn_opt.is_some()) {
+        const auto sconn = sconn_opt.unwrap();
+        ((rusty::detail::deref_if_pointer_like(sconn))).reply(rusty::detail::deref_if_pointer_like(this->req_field), std::move(error_code), empty_server_reply_fn());
+    } else {
+        // @unsafe
+        {
+            Log_debug("Connection closed before error reply sent, dropping reply");
+        }
+    }
 }
 
 DeferredReply::~DeferredReply() noexcept(false) {
@@ -1908,40 +1976,12 @@ void sconn_close(ServerConnection& self) {
 // behaviour without needing a separate bool.
 // @unsafe { Log_warn / Log_debug + sconn->reply<F> template call
 //           with a moved-in Function lvalue }
-void deferred_reply_dispatch_reply(DeferredReply& self) {
-    auto cb_opt = self.archive_reply_field.take();
-    if (cb_opt.is_none()) {
-        Log_warn("DeferredReply::reply() called multiple times, ignoring");
-        return;
-    }
-    auto cb = cb_opt.unwrap();
-    auto sconn_opt = self.weak_sconn_field.upgrade();
-    if (sconn_opt.is_some()) {
-        auto sconn = sconn_opt.unwrap();
-        sconn->reply(*self.req_field, 0, std::move(cb));
-    } else {
-        Log_debug("Connection closed before reply sent, dropping reply");
-    }
-}
 
 // @safe - Out-of-line dispatch for `DeferredReply::reply_error`.
 // Same once-fire shape via `Option::take()`; error path doesn't
 // invoke the archive callback (the empty-reply overload of
 // `ServerConnection::reply` only takes the error code).
 // @unsafe { Log_warn / Log_debug + sconn->reply 2-arg overload }
-void deferred_reply_dispatch_reply_error(DeferredReply& self, i32 error_code) {
-    if (self.archive_reply_field.take().is_none()) {
-        Log_warn("DeferredReply::reply_error() called multiple times, ignoring");
-        return;
-    }
-    auto sconn_opt = self.weak_sconn_field.upgrade();
-    if (sconn_opt.is_some()) {
-        auto sconn = sconn_opt.unwrap();
-        sconn->reply(*self.req_field, error_code, ServerReplyFn{});
-    } else {
-        Log_debug("Connection closed before error reply sent, dropping reply");
-    }
-}
 
 // ============================================================================
 // Server impl helpers — free functions called from the DSL block.
