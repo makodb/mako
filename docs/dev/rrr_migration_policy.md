@@ -1,9 +1,76 @@
-# Migration policy questions
+# Migration policy
 
 Step 1 is: `src/rrr` contains no hand-written C++ — every line is
 inline-Rust DSL, C++ generated from it, or external C behind
-`extern "C"`. Converting `frame_codec.cpp` (the first target) surfaced a
-question that will recur across all 7,106 lines.
+`extern "C"`.
+
+## THE DECISION RULE
+
+When a piece of C++ resists becoming DSL, apply these **in order** and
+take the first that fits:
+
+### 1. Is it a TRANSLATION BUG? Fix the translator.
+
+The DSL cannot express it, or expresses it wrongly, because the
+transpiler is wrong. Then the transpiler is what changes — not the
+code, and not the shape of the port.
+
+This is first because every workaround has to be repeated by every
+future consumer, and because a translator that deviates from authentic
+Rust behaviour makes the whole campaign unsound: the C++ side stops
+being a faithful image of the Rust.
+
+Worked example: `ClientConnection::pause` was renamed `pause_` by a
+libc-collision rule applied in member position, where no collision is
+possible. That was a bug. It was fixed in the transpiler
+(rusty-cpp `e781abe4`), not worked around by renaming the method across
+deptran.
+
+### 2. Not a bug, but avoidable by REWRITING THE CALL SITE to equivalent logic? Rewrite it.
+
+The translation is legitimate; the existing C++ just happens to use a
+shape the DSL renders differently. If an equivalent formulation exists
+that the DSL handles cleanly, change the code.
+
+The bar is *equivalent logic* — same behaviour, different spelling. Not
+"weaken the API until it lowers".
+
+### 3. Neither applies? Convert to EXTERNAL C.
+
+A `.c` (or `.S`) file behind `extern "C"`, assembled/compiled once and
+linked by both toolchains — the arrangement already proven by
+`runtime/fiber/fiber_x86_64.S` and the libc thunks.
+
+**Last resort, deliberately.** Anything moved to C is permanently not
+Rust, and step 2 (compile the DSL under rustc) inherits it forever. C is
+for what genuinely cannot be expressed: raw-pointer/allocator surgery,
+syscalls, assembly, third-party APIs.
+
+### Why this order
+
+Rule 3 is the cheapest way to hit "hand-written C++ -> 0" and the worst
+way to reach the actual goal. A burndown metric can be satisfied while
+the Rust story gets worse. The ordering exists so that cannot happen by
+default: C has to be *argued for*, after 1 and 2 have failed.
+
+---
+
+## Applying it to frame_codec.cpp
+
+| function | rule | disposition |
+|---|---|---|
+| `frame_decode_status_to_string` (8) | **2** | `-> &'static str` lowering to `std::string_view` is correct, not a bug. Rewrite the 3 `EXPECT_STREQ` call sites as `EXPECT_EQ`. → **DSL Rust** |
+| `frame_codec_write_header` (28) | **2** | Raw-pointer parameter is an old API, not a kernel. Take a slice; 4 test call sites pass `hdr.data()`. `wire/frame.rs` already does this safely. → **DSL Rust** |
+| `frame_codec_encode_into` (74) | **2 (try), else 3** | Body is validate/resize/copy over a `vector&`. `wire/frame.rs::encode_into` expresses it over slices under `deny(unsafe_code)`, so rule 2 probably reaches. Fall to C only if it does not. |
+| module scaffolding (~26) | exempt | See Settled. |
+
+Note what changed: the first triage sent 102 of 136 lines to external C.
+Under the rule, most or all of it is rule 2 — **DSL Rust**. That
+difference is the whole point of having the rule.
+
+---
+
+## Original framing of the question (kept for the reasoning)
 
 ## When the DSL lowering is WORSE than the C++, what wins?
 

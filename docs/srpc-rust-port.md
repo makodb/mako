@@ -6,6 +6,26 @@ Status log: see [Status](#status-log) at the bottom. **This document is
 the canonical tracker for the campaign** — update it in the same commit
 as the work it records.
 
+## Migration decision rule (2026-07-31)
+
+When C++ resists becoming inline-Rust DSL, apply **in order**, first
+fit wins:
+
+1. **Translation bug → fix the translator.** Not the code. Every
+   workaround is otherwise repeated by every future consumer, and a
+   translator that deviates from authentic Rust makes the C++ stop
+   being a faithful image of the Rust.
+2. **Not a bug, avoidable by rewriting the call site to equivalent
+   logic → rewrite it.** Equivalent logic, not a weakened API.
+3. **Neither → external C** behind `extern "C"`, built once and linked
+   by both toolchains. **Last resort** — anything moved to C is
+   permanently not Rust, and step 2 inherits it forever.
+
+Rule 3 is the cheapest way to hit "hand-written C++ -> 0" and the worst
+way to reach the goal, so C must be argued for rather than defaulted to.
+Full rationale and worked examples:
+[docs/dev/rrr_migration_policy.md](dev/rrr_migration_policy.md).
+
 ## Mission
 
 Turn sRPC (`src/rrr`) into a **real Rust library** (`crates/srpc`,
