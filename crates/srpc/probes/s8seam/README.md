@@ -61,8 +61,21 @@ somewhere it should not, breaking
 `test_leaf41543333331_typed_raw_pointer_local_does_not_emit_duplicate_const`
 by adding an address-of to a local that was already a pointer.
 
-That failure is the useful part: the generic expected-type path is the
-wrong home for this. Every expression in the crate flows through it, so
+**Second attempt: the rule LANDED (rusty-cpp `eb2f8c98`), but it still
+does not help this seam.** Moving it to the call-argument site, keyed on
+the callee's declared parameter type, removed all collateral damage —
+1946/1946, and the already-a-pointer case passes. But `extern "C"`
+blocks are only EMITTED (`emit_foreign_mod`), never collected into
+`function_arg_expected_types`, so a foreign callee has no declared
+parameter type for any rule to key on.
+
+So the seam keeps `*mut FiberContext`, and the real follow-up is
+**collecting foreign signatures into the function registry** — which
+would unblock anything expected-type-driven at an FFI boundary, not just
+this coercion.
+
+The first failure is still the useful part: the generic expected-type
+path is the wrong home for this. Every expression in the crate flows through it, so
 a rule keyed on "expected is a pointer, argument is a reference" has an
 enormous blast radius and no way to know it is looking at a call
 argument. The right home is the CALL-ARGUMENT site, keyed on the
