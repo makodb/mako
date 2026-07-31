@@ -28,6 +28,12 @@ import rrr.threading;
 // InMemoryFactory::connect/make_listener, and the test helper
 // make_channel_pair_for_testing also const_cast inline and are
 // `// @unsafe`.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 
@@ -404,7 +410,7 @@ void InMemoryChannel::close() const {
     auto peer_on_closed = empty_on_closed_callback();
     auto fire_peer_closed = false;
     {
-        auto guard = (*this->state_).inner.lock().unwrap();
+        auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
         if (this->is_a_side_) {
             if ((rusty::detail::deref_if_pointer_like(guard)).a_closed) {
                 return;
@@ -431,12 +437,12 @@ void InMemoryChannel::close() const {
 }
 
 bool InMemoryChannel::is_closed() const {
-    const auto guard = (*this->state_).inner.lock().unwrap();
+    const auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
     return rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).a_closed) || rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).b_closed);
 }
 
 std::string InMemoryChannel::peer_address() const {
-    const auto guard = (*this->state_).inner.lock().unwrap();
+    const auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
     if (this->is_a_side_) {
         return (rusty::detail::deref_if_pointer_like(guard)).b_peer_address;
     } else {
@@ -445,7 +451,7 @@ std::string InMemoryChannel::peer_address() const {
 }
 
 void InMemoryChannel::set_on_frame(OnFrameCallback cb) const {
-    auto guard = (*this->state_).inner.lock().unwrap();
+    auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
     if (this->is_a_side_) {
         (rusty::detail::deref_if_pointer_like(guard)).a_on_frame = std::move(cb);
     } else {
@@ -454,7 +460,7 @@ void InMemoryChannel::set_on_frame(OnFrameCallback cb) const {
 }
 
 void InMemoryChannel::set_on_closed(OnClosedCallback cb) const {
-    auto guard = (*this->state_).inner.lock().unwrap();
+    auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
     if (this->is_a_side_) {
         (rusty::detail::deref_if_pointer_like(guard)).a_on_closed = std::move(cb);
     } else {
@@ -463,7 +469,7 @@ void InMemoryChannel::set_on_closed(OnClosedCallback cb) const {
 }
 
 void InMemoryChannel::set_on_error(OnErrorCallback cb) const {
-    auto guard = (*this->state_).inner.lock().unwrap();
+    auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});
     if (this->is_a_side_) {
         (rusty::detail::deref_if_pointer_like(guard)).a_on_error = std::move(cb);
     } else {
@@ -1141,40 +1147,81 @@ ChannelError inmemory_channel_send_frame(const InMemoryChannel& self, const Chan
 // ---------------------------------------------------------------------------
 
 // @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_inject_drop_next_sends(const InMemoryChannel& self, int count) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) {
+// Fault injection (test-only). Authored as inline Rust DSL.
+//
+// The three C++ originals each opened with
+// `const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock()`.
+// That cast was never needed: rusty::Mutex has a `lock() const` overload
+// that hands back a mutable guard (interior mutability, exactly as Rust's
+// Mutex does), so a shared &self can lock and mutate. The DSL just locks.
+#if RUSTYCPP_RUST
+fn inmemory_channel_inject_drop_next_sends(ch: &InMemoryChannel, count: i32) {
+    let mut guard = (*ch.state_).inner.lock().unwrap();
+    if ch.is_a_side_ {
         (*guard).drop_next_sends_a = count;
     } else {
         (*guard).drop_next_sends_b = count;
     }
 }
 
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_inject_send_error(const InMemoryChannel& self, ChannelError err, int count) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) {
-        (*guard).send_error_a       = err;
+fn inmemory_channel_inject_send_error(ch: &InMemoryChannel, err: ChannelError, count: i32) {
+    let mut guard = (*ch.state_).inner.lock().unwrap();
+    if ch.is_a_side_ {
+        (*guard).send_error_a = err;
         (*guard).send_error_count_a = count;
     } else {
-        (*guard).send_error_b       = err;
+        (*guard).send_error_b = err;
         (*guard).send_error_count_b = count;
     }
 }
 
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast.
-void inmemory_channel_clear_fault_injection(const InMemoryChannel& self) {
-    auto guard = const_cast<InMemoryConnectionState&>(*self.state_.get()).inner.lock().unwrap();
-    if (self.is_a_side_) {
-        (*guard).drop_next_sends_a  = 0;
+fn inmemory_channel_clear_fault_injection(ch: &InMemoryChannel) {
+    let mut guard = (*ch.state_).inner.lock().unwrap();
+    if ch.is_a_side_ {
+        (*guard).drop_next_sends_a = 0;
         (*guard).send_error_count_a = 0;
-        (*guard).send_error_a       = ChannelError::None;
+        (*guard).send_error_a = ChannelError::None;
     } else {
-        (*guard).drop_next_sends_b  = 0;
+        (*guard).drop_next_sends_b = 0;
         (*guard).send_error_count_b = 0;
-        (*guard).send_error_b       = ChannelError::None;
+        (*guard).send_error_b = ChannelError::None;
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.fault_injection version=1 rust_sha256=ed54d0b12079aec3f8e760085a536891639da7057ee095c795685522ae167a99*/
+void inmemory_channel_inject_drop_next_sends(const InMemoryChannel& ch, int32_t count) {
+    auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(ch.state_)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+    if (ch.is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_a = std::move(count);
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_b = std::move(count);
+    }
+}
+
+void inmemory_channel_inject_send_error(const InMemoryChannel& ch, ChannelError err, int32_t count) {
+    auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(ch.state_)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+    if (ch.is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_a = std::move(err);
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_count_a = std::move(count);
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_b = std::move(err);
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_count_b = std::move(count);
+    }
+}
+
+void inmemory_channel_clear_fault_injection(const InMemoryChannel& ch) {
+    auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(ch.state_)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+    if (ch.is_a_side_) {
+        (rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_a = 0;
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_count_a = 0;
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_a = ChannelError::None;
+    } else {
+        (rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_b = 0;
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_count_b = 0;
+        (rusty::detail::deref_if_pointer_like(guard)).send_error_b = ChannelError::None;
+    }
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.fault_injection*/
 
 // 6b: close semantics — peer-only on_closed fire.
 //
