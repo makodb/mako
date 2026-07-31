@@ -1,3 +1,55 @@
+# srpc performance — canonical results
+
+**Every number in this section comes from ONE build and ONE harness
+sweep** (`scripts/capture_srpc_perf.sh`, 2026-07-31). The sections that
+follow recorded figures taken across three different states of the code;
+each was measured honestly, but a table assembled from three builds is
+how a stale figure survives into a conclusion. They are kept for their
+reasoning and their dead hypotheses — **not for their numbers.**
+
+Conditions: server `taskset -c 2`, clients `taskset -c 4-7`, `-t 4`,
+`-n 5`. Nagle ON, 1 ms epoll tick, stock cargo release profile. Change
+any of these and the numbers are not comparable.
+
+## Client — ours against the real C++ server
+
+| depth | payload | Rust `await` | C++ | ratio |
+|---:|---:|---:|---:|---:|
+| 1 | 10 B | 38,824 | 36,166 | **107.3%** |
+| 1 | 100 B | 38,470 | 36,965 | **104.1%** |
+| 1 | 1024 B | 36,193 | 34,259 | **105.6%** |
+| 100 | 10 B | 1,069,932 | 1,015,625 | **105.3%** |
+| 100 | 100 B | 994,038 | 941,367 | **105.6%** |
+| 100 | 1024 B | 756,164 | 688,663 | **109.8%** |
+
+All six cells inside the 10% criterion. The `block` control shows why S7
+existed: 26.1-26.3k at depth 1 (~72%, the park/unpark per request) but
+97-106% at depth 100, where a fixed per-request cost is amortized across
+a hundred in flight.
+
+## Server — the real C++ client against ours
+
+| payload | Rust inline | Rust fiber | C++ | inline/C++ | fiber/inline |
+|---:|---:|---:|---:|---:|---:|
+| 10 B | 1,997,359 | 1,817,150 | 1,011,350 | **197%** | 91.0% |
+| 100 B | 1,873,113 | 1,794,567 | 916,533 | **204%** | 95.8% |
+| 1024 B | 1,472,576 | 1,160,772 | 687,809 | **214%** | 78.8% |
+
+The C++ client counts OK RESPONSES, so these are replies it parsed and
+accepted — the envelope validated by a peer from outside this tree.
+
+**S8 fiber gate: 78.8-95.8% against a >=60% bar** (the C++'s own
+fiber/fast ratio is 64.9-70.1%). Passes in every cell.
+
+## Latency
+
+Unchanged by this sweep; see the S9 section below. Mean latency is
+derivable for both stacks by Little's Law and lands at 95-98%. C++ tail
+percentiles remain unmeasured — the only percentile code in that tree is
+commented out, and reviving it is an open decision, not an oversight.
+
+---
+
 # S5 — first cross-stack perf gate (2026-07-30)
 
 Rust client vs C++ client, **both driving the same unmodified C++
