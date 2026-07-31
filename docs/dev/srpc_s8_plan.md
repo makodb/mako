@@ -48,6 +48,18 @@ Split S8 by *lowerability*, not by feature:
   ~370 Fiber / ~336 IntEvent call sites. Writing it before reading those
   is writing to a guess.
 
+**S8a-0 — DONE (2026-07-30). Both directions verified; see
+`crates/srpc/probes/s8seam/`.** With the shared `.S`: links, runs,
+switches stacks, returns. Without it: `undefined reference to
+'srpc_fiber_swap'`, no binary. C linkage survives module purview
+(`nm` shows `U srpc_fiber_swap`, unmangled).
+
+The probe also replaced the twin design with a **single shared `.S`
+assembled by both toolchains** — so `global_asm!` dropping on the C++
+side is correct rather than a hazard, and there is no second copy of the
+assembly to drift. That largely retires decision 5.3.
+
+Original framing, kept for the record:
 **S8a-0 — the lowering probe, half a day, before any S8 code.** Build
 the seam in *module form* (this tree has been burned by clang modules
 repeatedly) and observe BOTH directions: link succeeds with the twin
