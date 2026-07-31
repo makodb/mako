@@ -999,23 +999,53 @@ rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<r
 /*RUSTYCPP:GEN-END id=server.resolve_poll_thread*/
 
 // @unsafe - std::random_device may use system entropy sources.
-inline uint64_t server_generate_instance_id() {
+// Two micro-kernels: a steady-clock read and a random_device draw. Both
+// are std objects the DSL grammar cannot construct; everything built ON
+// them (the mix, the mask, the zero guard) is DSL below.
+// @unsafe - std::chrono::steady_clock.
+inline uint64_t server_now_nanos() {
     auto now = std::chrono::steady_clock::now().time_since_epoch();
-    uint64_t time_component = static_cast<uint64_t>(
+    return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+}
+
+// @unsafe - constructs a std::random_device and draws from it.
+inline uint64_t server_random_u64() {
     std::random_device rd;
-    uint64_t random_component = static_cast<uint64_t>(rd()) << 32 |
-                                static_cast<uint64_t>(rd());
-    uint64_t pid_component =
-        static_cast<uint64_t>(rusty::sys::process::getpid()) << 48;
-    uint64_t id = (time_component ^ random_component ^ pid_component)
-        & static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
-    if (id == 0) {
+    return static_cast<uint64_t>(rd()) << 32 | static_cast<uint64_t>(rd());
+}
+
+#if RUSTYCPP_RUST
+fn server_generate_instance_id() -> u64 {
+    let time_component: u64 = server_now_nanos();
+    let random_component: u64 = server_random_u64();
+    let pid_component: u64 = (rusty::sys::process::getpid() as u64) << 48;
+    // 0x7fff_ffff_ffff_ffff is std::numeric_limits<int64_t>::max(): the id
+    // is kept non-negative because it crosses the wire as a signed i64.
+    let mut id: u64 = (time_component ^ random_component ^ pid_component)
+        & 0x7fffffffffffffff;
+    if id == 0 {
         id = 1;
     }
     Log_debug("Server: generated instance_id={}", id);
-    return id;
+    id
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.instance_id version=1 rust_sha256=a5b222e5d450cd498727c808292b95698f7a275c6417f5ba90fc576e714cbd24*/
+uint64_t server_generate_instance_id();
+
+uint64_t server_generate_instance_id() {
+    const uint64_t time_component = server_now_nanos();
+    const uint64_t random_component = server_random_u64();
+    const uint64_t pid_component = ((static_cast<uint64_t>(rusty::sys::process::getpid()))) << 48;
+    uint64_t id = (((rusty::detail::deref_if_pointer_like(time_component) ^ rusty::detail::deref_if_pointer_like(random_component)) ^ rusty::detail::deref_if_pointer_like(pid_component))) & static_cast<uint64_t>(9223372036854775807);
+    if (rusty::detail::deref_if_pointer_like(id) == static_cast<uint64_t>(0)) {
+        id = static_cast<uint64_t>(1);
+    }
+    Log_debug("Server: generated instance_id={}", std::move(id));
+    return std::move(id);
+}
+/*RUSTYCPP:GEN-END id=server.instance_id*/
 
 // @unsafe - rusty::Mutex::lock + rusty::Condvar::wait_while with a
 // closure predicate. The DSL grammar can't express the wait-while
