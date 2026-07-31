@@ -1165,18 +1165,6 @@ inline void server_run_shutdown_hooks(
     }
 }
 
-// @unsafe - Box::get + virtual dispatch through ChannelListenerBase.
-// Lives here so the DSL doesn't have to navigate the `.as_ref()
-// .unwrap()` -> Box auto-deref chain (which currently emits
-// `(box).close()` instead of `(*box).close()`).
-inline void server_close_channel_listener_if_bound(
-        const rusty::Option<ChannelListenerProxy>& listener_opt) {
-    if (listener_opt.is_some()) {
-        auto* listener = listener_opt.as_ref().unwrap().get();
-        listener->close();
-    }
-}
-
 // @unsafe - std::stoi / std::string ops / try/catch.
 inline int32_t server_get_bound_port_impl(
         const rusty::Option<ChannelListenerProxy>& listener_opt) {
@@ -1373,7 +1361,12 @@ impl Server {
             return;
         }
         self.shutdown_phase_field.set(ShutdownPhase::STOP_ACCEPTING);
-        server_close_channel_listener_if_bound(self.channel_listener_field);
+        if self.channel_listener_field.is_some() {
+            // Named Box type so the call lowers to `->close()` (playbook §7.13).
+            let listener: &mut Box<ChannelListenerBase> =
+                self.channel_listener_field.as_mut().unwrap();
+            listener.close();
+        }
     }
 
     fn drain(&self, timeout_ms: u64) -> bool {
@@ -1447,7 +1440,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=ee898bcb16de95c4e08aaa7881f3009ebf5ed1d52433c4c153965b76bbbb4816*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=ebfb907c7ef1c98046439f04d47a1174585419d388f9b116c858f72d60e87c83*/
 struct Server;
 
 struct Server {
@@ -1592,7 +1585,10 @@ void Server::stop_accepting() {
         return;
     }
     this->shutdown_phase_field.set(rusty::clone(rusty::clone(ShutdownPhase_STOP_ACCEPTING())));
-    server_close_channel_listener_if_bound(this->channel_listener_field);
+    if (this->channel_listener_field.is_some()) {
+        rusty::Box<ChannelListenerBase>& listener = this->channel_listener_field.as_mut().unwrap();
+        listener->close();
+    }
 }
 
 bool Server::drain(uint64_t timeout_ms) const {
