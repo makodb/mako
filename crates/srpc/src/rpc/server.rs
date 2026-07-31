@@ -111,6 +111,13 @@ pub fn encode_reply(xid: i64, err: i32, server_instance_id: i64, results: &[u8])
 struct Shared {
     registry: Registry,
     instance_id: i64,
+    /// Run each request in its own fiber instead of inline.
+    ///
+    /// The C++ distinguishes these as `reg_rpc` (fiber) vs
+    /// `reg_fast_rpc` (inline), and the measured ~35% gap between them
+    /// is exactly this choice — spawn, two context switches and the TLS
+    /// save/restore, with no yield anywhere.
+    fiber_dispatch: bool,
     /// Accepted connections, kept alive for the server's lifetime.
     /// Without this the only strong reference is the poll thread's, and
     /// a connection removed on close would drop mid-callback.
@@ -174,7 +181,28 @@ impl Pollable for Listener {
                 let Some(conn) = reply_to.upgrade() else {
                     return;
                 };
-                dispatch(&shared, &conn, body);
+                if !shared.fiber_dispatch {
+                    dispatch(&shared, &conn, body);
+                    return;
+                }
+                // Fiber dispatch. The body is COPIED out of the
+                // zero-copy view before the spawn — mandatory, and it is
+                // parity: the C++ moves the request into the fiber's
+                // closure for the same reason. A fiber can outlive this
+                // callback, and the view aliases a buffer the reader is
+                // free to compact the moment we return.
+                let owned = body.to_vec();
+                let fiber_shared = Arc::clone(&shared);
+                let fiber_conn = Arc::clone(&conn);
+                let spawned = crate::runtime::fiber::spawn_here(Box::new(move || {
+                    dispatch(&fiber_shared, &fiber_conn, &owned);
+                }));
+                if spawned.is_none() {
+                    // No runtime on this thread, or no stack available.
+                    // Falling back inline keeps the server answering
+                    // rather than dropping the request silently.
+                    dispatch(&shared, &conn, body);
+                }
             }));
 
             // Drop the connection from the server's table when it dies,
@@ -252,10 +280,20 @@ impl Server {
     /// Build a server over `registry`. `instance_id` is echoed in every
     /// reply; the C++ uses it to let a client detect a restarted peer.
     pub fn new(registry: Registry, instance_id: i64) -> Arc<Server> {
+        Server::with_dispatch(registry, instance_id, false)
+    }
+
+    /// Build a server that runs every handler in a fiber.
+    pub fn with_fibers(registry: Registry, instance_id: i64) -> Arc<Server> {
+        Server::with_dispatch(registry, instance_id, true)
+    }
+
+    fn with_dispatch(registry: Registry, instance_id: i64, fiber_dispatch: bool) -> Arc<Server> {
         Arc::new(Server {
             shared: Arc::new(Shared {
                 registry,
                 instance_id,
+                fiber_dispatch,
                 conns: Mutex::new(Vec::new()),
             }),
             listener: Mutex::new(None),

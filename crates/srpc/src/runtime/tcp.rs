@@ -29,6 +29,7 @@ use crate::runtime::epoll::PollMode;
 use crate::runtime::poll_thread::{PollThread, Pollable};
 use crate::sys;
 use crate::wire::frame::{FrameHeader, FrameReader};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -125,7 +126,13 @@ pub struct TcpConnection {
 
 #[derive(Default)]
 struct Outbound {
-    queue: Vec<Vec<u8>>,
+    /// A DEQUE, not a Vec. Retiring the head with `Vec::remove(0)`
+    /// shifts every remaining entry, so a queue that actually backs up
+    /// costs O(n) per send and O(n^2) per drain. That is invisible at
+    /// small payloads — the socket accepts each reply immediately and
+    /// the queue never exceeds one entry — and it cost a 16x throughput
+    /// collapse at 1 KiB, where backpressure lets it grow.
+    queue: VecDeque<Vec<u8>>,
     /// Bytes of `queue[0]` already written.
     offset: usize,
 }
@@ -195,7 +202,7 @@ impl TcpConnection {
         }
         let result = {
             let mut guard = self.outbound.lock().unwrap();
-            guard.queue.push(bytes);
+            guard.queue.push_back(bytes);
             self.drain_outbound_locked(&mut guard)
         };
         if result == ChannelError::WouldBlock {
@@ -223,7 +230,7 @@ impl TcpConnection {
             if n > 0 {
                 out.offset += n as usize;
                 if out.offset >= out.queue[0].len() {
-                    out.queue.remove(0);
+                    out.queue.pop_front();
                     out.offset = 0;
                 }
                 continue;

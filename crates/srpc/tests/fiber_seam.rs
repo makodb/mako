@@ -6,7 +6,7 @@
 //! connection's frame callback resumes LATER, in the poll loop's own
 //! phase, never inline while that connection holds its reader lock.
 
-use srpc::runtime::fiber::yield_now;
+use srpc::runtime::fiber::{spawn_here, yield_now};
 use srpc::runtime::poll_thread::PollThread;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,13 +29,12 @@ fn a_fiber_spawned_on_the_poll_thread_runs_there() {
     let ran_on = Arc::new(Mutex::new(None));
     let sink = Arc::clone(&ran_on);
 
-    poll.run_on_poll_thread(move |fibers| {
+    poll.run_on_poll_thread(move || {
         let sink = Arc::clone(&sink);
-        fibers
-            .spawn(Box::new(move || {
-                *sink.lock().unwrap() = Some(std::thread::current().id());
-            }))
-            .expect("spawn");
+        spawn_here(Box::new(move || {
+            *sink.lock().unwrap() = Some(std::thread::current().id());
+        }))
+        .expect("spawn");
     });
 
     assert!(
@@ -59,15 +58,14 @@ fn a_fiber_suspends_and_is_resumed_by_the_loop_after_a_foreign_wake() {
 
     let s = Arc::clone(&stage);
     let hs = Arc::clone(&handle_slot);
-    poll.run_on_poll_thread(move |fibers| {
+    poll.run_on_poll_thread(move || {
         let s2 = Arc::clone(&s);
-        let h = fibers
-            .spawn(Box::new(move || {
-                s2.store(1, Ordering::SeqCst);
-                yield_now();
-                s2.store(2, Ordering::SeqCst);
-            }))
-            .expect("spawn");
+        let h = spawn_here(Box::new(move || {
+            s2.store(1, Ordering::SeqCst);
+            yield_now();
+            s2.store(2, Ordering::SeqCst);
+        }))
+        .expect("spawn");
         *hs.lock().unwrap() = Some(h);
     });
 
@@ -96,15 +94,14 @@ fn many_fibers_interleave_on_one_poll_thread() {
 
     let f = Arc::clone(&finished);
     let hs = Arc::clone(&handles);
-    poll.run_on_poll_thread(move |fibers| {
+    poll.run_on_poll_thread(move || {
         for _ in 0..N {
             let f2 = Arc::clone(&f);
-            let h = fibers
-                .spawn(Box::new(move || {
-                    yield_now();
-                    f2.fetch_add(1, Ordering::SeqCst);
-                }))
-                .expect("spawn");
+            let h = spawn_here(Box::new(move || {
+                yield_now();
+                f2.fetch_add(1, Ordering::SeqCst);
+            }))
+            .expect("spawn");
             hs.lock().unwrap().push(h);
         }
     });

@@ -39,7 +39,10 @@
 #![allow(unsafe_code)]
 
 pub mod runtime;
-pub use runtime::{FiberHandle, FiberRuntime, ReadyQueue};
+pub use runtime::{
+    live_here, ready_queue_here, run_ready_here, spawn_here, with_runtime_installed, FiberHandle,
+    FiberRuntime, ReadyQueue,
+};
 
 use crate::sys;
 use std::cell::Cell;
@@ -186,6 +189,35 @@ impl Fiber {
             }
             self.context.sp = sp as u64;
         }
+    }
+
+    /// Re-arm a FINISHED fiber with a new body, keeping its stack.
+    ///
+    /// This is the C++ `REUSE_FIBER` path and it is not an optimisation
+    /// to defer. Without it every spawn costs `mmap` + `mprotect` +
+    /// `munmap` — three syscalls and the page-table work behind them —
+    /// which measured 9% of inline dispatch, i.e. the benchmark was
+    /// reporting the allocator, not the fibers.
+    ///
+    /// The id is refreshed so a stale handle for the previous occupant
+    /// does not silently address the new one.
+    pub fn reset(&mut self, body: Box<dyn FnOnce()>) {
+        debug_assert!(self.is_finished(), "reset of a live fiber");
+        self.id = NEXT_ID.with(|n| {
+            let v = n.get();
+            n.set(v.wrapping_add(1));
+            v
+        });
+        self.body = Some(body);
+        self.state.set(FiberState::Ready);
+        self.caller = FiberContext::zeroed();
+        self.prepare_stack();
+    }
+
+    /// The stack's mapping base — for tests that prove recycling by
+    /// checking the address is reused rather than remapped.
+    pub fn stack_base(&self) -> usize {
+        self.map_base
     }
 
     pub fn id(&self) -> u64 {

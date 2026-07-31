@@ -141,7 +141,14 @@ fn nop_args(bytes: usize) -> Vec<u8> {
 fn serve(cfg: &Config) -> ! {
     let mut reg = Registry::new();
     reg.register(FAST_NOP, Box::new(|_args| Ok(Vec::new())));
-    let server = Server::new(reg, 1);
+    // `-m fiber` serves every request from its own fiber; anything else
+    // dispatches inline. That single choice is what the C++ measures as
+    // reg_rpc vs reg_fast_rpc, and it is the whole of the ~35% gap.
+    let server = if cfg.mode == "fiber" {
+        Server::with_fibers(reg, 1)
+    } else {
+        Server::new(reg, 1)
+    };
     let poll = PollThread::start();
     match server.listen(&cfg.addr, &poll) {
         Ok(port) => eprintln!("rbench: serving fast_nop on {}:{}", cfg.addr, port),

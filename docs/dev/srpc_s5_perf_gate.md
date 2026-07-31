@@ -190,3 +190,46 @@ Reviving it is not free and is not obviously the right call:
 
 Flagging rather than choosing: this is a scope decision about the C++
 tree, not a port implementation detail.
+
+## S8a-3 — fiber dispatch gate (2026-07-31)
+
+C++ `rpcbench -c` driving our server, `-t 4 -o 100`, inline dispatch vs
+fiber-per-request (the `reg_fast_rpc` / `reg_rpc` distinction).
+
+| payload | inline | fiber | fiber/inline |
+|---:|---:|---:|---:|
+| 10 B | 671,835 | 595,243 | **88.6%** |
+| 100 B | 667,399 | 589,547 | **88.3%** |
+| 1024 B | 40,405 | 41,898 | 103.7% |
+
+**The gate is ≥60%** (C++'s own fiber/fast ratio is 64.9 / 67.6 / 70.1%).
+All three cells pass, and the first two beat the C++ ratio.
+
+### Recycling was worth 10x, and a counter would have missed it
+
+The first measurement was **9.0%** (61,277 vs 684,153). Not a fiber
+cost — an allocator cost: every spawn was `mmap` + `mprotect` and every
+finish a `munmap`, three syscalls per request. Adding the C++'s
+`REUSE_FIBER` stack pool took it to 88.6%.
+
+The test that guards it asserts stack-base ADDRESS identity across 64
+sequential spawns, not a spawn count — a counting test would have
+passed the whole time.
+
+### OPEN: a 1 KiB throughput cliff, and it is NOT the fibers
+
+Both modes collapse from ~670k to ~40k at 1 KiB, a 16x drop that
+payload size does not explain — the C++ server does 689k in the same
+cell. Since it hits inline and fiber *equally*, the fiber ratio above is
+still meaningful; the absolute number is not.
+
+First hypothesis was `Vec::remove(0)` in the outbound drain going
+quadratic once backpressure lets the queue grow. That is a genuine
+latent bug and is fixed (it is a `VecDeque` now) — but it was **not**
+this: the numbers did not move. Cause unknown, not profiled, not
+guessed at again.
+
+Likely the same defect as the S6 ~32% Rust-server deficit, which is also
+unattributed. Both are server-side and neither is S8. Profile before
+theorizing — this file has twice recorded a plausible explanation that
+measurement then refuted.

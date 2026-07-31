@@ -34,7 +34,61 @@
 //! keyed by fd.
 
 use crate::runtime::fiber::Fiber;
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    /// The runtime carried by THIS thread, installed by the poll loop.
+    ///
+    /// Thread-local for the same reason the C++ reactor is
+    /// (`sp_reactor_th_`): a request handler needs to spawn a fiber from
+    /// deep inside a frame callback, which has no path to a value the
+    /// poll loop holds on its stack. Posting a command per request
+    /// instead would add a channel round trip to the hot path and change
+    /// what is being measured.
+    ///
+    /// Same Goal-2 gap as `CURRENT` — see the module docs on `fiber`.
+    static LOCAL: RefCell<Option<FiberRuntime>> = const { RefCell::new(None) };
+}
+
+/// Install a runtime on this thread for the duration of `f`.
+pub fn with_runtime_installed<R>(f: impl FnOnce() -> R) -> R {
+    LOCAL.with(|l| *l.borrow_mut() = Some(FiberRuntime::new()));
+    let r = f();
+    LOCAL.with(|l| *l.borrow_mut() = None);
+    r
+}
+
+/// Spawn a fiber on this thread's runtime. `None` if the thread carries
+/// no runtime, or if the stack could not be mapped.
+pub fn spawn_here(body: Box<dyn FnOnce()>) -> Option<FiberHandle> {
+    LOCAL.with(|l| {
+        let mut g = l.borrow_mut();
+        let rt = g.as_mut()?;
+        rt.spawn(body)
+    })
+}
+
+/// Run this thread's ready fibers. Returns 0 if it carries no runtime.
+pub fn run_ready_here() -> usize {
+    LOCAL.with(|l| {
+        let mut g = l.borrow_mut();
+        match g.as_mut() {
+            Some(rt) => rt.run_ready(),
+            None => 0,
+        }
+    })
+}
+
+/// This thread's ready queue, for handing wake rights to other threads.
+pub fn ready_queue_here() -> Option<Arc<ReadyQueue>> {
+    LOCAL.with(|l| l.borrow().as_ref().map(|rt| rt.ready_queue()))
+}
+
+/// Fibers currently suspended on this thread.
+pub fn live_here() -> usize {
+    LOCAL.with(|l| l.borrow().as_ref().map(|rt| rt.live()).unwrap_or(0))
+}
 
 /// Slots woken since the last sweep. Shared across threads; the fibers
 /// themselves are not.
@@ -90,6 +144,18 @@ pub struct FiberRuntime {
     /// Indexed by slot. `None` is a free slot, reused by the next spawn.
     slab: Vec<Option<Box<Fiber>>>,
     free: Vec<u64>,
+    ///
+    /// `Box<Fiber>`, and clippy'''s `vec_box` suggestion to drop it is
+    /// WRONG here: the trampoline resolves its fiber through a
+    /// thread-local pointer, so a fiber'''s address must never change.
+    /// A `Vec<Fiber>` moves its elements on reallocation, which would
+    /// leave every suspended fiber'''s trampoline pointing at freed
+    /// memory.
+    #[allow(clippy::vec_box)]
+    /// Finished fibers, kept for their STACKS. Reusing one costs a
+    /// pointer pop; creating one costs mmap + mprotect, and dropping it
+    /// costs munmap. See `Fiber::reset`.
+    pool: Vec<Box<Fiber>>,
     ready: Arc<ReadyQueue>,
 }
 
@@ -98,6 +164,7 @@ impl FiberRuntime {
         FiberRuntime {
             slab: Vec::new(),
             free: Vec::new(),
+            pool: Vec::new(),
             ready: ReadyQueue::new(),
         }
     }
@@ -114,7 +181,15 @@ impl FiberRuntime {
     /// body on the creating stack until it blocks. A handler that never
     /// blocks therefore costs no queueing at all.
     pub fn spawn(&mut self, body: Box<dyn FnOnce()>) -> Option<FiberHandle> {
-        let mut fiber = Fiber::new(body)?;
+        // Recycle before mapping. This is the difference between
+        // measuring fibers and measuring mmap.
+        let mut fiber = match self.pool.pop() {
+            Some(mut f) => {
+                f.reset(body);
+                f
+            }
+            None => Fiber::new(body)?,
+        };
         let slot = match self.free.pop() {
             Some(s) => s,
             None => {
@@ -131,6 +206,7 @@ impl FiberRuntime {
             // Never suspended: reclaim immediately rather than holding a
             // stack for a fiber that is already done.
             self.free.push(slot);
+            self.recycle(fiber);
         } else {
             self.slab[slot as usize] = Some(fiber);
         }
@@ -168,12 +244,30 @@ impl FiberRuntime {
                 ran += 1;
                 if fiber.is_finished() {
                     self.free.push(slot);
+                    self.recycle(fiber);
                 } else {
                     self.slab[idx] = Some(fiber);
                 }
             }
         }
         ran
+    }
+
+    /// Bound on retained stacks. Each is 1 MiB of address space (mostly
+    /// untouched pages), so the cap trades idle RSS against remapping
+    /// under a bursty load.
+    const POOL_CAP: usize = 256;
+
+    fn recycle(&mut self, fiber: Box<Fiber>) {
+        if self.pool.len() < Self::POOL_CAP {
+            self.pool.push(fiber);
+        }
+        // Over the cap: dropping unmaps, which is the point of a cap.
+    }
+
+    /// Stacks currently held for reuse.
+    pub fn pooled(&self) -> usize {
+        self.pool.len()
     }
 
     /// Fibers currently suspended.
@@ -333,5 +427,66 @@ mod tests {
             first, second,
             "a freed slot should be reused rather than growing the slab"
         );
+    }
+}
+
+#[cfg(test)]
+mod recycling_tests {
+    use super::*;
+
+    /// Recycling proven by ADDRESS, not by a counter.
+    ///
+    /// Without this, every spawn costs mmap + mprotect and every finish
+    /// costs munmap — which measured 9% of inline dispatch on the real
+    /// benchmark. A test that only counted spawns would have passed
+    /// throughout.
+    #[test]
+    fn a_finished_fibers_stack_is_reused_rather_than_remapped() {
+        let mut rt = FiberRuntime::new();
+        let mut bases = Vec::new();
+        for _ in 0..64 {
+            let seen = std::rc::Rc::new(std::cell::Cell::new(0usize));
+            let sink = std::rc::Rc::clone(&seen);
+            rt.spawn(Box::new(move || {
+                let probe = 0u64;
+                sink.set(&probe as *const u64 as usize);
+            }))
+            .expect("spawn");
+            bases.push(seen.get());
+        }
+        let mut distinct = bases.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            1,
+            "64 sequential fibers used {} distinct stacks — recycling is broken",
+            distinct.len()
+        );
+        assert_eq!(rt.pooled(), 1, "the one stack should be pooled");
+    }
+
+    #[test]
+    fn concurrently_live_fibers_still_get_distinct_stacks() {
+        // Recycling must not hand the same stack to two live fibers.
+        let mut rt = FiberRuntime::new();
+        let bases = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let sink = std::rc::Rc::clone(&bases);
+            handles.push(
+                rt.spawn(Box::new(move || {
+                    let probe = 0u64;
+                    sink.borrow_mut().push(&probe as *const u64 as usize);
+                    crate::runtime::fiber::yield_now();
+                }))
+                .expect("spawn"),
+            );
+        }
+        let b = bases.borrow().clone();
+        let mut distinct = b.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 16, "live fibers shared a stack");
     }
 }

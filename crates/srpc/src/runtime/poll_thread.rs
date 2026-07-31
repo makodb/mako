@@ -31,7 +31,7 @@
 //! nothing to do with Rust. See `docs/dev/srpc_rpcbench_baseline.md`.
 
 use crate::runtime::epoll::{Epoll, PollMode, Readiness, POLL_TIMEOUT_MS};
-use crate::runtime::fiber::FiberRuntime;
+use crate::runtime::fiber::{run_ready_here, spawn_here, with_runtime_installed, FiberHandle};
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -72,7 +72,7 @@ enum Command {
     /// Run work ON the poll thread — the counterpart of the C++
     /// `trigger_job`. A fiber's body must be created where it will run,
     /// because it owns a stack that never moves between threads.
-    Run(Box<dyn FnOnce(&mut FiberRuntime) + Send>),
+    Run(Box<dyn FnOnce() + Send>),
     Shutdown,
 }
 
@@ -118,9 +118,20 @@ impl PollThread {
     /// crosses the thread boundary; the fiber never does.
     pub fn run_on_poll_thread<F>(&self, job: F)
     where
-        F: FnOnce(&mut FiberRuntime) + Send + 'static,
+        F: FnOnce() + Send + 'static,
     {
         self.post(Command::Run(Box::new(job)));
+    }
+
+    /// Spawn a fiber on the poll thread. Convenience over
+    /// [`Self::run_on_poll_thread`] plus `spawn_here`.
+    pub fn spawn_fiber<F>(&self, body: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.post(Command::Run(Box::new(move || {
+            let _: Option<FiberHandle> = spawn_here(Box::new(body));
+        })));
     }
 
     /// Stop the loop and join. Idempotent.
@@ -157,14 +168,17 @@ impl Drop for PollThread {
 }
 
 fn poll_loop(rx: Receiver<Command>) {
+    // Install this thread's fiber runtime for the life of the loop, so a
+    // handler can spawn from inside a frame callback.
+    with_runtime_installed(|| poll_loop_inner(rx))
+}
+
+fn poll_loop_inner(rx: Receiver<Command>) {
     let mut ep = match Epoll::new() {
         Ok(e) => e,
         Err(_) => return,
     };
     let mut pollables: HashMap<i32, Arc<dyn Pollable>> = HashMap::new();
-    // The fibers this poll thread carries. Local, because a fiber owns
-    // a machine stack and is not Send; only its ready queue is shared.
-    let mut fibers = FiberRuntime::new();
     // Mode changes discovered while dispatching, applied after the
     // sweep so the map is not mutated mid-iteration.
     let mut deferred: Vec<(i32, PollMode)> = Vec::new();
@@ -251,7 +265,7 @@ fn poll_loop(rx: Receiver<Command>) {
                     let _ = ep.remove(fd);
                     pollables.remove(&fd);
                 }
-                Command::Run(job) => job(&mut fibers),
+                Command::Run(job) => job(),
                 Command::Shutdown => return,
             }
         }
@@ -263,7 +277,7 @@ fn poll_loop(rx: Receiver<Command>) {
         // the dispatch sweep above only queued a slot, so no fiber can
         // suspend while the connection that woke it holds its reader
         // lock mid-decode.
-        fibers.run_ready();
+        run_ready_here();
     }
 }
 
