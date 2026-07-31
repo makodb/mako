@@ -152,25 +152,66 @@ int32_t FrameHeader::total_frame_size() const {
 /**
  * Encode a frame header into the first 4 bytes of `out_buf`. Returns
  * `false` if `payload_size` is negative or exceeds
- * `kMaxFramePayloadSize`; in that case `out_buf` is left untouched and
- * the caller must surface a transport error.
+ * `kMaxFramePayloadSize`, or if `out_buf` is shorter than the header;
+ * in that case `out_buf` is left untouched and the caller must surface
+ * a transport error.
  *
  * The on-wire size is written in host byte order to match the existing
- * `Marshal::write_bookmark` semantics.
+ * `Marshal::write_bookmark` semantics. `to_ne_bytes()` lowers to
+ * `std::bit_cast<std::array<uint8_t, 4>>`, which is byte-for-byte the
+ * `memcpy` this used to do.
+ *
+ * Authored as inline Rust DSL. This took a raw `uint8_t*` + an implicit
+ * "caller guarantees 4 bytes" contract, enforced only by a null check.
+ * Per docs/dev/rrr_migration_policy.md rule 2 the call site was rewritten
+ * to pass a slice instead of teaching the DSL to emit pointer arithmetic:
+ * `&mut [u8]` lowers to `std::span<uint8_t>`, which cannot be null and
+ * carries its own length, so the null check becomes a real bounds check.
  */
-// @unsafe - writes the 4-byte size prefix into a raw `uint8_t*` via memcpy.
-inline bool frame_codec_write_header(std::uint8_t* out_buf,
-                                     std::int32_t payload_size,
-                                     bool extended_header_flag) {
-    if (out_buf == nullptr) return false;
-    if (payload_size < 0)   return false;
-    if (payload_size > kMaxFramePayloadSize) return false;
+#if RUSTYCPP_RUST
+fn frame_codec_write_header(out_buf: &mut [u8],
+                            payload_size: i32,
+                            extended_header_flag: bool) -> bool {
+    if payload_size < 0 {
+        return false;
+    }
+    if payload_size > kMaxFramePayloadSize {
+        return false;
+    }
+    if out_buf.len() < kFrameHeaderSize {
+        return false;
+    }
+    let encoded: i32 = encode_response_size(payload_size, extended_header_flag);
+    let bytes = encoded.to_ne_bytes();
+    out_buf[0] = bytes[0];
+    out_buf[1] = bytes[1];
+    out_buf[2] = bytes[2];
+    out_buf[3] = bytes[3];
+    true
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.write_header version=1 rust_sha256=547130034455231d856c4f0bc5409a449515ec828096af98f5bf56a0cc38c58e*/
+bool frame_codec_write_header(std::span<uint8_t> out_buf, int32_t payload_size, bool extended_header_flag);
 
-    const std::int32_t encoded =
-        encode_response_size(payload_size, extended_header_flag);
-    std::memcpy(out_buf, &encoded, kFrameHeaderSize);
+bool frame_codec_write_header(std::span<uint8_t> out_buf, int32_t payload_size, bool extended_header_flag) {
+    if (rusty::detail::deref_if_pointer_like(payload_size) < 0) {
+        return false;
+    }
+    if (rusty::detail::deref_if_pointer_like(payload_size) > rusty::detail::deref_if_pointer_like(kMaxFramePayloadSize)) {
+        return false;
+    }
+    if (rusty::len(out_buf) < rusty::detail::deref_if_pointer_like(kFrameHeaderSize)) {
+        return false;
+    }
+    const int32_t encoded = encode_response_size(std::move(payload_size), std::move(extended_header_flag));
+    const auto bytes = ([&]() { auto __v = encoded; return std::bit_cast<std::array<uint8_t, sizeof(__v)>>(__v); }());
+    out_buf[static_cast<size_t>(0)] = bytes[static_cast<size_t>(0)];
+    out_buf[static_cast<size_t>(1)] = bytes[static_cast<size_t>(1)];
+    out_buf[static_cast<size_t>(2)] = bytes[static_cast<size_t>(2)];
+    out_buf[static_cast<size_t>(3)] = bytes[static_cast<size_t>(3)];
     return true;
 }
+/*RUSTYCPP:GEN-END id=frame_codec.write_header*/
 
 /**
  * Peek at the size prefix in `buf`. Does not require the full payload
@@ -187,25 +228,45 @@ inline bool frame_codec_write_header(std::uint8_t* out_buf,
  * frame as fully present. `FrameStreamReader` does that comparison
  * internally.
  */
-// @unsafe - reads the 4-byte size prefix out of a raw `const uint8_t*` via memcpy.
-inline FrameDecodeStatus frame_codec_peek_header(const std::uint8_t* buf,
-                                                 std::size_t available,
-                                                 FrameHeader& out_header) {
-    if (available < kFrameHeaderSize) {
+// Authored as inline Rust DSL. Rule 2 again: the `(const uint8_t*,
+// size_t available)` pointer+length pair collapses into a single
+// `&[u8]`, which lowers to `std::span<const uint8_t>` and carries its
+// own length — so `available` disappears from the signature rather than
+// the DSL learning to emit `memcpy` off a raw pointer. `from_ne_bytes`
+// reads the prefix in host byte order, matching the old memcpy.
+#if RUSTYCPP_RUST
+fn frame_codec_peek_header(buf: &[u8], out_header: &mut FrameHeader) -> FrameDecodeStatus {
+    if buf.len() < kFrameHeaderSize {
         return FrameDecodeStatus::NeedMoreBytes;
     }
-    std::int32_t encoded = 0;
-    std::memcpy(&encoded, buf, kFrameHeaderSize);
-
-    const bool ext = response_has_extended_header(encoded);
-    const std::int32_t payload = response_payload_size(encoded);
-    if (payload < 0) {
+    let encoded: i32 = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let ext: bool = response_has_extended_header(encoded);
+    let payload: i32 = response_payload_size(encoded);
+    if payload < 0 {
         return FrameDecodeStatus::Malformed;
     }
     out_header.payload_size = payload;
     out_header.extended_header_flag = ext;
-    return FrameDecodeStatus::Complete;
+    FrameDecodeStatus::Complete
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=frame_codec.peek_header version=1 rust_sha256=5c58d8dcf39312d45a761d25aac00fd80bc2a2c8ff5d812e48f669cb9d4b3706*/
+FrameDecodeStatus frame_codec_peek_header(std::span<const uint8_t> buf, FrameHeader& out_header) {
+    FrameHeader* out_header_shadow1 = &out_header;
+    if (rusty::len(buf) < rusty::detail::deref_if_pointer_like(kFrameHeaderSize)) {
+        return FrameDecodeStatus_NeedMoreBytes();
+    }
+    const int32_t encoded = rusty::from_ne_bytes<int32_t>(std::array{buf[static_cast<size_t>(0)], buf[static_cast<size_t>(1)], buf[static_cast<size_t>(2)], buf[static_cast<size_t>(3)]});
+    bool ext = response_has_extended_header(std::move(encoded));
+    int32_t payload = response_payload_size(std::move(encoded));
+    if (rusty::detail::deref_if_pointer_like(payload) < 0) {
+        return FrameDecodeStatus_Malformed();
+    }
+    (*out_header_shadow1).payload_size = std::move(payload);
+    (*out_header_shadow1).extended_header_flag = std::move(ext);
+    return FrameDecodeStatus_Complete();
+}
+/*RUSTYCPP:GEN-END id=frame_codec.peek_header*/
 
 // ---------------------------------------------------------------------------
 // Frame view (handed back from FrameStreamReader)
@@ -470,7 +531,7 @@ bool frame_codec_encode_into(std::vector<std::uint8_t>& out,
         kFrameHeaderSize + static_cast<std::size_t>(payload_size);
     out.resize(prev_size + needed);
 
-    if (!frame_codec_write_header(out.data() + prev_size,
+    if (!frame_codec_write_header(std::span<std::uint8_t>(out).subspan(prev_size),
                                   payload_size,
                                   extended_header_flag)) {
         out.resize(prev_size);
@@ -508,7 +569,7 @@ FrameDecodeStatus fsr_next_frame(const FrameStreamReader& self,
 
     FrameHeader header;
     const FrameDecodeStatus header_status =
-        frame_codec_peek_header(rem.data(), rem.size(), header);
+        frame_codec_peek_header(rem, header);
     if (header_status != FrameDecodeStatus::Complete) {
         return header_status;
     }
@@ -553,7 +614,7 @@ void fsr_consume_frame(FrameStreamReader& self) {
     if (rem.size() < kFrameHeaderSize) return;
 
     FrameHeader header;
-    if (frame_codec_peek_header(rem.data(), rem.size(), header)
+    if (frame_codec_peek_header(rem, header)
         != FrameDecodeStatus::Complete) {
         return;
     }

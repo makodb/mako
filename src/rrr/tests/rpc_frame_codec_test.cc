@@ -39,10 +39,10 @@ using Bytes = std::vector<std::uint8_t>;
 
 TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 17, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 17, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 17);
     EXPECT_FALSE(out.extended_header_flag);
@@ -52,10 +52,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripRequest) {
 
 TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 4096, /*ext=*/true));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 4096, /*ext=*/true));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 4096);
     EXPECT_TRUE(out.extended_header_flag);
@@ -63,10 +63,10 @@ TEST(RpcFrameCodecTest, HeaderRoundTripResponseWithExtendedFlag) {
 
 TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(), 0, /*ext=*/false));
+    EXPECT_TRUE(frame_codec_write_header(hdr, 0, /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, 0);
     EXPECT_FALSE(out.extended_header_flag);
@@ -74,12 +74,12 @@ TEST(RpcFrameCodecTest, HeaderZeroPayloadAllowed) {
 
 TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_TRUE(frame_codec_write_header(hdr.data(),
+    EXPECT_TRUE(frame_codec_write_header(hdr,
                                          kMaxFramePayloadSize,
                                          /*ext=*/false));
 
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(out.payload_size, kMaxFramePayloadSize);
     EXPECT_FALSE(out.extended_header_flag);
@@ -87,7 +87,7 @@ TEST(RpcFrameCodecTest, HeaderMaxPayloadAtBoundary) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{0xFF, 0xFF, 0xFF, 0xFF};
-    EXPECT_FALSE(frame_codec_write_header(hdr.data(), -1, /*ext=*/false));
+    EXPECT_FALSE(frame_codec_write_header(hdr, -1, /*ext=*/false));
     // Encoder must not modify the buffer when refusing.
     EXPECT_EQ(hdr[0], 0xFF);
     EXPECT_EQ(hdr[3], 0xFF);
@@ -95,7 +95,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsNegativePayloadOnEncode) {
 
 TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
     std::array<std::uint8_t, kFrameHeaderSize> hdr{};
-    EXPECT_FALSE(frame_codec_write_header(hdr.data(),
+    EXPECT_FALSE(frame_codec_write_header(hdr,
                                           kMaxFramePayloadSize + 1,
                                           /*ext=*/false));
 }
@@ -103,7 +103,7 @@ TEST(RpcFrameCodecTest, HeaderRejectsOverlargePayloadOnEncode) {
 TEST(RpcFrameCodecTest, HeaderPeekReportsNeedMoreOnShortBuffer) {
     std::array<std::uint8_t, 3> short_buf{0x10, 0x00, 0x00};
     FrameHeader out{};
-    EXPECT_EQ(frame_codec_peek_header(short_buf.data(), short_buf.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(short_buf, out),
               FrameDecodeStatus::NeedMoreBytes);
 }
 
@@ -144,7 +144,7 @@ TEST(RpcFrameCodecTest, HeaderPeekReportsMalformedOnNegative) {
 
     FrameHeader out{};
     // High bit set + payload bits = 0 → ext flag with zero-length payload.
-    EXPECT_EQ(frame_codec_peek_header(hdr.data(), hdr.size(), out),
+    EXPECT_EQ(frame_codec_peek_header(hdr, out),
               FrameDecodeStatus::Complete);
     EXPECT_TRUE(out.extended_header_flag);
     EXPECT_EQ(out.payload_size, 0);
@@ -161,7 +161,7 @@ TEST(RpcFrameCodecTest, EncodeIntoAppendsHeaderThenPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize + 4);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(out, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 4);
     EXPECT_FALSE(hdr.extended_header_flag);
@@ -174,7 +174,7 @@ TEST(RpcFrameCodecTest, EncodeIntoSupportsZeroPayload) {
 
     ASSERT_EQ(out.size(), kFrameHeaderSize);
     FrameHeader hdr{};
-    EXPECT_EQ(frame_codec_peek_header(out.data(), out.size(), hdr),
+    EXPECT_EQ(frame_codec_peek_header(out, hdr),
               FrameDecodeStatus::Complete);
     EXPECT_EQ(hdr.payload_size, 0);
     EXPECT_TRUE(hdr.extended_header_flag);
