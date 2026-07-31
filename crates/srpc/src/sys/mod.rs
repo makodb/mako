@@ -54,9 +54,28 @@
 //     is absent. Consistent, and it sidesteps the collision by not
 //     naming libc's symbols at all.
 //
-// RECOMMENDED: (3), for consistency with the fiber seam. The general
-// fix is teaching the transpiler `#[link_name]`, which would make (2)
-// work and help every future FFI surface — worth doing, but it is a
+// RECOMMENDED: (3) — and specifically as ASSEMBLY THUNKS, not a C
+// file. `srpc_sys_x86_64.S` holding one `jmp connect@PLT` per symbol:
+//
+//     .globl srpc_connect
+//     srpc_connect:
+//         jmp connect@PLT
+//
+// Rust assembles it with `global_asm!(include_str!(...))` and the C++
+// build assembles the same file — byte for byte the fiber seam, already
+// proven end to end in probes/s8seam (links with it, `undefined
+// reference` without it).
+//
+// Why thunks rather than a C kernel: a `.c` file would need a build
+// script to compile for the Rust side, and the crate takes NO
+// dependencies (so no `cc` crate) — a hand-rolled build.rs shelling to
+// a compiler is exactly the kind of moving part this port has avoided.
+// `global_asm!` needs none of that. The thunks are also trivially
+// reviewable: one instruction each, no signature to get wrong, and the
+// types stay entirely on the Rust side where they are already correct.
+//
+// The general fix remains teaching the transpiler `#[link_name]`, which
+// would make (2) work and help every future FFI surface. That is a
 // transpiler feature rather than a port change, so it is recorded
 // rather than assumed.
 
