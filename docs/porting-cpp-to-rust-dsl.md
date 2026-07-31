@@ -992,3 +992,45 @@ in a backtrace probe showed nothing (they were not the producer), while a
 probe on `escape_cpp_keyword` for the callee name landed exactly on the
 branch. When a grep-hunt across ~200 candidate sites stalls, probe the
 narrowest thing the bad output must have passed through.
+
+### 7.13 Box method dispatch through a Mutex guard needs a named type
+
+Calling a trait method on a `Box` normally lowers fine — all three of
+these emit `->close()` on their own:
+
+```rust
+fn a(b: &mut Box<dyn Conn>)          { b.close(); }
+fn c(b: &mut Box<dyn Conn>)          { (*b).close(); }
+fn d(o: &mut Option<Box<dyn Conn>>)  { o.as_mut().unwrap().close(); }
+```
+
+What breaks is reaching the Box **through a Mutex guard**, where the
+transpiler loses the element type and emits `.close()` on the Box itself:
+
+```
+error: no member named 'close' in 'rusty::Box<rrr::ChannelConnectionBase>';
+       did you mean to use '->' instead of '.'?
+```
+
+Two non-fixes, both worth knowing so they aren't retried:
+
+ - **An explicit deref is silently dropped.** `(*(*guard).as_mut().unwrap()).close()`
+   emits `((..)).close()` — the `*` does not survive, so it is not an
+   escape hatch here.
+ - **A C++ type alias does not help.** Annotating with the project alias
+   (`let proxy: &mut ChannelConnectionProxy = ..`) changes nothing: the
+   transpiler cannot tell that alias is a Box.
+
+What works is naming the type in the form the transpiler recognises:
+
+```rust
+let proxy: &mut Box<ChannelConnectionBase> = (*guard).as_mut().unwrap();
+proxy.close();          // -> proxy->close();
+```
+
+So the rule is: when a Box comes out of a guard, bind it with an
+explicit `Box<T>` annotation before calling through it. The underlying
+gap — guard types not carrying their element type through
+`as_mut().unwrap()` — is the same inference weakness behind the
+`let mut cb` note in DeferredReply::reply (§ commit 1e32afe9); fixing
+that inference would retire both workarounds.

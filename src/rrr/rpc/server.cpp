@@ -485,7 +485,6 @@ inline ServerReplyFn empty_server_reply_fn() { return {}; }
 // file; each carries its own `// @unsafe` at the definition site.
 void sconn_reply(const ServerConnection& self, const Request& req,
                  i32 error_code, ServerReplyFn write_fn);
-void sconn_close(ServerConnection& self);
 void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy);
 void sconn_decode_request_and_dispatch(ServerConnection& self,
                                        const std::uint8_t* bytes, std::size_t size);
@@ -564,7 +563,20 @@ impl ServerConnection {
     }
 
     fn close(&mut self) {
-        sconn_close(self)
+        if self.status_ == ServerConnStatus::CONNECTED {
+            self.status_ = ServerConnStatus::CLOSED;
+            Log_debug("server@{} close ServerConnection", self.ctx_.addr.c_str());
+            // Tear down the channel proxy. Idempotent per channel-layer contract.
+            let mut guard = self.channel_proxy_.lock().unwrap();
+            if (*guard).is_some() {
+                // Annotated binding: Box method dispatch lowers correctly on
+                // its own, but the transpiler cannot see the element type
+                // THROUGH the Mutex guard, so it emitted `.close()` on the Box
+                // instead of `->close()`. Naming the type restores it.
+                let proxy: &mut Box<ChannelConnectionBase> = (*guard).as_mut().unwrap();
+                proxy.close();
+            }
+        }
     }
 
     fn bind_channel(&mut self, proxy: ChannelConnectionProxy) {
@@ -581,7 +593,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=bf5c8ec12d4c8a005925664f3ea515e985491d1ae49c2e1902b2cb9a80c4b219*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=73f323c36ea821f31c32c6043b192ad5aa23fad4f7799312e8df9a1d4485417d*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -644,7 +656,15 @@ void ServerConnection::reply(const Request& req, int32_t error_code, ServerReply
 }
 
 void ServerConnection::close() {
-    sconn_close((*this));
+    if (rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CONNECTED())) {
+        this->status_ = rusty::clone(rusty::clone(ServerConnStatus_CLOSED()));
+        Log_debug("server@{} close ServerConnection", (*this->ctx_).addr.c_str());
+        auto guard = this->channel_proxy_.lock().unwrap();
+        if (((*guard)).is_some()) {
+            rusty::Box<ChannelConnectionBase>& proxy = ((*guard)).as_mut().unwrap();
+            proxy->close();
+        }
+    }
 }
 
 void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
@@ -1779,7 +1799,7 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        sconn_close(*mut_sconn);
+        mut_sconn->close();
     });
     // 5d: on_error logs and force-closes. Per the channel-layer
     // contract, fatal errors are followed by on_closed, so the
@@ -1793,7 +1813,7 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
                  channel_error_to_string(err),
                  std::string_view(message.data(), message.size()));
         auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        sconn_close(*mut_sconn);
+        mut_sconn->close();
     });
 
     // @unsafe { rusty::Mutex::lock + ChannelConnectionProxy move }
@@ -1952,22 +1972,6 @@ void sconn_dispatch_response_frame_via_channel(
 // recursive entry: close() may be called from `on_closed` which 5d
 // installs, and 5d's on_closed → close() → proxy.close() →
 // (idempotent) on_closed re-fires without effect.
-void sconn_close(ServerConnection& self) {
-    if (self.status_ == ServerConnStatus::CONNECTED) {
-        self.status_ = ServerConnStatus::CLOSED;
-        Log_debug("server@{} close ServerConnection",
-                  self.ctx_->addr.c_str());
-        // Tear down the channel proxy. Idempotent per channel-layer contract.
-        // @unsafe { rusty::Mutex::lock + Box::get + virtual dispatch }
-        {
-            auto guard = self.channel_proxy_.lock().unwrap();
-            if ((*guard).is_some()) {
-                auto* conn = (*guard).as_ref().unwrap().get();
-                conn->close();
-            }
-        }
-    }
-}
 
 // @safe - Out-of-line dispatch for `DeferredReply::reply`. Takes
 // `archive_reply_field` via `Option::take()` so the second call
