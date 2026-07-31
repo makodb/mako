@@ -38,6 +38,9 @@
 
 #![allow(unsafe_code)]
 
+pub mod runtime;
+pub use runtime::{FiberHandle, FiberRuntime, ReadyQueue};
+
 use crate::sys;
 use std::cell::Cell;
 

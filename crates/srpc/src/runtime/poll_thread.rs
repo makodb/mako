@@ -31,6 +31,7 @@
 //! nothing to do with Rust. See `docs/dev/srpc_rpcbench_baseline.md`.
 
 use crate::runtime::epoll::{Epoll, PollMode, Readiness, POLL_TIMEOUT_MS};
+use crate::runtime::fiber::FiberRuntime;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -68,6 +69,10 @@ enum Command {
     Add(Arc<dyn Pollable>),
     UpdateMode(i32, PollMode),
     Remove(i32),
+    /// Run work ON the poll thread — the counterpart of the C++
+    /// `trigger_job`. A fiber's body must be created where it will run,
+    /// because it owns a stack that never moves between threads.
+    Run(Box<dyn FnOnce(&mut FiberRuntime) + Send>),
     Shutdown,
 }
 
@@ -104,6 +109,18 @@ impl PollThread {
 
     pub fn remove(&self, fd: i32) {
         self.post(Command::Remove(fd));
+    }
+
+    /// Run `job` on the poll thread, with access to its fibers.
+    ///
+    /// The seam for spawning a fiber: a fiber owns a machine stack and
+    /// is not `Send`, so it has to be CREATED where it will run. The job
+    /// crosses the thread boundary; the fiber never does.
+    pub fn run_on_poll_thread<F>(&self, job: F)
+    where
+        F: FnOnce(&mut FiberRuntime) + Send + 'static,
+    {
+        self.post(Command::Run(Box::new(job)));
     }
 
     /// Stop the loop and join. Idempotent.
@@ -145,6 +162,9 @@ fn poll_loop(rx: Receiver<Command>) {
         Err(_) => return,
     };
     let mut pollables: HashMap<i32, Arc<dyn Pollable>> = HashMap::new();
+    // The fibers this poll thread carries. Local, because a fiber owns
+    // a machine stack and is not Send; only its ready queue is shared.
+    let mut fibers = FiberRuntime::new();
     // Mode changes discovered while dispatching, applied after the
     // sweep so the map is not mutated mid-iteration.
     let mut deferred: Vec<(i32, PollMode)> = Vec::new();
@@ -231,9 +251,19 @@ fn poll_loop(rx: Receiver<Command>) {
                     let _ = ep.remove(fd);
                     pollables.remove(&fd);
                 }
+                Command::Run(job) => job(&mut fibers),
                 Command::Shutdown => return,
             }
         }
+
+        // The fiber phase, LAST, mirroring `Reactor::loop()`'s position
+        // at the bottom of the C++ poll iteration.
+        //
+        // This is the only place a stack switches. Wakes arriving from
+        // the dispatch sweep above only queued a slot, so no fiber can
+        // suspend while the connection that woke it holds its reader
+        // lock mid-decode.
+        fibers.run_ready();
     }
 }
 
