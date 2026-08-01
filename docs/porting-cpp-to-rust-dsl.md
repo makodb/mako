@@ -3505,3 +3505,64 @@ That second point is why this is a dedicated run with the full suite
 (1955 tests) and not a drive-by edit. Deliberately not applied here: an
 untested transpiler change sitting in the submodule is worse than a
 documented one, because the next regen would silently bake it in.
+
+#### 7.50.3 The fix was attempted and REVERTED — and the suite did not notice
+
+§7.50.2 said the fix was "add the six RAII guard idents to
+`infer_deref_result_type_from_type`". That was tried. It works for the
+bug it targets and is **still wrong**, for a reason worth recording
+before anyone tries it again.
+
+Applied, rebuilt, and measured:
+
+ - the reproducer is fixed: the guard-rooted chain emits
+   `deref_if_pointer_like(((*guard)).as_ref().unwrap())`.
+ - the transpiler suite: **428 passed / 16 failed, a failing set
+   byte-identical to baseline.** No signal at all.
+ - regenerating src/rrr and compiling it: **broken.**
+
+       server.cpp:1164:9: error: no matching function for call to
+                                 'server_invoke_shutdown_hook_safely'
+
+**Why it breaks.** Teaching inference to type `*guard` makes a whole
+chain of previously-unknown expressions knowable, and other emitters
+change behaviour when they stop guessing. Here `for hook in ...` over a
+`Vec<ShutdownHook>` behind a guard: `&mut hook` used to emit `hook`
+(inference failed, so "assume it is already a reference" — right, because
+the C++ range-for binds a reference). With the fix, `hook` types as a
+*value*, so `&mut hook` emits `&hook` — a pointer, which will not bind to
+the `ShutdownHook&` parameter.
+
+So the change is not self-contained. A correct version must also make
+`&mut x` aware that a C++ loop binding is *already* a reference. Both
+halves have to land together.
+
+**The methodological point is bigger than the bug.** The transpiler suite
+could not see a change that breaks the build of the codebase the
+transpiler exists to serve. A green suite means "no known case changed",
+not "no case changed". Regenerating a real consumer and compiling it is a
+*different* check, and it is the one that found this.
+
+Concretely, for any transpiler change: regenerate src/rrr and build it,
+and separate the two populations first, because they are easily confused:
+
+ - **backlog** — files whose checked-in GEN predates the current pin, which
+   regenerate differently for reasons unrelated to your change (§7.48).
+ - **your change** — the incremental diff on top of that.
+
+Isolate by regenerating twice, once with each binary, and diffing the
+outputs. Here that separated 9 changed files into 6 backlog and 3 real,
+and only one of the 3 was the bug.
+
+**A second finding fell out of the backlog half**: regenerating
+`rpc/utils.cpp` with the pinned transpiler emits
+`rusty::detail::mark_forgotten_if_supported`, which does not exist in the
+pinned headers —
+
+    utils.cpp:102:90: error: no member named 'mark_forgotten_if_supported'
+                             in namespace 'rusty::detail'
+
+i.e. the pin is *internally inconsistent*: transpiler and headers at the
+same SHA disagree. Regenerating that file is therefore not safe today,
+which is a second reason a pin bump cannot be treated as a mechanical
+"regenerate everything" (§7.48).
