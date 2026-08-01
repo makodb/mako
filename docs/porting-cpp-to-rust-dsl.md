@@ -3048,3 +3048,51 @@ twelve expired wholly or partly. The two that held (`nullptr`,
 variadic generics) are both cases where Rust genuinely has no
 equivalent — which is the shape of a real floor. Everything else has
 been a dated observation about a toolchain that kept moving.
+
+### 7.44 ⚠ `#[cfg(...)]` is SILENTLY DROPPED — and the fn-local-static floor is gone
+
+Third batch of the limitation sweep. Two expiries and one hazard.
+
+**`#[cfg(target_os = "linux")]` is silently discarded.** Probed:
+
+```rust
+#[cfg(target_os = "linux")]
+fn plat() -> i32 { 1i32 }
+```
+
+emits
+
+```cpp
+int32_t plat() { return static_cast<int32_t>(1); }
+```
+
+No `#if defined(__linux__)`, no diagnostic, no TODO comment. The
+function is emitted **unconditionally**. Anyone porting
+platform-conditional code by writing `#[cfg]` and trusting the output
+gets code compiled on every platform — a wrong-code failure that
+compiles, which is the worst category. This is the same shape as the
+`use rusty::…` silent drop fixed earlier today (§7.42 lineage), and it
+deserves the same treatment upstream: either lower `cfg` to `#if`, or
+refuse to transpile it. Silently ignoring it is the one unacceptable
+option.
+
+Practical consequence now: the existing "`#ifdef` platform split" floors
+(`basetypes.cpp:653/655`, `threading.cpp:229`) must stay hand-written or
+be split into per-platform files (the `fiber_context_*.S` arrangement).
+Do NOT write `#[cfg]` expecting it to work.
+
+**Two floors expired.**
+
+| claim | result |
+|---|---|
+| `any_message.cpp:384` — "returns a reference to it, which the DSL cannot spell" | **EXPIRED**: `fn get_ref(v: &Vec<i32>) -> &i32` emits `const int32_t& get_ref(const rusty::Vec<int32_t>&)` |
+| `any_message.cpp:383` / §7.24b — "FUNCTION-LOCAL STATIC, not DSL-expressible" | **EXPIRED**: `static mut N: i64 = 0;` inside a fn emits `static int64_t N = static_cast<int64_t>(0);` in the body |
+
+The second retires one of the **three structural floors** §7.24 names
+(class templates, overloading, function-local statics). All three are
+now disproved: class templates in §7.40's probe, overloading via trait
+impls (§7.40), and function-local statics here. §7.24's framing should
+be read as historical.
+
+That also removes **A4** from the Goal 0 Phase-A plan — it was never a
+reshape task, the construct simply works now.
