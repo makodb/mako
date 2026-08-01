@@ -1832,3 +1832,56 @@ them. It compiles now and will break the moment anyone regenerates it —
 with an error pointing at a line they did not write. Whoever touches it
 next should add `#include <rusty/traits.hpp>` to the GMF *first*, before
 running the transpiler, so the failure never happens.
+
+### 7.30 Auditing stated blockers: structural ones hold, tool ones rot
+
+Six workarounds in this tree outlived the constraint that created them.
+Each carried a comment stating a reason that had quietly become false,
+and nothing linked the two, so the comment kept reading as settled.
+
+| workaround | stated cause | why it expired |
+|---|---|---|
+| `*_to_string` deferral | varargs UB | logging became `std::format` (§7.26) |
+| `idempotency-LRU` deferral | waits on Marshal deprecation | `Marshal` no longer exists |
+| drain phase name dropped | "cannot drive `*_to_string` varargs" | same as above (§7.26) |
+| 5× `server_atomic_*` kernels | classified "kernels", no cause given | DSL expresses the ops directly |
+| 2× `log_connect_*` helpers | `int32_t::Log_error` miscodegen | that transpiler bug was fixed here |
+| `fiber_yield_invoke` | "transpiler can't translate raw deref" | raw deref lowers cleanly |
+
+**The discriminator.** A deferral that names a *structural fact* does not
+rot. One that names a *tool limitation* does — because the tool is under
+active development, often by us.
+
+`frame_codec.cpp:519` is the model of the first kind: a DSL `&mut Vec<u8>`
+lowers to `rusty::Vec`, every caller passes `std::vector`, and
+`tcp_channel` drains with iterator-pair `erase` which rustc's Vec lacks —
+so the rewrite is a data-structure migration on a hot path, weighed
+against the branch's performance-parity goal. Re-checked: `rusty::Vec`
+still has neither `erase` nor `drain`. That deferral is as valid as the
+day it was written, and should be left alone.
+
+Every entry in the table above is the second kind.
+
+**Method.** Probing is cheap and decisive — the transpiler is a
+standalone binary, so a scratchpad file answers "does this lower?"
+in seconds with no build:
+
+    $ cat > /tmp/probe.cpp   # module + one #if RUSTYCPP_RUST block
+    $ rusty-cpp-transpiler inline-rust --rewrite --files /tmp/probe.cpp
+
+Then read the GEN. Cheaper than reasoning, and it produces evidence
+rather than an opinion.
+
+**Two probe traps, both hit in one session:**
+ - **Don't name a probe parameter `self`.** The DSL treats it as the
+   receiver and emits `(*this)`, which answers a different question than
+   the one asked. A raw-deref probe looked like it worked for the wrong
+   reason until it was re-run with `p`.
+ - **Isolate one variable.** `type Cb = rusty::Function<void()>` failed,
+   which looked like "aliases are unsupported". Aliases work fine; only
+   the C++ callable-signature argument fails (§7.29). One probe, two
+   confounded variables, nearly the wrong conclusion.
+
+**And grep for the blocker, not for mentions of it.** `Marshal` appeared
+42 times in `src/rrr` and every one was a comment describing the historical
+migration. The type had been gone for some time.
