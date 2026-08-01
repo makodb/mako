@@ -2480,3 +2480,32 @@ compiles is found by READING the GEN, not by running the suite.
 `let slot_opt: Option<&mut Vec<T>> = ...` and
 `let slot: &mut Vec<T> = ...` — or collapse to the one-step chained form,
 which needs no annotation.
+
+**Located (transpiler).** `transpiler/src/codegen/emit_stmt.rs:3507`, in
+the predicate deciding whether a `let` binding stays a non-const
+reference:
+
+```rust
+if matches!(method.as_str(), "unwrap" | "unwrap_unchecked" | "expect")
+    && let syn::Expr::MethodCall(inner) = self.peel_paren_group_expr(&mc.receiver)
+    && mut_ref_yielding_method_shape(&inner.method.to_string())
+{
+    return true;
+}
+```
+
+It requires `unwrap()`'s receiver to be a **MethodCall**. That is
+satisfied by the chained form (`m.get_mut(1).unwrap()`, receiver =
+`get_mut(..)`) and NOT by the two-step form, where the receiver is a
+`syn::Expr::Path` naming the local. The match fails, the predicate
+returns false, and the binding falls through to by-value + const. This
+single condition explains the whole one-step/two-step split.
+
+**Shape of the fix** (not yet implemented): also accept a `Path`
+receiver that names a local whose own initializer satisfied
+`mut_ref_yielding_method_shape`. That needs the locals carrying a
+mut-ref payload to be tracked (a set populated where `let` bindings are
+emitted) and the condition widened to consult it. Note the sibling
+defect in the same repro — `auto& slot_opt = m.get_mut(1);` binds a
+reference to a by-value temporary `Option` — which should be `auto`;
+fix both together, since annotating only one still leaves wrong code.
