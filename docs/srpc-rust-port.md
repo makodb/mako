@@ -164,6 +164,52 @@ different piles:
    syscall wrappers, `verify`, `Log_*`). rustc needs *declarations*
    for these, which is FFI-shaped.
 
+**Correction to the "bulk-fixable" split above.** Measured it rather
+than assumed: adding a real prelude (std `Cell`/`Arc`/`Mutex`/atomics/
+collections) plus the `rusty::X -> X` and `std::string -> String`
+spellings moved **1,567 -> 1,397 errors — 11%, not the bulk.** The
+mechanical pile is real but small.
+
+What survives is the structural pile, and its shape is the important
+result. Top unresolved names:
+
+```
+53  EventStatus            17  OnErrorCallback
+39  verify                 15  ConnectionCallback
+27  Fiber                  15  PollMode
+17  Rc                     14  ChannelConnectionProxy
+```
+
+These are not stray syscall kernels. They are **types, aliases and
+functions defined in the HAND-WRITTEN C++ half of the very same
+files** that the DSL blocks are interleaved with. The DSL is not
+self-contained: it leans on its C++ neighbours for `EventStatus`,
+`Fiber`, `PollMode`, the `CallbackWrapper` aliases, `verify`, and so
+on.
+
+### The organizing principle for (b)
+
+**The FFI surface that (b) needs is precisely (a)'s floor.**
+
+Every line (a) converts removes a name (b) would otherwise have to
+declare — today's callback-alias conversions
+(`HeartbeatTimeoutCallback`, `StateChangeCallback`,
+`QueuedRequestCallback`) are exactly that: names that used to be
+C++-only and now resolve in DSL. And where (a) is genuinely floored —
+the Event hierarchy behind `EventStatus`, `Fiber`'s asm/mmap core, the
+const-callable `CallbackWrapper` family — (b) must declare those and
+only those.
+
+Two consequences:
+
+ - (a) and (b) are **coupled, not parallel**: progress on (a) shrinks
+   (b)'s declaration surface monotonically, and (b)'s residual FFI
+   surface is bounded below by (a)'s floor.
+ - The floors are therefore worth **re-auditing before** designing
+   (b)'s FFI layer, not after — every floor that turns out to have
+   expired (ten did in one session) is one fewer declaration to
+   design, and the cost of re-testing a stated cause is one command.
+
 **Verdict: tractable but a real project, not a quick win.** ~1 error
 per 5 DSL lines, most of them bulk-fixable, with one genuine design
 decision (kernel declarations) underneath.
