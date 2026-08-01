@@ -310,6 +310,39 @@ classifiers are blind to relational properties. Overloading, ODR
 collisions and specialisation-vs-base all need a cross-declaration
 pass.
 
+#### Standing directive for the "hard" set (user, 2026-08-01)
+
+> "for those that have a route, you can follow what past experience …
+> for those 44 hard ones, you can rewrite the original C++ to not use
+> those hard patterns again, replace them with the easy patterns, and
+> then you can convert them"
+
+So the hard column is **not a floor list — it is a reshape list.**
+Rewrite the C++ out of the hard construct first, then convert the
+result. This is the reshape-then-translate workflow already recorded in
+the playbook, applied at scale:
+
+| hard construct | n | reshape to |
+|---|---:|---|
+| variadic pack | 18 | fixed-arity overloads, or a slice/`Vec` parameter — the pack is nearly always a fold over a homogeneous list |
+| operator | 14 | free functions (proven wholesale on the wire layer) |
+| explicit specialisation | 7 | one trait impl per type (§7.40) — specialisation IS per-type dispatch |
+| SFINAE / `enable_if` | 4 | a concrete type, or a trait bound |
+| `requires` / concept | 1 | a trait bound |
+
+Consequence for the plan: **of the 125 class-template sites, none is a
+permanent floor.** 83 have a direct route, 42 reshape into one. The
+only genuinely irreducible thing found so far in the whole audit is
+compile-time metaprogramming that has no runtime meaning at all — and
+even variadic packs, previously called a genuine floor because "Rust
+has no variadic generics", are reshapeable because the C++ does not
+need them either.
+
+Order within a file: reshape first as its own commit (independently
+buildable and testable, since it is still C++), then convert. Never
+combine the two — a reshape bug and a conversion bug look identical in
+the diff.
+
 **Phase B — grind the six big files** with the retired floors in hand.
 reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
 tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
