@@ -2547,3 +2547,36 @@ compiler already covers the case, and only compiling the reduced binding
 showed the remaining form is loud. One probe would have left a wrong
 priority in place — and I had already written that wrong priority into a
 commit message.
+
+**CORRECTION (2026-08-01) — the destruction no longer reproduces; 4c is moot.**
+§7.32 says `--rewrite` deletes a function body *before* erroring on a
+block-id collision, and prescribes committing first. That hazard could
+not be reproduced on either the current transpiler or the older
+reference binary, under both triggers:
+
+ - **Live, unplanned.** Adding a `use` block to
+   `reactor/connection_metrics.cpp` auto-numbered to
+   `connection_metrics.1`, colliding with the struct block already
+   holding that id. `--rewrite` aborted with
+   `duplicate inline block id=…` and the file was byte-unchanged — the
+   struct body and every GEN marker intact (checked immediately, not
+   assumed).
+ - **Deliberate.** A synthetic file with two GEN blocks sharing an id:
+   both binaries exit 1 and leave the file byte-identical.
+
+So the "commit before regenerating" rule is no longer load-bearing for
+*this* failure. Committing first is still good practice — regeneration
+touches blocks you did not edit (§7.18) — but it is hygiene now, not a
+guard against losing work, and the planned upstream bug report has
+nothing left to report.
+
+Stated narrowly on purpose: two triggers were tested. If the original
+observation had a third (a partially-written block, an interrupted run),
+that path is unverified. What is settled is that the two collisions you
+actually hit in practice are safe.
+
+**The pattern, for the ninth time this session.** A documented blocker's
+stated cause had expired and nobody re-checked, so the workaround
+outlived it. Re-testing a stated cause costs one command; carrying a
+phantom constraint costs every future decision that routes around it.
+Before honouring a workaround, re-run its repro.
