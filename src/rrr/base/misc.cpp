@@ -78,6 +78,8 @@ int get_ncpu();
 std::string getline(FILE *fp, char delim = '\n');
 
 template <class K, class V, class Map>
+// @unsafe - uses the DEPENDENT TYPE `typename Map::value_type`, which is
+// C++ template metaprogramming with no DSL equivalent.
 inline void insert_into_map(Map &map, const K &key, const V &value) {
   map.insert(typename Map::value_type(key, value));
 }

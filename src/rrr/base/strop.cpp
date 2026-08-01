@@ -35,6 +35,10 @@ export bool endswith(const char* str, const char* tail) {
     return strncmp(str + (len_str - len_tail), tail, len_tail) == 0;
 }
 
+// @unsafe - OVERLOADED NAME (double/int pair below). Rust has no function
+// overloading, so the two cannot coexist as one DSL fn (§7.24a). Also uses
+// ostringstream. NOTE: startswith/endswith/strsplit in this file have ZERO
+// callers repo-wide -- see the dead-code decision (a).
 export std::string format_decimal(double val) {
     std::ostringstream o;
     o.precision(2);

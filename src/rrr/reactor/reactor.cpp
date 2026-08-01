@@ -3655,6 +3655,9 @@ inline void stackless_profile_update_max_slots(size_t slots) {
   }
 }
 
+// @unsafe - FUNCTION-LOCAL STATIC (`static thread_local uint64_t
+// last_report_us`, §7.24b) plus raw std::atomic / std::memory_order on the
+// profile counters. Both keep this out of the DSL.
 inline void stackless_profile_report_periodic() {
   if (!stackless_profile_enabled()) {
     return;
@@ -4176,6 +4179,9 @@ void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_ev
 // so the O(n) sweep runs ~O(1) amortized per create_sp_event. Runs on the
 // reactor thread (single-threaded ownership), and cross-thread signalers reach
 // events via the weak_ptr `self_`, so freeing a sole-owned event is safe.
+// @unsafe - FUNCTION-LOCAL STATIC (`static thread_local size_t prune_hwm`).
+// The DSL has no construct for a static declared inside a function body
+// (§7.24b); hoisting it would change the per-thread high-water semantics.
 void Reactor::prune_finished_events() const {
   static thread_local std::size_t prune_hwm = 64;
   auto guard = all_events_.borrow_mut();

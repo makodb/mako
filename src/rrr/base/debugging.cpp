@@ -50,6 +50,9 @@ void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
 template <typename Expr>
 // @safe - pure precondition check; aborts on failure (parity with Rust's
 // `assert!` macro). No memory operations, no caller-visible side effects.
+// @unsafe - PLATFORM/CONFIG #ifdef SPLIT (NDEBUG), a std::source_location
+// DEFAULT ARGUMENT (the DSL has no default args), and varargs fprintf.
+// Any one of those would floor it.
 inline void verify(const Expr& expr,
                    const std::source_location& loc = std::source_location::current()) {
   const bool ok = static_cast<bool>(expr);

@@ -247,6 +247,8 @@ void clear_for_testing();
 //
 // Returns 0 — suitable for `static int _reg = reg_any_message_as<T>("...");`.
 template <typename T>
+// @unsafe - builds a factory LAMBDA and uses typeid / std::type_index
+// (RTTI). Neither is DSL-expressible.
 inline int reg_any_message_as(std::string name) {
   auto factory = []() -> SerializableProxy {
     auto sp = rusty::Arc<T>::make();
