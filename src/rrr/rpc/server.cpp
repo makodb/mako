@@ -2118,9 +2118,15 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
             if (!conn_proxy) return;
             auto sconn = rusty::Arc<ServerConnection>::make(
                 ctx_arc.clone(), /*socket=*/-1);
-            auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
-            mut_sconn.install_self_weak_for_testing(rusty::sync::downgrade(sconn));
-            mut_sconn.bind_channel(std::move(conn_proxy));
+            // get_mut(), not const_cast: the Arc was just made and is still
+            // uniquely owned here, which is exactly when Rust's Arc::get_mut
+            // yields a &mut. Same window as inmemory_factory_make_listener.
+            {
+                auto mut_sconn = sconn.get_mut();
+                mut_sconn.unwrap().install_self_weak_for_testing(
+                    rusty::sync::downgrade(sconn));
+            }
+            sconn.get_mut().unwrap().bind_channel(std::move(conn_proxy));
             {
                 auto guard = server_ptr->channel_sconns_field.lock().unwrap();
                 (*guard).push(std::move(sconn));
