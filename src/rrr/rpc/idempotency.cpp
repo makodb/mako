@@ -468,9 +468,6 @@ uint64_t IdempotencyKeyGenerator::current_sequence() const {
 // block. (lookup writes through `int32_t&`/`Vec<u8>&` out-params + copies
 // via cached_response_get; store copies via cached_response_set.)
 struct IdempotencyCache;  // defined by the GEN block below
-bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
-                 uint64_t current_time_ms, int32_t& out_error_code,
-                 rusty::Vec<std::uint8_t>& out_response);
 void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
                 int32_t error_code, const rusty::Vec<std::uint8_t>& response,
                 uint64_t current_time_ms);
@@ -528,9 +525,36 @@ impl IdempotencyCache {
         self.config_.set(config)
     }
 
+    // Body inlined from the former idem_lookup kernel. The guard is BOUND
+    // then dereferenced throughout (§7.33); push_front/remove through a
+    // Mutex<VecDeque> guard and the &mut out-params are probe-verified.
     fn lookup(&self, key: &IdempotencyKey, current_time_ms: u64,
               out_error_code: &mut i32, out_response: &mut Vec<u8>) -> bool {
-        idem_lookup(self, key, current_time_ms, out_error_code, out_response)
+        let cfg = self.config_.get();
+        if !cfg.enabled || !key.is_valid() {
+            self.misses_.set(self.misses_.get() + 1);
+            return false;
+        }
+        let mut guard = self.cache_.lock().unwrap();
+        let mut i: usize = 0usize;
+        while i < (*guard).len() {
+            if (*guard)[i].key == (*key) {
+                if (*guard)[i].is_expired(current_time_ms, cfg.ttl_ms) {
+                    (*guard).remove(i);
+                    self.misses_.set(self.misses_.get() + 1);
+                    return false;
+                }
+                (*out_error_code) = (*guard)[i].error_code;
+                cached_response_get(&(*guard)[i], out_response);
+                let entry = (*guard).remove(i).unwrap();
+                (*guard).push_front(entry);
+                self.hits_.set(self.hits_.get() + 1);
+                return true;
+            }
+            i += 1usize;
+        }
+        self.misses_.set(self.misses_.get() + 1);
+        return false;
     }
 
     fn store(&self, key: &IdempotencyKey, error_code: i32,
@@ -611,7 +635,7 @@ impl IdempotencyCache {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=e4ee22bc6d5a77c26f7bc14cb52b5b6742c3a9ef62e440d5d25a8f7e52162a43*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=a970c8e5833347f00b3eac8429412afc874fdf2ba5ccd5c6ed0da3919a71d117*/
 struct IdempotencyCache;
 
 struct IdempotencyCache {
@@ -669,7 +693,32 @@ void IdempotencyCache::set_config(const IdempotencyConfig& config) const {
 }
 
 bool IdempotencyCache::lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const {
-    return idem_lookup((*this), key, std::move(current_time_ms), out_error_code, out_response);
+    int32_t* out_error_code_shadow1 = &out_error_code;
+    const auto cfg = this->config_.get();
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || rusty::detail::rust_not(key.is_valid())) {
+        this->misses_.set(this->misses_.get() + static_cast<uint64_t>(1));
+        return false;
+    }
+    auto guard = this->cache_.lock().unwrap();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*guard))) {
+        if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }((*guard)[i])) == (key)) {
+            if ((*guard)[i].is_expired(std::move(current_time_ms), std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.ttl_ms); }) { return (__r.ttl_ms); } else if constexpr (requires { (__r.ttl_ms_field); }) { return (__r.ttl_ms_field); } else if constexpr (requires { ((*__r).ttl_ms); }) { return ((*__r).ttl_ms); } else { return ((*__r).ttl_ms_field); } }(cfg)))) {
+                ((*guard)).remove(i);
+                this->misses_.set(this->misses_.get() + static_cast<uint64_t>(1));
+                return false;
+            }
+            (*out_error_code_shadow1) = [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.error_code); }) { return (__r.error_code); } else if constexpr (requires { (__r.error_code_field); }) { return (__r.error_code_field); } else if constexpr (requires { ((*__r).error_code); }) { return ((*__r).error_code); } else { return ((*__r).error_code_field); } }((*guard)[i]);
+            cached_response_get((*guard)[i], out_response);
+            auto entry = ((*guard)).remove(i).unwrap();
+            ((*guard)).push_front(std::move(entry));
+            this->hits_.set(this->hits_.get() + static_cast<uint64_t>(1));
+            return true;
+        }
+        i += static_cast<size_t>(1);
+    }
+    this->misses_.set(this->misses_.get() + static_cast<uint64_t>(1));
+    return false;
 }
 
 void IdempotencyCache::store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const {
@@ -751,34 +800,6 @@ size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
 
 // @unsafe - linear scan of the LRU VecDeque + TTL check + move-to-front +
 // byte copy through the `Vec<u8>&` out-param.
-bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
-                 uint64_t current_time_ms, int32_t& out_error_code,
-                 rusty::Vec<std::uint8_t>& out_response) {
-    auto cfg = self.config_.get();
-    if (!cfg.enabled || !key.is_valid()) {
-        self.misses_.set(self.misses_.get() + 1);
-        return false;
-    }
-    auto guard = self.cache_.lock().unwrap();
-    for (size_t i = 0; i < guard->len(); ++i) {
-        if ((*guard)[i].key == key) {
-            if ((*guard)[i].is_expired(current_time_ms, cfg.ttl_ms)) {
-                guard->remove(i);
-                self.misses_.set(self.misses_.get() + 1);
-                return false;
-            }
-            out_error_code = (*guard)[i].error_code;
-            cached_response_get((*guard)[i], out_response);
-            // Move to front (MRU).
-            auto entry = guard->remove(i).unwrap();
-            guard->push_front(std::move(entry));
-            self.hits_.set(self.hits_.get() + 1);
-            return true;
-        }
-    }
-    self.misses_.set(self.misses_.get() + 1);
-    return false;
-}
 
 // @unsafe - scan for an existing entry (update + move-to-front) else evict
 // LRU at capacity and push the new entry; byte copy via cached_response_set.
