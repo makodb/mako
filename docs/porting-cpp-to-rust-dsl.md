@@ -2033,3 +2033,50 @@ The honest position: the overloading floor is real and large in
 `serializable.cpp` (verified by reading the functions), and unquantified
 elsewhere. Counting it properly needs qualified-name resolution, not a
 regex over declaration lines.
+
+### 7.32 Block-id collisions: a failed regen leaves the file BROKEN — commit first
+
+Adding a DSL block to a file that already has many can fail with
+
+    inline-rust error: reactor.cpp:3345: duplicate inline block id=reactor.22
+
+**and the failure is destructive.** `--rewrite` deletes the hand-written
+body *before* it detects the collision, so the function ends up declared
+and never defined. The file does not compile, and the damage is not
+in the block you were editing.
+
+Two rules follow, both cheap:
+
+ 1. **Commit before regenerating.** `git checkout <file>` is the recovery,
+    and it only works if the previous work is committed. This is how the
+    first `waitany_make` attempt was recovered without losing four landed
+    factory conversions.
+ 2. **Try a risky regen on a copy first.** `cp` the file to a scratchpad,
+    apply the edit there, run the transpiler. That is how the fix below
+    was found with the real file never at risk.
+
+**Why it happens.** `reactor.cpp` carries 29 GEN blocks. Most have
+explicit ids (`reactor.wait_any`, `reactor.timeout_event`,
+`reactor.tls_singletons`), but some are auto-numbered (`reactor.3`,
+`reactor.12`, … `reactor.23`). Inserting a block auto-numbers it by
+position, and it lands on a number a *later* block already holds — the
+later block keeps its id because ids are preserved, so the two collide.
+
+**The fix — ids are author-controllable.** The transpiler preserves any id
+already present in a `GEN-BEGIN` comment and only auto-numbers blocks that
+lack one. So pre-seed an empty stub immediately after the `#endif`:
+
+```
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.waitany_make version=1 rust_sha256=0*/
+/*RUSTYCPP:GEN-END id=reactor.waitany_make*/
+```
+
+The transpiler fills in the body and the real hash on the next rewrite.
+Give it a *name*, not a number — a name cannot collide with the
+auto-numbering sequence, and it survives future insertions.
+
+**Worth an upstream report.** Auto-numbering that collides with existing
+ids in the same file is a bug on its own; that it half-deletes the source
+before erroring is the serious part. A regen failure should leave the file
+exactly as it found it.
