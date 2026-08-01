@@ -2126,5 +2126,29 @@ what exposed the idiom as the variable. Note the working form had been
 sitting in the tree all along: `request_queue.cpp:461` uses
 `for req in &mut (*guard)`, the same bind-then-deref shape.
 
-Guards seen to behave this way: `RefCell::borrow_mut` and `Mutex::lock`.
-Assume it applies to any guard type.
+**Correction — the scope is narrower than first stated.** The rule above
+was originally written as "never chain a method through `borrow_mut()`".
+That is wrong; chaining is fine for most containers. Probing the same
+method against two containers isolates it:
+
+| chained call | generated | verdict |
+|---|---|---|
+| `Vec::push(x)` | `push(std::move(Vec::from_iter(std::move(x))))` | ❌ |
+| `Vec::insert(0, x)` | `insert(0, std::move(Vec::from_iter(std::move(x))))` | ❌ |
+| `VecDeque::push_back(x)` | `push_back(std::move(x))` | ✅ |
+| **`VecDeque::insert(0, x)`** | `insert(0, std::move(x))` | ✅ |
+
+Same method `insert`, opposite results — so it is the **container**, not
+the method and not chaining as such. Chained calls through a guard over a
+`RefCell<Vec<T>>` wrap the argument in `Vec::from_iter`; over a
+`RefCell<VecDeque<T>>` they are correct.
+
+`VecDeque` chained calls route through `rusty::deref_call(guard,
+rusty::detail::__mdisp_push_back, …)` — the method-dispatch shim — which
+is why they survive. The three live `push_back` call sites in
+`reactor.cpp` (3074/3079/3085) use that path and are **correct**; they
+were checked before this correction was written.
+
+So: **for a `Vec` behind a guard, bind then deref.** For other containers
+chaining works, but binding is never wrong, so prefer it uniformly rather
+than memorising which containers are safe.
