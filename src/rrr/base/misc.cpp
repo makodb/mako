@@ -40,16 +40,35 @@ inline uint64_t rdtsc() {
 #endif
 }
 
-template <class T, class T1, class T2>
-inline T clamp(const T &v, const T1 &lower, const T2 &upper) {
-  if (v < lower) {
-    return lower;
-  }
-  if (v > upper) {
-    return upper;
-  }
-  return v;
+// Authored as inline Rust DSL — multi-parameter fn templates lower
+// directly (§7.9); the generated template is byte-equivalent to the
+// hand-written one.
+#if RUSTYCPP_RUST
+fn clamp<T, T1, T2>(v: &T, lower: &T1, upper: &T2) -> T {
+    if (*v) < (*lower) {
+        return (*lower);
+    }
+    if (*v) > (*upper) {
+        return (*upper);
+    }
+    return (*v);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=misc.1 version=1 rust_sha256=15cd0d75ad48f830d6171e3faac0b5e8eaa9953aa66df1dd3573e1a2db99c4d5*/
+template<typename T, typename T1, typename T2>
+T clamp(const T& v, const T1& lower, const T2& upper);
+
+template<typename T, typename T1, typename T2>
+T clamp(const T& v, const T1& lower, const T2& upper) {
+    if ((v) < (lower)) {
+        return (lower);
+    }
+    if ((v) > (upper)) {
+        return (upper);
+    }
+    return (v);
+}
+/*RUSTYCPP:GEN-END id=misc.1*/
 
 // YYYY-MM-DD HH:MM:SS.mmm; caller-supplied buffer must be at least 24 bytes.
 void time_now_str(char *now);
@@ -93,6 +112,8 @@ pub trait Job {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=job.0 version=1 rust_sha256=18786ba6577a83b252e1bcef0f636e48705c6028747245d431309a72153fea97*/
+class Job;
+
 class Job {
 public:
     virtual ~Job() noexcept(false) {}

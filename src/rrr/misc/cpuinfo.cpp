@@ -509,13 +509,27 @@ namespace rrr {
 // @safe - Result<_, io::Error> bridge over the std-faithful
 // rusty::sys::fs::read_to_string ("" on any error — matches the legacy
 // silent-ifstream-failure behavior).
+// Authored as inline Rust DSL — plain Result handling.
+#if RUSTYCPP_RUST
+fn cpuinfo_read_proc(path: &std::string) -> std::string {
+    let r = rusty::sys::fs::read_to_string(path);
+    if r.is_err() {
+        return std::string();
+    }
+    return r.unwrap();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=cpuinfo.read_proc version=1 rust_sha256=839a3fd41b3c88a413dfd92bb7a6c80510cba5e818f902f9da152808f96b88e7*/
+std::string cpuinfo_read_proc(const std::string& path);
+
 std::string cpuinfo_read_proc(const std::string& path) {
     auto r = rusty::sys::fs::read_to_string(path);
     if (r.is_err()) {
         return std::string();
     }
-    return std::move(r).unwrap();
+    return r.unwrap();
 }
+/*RUSTYCPP:GEN-END id=cpuinfo.read_proc*/
 
 // @unsafe - trivial factory for the DSL.
 std::string cpuinfo_empty_string() { return std::string(); }
