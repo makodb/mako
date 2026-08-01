@@ -343,6 +343,32 @@ buildable and testable, since it is still C++), then convert. Never
 combine the two — a reshape bug and a conversion bug look identical in
 the diff.
 
+#### ⚠ The Phase-A counts are NOT trustworthy
+
+Every regex classifier written for this plan has been wrong when checked
+against the code. Four for four:
+
+| claimed | actual |
+|---|---|
+| "81 plain class templates" | 77 were an OVERLOAD FAMILY — overloading is a relation *between* declarations, invisible to a per-declaration window |
+| "`rusty::` iterates Rust-style, `std::` does not" | `rusty::Vec` IS `std::vector` — the namespace says nothing about the body |
+| "`std::` containers have no DSL iteration" | `rusty::iter` has an explicit STL arm; no adapter needed |
+| "28 function-local statics" | those matches were class STATIC MEMBERS (`static void f();`). A follow-up detector then reported 0, which was also wrong — `tcp_channel.cpp:1579` has a real one |
+
+So treat the A-table's numbers as **rough magnitudes, not a worklist**.
+They were useful for spotting that class templates dominate and that the
+long tail is exhausted; they are not reliable for sequencing, and no
+slice should be planned from a count alone.
+
+What has actually worked, every time, is: pick a candidate, read the
+bodies, and compile. Three of the four errors above were caught by
+reading code and the fourth by the compiler. None was caught by a better
+regex.
+
+Practical consequence: before each slice, re-derive its scope by reading
+that file, and expect the count to move. Budget for the count being
+wrong rather than for the slice being hard.
+
 **Phase B — grind the six big files** with the retired floors in hand.
 reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
 tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
