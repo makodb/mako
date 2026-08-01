@@ -1402,3 +1402,33 @@ The branch may still be reachable under concurrent growth, or be dead
 code. Deciding which is a question about ClientPool's intended behaviour,
 not about the port — so the conversion stays deferred, and this is the
 thing to resolve first.
+
+### 7.22 A DSL method body can only use types complete AT THE BLOCK
+
+`inline-rust` emits a method's declaration and DEFINITION together,
+inside the `#if RUSTYCPP_RUST` block. So the body may only name types
+that are complete at that point in the file — not at the point where the
+hand-written definition used to sit.
+
+`SharedIntEvent::wait_until_gte` is the worked example. Its DSL block is
+near the top of reactor.cpp, where `class Reactor;` is only a forward
+declaration; the kernel it replaced lived ~2500 lines later, after
+Reactor is defined. Converting it gives:
+
+```
+error: incomplete type 'rrr::Reactor' named in nested name specifier
+   const auto ev = Reactor::create_sp_event<IntEvent>();
+```
+
+This is the ORDERING sibling of 7.20 (which is about namespaces), and
+neither fix helps the other:
+
+| symptom | cause | fix |
+|---|---|---|
+| `undefined reference to X@mod` | definition is in the impl namespace, DSL block is in the exported one | move the STATE, or leave it C++ (7.20) |
+| `incomplete type X` in a DSL body | the type is defined after the block | move the type's definition earlier, or leave it C++ |
+| `undefined reference` after forward-declaring an `inline` fn | declaration promises external linkage the inline definition never emits | move the DEFINITION above first use (see PollThread::shutdown) |
+
+Check before converting: everything the body names must be COMPLETE at
+the block, not merely declared. A forward declaration is enough for a
+pointer or reference, not for `Type::static_method()`.
