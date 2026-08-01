@@ -25,6 +25,23 @@ TEST(RequestQueueTest, InitiallyEmpty) {
     EXPECT_FALSE(queue.full());
 }
 
+// update_config had NO coverage, which is how a conversion that wrote the
+// new config to a temporary (`config_.get().set(cfg)`) shipped, compiled,
+// and passed all 30 tests. Assert the swap is actually observable.
+TEST(RequestQueueTest, UpdateConfigIsObservable) {
+    RequestQueue queue;
+    const size_t original_max = queue.max_size();
+
+    auto cfg = queue.config();
+    cfg.max_size = original_max + 7;
+    cfg.enabled = !queue.enabled();
+    queue.update_config(cfg);
+
+    EXPECT_EQ(queue.max_size(), original_max + 7);
+    EXPECT_EQ(queue.enabled(), cfg.enabled);
+    EXPECT_EQ(queue.config().max_size, original_max + 7);
+}
+
 TEST(RequestQueueTest, EnqueueSingleRequest) {
     RequestQueue queue;
 
