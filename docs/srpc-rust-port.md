@@ -274,9 +274,41 @@ Per file, `misc/serializable.cpp` is the single biggest pocket: 64
 sites, **55 of them plain**. `reactor.cpp` is 26 sites but 10 are
 variadic packs, so its real yield is 12. `tcp_channel.cpp` has none.
 
-Caveat on the method: "plain" means no hard construct in a 25-line
-signature window, so it is an upper bound — a body can still surprise.
-Treat 81 as the candidate list to attempt, not a promise.
+**SUPERSEDED — the table above is wrong.** "Plain" meant "no hard
+construct in a 25-line signature window", and a per-declaration window
+cannot see OVERLOADING, which is a relationship *between* declarations.
+Re-classified with a cross-declaration pass that groups sites by the
+declared function name:
+
+| file | sites | overload-family | hard | plain |
+|---|---:|---:|---:|---:|
+| reactor.cpp | 26 | 9 | 14 | 3 |
+| client.cpp | 15 | 6 | 10 | 0 |
+| **serializable.cpp** | **64** | **56** | 9 | 0 |
+| server.cpp | 4 | 2 | 1 | 1 |
+| serializable_envelope.cpp | 16 | 4 | 10 | 2 |
+| **TOTAL** | **125** | **77** | **44** | **6** |
+
+So **77 of 125 are overload families**, not plain templates. That is
+good news rather than bad: playbook §7.40 proves overload families
+convert via `impl Trait for X` (one impl per type), which lowers back
+to exactly the free-function overload set the code already has, so call
+sites are untouched.
+
+It also changes the SHAPE of the work. `serializable.cpp` is not 64
+separate conversions — it is **one trait with ~56 impls**. That is a
+single coherent slice, not a grind.
+
+Revised routes: 77 overload-family (trait impls, route proven) + 6
+plain (direct) = 83 with a route; 44 hard, of which 18 variadic packs
+are a genuine floor and the rest need case-by-case work. Overlap
+between the overload and hard columns is possible, so treat these as
+routes-to-attempt rather than a promise.
+
+Method lesson, now recorded in §7.40 as well: per-declaration
+classifiers are blind to relational properties. Overloading, ODR
+collisions and specialisation-vs-base all need a cross-declaration
+pass.
 
 **Phase B — grind the six big files** with the retired floors in hand.
 reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
