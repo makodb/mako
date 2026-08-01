@@ -1645,6 +1645,23 @@ assertion, since `string_view` compares equal to a string literal.
 **Generalisable lesson.** A deferral records a decision *and* a
 justification, but only the decision survives review. When a sweep
 removes a whole mechanism — varargs here — walk the deferral list and
-ask which causes it just invalidated. Still live at this writing:
-`idempotency-LRU` (waits on Marshal deprecation, not yet done) and the
-kernel classifications.
+ask which causes it just invalidated.
+
+**A second expired deferral, found immediately.** The first version of
+this section asserted that `idempotency-LRU` was still blocked because
+it "waits on Marshal deprecation, not yet done". That was written from
+memory and is false: `Marshal` has **zero** non-comment references
+anywhere in the repo, and no definition — the type is gone. All 42
+remaining mentions in `src/rrr` are comments describing the historical
+migration, which is exactly what made memory feel confirmed. Marshal
+deprecation is complete, so that deferral is expired too.
+
+Note what happened there: the lesson of this very section is "verify the
+cause, do not trust the record", and the first draft of it restated a
+remembered blocker without checking. A grep would have taken ten
+seconds. When auditing deferrals, grep for the *blocker*, not for
+mentions of it — comments about a removed mechanism outlive the
+mechanism and read exactly like live references.
+
+Deferrals still believed live, each needing its own check before use:
+the kernel classifications (`clientconn`, `server-atomics`).
