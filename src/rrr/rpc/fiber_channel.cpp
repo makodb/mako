@@ -113,7 +113,6 @@ struct OwnedFrame {
 // bind_callbacks lambdas). The custom dtor (detach callbacks before member
 // teardown) maps to `impl Drop`. Defined in the impl namespace below.
 struct FiberChannel;  // defined by the GEN block below
-void                      fiberchannel_bind_callbacks(FiberChannel& self);
 rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self);
 rusty::Arc<IntEvent>      fiberchannel_make_event();
 void                      fiberchannel_wait_event(FiberChannel& self);
@@ -160,7 +159,21 @@ impl FiberChannel {
     }
 
     fn bind_callbacks(&mut self) {
-        fiberchannel_bind_callbacks(self)
+        // Callbacks capture a raw self pointer, not a handle: FiberChannel is
+        // owned by its holder and the Drop impl detaches these before
+        // teardown, which keeps the pointer live for their lifetime.
+        let self_ptr: *mut FiberChannel = &raw mut *self;
+        let ch: &mut Box<ChannelConnectionBase> = &mut self.ch_;
+        ch.set_on_frame(move |f: &ChannelFrame| {
+            unsafe { (*self_ptr).on_inbound_frame(f) };
+        });
+        ch.set_on_closed(move |reason: ChannelError| {
+            unsafe { (*self_ptr).on_inbound_closed() };
+        });
+        // Fatal errors are followed by on_closed; non-fatal errors are
+        // silently ignored at this layer.
+        ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+        });
     }
 
     // Fiber-blocking receive: drain the queue, else arm the pending
@@ -248,7 +261,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=0fe8077149304855cd75906032885297fd869fd38bcf330b2d4d46f37c95877b*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=950c58a923c0e19e455a812c668d3d01c596ba8505f22d977a80fbff2bb487a0*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -296,7 +309,22 @@ FiberChannel::FiberChannel(ChannelConnectionProxy ch)
 {}
 
 void FiberChannel::bind_callbacks() {
-    fiberchannel_bind_callbacks((*this));
+    FiberChannel* self_ptr = &(*this);
+    rusty::Box<ChannelConnectionBase>& ch = this->ch_;
+    ch->set_on_frame([=, self_ptr = std::move(self_ptr)](const ChannelFrame& f) {
+// @unsafe
+{
+    ((*self_ptr)).on_inbound_frame(f);
+}
+});
+    ch->set_on_closed([=, self_ptr = std::move(self_ptr)](ChannelError reason) {
+// @unsafe
+{
+    ((*self_ptr)).on_inbound_closed();
+}
+});
+    ch->set_on_error([=](ChannelError err, std::string_view msg) {
+});
 }
 
 rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
@@ -383,19 +411,6 @@ void fiberchannel_signal_pending_recv(FiberChannel& self);
 // ctor chain on three captured `[self_ptr]` lambdas. `self_ptr == &self` is
 // pinned because callers hold FiberChannel inside a `rusty::Box` (or on the
 // test stack) for the proxy's lifetime (which the FiberChannel owns).
-void fiberchannel_bind_callbacks(FiberChannel& self) {
-    FiberChannel* self_ptr = &self;
-    self.ch_->set_on_frame([self_ptr](const ChannelFrame& f) {
-        self_ptr->on_inbound_frame(f);
-    });
-    self.ch_->set_on_closed([self_ptr](ChannelError /*reason*/) {
-        self_ptr->on_inbound_closed();
-    });
-    self.ch_->set_on_error([](ChannelError /*err*/, std::string_view /*msg*/) {
-        // Fatal errors are followed by on_closed; non-fatal errors are
-        // silently ignored at this layer.
-    });
-}
 
 // @unsafe - `ch_->set_on_*({})` detach driven through the proxy deref. This
 // is the former `~FiberChannel`, now reached via `impl Drop`.
