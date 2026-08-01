@@ -2787,3 +2787,32 @@ Recommend (1) first: it converts the bulk, is independently verifiable
 against the golden corpus, and leaves (2) as a later, separately-gated
 decision. Do not start (2) without deciding the diagnostic story — the
 poison exists because someone was bitten by the absence of one.
+
+**Slice-readiness probe (2026-08-01).** Two things had to be true before
+starting the leaf-only conversion; both are:
+
+ - *Coexistence.* A DSL trait block placed inside an existing
+   `namespace Serialize_ { … }` emits its impls into a nested `Ser_`
+   namespace plus `using namespace Ser_;`, so generated overloads and
+   surviving hand-written ones form ONE overload set in the enclosing
+   namespace. A partial conversion is therefore possible — convert some
+   types, leave others hand-written.
+ - *Bodies, not declarations, are the real work.* The 56 impls are not
+   uniform. `rusty::` containers iterate Rust-style (`v.iter()` /
+   `next()` / `is_some()`) and map onto DSL `for_in`. The `std::` ones
+   (`set`, `unordered_set`, `map`, `unordered_map`, `vector`, `list`)
+   use the raw C++ iterator protocol, which has NO DSL spelling. So the
+   natural first slice is the `rusty::` containers only — it is
+   independent of how the `std::` question is resolved.
+
+Cost to accept: a trait emits an abstract base class and three adapter
+templates for dyn dispatch that a pure static-dispatch family never
+uses. Generated, so it does not count against the hand-written census,
+but it is real output.
+
+Open fork for the `std::` half: (a) a small C++ kernel adapting any
+`std::` container to a Rust-style iterator, called from DSL impls —
+contained, and the same "convert at the edge, isolate, annotate
+`@unsafe`" pattern the project already sanctions for `std::` boundary
+types; or (b) drop `std::` container support from the wire layer so
+every impl is `rusty::` — cleaner but changes the public RPC surface.
