@@ -442,13 +442,26 @@ first.
 
 ### Goal 2 — blockers in dependency order
 
-1. **User decision (blocking now):** the four rusty-cpp fix branches
-   are verified but unlanded; no pin bump → no translated output can
-   be checked in. Issue #44 also awaits a call (fix vs. leave).
-2. **Runtime proof missing:** 6/6 is compile-only. Cheapest de-risk:
-   a C++ test importing translated `srpc.wire.serde` asserting the
-   62-case corpus — runnable TODAY against the verify-stack build,
-   no pin bump needed for the proof itself.
+1. ~~**User decision (blocking now):** the four rusty-cpp fix branches
+   are verified but unlanded; no pin bump.~~ **RESOLVED 2026-08-01.**
+   All four (`fix-37`…`fix-40`) are contained in `verify-stack`, and
+   mako's pin now points at `verify-stack` `4d48363e` (mako commit
+   `21faaeab`), which also carries three further fixes from the
+   src/rrr conversion (libc-macro scope escaping, `use rusty::…`, and
+   `rusty::Function` bare signatures). Verified by
+   `git log verify-stack..<branch>` being empty for each.
+   Issue #44 still awaits a call (fix vs. leave).
+2. ~~**Runtime proof missing:** 6/6 is compile-only.~~ **DONE
+   2026-07-29 — see "Runtime proof" above: GREEN, 64 cases / 0
+   failures**, and it earned its keep by finding a silent
+   wrong-answer bug (`range_inclusive<int>` narrowing an `int64_t`
+   argument, so `val_size` chose a 1-byte encoding for 5-byte
+   values). Fixed upstream and in the pin (`0fa13631`).
+
+   *This entry sat stale for three days and actively misled a reader
+   into planning work that was already finished. When two sections of
+   this document disagree, the dated narrative section wins over the
+   blocker list — and whoever notices should fix the list, as here.*
 3. **First-swap mechanics** (`rrr.frame_codec` ← `srpc.wire.frame` —
    chosen because it has ONE real consumer TU, `tcp_channel.cpp`,
    plus an existing golden-byte test; `rrr.serializable` has 7
