@@ -101,6 +101,9 @@ struct OwnedFrame;
 
 struct OwnedFrame {
     rusty::Vec<uint8_t> bytes;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 /*RUSTYCPP:GEN-END id=fiber_channel.owned_frame*/
 
@@ -115,9 +118,7 @@ rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self);
 rusty::Arc<IntEvent>      fiberchannel_make_event();
 void                      fiberchannel_wait_event(FiberChannel& self);
 void                      fiberchannel_arm(FiberChannel& self);
-void                      fiberchannel_disarm(FiberChannel& self);
 OwnedFrame                fiberchannel_owned_copy(const ChannelFrame& f);
-bool                      fiberchannel_ch_is_closed(const FiberChannel& self);
 void                      fiberchannel_signal_pending_recv(FiberChannel& self);
 ChannelError              fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f);
 void                      fiberchannel_close(FiberChannel& self);
@@ -189,7 +190,8 @@ impl FiberChannel {
             if armed {
                 fiberchannel_wait_event(self);
             }
-            fiberchannel_disarm(self);
+            let mut ev_guard = self.pending_recv_event_.lock().unwrap();
+            (*ev_guard) = rusty::None;
         }
         rusty::None
     }
@@ -222,7 +224,11 @@ impl FiberChannel {
         if self.closed_.get() {
             return true;
         }
-        fiberchannel_ch_is_closed(self)
+        // The helper this replaced const_cast'd the proxy to call
+        // is_closed(). The trait declares `fn is_closed(&self)` and the C++
+        // base `is_closed() const`, so the cast was never needed (§7.16).
+        let ch: &Box<ChannelConnectionBase> = &self.ch_;
+        ch.is_closed()
     }
 
     fn channel_for_test(&mut self) -> &mut ChannelConnectionProxy {
@@ -236,7 +242,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=98e67497e58967b701554d56c92e7351515557c4eb4cc67427d2a16d10f5ef4e*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=c00ce8307f69e284bf8c4090ef7e2dd536b2a6b56219f1a263a1090d64368aad*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -260,7 +266,7 @@ struct FiberChannel {
         new (this) FiberChannel(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->ch_); rusty::detail::mark_forgotten_if_supported(this->queue_); rusty::detail::mark_forgotten_if_supported(this->pending_recv_event_); rusty::detail::mark_forgotten_if_supported(this->closed_); }
 
 
     FiberChannel(ChannelConnectionProxy ch);
@@ -307,7 +313,8 @@ rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
         if (armed) {
             fiberchannel_wait_event((*this));
         }
-        fiberchannel_disarm((*this));
+        auto ev_guard = this->pending_recv_event_.lock().unwrap();
+        (*ev_guard) = rusty::None;
     }
     return rusty::None;
 }
@@ -338,7 +345,8 @@ bool FiberChannel::is_closed() const {
     if (this->closed_.get()) {
         return true;
     }
-    return fiberchannel_ch_is_closed((*this));
+    const rusty::Box<ChannelConnectionBase>& ch = this->ch_;
+    return ch->is_closed();
 }
 
 ChannelConnectionProxy& FiberChannel::channel_for_test() {
@@ -431,10 +439,6 @@ void fiberchannel_arm(FiberChannel& self) {
 
 // @unsafe - Mutex + store None. Clears the waiter under the dedicated
 // mutex after the wait completes (reactor thread only).
-void fiberchannel_disarm(FiberChannel& self) {
-    auto guard = self.pending_recv_event_.lock().unwrap();
-    (*guard) = rusty::Option<rusty::Arc<IntEvent>>(rusty::None);
-}
 
 // @unsafe - proxy deref through `ch_->send_frame(f)`.
 ChannelError fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f) {
@@ -443,10 +447,6 @@ ChannelError fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f) 
 
 // @unsafe - const_cast through the ChannelConnectionProxy reference +
 // proxy deref (the Cell-flag half of is_closed lives in the DSL).
-bool fiberchannel_ch_is_closed(const FiberChannel& self) {
-    auto& mut_ch = const_cast<ChannelConnectionProxy&>(self.ch_);
-    return mut_ch->is_closed();
-}
 
 // @unsafe - proxy deref through `ch_->close()`.
 void fiberchannel_close(FiberChannel& self) {
