@@ -1464,3 +1464,36 @@ Remaining 14, all genuine, with the reason each resists:
 
 None of these five are cleanup; each is a signature or API change with
 its own blast radius. The sweep is finished.
+
+### 7.23 Cross-MODULE enums are treated as data enums; tcp_channel.cpp is unregenerable
+
+Two blockers found trying to convert `io_kind_to_channel_error` in
+tcp_channel.cpp — a pure `switch` mapping `rusty::io::Error::Kind` onto
+`ChannelError`, which should have been the easiest kind of conversion.
+
+**(a) An enum from another MODULE is matched as a data enum.** 78a0d9a7
+taught the transpiler about enums declared in a SIBLING BLOCK of the same
+file. It does not cover enums from elsewhere: `Error::Kind` lives in the
+rusty headers and `ChannelError` in rrr.channel, and the match lowered to
+
+```cpp
+rusty::detail::variant_holds<rusty::io::Error::Kind_ConnectionRefused>(_m)
+   -> error: no member named 'Kind_ConnectionRefused' in 'rusty::io::Error'
+ChannelError::ConnectionRefused()   // enumerator called as a function
+```
+
+So a `match` over an imported C-like enum does not currently work,
+whichever side it comes from. Same shape as the bug fixed for sibling
+blocks, one scope wider.
+
+**(b) tcp_channel.cpp cannot be regenerated at all**, for the §7.18
+reason: it reads libc `errno` in two syscall kernels, and the current
+transpiler renames that to `errno_`. Any `--rewrite` of this file
+re-emits those blocks and breaks the build, independent of what you were
+trying to convert.
+
+(b) is the harder gate: it makes every conversion in this file
+impossible, not just enum-matching ones. It is the same open decision
+from §7.18 — the rename is right for a fn NAMED errno and wrong for DSL
+that READS it — and this is now a concrete cost of leaving it unresolved,
+not a hypothetical one. tcp_channel.cpp has 350 hand-written lines.
