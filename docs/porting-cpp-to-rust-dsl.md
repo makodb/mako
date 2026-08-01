@@ -2152,3 +2152,44 @@ were checked before this correction was written.
 So: **for a `Vec` behind a guard, bind then deref.** For other containers
 chaining works, but binding is never wrong, so prefer it uniformly rather
 than memorising which containers are safe.
+
+#### 7.30c A probe verifies LOWERING, not COMPILABILITY
+
+§7.30b catalogues four probes that gave wrong answers because the probe
+did not match the real code. This one is different: the probe matched
+perfectly and still misled, because reading generated C++ is not the same
+as compiling it.
+
+Probing `entry_set(&mut (*guard)[i], resp)` produced
+
+    entry_set(rusty::addr_of_temp_mut((*guard)[i]), resp);
+
+which I read as correct — `addr_of_temp_mut` really does return a pointer
+to the actual element, not to a temporary (the name is about *tolerating*
+temporaries). The reasoning was sound. The conclusion was wrong:
+
+    error: no matching function for call to 'cached_response_set'
+    note: no known conversion from 'CachedResponse *' to 'CachedResponse &'
+
+**`&mut expr` lowers to a pointer; `&expr` lowers to a plain lvalue.** A
+C++ callee taking `T&` accepts the second and rejects the first.
+
+| DSL argument | generated | binds to `T&`? |
+|---|---|---|
+| `&mut expr` | `&expr` / `addr_of_temp_mut(expr)` | ❌ pointer |
+| `&expr` | `expr` | ✅ lvalue |
+
+So for a C++ function taking a mutable reference, pass `&expr` — even
+though `&mut` reads as the "obviously right" Rust spelling.
+
+**The general rule: a transpiler probe answers "what does this lower to",
+never "does that compile".** For anything where the question is type
+binding — argument passing, overload resolution, reference vs pointer —
+the generated snippet has to go through a compiler before you believe it.
+Cheapest reliable form: convert one call site in the real file and build
+that file, which is what finally settled this.
+
+Note the fix came from in-tree evidence rather than another probe:
+`lookup`'s `cached_response_get(&(*guard)[i], …)` had already compiled in
+a previous commit, which is direct proof that `&expr` binds where `&mut
+expr` does not.
