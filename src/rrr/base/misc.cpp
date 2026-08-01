@@ -140,18 +140,16 @@ template <class U> class JobAdapterRefMut;
 // `struct OneTimeJob : public Job` with implicit overrides; call sites
 // keep constructing via OneTimeJob::new_ and upcasting Arc<OneTimeJob>
 // -> Arc<Job> unchanged.
-// Callback alias (the DSL can't parse a Function<..> field type inline).
-using OneTimeJobFn = rusty::Function<void()>;
 
 #if RUSTYCPP_RUST
 struct OneTimeJob {
     done_: bool,
     ready_: bool,
-    func_: OneTimeJobFn,
+    func_: rusty::Function<dyn FnMut()>,
 }
 
 impl OneTimeJob {
-    fn new(func: OneTimeJobFn) -> OneTimeJob {
+    fn new(func: rusty::Function<dyn FnMut()>) -> OneTimeJob {
         OneTimeJob { done_: false, ready_: true, func_: func }
     }
 }
@@ -174,25 +172,25 @@ impl Job for OneTimeJob {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=misc.one_time_job version=1 rust_sha256=6fab16d57545a1a9bbdcd5eb475f330ab39fe0667f2affc062dd6713cc3e2a9e*/
+/*RUSTYCPP:GEN-BEGIN id=misc.one_time_job version=1 rust_sha256=811950b81a2fba1d8570507b860d09abc088434e0af080f2bbfffb10e7ed627c*/
 struct OneTimeJob;
 
 struct OneTimeJob : public Job {
     bool done_;
     bool ready_;
-    OneTimeJobFn func_;
-    OneTimeJob(bool done__init, bool ready__init, OneTimeJobFn func__init) : Job(), done_(std::move(done__init)), ready_(std::move(ready__init)), func_(std::move(func__init)) {}
+    rusty::Function<void()> func_;
+    OneTimeJob(bool done__init, bool ready__init, rusty::Function<void()> func__init) : Job(), done_(std::move(done__init)), ready_(std::move(ready__init)), func_(std::move(func__init)) {}
     OneTimeJob(OneTimeJob&& other) noexcept : Job(), done_(std::move(other.done_)), ready_(std::move(other.ready_)), func_(std::move(other.func_)) {}
 
 
-    static OneTimeJob new_(OneTimeJobFn func);
+    static OneTimeJob new_(rusty::Function<void()> func);
     bool Ready();
     bool Done();
     void Work();
 };
 
 
-OneTimeJob OneTimeJob::new_(OneTimeJobFn func) {
+OneTimeJob OneTimeJob::new_(rusty::Function<void()> func) {
     return OneTimeJob(false, true, std::move(func));
 }
 
