@@ -3017,3 +3017,34 @@ Two cautions before a sweep:
 
 Worth doing as one batched pass rather than per-file, since the pattern
 is uniform and each gate cycle is ~40 minutes.
+
+### 7.43 Batch re-test of stated limitations: 2 of 3 expired
+
+Continuing the sweep (§7.42). Three more claims probed in one pass:
+
+| claim (and where it is stated) | result |
+|---|---|
+| `client.cpp:1097` — "the DSL cannot emit `nullptr`" | **STILL TRUE.** `std::ptr::null()` lowers verbatim to `std::ptr::null()`, which is not C++. The `null_reply_bytes()` kernel stays. |
+| `client.cpp:1481` — "the DSL can't deref a Box for a method" | **EXPIRED.** `(*b).close()` on a `rusty::Box` emits `rusty::detail::deref_if_pointer_like(b).close()` — the deref happens. |
+| `epoll_platform_linux.cc:22` — "struct-fill / memset has no DSL spelling" | **EXPIRED.** A struct literal emits designated initialisers (`epoll_event{.events = …, .data = …}`). |
+
+**The Box result shrinks §7.39.** That entry scopes the
+closure-mutability fix as three changes that must land together, the
+third being "Box-receiver method-call autoderef". That third step is
+already done — `deref_if_pointer_like` covers Box. So the remaining
+work is two changes, not three:
+
+ 1. widen the mutability analysis from "all captures are raw pointers"
+    to "no capture is mutated", pointer-like receivers non-mutating;
+ 2. teach the pointer-like predicate to resolve C++ `using` aliases
+    (it matches the last path segment by name, so it cannot see
+    `WeakClientConnection` = `rusty::sync::Weak<…>`).
+
+Still both-or-nothing — step 1 alone stays inert on mako's closures —
+but a third smaller than it was.
+
+Running tally for the session: **fourteen** stated limitations tested,
+twelve expired wholly or partly. The two that held (`nullptr`,
+variadic generics) are both cases where Rust genuinely has no
+equivalent — which is the shape of a real floor. Everything else has
+been a dated observation about a toolchain that kept moving.
