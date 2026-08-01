@@ -2739,3 +2739,51 @@ it.
 cannot see relational properties. Overloading, ODR collisions, and
 specialisation-vs-base relationships all need a cross-declaration pass.
 Expect other "plain" counts to hide the same thing.
+
+### 7.40a serializable.cpp's overload family is also an ADL machine — a fork
+
+§7.40 proves `impl Trait for X` generates an overload set, which is the
+shape `misc/serializable.cpp` has. Reading the actual file before
+converting shows it is more than that. The family is a deliberately
+engineered ADL dispatch:
+
+```cpp
+namespace adl_detail_ {
+void serialize() = delete;              // lookup poison: stops ascent
+template<typename T>
+inline void dispatch_serialize(const T& v, BinaryWriteArchive& ar) {
+  serialize(v, ar);                     // ADL-only by construction
+}
+}
+```
+
+plus forward declarations emitted *before* the definitions "so nested
+containers resolve regardless of definition order", and unqualified
+element calls that fall back to a generic catch-all. The deleted decoy
+is load-bearing: it blocks self-selection and turns a missing overload
+into a diagnostic that names the type.
+
+All of that exists **because C++ has no traits**. In Rust the trait
+system *is* the dispatch. So this is not a 56-declaration port; it is a
+replacement of the wire layer's dispatch mechanism — in the one
+subsystem guarded by golden corpora, where a wrong answer is a
+wire-format bug rather than a compile error.
+
+**The fork:**
+
+ 1. *Leaf-only.* Convert the ~56 per-type impls to trait impls and KEEP
+    the hand-written catch-all + poison as a small remaining kernel.
+    Incremental, reversible, leaves ~8 lines of dispatch machinery
+    hand-written. The generated forward-declaration block (the probe
+    emits one) should satisfy the nested-container ordering
+    requirement, but that must be verified, not assumed.
+ 2. *Full.* Replace ADL dispatch with trait dispatch outright. More
+    idiomatic and removes the poison entirely, but changes how every
+    element call resolves, and the failure mode of getting it wrong is
+    silent: a different overload selected still compiles and still
+    produces bytes.
+
+Recommend (1) first: it converts the bulk, is independently verifiable
+against the golden corpus, and leaves (2) as a later, separately-gated
+decision. Do not start (2) without deciding the diagnostic story — the
+poison exists because someone was bitten by the absence of one.
