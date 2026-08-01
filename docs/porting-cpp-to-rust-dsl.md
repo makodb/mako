@@ -2890,3 +2890,50 @@ probe: "plain class templates" (an overload family), "`rusty::` vs
 containers have no DSL iteration". Each was stated confidently in a
 comment or a plan and each cost one command to disprove. In this
 codebase, probe before believing — including before believing yourself.
+
+### 7.40b Partial conversion of a MUTUALLY RECURSIVE overload family fails
+
+Attempted (and reverted) the second slice of `serializable.cpp`: six
+more containers (`rusty::Vec`, `std::vector`, `set`, `unordered_set`,
+`map`, `unordered_map`) as trait impls alongside the already-converted
+`std::list`. It does not work, and the reason is structural rather than
+a missing feature.
+
+The serde family is **mutually recursive**: `serialize(vector<T>)`
+calls `serialize(T)`, which for `vector<vector<int>>` calls
+`serialize(vector<int>)` again. The hand-written code makes that work
+with a block of forward declarations emitted *before* every definition
+— that is exactly what those declarations are for.
+
+A converted impl cannot participate:
+
+```
+test_marshal.cc   rrr::Serialize_::serialize(nested_vec, war)   // vector<vector<int>>
+  -> WireSerialize_::serialize<vector<int>>       (converted impl, via the using) OK
+    -> body: Serialize_::serialize(e, ar)         // e is vector<int>
+      -> resolves to the CATCH-ALL, not the converted overload
+        -> adl_detail_ -> ADL-only -> hard error
+```
+
+The generated bodies sit *before* the `using ::rrr::WireSerialize_::serialize;`
+bridge, and the bridge cannot be hoisted above them because it names
+`WireSerialize_`, which the GEN block itself introduces. Circular.
+
+**Why the first slice passed anyway:** nothing nests `std::list`. The
+recursion never re-entered a converted overload, so the gap never
+showed. A green gate on one type says nothing about the next.
+
+**Routes, for whoever picks this up:**
+ 1. *Whole-family conversion.* One trait block containing every impl —
+    the transpiler emits all forward declarations before all
+    definitions *within a block*, so the recursion closes. Big-bang on
+    the wire layer, gated by the golden corpus.
+ 2. *Hand-written forward declarations* for converted types, kept
+    alongside the trait. Small, incremental, but leaves hand-written
+    C++ behind — it trades a body for a declaration rather than
+    removing one.
+ 3. Leave the family alone; spend Phase A effort where conversions are
+    independent.
+
+The single `std::list` conversion (commit d04fff23) stays: it is
+verified, and it is the worked example of the four placement rules.
