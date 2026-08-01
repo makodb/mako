@@ -63,14 +63,25 @@ inline constexpr CircuitState CircuitState_OPEN() { return CircuitState::OPEN; }
 inline constexpr CircuitState CircuitState_HALF_OPEN() { return CircuitState::HALF_OPEN; }
 /*RUSTYCPP:GEN-END id=circuit_breaker.circuit_state*/
 
-inline const char* circuit_state_to_string(CircuitState state) {
-    switch (state) {
-        case CircuitState::CLOSED: return "CLOSED";
-        case CircuitState::OPEN: return "OPEN";
-        case CircuitState::HALF_OPEN: return "HALF_OPEN";
-        default: return "UNKNOWN";
+// Returns &'static str (-> std::string_view), not const char*: the DSL
+// cannot spell a literal as a raw pointer. Callers use EXPECT_EQ, not
+// EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
+// std::format variadic template now, not C varargs. See playbook 7.26.
+#if RUSTYCPP_RUST
+fn circuit_state_to_string(state: CircuitState) -> &'static str {
+    match state {
+        CircuitState::CLOSED => "CLOSED",
+        CircuitState::OPEN => "OPEN",
+        CircuitState::HALF_OPEN => "HALF_OPEN",
+        _ => "UNKNOWN",
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=circuit_breaker.3 version=1 rust_sha256=8adb36cb7876f87b7fd07442552246b46f812cb92d24870cb83c62aab79ad22a*/
+std::string_view circuit_state_to_string(CircuitState state) {
+    return ({ auto&& _m = state; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == CircuitState::CLOSED)) { _match_value.emplace(std::move(std::string_view("CLOSED"))); _m_matched = true; } if (!_m_matched && (_m == CircuitState::OPEN)) { _match_value.emplace(std::move(std::string_view("OPEN"))); _m_matched = true; } if (!_m_matched && (_m == CircuitState::HALF_OPEN)) { _match_value.emplace(std::move(std::string_view("HALF_OPEN"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
+/*RUSTYCPP:GEN-END id=circuit_breaker.3*/
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -145,6 +156,9 @@ struct CircuitBreakerConfig {
     static CircuitBreakerConfig sensitive();
     static CircuitBreakerConfig relaxed();
     static CircuitBreakerConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -384,7 +398,7 @@ struct CircuitBreaker {
 
 
 CircuitBreaker CircuitBreaker::new_(CircuitBreakerConfig config) {
-    return CircuitBreaker{.config_field = rusty::Cell<CircuitBreakerConfig>::new_(std::move(config)), .state_field = rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState::CLOSED))), .failure_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .success_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .last_failure_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .probe_in_progress = rusty::Cell<bool>::new_(false)};
+    return CircuitBreaker{.config_field = rusty::Cell<CircuitBreakerConfig>::new_(std::move(config)), .state_field = rusty::Cell<CircuitState>::new_(rusty::clone(rusty::clone(CircuitState_CLOSED()))), .failure_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .success_count_field = rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), .last_failure_time = rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(0)), .probe_in_progress = rusty::Cell<bool>::new_(false)};
 }
 
 void CircuitBreaker::set_config(CircuitBreakerConfig config) const {
@@ -397,22 +411,22 @@ bool CircuitBreaker::allow_request() const {
         return true;
     }
     const CircuitState current = this->state_field.get();
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::CLOSED)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_CLOSED())))) {
         return true;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_OPEN())))) {
         const uint64_t now = current_time_us();
         const uint64_t last = this->last_failure_time.get();
         const uint64_t timeout_us = ((static_cast<uint64_t>(this->config_field.get().timeout_ms))) * static_cast<uint64_t>(1000);
         if ((rusty::detail::deref_if_pointer_like(now) - rusty::detail::deref_if_pointer_like(last)) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
-            CircuitState next = rusty::clone(CircuitState::HALF_OPEN);
+            CircuitState next = rusty::clone(CircuitState_HALF_OPEN());
             this->state_field.set(std::move(next));
             this->probe_in_progress.set(true);
             return true;
         }
         return false;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::HALF_OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_HALF_OPEN())))) {
         if (rusty::detail::rust_not(this->probe_in_progress.get())) {
             this->probe_in_progress.set(true);
             return true;
@@ -427,23 +441,23 @@ void CircuitBreaker::record_success() const {
         return;
     }
     const CircuitState current = this->state_field.get();
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::CLOSED)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_CLOSED())))) {
         this->failure_count_field.set(static_cast<uint32_t>(0));
         return;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::HALF_OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_HALF_OPEN())))) {
         this->probe_in_progress.set(false);
         uint32_t count = this->success_count_field.get() + static_cast<uint32_t>(1);
         this->success_count_field.set(std::move(count));
         if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.get().success_threshold)) {
-            CircuitState closed = rusty::clone(CircuitState::CLOSED);
+            CircuitState closed = rusty::clone(CircuitState_CLOSED());
             this->state_field.set(std::move(closed));
             this->failure_count_field.set(static_cast<uint32_t>(0));
             this->success_count_field.set(static_cast<uint32_t>(0));
         }
         return;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_OPEN())))) {
         this->probe_in_progress.set(false);
     }
 }
@@ -453,11 +467,11 @@ void CircuitBreaker::record_failure() const {
         return;
     }
     const CircuitState current = this->state_field.get();
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::CLOSED)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_CLOSED())))) {
         uint32_t count = this->failure_count_field.get() + static_cast<uint32_t>(1);
         this->failure_count_field.set(std::move(count));
         if (rusty::detail::deref_if_pointer_like(count) >= rusty::detail::deref_if_pointer_like(this->config_field.get().failure_threshold)) {
-            CircuitState open = rusty::clone(CircuitState::OPEN);
+            CircuitState open = rusty::clone(CircuitState_OPEN());
             this->state_field.set(std::move(open));
             this->last_failure_time.set(current_time_us());
             this->failure_count_field.set(static_cast<uint32_t>(0));
@@ -465,15 +479,15 @@ void CircuitBreaker::record_failure() const {
         }
         return;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::HALF_OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_HALF_OPEN())))) {
         this->probe_in_progress.set(false);
-        CircuitState open = rusty::clone(CircuitState::OPEN);
+        CircuitState open = rusty::clone(CircuitState_OPEN());
         this->state_field.set(std::move(open));
         this->last_failure_time.set(current_time_us());
         this->success_count_field.set(static_cast<uint32_t>(0));
         return;
     }
-    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState::OPEN)))) {
+    if (((static_cast<int32_t>(current))) == ((static_cast<int32_t>(CircuitState_OPEN())))) {
         this->last_failure_time.set(current_time_us());
     }
 }
@@ -483,19 +497,19 @@ CircuitState CircuitBreaker::state() const {
 }
 
 bool CircuitBreaker::is_open() const {
-    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState::OPEN)));
+    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState_OPEN())));
 }
 
 bool CircuitBreaker::is_closed() const {
-    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState::CLOSED)));
+    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState_CLOSED())));
 }
 
 bool CircuitBreaker::is_half_open() const {
-    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState::HALF_OPEN)));
+    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(CircuitState_HALF_OPEN())));
 }
 
 void CircuitBreaker::reset() const {
-    CircuitState closed = rusty::clone(CircuitState::CLOSED);
+    CircuitState closed = rusty::clone(CircuitState_CLOSED());
     this->state_field.set(std::move(closed));
     this->failure_count_field.set(static_cast<uint32_t>(0));
     this->success_count_field.set(static_cast<uint32_t>(0));

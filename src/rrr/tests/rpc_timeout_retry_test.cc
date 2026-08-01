@@ -108,17 +108,17 @@ TEST(TimeoutTypeTest, DefaultIsNone) {
 }
 
 TEST(TimeoutTypeTest, StringConversions) {
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::NONE), "NONE");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
-    EXPECT_STREQ(timeout_type_to_string(TimeoutType::TOTAL_TIMEOUT), "TOTAL_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::NONE), "NONE");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
+    EXPECT_EQ(timeout_type_to_string(TimeoutType::TOTAL_TIMEOUT), "TOTAL_TIMEOUT");
 }
 
 TEST(TimeoutTypeTest, UnknownTypeReturnsUnknown) {
     // Cast invalid value
     auto invalid = static_cast<TimeoutType>(255);
-    EXPECT_STREQ(timeout_type_to_string(invalid), "UNKNOWN");
+    EXPECT_EQ(timeout_type_to_string(invalid), "UNKNOWN");
 }
 
 // ============================================================================

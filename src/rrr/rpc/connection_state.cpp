@@ -53,17 +53,28 @@ inline constexpr ConnectionState ConnectionState_DISCONNECTED() { return Connect
 inline constexpr ConnectionState ConnectionState_FAILED() { return ConnectionState::FAILED; }
 /*RUSTYCPP:GEN-END id=connection_state.connection_state*/
 
-inline const char* connection_state_to_string(ConnectionState state) {
-    switch (state) {
-        case ConnectionState::NEW: return "NEW";
-        case ConnectionState::CONNECTING: return "CONNECTING";
-        case ConnectionState::CONNECTED: return "CONNECTED";
-        case ConnectionState::DISCONNECTING: return "DISCONNECTING";
-        case ConnectionState::DISCONNECTED: return "DISCONNECTED";
-        case ConnectionState::FAILED: return "FAILED";
-        default: return "UNKNOWN";
+// Returns &'static str (-> std::string_view), not const char*: the DSL
+// cannot spell a literal as a raw pointer. Callers use EXPECT_EQ, not
+// EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
+// std::format variadic template now, not C varargs. See playbook 7.26.
+#if RUSTYCPP_RUST
+fn connection_state_to_string(state: ConnectionState) -> &'static str {
+    match state {
+        ConnectionState::NEW => "NEW",
+        ConnectionState::CONNECTING => "CONNECTING",
+        ConnectionState::CONNECTED => "CONNECTED",
+        ConnectionState::DISCONNECTING => "DISCONNECTING",
+        ConnectionState::DISCONNECTED => "DISCONNECTED",
+        ConnectionState::FAILED => "FAILED",
+        _ => "UNKNOWN",
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_state.2 version=1 rust_sha256=909532b500772821ab6b18b983a13ed7797d3c6ec7598687e9f2954a04ae1829*/
+std::string_view connection_state_to_string(ConnectionState state) {
+    return ({ auto&& _m = state; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == ConnectionState::NEW)) { _match_value.emplace(std::move(std::string_view("NEW"))); _m_matched = true; } if (!_m_matched && (_m == ConnectionState::CONNECTING)) { _match_value.emplace(std::move(std::string_view("CONNECTING"))); _m_matched = true; } if (!_m_matched && (_m == ConnectionState::CONNECTED)) { _match_value.emplace(std::move(std::string_view("CONNECTED"))); _m_matched = true; } if (!_m_matched && (_m == ConnectionState::DISCONNECTING)) { _match_value.emplace(std::move(std::string_view("DISCONNECTING"))); _m_matched = true; } if (!_m_matched && (_m == ConnectionState::DISCONNECTED)) { _match_value.emplace(std::move(std::string_view("DISCONNECTED"))); _m_matched = true; } if (!_m_matched && (_m == ConnectionState::FAILED)) { _match_value.emplace(std::move(std::string_view("FAILED"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
+/*RUSTYCPP:GEN-END id=connection_state.2*/
 
 // Type alias for the state-change callback. Switched from the
 // non-const-callable `rusty::Function<void(...)>` to the const-callable
@@ -230,7 +241,7 @@ struct ConnectionStateMachine {
 
 
 ConnectionStateMachine ConnectionStateMachine::new_() {
-    return ConnectionStateMachine{.state_field = rusty::Cell<ConnectionState>::new_(rusty::clone(rusty::clone(ConnectionState::NEW))), .on_state_change = StateChangeCallback{}};
+    return ConnectionStateMachine{.state_field = rusty::Cell<ConnectionState>::new_(rusty::clone(rusty::clone(ConnectionState_NEW()))), .on_state_change = StateChangeCallback{}};
 }
 
 ConnectionState ConnectionStateMachine::state() const {
@@ -267,46 +278,46 @@ void ConnectionStateMachine::set_on_state_change(StateChangeCallback callback) {
 }
 
 bool ConnectionStateMachine::is_connected() const {
-    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(ConnectionState::CONNECTED)));
+    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(ConnectionState_CONNECTED())));
 }
 
 bool ConnectionStateMachine::is_failed() const {
-    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(ConnectionState::FAILED)));
+    return ((static_cast<int32_t>(this->state_field.get()))) == ((static_cast<int32_t>(ConnectionState_FAILED())));
 }
 
 bool ConnectionStateMachine::is_terminal() const {
     const ConnectionState s = this->state_field.get();
-    return (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED)))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::FAILED))));
+    return (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTED())))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_FAILED()))));
 }
 
 bool ConnectionStateMachine::can_connect() const {
     const ConnectionState s = this->state_field.get();
-    return ((((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::NEW)))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::FAILED))));
+    return ((((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_NEW())))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTED()))))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_FAILED()))));
 }
 
 bool ConnectionStateMachine::is_usable() const {
     const ConnectionState s = this->state_field.get();
-    return (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::CONNECTING)))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState::CONNECTED))));
+    return (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_CONNECTING())))) || (((static_cast<int32_t>(s))) == ((static_cast<int32_t>(ConnectionState_CONNECTED()))));
 }
 
 bool ConnectionStateMachine::is_valid_transition(ConnectionState from, ConnectionState to) {
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::NEW)))) {
-        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::CONNECTING)));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_NEW())))) {
+        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_CONNECTING())));
     }
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::CONNECTING)))) {
-        return ((((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::CONNECTED)))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::FAILED))))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED))));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_CONNECTING())))) {
+        return ((((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_CONNECTED())))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_FAILED()))))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTED()))));
     }
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::CONNECTED)))) {
-        return (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTING)))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::FAILED))));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_CONNECTED())))) {
+        return (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTING())))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_FAILED()))));
     }
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTING)))) {
-        return (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED)))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::FAILED))));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTING())))) {
+        return (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTED())))) || (((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_FAILED()))));
     }
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::DISCONNECTED)))) {
-        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::CONNECTING)));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_DISCONNECTED())))) {
+        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_CONNECTING())));
     }
-    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState::FAILED)))) {
-        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState::CONNECTING)));
+    if (((static_cast<int32_t>(from))) == ((static_cast<int32_t>(ConnectionState_FAILED())))) {
+        return ((static_cast<int32_t>(to))) == ((static_cast<int32_t>(ConnectionState_CONNECTING())));
     }
     return false;
 }

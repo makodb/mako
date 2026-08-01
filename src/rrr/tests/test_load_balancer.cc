@@ -338,11 +338,11 @@ TEST_F(LoadBalancerTest, SingleClientAlwaysSelected) {
 // ===========================================================================
 
 TEST(LoadBalancingStrategyTest, ToStringConversion) {
-    EXPECT_STREQ(load_balancing_strategy_to_string(LoadBalancingStrategy::RANDOM), "RANDOM");
-    EXPECT_STREQ(load_balancing_strategy_to_string(LoadBalancingStrategy::ROUND_ROBIN), "ROUND_ROBIN");
-    EXPECT_STREQ(load_balancing_strategy_to_string(LoadBalancingStrategy::LEAST_CONNECTIONS), "LEAST_CONNECTIONS");
-    EXPECT_STREQ(load_balancing_strategy_to_string(LoadBalancingStrategy::LEAST_LATENCY), "LEAST_LATENCY");
-    EXPECT_STREQ(load_balancing_strategy_to_string(static_cast<LoadBalancingStrategy>(99)), "UNKNOWN");
+    EXPECT_EQ(load_balancing_strategy_to_string(LoadBalancingStrategy::RANDOM), "RANDOM");
+    EXPECT_EQ(load_balancing_strategy_to_string(LoadBalancingStrategy::ROUND_ROBIN), "ROUND_ROBIN");
+    EXPECT_EQ(load_balancing_strategy_to_string(LoadBalancingStrategy::LEAST_CONNECTIONS), "LEAST_CONNECTIONS");
+    EXPECT_EQ(load_balancing_strategy_to_string(LoadBalancingStrategy::LEAST_LATENCY), "LEAST_LATENCY");
+    EXPECT_EQ(load_balancing_strategy_to_string(static_cast<LoadBalancingStrategy>(99)), "UNKNOWN");
 }
 
 // ===========================================================================

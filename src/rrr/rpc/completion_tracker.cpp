@@ -89,6 +89,9 @@ struct CompletionTrackerConfig {
     static CompletionTrackerConfig small();
     static CompletionTrackerConfig large();
     static CompletionTrackerConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -157,6 +160,9 @@ struct CompletedEntry {
 
     static CompletedEntry new_(int64_t x, uint64_t ts);
     bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -687,11 +693,14 @@ struct CompletionQueryResult {
     static CompletionQueryResult completed(int32_t err_code, bool has_response);
     static CompletionQueryResult expired();
     bool is_completed() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
 CompletionQueryResult CompletionQueryResult::new_() {
-    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::NOT_FOUND)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus_NOT_FOUND())), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
 }
 
 CompletionQueryResult CompletionQueryResult::not_found() {
@@ -699,29 +708,40 @@ CompletionQueryResult CompletionQueryResult::not_found() {
 }
 
 CompletionQueryResult CompletionQueryResult::completed(int32_t err_code, bool has_response) {
-    CompletionStatus s = (rusty::detail::deref_if_pointer_like(err_code) == static_cast<int32_t>(0) ? rusty::clone(CompletionStatus::COMPLETED) : rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+    CompletionStatus s = (rusty::detail::deref_if_pointer_like(err_code) == static_cast<int32_t>(0) ? rusty::clone(CompletionStatus_COMPLETED()) : rusty::clone(CompletionStatus_COMPLETED_WITH_ERROR()));
     return CompletionQueryResult{.status = std::move(s), .error_code = std::move(err_code), .has_cached_response = std::move(has_response)};
 }
 
 CompletionQueryResult CompletionQueryResult::expired() {
-    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus::EXPIRED)), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
+    return CompletionQueryResult{.status = rusty::clone(rusty::clone(CompletionStatus_EXPIRED())), .error_code = static_cast<int32_t>(0), .has_cached_response = false};
 }
 
 bool CompletionQueryResult::is_completed() const {
-    return (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED)) || (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus::COMPLETED_WITH_ERROR));
+    return (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus_COMPLETED())) || (rusty::detail::deref_if_pointer_like(this->status) == rusty::clone(CompletionStatus_COMPLETED_WITH_ERROR()));
 }
 /*RUSTYCPP:GEN-END id=completion_tracker.3*/
 
 // @safe - Convert status to string for logging
-inline const char* completion_status_to_string(CompletionStatus status) {
-    switch (status) {
-        case CompletionStatus::NOT_FOUND: return "NOT_FOUND";
-        case CompletionStatus::COMPLETED: return "COMPLETED";
-        case CompletionStatus::COMPLETED_WITH_ERROR: return "COMPLETED_WITH_ERROR";
-        case CompletionStatus::EXPIRED: return "EXPIRED";
-        default: return "UNKNOWN";
+// Returns &'static str (-> std::string_view), not const char*: the DSL
+// cannot spell a literal as a raw pointer. Callers use EXPECT_EQ, not
+// EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
+// std::format variadic template now, not C varargs. See playbook 7.26.
+#if RUSTYCPP_RUST
+fn completion_status_to_string(status: CompletionStatus) -> &'static str {
+    match status {
+        CompletionStatus::NOT_FOUND => "NOT_FOUND",
+        CompletionStatus::COMPLETED => "COMPLETED",
+        CompletionStatus::COMPLETED_WITH_ERROR => "COMPLETED_WITH_ERROR",
+        CompletionStatus::EXPIRED => "EXPIRED",
+        _ => "UNKNOWN",
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=completion_tracker.6 version=1 rust_sha256=cc7a16602ea1f2ba3342bc5ca3f07b901f63fed50240ecfc1d8958c7da4e7cb8*/
+std::string_view completion_status_to_string(CompletionStatus status) {
+    return ({ auto&& _m = status; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == CompletionStatus::NOT_FOUND)) { _match_value.emplace(std::move(std::string_view("NOT_FOUND"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::COMPLETED)) { _match_value.emplace(std::move(std::string_view("COMPLETED"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::COMPLETED_WITH_ERROR)) { _match_value.emplace(std::move(std::string_view("COMPLETED_WITH_ERROR"))); _m_matched = true; } if (!_m_matched && (_m == CompletionStatus::EXPIRED)) { _match_value.emplace(std::move(std::string_view("EXPIRED"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
+/*RUSTYCPP:GEN-END id=completion_tracker.6*/
 
 
 }  // export namespace rrr

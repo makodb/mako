@@ -23,12 +23,12 @@ TEST(ConnectionStateTest, InitialState) {
 }
 
 TEST(ConnectionStateTest, StateToString) {
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::NEW), "NEW");
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::CONNECTING), "CONNECTING");
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::CONNECTED), "CONNECTED");
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::DISCONNECTING), "DISCONNECTING");
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::DISCONNECTED), "DISCONNECTED");
-    EXPECT_STREQ(connection_state_to_string(ConnectionState::FAILED), "FAILED");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::NEW), "NEW");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::CONNECTING), "CONNECTING");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::CONNECTED), "CONNECTED");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::DISCONNECTING), "DISCONNECTING");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::DISCONNECTED), "DISCONNECTED");
+    EXPECT_EQ(connection_state_to_string(ConnectionState::FAILED), "FAILED");
 }
 
 // ============================================================================

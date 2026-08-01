@@ -400,11 +400,11 @@ TEST_F(CompletionQueryResultTest, Expired) {
 }
 
 TEST_F(CompletionQueryResultTest, StatusToString) {
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::NOT_FOUND), "NOT_FOUND");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::COMPLETED), "COMPLETED");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::COMPLETED_WITH_ERROR), "COMPLETED_WITH_ERROR");
-    EXPECT_STREQ(completion_status_to_string(CompletionStatus::EXPIRED), "EXPIRED");
-    EXPECT_STREQ(completion_status_to_string(static_cast<CompletionStatus>(99)), "UNKNOWN");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::NOT_FOUND), "NOT_FOUND");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::COMPLETED), "COMPLETED");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::COMPLETED_WITH_ERROR), "COMPLETED_WITH_ERROR");
+    EXPECT_EQ(completion_status_to_string(CompletionStatus::EXPIRED), "EXPIRED");
+    EXPECT_EQ(completion_status_to_string(static_cast<CompletionStatus>(99)), "UNKNOWN");
 }
 
 // ===========================================================================

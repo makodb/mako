@@ -48,9 +48,9 @@ TEST(CircuitBreakerConfigTest, DisabledPreset) {
 }
 
 TEST(CircuitBreakerStateTest, StateToString) {
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
-    EXPECT_STREQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::CLOSED), "CLOSED");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::OPEN), "OPEN");
+    EXPECT_EQ(circuit_state_to_string(CircuitState::HALF_OPEN), "HALF_OPEN");
 }
 
 // ============================================================================

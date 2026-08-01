@@ -45,15 +45,26 @@ inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_CONNECTIONS()
 inline constexpr LoadBalancingStrategy LoadBalancingStrategy_LEAST_LATENCY() { return LoadBalancingStrategy::LEAST_LATENCY; }
 /*RUSTYCPP:GEN-END id=load_balancer.strategy*/
 
-inline const char* load_balancing_strategy_to_string(LoadBalancingStrategy strategy) {
-    switch (strategy) {
-        case LoadBalancingStrategy::RANDOM: return "RANDOM";
-        case LoadBalancingStrategy::ROUND_ROBIN: return "ROUND_ROBIN";
-        case LoadBalancingStrategy::LEAST_CONNECTIONS: return "LEAST_CONNECTIONS";
-        case LoadBalancingStrategy::LEAST_LATENCY: return "LEAST_LATENCY";
-        default: return "UNKNOWN";
+// Returns &'static str (-> std::string_view), not const char*: the DSL
+// cannot spell a literal as a raw pointer. Callers use EXPECT_EQ, not
+// EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
+// std::format variadic template now, not C varargs. See playbook 7.26.
+#if RUSTYCPP_RUST
+fn load_balancing_strategy_to_string(strategy: LoadBalancingStrategy) -> &'static str {
+    match strategy {
+        LoadBalancingStrategy::RANDOM => "RANDOM",
+        LoadBalancingStrategy::ROUND_ROBIN => "ROUND_ROBIN",
+        LoadBalancingStrategy::LEAST_CONNECTIONS => "LEAST_CONNECTIONS",
+        LoadBalancingStrategy::LEAST_LATENCY => "LEAST_LATENCY",
+        _ => "UNKNOWN",
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.2 version=1 rust_sha256=edb82717951b95cabfba64d5d9b8ff95309680be4ea687768d98430a26266e13*/
+std::string_view load_balancing_strategy_to_string(LoadBalancingStrategy strategy) {
+    return ({ auto&& _m = strategy; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == LoadBalancingStrategy::RANDOM)) { _match_value.emplace(std::move(std::string_view("RANDOM"))); _m_matched = true; } if (!_m_matched && (_m == LoadBalancingStrategy::ROUND_ROBIN)) { _match_value.emplace(std::move(std::string_view("ROUND_ROBIN"))); _m_matched = true; } if (!_m_matched && (_m == LoadBalancingStrategy::LEAST_CONNECTIONS)) { _match_value.emplace(std::move(std::string_view("LEAST_CONNECTIONS"))); _m_matched = true; } if (!_m_matched && (_m == LoadBalancingStrategy::LEAST_LATENCY)) { _match_value.emplace(std::move(std::string_view("LEAST_LATENCY"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
+/*RUSTYCPP:GEN-END id=load_balancer.2*/
 
 // `LoadBalancerState` — single-counter round-robin index holder.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
@@ -109,6 +120,8 @@ struct LoadBalancerState {
     static LoadBalancerState new_();
     size_t next_round_robin_index(size_t pool_size) const;
     void reset() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
 };
 
 
@@ -242,6 +255,9 @@ struct LoadBalancer {
     static size_t select(LoadBalancingStrategy strategy, const ClientVec& clients, const LoadBalancerState& state, size_t rand_value);
     static size_t select_random(size_t pool_size, size_t rand_value);
     static size_t select_round_robin(size_t pool_size, const LoadBalancerState& state);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -251,13 +267,13 @@ size_t LoadBalancer::select(LoadBalancingStrategy strategy, const ClientVec& cli
     if (rusty::detail::deref_if_pointer_like(pool_size) == static_cast<size_t>(0)) {
         return static_cast<size_t>(0);
     }
-    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::ROUND_ROBIN)) {
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy_ROUND_ROBIN())) {
         return LoadBalancer::select_round_robin(std::move(pool_size), state);
     }
-    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::LEAST_CONNECTIONS)) {
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy_LEAST_CONNECTIONS())) {
         return lb_select_least_connections(clients);
     }
-    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy::LEAST_LATENCY)) {
+    if (rusty::detail::deref_if_pointer_like(strategy) == rusty::clone(LoadBalancingStrategy_LEAST_LATENCY())) {
         return lb_select_least_latency(clients);
     }
     return LoadBalancer::select_random(std::move(pool_size), std::move(rand_value));

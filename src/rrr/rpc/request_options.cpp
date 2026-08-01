@@ -237,6 +237,9 @@ struct RequestOptions {
     uint64_t calculate_delay_ms(uint16_t attempt) const;
     bool is_total_timeout_exceeded(uint64_t elapsed_ms) const;
     uint64_t remaining_time_ms(uint64_t elapsed_ms) const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -311,15 +314,29 @@ uint64_t RequestOptions::remaining_time_ms(uint64_t elapsed_ms) const {
 }
 /*RUSTYCPP:GEN-END id=request_options.0*/
 
-inline const char* timeout_type_to_string(TimeoutType type) {
-    switch (type) {
-        case TimeoutType::NONE: return "NONE";
-        case TimeoutType::CONNECT_TIMEOUT: return "CONNECT_TIMEOUT";
-        case TimeoutType::REQUEST_TIMEOUT: return "REQUEST_TIMEOUT";
-        case TimeoutType::RESPONSE_TIMEOUT: return "RESPONSE_TIMEOUT";
-        case TimeoutType::TOTAL_TIMEOUT: return "TOTAL_TIMEOUT";
-        default: return "UNKNOWN";
+// Returns &'static str (-> std::string_view), not const char*: the DSL
+// cannot spell a literal as a raw pointer. Callers use EXPECT_EQ, not
+// EXPECT_STREQ. The varargs-UB objection to this is expired -- Log_* is a
+// std::format variadic template now, not C varargs. See playbook 7.26.
+#if RUSTYCPP_RUST
+// NOTE: the parameter is `ty`, not `type` -- `type` is a Rust keyword and
+// the DSL parser rejects it (CLAUDE.md documents this for fields; it applies
+// to parameters too). C++ callers pass positionally, so the rename is local.
+fn timeout_type_to_string(ty: TimeoutType) -> &'static str {
+    match ty {
+        TimeoutType::NONE => "NONE",
+        TimeoutType::CONNECT_TIMEOUT => "CONNECT_TIMEOUT",
+        TimeoutType::REQUEST_TIMEOUT => "REQUEST_TIMEOUT",
+        TimeoutType::RESPONSE_TIMEOUT => "RESPONSE_TIMEOUT",
+        TimeoutType::TOTAL_TIMEOUT => "TOTAL_TIMEOUT",
+        _ => "UNKNOWN",
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_options.3 version=1 rust_sha256=eb3d5bd030447754c91ca6c42382923cb6a5afd8eb4a352b096d694a7bcdf35a*/
+std::string_view timeout_type_to_string(TimeoutType ty) {
+    return ({ auto&& _m = ty; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == TimeoutType::NONE)) { _match_value.emplace(std::move(std::string_view("NONE"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::CONNECT_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("CONNECT_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::REQUEST_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("REQUEST_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::RESPONSE_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("RESPONSE_TIMEOUT"))); _m_matched = true; } if (!_m_matched && (_m == TimeoutType::TOTAL_TIMEOUT)) { _match_value.emplace(std::move(std::string_view("TOTAL_TIMEOUT"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
+/*RUSTYCPP:GEN-END id=request_options.3*/
 
 } // export namespace rrr
