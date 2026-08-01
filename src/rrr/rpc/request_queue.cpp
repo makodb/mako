@@ -340,7 +340,6 @@ RequestQueueConfig RequestQueueConfig::disabled() {
 struct RequestQueue;
 inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
 inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
-inline size_t rq_expire_stale(const RequestQueue& self);
 #if RUSTYCPP_RUST
 struct RequestQueue {
     // Cell: RequestQueue is reached through a shared handle, so a config
@@ -376,7 +375,27 @@ impl RequestQueue {
     }
 
     fn expire_stale(&self) -> usize {
-        rq_expire_stale(self)
+        // Collect under the lock, invoke outside it (see clear_all).
+        let mut callbacks_to_invoke: Vec<QueuedRequestCallback> =
+            Vec::<QueuedRequestCallback>::new();
+        let mut removed: usize = 0;
+        {
+            let mut guard = self.queue_.lock().unwrap();
+            let mut expired = (*guard).extract_if(move |r: &QueuedRequest| {
+                r.is_expired()
+            });
+            removed = expired.size();
+            while expired.size() > 0 {
+                let mut req = expired.pop_front().unwrap();
+                if req.callback {
+                    callbacks_to_invoke.push(req.callback);
+                }
+            }
+        }
+        for cb in callbacks_to_invoke {
+            rq_invoke_callback_safely(cb, kRequestQueueExpiredError);
+        }
+        removed
     }
 
     fn size(&self) -> usize {
@@ -443,7 +462,7 @@ impl RequestQueue {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=63a9df1337e15f8e80e85abc9e6bd35e761bcf26cef4b6cbd0a42848843fe108*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=c7b064302b0c2584d91a31badefe6a49c98188be7435a65398210f10e7434e7c*/
 struct RequestQueue;
 
 struct RequestQueue {
@@ -487,7 +506,25 @@ rusty::Option<QueuedRequest> RequestQueue::dequeue() {
 }
 
 size_t RequestQueue::expire_stale() const {
-    return rq_expire_stale((*this));
+    rusty::Vec<QueuedRequestCallback> callbacks_to_invoke = rusty::Vec<QueuedRequestCallback>::new_();
+    size_t removed = static_cast<size_t>(0);
+    {
+        auto guard = this->queue_.lock().unwrap();
+        auto expired = ((*guard)).extract_if([=](const QueuedRequest& r) {
+return r.is_expired();
+});
+        removed = expired.size();
+        while (expired.size() > 0) {
+            auto req = expired.pop_front().unwrap();
+            if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.callback); }) { return (__r.callback); } else if constexpr (requires { (__r.callback_field); }) { return (__r.callback_field); } else if constexpr (requires { ((*__r).callback); }) { return ((*__r).callback); } else { return ((*__r).callback_field); } }(req)) {
+                callbacks_to_invoke.push(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.callback); }) { return (__r.callback); } else if constexpr (requires { (__r.callback_field); }) { return (__r.callback_field); } else if constexpr (requires { ((*__r).callback); }) { return ((*__r).callback); } else { return ((*__r).callback_field); } }(req)));
+            }
+        }
+    }
+    for (auto&& cb : rusty::for_in(callbacks_to_invoke)) {
+        rq_invoke_callback_safely(std::move(cb), std::move(kRequestQueueExpiredError));
+    }
+    return std::move(removed);
 }
 
 size_t RequestQueue::size() const {
@@ -589,28 +626,6 @@ inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
 
 // @unsafe - expire_stale: extract_if + drain callbacks outside the lock with
 // try/catch (the try/catch is not DSL-expressible).
-inline size_t rq_expire_stale(const RequestQueue& self) {
-    rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
-    size_t removed = 0;
-    {
-        auto guard = self.queue_.lock().unwrap();
-        auto expired = (*guard).extract_if(
-            rusty::Function<bool(const QueuedRequest&)>(
-                [](const QueuedRequest& r) { return r.is_expired(); }));
-        removed = expired.size();
-        while (expired.size() > 0) {
-            auto req = expired.pop_front().unwrap();
-            if (req.callback) {
-                callbacks_to_invoke.push(std::move(req.callback));
-            }
-        }
-    }
-    for (auto& cb : callbacks_to_invoke) {
-        // @unsafe { invoking + swallowing exceptions }
-        try { cb(kRequestQueueExpiredError); } catch (...) {}
-    }
-    return removed;
-}
 
 // @unsafe - clear_all: drain callbacks (range-for over the guarded deque) +
 // clear, invoke outside the lock with try/catch.
