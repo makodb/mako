@@ -2310,3 +2310,62 @@ function, each caught by a different mechanism and none visible in the
 DSL source: a `self`-named parameter becoming a receiver (caught by
 reading GEN), the call emitted above its callee's declaration (caught by
 compile), and this (caught only by link).
+
+### 7.35 Compile ONE TU against the existing BMIs — a 1-minute check, not a 30-minute build
+
+Some claims are about code the normal build never compiles: an
+`#ifdef`-disabled block, a platform arm, a file you are about to delete.
+The reflex is either to assert from reading ("this would obviously
+fail") or to run the full gate. There is a much cheaper third option:
+ask ninja for the exact command it would use, and run just that.
+
+```
+# 1. get the real command (last line = the compile)
+ninja -t commands src/rrr/CMakeFiles/rrr.dir/rpc/server.cpp.o | tail -1
+
+# 2. rewrite it: drop the depfile flags, redirect the outputs,
+#    add whatever you are testing
+#    -MD, -MT <val>, -MF <val>   -> DROP (no depfile wanted)
+#    -o <val>                    -> scratch path
+#    -c <val>                    -> your probe copy of the source
+#    @....modmap                 -> ***KEEP***  (see below)
+```
+
+**Keep the `@...modmap` argument.** It is the file that maps every
+`import` in the TU to a concrete built BMI. Without it the compile dies
+on the first import and you learn nothing. This is also why the check is
+fast: every module the TU imports is *already built* in the tree, so you
+pay for one TU, not the module graph.
+
+Two ways to get it wrong, both of which I hit:
+
+ - **Stripping an option's VALUE but not its flag.** `-MT` and `-MF` each
+   take a separate following token. Filtering out the token that merely
+   *looks* like an output path (`…/server.cpp.o`) leaves a dangling
+   `-MT`, which then swallows the next flag. Symptom is a nonsense error
+   naming the depfile as a missing input. Drop flag and value together.
+ - **Compiling the tree's real file in place.** Don't. Write the variant
+   to a scratch path and point `-c` at that, with `-o` to scratch too.
+   A module *implementation* unit (no `-fmodule-output` in its command)
+   produces no BMI, so nothing in the build tree is disturbed and no
+   rebuild is triggered. Check for `-fmodule-output` first — if it IS an
+   interface unit, it emits a BMI and you must redirect that as well or
+   you will poison the tree.
+
+Worked example: the `#ifdef RPC_STATISTICS` block in `server.cpp` was
+deleted on the argument that it "had rotted." That argument came from a
+subagent and I published it in a commit message before checking it.
+Extracting the command, adding `-DRPC_STATISTICS`, and compiling one TU
+took about a minute and produced exactly 4 errors — confirming the claim
+but refuting my own guesses about its *cause*. I had assumed the rot was
+in the rusty container APIs (`HashMap::operator[]`, the `Counter`
+methods); those were all fine. The real breakage was unqualified names
+that lost namespace reachability in the module migration: `base::rdtsc`
+(the `base` namespace is gone — it survives as `rrr::rdtsc`),
+`numeric_limits`, and `pair`.
+
+Which is the general lesson: **"does it compile" is cheap to answer
+exactly and expensive to answer by reasoning.** Reading the code told me
+the right verdict for the wrong reason, and a wrong reason is a bad thing
+to write into a commit message. If a claim is decidable by the compiler,
+decide it with the compiler.
