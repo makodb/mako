@@ -3096,3 +3096,42 @@ be read as historical.
 
 That also removes **A4** from the Goal 0 Phase-A plan — it was never a
 reshape task, the construct simply works now.
+
+### 7.45 The heuristic that predicts which limitations are stale
+
+Twenty stated limitations have now been re-tested. A rule emerged that
+has predicted **every** outcome so far, and it is cheaper to apply than
+a probe:
+
+> **Does the limitation trace to a gap in RUST's own expressiveness, or
+> to "the transpiler doesn't do it yet"?** The first is a real floor.
+> The second is a dated observation and is almost certainly stale.
+
+Scoreboard:
+
+| limitation | Rust has the construct? | verdict |
+|---|---|---|
+| `nullptr` | no (`std::ptr::null()` has no C++ lowering) | **REAL** |
+| variadic generics | no | **REAL** |
+| per-field in-class default initialisers | no — Rust uses `Default`, not field inits | **REAL** (parse error, confirmed) |
+| default arguments | no | **REAL** (untested, but same shape) |
+| class templates | yes (generics) | stale |
+| function overloading | yes (trait impls) | stale |
+| function-local statics | yes | stale |
+| returning a reference | yes | stale |
+| Box deref for a method call | yes (auto-deref) | stale |
+| struct fill | yes (struct literal) | stale |
+| move-out-of-deque | yes (`pop_front`) | stale — `q.pop_front()` lowers verbatim |
+| `Function<..>` as a field/param type | yes | stale |
+| `use rusty::…` imports | yes | stale (fixed today) |
+
+Sixteen tested stale, four real — and the four real ones are exactly the
+four where Rust itself lacks the feature. That is not a coincidence: the
+transpiler's job is to lower Rust, so anything Rust can say it will
+eventually say, while anything Rust cannot say has nowhere to come from.
+
+**Use it to triage, not to conclude.** The heuristic says where to spend
+a probe, and the probe still decides — but it has turned a 24-item list
+into a ranked one, and it explains why the "floor" framing in §7.24 kept
+dissolving: those were all transpiler-maturity claims wearing the
+language of language limits.
