@@ -241,10 +241,21 @@ inline void cpu_pause() noexcept {
 //
 // One C++ feature deliberately dropped vs. the pre-DSL form: the
 // `alignas(64)` cache-line alignment on `locked_field`. The DSL does
-// not yet emit field-level alignment attributes. The performance
-// impact is small (false-sharing risk for SpinLocks colocated with
-// other heavily-written data); fixable later by adding alignas
-// support to the transpiler or wrapping in a CacheAligned<T> helper.
+// not yet emit field-level alignment attributes. Fixable by adding
+// alignas support to the transpiler (preferred — it is a translator
+// gap, not a design choice) or by wrapping in a CacheAligned<T>.
+//
+// MEASURED EXPOSURE (2026-08-01): currently nil. SpinLock has exactly
+// two live instances in the whole tree — RccTx::__debug_parents_lock_
+// and RccTx::__debug_scc_lock_ (src/deptran/rcc/tx.h:26-27), both
+// STATIC DEBUG locks, neither a field inside a hot struct. The
+// false-sharing scenario this note warns about does not occur today,
+// and no CacheAligned<T> helper exists anywhere in the tree.
+//
+// So: do not treat this as an outstanding performance bug. DO re-check
+// it before putting a SpinLock inside a struct alongside
+// heavily-written fields — that is the case where the lost alignment
+// starts to cost something, and nothing will warn you.
 #if RUSTYCPP_RUST
 struct SpinLock {
     locked_field: AtomicBool,
