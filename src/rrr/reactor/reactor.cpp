@@ -3377,22 +3377,42 @@ rusty::Arc<WaitAll> waitall_make() {
 /*RUSTYCPP:GEN-END id=reactor.22*/
 
 // Flattened (S4): the former WaitAll(const Vec&) ctor.
-rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
-  rusty::Vec<rusty::Arc<EventPollable>> events;
-  events.reserve(evs.len());
-  for (const auto& ev : evs) {
-    events.push(ev);
-  }
-  auto sp = rusty::Arc<WaitAll>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
-      rusty::thread::current_id(),                        // owner_thread_
-      EventState{},                                       // state_
-      rusty::Cell<bool>::new_(true),                      // prunable_
-      rusty::sync::Weak<EventPollable>(),                 // self_
-      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));  // events_
-  event_state_seed(sp->state_);
-  return sp;
+// Authored as inline Rust DSL. `ev.clone()` in the loop is the faithful
+// translation of the C++ `events.push(ev)` over a const& — it lowers to
+// rusty::clone(ev), NOT std::move(ev), so the caller's vector is not
+// gutted (probe-verified). Pre-seeded block id: see §7.32.
+#if RUSTYCPP_RUST
+fn waitall_make_from(evs: &rusty::Vec<rusty::Arc<EventPollable>>) -> Arc<WaitAll> {
+    let mut events: rusty::Vec<rusty::Arc<EventPollable>> =
+        rusty::Vec::<rusty::Arc<EventPollable>>::new();
+    events.reserve(evs.len());
+    for ev in evs {
+        events.push(ev.clone());
+    }
+    let sp = rusty::Arc::<WaitAll>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+        rusty::RefCell::<rusty::Vec<rusty::Arc<EventPollable>>>(events),
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.waitall_make_from version=1 rust_sha256=c9f97353ab92163d2e04ff034a904697585f229ef1864335a574e3c3e594e888*/
+rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
+    rusty::Vec<rusty::Arc<EventPollable>> events = rusty::Vec<rusty::Arc<EventPollable>>::new_();
+    events.reserve(rusty::len(evs));
+    for (auto&& ev : rusty::for_in(rusty::iter(evs))) {
+        events.push(rusty::clone(ev));
+    }
+    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>(std::move(events)));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+/*RUSTYCPP:GEN-END id=reactor.waitall_make_from*/
 
 // @unsafe - the single push the DSL add_event forwards here (a `.push()` on a
 // RefCell<Vec> guard currently mis-lowers, so it stays a hand-written kernel).
