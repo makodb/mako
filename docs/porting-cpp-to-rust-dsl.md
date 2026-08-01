@@ -1199,3 +1199,43 @@ in it rewrites the four `Fiber::sleep` call sites into non-compiling code.
 its comment cites is GONE (`rc.field` now lowers to `(*rc).field`,
 provided the binding's type is known; annotate it if it comes from a C++
 static like `Fiber::current_fiber()`).
+
+### 7.18 Output drift is real and widespread — 26 of 41 files (measured)
+
+§7.17 predicted the drift guard cannot see generated-output drift.
+Measured it: regenerating all 41 DSL files with the current transpiler
+changes **26 of them** (+234/−101), while `rrr_dsl_check.sh` reports
+"0 drift" throughout — it only hashes the DSL source.
+
+Most of the delta is IMPROVEMENT accumulated from fixes landed since
+those blocks were generated:
+ - `rusty_mark_forgotten()` now propagates to fields
+   (`mark_forgotten_if_supported(this->info_)`) — the forget machinery was
+   silently incomplete;
+ - enum variants resolve to their factories
+   (`LoadBalancingStrategy_ROUND_ROBIN()`), from the cross-block enum fix;
+ - `is_send` / `is_sync` markers are emitted.
+
+But a bulk regeneration does NOT currently compile, for two separate
+reasons, so do not do one casually:
+
+ 1. **Generic structs** emit `rusty::is_send<T>` / `rusty::is_sync<T>`,
+    whose primary templates live in `<rusty/traits.hpp>`. inline-rust
+    cannot add includes, so the file must include it itself — same shape
+    as the intrinsics include in channel.cpp. Fixable per-file.
+ 2. **`errno` is renamed to `errno_`** in epoll_platform_linux.cc, which
+    does not compile. This one needs a DECISION, not a patch. The rename
+    exists for a good reason (mod.rs ~54690): `errno` is a libc MACRO, so
+    a fn *named* errno emitted verbatim gets textually replaced and fails
+    with a diagnostic naming neither. But this DSL is *reading* libc's
+    errno on purpose in a syscall kernel, where the macro is exactly what
+    is wanted. Definition position and reference position want opposite
+    answers, and the escape currently cannot tell them apart.
+
+Not caused by the qualified-path fix (`ed90e566`): that only touches the
+trailing segment of MULTI-segment paths, and `errno` is single-segment.
+
+**Practical guidance:** regenerate one file at a time, as part of
+converting something in it, and build. A file that has not been touched
+in a while may not round-trip, and you will discover that only by trying
+— which is exactly how fiber.cpp's `Fiber::sleep_` breakage surfaced.
