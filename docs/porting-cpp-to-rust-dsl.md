@@ -1698,7 +1698,7 @@ merely use them):
 | `rusty::for_in` | `for x in ...` | `rusty/slice.hpp:2133` |
 | `rusty::iter_mut` | `for x in &mut ...` | `rusty/slice.hpp:2072` |
 | `rusty::is_send<T>` / `is_sync<T>` | generic (templated) structs | `rusty/traits.hpp:49` |
-| `rusty::clone` | `.clone()` | `rusty/move.hpp` |
+| `rusty::clone` | `.clone()`, and defensive transpiler emission | `rusty/move.hpp:129` |
 
 Two ways to satisfy it: the umbrella `<rusty/rusty.hpp>` (simple, but
 pulls in the world and slows the TU), or the narrow header (preferred —
