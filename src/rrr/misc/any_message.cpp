@@ -35,10 +35,13 @@ export namespace rrr {
 
 struct AnyMessage;
 
-// Hand-written backing free fns for the DSL save/load below (Marshal
-// operator chains + shared_ptr deref). Defined in the impl namespace.
-void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar);
-void anymessage_load(AnyMessage& self, BinaryReadArchive& ar);
+// The registry namespace is defined further down (it needs SerializableProxy
+// and the Mutex-guarded map), but AnyMessage::load — DSL, above it — calls
+// create(). Forward-declare just that one entry point.
+using SerializableProxy = rusty::Arc<SerializableBase>;
+namespace any_message_registry {
+rusty::Option<SerializableProxy> create(const std::string& name);
+}  // namespace any_message_registry
 
 // The generic backing free fns must be DECLARED before the generated
 // template methods below: `pack`/`pack_as` take only std::shared_ptr<T>
@@ -91,7 +94,20 @@ impl AnyMessage {
     }
 
     fn load(&mut self, ar: &mut BinaryReadArchive) {
-        anymessage_load(self, ar)
+        rrr::Deserialize_::deserialize(self.type_name_, ar);
+        let proxy_opt = any_message_registry::create(self.type_name_);
+        // The C++ wrote `verify(cond && "unknown type name on wire...")`.
+        // That string is never printed — rrr's verify() reports only file
+        // and line under NDEBUG, and asserts on `ok` otherwise — so it was
+        // documentation for the reader, and stays that way here: an
+        // unknown type name means the sender registered a type the
+        // receiver does not know.
+        verify(proxy_opt.is_some());
+        let mut proxy: rusty::Arc<SerializableBase> = proxy_opt.unwrap();
+        // Unique-owner mutation window: the proxy is factory-fresh, so
+        // get_mut() hands back the &mut that Arc otherwise withholds.
+        proxy.get_mut().unwrap().load(ar);
+        self.payload_ = rusty::Some(proxy);
     }
 
     // True iff this AnyMessage carries a value of type T (i.e., the
@@ -121,7 +137,7 @@ impl AnyMessage {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=52d3281542ba5e1e2e5dec99ad865cad11285e78493fb96e94df8a9afac87da1*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=d50e06d531351fe40caa5cc28f7507e64ac6bf67c5fc332203e77a121cc8931c*/
 struct AnyMessage;
 
 struct AnyMessage {
@@ -150,7 +166,12 @@ void AnyMessage::save(BinaryWriteArchive& ar) const {
 }
 
 void AnyMessage::load(BinaryReadArchive& ar) {
-    anymessage_load((*this), ar);
+    rrr::Deserialize_::deserialize(this->type_name_, ar);
+    auto proxy_opt = any_message_registry::create(this->type_name_);
+    verify(proxy_opt.is_some());
+    rusty::Arc<SerializableBase> proxy = proxy_opt.unwrap();
+    proxy.get_mut().unwrap().load(ar);
+    this->payload_ = rusty::Option<SerializableProxy>(std::move(proxy));
 }
 
 template<typename T>
@@ -330,26 +351,9 @@ namespace rrr {
 
 // @unsafe - `ar << type_name_` Marshal operator<< chain + raw
 // shared_ptr deref to call payload_->save.
-void anymessage_save(const AnyMessage& self, BinaryWriteArchive& ar) {
-  rrr::Serialize_::serialize(self.type_name_, ar);
-  if (self.payload_.is_some()) {
-    self.payload_.unwrap()->save(ar);
-  }
-}
 
 // @unsafe - `ar >> type_name_` Marshal operator>> chain + raw
 // shared_ptr deref to call payload_->load.
-void anymessage_load(AnyMessage& self, BinaryReadArchive& ar) {
-  rrr::Deserialize_::deserialize(self.type_name_, ar);
-  auto proxy_opt = any_message_registry::create(self.type_name_);
-  verify(proxy_opt.is_some() &&
-         "AnyMessage::load: unknown type name on wire.  "
-         "Did the sender register a type the receiver does not know?");
-  auto proxy = proxy_opt.unwrap();
-  // @unsafe - unique-owner mutation window (factory-fresh proxy).
-  proxy.get_mut().unwrap().load(ar);
-  self.payload_ = rusty::Option<SerializableProxy>(std::move(proxy));
-}
 
 namespace {
 
