@@ -9,6 +9,7 @@
 //! C++ numbers, and compare like-for-like build modes (cargo bench is
 //! release/opt-level 3; the C++ bench builds -O3).
 
+use srpc::wire::frame::{encode_into, FrameReader};
 use srpc::wire::{Deserialize, ReadArchive, Serialize, WriteArchive};
 use std::time::Instant;
 
@@ -38,6 +39,49 @@ fn blob(n: usize, fill: u8) -> Vec<u8> {
 
 fn str100() -> String {
     "y".repeat(100)
+}
+
+
+/// Frame-reader scenarios for the first-swap perf question.
+///
+/// The C++ FrameStreamReader splits a ZERO-COPY peek (`next_frame` ->
+/// a `FrameView` aliasing the buffer) from a separate `consume_frame()`.
+/// The Rust port fuses them: `next_frame()` copies each payload out
+/// into a fresh `Vec`. That is one allocation + copy per INBOUND RPC on
+/// the hot path, and the conversion ledger flags it as a bench gate
+/// before the `rrr.frame_codec` swap can land.
+///
+/// `with_next_frame()` already provides the zero-copy shape, so these
+/// price the difference directly instead of arguing about it.
+/// Const-generic over the payload size so each stays a plain `fn(usize)`
+/// (the Scenario table takes a fn pointer, not a capturing closure).
+fn frame_owned_vec<const N: usize>(n: usize) {
+    let mut wire = Vec::new();
+    assert!(encode_into(&mut wire, &blob(N, 0xab), false));
+    let mut r = FrameReader::new();
+    let mut acc = 0usize;
+    let mut i = 0usize;
+    while i < n {
+        r.append(&wire);
+        let (_h, p) = r.next_frame().unwrap().unwrap();
+        acc += p.len();
+        i += 1;
+    }
+    std::hint::black_box(acc);
+}
+
+fn frame_zero_copy<const N: usize>(n: usize) {
+    let mut wire = Vec::new();
+    assert!(encode_into(&mut wire, &blob(N, 0xab), false));
+    let mut r = FrameReader::new();
+    let mut acc = 0usize;
+    let mut i = 0usize;
+    while i < n {
+        r.append(&wire);
+        r.with_next_frame(|_h, p| acc += p.len()).unwrap();
+        i += 1;
+    }
+    std::hint::black_box(acc);
 }
 
 fn main() {
@@ -226,4 +270,11 @@ fn main() {
             }
         },
     });
+    // Frame reader: owned-Vec pop vs zero-copy peek, same payload.
+    run(&Scenario { name: "frame next_frame OWNED Vec (16B payload)",      iters: 2_000_000, body: frame_owned_vec::<16> });
+    run(&Scenario { name: "frame with_next_frame ZERO-COPY (16B payload)", iters: 2_000_000, body: frame_zero_copy::<16> });
+    run(&Scenario { name: "frame next_frame OWNED Vec (1KiB payload)",      iters: 1_000_000, body: frame_owned_vec::<1024> });
+    run(&Scenario { name: "frame with_next_frame ZERO-COPY (1KiB payload)", iters: 1_000_000, body: frame_zero_copy::<1024> });
+    run(&Scenario { name: "frame next_frame OWNED Vec (16KiB payload)",      iters: 200_000, body: frame_owned_vec::<16384> });
+    run(&Scenario { name: "frame with_next_frame ZERO-COPY (16KiB payload)", iters: 200_000, body: frame_zero_copy::<16384> });
 }

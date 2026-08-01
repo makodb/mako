@@ -703,6 +703,32 @@ each payload into a fresh `Vec` where C++ returns a zero-copy view,
 and the Rust compaction rule (`pos>4096 && pos*2>=len`) memmoves far
 more often than the C++ 64 KiB consumed-prefix rule.
 
+**MEASURED 2026-08-01** (`cargo bench -p srpc`, `taskset -c 2`) — the
+owned-`Vec` divergence is priced, so the swap no longer has to argue
+about it:
+
+| payload | `next_frame` (owned `Vec`) | `with_next_frame` (zero-copy) | tax |
+|---|---:|---:|---:|
+| 16 B    |   29.8 ns/op |  11.2 ns/op | **2.66×** |
+| 1 KiB   |   95.0 ns/op |  47.8 ns/op | **1.99×** |
+| 16 KiB  | 1196.8 ns/op | 575.4 ns/op | **2.08×** |
+
+Roughly **2–2.7× per inbound frame**, and it does not amortise with
+payload size — at 16 B the copy is trivial and the allocator still
+costs 18.6 ns, while at 16 KiB the copy itself dominates at +621 ns.
+Both ends are bad for different reasons.
+
+**Consequence for the first swap: the transport must call
+`with_next_frame`, not `next_frame`.** This is not a blocker and does
+not need a crate redesign — the zero-copy shape already exists and is
+already the documented hot-path form. It is a use-the-right-API
+finding, now with a number attached. `next_frame` stays for tests and
+for callers that genuinely want an owned payload.
+
+Scenarios live in `crates/srpc/benches/wire_bench.rs`, const-generic
+over payload size so each stays a plain `fn(usize)` for the Scenario
+table.
+
 ### Perf risks to measure EARLY
 
 - **No latency harness exists** — half the gate is undefined until S1.
