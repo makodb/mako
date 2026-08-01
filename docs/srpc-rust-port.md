@@ -369,6 +369,43 @@ Practical consequence: before each slice, re-derive its scope by reading
 that file, and expect the count to move. Budget for the count being
 wrong rather than for the slice being hard.
 
+#### Goal 0's TRUE floor, characterised (2026-08-01)
+
+Applying the §7.45 heuristic to every "the DSL can't X" comment in
+`src/rrr` (~24 of them), classified by the construct they name:
+
+| construct | sites | verdict |
+|---|---:|---|
+| function-local static | 4 | **DISPROVED** — works (§7.44) |
+| `Function<..>` field/param type | 2 | **DISPROVED** — works (§7.42) |
+| Box deref for a method | 1 | **DISPROVED** (§7.43) |
+| returning a reference | 1 | **DISPROVED** (§7.44) |
+| struct-fill / memset | 1 | **DISPROVED** (§7.43) |
+| element-type visibility | 1 | untested; transpiler-maturity shape ⇒ likely stale |
+| libc syscall modelling | 1 | untested; Rust can express it ⇒ likely stale |
+| **`#[cfg]` / `#ifdef` platform split** | **4** | **transpiler BUG, not a floor** — silently dropped; fixable (upstream report above) |
+| **try/catch** | **3** | **REAL** — Rust has no exceptions |
+| **varargs** | **2** | **REAL** — no C varargs in Rust (though `Log_*` is `std::format` now, so some may be stale) |
+| **`nullptr`** | **1** | **REAL** |
+| **per-field default initialisers** | **1** | **REAL** — Rust uses `Default`, not field inits |
+| **default arguments** | **1** | **REAL** |
+
+So the irreducible core is **~8 stated sites across 5 constructs**
+(try/catch, varargs, nullptr, field defaults, default args), plus 4
+`#[cfg]` sites that are a fixable transpiler bug rather than a floor,
+plus ~2 untested that the heuristic expects to fall.
+
+**Caveat on the numbers:** these count *comments*, not lines. One
+try/catch comment can guard a large body. They bound the floor's
+VARIETY, not its size — but variety is what matters for planning,
+because each distinct construct needs its own decision (Result-vs-panic
+for try/catch, a kernel for nullptr, factories for field defaults) while
+extra sites of a solved construct are mechanical.
+
+**The useful restatement of Goal 0(a):** not "convert 4,856 lines" but
+"make five decisions and then grind". The line count was never the
+obstacle; the unexamined floor list was.
+
 **Phase B — grind the six big files** with the retired floors in hand.
 reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
 tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
