@@ -87,17 +87,29 @@ inline ReplyBuffer reply_buffer_empty() {
     return ReplyBuffer{};
 }
 
-// @unsafe - reserve + raw memcpy + set_len into the reply body (same
-// bulk-fill kernel shape as request_fill_body / buffer_sink_write),
-// then point the read cursor at the filled buffer. Call at most once
-// per ReplyBuffer, before any read.
-inline void reply_buffer_fill(ReplyBuffer& rb, const std::uint8_t* bytes,
-                              std::size_t n) {
-    rb.body.reserve(n);
-    std::memcpy(rb.body.data(), bytes, n);
-    rb.body.set_len(n);
+// Fill the reply body from the wire bytes, then point the read cursor at
+// the filled buffer. Call at most once per ReplyBuffer, before any read.
+//
+// Was a `reserve` + `memcpy` + `set_len` kernel over a raw pointer;
+// taking a slice (rule 2) lets extend_from_slice do the same work with
+// the length carried by the argument. Both callers already computed a
+// sub-range by pointer arithmetic, so they now build that span
+// explicitly at the boundary where the arithmetic belongs.
+#if RUSTYCPP_RUST
+fn reply_buffer_fill(rb: &mut ReplyBuffer, bytes: &[u8]) {
+    rb.body.clear();
+    rb.body.extend_from_slice(bytes);
     rb.src = BufferSource::new_(rb.body.data(), rb.body.len());
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=client.reply_fill version=1 rust_sha256=dbefb4f206231dec0cfcf41e07a68ae8eb549f988f8244f31f3f1a7512a19f81*/
+void reply_buffer_fill(ReplyBuffer& rb, std::span<const uint8_t> bytes) {
+    ReplyBuffer* rb_shadow1 = &rb;
+    (*rb_shadow1).body.clear();
+    (*rb_shadow1).body.extend_from_slice(bytes);
+    (*rb_shadow1).src = BufferSource::new_((*rb_shadow1).body.data(), rusty::len((*rb_shadow1).body));
+}
+/*RUSTYCPP:GEN-END id=client.reply_fill*/
 
 // Stream operator for RefMut<ReplyBuffer> — supports the
 // `fu->get_reply() >> x` pattern.  Each read dispatches through
@@ -250,7 +262,7 @@ struct BufferingConfig {
 
 
 BufferingConfig BufferingConfig::new_() {
-    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior::QUEUE)), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior_QUEUE())), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
 }
 
 BufferingConfig BufferingConfig::defaults() {
@@ -258,7 +270,7 @@ BufferingConfig BufferingConfig::defaults() {
 }
 
 BufferingConfig BufferingConfig::disabled() {
-    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior::FAIL_FAST)), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
+    return BufferingConfig{.behavior = rusty::clone(rusty::clone(DisconnectBehavior_FAIL_FAST())), .max_pending = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
 }
 
 RequestQueueConfig BufferingConfig::to_queue_config() const {
@@ -4388,9 +4400,11 @@ FutureResult clientconn_request_with_options(const ClientConnection& self, i32 r
                     auto attempt_reply = attempt_fu->reply_.borrow_mut();
                     size_t reply_size = attempt_reply->src.remaining();
                     if (reply_size > 0) {
-                        reply_buffer_fill(*final_fu->reply_.borrow_mut(),
-                                          attempt_reply->body.data() + attempt_reply->src.pos(),
-                                          reply_size);
+                        reply_buffer_fill(
+                            *final_fu->reply_.borrow_mut(),
+                            std::span<const std::uint8_t>(
+                                attempt_reply->body.data() + attempt_reply->src.pos(),
+                                reply_size));
                     }
                 }
                 final_fu->notify_ready(final_fu);
@@ -4831,8 +4845,9 @@ void clientconn_decode_response_and_notify(const ClientConnection& self, const s
     verify(fu->xid_ == v_reply_xid.get());
     fu->error_code_.set(v_error_code.get());
     if (response_payload_bytes > 0) {
-      reply_buffer_fill(*fu->reply_.borrow_mut(), bytes + parsed_header_size,
-                        response_payload_bytes);
+      reply_buffer_fill(*fu->reply_.borrow_mut(),
+                        std::span<const std::uint8_t>(bytes + parsed_header_size,
+                                                      response_payload_bytes));
     }
 
     if (v_error_code.get() == 0) {
