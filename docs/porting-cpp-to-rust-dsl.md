@@ -2080,3 +2080,51 @@ auto-numbering sequence, and it survives future insertions.
 ids in the same file is a bug on its own; that it half-deletes the source
 before erroring is the serious part. A regen failure should leave the file
 exactly as it found it.
+
+### 7.33 Bind the guard, then deref — never chain a method through `borrow_mut()`
+
+Two spellings of the same operation, one of which is silently wrong:
+
+```rust
+// WRONG — chained through the guard
+self.events_.borrow_mut().push(x);
+```
+```cpp
+this->events_.borrow_mut()->push(std::move(rusty::Vec<rusty::Arc<Ev>>::from_iter(std::move(x))));
+```
+
+```rust
+// CORRECT — bind the guard, then deref
+let mut g = self.events_.borrow_mut();
+(*g).push(x);
+```
+```cpp
+((*g)).push(std::move(x));
+```
+
+The chained form wraps the *element* in a `Vec::from_iter` — it tries to
+push a collection where an element belongs. It fails to compile here, but
+do not rely on that: the transformation is silent at the DSL level and
+there is no reason a different element type could not produce something
+that compiles and misbehaves.
+
+**This is category (2) under the decision rule** — not a translator bug to
+fix, an equivalent call-site spelling that avoids it. Prefer the bound
+form everywhere a guard is involved.
+
+**It also retracts a verdict.** §7.30a listed `waitall_add_event`
+(reactor.cpp) as a deferral *confirmed still valid*, on the strength of
+probing the chained form and seeing it mis-lower. The deferral is
+avoidable: rewriting the body with a bound guard converts fine. That was
+a **false blocker** — the expensive direction (§7.30b), because a false
+"works" is caught by the build while a false "blocked" silently removes
+work from the plan.
+
+Found while probing `idem_lookup`, whose `(*guard).push_front(entry)`
+lowers correctly — the contrast between that and the earlier failure is
+what exposed the idiom as the variable. Note the working form had been
+sitting in the tree all along: `request_queue.cpp:461` uses
+`for req in &mut (*guard)`, the same bind-then-deref shape.
+
+Guards seen to behave this way: `RefCell::borrow_mut` and `Mutex::lock`.
+Assume it applies to any guard type.
