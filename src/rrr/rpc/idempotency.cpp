@@ -78,6 +78,9 @@ struct IdempotencyKey {
     static IdempotencyKey new_(uint64_t client_id, uint64_t sequence);
     static IdempotencyKey empty();
     bool is_valid() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -137,6 +140,9 @@ struct IdempotencyKeyHash;
 struct IdempotencyKeyHash {
 
     uint64_t hash_one(const IdempotencyKey& key) const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -215,6 +221,9 @@ struct IdempotencyConfig {
     static IdempotencyConfig small();
     static IdempotencyConfig large();
     static IdempotencyConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -301,32 +310,37 @@ bool CachedResponse::is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const
 }
 /*RUSTYCPP:GEN-END id=idempotency.cached_response*/
 
-// @unsafe - raw byte copy (reserve + memcpy + set_len) into the entry.
-inline void cached_response_set(CachedResponse& self,
-                                const rusty::Vec<std::uint8_t>& bytes) {
-    const size_t size = bytes.len();
-    self.response_data.clear();
-    self.response_data.reserve(size);
-    if (size > 0) {
-        self.response_data.set_len(size);
-        std::memcpy(&self.response_data[0], bytes.data(), size);
-    }
+// Byte copy in/out of a cache entry. Authored as inline Rust DSL.
+//
+// These were `reserve` + `set_len` + `memcpy` kernels. extend_from_slice
+// is the idiomatic Rust form AND matches what they actually did: it
+// reserves and copies without zero-initialising first, so this is not the
+// `resize(n, 0)` trade that keeps other byte-copy kernels hand-written.
+//
+// `get` took `Vec<u8>*` with a null check; a reference cannot be null, so
+// the check is gone with it (call site updated).
+#if RUSTYCPP_RUST
+fn cached_response_set(entry: &mut CachedResponse, bytes: &Vec<u8>) {
+    entry.response_data.clear();
+    entry.response_data.extend_from_slice(bytes);
 }
 
-// @unsafe - raw byte copy out of the entry (replaces `out` contents).
-inline void cached_response_get(const CachedResponse& self,
-                                rusty::Vec<std::uint8_t>* out) {
-    if (out == nullptr) {
-        return;
-    }
-    out->clear();
-    const size_t size = self.response_data.len();
-    out->reserve(size);
-    if (size > 0) {
-        out->set_len(size);
-        std::memcpy(&(*out)[0], self.response_data.data(), size);
-    }
+fn cached_response_get(entry: &CachedResponse, out: &mut Vec<u8>) {
+    out.clear();
+    out.extend_from_slice(&entry.response_data);
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=idempotency.byte_copy version=1 rust_sha256=ab56c18ed6c6d3ee07fb78732aa007b1812ce47bf4f9e43557309fa3870306f3*/
+void cached_response_set(CachedResponse& entry, const rusty::Vec<uint8_t>& bytes) {
+    entry.response_data.clear();
+    entry.response_data.extend_from_slice(bytes);
+}
+
+void cached_response_get(const CachedResponse& entry, rusty::Vec<uint8_t>& out) {
+    out.clear();
+    out.extend_from_slice(entry.response_data);
+}
+/*RUSTYCPP:GEN-END id=idempotency.byte_copy*/
 
 // ===========================================================================
 // IdempotencyKeyGenerator
@@ -403,6 +417,8 @@ struct IdempotencyKeyGenerator {
     uint64_t client_id() const;
     void set_client_id(uint64_t id) const;
     uint64_t current_sequence() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
 };
 
 
@@ -752,7 +768,7 @@ bool idem_lookup(const IdempotencyCache& self, const IdempotencyKey& key,
                 return false;
             }
             out_error_code = (*guard)[i].error_code;
-            cached_response_get((*guard)[i], &out_response);
+            cached_response_get((*guard)[i], out_response);
             // Move to front (MRU).
             auto entry = guard->remove(i).unwrap();
             guard->push_front(std::move(entry));
