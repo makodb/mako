@@ -3371,11 +3371,26 @@ which fails to compile exactly as the comment predicted:
     error: no member named 'close' in 'rusty::Box<Chan>';
            did you mean to use '->' instead of '.'?
 
-So `*expr` takes two different paths: a field operand gets wrapped in
-`deref_if_pointer_like`, a chained operand silently loses the deref. That
-is a genuine transpiler bug (and the proper fix under the decision rule is
-to make the two paths agree, not to keep the kernels) -- but until it is
-fixed, the kernels stay and the change was reverted.
+The first characterisation of this -- "field operand works, *chained*
+operand loses the deref" -- was **wrong**, and narrowing it mattered. A
+chain rooted at a field is fine; the trigger is a **guard** in the chain:
+
+| operand | emitted | ok |
+|---|---|---|
+| `(*self.b)` (field) | `deref_if_pointer_like(this->b)` | yes |
+| `(*self.o.as_ref().unwrap())` (chain from a field) | `deref_if_pointer_like(this->o.as_ref().unwrap())` | yes |
+| `(*(*guard).as_ref().unwrap())` (chain from a guard) | `((*guard).as_ref().unwrap())` -- deref **dropped** | **no** |
+
+Minimal reproducer: `docs/repro/box_guard_deref_repro.cpp` -- two methods on one
+struct, `no_guard` and `via_guard`, differing only in whether the Option
+is reached through a `MutexGuard`. The guard-deref branch in
+`transpiler/src/codegen/emit_expr.rs` (the arm that emits `*{operand}`
+directly for guard-like receivers, ~line 22085) consumes the outer `*`
+and never re-emits it as the helper.
+
+That is a genuine transpiler bug, and the proper fix under the decision
+rule is to make the paths agree rather than keep the kernels -- but until
+it is fixed, the kernels stay and the change was reverted.
 
 **The lesson is about probe fidelity, not about Box.** A probe is only
 evidence for the shape it actually tested. `self.b` and
