@@ -74,6 +74,12 @@ import rrr.threading;
 // (same set_on_* detach), `on_inbound_frame` (raw `const uint8_t*`
 // byte arithmetic into the std::vector buffer), and `is_closed`
 // (const_cast through the ChannelConnectionProxy).
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 /**
@@ -428,24 +434,48 @@ OwnedFrame fiberchannel_owned_copy(const ChannelFrame& f) {
     return copy;
 }
 
-void fiberchannel_signal_pending_recv(FiberChannel& self) {
-    // The waiter handle is shared between the reactor thread (recv_frame
-    // arm/disarm) and the callback thread (this fn, which the in-memory
-    // backend delivers synchronously on the SENDER's thread). Clone the
-    // Arc out under the dedicated mutex so a concurrent arm/disarm can't
-    // race the field read/free, then release the lock BEFORE set() (set()
-    // may re-enter the reactor — holding the lock across it is a hazard).
-    rusty::Option<rusty::Arc<IntEvent>> held{rusty::None};
+// Authored as inline Rust DSL.
+//
+// The waiter handle is shared between the reactor thread (recv_frame
+// arm/disarm) and the callback thread (this fn, which the in-memory
+// backend delivers synchronously on the SENDER's thread). Clone the Arc
+// out under the dedicated mutex so a concurrent arm/disarm can't race the
+// field read/free, then release the lock BEFORE set() (set() may re-enter
+// the reactor — holding the lock across it is a hazard).
+//
+// THE SCOPED BLOCK IS LOAD-BEARING: the guard must drop at the closing
+// brace, before set(). Verified that DSL scoped blocks lower to a real C++
+// block (PollThread::shutdown relies on the same thing) — check the
+// generated braces if this is ever regenerated.
+#if RUSTYCPP_RUST
+fn fiberchannel_signal_pending_recv(ch: &mut FiberChannel) {
+    let mut held: rusty::Option<rusty::Arc<IntEvent>> = rusty::Option::<rusty::Arc<IntEvent>>::None;
     {
-        auto guard = self.pending_recv_event_.lock().unwrap();
+        let mut guard = ch.pending_recv_event_.lock().unwrap();
         held = (*guard).clone();
     }
-    if (held.is_some()) {
-        auto event = held.unwrap();  // owned Arc<IntEvent>, keeps it alive
-        // @unsafe { IntEvent::set is not annotated @safe yet. }
-        event->set(1);
+    if held.is_some() {
+        let event = held.unwrap();
+        unsafe { event.set(1i32); }
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiberchannel.signal_pending_recv version=1 rust_sha256=4e55f86b90adde85c5bd79c266834c6964d2a83a56bc1d51cdda0f55035b5a4f*/
+void fiberchannel_signal_pending_recv(FiberChannel& ch) {
+    rusty::Option<rusty::Arc<IntEvent>> held = rusty::Option<rusty::Arc<IntEvent>>{rusty::None};
+    {
+        auto&& guard = rusty::deref_call(ch.pending_recv_event_.lock(), rusty::detail::__mdisp_unwrap{});
+        held = rusty::clone(((rusty::detail::deref_if_pointer_like(guard))));
+    }
+    if (held.is_some()) {
+        const auto event = held.unwrap();
+        // @unsafe
+        {
+            event->set(static_cast<int32_t>(1));
+        }
+    }
+}
+/*RUSTYCPP:GEN-END id=fiberchannel.signal_pending_recv*/
 
 // @unsafe - Mutex + Arc make + store. Arms the single-waiter event under
 // the dedicated mutex (called only on the reactor thread from recv_frame).
