@@ -393,6 +393,30 @@ push-button today; the 4 blockers are crisp, general transpiler
 features (not srpc-shaped hacks), exactly what the spike existed to
 surface while the crate is small.
 
+## Whole-crate re-translation at the 4d48363e pin (2026-08-01)
+
+The three transpiler fixes landed for the `src/rrr` conversion
+(libc-macro scope escaping, `use rusty::…`, `rusty::Function` bare
+signatures) all changed CODEGEN, and nothing had re-run the crate
+against them. Regression check:
+
+`--crate crates/srpc/Cargo.toml` → **24 files transpiled, 0 errors.**
+(The crate has grown from the 6 files of the W3 spike.)
+
+The `use rusty::…` fix is visible in the output rather than only in
+its unit test: **53 `using rusty::…` declarations emitted** (`Arc`,
+`Cell`, `Condvar`, `Context`, `HashMap`, `Mutex`, …) and **zero**
+surviving `// TODO: external crate 'rusty'` comments. Before the fix
+every one of those imports was dropped, taking its using-declaration
+with it.
+
+Verification gotcha worth repeating: a first pass grepped the output
+for `errno_` and found 14 hits, which looked like the libc-macro
+escape leaking. They are all `errno_to_channel_error` — a real crate
+function (`runtime/tcp.rs:42`) whose name merely BEGINS with the
+string. Zero spurious escapes. Grep for the escape, not for a
+substring of it.
+
 ## W8 baselines (2026-07-28, this host, `taskset -c 2`)
 
 C++ `bench_marshal` (clang 22, `-O3 -march=native`) vs Rust
