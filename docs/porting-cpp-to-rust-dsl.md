@@ -1314,3 +1314,40 @@ is visible from the exported namespace. A file-scope static in the impl
 section is not. Converting one means first moving the state (e.g. behind
 an accessor that is itself exported), which is a design change, not a
 port.
+
+### 7.21 Mutating a map value through get_mut needs three annotations — and the un-annotated form is SILENTLY wrong
+
+`ClientPool::remove_all_unhealthy` is the worked example. The C++ is:
+
+```cpp
+auto  clients_opt = (*guard).cache.get_mut(addr);   // by value
+auto& clients     = clients_opt.unwrap();           // REFERENCE into the map
+...
+clients = std::move(kept);                          // writes back through it
+```
+
+Converting it straight produced four defects in a row, each hidden by
+fixing the previous one:
+
+1. `let mut v: Vec<T> = Vec::new()` → `rusty::Vec<T> v = rusty::Vec<size_t>::new_()`
+   — element type ignored. Needs the turbofish: `Vec::<T>::new()`.
+2. `clients = kept` → assigns to the binding, not through it. Needs `*clients = kept`.
+3. **`let clients = clients_opt.unwrap()` → `auto clients` (BY VALUE).**
+   The write-back then updates a copy and the map never changes. This
+   COMPILES, and `test_rpc_client_pool` passes 20/20 — because its only
+   remove_all_unhealthy test asserts the all-healthy case
+   (`EXPECT_EQ(removed, 0u)`) and never exercises the mutation path.
+   Fixed by annotating: `let clients: &mut Vec<rusty::Arc<Client>> = ..`.
+4. `clients_opt` then became `auto&` bound to a temporary. Fixed by
+   annotating it too: `let clients_opt: rusty::Option<&mut Vec<..>> = ..`.
+
+With all four, it builds and passes. It was still REVERTED: a
+connection-lifecycle rewrite whose mutation path has no test coverage,
+and which already produced one silently-wrong version, is not worth 46
+lines. Land it only alongside a test that actually removes something.
+
+**The general point:** for map-value mutation, the DSL's default
+lowering drops the reference, and dropping a reference is invisible to
+the compiler. Whenever a conversion writes back through something
+obtained from a container, READ the emitted C++ for `auto x =` where the
+original had `auto& x =`.
