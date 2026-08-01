@@ -1146,3 +1146,56 @@ Rust). Retyping `ServerPendingRequestsAtomic` /
 five — but note `std::atomic<i32>` also appears INSIDE DSL blocks and in
 `Request::attach_pending_guard`'s signature, so it needs a regen and a
 signature change, not just an alias swap.
+
+### 7.17 Two findings from regenerating an already-converted file
+
+Converting `this_fiber::get_id` in `fiber.cpp` surfaced two problems that
+have nothing to do with that function.
+
+**(a) The drift guard does not catch GENERATED-output drift.**
+`scripts/rrr_dsl_check.sh` runs `inline-rust --check`, which compares the
+`rust_sha256` in each GEN marker against the DSL source. It says nothing
+about whether the checked-in C++ still matches what the CURRENT
+transpiler would emit. So a file can sit "0 drift" for months while the
+transpiler's output for it has changed underneath.
+
+`--rewrite` regenerates EVERY block in the file, so the first person to
+convert one more function in an old file inherits all of that drift at
+once. Expect it; do not assume your own change caused it.
+
+**(b) A qualified static call gets the libc-collision rename.**
+
+```rust
+fn f(x: u64) { Fiber::sleep(x); Foo::pause(x); Bar::dup(x); }
+```
+```cpp
+Fiber::sleep_(std::move(x));   // ✗ no member named 'sleep_' in 'rrr::Fiber'
+Foo::pause_(std::move(x));     // ✗
+Bar::dup_(std::move(x));       // ✗
+```
+
+The checked-in `fiber.cpp` GEN blocks contain the CORRECT `Fiber::sleep(..)`,
+so this is a regression relative to whatever transpiler produced them.
+
+The rename is right for a bare `sleep(x)` — an unqualified user function
+loses overload resolution to libc's exact match. It is wrong here for the
+reason `escape_cpp_keyword_in_runtime_path` already documents for
+`rusty::thread::sleep`: a QUALIFIED path can never select `::sleep`, and
+the class declares `sleep`, not `sleep_`. Two of the three escape
+variants already exempt `dup/sleep/raise/kill/pause`
+(`..._in_member_position`, `..._in_runtime_path`); the qualified-static
+path does not.
+
+NOT the site: `try_resolve_nested_local_type_path` (mod.rs ~19889).
+Routing its lookup escaping through the member-position helper does not
+change the output, so the emitted spelling comes from somewhere else on
+the `emit_call_func_with_owner_template_recovery` ->
+`emit_expr_path_to_string` -> `emit_path_to_string` chain. That chain is
+the backtrace from probing `escape_cpp_keyword` for `"sleep"`.
+
+Until it is fixed, `fiber.cpp` cannot be regenerated: converting anything
+in it rewrites the four `Fiber::sleep` call sites into non-compiling code.
+`get_id` is otherwise ready to convert — the `Rc<T>` field-access blocker
+its comment cites is GONE (`rc.field` now lowers to `(*rc).field`,
+provided the binding's type is known; annotate it if it comes from a C++
+static like `Fiber::current_fiber()`).
