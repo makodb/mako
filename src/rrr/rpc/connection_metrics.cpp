@@ -22,8 +22,25 @@ export namespace rrr {
 // enum-value paths (`Ordering::Relaxed`) or static-method-receiver
 // paths (`AtomicU64::new(...)`) in expression position — those are
 // emitted verbatim. These usings are the bridge.
+//
+// Authored as DSL `use` rather than hand-written C++: a `use rusty::…;`
+// used to be dropped with only a TODO comment (the transpiler classified
+// the RUNTIME as an unmapped external crate), which is why these two
+// lines were the last hand-written C++ in this file. Fixed upstream —
+// `rusty` now sits with the built-in path roots and the import lowers to
+// the using-DECLARATION form.
+// NOTE the explicit block id. Auto-numbering would name this block
+// `connection_metrics.1`, colliding with the struct block below that
+// already holds that id (§7.32) — `--rewrite` then aborts.
+#if RUSTYCPP_RUST
+use rusty::sync::atomic::Ordering;
+use rusty::sync::atomic::AtomicU64;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_metrics.usings version=1 rust_sha256=a25ddd81cba7a76b699158b8786b243b2443daf60f8d142b78f3faea2abe247d*/
 using rusty::sync::atomic::Ordering;
+
 using rusty::sync::atomic::AtomicU64;
+/*RUSTYCPP:GEN-END id=connection_metrics.usings*/
 
 // `ConnectionMetrics` — bag of `rusty::Cell<u64>` counters. Every
 // field is interior-mutable, so every method is `const` and `&self`.
@@ -325,6 +342,9 @@ struct ConnectionMetrics {
     void record_connect(uint64_t current_time_ms) const;
     void reset() const;
     void decrement_in_flight() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
