@@ -1545,3 +1545,51 @@ you should expect from it.
 **Generalisable lesson.** A burndown metric that counts lines cannot see
 *expressibility*. Before treating a high-count file as an opportunity,
 open it — the count is evidence about size, never about tractability.
+
+### 7.25 A DSL `impl` requires a DSL-declared struct — reactor.cpp needs whole-class conversions
+
+Every one of the ~60 `impl` blocks across src/rrr targets a type the DSL
+itself declares (`pub struct X` in the same block). A scan for an `impl`
+whose target is a hand-written `class`/`struct` in the same file returns
+**zero** hits. There is no precedent for attaching a DSL method to a C++
+class the DSL does not own.
+
+Consequence: you cannot nibble a hand-written class method-by-method.
+Converting `Fiber::finished` — four trivial lines of `Cell::get` and an
+enum compare — first requires converting the whole `Fiber` class to a
+`pub struct`.
+
+**How much this actually blocks (measured):**
+
+| | lines |
+|---|---|
+| methods of hand-written C++ classes | **522** |
+| — of which `reactor.cpp` (`Fiber`, `Reactor`) | 500 |
+| — everywhere else | 22 |
+
+So this is a *localized* constraint, not a broad one. Outside
+reactor.cpp the remaining backlog is free functions and methods of types
+already declared as DSL structs, and stays convertible piecemeal. Do not
+let this finding scare you off the rest of the tree.
+
+**Why Fiber/Reactor are a project, not a task.** Both are non-virtual,
+which helps. But `Reactor` stacks several known DSL limits at once:
+
+ - deleted copy *and* move ctors — a `pub struct` with an inherent impl
+   lowers to a **copyable aggregate** (only `#[cpp_inherit] impl Trait`
+   is move-only), which is the wrong shape;
+ - ~20 fields carrying inline default initializers, which the DSL does
+   not support (§ CLAUDE.md: use `fn new`/factories) — and `Reactor() =
+   default` means every one of them would need a factory;
+ - 7 static members, plus 5 on `Fiber`, whose lowering is unverified;
+ - one `friend` declaration on `Fiber`.
+
+Any of these alone is tractable. Together they are the exact profile —
+several uncertain lowerings entangled in one change — that has cost this
+campaign more reverts than progress. Treat Fiber/Reactor as a planned
+conversion with its own probe sequence, not as burndown filler.
+
+**Rule of thumb.** Before picking a hand-written method as a conversion
+target, check whether its owning type is a DSL struct. If it is not, the
+real unit of work is the class, and the line count you were looking at
+is not the size of the job.
