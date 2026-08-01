@@ -1098,9 +1098,15 @@ inline bool server_atomic_load_bool(
 }
 
 // Drain phase-FSM + timed busy-wait, authored as inline Rust DSL (the
-// atomic loads route through the server_atomic_load_int kernel; the
-// phase-name %s in the already-in-phase debug line is dropped — the
-// DSL cannot drive the *_to_string varargs safely).
+// atomic loads route through the server_atomic_load_int kernel).
+//
+// The already-in-phase debug line used to omit the phase name, on the
+// grounds that "the DSL cannot drive the *_to_string varargs safely".
+// That cause expired: Log_* is now a std::format variadic TEMPLATE
+// (std::format_string), not C varargs, so the std::string_view that
+// shutdown_phase_to_string returns is type-checked and formats fine.
+// The name is restored — without it you cannot tell WHICH phase drain
+// bailed out on. See playbook §7.26.
 #if RUSTYCPP_RUST
 fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
                      pending: &rusty::Arc<ServerPendingRequestsAtomic>,
@@ -1108,7 +1114,8 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     let current_phase = phase.get();
     if current_phase != ShutdownPhase::RUNNING
         && current_phase != ShutdownPhase::STOP_ACCEPTING {
-        Log_debug("Server::drain: already past the draining phases");
+        Log_debug("Server::drain: already past the draining phases ({})",
+                  shutdown_phase_to_string(current_phase));
         return server_atomic_load_int(pending) == 0;
     }
     Log_info("Server::drain: transitioning to DRAINING, pending={}",
@@ -1129,11 +1136,11 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     true
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=8d707e5e9c97cee76c4b56dc00050cbd39f40e07524d0051dfe6397a96426d9d*/
+/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=fdcce4967d24435764cb0c0541d59b0394dbdee5920e6b44d1ec4260d21c6148*/
 bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
     const auto current_phase = phase.get();
     if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_RUNNING())) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_STOP_ACCEPTING()))) {
-        Log_debug("Server::drain: already past the draining phases");
+        Log_debug("Server::drain: already past the draining phases ({})", shutdown_phase_to_string(std::move(current_phase)));
         return server_atomic_load_int(pending) == 0;
     }
     Log_info("Server::drain: transitioning to DRAINING, pending={}", server_atomic_load_int(pending));
