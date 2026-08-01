@@ -180,6 +180,8 @@ pub trait EventPollable {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.event_pollable version=1 rust_sha256=342f3c1646b41349ac6febce95fc5c9a264abe74cb3f7e2d2c3ba25df0feb539*/
+class EventPollable;
+
 class EventPollable {
 public:
     virtual ~EventPollable() noexcept(false) {}
@@ -1527,8 +1529,6 @@ extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
 const kDefaultStackBytes: usize = 1usize << 20;
 #endif
 /*RUSTYCPP:GEN-BEGIN id=reactor.fiber_default_stack version=1 rust_sha256=573a148f9a126f68ff3cd154018259cab614444f2c74a62837b70635855b9e68*/
-extern const size_t kDefaultStackBytes;
-
 constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;
 /*RUSTYCPP:GEN-END id=reactor.fiber_default_stack*/
 
@@ -2103,15 +2103,24 @@ struct CmdAddPollable {
 
 struct CmdRemovePollable {
     int32_t fd;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct CmdClosePollable {
     int32_t fd;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct CmdUpdateMode {
     int32_t fd;
     int32_t new_mode;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 struct CmdAddJob {
@@ -2123,6 +2132,9 @@ struct CmdRemoveJob {
 };
 
 struct CmdShutdown {
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 /*RUSTYCPP:GEN-END id=reactor.poll_cmds*/
 
@@ -2259,6 +2271,15 @@ using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
 // incompatible-type ctor, which panics at RUNTIME rather than failing to
 // compile ("invalid Option conversion with value" out of
 // pollthread_create, taking every TcpFactoryTest down in SetUp).
+// Moved ABOVE its first use: the DSL shutdown() below calls it, and an
+// `inline` definition emits no external symbol, so a forward declaration
+// links only if the definition is non-inline. Relocating is simpler than
+// changing its linkage.
+inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
+    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
+    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
+}
+
 using PollJoinSlot =
     rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;
 
@@ -2268,7 +2289,6 @@ struct PollThread;
 // spawn/join, mpsc sends, syscall logging). Definitions near the
 // original impl site.
 rusty::Arc<PollThread> pollthread_create();
-void pollthread_shutdown(const PollThread& self);
 void pollthread_drop(const PollThread& self);
 void pollthread_add_proxy(const PollThread& self, PollableProxy poll);
 void pollthread_remove(const PollThread& self, Pollable& poll);
@@ -2307,7 +2327,39 @@ impl PollThread {
 
     // Explicit shutdown: send CmdShutdown, join unless self-join.
     fn shutdown(&self) {
-        pollthread_shutdown(self)
+        let main_tid: i64 = unsafe { syscall(SYS_gettid) };
+        Log_debug("[PollThread::shutdown] Called from TID={}", main_tid as i32);
+        if self.shutdown_called_.swap(true) {
+            Log_debug("[PollThread::shutdown] Already called, returning");
+            return;
+        }
+        Log_debug("[PollThread::shutdown] Sending CmdShutdown");
+        self.sender_.send(CmdShutdown {});
+        Log_debug("[PollThread::shutdown] CmdShutdown sent");
+        // Thread-safe read of the poll thread's id.
+        let current_tid = rusty::thread::current_id();
+        let poll_tid = u64_to_thread_id(
+            self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
+        if current_tid == poll_tid {
+            Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
+            return;
+        }
+        Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
+        // Scoped so the guard drops BEFORE the "Released" log below, as the
+        // C++ block did.
+        {
+            let mut guard = self.join_handle_.lock().unwrap();
+            Log_debug("[PollThread::shutdown] join_handle lock acquired");
+            if (*guard).is_some() {
+                Log_debug("[PollThread::shutdown] Calling thread.join()...");
+                (*guard).take().unwrap().join();
+                Log_debug("[PollThread::shutdown] thread.join() completed!");
+            } else {
+                Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
+            }
+        }
+        Log_debug("[PollThread::shutdown] Released join_handle lock");
+        Log_debug("[PollThread::shutdown] Complete");
     }
 
     fn add_proxy(&self, poll: PollableProxy) {
@@ -2350,7 +2402,7 @@ impl Drop for PollThread {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=3fef7a30346c94da0802af0018d3ccdd7480ddabc5cea386e08fa0ceee183864*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=8ce28d38f8f60333656ace1c7c1b2d96e6bc98c4ab157c09217f75f33de8e60d*/
 struct PollThread;
 
 struct PollThread {
@@ -2374,7 +2426,7 @@ struct PollThread {
         new (this) PollThread(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->sender_); rusty::detail::mark_forgotten_if_supported(this->join_handle_); rusty::detail::mark_forgotten_if_supported(this->poll_thread_id_bits_); rusty::detail::mark_forgotten_if_supported(this->shutdown_called_); }
 
 
     static rusty::Arc<PollThread> create();
@@ -2395,7 +2447,35 @@ rusty::Arc<PollThread> PollThread::create() {
 }
 
 void PollThread::shutdown() const {
-    pollthread_shutdown((*this));
+    const int64_t main_tid = syscall(SYS_gettid);
+    Log_debug("[PollThread::shutdown] Called from TID={}", static_cast<int32_t>(main_tid));
+    if (this->shutdown_called_.swap(true)) {
+        Log_debug("[PollThread::shutdown] Already called, returning");
+        return;
+    }
+    Log_debug("[PollThread::shutdown] Sending CmdShutdown");
+    this->sender_.send(CmdShutdown{});
+    Log_debug("[PollThread::shutdown] CmdShutdown sent");
+    const auto current_tid = rusty::thread::current_id();
+    const auto poll_tid = u64_to_thread_id(this->poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
+    if (rusty::detail::deref_if_pointer_like(current_tid) == rusty::detail::deref_if_pointer_like(poll_tid)) {
+        Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
+        return;
+    }
+    Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
+    {
+        auto guard = this->join_handle_.lock().unwrap();
+        Log_debug("[PollThread::shutdown] join_handle lock acquired");
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_some()) {
+            Log_debug("[PollThread::shutdown] Calling thread.join()...");
+            ((rusty::detail::deref_if_pointer_like(guard))).take().unwrap().join();
+            Log_debug("[PollThread::shutdown] thread.join() completed!");
+        } else {
+            Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
+        }
+    }
+    Log_debug("[PollThread::shutdown] Released join_handle lock");
+    Log_debug("[PollThread::shutdown] Complete");
 }
 
 void PollThread::add_proxy(PollableProxy poll) const {
@@ -4664,10 +4744,6 @@ inline std::uint64_t thread_id_to_u64(rusty::thread::ThreadId tid) noexcept {
     return std::bit_cast<std::uint64_t>(tid.as_native());
 }
 
-inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
-    using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
-    return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
-}
 } // namespace
 
 // @unsafe - takes address-of an atomic field (`&arc->poll_thread_id_bits_`)
@@ -4738,44 +4814,6 @@ void pollthread_drop(const PollThread& pt) {
 }
 /*RUSTYCPP:GEN-END id=reactor.pollthread_drop*/
 
-void pollthread_shutdown(const PollThread& self) {
-  pid_t main_tid = syscall(SYS_gettid);
-  Log_debug("[PollThread::shutdown] Called from TID={}", (int)main_tid);
-  if (self.shutdown_called_.swap(true)) {
-    Log_debug("[PollThread::shutdown] Already called, returning");
-    return;  // Already called
-  }
-
-  // Send shutdown command via channel
-  Log_debug("[PollThread::shutdown] Sending CmdShutdown");
-  self.sender_.send(CmdShutdown{});
-  Log_debug("[PollThread::shutdown] CmdShutdown sent");
-
-  // Check if we're on the poll thread (atomic load for thread-safe read)
-  auto current_tid = rusty::thread::current_id();
-  auto poll_tid = u64_to_thread_id(
-      self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
-  if (current_tid == poll_tid) {
-    Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
-    return;
-  }
-
-  // Join thread
-  Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
-  {
-    auto guard = self.join_handle_.lock().unwrap();
-    Log_debug("[PollThread::shutdown] join_handle lock acquired");
-    if ((*guard).is_some()) {
-      Log_debug("[PollThread::shutdown] Calling thread.join()...");
-      (*guard).take().unwrap().join();
-      Log_debug("[PollThread::shutdown] thread.join() completed!");
-    } else {
-      Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
-    }
-  }
-  Log_debug("[PollThread::shutdown] Released join_handle lock");
-  Log_debug("[PollThread::shutdown] Complete");
-}
 
 void pollthread_add_proxy(const PollThread& self, PollableProxy poll) {
   self.sender_.send(CmdAddPollable{std::move(poll)});
