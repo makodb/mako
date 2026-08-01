@@ -1665,3 +1665,50 @@ mechanism and read exactly like live references.
 
 Deferrals still believed live, each needing its own check before use:
 the kernel classifications (`clientconn`, `server-atomics`).
+
+### 7.27 GMF reachability: the module-global fragment must include what the GEN names
+
+`inline-rust` cannot add `#include`s. It emits C++ that calls into the
+rusty runtime, and the file's module-global fragment has to already
+reach every symbol that generated code names. Introduce a new *construct*
+in a DSL block and you may introduce a new *symbol* — and the file that
+compiled yesterday stops compiling.
+
+This rule was already in this document, but only as two passing mentions
+inside other sections (§ syscalls, § bulk regeneration), phrased as
+specific instances. That is why it did not fire when it should have:
+adding a `match` to `errors.cpp` — a file whose GMF was only
+`move.hpp` + `slice.hpp` — produced
+
+    error: no member named 'unreachable_panic' in namespace 'rusty::intrinsics'
+
+`logging.cpp` has the same construct and compiles because it includes the
+umbrella `<rusty/rusty.hpp>`; `channel.cpp` shows the narrow fix. The
+lesson is not "remember channel.cpp", it is: **when you add a construct,
+check what its GEN names.**
+
+Definition sites, verified against the pinned runtime (grep for the
+*definition*, not for mentions — several of these appear in headers that
+merely use them):
+
+| generated symbol | construct that emits it | defining header |
+|---|---|---|
+| `rusty::intrinsics::unreachable_panic` | `match` fallthrough arm | `rusty/intrinsics.hpp:34` |
+| `rusty::detail::deref_if_pointer_like` | most field/param reads | `rusty/slice.hpp:421` |
+| `rusty::for_in` | `for x in ...` | `rusty/slice.hpp:2133` |
+| `rusty::iter_mut` | `for x in &mut ...` | `rusty/slice.hpp:2072` |
+| `rusty::is_send<T>` / `is_sync<T>` | generic (templated) structs | `rusty/traits.hpp:49` |
+| `rusty::clone` | `.clone()` | `rusty/move.hpp` |
+
+Two ways to satisfy it: the umbrella `<rusty/rusty.hpp>` (simple, but
+pulls in the world and slows the TU), or the narrow header (preferred —
+what `channel.cpp` and now `errors.cpp` do).
+
+**And note what this cost.** The conversion had been checked two ways
+before it was built: the 28-arm switch→match mapping was diffed
+structurally and found identical, and every arm was confirmed pinned by
+a test. Both checks were sound and neither could have caught this,
+because a missing include is not a semantics question. Structural
+verification tells you the translation is *right*; only a compiler tells
+you the translation unit can *resolve* itself. Do both; neither
+substitutes for the other.
