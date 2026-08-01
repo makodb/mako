@@ -2257,6 +2257,10 @@ void PollThreadWorker::update_mode(Pollable& poll, int32_t new_mode) {
 /*RUSTYCPP:GEN-END id=reactor.poll_thread_worker*/
 
 // @safe - Check if the current thread is a poll thread.
+// @unsafe - doubly blocked: reads the impl-namespace `thread_local`
+// g_current_poll_worker (§7.20), and the `!= nullptr` test would emit a
+// non-existent `nullptr_` (§7.31 -- `.is_null()` is the DSL spelling, but
+// the static read blocks it anyway).
 inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nullptr; }
 
 // =============================================================================
@@ -2277,6 +2281,9 @@ using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
 // `inline` definition emits no external symbol, so a forward declaration
 // links only if the definition is non-inline. Relocating is simpler than
 // changing its linkage.
+// @unsafe - C++ template metaprogramming: `decltype(std::declval<...>())`
+// to name the native id type, plus std::bit_cast. Neither is DSL-
+// expressible.
 inline rusty::thread::ThreadId u64_to_thread_id(std::uint64_t bits) noexcept {
     using NativeId = decltype(std::declval<rusty::thread::ThreadId>().as_native());
     return rusty::thread::ThreadId{std::bit_cast<NativeId>(bits)};
