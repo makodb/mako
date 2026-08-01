@@ -253,6 +253,31 @@ floor).
 | A7 | try/catch (6) | Decide the crate-wide panic-vs-Result rule once, then convert; or keep one small kernel. |
 | A8 | Event hierarchy ("intractable") | **Verify before believing.** The reactor events are reportedly all DSL now (QuorumEvent, WaitAny, WaitAll, BoxEvent), which would contradict the recorded verdict. |
 
+#### A1 worklist (measured 2026-08-01)
+
+Classified all 125 class-template sites in the six big files by what
+appears in their signature window:
+
+| construct | sites | path |
+|---|---:|---|
+| **plain** | **81** | convert directly — the probe above proves the shape lowers |
+| variadic pack | 18 | **genuine floor**: Rust has no variadic generics, so there is no DSL spelling |
+| operator | 14 | free-operator pattern — proven wholesale on the wire layer (member `operator<</>>` families became free operators with identical call syntax) |
+| explicit specialisation | 7 | hard — no Rust equivalent; sometimes restructurable as trait impls |
+| SFINAE / `enable_if` | 4 | hard |
+| `requires` / concept | 1 | hard |
+
+So ~95 of 125 have a route and ~30 are genuinely hard — and the hard
+ones are now *named*, not a vague "class templates are a floor".
+
+Per file, `misc/serializable.cpp` is the single biggest pocket: 64
+sites, **55 of them plain**. `reactor.cpp` is 26 sites but 10 are
+variadic packs, so its real yield is 12. `tcp_channel.cpp` has none.
+
+Caveat on the method: "plain" means no hard construct in a 25-line
+signature window, so it is an upper bound — a body can still surprise.
+Treat 81 as the candidate list to attempt, not a promise.
+
 **Phase B — grind the six big files** with the retired floors in hand.
 reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
 tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
