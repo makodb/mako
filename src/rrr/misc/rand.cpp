@@ -29,7 +29,42 @@ struct RandomGenerator;
 int randgen_rand_raw();
 double randgen_rand_max();
 int randgen_nu_constant_now();
-std::string randgen_zero_pad(const std::string& s, int length);
+// Left-pad (or right-truncate) `s` to exactly `length` chars. Authored as
+// inline Rust DSL — pure std::string control flow, no kernel needed.
+#if RUSTYCPP_RUST
+fn randgen_zero_pad(s: std::string, length: i32) -> std::string {
+    let mut ret: std::string = s;
+    if (ret.length() as i32) < length {
+        while (ret.length() as i32) < length {
+            ret.insert(0, "0");
+        }
+        return ret;
+    }
+    if (ret.length() as i32) > length {
+        let cur: usize = ret.length();
+        return ret.substr(cur - (length as usize), length as usize);
+    }
+    ret
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rand.zero_pad version=1 rust_sha256=093fc9bc66d0ac77ad4481006931018c15e0b61ba124eba2d1d7582b9c5295ab*/
+std::string randgen_zero_pad(std::string s, int32_t length);
+
+std::string randgen_zero_pad(std::string s, int32_t length) {
+    std::string ret = s;
+    if (((static_cast<int32_t>(ret.length()))) < rusty::detail::deref_if_pointer_like(length)) {
+        while (((static_cast<int32_t>(ret.length()))) < rusty::detail::deref_if_pointer_like(length)) {
+            ret.insert(0, "0");
+        }
+        return std::move(ret);
+    }
+    if (((static_cast<int32_t>(ret.length()))) > rusty::detail::deref_if_pointer_like(length)) {
+        const size_t cur = ret.length();
+        return ret.substr(rusty::detail::deref_if_pointer_like(cur) - ((static_cast<size_t>(length))), static_cast<size_t>(length));
+    }
+    return std::move(ret);
+}
+/*RUSTYCPP:GEN-END id=rand.zero_pad*/
 void randgen_destroy();
 
 // std::vector<double> spelled via an alias for the DSL param grammar.
@@ -121,6 +156,9 @@ struct RandomGenerator {
     static int32_t nu_rand(int32_t a, int32_t x, int32_t y);
     static uint32_t weighted_select(const RandWeightVec& weight_vector);
     static void destroy();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -269,19 +307,6 @@ int randgen_nu_constant_now() {
 
 // @unsafe - std::string surgery (substr/prepend) for int2str_n's
 // fixed-width formatting; kept as a kernel for the substr call.
-std::string randgen_zero_pad(const std::string& s, int length) {
-    std::string ret = s;
-    if (static_cast<int>(ret.length()) < length) {
-        while (static_cast<int>(ret.length()) < length) {
-            ret = std::string("0").append(ret);
-        }
-        return ret;
-    }
-    else if (static_cast<int>(ret.length()) > length) {
-        ret = ret.substr(ret.length() - length, length);
-    }
-    return ret;
-}
 
 // @unsafe - pthread_once + raw pthread key teardown.
 void randgen_destroy() {
