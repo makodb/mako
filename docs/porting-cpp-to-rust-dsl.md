@@ -1262,7 +1262,32 @@ the capture, so `mutable` is unnecessary; emitting it is what closes the
 door. A `move` closure whose captures are all Copy and which never
 mutates them should lower without `mutable`.
 
-**Where the fix goes:** `emit_expr.rs:24350` —
+**FIXED (partly)** in rusty-cpp `369c6897`: `mutable` is now suppressed
+when every capture is a RAW POINTER and the body reassigns none of them.
+That unblocked `FiberChannel::bind_callbacks`, whose closures capture a
+`*mut FiberChannel`.
+
+It does NOT unblock `sconn_bind_channel`, and I claimed otherwise in
+5f7d34b6 before checking — a probe shows a value-typed capture still
+emits `mutable`:
+
+```rust
+let w: W = ..; take(move |x: i32| { w.upgrade(); });
+//  -> ::take([=, w = std::move(w)](int32_t x) mutable { .. })
+```
+
+`sconn_bind_channel` captures a `WeakServerConnection` BY VALUE, so it
+stays floor. Extending the rule to value captures needs to know whether
+the body calls a non-const method on one, and for a C++ type like
+WeakServerConnection the transpiler has no such information. A cruder
+rule — suppress whenever no capture is ASSIGNED — would unblock it, and
+would fail loudly (compile error) rather than silently when wrong, but
+it is a much wider behavioural change than the pointer case and is not
+worth making blind.
+
+Historical note, kept because the failure mode is nasty:
+
+**Where the fix went:** `emit_expr.rs:24350` —
 `let lambda_mutability = if is_move_closure { " mutable" } else { "" };`
 — which adds `mutable` to EVERY move closure unconditionally.
 
