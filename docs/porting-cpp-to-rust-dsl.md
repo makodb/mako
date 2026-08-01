@@ -2424,3 +2424,59 @@ against editing a DSL block and forgetting to regenerate. And when a
 green check is load-bearing for a conclusion, ask what a red one would
 have required: if no realistic breakage produces red, the green is not
 evidence.
+
+### 7.37 Minimal repro: two-step `unwrap()` of `Option<&mut T>` drops the reference
+
+§7.21 recorded that `let x = opt.unwrap()` can silently emit a BY-VALUE
+binding, so writes land on a copy. This narrows it to a minimal repro and
+identifies which half is actually broken — the two forms differ.
+
+**One-step (chained) — CORRECT:**
+
+```rust
+let slot: &mut Vec<i32> = m.get_mut(1).unwrap();   // -> Vec<int32_t>& slot
+let slot = m.get_mut(1).unwrap();                  // -> auto& slot
+```
+
+Both bind a reference, annotated or not. Nothing to fix here.
+
+**Two-step — BROKEN:**
+
+```rust
+let slot_opt = m.get_mut(1);
+let slot = slot_opt.unwrap();
+slot.push(7);
+```
+
+emits
+
+```cpp
+auto& slot_opt = m.get_mut(1);        // reference bound to a TEMPORARY Option
+const auto slot = slot_opt.unwrap();  // BY VALUE and const
+slot.push(7);                         // mutates the copy
+```
+
+Two defects, both §7.21's: the intermediate binds `auto&` to a
+by-value temporary, and the unwrap drops the reference AND adds `const`.
+
+So the bug is NOT in `unwrap()` — the chained form proves `unwrap()`
+lowers fine when the receiver's type is known at the call. It is in the
+INTERMEDIATE binding: `slot_opt`'s payload is not recorded as a
+reference, so by the time `.unwrap()` is emitted the reference-ness is
+already lost. That is the thing to fix, and it is a much narrower target
+than "unwrap copies".
+
+Verified identical on the transpiler before AND after the §7.35 errno
+fix, so it is long-standing, not a regression.
+
+**Why this class matters more than a loud bug:** the emitted code
+compiles and the tests pass. §7.21 hit exactly this — `test_rpc_client_pool`
+passed 20/20 while `remove_all_unhealthy`'s write-back updated a copy,
+because the only test of that path asserted the all-healthy case
+(`removed == 0`) and never exercised the mutation. A wrong-code bug that
+compiles is found by READING the GEN, not by running the suite.
+
+**Workaround until fixed:** annotate both bindings, as §7.21 records —
+`let slot_opt: Option<&mut Vec<T>> = ...` and
+`let slot: &mut Vec<T> = ...` — or collapse to the one-step chained form,
+which needs no annotation.
