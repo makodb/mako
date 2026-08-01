@@ -1541,9 +1541,9 @@ class fiber_task_t;
 // `fiber_yield_t` is now a pure-POD pointer wrapper. The previous
 // member method `void operator()()` (renamed to `void yield_now()` in
 // an earlier DSL-prep commit) is now the free function
-// `fiber_yield_invoke(fiber_yield_t&)`, kept outside the DSL block
-// because the body raw-dereferences `task_` and the rusty-cpp
-// transpiler doesn't yet translate that style of impl body. The two
+// `fiber_yield_invoke(fiber_yield_t&)`. (It was kept outside the DSL
+// block for a while because the body raw-dereferences `task_`; that
+// transpiler limitation is gone and the fn is DSL now.) The two
 // call sites (`yield()` in `Fiber::run_wrapper`, `(*yield_ptr)()` in
 // `Fiber::yield_`) now use `fiber_yield_invoke(yield)` /
 // `fiber_yield_invoke(*yield_ptr)`. The DSL `fn new(task)` factory
@@ -1579,8 +1579,7 @@ fiber_yield_t fiber_yield_t::new_(fiber_task_t& task) {
 
 // @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
 // the friend declaration on fiber_task_t still applies. } Free
-// function — kept outside the DSL block because the body raw-deref
-// is not yet supported by the rusty-cpp transpiler.
+// function, authored as DSL further down (§7.30).
 void fiber_yield_invoke(fiber_yield_t& self);
 
 class fiber_task_t {
@@ -4856,12 +4855,32 @@ void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job) {
 
 thread_local fiber_task_t* fiber_task_t::tls_active_task_ = nullptr;
 
-// @unsafe { raw fiber_task_t* deref + private yield_to_caller() call;
-// the friend declaration on fiber_task_t still applies. }
-void fiber_yield_invoke(fiber_yield_t& self) {
-  verify(self.task_ != nullptr);
-  self.task_->yield_to_caller();
+// Authored as inline Rust DSL. The raw `fiber_task_t*` deref lowers fine —
+// the older comment claiming the transpiler could not translate it was
+// stale (§7.30). The parameter is `y`, not `self`: a DSL param named
+// `self` becomes a receiver and would emit a METHOD, which would not
+// match `friend void fiber_yield_invoke(fiber_yield_t&)`. Parameter names
+// are not part of a C++ signature, so friendship still applies.
+//
+// `!y.task_.is_null()` rather than `y.task_ != nullptr`: the latter emits
+// a non-existent `nullptr_` (§7.31).
+#if RUSTYCPP_RUST
+fn fiber_yield_invoke(y: &mut fiber_yield_t) {
+    verify(!y.task_.is_null());
+    unsafe { (*y.task_).yield_to_caller(); }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.23 version=1 rust_sha256=edfdd5edd7499fdf2a71159254c03890da9bb1e50bcedb96879b8ffbe6a05662*/
+void fiber_yield_invoke(fiber_yield_t& y);
+
+void fiber_yield_invoke(fiber_yield_t& y) {
+    verify(rusty::detail::rust_not((y.task_ == nullptr)));
+    // @unsafe
+    {
+        ((rusty::detail::deref_if_pointer_like(y.task_))).yield_to_caller();
+    }
+}
+/*RUSTYCPP:GEN-END id=reactor.23*/
 
 fiber_task_t::fiber_task_t(TaskFn fn)
     : fn_(std::move(fn)),
