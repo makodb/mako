@@ -1297,16 +1297,15 @@ rusty::Option<rusty::Rc<Fiber>> WaitAny::upgrade_fiber() const {
 // single-arg (every call site already passes one event). The one test that used
 // the 3-arg variadic ctor now builds a vector.
 //
-// The single push stays a hand-written @unsafe kernel (`waitall_add_event`) —
-// `.push()` on a RefCell<Vec> guard currently mis-lowers in the transpiler
-// (wraps the element in Vec::from_iter). is_ready / log iterate the borrowed
-// guard directly in DSL.
+// add_event is fully DSL now. The push once lived in a hand-written kernel
+// because `.push()` chained through a RefCell guard mis-lowers (wrapping the
+// element in Vec::from_iter) — but that is an IDIOM problem, not a transpiler
+// limitation: binding the guard first and dereferencing (`let mut g = ...;
+// (*g).push(x)`) lowers correctly. See §7.33.
 //
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is the
 // source of truth; the transpiler regenerates the matching GEN block.
 struct WaitAll;
-// @unsafe - pushes onto the RefCell<Vec> child list (guard-push kernel).
-void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x);
 #if RUSTYCPP_RUST
 struct WaitAll {
     status_: Cell<EventStatus>,
@@ -1319,7 +1318,10 @@ struct WaitAll {
 
 impl WaitAll {
     fn add_event(&self, x: rusty::Arc<EventPollable>) {
-        waitall_add_event(self, x)
+        // Bind the guard, then deref — chaining `.borrow_mut().push(x)`
+        // mis-lowers to push(Vec::from_iter(x)). See §7.33.
+        let mut g = self.events_.borrow_mut();
+        (*g).push(x);
     }
     fn wait(&self) {
         event_wait_impl(self, 0u64)
@@ -1376,7 +1378,7 @@ impl EventPollable for WaitAll {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.wait_all version=1 rust_sha256=e3f006bce41bf22a6d458abd7d525bf4e4ce1e5963bc3bfb251577961c6ce81c*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.wait_all version=1 rust_sha256=e69198fa813b48c276f6aae16f1e138c0c9c3038b832c35b3dec16154fc8786a*/
 struct WaitAll;
 
 struct WaitAll : public EventPollable {
@@ -1409,7 +1411,8 @@ struct WaitAll : public EventPollable {
 
 
 void WaitAll::add_event(rusty::Arc<EventPollable> x) const {
-    waitall_add_event((*this), std::move(x));
+    auto g = this->events_.borrow_mut();
+    ((*g)).push(std::move(x));
 }
 
 void WaitAll::wait() const {
@@ -3414,11 +3417,7 @@ rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>
 }
 /*RUSTYCPP:GEN-END id=reactor.waitall_make_from*/
 
-// @unsafe - the single push the DSL add_event forwards here (a `.push()` on a
-// RefCell<Vec> guard currently mis-lowers, so it stays a hand-written kernel).
-void waitall_add_event(const WaitAll& self, rusty::Arc<EventPollable> x) {
-  self.events_.borrow_mut()->push(std::move(x));
-}
+
 
 int shared_int_event_set(SharedIntEvent& self, const int& v) {
   auto ret = self.value_;
