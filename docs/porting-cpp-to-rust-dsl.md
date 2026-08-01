@@ -2684,3 +2684,58 @@ Worth the effort for a reason that is now measurable rather than
 aesthetic: this single floor accounts for ~50 of the names Goal 0(b)
 would otherwise have to declare across an FFI boundary, and it blocks
 the whole channel-binding cluster in Goal 0(a). One fix, both goals.
+
+### 7.40 Overload families ARE expressible — as trait impls
+
+§7.24a records "no function overloading" as a structural floor: the DSL
+rejects two `fn` of the same name, so a C++ overload family looked
+unportable. That is true of *direct* declarations and false of the
+shape that matters.
+
+`impl Trait for X`, one impl per type, lowers to **overloaded free
+functions**:
+
+```rust
+pub trait Ser { fn ser(&self, ar: &mut Sink); }
+impl<T> Ser for rusty::Vec<T> { fn ser(&self, ar: &mut Sink) { … } }
+impl Ser for i32             { fn ser(&self, ar: &mut Sink) { … } }
+```
+
+emits
+
+```cpp
+namespace Ser_ {
+    template<typename T> void ser(const rusty::Vec<T>& self_, Sink& ar);
+    void ser(const int32_t& self_, Sink& ar);
+}
+using namespace Ser_;
+```
+
+Same name, different parameter types, brought into scope by the
+`using namespace` — an overload set, generated. The receiver becomes
+the first parameter, so `x.ser(ar)` in DSL and `ser(x, ar)` in C++ are
+the same call.
+
+**Why this matters more than it looks.** `misc/serializable.cpp` is 64
+template sites — the densest pocket of hand-written C++ in the tree —
+and they are not ordinary class templates at all. They are the serde
+overload family: `serialize`/`deserialize` repeated for `rusty::Vec`,
+`std::vector`, `std::list`, `BTreeSet`, `set`, `HashSet`,
+`unordered_set`, `BTreeMap`, `map`, … The Rust name for that pattern is
+a trait with one impl per type, and it round-trips back to exactly the
+free-function overload set the file already has, so the ~496 existing
+`serialize(x, ar)` call sites keep working untouched.
+
+**Correction to the A1 worklist.** Those 64 sites were counted as
+"plain class templates". They are not — they are an overload family,
+which a signature-window classifier cannot see, because overloading is
+a relationship *between* declarations rather than a construct *within*
+one. The A6 remedy recorded for overloading ("rename the call sites")
+would have been actively wrong here: renaming per-type destroys the
+uniform call syntax the whole wire layer depends on. Trait impls keep
+it.
+
+**Lesson for the remaining floor audit:** a per-declaration classifier
+cannot see relational properties. Overloading, ODR collisions, and
+specialisation-vs-base relationships all need a cross-declaration pass.
+Expect other "plain" counts to hide the same thing.
