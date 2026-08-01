@@ -586,9 +586,9 @@ TEST(RequestQueueTest, ConcurrentEnqueueDequeue) {
 // ============================================================================
 
 TEST(RequestQueueTest, OverflowStrategyToString) {
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::DROP_OLDEST), "DROP_OLDEST");
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::DROP_NEWEST), "DROP_NEWEST");
-    EXPECT_STREQ(overflow_strategy_to_string(OverflowStrategy::FAIL_FAST), "FAIL_FAST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::DROP_OLDEST), "DROP_OLDEST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::DROP_NEWEST), "DROP_NEWEST");
+    EXPECT_EQ(overflow_strategy_to_string(OverflowStrategy::FAIL_FAST), "FAIL_FAST");
 }
 
 int main(int argc, char** argv) {

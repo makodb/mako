@@ -30,12 +30,22 @@ enum OverflowStrategy {
     DROP_NEWEST,
     FAIL_FAST,
 }
+
+fn overflow_strategy_to_string(strategy: OverflowStrategy) -> &'static str {
+    match strategy {
+        OverflowStrategy::DROP_OLDEST => "DROP_OLDEST",
+        OverflowStrategy::DROP_NEWEST => "DROP_NEWEST",
+        OverflowStrategy::FAIL_FAST => "FAIL_FAST",
+        _ => "UNKNOWN",
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.overflow_strategy version=1 rust_sha256=bf9f48db6809a04afbd718314f92b36dbe612714d96e1a75115ad2bb39673b15*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.overflow_strategy version=1 rust_sha256=df1d44b6aab049105caa11c08a961da299d1ba5e4259380f867eef0e62be53f0*/
 enum class OverflowStrategy;
 constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST();
 constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST();
 constexpr OverflowStrategy OverflowStrategy_FAIL_FAST();
+std::string_view overflow_strategy_to_string(OverflowStrategy strategy);
 
 enum class OverflowStrategy {
     DROP_OLDEST,
@@ -45,6 +55,10 @@ enum class OverflowStrategy {
 inline constexpr OverflowStrategy OverflowStrategy_DROP_OLDEST() { return OverflowStrategy::DROP_OLDEST; }
 inline constexpr OverflowStrategy OverflowStrategy_DROP_NEWEST() { return OverflowStrategy::DROP_NEWEST; }
 inline constexpr OverflowStrategy OverflowStrategy_FAIL_FAST() { return OverflowStrategy::FAIL_FAST; }
+
+std::string_view overflow_strategy_to_string(OverflowStrategy strategy) {
+    return ({ auto&& _m = strategy; std::optional<std::string_view> _match_value; bool _m_matched = false; if (!_m_matched && (_m == OverflowStrategy::DROP_OLDEST)) { _match_value.emplace(std::move(std::string_view("DROP_OLDEST"))); _m_matched = true; } if (!_m_matched && (_m == OverflowStrategy::DROP_NEWEST)) { _match_value.emplace(std::move(std::string_view("DROP_NEWEST"))); _m_matched = true; } if (!_m_matched && (_m == OverflowStrategy::FAIL_FAST)) { _match_value.emplace(std::move(std::string_view("FAIL_FAST"))); _m_matched = true; } if (!_m_matched) { _match_value.emplace(std::move(std::string_view("UNKNOWN"))); _m_matched = true; } if (!_m_matched) { rusty::intrinsics::unreachable_panic(); } std::move(_match_value).value(); });
+}
 /*RUSTYCPP:GEN-END id=request_queue.overflow_strategy*/
 
 // Canonical queue callback errors for caller observability.
@@ -257,11 +271,14 @@ struct RequestQueueConfig {
     static RequestQueueConfig small();
     static RequestQueueConfig large();
     static RequestQueueConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
 RequestQueueConfig RequestQueueConfig::new_() {
-    return RequestQueueConfig{.max_size = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+    return RequestQueueConfig{.max_size = static_cast<size_t>(1000), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy_DROP_OLDEST())), .enabled = true};
 }
 
 RequestQueueConfig RequestQueueConfig::defaults() {
@@ -269,15 +286,15 @@ RequestQueueConfig RequestQueueConfig::defaults() {
 }
 
 RequestQueueConfig RequestQueueConfig::small() {
-    return RequestQueueConfig{.max_size = static_cast<size_t>(10), .default_ttl_ms = static_cast<uint32_t>(5000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10), .default_ttl_ms = static_cast<uint32_t>(5000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy_DROP_OLDEST())), .enabled = true};
 }
 
 RequestQueueConfig RequestQueueConfig::large() {
-    return RequestQueueConfig{.max_size = static_cast<size_t>(10000), .default_ttl_ms = static_cast<uint32_t>(60000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = true};
+    return RequestQueueConfig{.max_size = static_cast<size_t>(10000), .default_ttl_ms = static_cast<uint32_t>(60000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy_DROP_OLDEST())), .enabled = true};
 }
 
 RequestQueueConfig RequestQueueConfig::disabled() {
-    return RequestQueueConfig{.max_size = static_cast<size_t>(0), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy::DROP_OLDEST)), .enabled = false};
+    return RequestQueueConfig{.max_size = static_cast<size_t>(0), .default_ttl_ms = static_cast<uint32_t>(30000), .overflow_strategy = rusty::clone(rusty::clone(OverflowStrategy_DROP_OLDEST())), .enabled = false};
 }
 /*RUSTYCPP:GEN-END id=request_queue.1*/
 
@@ -593,14 +610,6 @@ inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig&
 }
 
 // @safe - Convert overflow strategy to string
-inline const char* overflow_strategy_to_string(OverflowStrategy strategy) {
-    switch (strategy) {
-        case OverflowStrategy::DROP_OLDEST: return "DROP_OLDEST";
-        case OverflowStrategy::DROP_NEWEST: return "DROP_NEWEST";
-        case OverflowStrategy::FAIL_FAST: return "FAIL_FAST";
-        default: return "UNKNOWN";
-    }
-}
 
 
 }  // export namespace rrr
