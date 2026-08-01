@@ -2193,3 +2193,40 @@ Note the fix came from in-tree evidence rather than another probe:
 `lookup`'s `cached_response_get(&(*guard)[i], …)` had already compiled in
 a previous commit, which is direct proof that `&expr` binds where `&mut
 expr` does not.
+
+#### 7.24b A third structural floor: function-local `static`
+
+§7.24 names class templates, §7.24a function overloading. This one is
+smaller per site but appears everywhere, and — unlike the other two — it
+is almost never written down, so each occurrence reads like a missed
+conversion until you open the body.
+
+The DSL has no construct for a `static` (or `static thread_local`)
+declared *inside* a function body. Four functions blocked by it, found in
+one session, **none of which said so**:
+
+| function | the static |
+|---|---|
+| `reactor.cpp` `prune_finished_events` | `static thread_local std::size_t prune_hwm` |
+| `reactor.cpp` `stackless_profile_report_periodic` | `static thread_local uint64_t last_report_us` |
+| `misc/cpuinfo.cpp` `cpuinfo_cpu_stat` | `static rusty::OnceCell<CPUInfo> inst` |
+| `misc/any_message.cpp` `registry()` | `static rusty::Mutex<AnyMessageRegistryMap> r` |
+
+Each cost a fresh derivation: read the body, spot the static, conclude
+"blocked", move on. A one-line `// @unsafe - function-local static, not
+DSL-expressible` on each would have made all four classifiable at a
+glance.
+
+**Workaround, where the semantics allow it:** hoist the static to
+namespace scope, which is what §7.25 found for *class* statics
+(`g_rpc_id_missing` was hoisted out of `ServerConnection` for exactly this
+reason). It is not free — it changes linkage and lifetime, and for a
+`thread_local` used as a per-thread cache it changes sharing — so it is a
+deliberate redesign, not a mechanical fix. None of the four above was
+worth it.
+
+**The general point, which is the same as §7.30's:** a kernel that states
+its cause is classified in seconds; a kernel that does not is re-derived
+by every person who passes. `rand.cpp` is the model — every kernel there
+says `rdtsc asm`, `pthread_key_create`, `malloc`, `pthread_once`, and the
+whole file triages in one pass.
