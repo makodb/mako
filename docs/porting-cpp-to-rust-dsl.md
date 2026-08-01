@@ -1945,3 +1945,37 @@ treat a green build as weak evidence — the original author wrote
 Two deferrals now checked and CONFIRMED VALID: this one, and
 `frame_codec.cpp:519` (§7.30). Both were worth the check; neither was
 worth the conversion.
+
+#### 7.30b Probe fidelity: three ways I got a wrong answer from a correct tool
+
+The scratchpad probe (§7.30) is the best tool here, and every wrong
+answer it gave came from the probe not matching reality:
+
+1. **Parameter named `self`.** Probing raw-pointer deref with
+   `fn dp(self: *mut Thing)` emitted `(*this)` — the DSL treats `self`
+   as the receiver, so it answered a question about methods, not
+   pointer params. Looked like success for the wrong reason. Re-probe
+   with any other name.
+2. **Editing a probe file in place.** Patching a previous probe with
+   `sed`/regex left a malformed block; the transpiler reported
+   `cannot parse string into token stream`, which reads like the DSL
+   rejecting the *form* under test. It was rejecting my broken file.
+   Write a fresh probe file per variant.
+3. **Signature that does not match the real callee.** Probing
+   `event_state_seed(sp.state_)` against a stub declared
+   `void f(EvState&)` produced `std::move(...)` binding failures and a
+   confident "genuinely blocked" conclusion. The real function takes
+   **`const EventState&`** — and a const reference binds an rvalue
+   happily, so the emission is fine. The blocker was invented by the
+   probe.
+
+All three share a shape: **the probe was not the thing.** Copy the real
+signature, the real parameter names, and the real types out of the
+source rather than approximating them — an approximated probe answers
+an approximated question, and the failure mode is a confident wrong
+conclusion rather than an error.
+
+Corollary: when a probe says "blocked", check the probe before
+believing it. Two of these three produced false blockers, which is the
+expensive direction — a false "works" gets caught by the build, a false
+"blocked" just quietly removes work from the plan.
