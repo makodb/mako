@@ -1722,3 +1722,64 @@ Two harness facts worth keeping:
   corpus on the first run. Worktree gotcha recorded: `git worktree add`
   leaves submodules empty — `git submodule update --init` before any
   mirror rsync.
+
+## Upstream bug: `#[cfg(target_os = …)]` is silently dropped (2026-08-01)
+
+**Minimal repro**
+
+```rust
+#[cfg(target_os = "linux")]
+fn plat() -> i32 { 1i32 }
+```
+
+emits
+
+```cpp
+int32_t plat() { return static_cast<int32_t>(1); }
+```
+
+No `#if`, no diagnostic, no TODO marker. The function is emitted
+**unconditionally on every platform**.
+
+**Root cause** — not an oversight; a documented policy meeting an
+unhandled input. `CodeGen::should_skip_cfg_attrs` (predicates.rs:557)
+skips an item only when its predicate evaluates `CfgEval::False`:
+
+```rust
+/// Skip items behind `#[cfg(...)]` when the predicate is known-false in
+/// transpiler mode. Unknown predicates are kept conservatively.
+```
+
+`eval_cfg_meta` (mod.rs ~13600) handles `test`, `all`, `any`, `not` —
+but has **no case for `target_os` / `target_arch` / `target_family`**, so
+platform predicates return `Unknown` and fall into "kept". Keeping is
+conservative for *presence* and wrong for *correctness*: platform-gated
+code becomes unconditional.
+
+This is the same failure shape as the `use rusty::…` drop fixed today —
+an unhandled input silently discarded rather than refused.
+
+**Two candidate fixes, with a real tradeoff:**
+
+1. *Evaluate platform predicates against the host.* A one-function
+   change in `eval_cfg_meta`: `target_os = "linux"` → True on Linux,
+   `"macos"` → False. Fits the existing architecture exactly, needs no
+   new emission machinery. **Cost:** bakes the build host into the
+   generated output, so checked-in GEN blocks differ per platform and
+   any `--check` drift guard fails on another host.
+2. *Lower to `#if`.* Wrap the emitted item in the C++ preprocessor
+   equivalent (`__linux__`, `__APPLE__`, `__x86_64__`, …). Keeps output
+   portable and matches what hand-written platform splits do. **Cost:**
+   `should_skip_cfg_attrs` has 17 call sites and the wrap has to happen
+   at item emission, so it is a broader change.
+
+Recommend (2) for a transpiler whose output is checked in and
+drift-guarded — (1) would make the drift guard host-dependent, which is
+a worse property than the change being larger. Either way, the current
+behaviour should not survive: if a predicate cannot be lowered, refuse
+to transpile it rather than emit unguarded code.
+
+**Consequence for us until it lands:** do NOT write `#[cfg]` in DSL
+blocks. The existing platform splits (`basetypes.cpp:653/655`,
+`threading.cpp:229`) stay hand-written, or move to per-platform files —
+the arrangement `fiber_context_{x86_64,aarch64}.S` now uses.
