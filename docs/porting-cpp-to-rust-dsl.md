@@ -2627,3 +2627,60 @@ Recorded rather than executed: `this_fiber::yield()` sits in the fiber
 core, and four lines is not worth a linkage change made without a reason
 to touch that file. The point of the entry is that the NAMESPACE is not
 the blocker, so nobody re-derives that.
+
+### 7.39 The const-callable-callback floor: exactly where it stands
+
+§7.19 and the Goal-0(b) measurement both land on the same cluster —
+`OnFrameCallback` / `OnClosedCallback` / `OnErrorCallback` /
+`ConnectionCallback`, ~50 unresolved names — floored because the DSL
+emits every `move` closure as `[=, x = std::move(x)]() mutable`, and a
+mutable lambda's `operator()` is non-const, so it will not convert to
+`CallbackWrapper<void(..) const>`.
+
+`369c6897` ("emit `mutable` only when a move closure can modify a
+capture") looked like it retired that. **It does not.** Probed:
+
+```rust
+fn pure_read(n: i32) -> rusty::Function<dyn Fn() -> i32> {
+    let captured: i32 = n;
+    move || { captured + 1i32 }        // reads only
+}
+```
+
+still emits `[=, captured = std::move(captured)]() mutable`. The
+predicate is narrower than its commit title:
+
+```rust
+let needs_mutable =
+    is_move_closure && !(all_captures_are_raw_pointers && !body_reassigns_a_capture);
+```
+
+`mutable` is dropped only when **every capture is a raw pointer** (or
+there are none). Any value capture — including one that is merely read
+— keeps it. mako's channel closures capture `Weak`/`Arc` values, so
+they are unaffected.
+
+**What would lift it**, and why it is not a one-liner (§7.19 records an
+attempt that was reverted): the sound rule must keep `mutable` for a
+method call on a capture UNLESS the capture is pointer-like
+(`Arc`/`Box`/`Rc`/`Weak`, where mutation goes through a const-correct
+deref). The predicate for that exists
+(`type_is_pointer_like_owner_type`) but matches the type's LAST PATH
+SEGMENT BY NAME and does not resolve aliases — and mako's captures are
+spelled `WeakClientConnection`, a C++ `using` alias for
+`rusty::sync::Weak<…>`. So a naively-sound fix stays inert on exactly
+the code that needs it.
+
+Scoped as three changes, in dependency order:
+
+ 1. widen the mutability analysis from "all captures are raw pointers"
+    to "no capture is mutated", with pointer-like receivers treated as
+    non-mutating;
+ 2. teach the pointer-like predicate to resolve C++ `using` aliases
+    (today it only knows DSL `type X =` decls);
+ 3. Box-receiver method-call autoderef (§7.19's third blocker).
+
+Worth the effort for a reason that is now measurable rather than
+aesthetic: this single floor accounts for ~50 of the names Goal 0(b)
+would otherwise have to declare across an FFI boundary, and it blocks
+the whole channel-binding cluster in Goal 0(a). One fix, both goals.
