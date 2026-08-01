@@ -2580,3 +2580,50 @@ stated cause had expired and nobody re-checked, so the workaround
 outlived it. Re-testing a stated cause costs one command; carrying a
 phantom constraint costs every future decision that routes around it.
 Before honouring a workaround, re-run its repro.
+
+### 7.38 `mod X { … }` lowers to `namespace X { … }` — nested namespaces are convertible
+
+Undocumented and unused anywhere in the tree, which reads like
+"unsupported". It is not. Probed directly:
+
+```rust
+mod this_fiber {
+    fn yield_probe() -> i32 { 7 }
+}
+```
+
+emits
+
+```cpp
+namespace this_fiber {
+    int32_t yield_probe();
+}
+
+// mod this_fiber
+namespace this_fiber {
+    int32_t yield_probe();
+    int32_t yield_probe() { return static_cast<int32_t>(7); }
+}
+```
+
+(The declaration appears twice — redundant but well-formed.)
+
+So code inside a nested namespace is not floored on the namespace. The
+worked candidate is `reactor/fiber.cpp`'s `this_fiber::yield()`, whose
+four lines are the file's entire remaining hand-written body.
+
+**Two hazards before converting one, neither about namespaces:**
+
+ - **`yield` is a Rust KEYWORD.** `fn yield()` will not parse; it needs
+   the raw identifier `r#yield`, and the escape strips the `r#` prefix so
+   the emitted name is still `yield`. Any C++ name that collides with a
+   Rust keyword (`match`, `type`, `move`, `become`, `yield`) hits this.
+ - **`inline` and `noexcept` are dropped.** The DSL emits neither. For a
+   free function in a module INTERFACE unit that is a linkage question,
+   not a cosmetic one — check the consumers before trading a working
+   `inline` for a DSL block.
+
+Recorded rather than executed: `this_fiber::yield()` sits in the fiber
+core, and four lines is not worth a linkage change made without a reason
+to touch that file. The point of the entry is that the NAMESPACE is not
+the blocker, so nobody re-derives that.
