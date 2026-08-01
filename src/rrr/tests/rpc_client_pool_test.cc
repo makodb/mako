@@ -408,6 +408,107 @@ TEST_F(ClientPoolTest, RemoveAllUnhealthyWithMultipleAddresses) {
     delete server;
 }
 
+// --------------------------------------------------------------------------
+// Coverage for the REMOVAL side of the cleanup kernels.
+//
+// Every test above asserts the KEPT side (`removed == 0`, count unchanged).
+// That gap was load-bearing: it let a silently-wrong conversion of
+// `remove_all_unhealthy` pass 20/20 while its write-back updated a copy of
+// the client vector and the map never changed, and it was later used to argue
+// the removal branch was unreachable dead code. It is not — the sequence
+// below reaches it through the plain public API, no concurrency required.
+//
+// Two facts make it reachable, both verified by these tests:
+//   1. a cache miss creates `min_connections` clients, not one; and
+//   2. `set_pool_config` is public and does NOT re-validate — the
+//      `verify(min_connections > 0)` lives only in `ClientPool::new_` — so
+//      the floor can be lowered AFTER the pool has been populated above it.
+// --------------------------------------------------------------------------
+
+TEST_F(ClientPoolTest, GetClientCreatesMinConnectionsNotOne) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto config = PoolConfig::defaults();
+    config.min_connections = 2;
+    config.max_connections = 4;
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+
+    auto client = pool.get_client(server_addr());
+    ASSERT_TRUE(client.is_some());
+
+    // Fact 1. A single miss populates the whole floor, so the pool can hold
+    // MORE clients at one address than a later, lower floor allows.
+    EXPECT_EQ(pool.total_client_count(), 2u);
+
+    delete server;
+}
+
+TEST_F(ClientPoolTest, RemoveAllUnhealthyRemovesDownToLoweredFloor) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto config = PoolConfig::defaults();
+    config.min_connections = 2;
+    config.max_connections = 4;
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+
+    auto client = pool.get_client(server_addr());
+    ASSERT_TRUE(client.is_some());
+    ASSERT_EQ(pool.total_client_count(), 2u);
+
+    // Make one pooled client unhealthy deterministically: get_client hands
+    // back an Arc SHARED with the pool, so closing it flips connected() for
+    // the pool's copy too. (Tearing down the server instead would race the
+    // poll thread noticing EOF.)
+    client.as_ref().unwrap()->close();
+
+    // Fact 2. Lower the floor below the current population.
+    auto lowered = pool.pool_config();
+    lowered.min_connections = 1;
+    pool.set_pool_config(lowered);
+    ASSERT_EQ(pool.pool_config().min_connections, 1);
+
+    // Now `clients.len() - removed > cfg.min_connections` holds on the first
+    // iteration and the removal branch runs. Exactly one client is dropped,
+    // independent of iteration order: whichever client is visited while the
+    // gate is open, the survivor is protected by the floor of 1.
+    size_t removed = pool.remove_all_unhealthy();
+    EXPECT_EQ(removed, 1u);
+    EXPECT_EQ(pool.total_client_count(), 1u);
+
+    delete server;
+}
+
+TEST_F(ClientPoolTest, RemoveUnhealthyClientsRemovesDownToLoweredFloor) {
+    // Same reachability, through the per-address kernel rather than the
+    // all-addresses one; the two carry an identical gate and are easy to fix
+    // out of step.
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto config = PoolConfig::defaults();
+    config.min_connections = 2;
+    config.max_connections = 4;
+    auto pool = ClientPool::new_(rusty::Some(poll_thread_.as_ref().unwrap().clone()), config);
+
+    auto client = pool.get_client(server_addr());
+    ASSERT_TRUE(client.is_some());
+    ASSERT_EQ(pool.total_client_count(), 2u);
+
+    client.as_ref().unwrap()->close();
+
+    auto lowered = pool.pool_config();
+    lowered.min_connections = 1;
+    pool.set_pool_config(lowered);
+
+    size_t removed = pool.remove_unhealthy_clients(server_addr());
+    EXPECT_EQ(removed, 1u);
+    EXPECT_EQ(pool.total_client_count(), 1u);
+
+    delete server;
+}
+
 TEST_F(ClientPoolTest, CloseAllIdleWithMultipleAddresses) {
     auto server = start_server();
     ASSERT_NE(server, nullptr);
