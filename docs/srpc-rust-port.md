@@ -129,6 +129,53 @@ BE the crate** — Goals 0 and 1 converge rather than running in
 parallel, and the golden corpora stop guarding a hand-maintained
 translation and start guarding a mechanical one.
 
+### (b) feasibility — measured 2026-08-01, not estimated
+
+Extract every `#if RUSTYCPP_RUST` block, apply `s/use rusty::/use std::/`,
+hand it to rustc:
+
+| unit | result |
+|---|---|
+| per file, in isolation | **3 of 37 compile clean** (`misc/stat.cpp`, `rpc/connection_metrics.cpp`, `rpc/internal_protocol.cpp`) |
+| whole corpus as ONE crate (8,122 lines) | **1,567 errors** |
+
+Per-file isolation is the wrong unit — it fails on cross-file type
+references that a single crate resolves — but the single-crate number
+shows that framing is not a rescue either. Error taxonomy:
+
+| code | n | what it is |
+|---|---:|---|
+| E0425 | 763 | value not in scope |
+| E0433 | 394 | type/module not in scope |
+| E0599 | 112 | no such method |
+| E0573 | 71  | `std::string` used as a TYPE (C++ spelling) |
+| E0608/E0308/E0609/E0369 | ~115 | indexing, type mismatch, field, missing `PartialEq` derive |
+
+**74% (1,157) is name resolution**, and it splits into two very
+different piles:
+
+ - **mechanical** — `rusty::` types that map to `std` (`Cell`,
+   `RefCell`, `Arc`, `Mutex`, `HashMap`, …), C++ spellings
+   (`std::string` → `String`), and derives the C++ side gets free on
+   enums (`==` needs `#[derive(PartialEq)]`). A prelude + a type map
+   in the extractor covers these in bulk.
+ - **the real question** — calls into the `@unsafe` C++ kernels the
+   DSL is interleaved with (`bt_empty_string`, `bt_index_prefix`,
+   syscall wrappers, `verify`, `Log_*`). rustc needs *declarations*
+   for these, which is FFI-shaped.
+
+**Verdict: tractable but a real project, not a quick win.** ~1 error
+per 5 DSL lines, most of them bulk-fixable, with one genuine design
+decision (kernel declarations) underneath.
+
+Method note: the first run of this experiment reported
+`connection_metrics.cpp` as compiling with "exit=0". That exit status
+came from `head` at the end of a pipeline, not from rustc, and rustc
+had in fact failed on `-o /dev/null` (it needs a writable temp dir
+beside the output path). The file *does* compile — the claim was right
+and the evidence was worthless. Check `${PIPESTATUS[0]}`, or do not
+pipe the command whose status you are reading.
+
 Open design question for (b): the DSL blocks are `#if RUSTYCPP_RUST`
 regions inside `.cpp`/`.cc` module units, interleaved with C++ kernels
 they call. Extracting them as compilable Rust needs a story for the
