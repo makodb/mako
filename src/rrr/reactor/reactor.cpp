@@ -4413,8 +4413,8 @@ void pollworker_poll_loop(PollThreadWorker& self) {
     Reactor::get_reactor()->loop();
 
     // Check for pending write updates (set by end_reply() during fiber execution)
-    // @unsafe - const_cast needed because Arc provides const access, but we know the
-    // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
+    // @unsafe - reads a pollable's interior-mutable pending_write_update_
+    // flag through the shared Arc; no cast is involved.
     for (auto [fd, poll] : self.fd_to_pollable_) {
       if (poll->check_pending_write_update()) {
         pollworker_do_update_mode(self, fd, PollMode::READ | PollMode::WRITE);

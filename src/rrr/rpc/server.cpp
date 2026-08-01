@@ -128,7 +128,8 @@ using ShutdownHook = rusty::Function<void()>;
 // needs a const_cast (the const is Arc's shared-ownership const, not the
 // atomic's — atomics are interior-mutable). These two are the only
 // places the counter moves.
-// @unsafe - const_cast through Arc's shared const to the interior-mutable atomic.
+// @safe - rusty::sync::atomic ops are const (Rust's &self), so the shared
+// Arc view is enough; the const_cast this used to need is gone.
 inline void pending_guard_acquire(const rusty::Arc<rusty::sync::atomic::AtomicI32>& counter) {
     if (counter.is_valid()) {
         counter.get()->fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);

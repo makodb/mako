@@ -462,9 +462,6 @@ ChannelError fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f) 
     return self.ch_->send_frame(f);
 }
 
-// @unsafe - const_cast through the ChannelConnectionProxy reference +
-// proxy deref (the Cell-flag half of is_closed lives in the DSL).
-
 // @unsafe - proxy deref through `ch_->close()`.
 void fiberchannel_close(FiberChannel& self) {
     self.ch_->close();

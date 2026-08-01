@@ -4050,8 +4050,8 @@ int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool
     // channel mode (the channel proxy's TcpConnection owns the fd);
     // the `connect()` call below routes through `connect_via_factory`
     // which produces a fresh proxy + fresh fd internally.
-    // @unsafe { const_cast — connect mutates state_machine_; reconnect is a
-    // const facade over the non-const connect path }
+    // @unsafe { connect drives the state machine and the socket; it is
+    // const-callable because that state is interior-mutable }
     return self.connect(reinterpret_cast<const int8_t*>(self.reconnect_address_.get().c_str()));
   };
 
