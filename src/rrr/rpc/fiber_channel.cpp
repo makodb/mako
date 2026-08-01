@@ -122,7 +122,6 @@ OwnedFrame                fiberchannel_owned_copy(const ChannelFrame& f);
 void                      fiberchannel_signal_pending_recv(FiberChannel& self);
 ChannelError              fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f);
 void                      fiberchannel_close(FiberChannel& self);
-void                      fiberchannel_drop(FiberChannel& self);
 
 // Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
 // std::deque / empty Option inline).
@@ -238,11 +237,18 @@ impl FiberChannel {
 
 impl Drop for FiberChannel {
     fn drop(&mut self) {
-        fiberchannel_drop(self);
+        // Detach callbacks before the proxy destructor runs, so an
+        // in-flight callback dispatch cannot race with member teardown.
+        // The empty_*_callback factories are channel.cpp's hand-bridge for
+        // the `{}` default ctor the DSL cannot spell (playbook §7.2).
+        let ch: &mut Box<ChannelConnectionBase> = &mut self.ch_;
+        ch.set_on_frame(empty_on_frame_callback());
+        ch.set_on_closed(empty_on_closed_callback());
+        ch.set_on_error(empty_on_error_callback());
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=c00ce8307f69e284bf8c4090ef7e2dd536b2a6b56219f1a263a1090d64368aad*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=0fe8077149304855cd75906032885297fd869fd38bcf330b2d4d46f37c95877b*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -355,7 +361,10 @@ ChannelConnectionProxy& FiberChannel::channel_for_test() {
 
 FiberChannel::~FiberChannel() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    fiberchannel_drop((*this));
+    rusty::Box<ChannelConnectionBase>& ch = this->ch_;
+    ch->set_on_frame(empty_on_frame_callback());
+    ch->set_on_closed(empty_on_closed_callback());
+    ch->set_on_error(empty_on_error_callback());
 }
 /*RUSTYCPP:GEN-END id=fiber_channel.fiber_channel*/
 
@@ -390,13 +399,6 @@ void fiberchannel_bind_callbacks(FiberChannel& self) {
 
 // @unsafe - `ch_->set_on_*({})` detach driven through the proxy deref. This
 // is the former `~FiberChannel`, now reached via `impl Drop`.
-void fiberchannel_drop(FiberChannel& self) {
-    // Detach callbacks before the proxy destructor runs to make sure
-    // any in-flight callback dispatch can't race with member teardown.
-    self.ch_->set_on_frame ({});
-    self.ch_->set_on_closed({});
-    self.ch_->set_on_error ({});
-}
 
 // @unsafe - raw `const uint8_t*` + `memcpy` + `set_len` byte-copy
 // (rusty::Vec has no `.assign(iter, iter)` so we reserve, memcpy, then
