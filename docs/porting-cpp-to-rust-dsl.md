@@ -1791,3 +1791,44 @@ property of the tooling, not of the code.
 `pollable_proxy.cpp` is the exception: its alias converts today (row 2),
 and its `make_pollable_proxy_from_typed_arc` is a function template,
 which §7.9 covers. That one is reachable now.
+
+#### 7.27a Regeneration can break a file nobody edited — one known landmine
+
+§7.18 says regenerating changes output in blocks you did not touch. Here
+is what that costs in practice, and it is worse than cosmetic drift.
+
+`pollable_proxy.cpp` had compiled for months. Converting one alias and
+one function template in it meant running `inline-rust --rewrite`, which
+regenerated **all four** blocks — and the untouched generic-struct block
+`PollableArcShim<T>` came back emitting
+
+    static constexpr bool is_send = rusty::is_send<T>::value && rusty::is_sync<T>::value;
+
+which its GMF (`arc.hpp`, `box.hpp`) could not reach. Six errors, in a
+block nobody hand-edited. Fix was one line: `#include <rusty/traits.hpp>`
+(§7.27 table: primary templates at `rusty/traits.hpp:49`).
+
+**So generated output is not stable across transpiler versions.** Any
+regen can surface new symbol requirements in code no human touched.
+Regenerate deliberately, one file at a time, and build after — never as
+a sweep. (§7.14 already says do not bulk-regenerate; this is the
+concrete reason.)
+
+**Audit of every file with a generic DSL struct** — a generic struct is
+what triggers the `is_send`/`is_sync` emission:
+
+| file | generic structs | traits reachable | emits today |
+|---|---|---|---|
+| `rpc/pollable_proxy.cpp` | 1 | ✅ (added) | yes |
+| `rpc/server.cpp` | 1 | ✅ | yes |
+| `misc/serializable.cpp` | 1 | ✅ | yes |
+| `rpc/reconnect_policy.cpp` | 1 | ✅ | no |
+| `reactor/reactor.cpp` | 1 | ✅ | no |
+| **`reactor/future.cpp`** | **2** | **❌** | **no** |
+
+**`reactor/future.cpp` is a landmine.** It has two generic structs
+(`FiberPromise<T>`, …), does not emit the traits today, and cannot reach
+them. It compiles now and will break the moment anyone regenerates it —
+with an error pointing at a line they did not write. Whoever touches it
+next should add `#include <rusty/traits.hpp>` to the GMF *first*, before
+running the transpiler, so the failure never happens.
