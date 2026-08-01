@@ -2369,3 +2369,58 @@ exactly and expensive to answer by reasoning.** Reading the code told me
 the right verdict for the wrong reason, and a wrong reason is a bad thing
 to write into a commit message. If a claim is decidable by the compiler,
 decide it with the compiler.
+
+### 7.36 `--check` verifies the SOURCE hash, not the generated C++
+
+`scripts/rrr_dsl_check.sh` reporting "checked 41 files, 0 with drift" is
+a weaker statement than it looks, and I over-trusted it for a long time.
+
+`inline-rust --check` compares the recorded `rust_sha256` in each
+`GEN-BEGIN` marker against the hash of the `#if RUSTYCPP_RUST` source
+block. It does **not** re-run codegen and byte-compare the emitted C++.
+
+Demonstrated, not inferred — take any file with a GEN block, edit the
+GENERATED side only, leave the DSL source untouched:
+
+```
+-    int32_t e = errno;
++    int32_t e = 12345;
+```
+
+`--check` reports the file clean. The generated code now says something
+the DSL source never said, and the guard is structurally incapable of
+noticing.
+
+So the guard answers exactly one question: *did someone edit a DSL block
+and forget to regenerate?* It is blind to two others that matter just as
+much:
+
+ - **Hand-edited GEN.** Someone patching generated C++ directly (to fix
+   a transpiler bug in place) leaves no trace the guard can find. The
+   file keeps passing forever.
+ - **Transpiler-version drift.** The same source through a different
+   transpiler build can emit different C++. The guard compares nothing
+   about the transpiler, so a pin bump that changes output silently
+   passes on every file.
+
+Worked example, and the reason this section exists.
+`reactor/epoll_platform_linux.cc` reads libc `errno`. Its checked-in GEN
+contains a bare `errno`, but the transpiler at the time renamed it to
+`errno_` (§7.18). Both facts were true at once and `--check` reported
+CLEAN, because the source hash matched. I briefly read that CLEAN as
+evidence the errno bug was already fixed — it was evidence of nothing.
+The bug was real, and the probe that actually settled it ran the old and
+new binaries over the same input and diffed the OUTPUT:
+
+```
+OLD:  int32_t e = errno_;
+NEW:  int32_t e = errno;
+```
+
+**Rule.** To claim the tree round-trips through a given transpiler, you
+must regenerate with that binary and diff — `--check` cannot support the
+claim. Reserve `--check` for what it does do: a cheap pre-commit guard
+against editing a DSL block and forgetting to regenerate. And when a
+green check is load-bearing for a conclusion, ask what a red one would
+have required: if no realistic breakage produces red, the green is not
+evidence.
