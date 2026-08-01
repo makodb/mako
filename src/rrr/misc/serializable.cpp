@@ -27,6 +27,12 @@ import rrr.threading;
 // raw `const uint8_t*` source storage, std::shared_ptr<T> holder, void*
 // memcpy in archive primitives) carry per-class `// @unsafe` overrides
 // or inline `// @unsafe { }` blocks below.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 // `MarshalSink` / `MarshalSource` (formerly here) now live in
@@ -70,6 +76,8 @@ pub trait SinkBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=serializable.sink_base version=1 rust_sha256=c6dde192737a6cb41eeb1ea174af464c9775406a8821e4aaab6934e2d107bbab*/
+class SinkBase;
+
 class SinkBase {
 public:
     virtual ~SinkBase() noexcept(false) {}
@@ -103,6 +111,8 @@ pub trait SourceBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=serializable.source_base version=1 rust_sha256=8ca92ac4f6d36965baaf91b4f6c0f852f253d7cd57cdb4177b27183f31a9a383*/
+class SourceBase;
+
 class SourceBase {
 public:
     virtual ~SourceBase() noexcept(false) {}
@@ -145,29 +155,46 @@ using SourceProxy = rusty::Box<SourceBase>;
 // need to reset just touch the field directly via `sink.bytes.clear()`
 // (the legacy `clear()` method had zero callers).
 struct BufferSink;
-inline void buffer_sink_write(BufferSink& self, const void* p, size_t n);
+// Hand-bridge: the SinkBase trait hands write_bytes a raw (ptr, len) pair,
+// and the DSL cannot build a span from one. This is the whole kernel that
+// remains — the copy itself is extend_from_slice below.
+inline std::span<const std::uint8_t> sink_span(const std::uint8_t* p, size_t n) {
+    return std::span<const std::uint8_t>(p, n);
+}
 #if RUSTYCPP_RUST
 struct BufferSink {
     bytes: Vec<u8>,
 }
 impl SinkBase for BufferSink {
     fn write_bytes(&mut self, p: *const u8, n: usize) {
-        buffer_sink_write(self, p, n);
+        if n == 0 {
+            return;
+        }
+        // Appends, so extend_from_slice is exactly the old kernel's work:
+        // grow if needed, then copy. The hand-rolled capacity doubling is
+        // gone with it — Vec already amortises growth.
+        self.bytes.extend_from_slice(sink_span(p, n));
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=227637d9171f91f5238e1c5a35a9f22536242cba0d954607c090dd07dbe7baeb*/
+/*RUSTYCPP:GEN-BEGIN id=serializable.buffer_sink version=1 rust_sha256=6239cfd1292829e54a30a003fc52a2bb8884870dee81f1304cec8a317f814a0f*/
 struct BufferSink;
 
 struct BufferSink {
     rusty::Vec<uint8_t> bytes;
 
     void write_bytes(const uint8_t* p, size_t n);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
 void BufferSink::write_bytes(const uint8_t* p, size_t n) {
-    buffer_sink_write((*this), p, std::move(n));
+    if (rusty::detail::deref_if_pointer_like(n) == static_cast<size_t>(0)) {
+        return;
+    }
+    this->bytes.extend_from_slice(sink_span(p, std::move(n)));
 }
 
 template <>
@@ -206,18 +233,6 @@ public:
 // Free function — kept outside the DSL block because the body's
 // `std::memcpy` over a `const void*` parameter isn't expressible in
 // inline-Rust today.
-inline void buffer_sink_write(BufferSink& self, const void* p, size_t n) {
-    if (n == 0) return;
-    const size_t old_len = self.bytes.len();
-    const size_t needed = old_len + n;
-    if (needed > self.bytes.capacity()) {
-        size_t new_cap = self.bytes.capacity() == 0 ? 64 : self.bytes.capacity() * 2;
-        while (new_cap < needed) new_cap *= 2;
-        self.bytes.reserve(new_cap);
-    }
-    std::memcpy(self.bytes.data() + old_len, p, n);
-    self.bytes.set_len(needed);
-}
 
 // In-memory byte source. Wraps a `const uint8_t*` view + length;
 // caller owns the underlying storage.
@@ -417,6 +432,9 @@ struct FdSink {
     static FdSink new_(int32_t fd);
     int32_t fd() const;
     void write_bytes(const uint8_t* p, size_t n);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -511,6 +529,9 @@ struct FdSource {
     static FdSource new_(int32_t fd);
     int32_t fd() const;
     size_t read_bytes(uint8_t* p, size_t n);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -761,6 +782,8 @@ impl Serialize for f64 {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=serializable.serialize_trait version=1 rust_sha256=1c03eccea53c5ff40cee1e490f75758d22ba3957d5cb346765e81d3914dcbc13*/
+class Serialize;
+
 // Extension trait free-function forward declarations
 namespace rusty_ext {
     void serialize(const v32& self_, BinaryWriteArchive& ar);
@@ -1985,6 +2008,8 @@ impl Deserialize for f64 {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=serializable.deserialize_trait version=1 rust_sha256=981d4817ed90246efe31c93a081d3d38c9d8d0763d5f62db55542165d70e90d9*/
+class Deserialize;
+
 // Extension trait free-function forward declarations
 namespace rusty_ext {
     void deserialize(v32& self_, BinaryReadArchive& ar);
@@ -3141,6 +3166,8 @@ pub trait SerializableBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=serializable.1 version=1 rust_sha256=09faf724fbedcb9cf6f47203e2f6865062f27426a1e4b6a2f2c53a8bfe3afa60*/
+class SerializableBase;
+
 class SerializableBase {
 public:
     virtual ~SerializableBase() noexcept(false) {}
@@ -3212,6 +3239,9 @@ struct SerializableSharedPtrHolder : public SerializableBase {
     int32_t kind() const {
         return this->ptr->kind();
     }
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = rusty::is_send<T>::value && rusty::is_sync<T>::value;
+    static constexpr bool is_sync = rusty::is_send<T>::value && rusty::is_sync<T>::value;
 };
 /*RUSTYCPP:GEN-END id=serializable.shared_ptr_holder*/
 
@@ -3325,6 +3355,9 @@ struct SerializableRegistry {
     static SerializableProxy create(int32_t kind);
     static bool is_registered(int32_t kind);
     static void clear_for_testing();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -3560,24 +3593,24 @@ bool serializable_registry_is_registered_impl(int32_t kind);
 void serializable_registry_clear_impl();
 
 void serializable_registry_register_factory(int32_t kind, SerializableRegistryFactory factory) {
-    auto guard = registry().lock().unwrap();
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     (rusty::detail::deref_if_pointer_like(guard)).map.insert(std::move(kind), std::move(factory));
 }
 
 SerializableProxy serializable_registry_create_impl(int32_t kind) {
-    auto guard = registry().lock().unwrap();
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     auto entry = (rusty::detail::deref_if_pointer_like(guard)).map.get(std::move(kind));
     verify(entry.is_some());
     return entry.unwrap()();
 }
 
 bool serializable_registry_is_registered_impl(int32_t kind) {
-    const auto guard = registry().lock().unwrap();
+    const auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     return (rusty::detail::deref_if_pointer_like(guard)).map.get(std::move(kind)).is_some();
 }
 
 void serializable_registry_clear_impl() {
-    auto guard = registry().lock().unwrap();
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     (rusty::detail::deref_if_pointer_like(guard)).map.clear();
 }
 /*RUSTYCPP:GEN-END id=serializable.registry_impls*/
