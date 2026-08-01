@@ -1600,3 +1600,51 @@ conversion with its own probe sequence, not as burndown filler.
 target, check whether its owning type is a DSL struct. If it is not, the
 real unit of work is the class, and the line count you were looking at
 is not the size of the job.
+
+### 7.26 Re-check deferral *causes* after a big sweep lands — they expire
+
+The J+K census deferred every `*_to_string` function with the cause
+"varargs-UB": they return `const char*`, the DSL can only return
+`&'static str` (→ `std::string_view`), and passing a non-POD
+`string_view` through C varargs is undefined behaviour. That was
+correct when written.
+
+It is no longer true. The DSL-native logging sweep replaced the
+printf/`va_list` surface with `std::format`, so `Log_info` is now
+
+    template <typename... Args>
+    inline void Log_info(std::format_string<Args...> fmt, Args&&... args)
+
+— a variadic *template*, not C varargs. A `string_view` argument is
+type-checked and formats correctly. The deferral outlived its reason by
+several sweeps, and nothing flagged it, because a deferral is recorded
+once and then read as settled.
+
+Concretely this unblocks six switch-table functions (~47 lines):
+
+| file | function |
+|---|---|
+| `rpc/connection_state.cpp` | `connection_state_to_string` |
+| `rpc/request_options.cpp` | `timeout_type_to_string` |
+| `rpc/load_balancer.cpp` | `load_balancing_strategy_to_string` |
+| `rpc/completion_tracker.cpp` | `completion_status_to_string` |
+| `rpc/circuit_breaker.cpp` | `circuit_state_to_string` |
+| (`tests/rpcbench.cc` — test, not a target) | `rpc_mode_name` |
+
+Only `connection_state_to_string` has production callers
+(`src/deptran/communicator.cc:172,185`); the rest are called from tests
+only. **Check callers before converting one of these** — the varargs
+hazard is real for any caller that is still genuinely printf-style, and
+this file cannot promise none will ever reappear.
+
+`errors.cpp` is the worked example (now 0 hand-written lines): convert
+the switch to a `match` returning `&'static str`, then change the tests
+from `EXPECT_STREQ` (which requires `char*`) to `EXPECT_EQ` — the same
+assertion, since `string_view` compares equal to a string literal.
+
+**Generalisable lesson.** A deferral records a decision *and* a
+justification, but only the decision survives review. When a sweep
+removes a whole mechanism — varargs here — walk the deferral list and
+ask which causes it just invalidated. Still live at this writing:
+`idempotency-LRU` (waits on Marshal deprecation, not yet done) and the
+kernel classifications.
