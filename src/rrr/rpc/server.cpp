@@ -2185,8 +2185,7 @@ void server_drop_impl(Server& self) {
     {
         auto guard = self.channel_sconns_field.lock().unwrap();
         for (auto& sconn : *guard) {
-            // @unsafe - const_cast through Arc::get for close()
-            sconn->close();   // close() is const now — no cast needed
+            sconn->close();   // close() is const (status_ is a Cell)
         }
         (*guard).clear();
     }
