@@ -3232,42 +3232,85 @@ void event_state_seed(const EventState& st) {
   }
 }
 
+// Authored as inline Rust DSL. The default `rusty::sync::Weak<T>()` that
+// used to need a C++ helper is spellable now (§7.30 table); the
+// `event_state_seed(sp.state_)` emission carries a std::move around the
+// field access, which is fine because event_state_seed takes
+// `const EventState&` (reactor.cpp:276) and a const ref binds an rvalue.
+#if RUSTYCPP_RUST
+fn never_event_make() -> Arc<NeverEvent> {
+    let sp = rusty::Arc::<NeverEvent>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+    );
+    event_state_seed(sp.state_);
+    return sp;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.19 version=1 rust_sha256=dcf171ad810f03fdb53d9fbbee59cb455e8fd685ecd8e85eee9bf7732dac065e*/
 rusty::Arc<NeverEvent> never_event_make() {
-  auto sp = rusty::Arc<NeverEvent>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
-      rusty::thread::current_id(),
-      EventState{},
-      rusty::Cell<bool>::new_(true),
-      rusty::sync::Weak<EventPollable>());
-  event_state_seed(sp->state_);
-  return sp;
+    auto sp = rusty::Arc<NeverEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>());
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
 }
+/*RUSTYCPP:GEN-END id=reactor.19*/
 
+// Authored as inline Rust DSL (§7.30 table: the default
+// `rusty::sync::Weak<T>()` that once needed a C++ helper is spellable now).
+// Arc/Cell MUST be `rusty::`-qualified here -- the unqualified forms do not
+// resolve in this TU (build-verified, not assumed).
+#if RUSTYCPP_RUST
+fn timeout_event_make(wait_us: u64) -> Arc<TimeoutEvent> {
+    let sp = rusty::Arc::<TimeoutEvent>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+        Time::now(true) + wait_us,
+        wait_us,
+    );
+    event_state_seed(sp.state_);
+    return sp;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.20 version=1 rust_sha256=019ef05ec016e8a5f5727a02ea265bd283f4fdcf798a5fc6996be21925f6c9a6*/
 rusty::Arc<TimeoutEvent> timeout_event_make(uint64_t wait_us) {
-  auto sp = rusty::Arc<TimeoutEvent>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
-      rusty::thread::current_id(),
-      EventState{},
-      rusty::Cell<bool>::new_(true),
-      rusty::sync::Weak<EventPollable>(),
-      Time::now(true) + wait_us,  // wakeup_time_: the deadline, at construction
-      wait_us);
-  event_state_seed(sp->state_);
-  return sp;
+    auto sp = rusty::Arc<TimeoutEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), Time::now(true) + rusty::detail::deref_if_pointer_like(wait_us), std::move(wait_us));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
 }
+/*RUSTYCPP:GEN-END id=reactor.20*/
 
-rusty::Arc<IntEvent> int_event_make(int32_t target) {
-  auto sp = rusty::Arc<IntEvent>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),
-      rusty::thread::current_id(),
-      EventState{},
-      rusty::Cell<bool>::new_(true),
-      rusty::sync::Weak<EventPollable>(),
-      rusty::Cell<int32_t>::new_(0),        // value_
-      rusty::Cell<int32_t>::new_(target));
-  event_state_seed(sp->state_);
-  return sp;
+// Authored as inline Rust DSL (§7.30 table: the default
+// `rusty::sync::Weak<T>()` that once needed a C++ helper is spellable now).
+// Arc/Cell MUST be `rusty::`-qualified here -- the unqualified forms do not
+// resolve in this TU (build-verified, not assumed).
+#if RUSTYCPP_RUST
+fn int_event_make(target: i32) -> Arc<IntEvent> {
+    let sp = rusty::Arc::<IntEvent>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+        rusty::Cell::<i32>::new(0i32),
+        rusty::Cell::<i32>::new(target),
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.21 version=1 rust_sha256=86a25dfd2b425c608b5aff36d8bdc2aec61e0b78096d66f64fd02af0d4456812*/
+rusty::Arc<IntEvent> int_event_make(int32_t target) {
+    auto sp = rusty::Arc<IntEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(std::move(target)));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+/*RUSTYCPP:GEN-END id=reactor.21*/
 
 // Flattened (S4): the former WaitAny(a, b) ctor, as the aggregate factory
 // rrr::event_make dispatches to. Build the child vector, then the aggregate,
@@ -3288,17 +3331,31 @@ rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPo
 }
 
 // Flattened (S4): the former WaitAll default ctor (empty child list).
-rusty::Arc<WaitAll> waitall_make() {
-  auto sp = rusty::Arc<WaitAll>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),        // status_
-      rusty::thread::current_id(),                              // owner_thread_
-      EventState{},                                             // state_
-      rusty::Cell<bool>::new_(true),                            // prunable_
-      rusty::sync::Weak<EventPollable>(),                       // self_
-      rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>()); // events_ (empty)
-  event_state_seed(sp->state_);
-  return sp;
+// Authored as inline Rust DSL (§7.30 table: the default
+// `rusty::sync::Weak<T>()` that once needed a C++ helper is spellable now).
+// Arc/Cell MUST be `rusty::`-qualified here -- the unqualified forms do not
+// resolve in this TU (build-verified, not assumed).
+#if RUSTYCPP_RUST
+fn waitall_make() -> Arc<WaitAll> {
+    let sp = rusty::Arc::<WaitAll>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+        rusty::RefCell::<rusty::Vec<rusty::Arc<EventPollable>>>(),
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.22 version=1 rust_sha256=5863d50f57ab83757887c8720481329e39577b09f1bc7c95d0239e2f2a72ce34*/
+rusty::Arc<WaitAll> waitall_make() {
+    auto sp = rusty::Arc<WaitAll>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::RefCell<rusty::Vec<rusty::Arc<EventPollable>>>());
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+/*RUSTYCPP:GEN-END id=reactor.22*/
 
 // Flattened (S4): the former WaitAll(const Vec&) ctor.
 rusty::Arc<WaitAll> waitall_make_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs) {
