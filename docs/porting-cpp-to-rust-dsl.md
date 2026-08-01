@@ -1856,9 +1856,21 @@ active development, often by us.
 lowers to `rusty::Vec`, every caller passes `std::vector`, and
 `tcp_channel` drains with iterator-pair `erase` which rustc's Vec lacks —
 so the rewrite is a data-structure migration on a hot path, weighed
-against the branch's performance-parity goal. Re-checked: `rusty::Vec`
-still has neither `erase` nor `drain`. That deferral is as valid as the
-day it was written, and should be left alone.
+against the branch's performance-parity goal. That deferral is as valid
+as the day it was written, and should be left alone.
+
+**Correction.** An earlier revision of this paragraph claimed "re-checked:
+`rusty::Vec` still has neither `erase` nor `drain`". That is **false** —
+`rusty::Vec` *does* have `drain`
+(`third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5217`). The
+check had grepped only `include/rusty/vec.hpp`, which is a 27-line
+wrapper; the real Vec is the transpiled port. Note the original
+`frame_codec` comment already said as much — "which rustc's Vec does not
+have (it has `drain`)" — so the re-derivation contradicted the source it
+was supposedly confirming. The conclusion survives, but on the comment's
+own reasoning: the blocker is *rewriting `tcp_channel`'s drain path on a
+hot buffer*, not an absent API. A true conclusion resting on a false
+premise is still a defect, because the next person inherits the premise.
 
 Every entry in the table above is the second kind.
 
