@@ -1351,3 +1351,29 @@ lowering drops the reference, and dropping a reference is invisible to
 the compiler. Whenever a conversion writes back through something
 obtained from a container, READ the emitted C++ for `auto x =` where the
 original had `auto& x =`.
+
+### 7.21a Why remove_all_unhealthy's removal branch has no test
+
+Following up 7.21: I tried to add the missing coverage so the conversion
+could land safely. It cannot be written against the public API, and the
+reason is worth recording so nobody else spends the time.
+
+Removal is gated on `clients.len() - removed > cfg.min_connections`, so
+reaching it needs MORE clients at one address than `min_connections`.
+But the pool never creates more than that:
+
+ - `ClientPool::new_` asserts `min_connections > 0`, so the floor cannot
+   be lowered to 0 (my first attempt died on this assertion).
+ - a cache miss creates one client;
+ - when every client at an address is unhealthy, the "recreate all"
+   branch clears the vector and creates exactly `num_connections`
+   (= `min_connections`) fresh ones.
+
+So `clients.len()` tops out AT the floor, and the kept/removed split
+never runs. Every existing test asserts `total_client_count() == 1`,
+consistent with that.
+
+The branch may still be reachable under concurrent growth, or be dead
+code. Deciding which is a question about ClientPool's intended behaviour,
+not about the port — so the conversion stays deferred, and this is the
+thing to resolve first.
