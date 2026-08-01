@@ -1741,3 +1741,53 @@ DSL cannot own a method on a hand-written class (§7.25), not an
 accident — only about three hand-written production parameters carry
 keyword names. This will not obstruct the remaining backlog; it is a
 paper cut to recognise, not a hazard to plan around.
+
+### 7.29 Type aliases ARE supported — two narrow gaps block the last line of four files
+
+Four files sit 1–5 hand-written lines from zero, and what remains is not
+logic. It is type aliases and `using` declarations:
+
+| file | hand-written left | what it is |
+|---|---|---|
+| `rpc/heartbeat.cpp` | 1 | `using HeartbeatTimeoutCallback = rusty::Function<void()>;` |
+| `rpc/connection_state.cpp` | 2 | `using StateChangeCallback = rusty::Function<void(ConnectionState, ConnectionState) const>;` |
+| `rpc/connection_metrics.cpp` | 2 | `using rusty::sync::atomic::Ordering;` / `AtomicU64;` |
+| `rpc/pollable_proxy.cpp` | 5 | `using PollableProxy = rusty::Box<PollableBase>;` + a fn template |
+
+There are **zero** `type X = ...` aliases in any DSL block in the tree,
+which reads like "unsupported". It is not. Probed directly:
+
+| DSL source | result |
+|---|---|
+| `type Foo = i32;` | ✅ `using Foo = int32_t;` |
+| `type PollableProxy = rusty::Box<PollableBase>;` | ✅ exact, unchanged |
+| `type Cb = rusty::Function<void()>;` | ❌ `Parse error: expected ','` |
+| `type Cb = rusty::Function<fn()>;` | ⚠️ `rusty::Function<rusty::SafeFn<void()>>` |
+| `type Cb = rusty::Function<dyn Fn()>;` | ⚠️ `rusty::Function<std::function<void()>>` |
+| `type Cb = rusty::Function<Fn()>;` | ❌ `Parse error: expected ','` |
+| `type Cb = rusty::Function<()>;` | ⚠️ `rusty::Function<rusty::Unit>` |
+| `use rusty::sync::atomic::Ordering;` | ⚠️ **silently dropped** — emits only `// TODO: external crate 'rusty'` |
+
+So aliases work; two narrow things do not.
+
+**Gap 1 — a C++ callable signature as a template argument.** `void()`
+is not Rust grammar, and every Rust spelling lowers to a *different*
+type. The ⚠️ rows are the dangerous ones: they succeed and silently
+produce the wrong type. `SafeFn<void()>` and `std::function<void()>`
+are not `rusty::Function<void()>`, and a reader skimming the GEN would
+not notice.
+
+**Gap 2 — `use` on an external crate is dropped, not translated.** It
+parses, emits a TODO comment, and the `using` declaration vanishes.
+Anything relying on the imported name then fails to compile — a silent
+semantic deletion, which is worse than the parse error in gap 1.
+
+Both are category (1) under the decision rule — translator gaps, not
+design choices — and both are small and precisely characterised, with
+copy-paste repros above. Until they land, three files cannot reach zero
+hand-written lines no matter how much logic is converted, and that is a
+property of the tooling, not of the code.
+
+`pollable_proxy.cpp` is the exception: its alias converts today (row 2),
+and its `make_pollable_proxy_from_typed_arc` is a function template,
+which §7.9 covers. That one is reachable now.
