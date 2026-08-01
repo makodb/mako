@@ -2937,3 +2937,41 @@ showed. A green gate on one type says nothing about the next.
 
 The single `std::list` conversion (commit d04fff23) stays: it is
 verified, and it is the worked example of the four placement rules.
+
+### 7.41 Default-init helpers: half of them are no longer needed
+
+`tcp_channel.cpp` carries nine one-line helpers whose comment explains
+them: *"the DSL struct literal can't spell a default-constructed
+std::vector / FrameStreamReader / On*Callback inline, so the ctor field
+inits call these."* Probed — the claim is **half true**, and the half
+that is false is free to reclaim:
+
+| DSL spelling | emits | verdict |
+|---|---|---|
+| `FrameStreamReader::new()` | `FrameStreamReader::new_()` | ✅ works — the type has that factory |
+| `OnFrameCallback {}` | `OnFrameCallback{}` | ✅ works — empty-callback literal |
+| `std::vector::<u8>::new()` | `std::vector<uint8_t>::new_()` | ❌ `std::vector` has no `new_` static |
+| `std::string::new()` | `std::string::new_()` | ❌ same |
+
+So the DSL-typed defaults (`FrameStreamReader`, the four `On*Callback`
+fields, `AcceptStep{}`, `FrameView{}`) can be written inline and their
+helpers deleted. The `std::`-typed ones (`tcpconn_empty_buf`,
+`tcplistener_empty_addr`) genuinely cannot be, because the DSL lowers
+`T::new()` to `T::new_()` and the std types have no such static.
+
+Untested alternative worth one compile: `rusty::Vec::<u8>::new()` emits
+`rusty::Vec<uint8_t>::new_()`, and `rusty::Vec` IS `std::vector`, so if
+that factory exists the vector helper is reclaimable too. Likewise
+`String::new()` → `rusty::String::new_()`, though assigning that to a
+`std::string` field needs checking. Both are compile questions, not
+probe questions.
+
+Not executed: it removes roughly nine lines and costs a full gate cycle,
+so it is worth batching with other `tcp_channel.cpp` work rather than
+doing alone. Recorded so nobody re-derives the split.
+
+**The pattern, again.** A code comment stated a limitation as fact; the
+limitation had partly expired; one probe separated the live half from
+the dead half. That is now twelve for this session. Comments age badly
+in a codebase whose toolchain is under active development — treat every
+"the DSL can't X" as a dated observation, not a property.
