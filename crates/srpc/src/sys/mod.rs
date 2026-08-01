@@ -571,15 +571,27 @@ mod tests {
 
     #[test]
     fn errors_come_back_as_negative_errno() {
-        // Registering a non-epoll fd, and operating on a closed one.
-        let ep = epoll_create_fd(10);
-        assert!(ep > 0);
-        assert_eq!(close_fd(ep), 0);
+        // An fd number that is never allocated.
+        //
+        // This deliberately does NOT open something and close it to get a
+        // "dead" fd. Tests run on several threads in one process, so between
+        // the close and the calls below another thread can reopen that exact
+        // number — which made this test wrong in two ways:
+        //   * the errno stopped being EBADF (a regular file landing there
+        //     answers EPERM: observed as `left: -1` roughly 1 run in 30), and
+        //   * the trailing double-close would then close an unrelated,
+        //     live fd belonging to another test.
+        // The second is a real hazard, not just a flake.
+        const NEVER_ALLOCATED: i32 = i32::MAX;
 
-        let rc = epoll_ctl_fd(ep, EPOLL_CTL_ADD, 0, EPOLLIN);
-        assert_eq!(rc, -ERRNO_EBADF, "a closed epoll fd should report EBADF");
+        let rc = epoll_ctl_fd(NEVER_ALLOCATED, EPOLL_CTL_ADD, 0, EPOLLIN);
+        assert_eq!(rc, -ERRNO_EBADF, "an invalid epoll fd should report EBADF");
 
-        assert_eq!(close_fd(ep), -ERRNO_EBADF, "a double close reports EBADF");
+        assert_eq!(
+            close_fd(NEVER_ALLOCATED),
+            -ERRNO_EBADF,
+            "closing an invalid fd reports EBADF"
+        );
     }
 
     #[test]

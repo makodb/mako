@@ -15,14 +15,18 @@
 //!   `epoll_ctl(MOD)` only when the mode actually differs. Under
 //!   edge-triggering, that dedupe plus "return READ once the outbound
 //!   queue drains" is jointly what re-arms the write edge.
-//! * **Four errno tolerances are deliberate**, not defensive coding:
+//! * **The errno tolerances are deliberate**, not defensive coding:
 //!   they are the historical fixes for a family of CI flakes.
 //!   - `ADD` → `EEXIST`: a stale registration for a recycled fd. Drop
 //!     it and retry once.
 //!   - `ADD` → `EBADF`: the fd closed underneath us; report it, do not
 //!     abort.
-//!   - `MOD`/`DEL` → `ENOENT`/`EBADF`: the fd is already gone, which is
-//!     the desired end state, so treat it as success.
+//!   - `MOD`/`DEL` → `ENOENT`/`EBADF`/`EPERM`: the fd is already gone,
+//!     which is the desired end state, so treat it as success. `EPERM`
+//!     belongs here because the number was closed and then reused by
+//!     something epoll cannot poll (a regular file) — it cannot mean
+//!     "caller registered a non-pollable fd", since `ADD` would have
+//!     rejected that. Omitting it was a real 1-in-8 flake under load.
 //!
 //! Anything else is a programming error and surfaces as an `Err`.
 
@@ -196,7 +200,17 @@ impl Epoll {
             return Ok(());
         }
         let rc = sys::epoll_ctl_fd(self.fd, sys::EPOLL_CTL_MOD, fd, Epoll::mod_events(mode));
-        if rc == -sys::ERRNO_ENOENT || rc == -sys::ERRNO_EBADF {
+        // Three ways the registration can be stale, all meaning "the thing
+        // we registered is no longer at this fd":
+        //   ENOENT — the number is live but not in this epoll set
+        //   EBADF  — the number is closed
+        //   EPERM  — the number was closed and REUSED by something epoll
+        //            cannot poll (a regular file). Reachable in production:
+        //            a connection closes while another thread opens a log.
+        // EPERM cannot mean "caller registered a non-pollable fd" here,
+        // because `add` would have rejected it — so it is unambiguously the
+        // stale case, not misuse.
+        if rc == -sys::ERRNO_ENOENT || rc == -sys::ERRNO_EBADF || rc == -sys::ERRNO_EPERM {
             self.modes.remove(&fd);
             return Ok(());
         }
@@ -211,7 +225,13 @@ impl Epoll {
     pub fn remove(&mut self, fd: i32) -> Result<(), EpollError> {
         self.modes.remove(&fd);
         let rc = sys::epoll_ctl_fd(self.fd, sys::EPOLL_CTL_DEL, fd, 0);
-        if rc < 0 && rc != -sys::ERRNO_ENOENT && rc != -sys::ERRNO_EBADF {
+        // Same stale-fd set as `update_mode` — deregistering something that
+        // is already gone (including reused-as-a-regular-file) is success.
+        if rc < 0
+            && rc != -sys::ERRNO_ENOENT
+            && rc != -sys::ERRNO_EBADF
+            && rc != -sys::ERRNO_EPERM
+        {
             return Err(EpollError::Ctl(-rc));
         }
         Ok(())
@@ -371,11 +391,19 @@ mod tests {
         assert!(saw_writable, "a connected socket should be writable");
 
         // An fd that vanished is not an error: gone is the goal.
+        //
+        // NOTE: this closes `fd` and then names it again. Another thread in
+        // this test binary can win the race and reopen that number, so the
+        // errno here is genuinely nondeterministic — EBADF if it stays
+        // closed, ENOENT if a socket takes it, EPERM if a regular file does.
+        // All three are tolerated (see `update_mode`); that is what makes
+        // this assertion stable rather than a 1-in-8 flake.
         drop(server);
         drop(client);
         ep.update_mode(fd, PollMode::READ).unwrap();
         assert_eq!(ep.registered(fd), None, "stale mode is forgotten");
     }
+
 
     #[test]
     fn wait_with_nothing_registered_returns_no_events() {
