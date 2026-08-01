@@ -81,11 +81,22 @@ constexpr int32_t kRequestQueueRejectedError = EAGAIN;
 constexpr int32_t kRequestQueueExpiredError = ETIMEDOUT;
 /*RUSTYCPP:GEN-END id=request_queue.err_codes*/
 
-// Type alias for QueuedRequest's completion callback. Defined outside
-// the DSL block so the inline-Rust source can refer to it by an
-// opaque type name (the DSL transpiler does not parse C++ function-
-// template arguments like `<void(int)>`).
-using QueuedRequestCallback = rusty::Function<void(int)>;
+// Type alias for QueuedRequest's completion callback.
+//
+// Authored as DSL. It used to live outside the DSL block because the
+// transpiler could not spell a C++ function-type template argument.
+// Fixed upstream (rusty-cpp 4d48363e) — `rusty::Function` now takes a
+// bare signature. `dyn FnMut` (callable through `&mut self`) gives the
+// NON-const form this alias has always had; `dyn Fn` would add `const`.
+//
+// Explicit block id: auto-numbering would collide with the existing
+// `request_queue.1` / `.2` blocks (§7.32).
+#if RUSTYCPP_RUST
+type QueuedRequestCallback = rusty::Function<dyn FnMut(i32)>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=request_queue.callback_alias version=1 rust_sha256=d57dbcc0edfc9339a5debe9d72558194425d7f4a16dad820db8ac4fb1dd70ce6*/
+using QueuedRequestCallback = rusty::Function<void(int32_t)>;
+/*RUSTYCPP:GEN-END id=request_queue.callback_alias*/
 
 // Wrapper around rusty::sys::time::clock_monotonic_us, named so the
 // DSL block below can call it as a simple identifier rather than the

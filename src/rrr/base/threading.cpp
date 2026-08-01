@@ -210,8 +210,20 @@ void Pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex) {
 // Bring `Ordering` and `AtomicBool` into the `rrr` namespace so DSL
 // bodies can write `Ordering::Acquire` / `AtomicBool::new(...)` (Rust
 // idiom) and the emitted C++ resolves via these using-decls.
+//
+// Authored as DSL: a `use rusty::…;` used to be silently dropped (the
+// transpiler classified the runtime as an unmapped external crate), so
+// these had to be hand-written. Fixed upstream (rusty-cpp 3f7ca481).
+// Explicit block id — auto-numbering would collide with `threading.1`.
+#if RUSTYCPP_RUST
+use rusty::sync::atomic::Ordering;
+use rusty::sync::atomic::AtomicBool;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=threading.atomic_usings version=1 rust_sha256=7c543022e137f9870611065121ad3bb2a8c4b9002bb2c45f359e223bc74aafc7*/
 using rusty::sync::atomic::Ordering;
+
 using rusty::sync::atomic::AtomicBool;
+/*RUSTYCPP:GEN-END id=threading.atomic_usings*/
 
 // @safe - architecture-specific pause hint for spin loops. Defined
 // outside the DSL because the DSL has no inline-asm or preprocessor
@@ -294,6 +306,9 @@ struct SpinLock {
     static SpinLock new_();
     void lock() const;
     void unlock() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
