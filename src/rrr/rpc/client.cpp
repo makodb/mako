@@ -1085,24 +1085,6 @@ struct ReconnectState {
 using AsyncReplyCallback = rusty::Function<
     void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
-// @unsafe - reaches the owned FiberChannel through its Box (Box::operator->).
-// Hand-written (forward-visible to the DSL) because the inline-rust grammar
-// emits a Box method call as `box.method()` (dot) rather than `box->method()`;
-// bind_channel calls this once the Box is pinned in `fiber_channel_`.
-inline void fiberchannel_bind_callbacks(rusty::Box<FiberChannel>& fc) {
-  fc->bind_callbacks();
-}
-
-// @unsafe - invokes close() on a channel object owned through a Box
-// (Box::operator->). Hand-written for the same Box-method-deref reason as
-// fiberchannel_bind_callbacks; a template so close() of the direct-channel
-// proxy (Box<ChannelConnectionBase>) and the FiberChannel (Box<FiberChannel>)
-// both route through it. Non-const Box& because both close()s are &mut self.
-template<typename T>
-inline void box_close(rusty::Box<T>& b) {
-  b->close();
-}
-
 // @unsafe - reinterpret a std::string's C string as the `const int8_t*`
 // address form clientconn_connect expects. Hand-written because the DSL has
 // no reinterpret_cast / `.c_str()`; the string must outlive the connect()
@@ -1363,9 +1345,10 @@ impl ClientConnection {
         // callbacks capture `this`). bind_callbacks must run AFTER the Box is
         // in its final slot so those [this]-captures pin to a stable address.
         {
-            let guard = self.fiber_channel_.lock().unwrap();
+            let mut guard = self.fiber_channel_.lock().unwrap();
             *guard = rusty::Some(rusty::make_box::<FiberChannel>(channel));
-            fiberchannel_bind_callbacks((*guard).as_ref().unwrap());
+            let fc: &mut Box<FiberChannel> = (*guard).as_mut().unwrap();
+            (*fc).bind_callbacks();
         }
         self.channel_mode_.set(true);
 
@@ -1462,18 +1445,22 @@ impl ClientConnection {
         }
 
         // Tear down the channel proxy(ies). The channel layer's close() is
-        // idempotent + thread-safe per the facade contract. box_close routes
-        // the call through the Box (the DSL can't deref a Box for a method).
+        // idempotent + thread-safe per the facade contract. The `&mut` local
+        // is load-bearing: deref-through-a-guard-chain drops the deref
+        // (docs 7.50), and a `&` binding would lower to `const Box<T>&`
+        // while close() is &mut self.
         {
-            let guard = self.direct_channel_.lock().unwrap();
+            let mut guard = self.direct_channel_.lock().unwrap();
             if (*guard).is_some() {
-                box_close((*guard).as_ref().unwrap());
+                let ch: &mut Box<ChannelConnectionBase> = (*guard).as_mut().unwrap();
+                (*ch).close();
             }
         }
         {
-            let guard = self.fiber_channel_.lock().unwrap();
+            let mut guard = self.fiber_channel_.lock().unwrap();
             if (*guard).is_some() {
-                box_close((*guard).as_ref().unwrap());
+                let fc: &mut Box<FiberChannel> = (*guard).as_mut().unwrap();
+                (*fc).close();
             }
         }
 
@@ -1741,7 +1728,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=0a520c0b362fb70fea27f800db092e309545b1da92be5c2191d35294764ec3bb*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3cb0418815132533e8c7d2db1ee362ad319e2913b91d6557b59e1fbf8cbeb26c*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2033,7 +2020,8 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
     {
         auto guard = this->fiber_channel_.lock().unwrap();
         *guard = rusty::Some(rusty::make_box<FiberChannel>(std::move(channel)));
-        fiberchannel_bind_callbacks(((*guard)).as_ref().unwrap());
+        rusty::Box<FiberChannel>& fc = ((*guard)).as_mut().unwrap();
+        ((rusty::detail::deref_if_pointer_like(fc))).bind_callbacks();
     }
     this->channel_mode_.set(true);
     WeakClientConnection weak_self = rusty::clone(this->weak_self_);
@@ -2133,13 +2121,15 @@ void ClientConnection::close() const {
     {
         auto guard = this->direct_channel_.lock().unwrap();
         if (((*guard)).is_some()) {
-            box_close(((*guard)).as_ref().unwrap());
+            rusty::Box<ChannelConnectionBase>& ch = ((*guard)).as_mut().unwrap();
+            ((rusty::detail::deref_if_pointer_like(ch))).close();
         }
     }
     {
         auto guard = this->fiber_channel_.lock().unwrap();
         if (((*guard)).is_some()) {
-            box_close(((*guard)).as_ref().unwrap());
+            rusty::Box<FiberChannel>& fc = ((*guard)).as_mut().unwrap();
+            ((rusty::detail::deref_if_pointer_like(fc))).close();
         }
     }
     if (was_connected) {
