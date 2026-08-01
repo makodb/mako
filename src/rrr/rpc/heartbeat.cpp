@@ -35,11 +35,24 @@ uint64_t heartbeat_time_us() {
 }
 /*RUSTYCPP:GEN-END id=heartbeat.heartbeat_time_us*/
 
-// Type alias for the heartbeat timeout callback. Defined outside the
-// DSL block so the inline-Rust source can refer to it by an opaque
-// type name (the DSL transpiler cannot parse C++ function-type
-// template arguments like `rusty::Function<void()>` directly).
+// Type alias for the heartbeat timeout callback.
+//
+// Authored as DSL. It used to live outside the DSL block because the
+// transpiler could not spell a C++ function-type template argument: the
+// literal `rusty::Function<void()>` is not Rust grammar and failed to
+// parse, while every Rust spelling silently produced a DIFFERENT type
+// (`rusty::Function<std::function<void()>>` and friends, which compile).
+// Fixed upstream — `rusty::Function` now takes a bare signature, and
+// Rust's `FnMut` (callable through `&mut self`) is the non-const form.
+//
+// Explicit block id: auto-numbering would collide with the existing
+// `heartbeat.1` / `heartbeat.2` blocks (§7.32).
+#if RUSTYCPP_RUST
+type HeartbeatTimeoutCallback = rusty::Function<dyn FnMut()>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=heartbeat.callback_alias version=1 rust_sha256=c6f9dfd0a10d88d96cc6416f69da5a3dac4daf87d320954920686392c165228b*/
 using HeartbeatTimeoutCallback = rusty::Function<void()>;
+/*RUSTYCPP:GEN-END id=heartbeat.callback_alias*/
 
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
 // the source of truth; the transpiler regenerates the matching
@@ -113,6 +126,9 @@ struct HeartbeatConfig {
     static HeartbeatConfig aggressive();
     static HeartbeatConfig relaxed();
     static HeartbeatConfig disabled();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 

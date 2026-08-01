@@ -83,11 +83,22 @@ std::string_view connection_state_to_string(ConnectionState state) {
 // known callers register captureless / const-callable `[&]` lambdas,
 // which satisfy the stricter const-invocable requirement.
 //
-// Defined outside the DSL block so the inline-Rust source can refer to
-// it by an opaque type name (the DSL transpiler does not parse C++
-// function-type template arguments like `<void(...) const>`).
-using StateChangeCallback =
-    rusty::Function<void(ConnectionState, ConnectionState) const>;
+// Authored as DSL. It used to live outside the DSL block because the
+// transpiler could not spell a C++ function-type template argument.
+// Fixed upstream — `rusty::Function` now takes a bare signature, and the
+// const-callability comes from Rust's own distinction rather than a
+// convention: `dyn Fn` is callable through `&self`, so it lowers to the
+// `... const` variant this alias needs. `dyn FnMut` would lower to the
+// non-const form.
+//
+// Explicit block id: auto-numbering would collide with the existing
+// `connection_state.1` / `.2` blocks (§7.32).
+#if RUSTYCPP_RUST
+type StateChangeCallback = rusty::Function<dyn Fn(ConnectionState, ConnectionState)>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=connection_state.callback_alias version=1 rust_sha256=5da10fb939e9774fce1415423043e940562831b59482c2eb64c3d330b4803846*/
+using StateChangeCallback = rusty::Function<void(ConnectionState, ConnectionState) const>;
+/*RUSTYCPP:GEN-END id=connection_state.callback_alias*/
 
 // `ConnectionStateMachine` — `rusty::Cell<ConnectionState>` plus a
 // `StateChangeCallback` for transition observers. Validated FSM with
