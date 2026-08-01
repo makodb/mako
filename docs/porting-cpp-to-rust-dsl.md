@@ -3171,3 +3171,43 @@ delegates to" were in the same sentence.
 **Final tally for the sweep:** ~24 comments → 9 disproved constructs,
 4 blocked on one fixable transpiler bug (`#[cfg]`), 8 genuinely real
 across 5 constructs, 2 false positives. Zero unknowns remaining.
+
+### 7.47 `bind_channel_direct` is now unblocked — the closure fix's payoff case
+
+§7.19 floored the channel-binding cluster because the DSL emitted every
+`move` closure as `[=] mutable`, and a mutable lambda's `operator()` is
+non-const, so it would not convert to the const-callable
+`CallbackWrapper<void(..) const>` slots the channel layer uses. That is
+fixed (rusty-cpp `92c6544a` + `0bf1d3d6` + `000f14a9`), verified on the
+exact shape:
+
+```
+let weak: WeakClientConnection = make_weak();
+move || { weak.upgrade(); }     ->  [=, weak = std::move(weak)]()   // no mutable
+```
+
+`clientconn_bind_channel_direct` (client.cpp ~4684, 36 lines) is the
+worked target. Its three callback installations capture `weak_self` and
+call `.upgrade()` — precisely the pattern above:
+
+```cpp
+channel->set_on_frame([weak_self](const ChannelFrame& f) { … upgrade() … });
+channel->set_on_closed([weak_self](ChannelError) { … upgrade() … });
+channel->set_on_error([](ChannelError, std::string_view) {});
+```
+
+**Remaining pieces, all with known routes** — none is the old blocker:
+
+| piece | route |
+|---|---|
+| `channel->set_on_frame(..)` on a `Box` proxy | Box deref works (§7.43) |
+| `if (!channel) return;` | `Box::is_valid()` (§7.19 precedent) |
+| lambda params `const ChannelFrame&`, `std::string_view` | reference params lower (§7.44) |
+| `f.payload`, `f.size` | plain field access |
+| scoped guard + `*guard = Some(..)` | the guard-then-deref idiom (§7.33) |
+
+Not attempted here: `client.cpp` is the RPC client core, and this is a
+36-line conversion touching callback installation, a Box proxy, and a
+lock scope at once. It wants a dedicated run with a full gate, not the
+tail of a long session. But the reason it was *floored* is gone, and
+that was the point of the transpiler work.
