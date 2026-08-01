@@ -3263,3 +3263,132 @@ output; the wrong output is perfectly plausible on its own. Check
 believing any probe result. This is the same family as the stale test
 binaries in §7.31 -- a green or red reading from a binary that is not
 the thing you think you are measuring.
+
+### 7.49 Sweep of the remaining "stated causes" in src/rrr
+
+§7.45 predicts that comments claiming "the DSL can't do X" go stale
+faster than anyone updates them, and that re-reading them is the
+highest-yield move available. Grepping src/rrr for the phrasings
+(`DSL can't`, `cannot spell`, `no spelling`, `wouldn't parse`, ...)
+returns ~24 sites. Three probed this round; **all three stale**:
+
+**1. `CompletionFn` / `OnConnectedFn` / `OnErrorFn` / `OnReconnectedFn` /
+`ServerRunAsyncFn`** -- "the DSL can't parse `Function<void()>` as a
+generic type argument" and "Rust syntax has no spelling for a C++
+function template like `rusty::Function<void() const>`". Both false.
+`dyn Fn` produces the `const` form, `dyn FnMut` the non-const one, and
+`&std::string` produces `const std::string&`, in every position tried
+(field, `Vec<..>`, `RefCell<..>`, parameter, local, return).
+
+**2. `QuorumFinalizeFn`** (reactor.cpp) -- "the DSL cannot parse a bare
+fn-type template argument as a field/param signature". False:
+
+    rusty::Function<dyn FnMut(&mut rusty::Vec<std::pair<u16, rrr::i64>>) -> bool>
+
+lowers to exactly the alias's expansion,
+`rusty::Function<bool(rusty::Vec<std::pair<uint16_t, rrr::i64>>&)>`,
+including the `&mut` -> trailing-`&` and the nested `std::pair`.
+
+**3. `null_reply_bytes()`** (client.cpp) -- "The DSL cannot emit
+`nullptr`: it lowers to a non-existent `nullptr_`". The conclusion is
+stale even though the observation was real. The working spelling is
+**`core::ptr::null()`**, which lowers to `rusty::ptr::null()` -- a
+function that exists, and whose own header comment documents
+`core::ptr::null::<T>()` as the intended DSL form:
+
+| DSL spelling | lowers to | usable |
+|---|---|---|
+| `std::ptr::null()` | `std::ptr::null()` | **no** -- passed through verbatim, does not compile |
+| `core::ptr::null()` | `rusty::ptr::null()` | yes |
+| `core::ptr::null_mut()` | `rusty::ptr::null_mut()` | yes |
+| `0 as *const u8` | `rusty::detail::ptr_cast<const uint8_t*>(0)` | yes |
+
+The trap is that `std::` is passed through untouched while `core::` is
+remapped to `rusty::`. A `std::`-prefixed path that has no C++ equivalent
+therefore fails *silently at the DSL level* and only errors much later in
+the C++ compile. When a `std::foo::bar()` call looks wrong in GEN, try
+`core::` before concluding the construct is unsupported.
+
+Not yet re-checked (still carrying stated causes): the `#[cpp_ctor]`
+default-init helpers (reconnect_policy, tcp_channel, fiber_channel,
+server), the variadic `add_event(Args...)` in reactor, the `*_to_string`
+varargs, and the RefCell-temporary bind at reactor.cpp:3762. The
+default-field-initializer one is a *documented* limit in CLAUDE.md, so
+that family is the most likely to be a genuine floor.
+
+#### 7.49.1 The negative result that makes the heuristic trustworthy
+
+Eight stated causes have now been probed and found stale, which invites
+the wrong conclusion -- that every such comment is stale and the floor is
+zero. It is not. Probed directly:
+
+    struct V { a: i32 = 5, b: bool = true }
+    -> inline-rust error: Parse error: expected `,`
+
+Default field initializers are a **real floor**, and the reason is the
+one §7.45 names: Rust itself has no field-default syntax (you write
+`impl Default`), so there is nothing for the DSL to lower. No transpiler
+change fixes this -- it is a language-expressiveness gap, not a
+missing feature.
+
+That legitimises the whole `#[cpp_ctor]` default-init family
+(reconnect_policy.cpp, tcp_channel.cpp, fiber_channel.cpp, server.cpp)
+and matches CLAUDE.md, which already documents it as a known limit to
+design around via `fn new`/factory functions.
+
+So the scoreboard is 8 stale / 1 confirmed-real, and the split falls
+exactly where §7.45 predicts:
+
+ - claims of the form *"the transpiler doesn't do X yet"* -> presume stale,
+   re-measure (8 for 8 so far)
+ - claims of the form *"Rust has no way to say X"* -> presume real floor
+
+Use the phrasing of the comment as the triage signal, and always probe
+against a freshly built binary (§7.48).
+
+### 7.50 Box method deref: real floor, and a probe that lied
+
+`client.cpp` carries two kernels (`box_close`, `fiberchannel_bind_callbacks`)
+whose stated cause is "the inline-rust grammar emits a Box method call as
+`box.method()` (dot) rather than `box->method()`". Under the §7.45
+heuristic this reads like a transpiler gap, so it should be stale. **It is
+not.** Both kernels are legitimate today.
+
+The near-miss is worth recording because the probe *appeared* to disprove
+it. Probing a plain field:
+
+    (*self.b).close()
+    -> ((rusty::detail::deref_if_pointer_like(this->b))).close()   // correct
+
+so the claim looked false and both kernels were deleted. But the actual
+call sites deref a **method-call chain**, not a field:
+
+    (*(*guard).as_ref().unwrap()).close()
+    -> ((((*guard)).as_ref().unwrap())).close()                    // deref DROPPED
+
+which fails to compile exactly as the comment predicted:
+
+    error: no member named 'close' in 'rusty::Box<Chan>';
+           did you mean to use '->' instead of '.'?
+
+So `*expr` takes two different paths: a field operand gets wrapped in
+`deref_if_pointer_like`, a chained operand silently loses the deref. That
+is a genuine transpiler bug (and the proper fix under the decision rule is
+to make the two paths agree, not to keep the kernels) -- but until it is
+fixed, the kernels stay and the change was reverted.
+
+**The lesson is about probe fidelity, not about Box.** A probe is only
+evidence for the shape it actually tested. `self.b` and
+`(*guard).as_ref().unwrap()` are both "a Box" to a reader and different
+operands to the compiler. When re-checking a stated cause, copy the real
+call site's shape -- receiver form included -- rather than writing the
+simplest expression of the same idea.
+
+And compile the *emitted* C++, not a hand-written equivalent of it. The
+`deref_if_pointer_like` form compiles fine; the form the transpiler
+actually produced does not. Checking the first one is what let a broken
+change get as far as regeneration.
+
+By contrast the nullptr kernel in the same file (§7.49) *was* stale, and
+its replacement was verified by compiling the emitted
+`cb(ENOTCONN, rusty::ptr::null(), 0)` rather than assuming the conversion.

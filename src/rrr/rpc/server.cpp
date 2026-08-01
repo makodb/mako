@@ -474,7 +474,6 @@ RpcServiceContext RpcServiceContext::new_(rusty::HashMap<int32_t, size_t> rpc_ma
 // Aliases for the reply / run_async callback types (the DSL parser can't
 // take `Function<Sig>` as a generic type argument).
 using ServerReplyFn = rusty::Function<void(BinaryWriteArchive&)>;
-using ServerRunAsyncFn = rusty::Function<void()>;
 
 // Hand-bridge (playbook 7.2), same shape as channel.cpp's
 // empty_on_frame_callback: rusty::Function's default ctor is a `{}` the
@@ -590,7 +589,7 @@ impl ServerConnection {
         sconn_bind_channel(self, proxy)
     }
 
-    fn run_async(&self, f: ServerRunAsyncFn) -> i32 {
+    fn run_async(&self, f: rusty::Function<dyn FnMut()>) -> i32 {
         if !f {
             Log_warn("rrr::ServerConnection::run_async called with empty callback");
             return EINVAL;
@@ -600,7 +599,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=da0286cd41f16c1f017d18155b6fd1549e88abe657727938e3dc02faca085686*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=35b0e2219b3cfb3423982066852ef3a21f6709c3787fc193b37287064709f399*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -629,7 +628,7 @@ struct ServerConnection {
     void reply(const Request& req, int32_t error_code, ServerReplyFn write_fn) const;
     void close() const;
     void bind_channel(ChannelConnectionProxy proxy);
-    int32_t run_async(ServerRunAsyncFn f) const;
+    int32_t run_async(rusty::Function<void()> f) const;
 };
 
 
@@ -678,7 +677,7 @@ void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
     sconn_bind_channel((*this), std::move(proxy));
 }
 
-int32_t ServerConnection::run_async(ServerRunAsyncFn f) const {
+int32_t ServerConnection::run_async(rusty::Function<void()> f) const {
     if (rusty::detail::rust_not(f)) {
         Log_warn("rrr::ServerConnection::run_async called with empty callback");
         return EINVAL;

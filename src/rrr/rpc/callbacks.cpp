@@ -19,11 +19,7 @@ import rrr.threading;
 // DSL; the transpiler regenerates the matching
 // `/*RUSTYCPP:GEN-BEGIN ... END*/` block below.
 //
-// Two things stay outside the DSL:
-//   * The three `using OnXxxFn = rusty::Function<…>` typedefs at file
-//     scope. The DSL needs named types for parameter spellings; an
-//     anonymous `rusty::Function<…>` in the Rust signature wouldn't
-//     parse.
+// One thing stays outside the DSL:
 //   * The `invoke_callback_safely<...>` free template helper. The DSL
 //     doesn't support C++ parameter packs or `try { } catch (…) { }`
 //     blocks; the invoke_on_* methods just delegate to this helper for
@@ -33,13 +29,6 @@ export namespace rrr {
 using ConnectionCallback = rusty::Arc<rusty::Function<void() const>>;
 using ErrorCallback = rusty::Arc<rusty::Function<void(RpcError, const std::string&) const>>;
 using ReconnectCallback = rusty::Arc<rusty::Function<void(bool) const>>;
-
-// Raw Function<> typedefs — DSL parameter types reference these by
-// name (the Rust syntax has no spelling for a C++ function template
-// like `rusty::Function<void() const>`).
-using OnConnectedFn = rusty::Function<void() const>;
-using OnErrorFn = rusty::Function<void(RpcError, const std::string&) const>;
-using OnReconnectedFn = rusty::Function<void(bool) const>;
 
 // @safe - try/catch protects the dispatcher from a user callback that
 // throws. The catch swallows everything per the original behaviour.
@@ -108,31 +97,31 @@ impl CallbackManager {
     // compiles because `rusty::MutexGuard<T>::operator*()` returns
     // `T&`. Method calls on the guard itself (`guard.unwrap()`,
     // `guard.lock()`, etc.) work unchanged.
-    fn add_on_connected(&self, cb: OnConnectedFn) {
+    fn add_on_connected(&self, cb: rusty::Function<dyn Fn()>) {
         let arc_cb: ConnectionCallback = ConnectionCallback::make(cb);
         let guard = self.callbacks_field.lock().unwrap();
         (*guard).on_connected.push(arc_cb);
     }
 
-    fn add_on_disconnected(&self, cb: OnConnectedFn) {
+    fn add_on_disconnected(&self, cb: rusty::Function<dyn Fn()>) {
         let arc_cb: ConnectionCallback = ConnectionCallback::make(cb);
         let guard = self.callbacks_field.lock().unwrap();
         (*guard).on_disconnected.push(arc_cb);
     }
 
-    fn add_on_error(&self, cb: OnErrorFn) {
+    fn add_on_error(&self, cb: rusty::Function<dyn Fn(RpcError, &std::string)>) {
         let arc_cb: ErrorCallback = ErrorCallback::make(cb);
         let guard = self.callbacks_field.lock().unwrap();
         (*guard).on_error.push(arc_cb);
     }
 
-    fn add_on_reconnecting(&self, cb: OnConnectedFn) {
+    fn add_on_reconnecting(&self, cb: rusty::Function<dyn Fn()>) {
         let arc_cb: ConnectionCallback = ConnectionCallback::make(cb);
         let guard = self.callbacks_field.lock().unwrap();
         (*guard).on_reconnecting.push(arc_cb);
     }
 
-    fn add_on_reconnected(&self, cb: OnReconnectedFn) {
+    fn add_on_reconnected(&self, cb: rusty::Function<dyn Fn(bool)>) {
         let arc_cb: ReconnectCallback = ReconnectCallback::make(cb);
         let guard = self.callbacks_field.lock().unwrap();
         (*guard).on_reconnected.push(arc_cb);
@@ -243,7 +232,7 @@ impl CallbackManager {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=4d5de7754d5f84dea7b344f8ea8ef747fe6f1922510f7b52fbd9801551f36b54*/
+/*RUSTYCPP:GEN-BEGIN id=callbacks.1 version=1 rust_sha256=8199f02f23e7188544e6247ffb4b0475a06c70d3e3b496b641250540750a351f*/
 struct ConnectionCallbacks;
 struct CallbackManager;
 
@@ -263,11 +252,11 @@ struct CallbackManager {
     rusty::Mutex<ConnectionCallbacks> callbacks_field;
 
     static CallbackManager new_();
-    void add_on_connected(OnConnectedFn cb) const;
-    void add_on_disconnected(OnConnectedFn cb) const;
-    void add_on_error(OnErrorFn cb) const;
-    void add_on_reconnecting(OnConnectedFn cb) const;
-    void add_on_reconnected(OnReconnectedFn cb) const;
+    void add_on_connected(rusty::Function<void() const> cb) const;
+    void add_on_disconnected(rusty::Function<void() const> cb) const;
+    void add_on_error(rusty::Function<void(RpcError, const std::string&) const> cb) const;
+    void add_on_reconnecting(rusty::Function<void() const> cb) const;
+    void add_on_reconnected(rusty::Function<void(bool) const> cb) const;
     void invoke_on_connected() const;
     void invoke_on_disconnected() const;
     void invoke_on_error(RpcError error, const std::string& message) const;
@@ -304,31 +293,31 @@ CallbackManager CallbackManager::new_() {
     return CallbackManager{.callbacks_field = rusty::Mutex<ConnectionCallbacks>::new_(ConnectionCallbacks{})};
 }
 
-void CallbackManager::add_on_connected(OnConnectedFn cb) const {
+void CallbackManager::add_on_connected(rusty::Function<void() const> cb) const {
     ConnectionCallback arc_cb = ConnectionCallback::make(std::move(cb));
     auto guard = this->callbacks_field.lock().unwrap();
     (*guard).on_connected.push(std::move(arc_cb));
 }
 
-void CallbackManager::add_on_disconnected(OnConnectedFn cb) const {
+void CallbackManager::add_on_disconnected(rusty::Function<void() const> cb) const {
     ConnectionCallback arc_cb = ConnectionCallback::make(std::move(cb));
     auto guard = this->callbacks_field.lock().unwrap();
     (*guard).on_disconnected.push(std::move(arc_cb));
 }
 
-void CallbackManager::add_on_error(OnErrorFn cb) const {
+void CallbackManager::add_on_error(rusty::Function<void(RpcError, const std::string&) const> cb) const {
     ErrorCallback arc_cb = ErrorCallback::make(std::move(cb));
     auto guard = this->callbacks_field.lock().unwrap();
     (*guard).on_error.push(std::move(arc_cb));
 }
 
-void CallbackManager::add_on_reconnecting(OnConnectedFn cb) const {
+void CallbackManager::add_on_reconnecting(rusty::Function<void() const> cb) const {
     ConnectionCallback arc_cb = ConnectionCallback::make(std::move(cb));
     auto guard = this->callbacks_field.lock().unwrap();
     (*guard).on_reconnecting.push(std::move(arc_cb));
 }
 
-void CallbackManager::add_on_reconnected(OnReconnectedFn cb) const {
+void CallbackManager::add_on_reconnected(rusty::Function<void(bool) const> cb) const {
     ReconnectCallback arc_cb = ReconnectCallback::make(std::move(cb));
     auto guard = this->callbacks_field.lock().unwrap();
     (*guard).on_reconnected.push(std::move(arc_cb));
