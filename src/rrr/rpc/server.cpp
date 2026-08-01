@@ -1877,17 +1877,29 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
 // @unsafe - 5c: decode one channel-mode request frame and dispatch.
 //
 // Mirrors the per-packet body of `handle_read` minus the size-framed
-// @unsafe - reserve + raw memcpy + set_len into the request's body
-// Vec (same bulk-fill kernel shape as buffer_sink_write), then point
-// the read cursor at the filled buffer. Must be called at most once
-// per Request, before any read.
-void request_fill_body(Request& req, const std::uint8_t* bytes,
-                       std::size_t size) {
-    req.body.reserve(size);
-    std::memcpy(req.body.data(), bytes, size);
-    req.body.set_len(size);
+// Fill the request body from the wire bytes, then point the read cursor
+// at the filled buffer. Must be called at most once per Request, before
+// any read.
+//
+// Was a `reserve` + `memcpy` + `set_len` kernel over a raw pointer.
+// Taking a slice (rule 2) lets extend_from_slice do the same work —
+// reserve then copy, no zero-init — with the length carried by the
+// argument instead of trusted alongside it.
+#if RUSTYCPP_RUST
+fn request_fill_body(req: &mut Request, bytes: &[u8]) {
+    req.body.clear();
+    req.body.extend_from_slice(bytes);
     req.src = BufferSource::new_(req.body.data(), req.body.len());
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.fill_body version=1 rust_sha256=b0dcfd92c216bc6b26d1cd742ac509bf3b28fb216a0687e47d0d340de4215899*/
+void request_fill_body(Request& req, std::span<const uint8_t> bytes) {
+    Request* req_shadow1 = &req;
+    (*req_shadow1).body.clear();
+    (*req_shadow1).body.extend_from_slice(bytes);
+    (*req_shadow1).src = BufferSource::new_((*req_shadow1).body.data(), rusty::len((*req_shadow1).body));
+}
+/*RUSTYCPP:GEN-END id=server.fill_body*/
 
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
@@ -1904,7 +1916,7 @@ void sconn_decode_request_and_dispatch(
     auto req_box = rusty::make_box<Request>();
     Request& req = *req_box;
     if (size > 0) {
-        request_fill_body(req, bytes, size);
+        request_fill_body(req, std::span<const std::uint8_t>(bytes, size));
     }
 
     // Header parse: xid + rpc_id. If the frame is malformed (less
