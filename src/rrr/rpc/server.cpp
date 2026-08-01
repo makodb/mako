@@ -489,7 +489,7 @@ inline ServerReplyFn empty_server_reply_fn() { return {}; }
 void sconn_reply(const ServerConnection& self, const Request& req,
                  i32 error_code, ServerReplyFn write_fn);
 void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy);
-void sconn_decode_request_and_dispatch(ServerConnection& self,
+void sconn_decode_request_and_dispatch(const ServerConnection& self,
                                        const std::uint8_t* bytes, std::size_t size);
 void sconn_dispatch_response_frame_via_channel(const ServerConnection& self,
                                                const std::uint8_t* bytes, std::size_t size);
@@ -1838,8 +1838,9 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
         auto sconn_opt = weak_self.upgrade();
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
-        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        sconn_decode_request_and_dispatch(*mut_sconn, f.payload, f.size);
+        // No cast: dispatch only READS the connection (status_ via Cell,
+        // ctx_ through the Arc), so it takes a const&.
+        sconn_decode_request_and_dispatch(*sconn, f.payload, f.size);
     });
     // 5d: on_closed runs the existing close path so the connection
     // transitions to CLOSED. The channel-layer contract guarantees
@@ -1891,7 +1892,7 @@ void request_fill_body(Request& req, const std::uint8_t* bytes,
 // I/O loop: the channel layer has already stripped the 4-byte size
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
 void sconn_decode_request_and_dispatch(
-        ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
+        const ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
     if (self.status_.get() == ServerConnStatus::CLOSED) {
         return;
     }
