@@ -1581,7 +1581,14 @@ which helps. But `Reactor` stacks several known DSL limits at once:
  - ~20 fields carrying inline default initializers, which the DSL does
    not support (§ CLAUDE.md: use `fn new`/factories) — and `Reactor() =
    default` means every one of them would need a factory;
- - 7 static members, plus 5 on `Fiber`, whose lowering is unverified;
+ - 7 static members, plus 5 on `Fiber`. **Resolved, and it is good news:**
+   a DSL struct cannot carry a static data member at all, but the
+   established workaround is to hoist it to a namespace-scope static —
+   `server.cpp` already does exactly this for `g_rpc_id_missing`, with
+   the comment "Hoisted out of ServerConnection (the DSL struct can't
+   carry a static data member)". So statics are a mechanical hoist, not
+   a blocker. Note this changes linkage/visibility, so check each one is
+   not part of a public API before moving it;
  - one `friend` declaration on `Fiber`.
 
 Any of these alone is tractable. Together they are the exact profile —
