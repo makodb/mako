@@ -3566,6 +3566,24 @@ void Client::clear_connection_callbacks() const {
 // their proven hand-written C++ bodies (defined far below, near where the
 // old out-of-line method defs lived).
 struct ClientPool;
+// The generated `ClientPool::pool_config()` returns `std::move(*guard)` —
+// it moves out of the value the mutex protects. That is correct ONLY while
+// PoolConfig is trivially copyable, where the move degrades to a copy and
+// the stored config is left intact. Add a non-trivial member (a
+// std::string, say) and that same line would silently GUT the pool's
+// config on every read. Fail the build instead of shipping that.
+static_assert(std::is_trivially_copyable<PoolConfig>::value,
+              "ClientPool::pool_config() returns std::move(*guard); a "
+              "non-trivially-copyable PoolConfig would be moved OUT of the "
+              "mutex and leave the stored config wrecked. Give pool_config() "
+              "an explicit copy before relaxing this.");
+
+// Health check on an EXPLICIT config snapshot. The config is passed in
+// rather than read from `self` because every caller below runs inside the
+// `state_` critical section: reading `config_` there would acquire the
+// config lock while holding `state_`, inverting the order against
+// `get_client` (which snapshots the config before locking `state_`).
+bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>& client);
 size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr);
 size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr);
 size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms);
@@ -3597,10 +3615,22 @@ impl PoolState {
     }
 }
 
+// `config_` is a Mutex, not a Cell. PoolConfig is ~40 bytes of plain
+// members, so a Cell read racing a `set_pool_config` write is a torn
+// read — UB, not merely a stale value. set_pool_config is public and
+// callable at any time, so that race is reachable.
+//
+// LOCK ORDER INVARIANT: never acquire `config_` while holding `state_`.
+// Every kernel snapshots the config FIRST and then takes `state_`, so the
+// two locks are never held together and there is no ordering hazard. This
+// is why the health check takes its config as an argument
+// (`clientpool_is_client_healthy_with`) rather than reading `config_`
+// itself — it is called from inside the `state_` critical section, and
+// re-reading there would invert the order against `get_client`.
 struct ClientPool {
     poll_thread_worker_: Option<Arc<PollThread>>,
     state_: rusty::Mutex<PoolState>,
-    config_: Cell<PoolConfig>,
+    config_: rusty::Mutex<PoolConfig>,
 }
 
 impl Drop for ClientPool {
@@ -3628,32 +3658,22 @@ impl ClientPool {
         ClientPool {
             poll_thread_worker_: ptw,
             state_: rusty::Mutex::<PoolState>::new(PoolState::new()),
-            config_: Cell::<PoolConfig>::new(config),
+            config_: rusty::Mutex::<PoolConfig>::new(config),
         }
     }
 
     fn set_pool_config(&self, config: PoolConfig) {
-        self.config_.set(config);
+        let guard = self.config_.lock().unwrap();
+        (*guard) = config;
     }
 
     fn pool_config(&self) -> PoolConfig {
-        self.config_.get()
+        let guard = self.config_.lock().unwrap();
+        (*guard)
     }
 
     fn is_client_healthy(&self, client: &Arc<Client>) -> bool {
-        let cfg = self.config_.get();
-        if !cfg.health_check_enabled {
-            return true;
-        }
-        if !(*client).connected() {
-            return false;
-        }
-        let requests_sent = (*client).metrics().requests_sent();
-        if requests_sent < cfg.min_requests_for_health {
-            return true;
-        }
-        let success_rate = (*client).metrics().success_rate_percent();
-        success_rate >= cfg.unhealthy_threshold_percent
+        clientpool_is_client_healthy_with(self.pool_config(), client)
     }
 
     fn get_healthy_client_count(&self, addr: &std::string) -> usize {
@@ -3695,7 +3715,7 @@ impl ClientPool {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.client_pool version=1 rust_sha256=bbcb216c3545fd411d15ce6fa644c9023e850b5c746f5a98236a5f978d347c04*/
+/*RUSTYCPP:GEN-BEGIN id=client.client_pool version=1 rust_sha256=1c052d979698a369ae493d8875a0384bd60cbc8fdd3d911f428339fcaa439119*/
 struct PoolState;
 struct ClientPool;
 
@@ -3709,9 +3729,9 @@ struct PoolState {
 struct ClientPool {
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
     rusty::Mutex<PoolState> state_;
-    rusty::Cell<PoolConfig> config_;
+    rusty::Mutex<PoolConfig> config_;
     mutable bool _rusty_forgotten = false;
-    ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker__init, rusty::Mutex<PoolState> state__init, rusty::Cell<PoolConfig> config__init) : poll_thread_worker_(std::move(poll_thread_worker__init)), state_(std::move(state__init)), config_(std::move(config__init)) {}
+    ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker__init, rusty::Mutex<PoolState> state__init, rusty::Mutex<PoolConfig> config__init) : poll_thread_worker_(std::move(poll_thread_worker__init)), state_(std::move(state__init)), config_(std::move(config__init)) {}
     ClientPool(const ClientPool&) = delete;
     ClientPool(ClientPool&& other) noexcept : poll_thread_worker_(std::move(other.poll_thread_worker_)), state_(std::move(other.state_)), config_(std::move(other.config_)) {
         this->_rusty_forgotten = other._rusty_forgotten;
@@ -3771,31 +3791,21 @@ ClientPool ClientPool::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_wo
     if (ptw.is_none()) {
         ptw = rusty::Option<rusty::Arc<PollThread>>(PollThread::create());
     }
-    return ClientPool(std::move(ptw), rusty::Mutex<PoolState>::new_(PoolState::new_()), rusty::Cell<PoolConfig>::new_(std::move(config)));
+    return ClientPool(std::move(ptw), rusty::Mutex<PoolState>::new_(PoolState::new_()), rusty::Mutex<PoolConfig>::new_(std::move(config)));
 }
 
 void ClientPool::set_pool_config(PoolConfig config) const {
-    this->config_.set(std::move(config));
+    auto guard = this->config_.lock().unwrap();
+    (*guard) = std::move(config);
 }
 
 PoolConfig ClientPool::pool_config() const {
-    return this->config_.get();
+    auto guard = this->config_.lock().unwrap();
+    return std::move((*guard));
 }
 
 bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
-    const auto cfg = this->config_.get();
-    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.health_check_enabled); }) { return (__r.health_check_enabled); } else if constexpr (requires { (__r.health_check_enabled_field); }) { return (__r.health_check_enabled_field); } else if constexpr (requires { ((*__r).health_check_enabled); }) { return ((*__r).health_check_enabled); } else { return ((*__r).health_check_enabled_field); } }(cfg))) {
-        return true;
-    }
-    if (rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(client))).connected())) {
-        return false;
-    }
-    const auto requests_sent = ((rusty::detail::deref_if_pointer_like(client))).metrics().requests_sent();
-    if (rusty::detail::deref_if_pointer_like(requests_sent) < rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.min_requests_for_health); }) { return (__r.min_requests_for_health); } else if constexpr (requires { (__r.min_requests_for_health_field); }) { return (__r.min_requests_for_health_field); } else if constexpr (requires { ((*__r).min_requests_for_health); }) { return ((*__r).min_requests_for_health); } else { return ((*__r).min_requests_for_health_field); } }(cfg))) {
-        return true;
-    }
-    const auto success_rate = ((rusty::detail::deref_if_pointer_like(client))).metrics().success_rate_percent();
-    return rusty::detail::deref_if_pointer_like(success_rate) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.unhealthy_threshold_percent); }) { return (__r.unhealthy_threshold_percent); } else if constexpr (requires { (__r.unhealthy_threshold_percent_field); }) { return (__r.unhealthy_threshold_percent_field); } else if constexpr (requires { ((*__r).unhealthy_threshold_percent); }) { return ((*__r).unhealthy_threshold_percent); } else { return ((*__r).unhealthy_threshold_percent_field); } }(cfg));
+    return clientpool_is_client_healthy_with(this->pool_config(), client);
 }
 
 size_t ClientPool::get_healthy_client_count(const std::string& addr) const {
@@ -4975,18 +4985,36 @@ RpcError clientconn_map_system_error(int32_t err) {
 // ClientPool implementation
 // ============================================================================
 
+// @safe - pure predicate over a config snapshot + Client metrics.
+bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>& client) {
+  if (!cfg.health_check_enabled) {
+    return true;
+  }
+  if (!client->connected()) {
+    return false;
+  }
+  const uint64_t requests_sent = client->metrics().requests_sent();
+  if (requests_sent < cfg.min_requests_for_health) {
+    return true;
+  }
+  const uint64_t success_rate = client->metrics().success_rate_percent();
+  return success_rate >= cfg.unhealthy_threshold_percent;
+}
+
 // @safe - rusty::Mutex::lock + BTreeMap ops + is_client_healthy are all @safe.
 // Delegated (not inline DSL): the inline `let clients = opt.unwrap()` lowered
 // to a Vec copy (vs the `auto& clients` reference here), which corrupted the
 // cached Arcs. Keep the proven reference-based body.
 size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::string& addr) {
+  // Config snapshot BEFORE `state_`, per the lock-order invariant.
+  auto cfg = self.pool_config();
   auto guard = self.state_.lock().unwrap();
   size_t count = 0;
   auto clients_opt = (*guard).cache.get(addr);
   if (clients_opt.is_some()) {
     auto& clients = clients_opt.unwrap();
     for (const auto& client : clients) {
-      if (self.is_client_healthy(client)) {
+      if (clientpool_is_client_healthy_with(cfg, client)) {
         count++;
       }
     }
@@ -4996,6 +5024,8 @@ size_t clientpool_get_healthy_client_count(const ClientPool& self, const std::st
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_client_healthy are @safe.
 size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::string& addr) {
+  // Config snapshot BEFORE `state_`, per the lock-order invariant.
+  auto cfg = self.pool_config();
   auto guard = self.state_.lock().unwrap();
   size_t removed = 0;
   auto clients_opt = (*guard).cache.get_mut(addr);
@@ -5003,7 +5033,6 @@ size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::st
     // BTreeMap::get returns `Option<V&>`; unwrap() yields a
     // reference. Use `.` instead of `->`, drop the `*` deref.
     auto& clients = clients_opt.unwrap();
-    auto cfg = self.config_.get();
 
     // Remove unhealthy clients, but keep at least min_connections.
     rusty::Vec<rusty::Arc<Client>> kept;
@@ -5013,7 +5042,7 @@ size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::st
         kept.push(client.clone());
         continue;
       }
-      if (!self.is_client_healthy(client)) {
+      if (!clientpool_is_client_healthy_with(cfg, client)) {
         client->close();
         removed++;
       } else {
@@ -5032,7 +5061,7 @@ size_t clientpool_remove_unhealthy_clients(const ClientPool& self, const std::st
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops + is_idle/close are @safe.
 size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& addr, uint64_t current_time_ms) {
-  auto cfg = self.config_.get();
+  auto cfg = self.pool_config();
 
   // If idle timeout is 0, no timeout
   if (cfg.idle_timeout_ms == 0) {
@@ -5071,9 +5100,13 @@ size_t clientpool_close_idle_clients(const ClientPool& self, const std::string& 
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops are @safe.
 size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
+  // Config snapshot BEFORE `state_`, per the lock-order invariant on
+  // ClientPool. This read used to sit after the lock, which is the one
+  // site in the pool that acquired the two in the opposite order from
+  // get_client.
+  auto cfg = self.pool_config();
   auto guard = self.state_.lock().unwrap();
   size_t total_removed = 0;
-  auto cfg = self.config_.get();
 
   // Snapshot keys into a Vec so the loop body (which mutates `cache` via
   // remove) doesn't iterate while modifying. BTreeMap::iter() yields
@@ -5098,7 +5131,7 @@ size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
         kept.push(client.clone());
         continue;
       }
-      if (!self.is_client_healthy(client)) {
+      if (!clientpool_is_client_healthy_with(cfg, client)) {
         client->close();
         removed++;
       } else {
@@ -5119,7 +5152,7 @@ size_t clientpool_remove_all_unhealthy(const ClientPool& self) {
 
 // @safe - rusty::Mutex::lock + BTreeMap/Vec ops are @safe.
 size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_ms) {
-  auto cfg = self.config_.get();
+  auto cfg = self.pool_config();
   if (cfg.idle_timeout_ms == 0) {
     return 0;
   }
@@ -5171,7 +5204,7 @@ size_t clientpool_close_all_idle(const ClientPool& self, uint64_t current_time_m
 // lock + BTreeMap ops are @safe but the network I/O underneath is not.
 rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, const std::string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
-  auto cfg = self.config_.get();
+  auto cfg = self.pool_config();
   int num_connections = cfg.min_connections;
 
   auto guard = self.state_.lock().unwrap();
@@ -5203,7 +5236,7 @@ rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self, 
       auto& client = clients[idx];
 
       // Check if client is connected and healthy
-      if (client->connected() && self.is_client_healthy(client)) {
+      if (client->connected() && clientpool_is_client_healthy_with(cfg, client)) {
         sp_cl = rusty::Some(client.clone());
         break;
       }
