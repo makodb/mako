@@ -424,7 +424,7 @@ impl RequestQueue {
         // Lock held while swapping so a concurrent enqueue cannot observe a
         // half-applied config, matching what the C++ helper did.
         let guard = self.queue_.lock().unwrap();
-        self.config_.get().set(config);
+        self.config_.set(config);
     }
 }
 #endif
