@@ -576,10 +576,18 @@ void InMemoryChannelShim::set_on_error(OnErrorCallback cb) {
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.channel_shim*/
 
-inline ChannelConnectionProxy make_inmemory_channel_proxy(
-        rusty::Arc<InMemoryChannel> conn) {
+// Authored as inline Rust DSL — same shape as
+// make_pollable_proxy_from_typed_arc. Pre-seeded block id (§7.32).
+#if RUSTYCPP_RUST
+fn make_inmemory_channel_proxy(conn: rusty::Arc<InMemoryChannel>) -> ChannelConnectionProxy {
+    rusty::make_box::<InMemoryChannelShim>(conn)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory.make_inmemory_channel_proxy version=1 rust_sha256=324da44fb457479ab8dd9c5ef5b9a4431e64b6d50127db97bb0af16b1440a09d*/
+ChannelConnectionProxy make_inmemory_channel_proxy(rusty::Arc<InMemoryChannel> conn) {
     return rusty::make_box<InMemoryChannelShim>(std::move(conn));
 }
+/*RUSTYCPP:GEN-END id=inmemory.make_inmemory_channel_proxy*/
 
 // ---------------------------------------------------------------------------
 // InMemoryListener
@@ -883,10 +891,18 @@ void InMemoryListenerShim::set_on_error(OnErrorCallback cb) {
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.listener_shim*/
 
-inline ChannelListenerProxy make_inmemory_listener_proxy(
-        rusty::Arc<InMemoryListener> listener) {
+// Authored as inline Rust DSL — same shape as
+// make_pollable_proxy_from_typed_arc. Pre-seeded block id (§7.32).
+#if RUSTYCPP_RUST
+fn make_inmemory_listener_proxy(listener: rusty::Arc<InMemoryListener>) -> ChannelListenerProxy {
+    rusty::make_box::<InMemoryListenerShim>(listener)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory.make_inmemory_listener_proxy version=1 rust_sha256=ccb82ec54816f4052c9794644d6b5cd818370cd69d3c066981765c3555ff42c0*/
+ChannelListenerProxy make_inmemory_listener_proxy(rusty::Arc<InMemoryListener> listener) {
     return rusty::make_box<InMemoryListenerShim>(std::move(listener));
 }
+/*RUSTYCPP:GEN-END id=inmemory.make_inmemory_listener_proxy*/
 
 // ---------------------------------------------------------------------------
 // InMemoryFactory
@@ -1020,10 +1036,18 @@ std::string InMemoryFactoryShim::backend_name() const {
 }
 /*RUSTYCPP:GEN-END id=inmemory_channel.factory_shim*/
 
-inline ChannelFactoryProxy make_inmemory_factory_proxy(
-        rusty::Arc<InMemoryFactory> factory) {
+// Authored as inline Rust DSL — same shape as
+// make_pollable_proxy_from_typed_arc. Pre-seeded block id (§7.32).
+#if RUSTYCPP_RUST
+fn make_inmemory_factory_proxy(factory: rusty::Arc<InMemoryFactory>) -> ChannelFactoryProxy {
+    rusty::make_box::<InMemoryFactoryShim>(factory)
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory.make_inmemory_factory_proxy version=1 rust_sha256=14e3e2040a2e066da9285b5586eafc265e7183be52c89f7bea92f963b02217ec*/
+ChannelFactoryProxy make_inmemory_factory_proxy(rusty::Arc<InMemoryFactory> factory) {
     return rusty::make_box<InMemoryFactoryShim>(std::move(factory));
 }
+/*RUSTYCPP:GEN-END id=inmemory.make_inmemory_factory_proxy*/
 
 // ---------------------------------------------------------------------------
 // Test helpers
