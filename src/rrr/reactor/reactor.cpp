@@ -3315,20 +3315,39 @@ rusty::Arc<IntEvent> int_event_make(int32_t target) {
 // Flattened (S4): the former WaitAny(a, b) ctor, as the aggregate factory
 // rrr::event_make dispatches to. Build the child vector, then the aggregate,
 // then seed the event-core state.
-rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
-  rusty::Vec<rusty::Arc<EventPollable>> events;
-  events.push(std::move(a));
-  events.push(std::move(b));
-  auto sp = rusty::Arc<WaitAny>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),  // status_
-      rusty::thread::current_id(),                        // owner_thread_
-      EventState{},                                       // state_
-      rusty::Cell<bool>::new_(true),                      // prunable_
-      rusty::sync::Weak<EventPollable>(),                 // self_
-      std::move(events));                                 // events_
-  event_state_seed(sp->state_);
-  return sp;
+// Authored as inline Rust DSL. NOTE the pre-seeded block id below: a new
+// DSL block in this file auto-numbers into an id an existing block already
+// holds ("duplicate inline block id=reactor.22"), and the failed rewrite
+// DELETES the hand-written body before erroring. Pre-seeding an explicit
+// id avoids the collision — see §7.32.
+#if RUSTYCPP_RUST
+fn waitany_make(a: rusty::Arc<EventPollable>, b: rusty::Arc<EventPollable>) -> Arc<WaitAny> {
+    let mut events: rusty::Vec<rusty::Arc<EventPollable>> =
+        rusty::Vec::<rusty::Arc<EventPollable>>::new();
+    events.push(a);
+    events.push(b);
+    let sp = rusty::Arc::<WaitAny>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),
+        rusty::thread::current_id(),
+        EventState {},
+        rusty::Cell::<bool>::new(true),
+        rusty::sync::Weak::<EventPollable>(),
+        events,
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.waitany_make version=1 rust_sha256=d7e9803118eefaea14289895c2a4bbaf7b3917b34f69330505222b903c2a109a*/
+rusty::Arc<WaitAny> waitany_make(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b) {
+    rusty::Vec<rusty::Arc<EventPollable>> events = rusty::Vec<rusty::Arc<EventPollable>>::new_();
+    events.push(std::move(a));
+    events.push(std::move(b));
+    auto sp = rusty::Arc<WaitAny>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), std::move(events));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+/*RUSTYCPP:GEN-END id=reactor.waitany_make*/
 
 // Flattened (S4): the former WaitAll default ctor (empty child list).
 // Authored as inline Rust DSL (§7.30 table: the default
