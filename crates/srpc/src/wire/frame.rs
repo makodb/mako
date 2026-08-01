@@ -183,6 +183,32 @@ impl FrameReader {
         self.buf.len() - self.pos
     }
 
+    /// True when nothing is buffered.
+    ///
+    /// The C++ `FrameStreamReader::empty()`, kept as its own method
+    /// rather than left to callers as `buffered() == 0` so the swap is
+    /// a name-for-name match.
+    pub fn is_empty(&self) -> bool {
+        self.buffered() == 0
+    }
+
+    /// Discard everything buffered and start clean.
+    ///
+    /// The C++ `FrameStreamReader::reset()`. Required by the transport,
+    /// not a convenience: the reader is reset after a MALFORMED header
+    /// (the stream is no longer frame-aligned, so every later parse
+    /// would be garbage) and before a reconnect (bytes from the dead
+    /// connection must not be interpreted as the new one's). Without
+    /// it, a port of the reconnect path has no way to express either.
+    ///
+    /// Clears rather than reallocates: a reader that just hit a bad
+    /// frame is likely to be reused immediately, and the C++ side keeps
+    /// its capacity too.
+    pub fn reset(&mut self) {
+        self.buf.clear();
+        self.pos = 0;
+    }
+
     /// Decode the next complete frame and hand its payload to `f`
     /// WITHOUT copying — the C++ `FrameView` shape, and the form the
     /// transport uses on its hot path.
@@ -249,6 +275,46 @@ impl FrameReader {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reset_discards_buffered_bytes_and_realigns() {
+        // reset() exists for two transport situations, both of which
+        // leave the stream un-parseable rather than merely stale: a
+        // malformed header (no longer frame-aligned) and a reconnect
+        // (bytes from the dead connection).
+        let mut r = FrameReader::new();
+        let mut wire = Vec::new();
+        assert!(encode_into(&mut wire, b"payload", false));
+        // Append a whole frame plus a partial one, so both `buf` and
+        // `pos` are non-trivial when reset lands.
+        r.append(&wire);
+        r.append(&wire[..3]);
+        assert!(r.next_frame().unwrap().is_some());
+        assert!(!r.is_empty(), "the partial frame should still be buffered");
+
+        r.reset();
+        assert!(r.is_empty());
+        assert_eq!(r.buffered(), 0);
+
+        // The decisive part: after reset the reader must parse a fresh
+        // frame correctly. Leaving `pos` stale would desynchronise it.
+        r.append(&wire);
+        let (_h, payload) = r.next_frame().unwrap().expect("frame after reset");
+        assert_eq!(payload, b"payload");
+    }
+
+    #[test]
+    fn is_empty_tracks_buffered() {
+        let mut r = FrameReader::new();
+        assert!(r.is_empty());
+        let mut wire = Vec::new();
+        assert!(encode_into(&mut wire, b"x", false));
+        r.append(&wire);
+        assert!(!r.is_empty());
+        assert!(r.next_frame().unwrap().is_some());
+        assert!(r.is_empty(), "fully consumed reader is empty again");
+    }
+
     use super::*;
 
     /// The zero-copy path must see the same bytes as the owned one, and
