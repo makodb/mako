@@ -81,6 +81,62 @@ goal is twofold, and both halves must hold:
 | Context switch | Twin asm kernels per arch (`asm!` in-crate / existing `fiber_context_*.cc` on the C++ side) | The one place single-source bends; ~100 lines per arch |
 | Namespace/modules | C++ side keeps `rrr::` / `rrr.*` module names through the strangle | Zero consumer churn; translated modules emit/alias the same names |
 
+## Goal 0 — src/rrr hand-written C++ to zero, dual-compiled (named 2026-08-01)
+
+The third track, named by the user: **reduce hand-written C++ in
+`src/rrr` to zero by expressing everything as Rust DSL — and compile
+that DSL BOTH with rustc and, through translation, with the C++
+compiler.** It is a *prerequisite* for Goal 1, not a side quest.
+
+### Status
+
+**(a) hand-written → 0** — ~59% of authored production lines are DSL:
+
+| | |
+|---|---:|
+| DSL | 7,042 |
+| generated | 9,568 |
+| hand-written | **4,947** |
+| reachable target | ~4,424 (523 inside class templates = floor) |
+| impure files | 32 |
+
+Distribution matters more than the total: **~3,735 of 4,947 (75%) is in
+six files** — reactor.cpp (1,432), client.cpp (1,006),
+serializable.cpp (461), tcp_channel.cpp (350), server.cpp (328),
+serializable_envelope.cpp (158) — and much of that is documented floor
+(class templates, overloading, function-local statics, inline asm,
+try/catch, `#ifdef` platform arms, varargs Log, the Event hierarchy).
+The long tail is nearly exhausted; recent wins were 1–2 lines each.
+
+**(b) dual compilation — 0%, and not currently possible by
+construction.** The DSL lives as inline-Rust *inside* C++ files. No
+`build.rs`, no extraction step, no crate includes it: `grep -rl
+RUSTYCPP_RUST crates/` is empty. rustc has never seen a single
+`src/rrr` DSL block. Today the DSL is validated by exactly ONE
+compiler — the C++ one, via translation.
+
+### Why (b) is the strategically important half
+
+`crates/srpc` is currently a HAND-WRITTEN re-port of the same
+semantics: `wire/frame.rs` is a "byte-exact port of frame_codec.cpp …
+whose DSL blocks are the Rust-syntax source of these functions" (W1
+above). So the same logic is authored twice, by hand, in two places,
+and kept in sync by golden corpora.
+
+Goal 0(b) collapses that duplication. If `src/rrr`'s DSL were
+extractable as real Rust that rustc compiles, **`src/rrr`'s DSL would
+BE the crate** — Goals 0 and 1 converge rather than running in
+parallel, and the golden corpora stop guarding a hand-maintained
+translation and start guarding a mechanical one.
+
+Open design question for (b): the DSL blocks are `#if RUSTYCPP_RUST`
+regions inside `.cpp`/`.cc` module units, interleaved with C++ kernels
+they call. Extracting them as compilable Rust needs a story for the
+kernel calls (the `@unsafe` C++ bodies the DSL invokes) — probably
+`extern "C"`-style declarations on the Rust side, which is exactly the
+FFI the campaign forbids for the *product* but may be acceptable for a
+*validation-only* build. Unresolved; decide before building it.
+
 ## Goal 1 release criteria (Rust-native)
 
 - [ ] `cargo build`/`test`/`clippy`/`fmt` clean on stable rustc; zero
