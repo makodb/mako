@@ -2,6 +2,12 @@ module;
 
 #include <rusty/cell.hpp>
 #include <rusty/result.hpp>
+// Reachability: this partition's GEN names
+// `rusty::detail::mark_forgotten_if_supported` (the recursive drop-glue
+// suppression emitted into `rusty_mark_forgotten`), and that helper is
+// header-only — it is not in the transpiled `rusty` module. A GMF must
+// include what its own GEN names.
+#include <rusty/slice.hpp>
 #include <rusty/sys/env.hpp>
 
 #include <fcntl.h>
@@ -99,7 +105,7 @@ struct AddrInfo {
         new (this) AddrInfo(std::move(other));
         return *this;
     }
-    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; }
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->info_); rusty::detail::mark_forgotten_if_supported(this->owned_); }
 
 
     AddrInfo();

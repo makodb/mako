@@ -254,6 +254,9 @@ struct SparseInt {
     static int32_t load32(const uint8_t* buf);
     static int64_t load64(const uint8_t* buf);
     static size_t val_size(int64_t val);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -364,7 +367,7 @@ size_t SparseInt::dump64(int64_t val, uint8_t* buf) {
 }
 
 int32_t SparseInt::load32(const uint8_t* buf) {
-    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
+    auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
     uint32_t u = static_cast<uint32_t>(0);
     if (rusty::detail::deref_if_pointer_like(bsize) < 5) {
         int32_t i = static_cast<int32_t>(0);
@@ -394,7 +397,7 @@ int32_t SparseInt::load32(const uint8_t* buf) {
 }
 
 int64_t SparseInt::load64(const uint8_t* buf) {
-    const auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
+    auto bsize = static_cast<int32_t>(SparseInt::buf_size(buf[static_cast<size_t>(0)]));
     uint64_t u = static_cast<uint64_t>(0);
     if (rusty::detail::deref_if_pointer_like(bsize) < 8) {
         int32_t i = static_cast<int32_t>(0);
@@ -486,6 +489,9 @@ struct v32 {
     void set(int32_t v);
     int32_t get() const;
     size_t val_size() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -531,6 +537,9 @@ struct v64 {
     void set(int64_t v);
     int64_t get() const;
     size_t val_size() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -602,6 +611,9 @@ struct Counter {
     int64_t peek_next() const;
     int64_t next(int64_t step) const;
     void reset(int64_t start) const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -697,6 +709,9 @@ struct Time {
 
     static uint64_t now(bool accurate);
     static void sleep(uint64_t t);
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
@@ -771,6 +786,9 @@ struct Timer {
     void stop();
     void reset();
     double elapsed() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 

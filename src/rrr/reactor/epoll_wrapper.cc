@@ -70,6 +70,8 @@ pub trait Pollable {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=epoll_wrapper.pollable version=1 rust_sha256=b44240c03518247bd1a865f3626ed5a43ffc80c6c0b604e97608cc215ebbce7c*/
+class Pollable;
+
 class Pollable {
 public:
     virtual ~Pollable() noexcept(false) {}

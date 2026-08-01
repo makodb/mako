@@ -94,6 +94,9 @@ struct ReconnectPolicy {
     static ReconnectPolicy aggressive();
     static ReconnectPolicy conservative();
     static ReconnectPolicy no_retry();
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 

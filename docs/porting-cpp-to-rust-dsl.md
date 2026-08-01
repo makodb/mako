@@ -3554,15 +3554,28 @@ Isolate by regenerating twice, once with each binary, and diffing the
 outputs. Here that separated 9 changed files into 6 backlog and 3 real,
 and only one of the 3 was the bug.
 
-**A second finding fell out of the backlog half**: regenerating
-`rpc/utils.cpp` with the pinned transpiler emits
-`rusty::detail::mark_forgotten_if_supported`, which does not exist in the
-pinned headers —
+**A second finding fell out of the backlog half, and my first reading of
+it was wrong.** Regenerating `rpc/utils.cpp` emits
+`rusty::detail::mark_forgotten_if_supported`, and the build says:
 
     utils.cpp:102:90: error: no member named 'mark_forgotten_if_supported'
                              in namespace 'rusty::detail'
 
-i.e. the pin is *internally inconsistent*: transpiler and headers at the
-same SHA disagree. Regenerating that file is therefore not safe today,
-which is a second reason a pin bump cannot be treated as a mechanical
-"regenerate everything" (§7.48).
+I first recorded this as "the pin is internally inconsistent -- transpiler
+and headers disagree at the same SHA". **That is false.** The helper is
+right there in `include/rusty/slice.hpp:414`. The true statement is
+narrower, and is a rule already on the books:
+
+ - the helper is **header-only** -- it is absent from the transpiled
+   `rusty` module, so `import rusty;` does not bring it in; and
+ - `utils.cpp` is a module TU whose global module fragment includes
+   `cell.hpp`, `result.hpp`, `sys/env.hpp` -- but not `slice.hpp`.
+
+That is the module-partition reachability rule: **a GMF must include what
+its own GEN names.** The fix is a one-line `#include <rusty/slice.hpp>`,
+after which `librrr.a` builds and the whole backlog applies cleanly.
+
+Check whether a missing symbol is *absent* or merely *unreachable* before
+concluding anything about the toolchain. One `grep` in `include/`
+separates the two, and the difference between them is "add one include"
+versus "the pin is broken".

@@ -105,6 +105,9 @@ struct AvgStat {
     AvgStat reset();
     AvgStat peek() const;
     int64_t avg() const;
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = true;
+    static constexpr bool is_sync = true;
 };
 
 
