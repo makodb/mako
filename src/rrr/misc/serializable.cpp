@@ -229,11 +229,6 @@ public:
 };
 /*RUSTYCPP:GEN-END id=serializable.buffer_sink*/
 
-// @unsafe { memcpy + set_len bypass per-element init for trivial T=uint8_t }
-// Free function — kept outside the DSL block because the body's
-// `std::memcpy` over a `const void*` parameter isn't expressible in
-// inline-Rust today.
-
 // In-memory byte source. Wraps a `const uint8_t*` view + length;
 // caller owns the underlying storage.
 //

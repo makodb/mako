@@ -11,10 +11,10 @@ export module rrr.frame_codec;
 import std;
 import rrr.internal_protocol;
 
-// @safe - wire-protocol frame codec. The free codec functions
-// (write_header / peek_header / encode_into) still carry per-method
-// `// @unsafe` for raw `uint8_t*` arithmetic + std::memcpy. The POD
-// structs and trivial accessors inherit namespace @safe.
+// @safe - wire-protocol frame codec. write_header and peek_header are DSL
+// over `&[u8]` slices now; only `encode_into` still carries a per-method
+// `// @unsafe`, for the raw payload pointer and the memcpy into `out`.
+// The POD structs and trivial accessors inherit namespace @safe.
 // SP-5 DONE: FrameStreamReader is now built on `rusty::io::Cursor`.
 // The buffer + read offset live in `cursor_`; the unread bytes are
 // peeked via `cursor_.fill_buf()` (a `std::span`) and dropped via
