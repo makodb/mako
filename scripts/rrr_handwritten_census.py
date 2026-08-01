@@ -75,6 +75,16 @@ def classify(path):
             if in_dsl and t.startswith("#endif"):
                 in_dsl = False
                 continue
+            # GEN-DISPATCH blocks are generated too (the RUSTY_METHOD_DISPATCH
+            # shims the transpiler emits for issue #31 deref_call). They were
+            # being counted as hand-written, which made a regeneration that
+            # ADDED one look like the burndown going backwards.
+            if "RUSTYCPP:GEN-DISPATCH-BEGIN" in t:
+                in_gen = True
+                continue
+            if in_gen and "RUSTYCPP:GEN-DISPATCH-END" in t:
+                in_gen = False
+                continue
             if "RUSTYCPP:GEN-BEGIN" in t:
                 in_gen = True
                 continue
