@@ -2289,12 +2289,6 @@ struct PollThread;
 // original impl site.
 rusty::Arc<PollThread> pollthread_create();
 void pollthread_drop(const PollThread& self);
-void pollthread_add_proxy(const PollThread& self, PollableProxy poll);
-void pollthread_remove(const PollThread& self, Pollable& poll);
-void pollthread_remove_fd(const PollThread& self, int fd);
-void pollthread_request_close(const PollThread& self, int fd);
-void pollthread_update_mode(const PollThread& self, int fd, int new_mode);
-void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job);
 
 // `PollThread` — the poll-loop thread handle: an mpsc command sender,
 // the join slot, and shutdown/identity state. Authored as inline Rust
@@ -2362,31 +2356,34 @@ impl PollThread {
     }
 
     fn add_proxy(&self, poll: PollableProxy) {
-        pollthread_add_proxy(self, poll)
+        self.sender_.send(CmdAddPollable { pollable: poll });
     }
 
     fn remove(&self, poll: &mut Pollable) {
-        pollthread_remove(self, poll)
+        self.sender_.send(CmdRemovePollable { fd: poll.fd() });
     }
 
     // fd-keyed variant (remove only reads .fd() anyway); lets
     // shim-only callers avoid the Pollable base entirely.
     fn remove_fd(&self, fd: i32) {
-        pollthread_remove_fd(self, fd)
+        self.sender_.send(CmdRemovePollable { fd: fd });
     }
 
     // Thread-safe close: removes from epoll, closes socket, drops
     // proxy ownership.
     fn request_close(&self, fd: i32) {
-        pollthread_request_close(self, fd)
+        self.sender_.send(CmdClosePollable { fd: fd });
     }
 
     fn update_mode(&self, fd: i32, new_mode: i32) {
-        pollthread_update_mode(self, fd, new_mode)
+        let result = self.sender_.send(CmdUpdateMode { fd: fd, new_mode: new_mode });
+        if result.is_err() {
+            unsafe { Log_error("PollThread::update_mode: send failed! Channel disconnected?"); }
+        }
     }
 
     fn add(&self, job: Arc<Job>) {
-        pollthread_add_job(self, job)
+        self.sender_.send(CmdAddJob { job: job });
     }
 
     // For testing — worker state is not reachable across the channel.
@@ -2401,7 +2398,7 @@ impl Drop for PollThread {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=8ce28d38f8f60333656ace1c7c1b2d96e6bc98c4ab157c09217f75f33de8e60d*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=d776bf09dd7aaa39d27ae46f7321b66f62669c46198070524a095e3f20656984*/
 struct PollThread;
 
 struct PollThread {
@@ -2478,27 +2475,33 @@ void PollThread::shutdown() const {
 }
 
 void PollThread::add_proxy(PollableProxy poll) const {
-    pollthread_add_proxy((*this), std::move(poll));
+    this->sender_.send(CmdAddPollable{.pollable = std::move(poll)});
 }
 
 void PollThread::remove(Pollable& poll) const {
-    pollthread_remove((*this), poll);
+    this->sender_.send(CmdRemovePollable{.fd = poll.fd()});
 }
 
 void PollThread::remove_fd(int32_t fd) const {
-    pollthread_remove_fd((*this), std::move(fd));
+    this->sender_.send(CmdRemovePollable{.fd = std::move(fd)});
 }
 
 void PollThread::request_close(int32_t fd) const {
-    pollthread_request_close((*this), std::move(fd));
+    this->sender_.send(CmdClosePollable{.fd = std::move(fd)});
 }
 
 void PollThread::update_mode(int32_t fd, int32_t new_mode) const {
-    pollthread_update_mode((*this), std::move(fd), std::move(new_mode));
+    const auto result = this->sender_.send(CmdUpdateMode{.fd = std::move(fd), .new_mode = std::move(new_mode)});
+    if (result.is_err()) {
+        // @unsafe
+        {
+            Log_error("PollThread::update_mode: send failed! Channel disconnected?");
+        }
+    }
 }
 
 void PollThread::add(rusty::Arc<Job> job) const {
-    pollthread_add_job((*this), std::move(job));
+    this->sender_.send(CmdAddJob{.job = std::move(job)});
 }
 
 int32_t PollThread::get_remove_count() const {
@@ -4814,37 +4817,13 @@ void pollthread_drop(const PollThread& pt) {
 /*RUSTYCPP:GEN-END id=reactor.pollthread_drop*/
 
 
-void pollthread_add_proxy(const PollThread& self, PollableProxy poll) {
-  self.sender_.send(CmdAddPollable{std::move(poll)});
-}
 
-void pollthread_remove(const PollThread& self, Pollable& poll) {
-  self.sender_.send(CmdRemovePollable{poll.fd()});
-}
 
-void pollthread_remove_fd(const PollThread& self, int fd) {
-  self.sender_.send(CmdRemovePollable{fd});
-}
 
-void pollthread_request_close(const PollThread& self, int fd) {
-  self.sender_.send(CmdClosePollable{fd});
-}
 
 // @safe - Sends update mode command via channel (send wrapped @unsafe)
 // SAFETY: Channel send is thread-safe
-void pollthread_update_mode(const PollThread& self, int fd, int new_mode) {
-  // @unsafe { mpsc::Sender::send is not borrow-checked }
-  {
-  auto result = self.sender_.send(CmdUpdateMode{fd, new_mode});
-  if (result.is_err()) {
-    Log_error("PollThread::update_mode: send failed! Channel disconnected?");
-  }
-  }
-}
 
-void pollthread_add_job(const PollThread& self, rusty::Arc<Job> job) {
-  self.sender_.send(CmdAddJob{std::move(job)});
-}
 
 
 // --- from fiber_context_runtime.cc --------------------------------------
