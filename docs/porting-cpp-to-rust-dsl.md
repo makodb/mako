@@ -1991,3 +1991,45 @@ Corollary: when a probe says "blocked", check the probe before
 believing it. Two of these three produced false blockers, which is the
 expensive direction — a false "works" gets caught by the build, a false
 "blocked" just quietly removes work from the plan.
+
+#### 7.24a A second structural floor: Rust has no function overloading
+
+§7.24 counts class templates as the DSL floor. There is another one, and
+`serializable.cpp` is where it bites.
+
+That file defines **14 `deserialize` and 15 `serialize` free-function
+overloads**, distinguished only by first-parameter type (`std::pair`,
+`rusty::Vec<T>`, `std::vector<T>`, `std::set<T>`, `rusty::HashSet<T>`, …).
+Rust has no overloading, so they cannot coexist as `fn deserialize<T>`.
+This is a *structural fact* (§7.30) — it will not rot.
+
+Measured for that one file, counting the **union** (overloads and class
+templates overlap heavily — do not add them):
+
+| | lines |
+|---|---|
+| hand-written | 461 |
+| in class templates | 272 |
+| in overloaded-name fns | 267 |
+| overlap (both) | 214 |
+| **union — structurally blocked** | **325** |
+| remainder — potentially convertible | 136 |
+
+So ~70% of `serializable.cpp` cannot convert without a redesign of the
+serde surface (one generic entry point + trait dispatch, which is a
+design change, not a port).
+
+**A tree-wide figure is NOT given here on purpose.** Two attempts to
+produce one were both unsound, in different ways:
+ - scanning without a DSL/GEN mask counts every DSL `fn foo` against its
+   own generated `void foo` mirror — every converted function looks like
+   a 2-way overload;
+ - scanning *with* the mask still cannot tell `Foo::method` from
+   `Bar::method`, so unrelated same-named methods on different classes
+   inflate the count. It reported 445 lines; the diagnostic written to
+   check that number shared the first flaw and so confirmed nothing.
+
+The honest position: the overloading floor is real and large in
+`serializable.cpp` (verified by reading the functions), and unquantified
+elsewhere. Counting it properly needs qualified-name resolution, not a
+regex over declaration lines.
