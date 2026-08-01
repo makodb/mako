@@ -26,7 +26,7 @@ void MenciusServer::OnPrepare(slotid_t slot_id,
   }
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   *max_ballot = instance->max_ballot_seen_;
   n_prepare_++;
@@ -64,7 +64,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
 
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   *max_ballot = instance->max_ballot_seen_;
   n_suggest_++;

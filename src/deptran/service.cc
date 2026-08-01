@@ -318,7 +318,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   // }, __FILE__, cmd_id);
@@ -330,7 +330,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   //   }
   //   auto coro_opt = Fiber::current_fiber();
   //   if (coro_opt.is_some()) {
-  //     *coro_id = coro_opt.unwrap()->id;
+  //     *coro_id = coro_opt.unwrap()->id.get();
   //   }
   //   defer.reply();
   // };
@@ -446,7 +446,7 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   if(null_cmd) *res = REPEAT;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   defer.reply();
   //auto coro = Fiber::create_run(func);
@@ -489,7 +489,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   *slow = sched->slow_;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
 
   if (ret == WRONG_LEADER) {
@@ -535,7 +535,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   *res = SUCCESS;
   auto coro_opt = Fiber::current_fiber();
   if (coro_opt.is_some()) {
-    *coro_id = coro_opt.unwrap()->id;
+    *coro_id = coro_opt.unwrap()->id.get();
   }
   // Set view data from replication scheduler if available
   if (sched->rep_sched_ != nullptr) {
