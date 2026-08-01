@@ -632,6 +632,21 @@ void fsr_compact_if_needed(FrameStreamReader& self) {
 
 // @safe-ish - peeks via `cursor_.fill_buf()` (span); advances the read
 // offset via `cursor_.consume(total)` instead of `read_pos_ += total`.
+// @unsafe - stays a kernel for a NON-OBVIOUS reason: the EXPORT BOUNDARY.
+// Its body is DSL-expressible (tried and verified: fill_buf() binds to a
+// `let`, FrameHeader is a two-field DSL struct, and the peek out-param
+// works as `&header`). But inlining it into the DSL method
+// FrameStreamReader::consume_frame moves this call to
+// fsr_compact_if_needed UP into `export namespace rrr` (lines 26-524),
+// while that kernel is defined in the non-exported `namespace rrr` below.
+// A forward declaration inside the export block is itself exported and
+// does not match a non-exported definition, so it COMPILES and then fails
+// to LINK ("undefined reference to rrr::fsr_compact_if_needed").
+//
+// Fixing it means exporting the kernel (a module API change) or
+// restructuring the namespace blocks -- both larger than the 15 lines.
+// Attempted and reverted; see playbook §7.34. Do not retry without
+// deciding on one of those two.
 void fsr_consume_frame(FrameStreamReader& self) {
     const std::span<const std::uint8_t> rem = self.cursor_.fill_buf();
     if (rem.size() < kFrameHeaderSize) return;
