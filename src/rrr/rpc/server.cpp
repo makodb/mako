@@ -1153,21 +1153,35 @@ bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc
 }
 /*RUSTYCPP:GEN-END id=server.drain_impl*/
 
-// @unsafe - try/catch + callback execution.
-inline void server_run_shutdown_hooks(
-        const rusty::Mutex<rusty::Vec<ShutdownHook>>& hooks) {
-    Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
-    auto guard = hooks.lock().unwrap();
-    for (auto& hook : *guard) {
-        try {
-            hook();
-        } catch (const std::exception& e) {
-            Log_error("Server::graceful_shutdown: hook threw exception: {}", e.what());
-        } catch (...) {
-            Log_error("Server::graceful_shutdown: hook threw unknown exception");
-        }
+// @unsafe - try/catch kernel: Rust has no exceptions, so the swallow stays
+// C++. Same shape as request_queue.cpp's rq_invoke_callback_safely.
+inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook);
+
+// NOTE: hooks run WHILE the mutex is held. That is the pre-existing
+// behaviour and is preserved deliberately — request_queue.cpp collects
+// callbacks under the lock and invokes them outside it, but changing the
+// order here would alter shutdown semantics, not just style.
+#if RUSTYCPP_RUST
+fn server_run_shutdown_hooks(hooks: &rusty::Mutex<Vec<ShutdownHook>>) {
+    unsafe { Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks"); }
+    let mut guard = hooks.lock().unwrap();
+    for hook in &mut (*guard) {
+        server_invoke_shutdown_hook_safely(&mut hook);
     }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=server.14 version=1 rust_sha256=74a440e25f3b0d260ae7615c8a926d95b4f578b5c7a105af84d7de89e4f4b206*/
+void server_run_shutdown_hooks(const rusty::Mutex<rusty::Vec<ShutdownHook>>& hooks) {
+    // @unsafe
+    {
+        Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
+    }
+    auto guard = hooks.lock().unwrap();
+    for (auto&& hook : rusty::for_in(rusty::iter_mut((*guard)))) {
+        server_invoke_shutdown_hook_safely(hook);
+    }
+}
+/*RUSTYCPP:GEN-END id=server.14*/
 
 // @unsafe - std::stoi throws on bad input. Rust has no exceptions, so the
 // catch is the only genuinely irreducible part; returning Option keeps the
@@ -1178,6 +1192,20 @@ inline rusty::Option<int32_t> server_parse_port(const std::string& text) {
         return rusty::Some(static_cast<int32_t>(std::stoi(text)));
     } catch (const std::exception&) {
         return rusty::None;
+    }
+}
+
+// @unsafe - invoking a stored rusty::Function + swallowing exceptions. The
+// two distinct catch arms are kept (not collapsed to `catch (...)`) because
+// the std::exception arm logs `e.what()`, which the caller relies on to tell
+// a throwing hook apart from a hook that failed opaquely.
+inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
+    try {
+        hook();
+    } catch (const std::exception& e) {
+        Log_error("Server::graceful_shutdown: hook threw exception: {}", e.what());
+    } catch (...) {
+        Log_error("Server::graceful_shutdown: hook threw unknown exception");
     }
 }
 
