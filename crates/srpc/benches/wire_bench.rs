@@ -41,7 +41,6 @@ fn str100() -> String {
     "y".repeat(100)
 }
 
-
 /// Frame-reader scenarios for the first-swap perf question.
 ///
 /// The C++ FrameStreamReader splits a ZERO-COPY peek (`next_frame` ->
@@ -271,10 +270,34 @@ fn main() {
         },
     });
     // Frame reader: owned-Vec pop vs zero-copy peek, same payload.
-    run(&Scenario { name: "frame next_frame OWNED Vec (16B payload)",      iters: 2_000_000, body: frame_owned_vec::<16> });
-    run(&Scenario { name: "frame with_next_frame ZERO-COPY (16B payload)", iters: 2_000_000, body: frame_zero_copy::<16> });
-    run(&Scenario { name: "frame next_frame OWNED Vec (1KiB payload)",      iters: 1_000_000, body: frame_owned_vec::<1024> });
-    run(&Scenario { name: "frame with_next_frame ZERO-COPY (1KiB payload)", iters: 1_000_000, body: frame_zero_copy::<1024> });
-    run(&Scenario { name: "frame next_frame OWNED Vec (16KiB payload)",      iters: 200_000, body: frame_owned_vec::<16384> });
-    run(&Scenario { name: "frame with_next_frame ZERO-COPY (16KiB payload)", iters: 200_000, body: frame_zero_copy::<16384> });
+    run(&Scenario {
+        name: "frame next_frame OWNED Vec (16B payload)",
+        iters: 2_000_000,
+        body: frame_owned_vec::<16>,
+    });
+    run(&Scenario {
+        name: "frame with_next_frame ZERO-COPY (16B payload)",
+        iters: 2_000_000,
+        body: frame_zero_copy::<16>,
+    });
+    run(&Scenario {
+        name: "frame next_frame OWNED Vec (1KiB payload)",
+        iters: 1_000_000,
+        body: frame_owned_vec::<1024>,
+    });
+    run(&Scenario {
+        name: "frame with_next_frame ZERO-COPY (1KiB payload)",
+        iters: 1_000_000,
+        body: frame_zero_copy::<1024>,
+    });
+    run(&Scenario {
+        name: "frame next_frame OWNED Vec (16KiB payload)",
+        iters: 200_000,
+        body: frame_owned_vec::<16384>,
+    });
+    run(&Scenario {
+        name: "frame with_next_frame ZERO-COPY (16KiB payload)",
+        iters: 200_000,
+        body: frame_zero_copy::<16384>,
+    });
 }
