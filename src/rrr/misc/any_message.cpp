@@ -378,6 +378,8 @@ struct AnyMessageRegistryMap {
 };
 /*RUSTYCPP:GEN-END id=any_message.1*/
 
+// @unsafe - FUNCTION-LOCAL STATIC, not DSL-expressible (§7.24b). Also
+// returns a reference to it, which the DSL cannot spell either.
 rusty::Mutex<AnyMessageRegistryMap>& registry() {
   // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so seed
   // it with an empty registry map explicitly.

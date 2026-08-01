@@ -1094,6 +1094,8 @@ using AsyncReplyCallback = rusty::Function<
 // grammar has no nullptr literal; mirrors the fut_secs / make_pending_queue
 // helper pattern. Lets the DSL invalidate path pass "no reply" to a
 // callback as `null_reply_bytes()`.
+// @unsafe - returns a raw null. The DSL cannot emit `nullptr`: it lowers
+// to a non-existent `nullptr_` (§7.31), so this stays a C++ kernel.
 inline const uint8_t* null_reply_bytes() {
   return nullptr;
 }
@@ -2642,6 +2644,8 @@ using OnReconnectedCallbackFn         = rusty::Function<void(bool) const>;
 // `proc_macro_runtime` import explosion). Used by the DSL `connect()`
 // body to bridge `*const i8` (Rust DSL) to `const char*` (legacy
 // ClientConnection signature).
+// @unsafe - reinterpret_cast between raw pointer types; not expressible
+// in the DSL.
 inline const char* client_dsl_addr_to_cstr(const int8_t* addr) {
     return reinterpret_cast<const char*>(addr);
 }

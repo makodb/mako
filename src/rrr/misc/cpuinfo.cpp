@@ -591,6 +591,10 @@ void cpuinfo_log_ticks(clock_t last_ticks, clock_t ticks) {
 //   pub fn cpu_stat() -> Vec<f64> {
 //       CPU_INFO.get_or_init(CpuInfo::new).get_cpu_stat()
 //   }
+// @unsafe - FUNCTION-LOCAL STATIC (`static rusty::OnceCell<CPUInfo>`).
+// The DSL has no construct for a static declared inside a function body
+// (§7.24b); hoisting it to namespace scope would change lifetime, so it
+// stays a kernel.
 rusty::Vec<double> cpuinfo_cpu_stat() {
     static rusty::OnceCell<CPUInfo> inst;
     inst.get_or_init([]() -> CPUInfo { return cpuinfo_new(); });

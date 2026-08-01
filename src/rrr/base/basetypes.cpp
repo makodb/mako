@@ -672,6 +672,8 @@ inline void abort_if_false(bool cond) {
 // @safe - architecture-conditional wall-clock helper. Defined outside
 // the DSL because the DSL has no preprocessor / `cfg!` support; the
 // `#ifdef __APPLE__` branch maps to a single dispatch on Linux.
+// @unsafe - PLATFORM #ifdef SPLIT (__APPLE__). The DSL has no
+// preprocessor conditionals, so this stays a C++ kernel.
 inline uint64_t time_now_us(bool accurate) {
 #ifdef __APPLE__
     (void)accurate;
