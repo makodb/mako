@@ -1239,3 +1239,31 @@ trailing segment of MULTI-segment paths, and `errno` is single-segment.
 converting something in it, and build. A file that has not been touched
 in a while may not round-trip, and you will discover that only by trying
 — which is exactly how fiber.cpp's `Fiber::sleep_` breakage surfaced.
+
+### 7.19 Callback installation: neither closure form is currently usable
+
+Installing a long-lived callback needs a lambda that is **captured by
+value** and **const-callable**. The DSL can express neither, so
+`fiberchannel_bind_callbacks` and `sconn_bind_channel` stay hand-written.
+
+| DSL | emitted | why it fails |
+|---|---|---|
+| `move \|f\| { .. }` | `[=, x = std::move(x)](..) mutable` | `mutable` makes `operator()` non-const, so it will not convert to `CallbackWrapper<void(..) const>` |
+| `\|f\| { .. }` | `[&](..)` | const-callable, but captures the local BY REFERENCE — the closure outlives the function, so this is a latent use-after-free that COMPILES |
+
+The second is the dangerous one. It builds clean and passes the fiber
+channel tests, because nothing invokes the callback after the frame that
+created it has returned in those tests. Do not "fix" the conversion by
+dropping `move`.
+
+What is needed is `[self_ptr](..)` — by value, no `mutable`. In Rust the
+capture IS by value (a raw pointer is Copy) and the body does not mutate
+the capture, so `mutable` is unnecessary; emitting it is what closes the
+door. A `move` closure whose captures are all Copy and which never
+mutates them should lower without `mutable`.
+
+Until then, callback installation is rule-3 floor. Note this is NOT the
+same as the `{}` default-callback problem — that one was solvable with
+channel.cpp's `empty_*_callback` factories (see the FiberChannel Drop
+conversion, fb430ec9), and only affects DETACHING callbacks, not
+installing them.
