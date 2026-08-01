@@ -1337,9 +1337,9 @@ ConnectResult inmemory_factory_connect(const InMemoryFactory& self, std::string_
     uint64_t client_id = client_counter.fetch_add(1, std::memory_order_relaxed);
     std::string client_address = "inmemory://client-" + std::to_string(client_id);
 
-    // @unsafe - const_cast through Arc::get for accept_for_connect.
-    auto& mut_listener = const_cast<InMemoryListener&>(*listener.get());
-    auto client_opt = inmemory_listener_accept_for_connect(mut_listener, client_address);
+    // No cast: accept_for_connect already takes `const InMemoryListener&`
+    // and reaches its state through a const-lockable rusty::Mutex.
+    auto client_opt = inmemory_listener_accept_for_connect(*listener, client_address);
     if (client_opt.is_none()) {
         return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
     }
