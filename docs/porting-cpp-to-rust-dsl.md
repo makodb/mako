@@ -1712,3 +1712,32 @@ because a missing include is not a semantics question. Structural
 verification tells you the translation is *right*; only a compiler tells
 you the translation unit can *resolve* itself. Do both; neither
 substitutes for the other.
+
+### 7.28 A Rust-keyword *parameter* name fails to parse — and the error never says so
+
+CLAUDE.md documents that struct **fields** named after Rust keywords
+(`type`, `match`, `ref`, …) must be renamed or the type stays C++. The
+same applies to function **parameters**, and the diagnostic is unhelpful:
+
+    inline-rust error: src/rrr/rpc/request_options.cpp:318: failed to
+    transpile inline block id=request_options.3: Parse error: expected
+    one of: identifier, `::`, `<`, `_`, literal, `const`, `ref`, `mut`,
+    `&`, parentheses, square brackets, `..`, `const`
+
+The culprit was `fn timeout_type_to_string(type: TimeoutType)`. Nothing
+in the message names `type`, points at the token, or mentions keywords —
+it reads like a grammar bug in the block.
+
+**The fix is materially cheaper than for a field.** A field rename
+changes the type's shape and every construction site; a *parameter*
+rename is local, because C++ callers pass positionally and never name
+it. So `type` → `ty` and move on — do not conclude the function is
+unconvertible.
+
+**Measured exposure in this tree:** small. Excluding tests (not a
+target) and the 64 parameters named `self` — which are the deliberate
+"free fn taking `const X& self`" convention that exists *because* the
+DSL cannot own a method on a hand-written class (§7.25), not an
+accident — only about three hand-written production parameters carry
+keyword names. This will not obstruct the remaining backlog; it is a
+paper cut to recognise, not a hazard to plan around.
