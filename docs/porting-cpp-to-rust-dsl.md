@@ -2509,3 +2509,41 @@ emitted) and the condition widened to consult it. Note the sibling
 defect in the same repro — `auto& slot_opt = m.get_mut(1);` binds a
 reference to a by-value temporary `Option` — which should be `auto`;
 fix both together, since annotating only one still leaves wrong code.
+
+**CORRECTION — this bug is LOUD, not silent.** I rated it the
+highest-value transpiler fix on the belief that it emitted quietly-wrong
+code. It does not, on the current transpiler. Three probes:
+
+| form | emitted | verdict |
+|---|---|---|
+| `let s = m.get_mut(1).unwrap()` | `auto& s` | correct |
+| `let o: Option<&mut Vec<i32>> = m.get_mut(1); let s = o.unwrap()` | `Option<Vec<int32_t>&> o` / `Vec<int32_t>& s` | correct |
+| `let o = m.get_mut(1); let s = o.unwrap()` | `auto& o = <temporary>` | **does not compile** |
+
+The third emits `auto& o = m.get_mut(1);`, and binding a non-const lvalue
+reference to a by-value temporary is ill-formed — confirmed by compiling
+the reduced case, not by reasoning about it:
+
+```
+error: non-const lvalue reference to type 'optional<...>' cannot bind to
+a temporary of type 'optional<...>'
+```
+
+So the `const auto s = o.unwrap()` defect on the next line is never
+reached: the TU fails first. Whoever hits this gets a diagnostic
+immediately.
+
+That changes the priority. §7.21's silent 20/20-passing incident was
+real, but it came from an intermediate whose type was already known —
+and that path is now correct. What remains is an ERGONOMIC gap (the bare
+two-step needs an annotation the chained form does not), not a
+correctness landmine. Fix it for polish, not for safety, and do not let
+it displace work that is genuinely silent.
+
+**Method note.** Both corrections in this section came from probing three
+variants instead of one. The first probe (bare two-step) looked like a
+silent by-value bug; only adding the annotated variant showed the
+compiler already covers the case, and only compiling the reduced binding
+showed the remaining form is loud. One probe would have left a wrong
+priority in place — and I had already written that wrong priority into a
+commit message.
