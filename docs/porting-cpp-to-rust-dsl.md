@@ -3579,3 +3579,38 @@ Check whether a missing symbol is *absent* or merely *unreachable* before
 concluding anything about the toolchain. One `grep` in `include/`
 separates the two, and the difference between them is "add one include"
 versus "the pin is broken".
+
+#### 7.50.4 Scoping the second half (`&mut x` on a loop binding)
+
+Where the two halves live, so the next attempt does not re-derive it:
+
+**Half 1** — `infer_deref_result_type_from_type`
+(codegen/inference.rs ~9455): add `Ref | RefMut | MutexGuard |
+SpinMutexGuard | RwLockReadGuard | RwLockWriteGuard` to the arm that
+currently lists `Box | NonNull | ConstNonNull | Ptr | MutPtr | Unique |
+reference_wrapper`. One line. Verified to fix the reproducer.
+
+**Half 2** — the `syn::Expr::Reference` arm of `emit_expr_to_string`
+(codegen/emit_expr.rs ~22118). Its fallthrough is
+
+    format!("&{}", inner)
+
+and that is what turns `&mut hook` into `&hook`. It is only correct when
+`inner` names a C++ *value*; for a binding that already lowers to a
+reference it must emit `inner` unchanged.
+
+The information needed is already collected: `pending_loop_var_bindings`
+and `pending_loop_var_binding_types` (codegen/mod.rs ~1318) record loop
+variables and their types as the loop is emitted. What is missing is a
+record of which of those lower to a C++ *reference* (a range-for over a
+container binds one), and a consultation of it in the arm above.
+
+Note the ordering trap: today half 2 is not needed, because inference
+fails and an earlier branch collapses the borrow. Landing half 1 alone
+removes that accident and exposes the gap. **The halves are not
+independent and must not be committed separately.**
+
+Verification for the pair cannot be the transpiler suite -- §7.50.3
+showed it reports an identical failing set while the tree is broken.
+It has to be: regenerate src/rrr, build `rrr`, and run a full gate,
+with backlog separated from the change's own effect (§7.48).
