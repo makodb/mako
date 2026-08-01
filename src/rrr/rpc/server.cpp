@@ -1725,76 +1725,9 @@ inline void server_for_each_service_impl(const Server& self, F&& callback) {
 
 // @safe - Implementation namespace. Out-of-class definitions inherit
 // their per-method `// @unsafe` annotations from the matching
-// declarations above. The anonymous-namespace `stat_*` helpers and
-// other free-function impl details carry their own `// @unsafe`
-// markers individually.
+// declarations above. Free-function impl details carry their own
+// `// @unsafe` markers individually.
 namespace rrr {
-
-#ifdef RPC_STATISTICS
-
-static const int g_stat_server_batching_size = 1000;
-static int g_stat_server_batching[g_stat_server_batching_size];
-static int g_stat_server_batching_idx;
-static uint64_t g_stat_server_batching_report_time = 0;
-static const uint64_t g_stat_server_batching_report_interval = 1000 * 1000 * 1000;
-
-// @unsafe - Uses global mutable state (single-threaded context)
-static void stat_server_batching(size_t batch) {
-    g_stat_server_batching_idx = (g_stat_server_batching_idx + 1) % g_stat_server_batching_size;
-    g_stat_server_batching[g_stat_server_batching_idx] = batch;
-    uint64_t now = base::rdtsc();
-    if (now - g_stat_server_batching_report_time > g_stat_server_batching_report_interval) {
-        // do report
-        int min = numeric_limits<int>::max();
-        int max = 0;
-        int sum_count = 0;
-        int sum = 0;
-        for (int i = 0; i < g_stat_server_batching_size; i++) {
-            if (g_stat_server_batching[i] == 0) {
-                continue;
-            }
-            if (g_stat_server_batching[i] > max) {
-                max = g_stat_server_batching[i];
-            }
-            if (g_stat_server_batching[i] < min) {
-                min = g_stat_server_batching[i];
-            }
-            sum += g_stat_server_batching[i];
-            sum_count++;
-            g_stat_server_batching[i] = 0;
-        }
-        double avg = double(sum) / sum_count;
-        Log_info("* SERVER BATCHING: min={} avg={:.1f} max={}", min, avg, max);
-        g_stat_server_batching_report_time = now;
-    }
-}
-
-// rpc_id -> <count, cumulative>
-static rusty::HashMap<i32, pair<Counter, Counter>> g_stat_rpc_counter;
-static uint64_t g_stat_server_rpc_counting_report_time = 0;
-static const uint64_t g_stat_server_rpc_counting_report_interval = 1000 * 1000 * 1000;
-
-// @unsafe - Uses global mutable state (single-threaded context)
-static void stat_server_rpc_counting(i32 rpc_id) {
-    g_stat_rpc_counter[rpc_id].first.next(1);
-
-    uint64_t now = base::rdtsc();
-    if (now - g_stat_server_rpc_counting_report_time > g_stat_server_rpc_counting_report_interval) {
-        // do report
-        for (auto it: g_stat_rpc_counter) {
-            i32 counted_rpc_id = it.first;
-            i64 count = it.second.first.peek_next();
-            it.second.first.reset(0);
-            it.second.second.next(count);
-            i64 cumulative = it.second.second.peek_next();
-            Log_info("* RPC COUNT: id={:#08x} count={} cumulative={}", counted_rpc_id, count, cumulative);
-        }
-        g_stat_server_rpc_counting_report_time = now;
-    }
-}
-
-#endif // RPC_STATISTICS
-
 
 // Static member definitions for missing RPC ID tracking
 // rusty::Mutex wraps the unordered_set for thread-safe access
@@ -1962,10 +1895,6 @@ void sconn_decode_request_and_dispatch(
         }
         return;
     }
-
-#ifdef RPC_STATISTICS
-    stat_server_rpc_counting(rpc_id);
-#endif // RPC_STATISTICS
 
     auto svc_index_opt = self.ctx_->rpc_to_service.get(rpc_id);
     if (svc_index_opt.is_none()) {

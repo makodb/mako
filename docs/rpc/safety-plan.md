@@ -32,7 +32,7 @@ This document tracks the plan to convert unsafe code in `src/rrr/rpc/` to safe c
 
 | Item | Location | Current Reason | Fix | Status |
 |------|----------|----------------|-----|--------|
-| Stats functions | stat_server_batching(), stat_server_rpc_counting() | Global mutable state | Accept as inherently unsafe (debug-only code under `#ifdef RPC_STATISTICS`) | ✅ Done |
+| Stats functions | ~~stat_server_batching(), stat_server_rpc_counting()~~ | Global mutable state | Superseded 2026-08-01: the whole `#ifdef RPC_STATISTICS` block was **deleted** rather than annotated. It was never compiled (the macro is defined nowhere in the tree, in any CMakeLists, or in any CI script), and it had rotted past the point of being restorable — enabling the flag produced 4 hard compile errors, so "just turn it back on" was never a real fallback. | ✅ Deleted |
 | `const_cast` in Client::connect() | client.cpp:421-444 | Init-before-sharing pattern | Replaced with `Arc::get_mut()` for Rust-idiomatic exclusive access | ✅ Done |
 | `DeferredReply::reply()` | server.hpp:418-441 | weak_ptr + const_cast | Made `ServerConnection::reply()` const using interior mutability (SpinMutex) | ✅ Done |
 
@@ -130,6 +130,7 @@ After all improvements:
 
 - 2025-12-31: Priority 3 complete - const_cast elimination and documentation
   - Stats functions: Accepted as inherently unsafe (debug-only under `#ifdef RPC_STATISTICS`)
+    - **Superseded 2026-08-01**: block deleted outright — never compiled, and 4 hard errors if enabled.
   - Client::connect(): Replaced const_cast with Arc::get_mut()
     - Arc::get_mut() now returns `Option<T&>` (Rust-idiomatic API)
     - Returns Some when strong_count == 1 (exclusive ownership)

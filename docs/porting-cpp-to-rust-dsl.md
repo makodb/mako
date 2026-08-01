@@ -1377,31 +1377,61 @@ the compiler. Whenever a conversion writes back through something
 obtained from a container, READ the emitted C++ for `auto x =` where the
 original had `auto& x =`.
 
-### 7.21a Why remove_all_unhealthy's removal branch has no test
+### 7.21a remove_all_unhealthy's removal branch IS reachable (retracted)
 
-Following up 7.21: I tried to add the missing coverage so the conversion
-could land safely. It cannot be written against the public API, and the
-reason is worth recording so nobody else spends the time.
+**This section previously argued the branch was unreachable dead code.
+That was wrong, and both load-bearing premises were false.** Two
+independent adversarial agents refuted it; the errors are recorded here
+because the *shape* of the mistake generalizes.
 
-Removal is gated on `clients.len() - removed > cfg.min_connections`, so
-reaching it needs MORE clients at one address than `min_connections`.
-But the pool never creates more than that:
+What I claimed, and what the code actually says:
 
- - `ClientPool::new_` asserts `min_connections > 0`, so the floor cannot
-   be lowered to 0 (my first attempt died on this assertion).
- - a cache miss creates one client;
- - when every client at an address is unhealthy, the "recreate all"
-   branch clears the vector and creates exactly `num_connections`
-   (= `min_connections`) fresh ones.
+ - **"a cache miss creates one client"** — false. `clientpool_get_client`
+   reads `int num_connections = cfg.min_connections;` (client.cpp:5175)
+   and *both* creation loops push that many. A cache miss creates
+   `min_connections` clients, not one.
+ - **"`min_connections` cannot be lowered"** — false. The
+   `verify(min_connections > 0)` lives only in `ClientPool::new_`
+   (client.cpp:3768). `set_pool_config` (client.cpp:3777) is public,
+   exported, `const`, and validates **nothing** — it is a bare
+   `config_.set(std::move(config))`.
 
-So `clients.len()` tops out AT the floor, and the kept/removed split
-never runs. Every existing test asserts `total_client_count() == 1`,
-consistent with that.
+So the removal branch is reachable through the ordinary public API, no
+concurrency required: construct with `PoolConfig::aggressive()`
+(`min_connections = 2`) → `get_client` populates 2 clients → lower
+`min_connections` to 1 via `set_pool_config` → `remove_all_unhealthy`
+now sees `clients.len() - removed > cfg.min_connections` and fires. The
+gate arithmetic was confirmed by *executing* an extracted simulation, not
+by reading it.
 
-The branch may still be reachable under concurrent growth, or be dead
-code. Deciding which is a question about ClientPool's intended behaviour,
-not about the port — so the conversion stays deferred, and this is the
-thing to resolve first.
+Two further findings worth keeping:
+
+ - The concurrency angle I *did* hypothesize (a TOCTOU between the
+   emptiness check and the insert) is **refuted** — the `state_` mutex
+   covers both. But a different race is real: `config_` is a
+   `rusty::Cell` read **outside** the lock at both sites
+   (`get_client` reads at :5174 *before* locking at :5177;
+   `remove_all_unhealthy` reads at :5076 *after* locking at :5074).
+   `Cell::get` racing `Cell::set` on a ~40-byte struct is UB.
+ - Deleting the branch would not have been a no-op-with-no-consequences:
+   it would have made the function unconditionally do nothing, orphaned
+   the empty-key cache-eviction path, and left it inconsistent with three
+   sibling kernels at :5012, :5052, and :5146.
+
+**The generalizable lesson.** "No test covers it" and "no input can reach
+it" are different claims, and I slid from the first to the second. The
+reachability argument was built by reading the code and reasoning about
+it — the premises were plausible, adjacent to the truth, and both wrong
+in the same direction (each assumed a validation or a bound that the code
+does not actually enforce). Note the asymmetry that makes this the
+dangerous direction to be wrong in: **a false "this is reachable" costs
+you a test you did not need; a false "this is unreachable" deletes live
+code.** So for any deletion justified by a reachability argument, try to
+*refute* it — enumerate the public mutators of every quantity in the
+gate condition, and execute the arithmetic rather than eyeballing it.
+The original conclusion — that the conversion stays deferred — happened
+to survive, but for the opposite reason: the branch is live and needs
+coverage, not adjudication.
 
 ### 7.22 A DSL method body can only use types complete AT THE BLOCK
 

@@ -27,26 +27,6 @@ export namespace rrr {
 using rusty::sync::atomic::Ordering;
 using rusty::sync::atomic::AtomicI64;
 
-template<typename T>
-inline void atomic_store_relaxed(std::atomic<T>& atomic_var, T value) {
-  atomic_var.store(value, std::memory_order_relaxed);
-}
-
-template<typename T>
-inline T atomic_load_relaxed(const std::atomic<T>& atomic_var) {
-  return atomic_var.load(std::memory_order_relaxed);
-}
-
-template<typename T>
-inline T atomic_fetch_add_acq_rel(std::atomic<T>& atomic_var, T value) {
-  return atomic_var.fetch_add(value, std::memory_order_acq_rel);
-}
-
-template<typename T>
-inline T atomic_fetch_sub_acq_rel(std::atomic<T>& atomic_var, T value) {
-  return atomic_var.fetch_sub(value, std::memory_order_acq_rel);
-}
-
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
