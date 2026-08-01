@@ -24,6 +24,12 @@ import rrr.threading;
 // dynamic_cast to a raw `T*` (`unpack`), or escape a raw
 // `const std::string*` (`name_for_type` and its callers) carry
 // per-method `// @unsafe` below.
+/*RUSTYCPP:GEN-DISPATCH-BEGIN*/
+namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(unwrap)
+} } // namespace rusty::detail (issue #31 deref_call dispatch)
+/*RUSTYCPP:GEN-DISPATCH-END*/
+
 export namespace rrr {
 
 
@@ -75,7 +81,13 @@ impl AnyMessage {
     // Wire ops. The payload's bytes come from the inner T's
     // `save`/`load` via the proxy facade.
     fn save(&self, ar: &mut BinaryWriteArchive) {
-        anymessage_save(self, ar)
+        rrr::Serialize_::serialize(self.type_name_, ar);
+        if self.payload_.is_some() {
+            // Named Arc type so the call lowers to `->save` (playbook §7.13):
+            // the element type is lost through Option::as_ref().unwrap().
+            let payload: &rusty::Arc<SerializableBase> = self.payload_.as_ref().unwrap();
+            payload.save(ar);
+        }
     }
 
     fn load(&mut self, ar: &mut BinaryReadArchive) {
@@ -109,7 +121,7 @@ impl AnyMessage {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=9d4d497a4139ee687c20a8e328dcb2a62cdce453bcb0f2a99a0c939bc525e78e*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.message version=1 rust_sha256=52d3281542ba5e1e2e5dec99ad865cad11285e78493fb96e94df8a9afac87da1*/
 struct AnyMessage;
 
 struct AnyMessage {
@@ -130,7 +142,11 @@ struct AnyMessage {
 
 
 void AnyMessage::save(BinaryWriteArchive& ar) const {
-    anymessage_save((*this), ar);
+    rrr::Serialize_::serialize(this->type_name_, ar);
+    if (this->payload_.is_some()) {
+        const rusty::Arc<SerializableBase>& payload = this->payload_.as_ref().unwrap();
+        payload->save(ar);
+    }
 }
 
 void AnyMessage::load(BinaryReadArchive& ar) {
@@ -436,7 +452,7 @@ bool is_registered_type(std::type_index ti);
 void clear_for_testing();
 
 rusty::Option<SerializableProxy> create(const std::string& name) {
-    auto guard = registry().lock().unwrap();
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     auto entry = (rusty::detail::deref_if_pointer_like(guard)).by_name.get(name);
     if (entry.is_none()) {
         return rusty::Option<SerializableProxy>{rusty::None};
@@ -445,7 +461,7 @@ rusty::Option<SerializableProxy> create(const std::string& name) {
 }
 
 std::string name_for_type_owned(std::type_index ti) {
-    const auto guard = registry().lock().unwrap();
+    const auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     auto entry = (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(ti.hash_code());
     if (entry.is_none()) {
         return anymessage_empty_string();
@@ -454,17 +470,17 @@ std::string name_for_type_owned(std::type_index ti) {
 }
 
 bool is_registered_name(const std::string& name) {
-    const auto guard = registry().lock().unwrap();
+    const auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     return (rusty::detail::deref_if_pointer_like(guard)).by_name.get(name).is_some();
 }
 
 bool is_registered_type(std::type_index ti) {
-    const auto guard = registry().lock().unwrap();
+    const auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     return (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(ti.hash_code()).is_some();
 }
 
 void clear_for_testing() {
-    auto guard = registry().lock().unwrap();
+    auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     (rusty::detail::deref_if_pointer_like(guard)).by_name.clear();
     (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.clear();
 }
