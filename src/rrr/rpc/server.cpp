@@ -526,7 +526,10 @@ enum ServerConnStatus {
 
 struct ServerConnection {
     ctx_: Arc<RpcServiceContext>,
-    status_: ServerConnStatus,
+    // Cell, matching how Server already holds shutdown_phase_field: an
+    // Arc<ServerConnection> is shared, so state changes go through interior
+    // mutability rather than callers const_cast-ing to get a &mut.
+    status_: Cell<ServerConnStatus>,
     weak_self_: WeakServerConnection,
     channel_proxy_: rusty::Mutex<Option<ChannelConnectionProxy>>,
     channel_mode_: Cell<bool>,
@@ -537,7 +540,7 @@ impl ServerConnection {
     #[cpp_ctor] fn new(ctx: Arc<RpcServiceContext>, socket: i32) -> ServerConnection {
         ServerConnection {
             ctx_: ctx,
-            status_: ServerConnStatus::CONNECTED,
+            status_: Cell::new(ServerConnStatus::CONNECTED),
             weak_self_: sconn_default_weak(),
             channel_proxy_: rusty::Mutex::<Option<ChannelConnectionProxy>>::new(sconn_no_proxy()),
             channel_mode_: Cell::new(false),
@@ -554,20 +557,20 @@ impl ServerConnection {
     }
 
     fn connected(&self) -> bool {
-        self.status_ == ServerConnStatus::CONNECTED
+        self.status_.get() == ServerConnStatus::CONNECTED
     }
 
     fn is_closed(&self) -> bool {
-        self.status_ == ServerConnStatus::CLOSED
+        self.status_.get() == ServerConnStatus::CLOSED
     }
 
     fn reply(&self, req: &Request, error_code: i32, write_fn: ServerReplyFn) {
         sconn_reply(self, req, error_code, write_fn)
     }
 
-    fn close(&mut self) {
-        if self.status_ == ServerConnStatus::CONNECTED {
-            self.status_ = ServerConnStatus::CLOSED;
+    fn close(&self) {
+        if self.status_.get() == ServerConnStatus::CONNECTED {
+            self.status_.set(ServerConnStatus::CLOSED);
             Log_debug("server@{} close ServerConnection", self.ctx_.addr.c_str());
             // Tear down the channel proxy. Idempotent per channel-layer contract.
             let mut guard = self.channel_proxy_.lock().unwrap();
@@ -596,7 +599,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=73f323c36ea821f31c32c6043b192ad5aa23fad4f7799312e8df9a1d4485417d*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=da0286cd41f16c1f017d18155b6fd1549e88abe657727938e3dc02faca085686*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -611,7 +614,7 @@ inline constexpr ServerConnStatus ServerConnStatus_CLOSED() { return ServerConnS
 
 struct ServerConnection {
     rusty::Arc<RpcServiceContext> ctx_;
-    ServerConnStatus status_;
+    rusty::Cell<ServerConnStatus> status_;
     WeakServerConnection weak_self_;
     rusty::Mutex<rusty::Option<ChannelConnectionProxy>> channel_proxy_;
     rusty::Cell<bool> channel_mode_;
@@ -623,7 +626,7 @@ struct ServerConnection {
     bool connected() const;
     bool is_closed() const;
     void reply(const Request& req, int32_t error_code, ServerReplyFn write_fn) const;
-    void close();
+    void close() const;
     void bind_channel(ChannelConnectionProxy proxy);
     int32_t run_async(ServerRunAsyncFn f) const;
 };
@@ -631,7 +634,7 @@ struct ServerConnection {
 
 ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int32_t socket)
     : ctx_(std::move(ctx))
-    , status_(rusty::clone(ServerConnStatus_CONNECTED()))
+    , status_(rusty::Cell<ServerConnStatus>::new_(rusty::clone(rusty::clone(ServerConnStatus_CONNECTED()))))
     , weak_self_(sconn_default_weak())
     , channel_proxy_(rusty::Mutex<rusty::Option<ChannelConnectionProxy>>::new_(sconn_no_proxy()))
     , channel_mode_(rusty::Cell<bool>::new_(false))
@@ -647,20 +650,20 @@ bool ServerConnection::is_channel_mode() const {
 }
 
 bool ServerConnection::connected() const {
-    return rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CONNECTED());
+    return this->status_.get() == rusty::clone(ServerConnStatus_CONNECTED());
 }
 
 bool ServerConnection::is_closed() const {
-    return rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CLOSED());
+    return this->status_.get() == rusty::clone(ServerConnStatus_CLOSED());
 }
 
 void ServerConnection::reply(const Request& req, int32_t error_code, ServerReplyFn write_fn) const {
     sconn_reply((*this), req, std::move(error_code), std::move(write_fn));
 }
 
-void ServerConnection::close() {
-    if (rusty::detail::deref_if_pointer_like(this->status_) == rusty::clone(ServerConnStatus_CONNECTED())) {
-        this->status_ = rusty::clone(rusty::clone(ServerConnStatus_CLOSED()));
+void ServerConnection::close() const {
+    if (this->status_.get() == rusty::clone(ServerConnStatus_CONNECTED())) {
+        this->status_.set(rusty::clone(rusty::clone(ServerConnStatus_CLOSED())));
         Log_debug("server@{} close ServerConnection", (*this->ctx_).addr.c_str());
         auto guard = this->channel_proxy_.lock().unwrap();
         if (((*guard)).is_some()) {
@@ -1846,8 +1849,7 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
         auto sconn_opt = weak_self.upgrade();
         if (sconn_opt.is_none()) return;
         auto sconn = sconn_opt.unwrap();
-        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        mut_sconn->close();
+        sconn->close();   // close() is const now — no cast needed
     });
     // 5d: on_error logs and force-closes. Per the channel-layer
     // contract, fatal errors are followed by on_closed, so the
@@ -1860,8 +1862,7 @@ void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
         Log_warn("rrr::ServerConnection: channel error {}: {}",
                  channel_error_to_string(err),
                  std::string_view(message.data(), message.size()));
-        auto* mut_sconn = const_cast<ServerConnection*>(sconn.get());
-        mut_sconn->close();
+        sconn->close();   // close() is const now — no cast needed
     });
 
     // @unsafe { rusty::Mutex::lock + ChannelConnectionProxy move }
@@ -1891,7 +1892,7 @@ void request_fill_body(Request& req, const std::uint8_t* bytes,
 // prefix, so the body is `[xid:v64][rpc_id:i32][user-args]`.
 void sconn_decode_request_and_dispatch(
         ServerConnection& self, const std::uint8_t* bytes, std::size_t size) {
-    if (self.status_ == ServerConnStatus::CLOSED) {
+    if (self.status_.get() == ServerConnStatus::CLOSED) {
         return;
     }
 
@@ -2166,8 +2167,7 @@ void server_drop_impl(Server& self) {
         auto guard = self.channel_sconns_field.lock().unwrap();
         for (auto& sconn : *guard) {
             // @unsafe - const_cast through Arc::get for close()
-            auto& mut_sconn = const_cast<ServerConnection&>(*sconn.get());
-            mut_sconn.close();
+            sconn->close();   // close() is const now — no cast needed
         }
         (*guard).clear();
     }
