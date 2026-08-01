@@ -341,7 +341,6 @@ struct RequestQueue;
 inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
 inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
 inline size_t rq_expire_stale(const RequestQueue& self);
-inline void rq_clear_all(const RequestQueue& self, int error_code);
 #if RUSTYCPP_RUST
 struct RequestQueue {
     // Cell: RequestQueue is reached through a shared handle, so a config
@@ -405,7 +404,23 @@ impl RequestQueue {
     }
 
     fn clear_all(&self, error_code: i32) {
-        rq_clear_all(self, error_code)
+        // Collect under the lock, invoke outside it: a callback must not run
+        // while the queue mutex is held.
+        let mut callbacks_to_invoke: Vec<QueuedRequestCallback> =
+            Vec::<QueuedRequestCallback>::new();
+        {
+            let mut guard = self.queue_.lock().unwrap();
+            for req in &mut (*guard) {
+                if req.callback {
+                    callbacks_to_invoke.push(req.callback);
+                }
+            }
+            (*guard).clear();
+        }
+        for cb in callbacks_to_invoke {
+            // try/catch kernel: Rust has no exceptions, so the swallow stays C++.
+            rq_invoke_callback_safely(cb, error_code);
+        }
     }
 
     fn config(&self) -> RequestQueueConfig {
@@ -428,7 +443,7 @@ impl RequestQueue {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=aeebda810bbe4187a370b0cc1a9c4e9ad9c9f7b5a6a05ca47d67f87191336ea4*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=63a9df1337e15f8e80e85abc9e6bd35e761bcf26cef4b6cbd0a42848843fe108*/
 struct RequestQueue;
 
 struct RequestQueue {
@@ -500,7 +515,19 @@ size_t RequestQueue::remaining_capacity() {
 }
 
 void RequestQueue::clear_all(int32_t error_code) const {
-    rq_clear_all((*this), std::move(error_code));
+    rusty::Vec<QueuedRequestCallback> callbacks_to_invoke = rusty::Vec<QueuedRequestCallback>::new_();
+    {
+        auto guard = this->queue_.lock().unwrap();
+        for (auto&& req : rusty::for_in(rusty::iter_mut((*guard)))) {
+            if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.callback); }) { return (__r.callback); } else if constexpr (requires { (__r.callback_field); }) { return (__r.callback_field); } else if constexpr (requires { ((*__r).callback); }) { return ((*__r).callback); } else { return ((*__r).callback_field); } }(req)) {
+                callbacks_to_invoke.push(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.callback); }) { return (__r.callback); } else if constexpr (requires { (__r.callback_field); }) { return (__r.callback_field); } else if constexpr (requires { ((*__r).callback); }) { return ((*__r).callback); } else { return ((*__r).callback_field); } }(req)));
+            }
+        }
+        ((*guard)).clear();
+    }
+    for (auto&& cb : rusty::for_in(callbacks_to_invoke)) {
+        rq_invoke_callback_safely(std::move(cb), std::move(error_code));
+    }
 }
 
 RequestQueueConfig RequestQueue::config() const {
@@ -587,22 +614,6 @@ inline size_t rq_expire_stale(const RequestQueue& self) {
 
 // @unsafe - clear_all: drain callbacks (range-for over the guarded deque) +
 // clear, invoke outside the lock with try/catch.
-inline void rq_clear_all(const RequestQueue& self, int error_code) {
-    rusty::Vec<rusty::Function<void(int)>> callbacks_to_invoke;
-    {
-        auto guard = self.queue_.lock().unwrap();
-        for (auto& req : *guard) {
-            if (req.callback) {
-                callbacks_to_invoke.push(std::move(req.callback));
-            }
-        }
-        (*guard).clear();
-    }
-    for (auto& cb : callbacks_to_invoke) {
-        // @unsafe { invoking + swallowing exceptions }
-        try { cb(error_code); } catch (...) {}
-    }
-}
 
 // @safe - update_config: lock to serialize with in-flight enqueue/dequeue, then
 // assign the POD config. (The lock-for-side-effect `(void)guard` reads cleaner
