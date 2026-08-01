@@ -323,7 +323,7 @@ uint64_t server_id = server->instance_id();
 
 // Clients can detect restarts
 client->set_on_server_restart([](uint64_t old_id, uint64_t new_id) {
-    Log_warn("Server restarted: %lu -> %lu", old_id, new_id);
+    Log_warn("Server restarted: {} -> {}", old_id, new_id);
     // Clear any cached state, re-establish session, etc.
 });
 ```
@@ -390,7 +390,7 @@ Reconnect multiple clients efficiently:
 ```cpp
 // Reconnect all clients for an address
 auto result = pool.reconnect_all("127.0.0.1:8080");
-Log_info("Reconnected %zu/%zu clients", result.succeeded, result.total);
+Log_info("Reconnected {}/{} clients", result.succeeded, result.total);
 
 // Reconnect all clients in pool
 auto result = pool.reconnect_all();

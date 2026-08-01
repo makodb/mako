@@ -149,7 +149,7 @@ client->add_on_disconnected([]() {
 });
 
 client->add_on_reconnected([](bool success) {
-    Log_info("Reconnected to server (success=%d)", success ? 1 : 0);
+    Log_info("Reconnected to server (success={})", success ? 1 : 0);
 });
 
 client->connect("127.0.0.1:8080");
@@ -205,11 +205,11 @@ Monitor connection health:
 ```cpp
 auto& metrics = client->metrics();
 
-Log_info("Requests sent: %lu", metrics.requests_sent());
-Log_info("Requests completed: %lu", metrics.requests_completed());
-Log_info("Requests failed: %lu", metrics.requests_failed());
-Log_info("Reconnect count: %lu", metrics.reconnect_count());
-Log_info("Avg latency: %lu us", metrics.avg_latency_us());
+Log_info("Requests sent: {}", metrics.requests_sent());
+Log_info("Requests completed: {}", metrics.requests_completed());
+Log_info("Requests failed: {}", metrics.requests_failed());
+Log_info("Reconnect count: {}", metrics.reconnect_count());
+Log_info("Avg latency: {} us", metrics.avg_latency_us());
 ```
 
 ### 7. Graceful Server Shutdown
@@ -310,7 +310,7 @@ if (future->timed_wait(timeout_ms)) {
     // Completed within timeout
 } else {
     // Timed out
-    Log_warn("Request timed out after %u ms", timeout_ms);
+    Log_warn("Request timed out after {} ms", timeout_ms);
 }
 ```
 
