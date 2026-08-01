@@ -3211,3 +3211,55 @@ Not attempted here: `client.cpp` is the RPC client core, and this is a
 lock scope at once. It wants a dedicated run with a full gate, not the
 tail of a long session. But the reason it was *floored* is gone, and
 that was the point of the transpiler work.
+
+### 7.48 The drift guard is blind to transpiler changes
+
+`scripts/rrr_dsl_check.sh` compares each block's `rust_sha256` against a
+hash of the Rust source. That catches the failure it was built for --
+Rust edited without regenerating -- and nothing else. In particular it
+**cannot see a GEN region that is stale with respect to the transpiler
+itself**, because changing the transpiler does not change the Rust.
+
+Measured, not reasoned: the check reported `checked 41 files, 0 with
+drift` at a moment when five blocks in `client.cpp` still carried
+`mutable` on closures that the current transpiler no longer emits (the
+`000f14a9` closure-mutability fix). Regenerating one file for an
+unrelated reason is what surfaced them.
+
+So there are two independent staleness axes, and only one is guarded:
+
+| stale thing | detected by | guard exists |
+|---|---|---|
+| GEN vs the Rust above it | `rust_sha256` | yes |
+| GEN vs the transpiler that made it | nothing | **no** |
+
+Two practical consequences:
+
+1. **After bumping the rusty-cpp pin, regenerate everything and diff.**
+   A green drift check does not mean the tree reflects the new
+   transpiler. Treat the pin bump as a regen event, not just a submodule
+   move.
+2. **Expect unrelated hunks when regenerating a file.** They are not
+   corruption; they are backlog from earlier transpiler fixes. Read them
+   -- they are also the only proof those fixes reach real code.
+
+The obvious fix (mix a transpiler version/hash into the stamp) would
+make every pin bump dirty every block at once, which is why it has not
+been done. The cheap version is a periodic regen-and-diff sweep, which
+is what caught this.
+
+#### The stale-binary trap that produced the false reading first
+
+Before the above, a probe of `Vec<rusty::Function<dyn FnMut()>>`
+reported the *wrong* lowering -- a double wrapper
+`Function<std::function<void()>>` -- which contradicted a landed commit
+that had produced clean `Function<void()>` from identical input. The
+probe was run against `target/release/rusty-cpp-transpiler`, a binary
+predating the `4d48363e` bare-signature fix that was already in HEAD.
+
+The tell was the contradiction with a commit, not anything in the
+output; the wrong output is perfectly plausible on its own. Check
+`stat -c %y` on the binary against `find src -name '*.rs' -newer` before
+believing any probe result. This is the same family as the stale test
+binaries in §7.31 -- a green or red reading from a binary that is not
+the thing you think you are measuring.

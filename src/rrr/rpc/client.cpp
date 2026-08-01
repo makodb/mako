@@ -550,10 +550,6 @@ FutureAttr FutureAttr::new_(FutureCallback cb) {
 // overload (the dead `Future*` overload is dropped; the `FutureResult`
 // callers now `(void)`-discard).
 
-// CompletionFn: the DSL can't parse `Function<void()>` as a generic type
-// argument, so alias it (mirrors OnFrameCallback / QueuedRequestCallback).
-using CompletionFn = rusty::Function<void()>;
-
 // @safe - the one irreducible std::chrono interop point: build the
 // `std::chrono::duration<double>` that rusty::Condvar::wait_timeout_while
 // requires. Minimized to a single expression so the rest of timed_wait can
@@ -566,12 +562,12 @@ inline std::chrono::duration<double> fut_secs(double sec) {
 struct FutureState {
     ready: bool,
     timed_out: bool,
-    completion_callbacks: Vec<CompletionFn>,
+    completion_callbacks: Vec<rusty::Function<dyn FnMut()>>,
 }
 
 impl FutureState {
     fn new() -> FutureState {
-        FutureState { ready: false, timed_out: false, completion_callbacks: Vec::<CompletionFn>::new() }
+        FutureState { ready: false, timed_out: false, completion_callbacks: Vec::<rusty::Function<dyn FnMut()>>::new() }
     }
 }
 
@@ -653,7 +649,7 @@ impl Future {
         guard.timed_out
     }
 
-    fn add_completion_callback(&self, callback: CompletionFn) -> bool {
+    fn add_completion_callback(&self, callback: rusty::Function<dyn FnMut()>) -> bool {
         let guard = self.state_.lock().unwrap();
         if guard.ready || guard.timed_out {
             return false;
@@ -714,7 +710,7 @@ impl Future {
 
     fn notify_ready(&self, self_arc: Arc<Future>) {
         let mut should_callback: bool = false;
-        let mut completion_callbacks: Vec<CompletionFn> = Vec::new();
+        let mut completion_callbacks: Vec<rusty::Function<dyn FnMut()>> = Vec::new();
         {
             let guard = self.state_.lock().unwrap();
             if !guard.timed_out {
@@ -740,14 +736,14 @@ impl Future {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=a081451731b70148e14b85193b215034096a96241f90b5284118f2dc78e66813*/
+/*RUSTYCPP:GEN-BEGIN id=client.future version=1 rust_sha256=b22eaab88dcd6f184fc4c68c7b5ed9ec91d069477ee3b2e0a4798fc77f6fd49d*/
 struct FutureState;
 struct Future;
 
 struct FutureState {
     bool ready;
     bool timed_out;
-    rusty::Vec<CompletionFn> completion_callbacks;
+    rusty::Vec<rusty::Function<void()>> completion_callbacks;
 
     static FutureState new_();
 };
@@ -771,7 +767,7 @@ struct Future {
     void timed_wait(double sec) const;
     bool wait_with_options() const;
     bool timed_out() const;
-    bool add_completion_callback(CompletionFn callback) const;
+    bool add_completion_callback(rusty::Function<void()> callback) const;
     rusty::RefMut<ReplyBuffer> get_reply() const;
     int32_t get_error_code() const;
     int64_t get_xid() const;
@@ -788,7 +784,7 @@ struct Future {
 
 
 FutureState FutureState::new_() {
-    return FutureState{.ready = false, .timed_out = false, .completion_callbacks = rusty::Vec<CompletionFn>::new_()};
+    return FutureState{.ready = false, .timed_out = false, .completion_callbacks = rusty::Vec<rusty::Function<void()>>::new_()};
 }
 
 Future::Future(int64_t xid, FutureAttr attr)
@@ -852,7 +848,7 @@ bool Future::timed_out() const {
     return std::move((*guard).timed_out);
 }
 
-bool Future::add_completion_callback(CompletionFn callback) const {
+bool Future::add_completion_callback(rusty::Function<void()> callback) const {
     auto guard = this->state_.lock().unwrap();
     if (rusty::detail::deref_if_pointer_like((*guard).ready) || rusty::detail::deref_if_pointer_like((*guard).timed_out)) {
         return false;
@@ -913,7 +909,7 @@ bool Future::should_retry() const {
 
 void Future::notify_ready(rusty::Arc<Future> self_arc) const {
     bool should_callback = false;
-    rusty::Vec<CompletionFn> completion_callbacks = rusty::Vec<CompletionFn>::new_();
+    rusty::Vec<rusty::Function<void()>> completion_callbacks = rusty::Vec<rusty::Function<void()>>::new_();
     {
         auto guard = this->state_.lock().unwrap();
         if (!(*guard).timed_out) {
@@ -1970,7 +1966,7 @@ void ClientConnection::on_channel_closed_fan_out() const {
             return;
         }
         WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
-        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
+        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
     return;
@@ -2052,7 +2048,7 @@ void ClientConnection::bind_channel(ChannelConnectionProxy channel) const {
     }
     this->channel_mode_.set(true);
     WeakClientConnection weak_self = rusty::clone(this->weak_self_);
-    Fiber::create_run([=, weak_self = std::move(weak_self)]() mutable {
+    Fiber::create_run([=, weak_self = std::move(weak_self)]() {
 auto conn_opt = weak_self.upgrade();
 if (conn_opt.is_none()) {
     return;
@@ -2195,7 +2191,7 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
     this->heartbeat_manager_.set_config(config);
     WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
-    this->heartbeat_manager_.set_on_timeout([=, weak_conn = std::move(weak_conn)]() mutable {
+    this->heartbeat_manager_.set_on_timeout([=, weak_conn = std::move(weak_conn)]() {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
     return;
@@ -2336,7 +2332,7 @@ void ClientConnection::handle_error() const {
             return;
         }
         WeakClientConnection weak_conn = rusty::clone(this->weak_self_);
-        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() mutable {
+        rusty::thread::spawn([=, weak_conn = std::move(weak_conn)]() {
 auto conn_opt = weak_conn.upgrade();
 if (conn_opt.is_none()) {
     return;
@@ -3297,7 +3293,7 @@ void Client::close() const {
         conn_ref->mark_closing();
         if (was_connected) {
             rusty::Arc<ClientConnection> conn_arc = rusty::clone(conn_ref);
-            const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() mutable {
+            const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, conn_arc = std::move(conn_arc)]() {
 conn_arc->close();
 }));
             this->poll_thread_worker_field->add(std::move(close_job));
