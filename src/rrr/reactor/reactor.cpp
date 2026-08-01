@@ -1701,7 +1701,10 @@ class Fiber {
   static thread_local uint64_t global_id;
   uint64_t dep_id_{0};
   bool need_finalize_{false};
-  uint64_t id{0};
+  // Cell: the id is stamped once on a Fiber reached through a shared
+  // handle, so interior mutability replaces the const_cast that used to
+  // do it (the old comment there said "id is not Cell yet").
+  rusty::Cell<uint64_t> id{0};
 
   enum Status { INIT = 0, STARTED, PAUSED, RESUMED, FINISHED, FINALIZING, RECYCLED };
 
@@ -3135,7 +3138,7 @@ bool event_test_impl(const W& ev) {
 uint64_t event_core_get_fiber_id() {
   auto fiber_opt = Fiber::current_fiber();
   verify(fiber_opt.is_some());
-  return fiber_opt.unwrap()->id;
+  return fiber_opt.unwrap()->id.get();
 }
 
 void event_state_seed(const EventState& st) {
@@ -3689,7 +3692,7 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
       available_guard->pop();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
       const auto& fiber_ref = *fiber;
-      const_cast<Fiber&>(fiber_ref).id = Fiber::global_id++;  // id is not Cell yet
+      fiber_ref.id.set(Fiber::global_id++);
       *fiber_ref.func_.borrow_mut() = std::move(func);
       // Keep the existing task/stack so continue_() can resume from the fiber's yield point.
       verify((*fiber_ref.fiber_task_.borrow()).is_some());

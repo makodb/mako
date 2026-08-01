@@ -50,7 +50,7 @@ inline uint64_t get_id() noexcept {
     auto fiber = Fiber::current_fiber();
     if (fiber.is_some()) {
         // @unsafe { accessing Rc internals }
-        return fiber.unwrap()->id;
+        return fiber.unwrap()->id.get();
     }
     return 0;
 }
