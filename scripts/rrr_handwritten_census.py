@@ -169,8 +169,10 @@ def main():
     print(f"production   dsl={p[0]}  generated={p[1]}  HAND-WRITTEN={p[2]}"
           f"  (+{p[3]} module scaffolding, exempt)")
     print(f"             of the hand-written, ~{p[4]} sit inside class templates"
-          f" — a DSL floor, not backlog (advisory, regex-estimated)")
-    print(f"             so the reachable target is ~{p[2] - p[4]}, not 0")
+          f" (advisory, regex-estimated)")
+    print(f"             NOTE: class templates are NOT a floor — probed 2026-08-01,"
+          f" `struct X<T>` + `impl<T>` lowers correctly.")
+    print(f"             So ~{p[2] - p[4]} is a LOWER bound on the target, not the target.")
     print(f"tests        hand-written={totals['test'][2]}  (oracle, not a target)")
     rows.sort(reverse=True)
     if show_files:

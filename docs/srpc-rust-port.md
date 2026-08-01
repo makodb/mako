@@ -230,6 +230,49 @@ kernel calls (the `@unsafe` C++ bodies the DSL invokes) — probably
 FFI the campaign forbids for the *product* but may be acceptable for a
 *validation-only* build. Unresolved; decide before building it.
 
+### Goal 0 completion plan (2026-08-01) — floors first, and most are stale
+
+Working assumption, earned rather than assumed: **ten stated blockers
+expired in a single session**, and the largest remaining floor category
+was just disproved by a one-command probe. Treat every "floor" as
+suspect until re-tested; the cost of re-testing is one probe and the
+hit rate has been extraordinary.
+
+**Phase A — retire the stale floors.** Cheapest, highest yield, and it
+also shrinks 0(b)'s FFI surface line-for-line (that surface IS this
+floor).
+
+| # | floor | status / strategy |
+|---|---|---|
+| A1 | **class templates** (~523 lines, 125 sites — the biggest) | **DISPROVED 2026-08-01.** `struct Holder<T>` + `impl<T>` lowers to a correct `template<typename T> struct` with methods, static factory, const accessor and turbofish call sites. Not a transpiler limit. Re-audit the 125 sites; expect most to convert. Genuinely hard subset: SFINAE, `decltype`-heavy signatures, explicit specialisations, operator families. |
+| A2 | varargs (29 sites) | Largely expired: `Log_*` is a `std::format` variadic template now, not C varargs (§7.26). Re-test each site. |
+| A3 | inline asm | **DONE 2026-08-01** — `fiber_context_{x86_64,aarch64}` moved to real `.S`, object code proven byte-identical. Category eliminated. |
+| A4 | function-local statics (28) | Reshape: hoist to module scope. Precedent already in-tree (`epoll_remove_count`, `g_current_poll_worker`). |
+| A5 | preprocessor `#if` (7) | Split into per-platform files so no file needs a guard — the arrangement `fiber_context_*` already uses. |
+| A6 | function overloading | Rename call sites; mechanical, no transpiler change (§7.24a). |
+| A7 | try/catch (6) | Decide the crate-wide panic-vs-Result rule once, then convert; or keep one small kernel. |
+| A8 | Event hierarchy ("intractable") | **Verify before believing.** The reactor events are reportedly all DSL now (QuorumEvent, WaitAny, WaitAll, BoxEvent), which would contradict the recorded verdict. |
+
+**Phase B — grind the six big files** with the retired floors in hand.
+reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
+tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
+(158) hold 75% of what remains. Expect the real target to drop sharply
+once A1 lands, since class templates dominate exactly these files
+(reactor 1,109 / client 779 / serializable 312 attributed lines).
+
+**Phase C — the 0(b) ratchet, in parallel from day one.** Wire the
+three already-rustc-clean files into CI as a standing gate over
+extracted DSL, and let every Phase-A/B conversion lock in the moment it
+makes another file clean. Do not wait for the FFI question.
+
+**Phase D — declaration policy** for whatever floor genuinely survives
+A. Only then is the FFI surface known and bounded.
+
+**Ordering rationale:** A before B because a retired floor converts
+many sites at once, while grinding converts one. C in parallel because
+it is a ratchet, not a milestone. D last because it is the only phase
+whose scope depends on the answer to the others.
+
 ### How to push Goal 0 (plan, 2026-08-01)
 
 **First, an honest correction to the target.** The census reports

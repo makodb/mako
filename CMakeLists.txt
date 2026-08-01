@@ -116,6 +116,12 @@ set(CMAKE_SHARED_LINKER_FLAGS_INIT "-stdlib=libc++ ${MAKO_BREW_LIBCXX_FLAGS}")
 
 project(mako)
 
+# The fiber context-switch trampolines are real `.S` assembly
+# (reactor/fiber_context_{x86_64,aarch64}.S) rather than assembly hidden
+# in a C++ raw string. `.S` (capital) is preprocessed, so the arch
+# guards still work, and the assembler now checks the syntax.
+enable_language(ASM)
+
 # Prefer shared libraries when available for third-party dependencies.
 set(BUILD_SHARED_LIBS ON)
 
@@ -1043,6 +1049,7 @@ file(GLOB RRR_SRC
     "src/rrr/base/*.cpp"
     "src/rrr/misc/*.cpp"
     "src/rrr/reactor/*.cc"
+    "src/rrr/reactor/*.S"
     "src/rrr/rpc/*.cpp"
 )
 

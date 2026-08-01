@@ -1,5 +1,5 @@
 /**
- * @file fiber_context_aarch64.cc
+ * @file fiber_context_aarch64.S
  * @brief AArch64 (ARM64) context switch primitive for Fibers.
  *
  * QUARANTINE — same role as fiber_context_x86_64.cc: implements
@@ -31,8 +31,7 @@
 #if defined(__aarch64__)
 
 #if defined(__APPLE__)
-// Mach-O: global symbols have an underscore prefix; no .type/.size directives.
-asm(R"(
+/* Mach-O: global symbols have an underscore prefix; no .type/.size. */
 .text
 .globl _fiber_swap_context
 _fiber_swap_context:
@@ -56,10 +55,8 @@ _fiber_swap_context:
     ldr  x9,  [x1, #0]
     mov  sp,  x9
     ret
-)");
 #else
-// ELF (Linux): no underscore prefix; .type and .size are valid.
-asm(R"(
+/* ELF (Linux): no underscore prefix; .type and .size are valid. */
 .text
 .globl fiber_swap_context
 .type fiber_swap_context, @function
@@ -85,7 +82,6 @@ fiber_swap_context:
     mov  sp,  x9
     ret
 .size fiber_swap_context, .-fiber_swap_context
-)");
-#endif // __APPLE__
+#endif /* __APPLE__ */
 
-#endif // __aarch64__
+#endif /* __aarch64__ */

@@ -9,6 +9,9 @@ file(GLOB RRR_BENCH_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/misc/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/rpc/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.cc"
+    # fiber context-switch trampolines, real assembly (see top-level
+    # CMakeLists enable_language(ASM))
+    "${CMAKE_CURRENT_SOURCE_DIR}/reactor/*.S"
 )
 
 # Files that have been converted to C++23 named-module interface units.
