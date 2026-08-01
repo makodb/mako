@@ -342,24 +342,26 @@ inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
 inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
 inline size_t rq_expire_stale(const RequestQueue& self);
 inline void rq_clear_all(const RequestQueue& self, int error_code);
-inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config);
 #if RUSTYCPP_RUST
 struct RequestQueue {
-    config_: RequestQueueConfig,
+    // Cell: RequestQueue is reached through a shared handle, so a config
+    // swap goes through interior mutability rather than a const_cast (the
+    // same treatment ServerConnection::status_ got).
+    config_: Cell<RequestQueueConfig>,
     queue_: rusty::Mutex<VecDeque<QueuedRequest>>,
 }
 
 impl RequestQueue {
     #[cpp_ctor] fn new() -> RequestQueue {
         RequestQueue {
-            config_: RequestQueueConfig::defaults(),
+            config_: Cell::new(RequestQueueConfig::defaults()),
             queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
         }
     }
 
     #[cpp_ctor] fn with_config(config: RequestQueueConfig) -> RequestQueue {
         RequestQueue {
-            config_: config,
+            config_: Cell::new(config),
             queue_: rusty::Mutex::<VecDeque<QueuedRequest>>::new(VecDeque::<QueuedRequest>::new()),
         }
     }
@@ -390,13 +392,13 @@ impl RequestQueue {
 
     fn full(&mut self) -> bool {
         let guard = self.queue_.lock().unwrap();
-        guard.size() >= self.config_.max_size
+        guard.size() >= self.config_.get().max_size
     }
 
     fn remaining_capacity(&mut self) -> usize {
         let guard = self.queue_.lock().unwrap();
-        if self.config_.max_size > guard.size() {
-            self.config_.max_size - guard.size()
+        if self.config_.get().max_size > guard.size() {
+            self.config_.get().max_size - guard.size()
         } else {
             0usize
         }
@@ -407,27 +409,30 @@ impl RequestQueue {
     }
 
     fn config(&self) -> RequestQueueConfig {
-        self.config_
+        self.config_.get()
     }
 
     fn enabled(&self) -> bool {
-        self.config_.enabled
+        self.config_.get().enabled
     }
 
     fn max_size(&self) -> usize {
-        self.config_.max_size
+        self.config_.get().max_size
     }
 
     fn update_config(&self, config: RequestQueueConfig) {
-        rq_update_config(self, config)
+        // Lock held while swapping so a concurrent enqueue cannot observe a
+        // half-applied config, matching what the C++ helper did.
+        let guard = self.queue_.lock().unwrap();
+        self.config_.get().set(config);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=737edc878ff54d80587f342a1054d9af90da1b9224818d27ebabe6ec7d14009c*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=aeebda810bbe4187a370b0cc1a9c4e9ad9c9f7b5a6a05ca47d67f87191336ea4*/
 struct RequestQueue;
 
 struct RequestQueue {
-    RequestQueueConfig config_;
+    rusty::Cell<RequestQueueConfig> config_;
     rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;
 
     RequestQueue();
@@ -448,12 +453,12 @@ struct RequestQueue {
 
 
 RequestQueue::RequestQueue()
-    : config_(RequestQueueConfig::defaults())
+    : config_(rusty::Cell<RequestQueueConfig>::new_(RequestQueueConfig::defaults()))
     , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 
 RequestQueue::RequestQueue(RequestQueueConfig config)
-    : config_(std::move(config))
+    : config_(rusty::Cell<RequestQueueConfig>::new_(std::move(config)))
     , queue_(rusty::Mutex<rusty::VecDeque<QueuedRequest>>::new_(rusty::VecDeque<QueuedRequest>::new_()))
 {}
 
@@ -482,13 +487,13 @@ bool RequestQueue::empty() const {
 
 bool RequestQueue::full() {
     auto guard = this->queue_.lock().unwrap();
-    return (*guard).size() >= rusty::detail::deref_if_pointer_like(this->config_.max_size);
+    return (*guard).size() >= rusty::detail::deref_if_pointer_like(this->config_.get().max_size);
 }
 
 size_t RequestQueue::remaining_capacity() {
     auto guard = this->queue_.lock().unwrap();
-    if (rusty::detail::deref_if_pointer_like(this->config_.max_size) > (*guard).size()) {
-        return rusty::detail::deref_if_pointer_like(this->config_.max_size) - (*guard).size();
+    if (rusty::detail::deref_if_pointer_like(this->config_.get().max_size) > (*guard).size()) {
+        return rusty::detail::deref_if_pointer_like(this->config_.get().max_size) - (*guard).size();
     } else {
         return static_cast<size_t>(0);
     }
@@ -499,19 +504,20 @@ void RequestQueue::clear_all(int32_t error_code) const {
 }
 
 RequestQueueConfig RequestQueue::config() const {
-    return this->config_;
+    return this->config_.get();
 }
 
 bool RequestQueue::enabled() const {
-    return this->config_.enabled;
+    return this->config_.get().enabled;
 }
 
 size_t RequestQueue::max_size() const {
-    return this->config_.max_size;
+    return this->config_.get().max_size;
 }
 
 void RequestQueue::update_config(RequestQueueConfig config) const {
-    rq_update_config((*this), std::move(config));
+    auto guard = this->queue_.lock().unwrap();
+    this->config_.set(std::move(config));
 }
 /*RUSTYCPP:GEN-END id=request_queue.queue*/
 
@@ -528,13 +534,13 @@ inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err) {
 // @unsafe - enqueue: overflow policy + try/catch callback invocation (the
 // try/catch and the interleaved rejection callbacks are not DSL-expressible).
 inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
-    if (!self.config_.enabled) {
+    if (!self.config_.get().enabled) {
         rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
         return false;
     }
     auto guard = self.queue_.lock().unwrap();
-    if ((*guard).size() >= self.config_.max_size) {
-        switch (self.config_.overflow_strategy) {
+    if ((*guard).size() >= self.config_.get().max_size) {
+        switch (self.config_.get().overflow_strategy) {
             case OverflowStrategy::DROP_OLDEST:
                 if ((*guard).size() > 0) {
                     auto oldest = (*guard).pop_front().unwrap();
@@ -548,7 +554,7 @@ inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
         }
     }
     if (request.ttl_ms == 0) {
-        request.ttl_ms = self.config_.default_ttl_ms;
+        request.ttl_ms = self.config_.get().default_ttl_ms;
     }
     (*guard).push_back(std::move(request));
     return true;
@@ -601,13 +607,6 @@ inline void rq_clear_all(const RequestQueue& self, int error_code) {
 // @safe - update_config: lock to serialize with in-flight enqueue/dequeue, then
 // assign the POD config. (The lock-for-side-effect `(void)guard` reads cleaner
 // as a free fn than in the DSL.)
-inline void rq_update_config(const RequestQueue& self, const RequestQueueConfig& config) {
-    auto guard = self.queue_.lock().unwrap();
-    (void)guard;
-    // config_ is a plain (non-interior-mut) field; const_cast under the queue
-    // lock matches the prior `mutable RequestQueue` access pattern. @unsafe.
-    const_cast<RequestQueue&>(self).config_ = config;
-}
 
 // @safe - Convert overflow strategy to string
 
