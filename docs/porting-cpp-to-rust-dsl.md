@@ -2816,3 +2816,44 @@ contained, and the same "convert at the edge, isolate, annotate
 `@unsafe`" pattern the project already sanctions for `std::` boundary
 types; or (b) drop `std::` container support from the wire layer so
 every impl is `rusty::` — cleaner but changes the public RPC surface.
+
+**CORRECTION to the slice split (same day).** The readiness note above
+says the `rusty::` containers iterate Rust-style and the `std::` ones do
+not, so "`rusty::` only" is a clean first slice. **That split does not
+hold.** Reading the bodies:
+
+```cpp
+inline void serialize(const rusty::Vec<T>& v, BinaryWriteArchive& ar) {
+  rrr::v64 v_len{static_cast<rrr::i64>(v.size())};    // .size(), not .len()
+  for (auto it = v.begin(); it != v.end(); ++it) ...  // C++ iterators
+}
+```
+
+`rusty::Vec` is an ALIAS for `std::vector` (see the collections
+migration note), so it iterates with `begin()/end()` exactly like the
+`std::` containers. The namespace a type is spelled in says nothing
+about how its body iterates.
+
+Actual grouping, by iteration mechanism rather than by name:
+
+ - `begin()/end()`: `rusty::Vec` (= `std::vector`), `std::vector`,
+   `std::list`, `std::set`, `std::unordered_set`, `std::map`,
+   `std::unordered_map`
+ - Rust-style `iter()`/`next()`/`is_some()`: `rusty::BTreeSet`,
+   `rusty::BTreeMap`
+ - hashbrown, with a documented crash hazard: `rusty::HashSet`,
+   `rusty::HashMap` — their comments warn that ANY enumeration
+   (`iter()`/`begin()`/`drain()`) routes through the `rusty::iter(table)`
+   lambda in slice.hpp, and one of them records that nothing currently
+   serializes a `rusty::HashSet` at all
+
+So the honest first slice is the **two BTree containers** (4 impls with
+serialize+deserialize), not "all `rusty::`". The rest need the `std::`
+iteration decision, and the hashbrown pair needs its own hazard review
+before anyone touches it.
+
+Lesson: this is the second time in one file that a plan derived from
+DECLARATIONS was wrong once the BODIES were read — first the overload
+family hiding behind "plain templates", now the iteration split hiding
+behind namespace names. In a file this dense, read bodies before
+slicing.
