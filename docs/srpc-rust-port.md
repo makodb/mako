@@ -230,6 +230,61 @@ kernel calls (the `@unsafe` C++ bodies the DSL invokes) — probably
 FFI the campaign forbids for the *product* but may be acceptable for a
 *validation-only* build. Unresolved; decide before building it.
 
+### How to push Goal 0 (plan, 2026-08-01)
+
+**First, an honest correction to the target.** The census reports
+"reachable target ~4,424", but that number only subtracts the
+class-template floor. It does not account for the Event hierarchy, the
+I/O layer, overloading, function-local statics, varargs, or try/catch.
+A floor-construct inventory of the six files holding 75% of the
+remaining hand-written C++ found 125 class templates, 29 varargs, 28
+function-local statics, 7 `#if`, 6 try/catch — and **zero inline asm**
+(that lives only in `fiber_context_*.cc`, 86 lines). So 4,424 is an
+optimistic upper bound; **the real convertible total is unmeasured.**
+
+**Phase 1 — floor audit of the six big files (do this first).**
+reactor.cpp (1,432), client.cpp (1,006), serializable.cpp (461),
+tcp_channel.cpp (350), server.cpp (328), serializable_envelope.cpp
+(158). Classify every hand-written region as: convertible today /
+needs transpiler feature X / genuine floor. This is the highest-value
+action available, for three compounding reasons:
+
+ - it replaces the optimistic 4,424 with a real 0(a) target;
+ - it produces a *ranked* transpiler-feature list — Goal 0(a) is now
+   **feature-bound, not conversion-bound**, since the 1–2-line tail is
+   exhausted; and
+ - it enumerates 0(b)'s FFI surface for free, because that surface IS
+   this floor.
+
+Track record says this pays: ten stated blockers expired in a single
+session, each costing one command to re-test.
+
+**Phase 2 — build the 0(b) ratchet now, small.** Do NOT wait for the
+FFI question. Wire the three files that already compile under rustc
+(`misc/stat.cpp`, `rpc/connection_metrics.cpp`,
+`rpc/internal_protocol.cpp`) into CI as a standing rustc gate over
+extracted DSL. That gives dual-compilation proof today, prevents
+regression, and makes every later conversion *lock in* the moment it
+makes another file rustc-clean. Same lesson the runtime proof taught:
+a standing gate beats a one-off.
+
+**Phase 3 — transpiler features, ranked by Phase 1.** Start with the
+already-scoped const-callable-callback fix (playbook §7.39): ~50 of
+0(b)'s FFI names plus the whole channel-binding cluster in 0(a). One
+fix, both goals. Its three parts must land together.
+
+**Phase 4 — declaration policy for the irreducible floor.** Only after
+Phase 1 bounds it. The question is whether a validation-only rustc
+build may use FFI-shaped declarations for kernels the product still
+reaches through translation.
+
+**Restate the goal honestly:** "hand-written C++ to zero" is probably
+not literally achievable — some floor (asm context switches, varargs
+logging, compile-time template metaprogramming) is irreducible without
+the translator growing features that may never be worth it. The
+useful form is **"zero CONVERTIBLE hand-written C++, with a documented,
+measured, and minimal floor"** — which Phase 1 is what defines.
+
 ## Goal 1 release criteria (Rust-native)
 
 - [ ] `cargo build`/`test`/`clippy`/`fmt` clean on stable rustc; zero
