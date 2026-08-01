@@ -1432,3 +1432,35 @@ neither fix helps the other:
 Check before converting: everything the body names must be COMPLETE at
 the block, not merely declared. A forward declaration is enough for a
 pointer or reference, not for `Type::static_method()`.
+
+### 7.16a The const_cast audit, completed
+
+28 hand-written casts at the start of the sweep, 14 left, and every
+remaining one has been checked against the callee's DECLARATION rather
+than its comment. That distinction mattered: two casts were classified
+genuine on the strength of a comment and turned out to be removable.
+
+Removed (the 7.16 "removable" category):
+ - `Mutex::lock` sites — a `lock() const` overload already existed
+ - `mpsc::Sender::send`, `net::TcpListener::accept`/`set_nonblocking` —
+   made const upstream to match Rust's `&self`
+ - `std::atomic` counters — retyped to `rusty::sync::atomic`, whose ops
+   are const
+ - `ServerConnection::status_`, `Fiber::id`, `RequestQueue::config_` —
+   moved behind `Cell`, which is what a shared handle wants
+ - two uniquely-owned Arcs — `Arc::get_mut` (checks the claim the cast
+   asserted)
+ - one vestigial cast whose callee already took `const&`
+
+Remaining 14, all genuine, with the reason each resists:
+
+| where | n | why |
+|---|---|---|
+| tcp_channel.cpp | 9 | field writes on a const facade; self-documented "localized-const_cast pattern". Retiring them means RefCell over 110 references — a design decision |
+| reactor.cpp (Job) | 2 | `Job::Ready`/`Work` are `fn (&mut self)` in the DSL trait; changing them changes every implementor |
+| reactor.cpp (Fiber) | 1 | a const method binds the non-const `run_wrapper` on `this` |
+| client.cpp | 1 | `FiberChannel::recv_frame` is `&mut self` |
+| serializable_envelope.cpp | 1 | deliberate: the non-const `unpack` keeps a historical `T*` contract, and its comment already points new code at the const overload |
+
+None of these five are cleanup; each is a signature or API change with
+its own blast radius. The sweep is finished.
