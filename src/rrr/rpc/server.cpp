@@ -1067,38 +1067,15 @@ inline void server_wait_for_shutdown_impl(
     Log_debug("Server::wait_for_shutdown - done");
 }
 
-// @safe - rusty::sync::atomic::Atomic::load is const (Rust's &self).
-inline int32_t server_atomic_load_int(
-        const rusty::Arc<ServerPendingRequestsAtomic>& a) {
-    return a->load(rusty::sync::atomic::Ordering::Relaxed);
-}
 
-// @safe - fetch_add is const on rusty atomics, so no cast is needed.
-inline void server_atomic_fetch_add_int(
-        const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
-    a->fetch_add(delta, rusty::sync::atomic::Ordering::Relaxed);
-}
 
-// @safe - fetch_sub is const on rusty atomics, so no cast is needed.
-inline void server_atomic_fetch_sub_int(
-        const rusty::Arc<ServerPendingRequestsAtomic>& a, int32_t delta) {
-    a->fetch_sub(delta, rusty::sync::atomic::Ordering::Relaxed);
-}
 
-// @safe - store is const on rusty atomics, so no cast is needed.
-inline void server_atomic_store_bool(
-        const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a, bool v) {
-    a->store(v, rusty::sync::atomic::Ordering::Release);
-}
 
-// @safe - load is const on rusty atomics.
-inline bool server_atomic_load_bool(
-        const rusty::Arc<ServerDropHeartbeatRepliesAtomic>& a) {
-    return a->load(rusty::sync::atomic::Ordering::Acquire);
-}
 
-// Drain phase-FSM + timed busy-wait, authored as inline Rust DSL (the
-// atomic loads route through the server_atomic_load_int kernel).
+// Drain phase-FSM + timed busy-wait, authored as inline Rust DSL. The
+// atomic loads are expressed directly now — the server_atomic_* wrapper
+// kernels are gone, since `a.load(Ordering::Relaxed)` on an `&Arc<Atomic>`
+// lowers to exactly `a->load(...)`, which is all the wrappers did.
 //
 // The already-in-phase debug line used to omit the phase name, on the
 // grounds that "the DSL cannot drive the *_to_string varargs safely".
@@ -1116,18 +1093,18 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
         && current_phase != ShutdownPhase::STOP_ACCEPTING {
         Log_debug("Server::drain: already past the draining phases ({})",
                   shutdown_phase_to_string(current_phase));
-        return server_atomic_load_int(pending) == 0;
+        return pending.load(rusty::sync::atomic::Ordering::Relaxed) == 0;
     }
     Log_info("Server::drain: transitioning to DRAINING, pending={}",
-             server_atomic_load_int(pending));
+             pending.load(rusty::sync::atomic::Ordering::Relaxed));
     phase.set(ShutdownPhase::DRAINING);
     let start_us = rusty::sys::time::clock_monotonic_us();
     let timeout_us = timeout_ms * 1000;
-    while server_atomic_load_int(pending) > 0 {
+    while pending.load(rusty::sync::atomic::Ordering::Relaxed) > 0 {
         let elapsed_us = rusty::sys::time::clock_monotonic_us() - start_us;
         if elapsed_us >= timeout_us {
             Log_warn("Server::drain: timeout after {} ms, pending={}",
-                     timeout_ms, server_atomic_load_int(pending));
+                     timeout_ms, pending.load(rusty::sync::atomic::Ordering::Relaxed));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
@@ -1136,21 +1113,21 @@ fn server_drain_impl(phase: &rusty::Cell<ShutdownPhase>,
     true
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=fdcce4967d24435764cb0c0541d59b0394dbdee5920e6b44d1ec4260d21c6148*/
+/*RUSTYCPP:GEN-BEGIN id=server.drain_impl version=1 rust_sha256=afcb7cf50ff0752ee6763e5799ae881e622d61214de63f6f313ea29a8ba35aa4*/
 bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms) {
     const auto current_phase = phase.get();
     if ((rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_RUNNING())) && (rusty::detail::deref_if_pointer_like(current_phase) != rusty::clone(ShutdownPhase_STOP_ACCEPTING()))) {
         Log_debug("Server::drain: already past the draining phases ({})", shutdown_phase_to_string(std::move(current_phase)));
-        return server_atomic_load_int(pending) == 0;
+        return pending->load(rusty::sync::atomic::Ordering::Relaxed) == 0;
     }
-    Log_info("Server::drain: transitioning to DRAINING, pending={}", server_atomic_load_int(pending));
+    Log_info("Server::drain: transitioning to DRAINING, pending={}", pending->load(rusty::sync::atomic::Ordering::Relaxed));
     phase.set(rusty::clone(rusty::clone(ShutdownPhase_DRAINING())));
     const auto start_us = rusty::sys::time::clock_monotonic_us();
     const auto timeout_us = rusty::detail::deref_if_pointer_like(timeout_ms) * 1000;
-    while (server_atomic_load_int(pending) > 0) {
+    while (pending->load(rusty::sync::atomic::Ordering::Relaxed) > 0) {
         const auto elapsed_us = rusty::sys::time::clock_monotonic_us() - rusty::detail::deref_if_pointer_like(start_us);
         if (rusty::detail::deref_if_pointer_like(elapsed_us) >= rusty::detail::deref_if_pointer_like(timeout_us)) {
-            Log_warn("Server::drain: timeout after {} ms, pending={}", std::move(timeout_ms), server_atomic_load_int(pending));
+            Log_warn("Server::drain: timeout after {} ms, pending={}", std::move(timeout_ms), pending->load(rusty::sync::atomic::Ordering::Relaxed));
             return false;
         }
         rusty::sys::time::sleep_us(1000);
@@ -1411,23 +1388,23 @@ impl Server {
     }
 
     fn pending_request_count(&self) -> i32 {
-        server_atomic_load_int(self.pending_requests_field)
+        self.pending_requests_field.load(rusty::sync::atomic::Ordering::Relaxed)
     }
 
     fn increment_pending(&self) {
-        server_atomic_fetch_add_int(self.pending_requests_field, 1i32);
+        self.pending_requests_field.fetch_add(1i32, rusty::sync::atomic::Ordering::Relaxed);
     }
 
     fn decrement_pending(&self) {
-        server_atomic_fetch_sub_int(self.pending_requests_field, 1i32);
+        self.pending_requests_field.fetch_sub(1i32, rusty::sync::atomic::Ordering::Relaxed);
     }
 
     fn set_drop_heartbeat_replies(&self, drop: bool) {
-        server_atomic_store_bool(self.drop_heartbeat_replies_field, drop);
+        self.drop_heartbeat_replies_field.store(drop, rusty::sync::atomic::Ordering::Release);
     }
 
     fn drop_heartbeat_replies(&self) -> bool {
-        server_atomic_load_bool(self.drop_heartbeat_replies_field)
+        self.drop_heartbeat_replies_field.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
     fn instance_id(&self) -> u64 {
@@ -1486,7 +1463,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2ba1051c7d197d13ddbd1991f7297e05386a8c1cfa66bcb74d7bbd126a3751b1*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=29325d674696bf2e2fb28ee5610c5f027085de3dc9f124b30ff0357583dde95a*/
 struct Server;
 
 struct Server {
@@ -1655,23 +1632,23 @@ ShutdownPhase Server::phase() const {
 }
 
 int32_t Server::pending_request_count() const {
-    return server_atomic_load_int(this->pending_requests_field);
+    return this->pending_requests_field->load(rusty::sync::atomic::Ordering::Relaxed);
 }
 
 void Server::increment_pending() const {
-    server_atomic_fetch_add_int(this->pending_requests_field, static_cast<int32_t>(1));
+    this->pending_requests_field->fetch_add(static_cast<int32_t>(1), rusty::sync::atomic::Ordering::Relaxed);
 }
 
 void Server::decrement_pending() const {
-    server_atomic_fetch_sub_int(this->pending_requests_field, static_cast<int32_t>(1));
+    this->pending_requests_field->fetch_sub(static_cast<int32_t>(1), rusty::sync::atomic::Ordering::Relaxed);
 }
 
 void Server::set_drop_heartbeat_replies(bool drop) const {
-    server_atomic_store_bool(this->drop_heartbeat_replies_field, std::move(drop));
+    this->drop_heartbeat_replies_field->store(std::move(drop), rusty::sync::atomic::Ordering::Release);
 }
 
 bool Server::drop_heartbeat_replies() const {
-    return server_atomic_load_bool(this->drop_heartbeat_replies_field);
+    return this->drop_heartbeat_replies_field->load(rusty::sync::atomic::Ordering::Acquire);
 }
 
 uint64_t Server::instance_id() const {

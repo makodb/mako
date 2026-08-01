@@ -2,6 +2,12 @@ module;
 
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+// The generic PollableArcShim<T> block generates `rusty::is_send<T>` /
+// `rusty::is_sync<T>` (primary templates at rusty/traits.hpp:49), and
+// inline-rust cannot add includes — §7.27. Note this only became necessary
+// when the file was regenerated: the emission is output drift (§7.18) in a
+// block that was not hand-edited.
+#include <rusty/traits.hpp>
 
 export module rrr.pollable_proxy;
 
@@ -43,6 +49,8 @@ pub trait PollableBase {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=pollable.0 version=1 rust_sha256=58f4fd8299bef8518306a38e8d93c412bfb6de8a9c7150f5c46259aeee31ed7a*/
+class PollableBase;
+
 class PollableBase {
 public:
     virtual ~PollableBase() noexcept(false) {}
@@ -68,7 +76,13 @@ template <class U> class PollableBaseAdapterRef;
 template <class U> class PollableBaseAdapterRefMut;
 /*RUSTYCPP:GEN-END id=pollable.0*/
 
+// Probe-verified: `type X = rusty::Box<Trait>` lowers exactly (§7.29).
+#if RUSTYCPP_RUST
+type PollableProxy = rusty::Box<PollableBase>;
+#endif
+/*RUSTYCPP:GEN-BEGIN id=pollable_proxy.2 version=1 rust_sha256=1b1131fff81477f4873a4d285b4ed15856f71f6ce264e0821358514802df5472*/
 using PollableProxy = rusty::Box<PollableBase>;
+/*RUSTYCPP:GEN-END id=pollable_proxy.2*/
 // `PollableArcShim<T>` — the generic Arc-holding PollableBase
 // implementor (generic #[cpp_inherit], probe-verified). Requires T's
 // pollable hooks to be &self/const — true for every production T after
@@ -148,12 +162,22 @@ struct PollableArcShim : public PollableBase {
     bool is_closed() const {
         return this->poll_->is_closed();
     }
+    // Rust derives Send/Sync from the field types; C++ cannot see them.
+    static constexpr bool is_send = rusty::is_send<T>::value && rusty::is_sync<T>::value;
+    static constexpr bool is_sync = rusty::is_send<T>::value && rusty::is_sync<T>::value;
 };
 /*RUSTYCPP:GEN-END id=pollable_proxy.arc_shim*/
 
-template <typename T>
-inline PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll) {
-  return rusty::make_box<PollableArcShim<T>>(std::move(poll));
+#if RUSTYCPP_RUST
+fn make_pollable_proxy_from_typed_arc<T>(poll: rusty::Arc<T>) -> PollableProxy {
+    rusty::make_box::<PollableArcShim<T>>(poll)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=pollable_proxy.4 version=1 rust_sha256=cfbe9b339204092e4dabfdaffffc7105b63545afa6a8797228dc356e861876e2*/
+template<typename T>
+PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll) {
+    return rusty::make_box<PollableArcShim<T>>(std::move(poll));
+}
+/*RUSTYCPP:GEN-END id=pollable_proxy.4*/
 
 }  // export namespace rrr
