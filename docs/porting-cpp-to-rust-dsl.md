@@ -2975,3 +2975,45 @@ limitation had partly expired; one probe separated the live half from
 the dead half. That is now twelve for this session. Comments age badly
 in a codebase whose toolchain is under active development — treat every
 "the DSL can't X" as a dated observation, not a property.
+
+### 7.42 The `Function<..>` alias workarounds are now unnecessary (16 sites)
+
+A sweep for stated DSL limitations across `src/rrr` turned up ~24
+"the DSL can't X" comments. One family is already dead as of today's
+gap-1 fix (§7.40 / the `rusty::Function` bare-signature change):
+
+```
+base/misc.cpp:143   // Callback alias (the DSL can't parse a Function<..> field type inline).
+                    using OneTimeJobFn = rusty::Function<void()>;
+rpc/client.cpp:553  // the DSL can't parse `Function<void()>` as a generic type argument,
+                    // so alias it (mirrors OnFrameCallback / QueuedRequestCallback).
+                    using CompletionFn = rusty::Function<void()>;
+```
+
+Probed — all three positions now work inline:
+
+| DSL | emits |
+|---|---|
+| field `cb_: rusty::Function<dyn FnMut()>` | `rusty::Function<void()> cb_;` |
+| field `ccb_: rusty::Function<dyn Fn(i32)>` | `rusty::Function<void(int32_t) const> ccb_;` |
+| param `fn f(c: rusty::Function<dyn FnMut()>)` | `int32_t take_cb(rusty::Function<void()> f)` |
+
+`grep -c 'using \w*Callback\w* = rusty::Function'` over `src/rrr`
+reports **16 such aliases**. Each exists only to give the type a name
+the DSL could parse; each can now be spelled inline at its use.
+
+Two cautions before a sweep:
+
+ - Some aliases are **public API** (`OnFrameCallback`,
+   `StateChangeCallback`, `QueuedRequestCallback` appear in headers and
+   call sites). Deleting those renames the surface. The win is removing
+   aliases that exist ONLY as a parse workaround — check each for
+   external users first.
+ - `dyn Fn` vs `dyn FnMut` decides the `const` qualifier, and the
+   existing aliases encode that choice in their spelling
+   (`Function<void(..) const>` vs `Function<void(..)>`). Match it
+   exactly; getting it backwards changes callable constness and fails
+   at the call site, not the declaration.
+
+Worth doing as one batched pass rather than per-file, since the pattern
+is uniform and each gate cycle is ~40 minutes.
