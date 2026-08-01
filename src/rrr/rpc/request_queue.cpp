@@ -339,7 +339,6 @@ RequestQueueConfig RequestQueueConfig::disabled() {
 // dropped (callers pass it explicitly; the one 0-arg test call is updated).
 struct RequestQueue;
 inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err);
-inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request);
 #if RUSTYCPP_RUST
 struct RequestQueue {
     // Cell: RequestQueue is reached through a shared handle, so a config
@@ -364,8 +363,38 @@ impl RequestQueue {
         }
     }
 
-    fn enqueue(&self, request: QueuedRequest) -> bool {
-        rq_enqueue(self, request)
+    fn enqueue(&self, mut request: QueuedRequest) -> bool {
+        if !self.config_.get().enabled {
+            rq_invoke_callback_safely(request.callback, kRequestQueueRejectedError);
+            return false;
+        }
+        let mut guard = self.queue_.lock().unwrap();
+        if (*guard).size() >= self.config_.get().max_size {
+            match self.config_.get().overflow_strategy {
+                OverflowStrategy::DROP_OLDEST => {
+                    if (*guard).size() > 0 {
+                        let mut oldest = (*guard).pop_front().unwrap();
+                        rq_invoke_callback_safely(oldest.callback, kRequestQueueRejectedError);
+                    }
+                }
+                OverflowStrategy::DROP_NEWEST => {
+                    rq_invoke_callback_safely(request.callback, kRequestQueueRejectedError);
+                    return false;
+                }
+                OverflowStrategy::FAIL_FAST => {
+                    rq_invoke_callback_safely(request.callback, kRequestQueueRejectedError);
+                    return false;
+                }
+                // The C++ switch had no default, so an out-of-range strategy
+                // fell through and still enqueued. Preserved deliberately.
+                _ => {}
+            }
+        }
+        if request.ttl_ms == 0 {
+            request.ttl_ms = self.config_.get().default_ttl_ms;
+        }
+        (*guard).push_back(request);
+        true
     }
 
     fn dequeue(&mut self) -> Option<QueuedRequest> {
@@ -462,7 +491,7 @@ impl RequestQueue {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=c7b064302b0c2584d91a31badefe6a49c98188be7435a65398210f10e7434e7c*/
+/*RUSTYCPP:GEN-BEGIN id=request_queue.queue version=1 rust_sha256=bd048a5b2ca980b0816ac512feee09264ada93c1235500c0211e24d492a25c6a*/
 struct RequestQueue;
 
 struct RequestQueue {
@@ -497,7 +526,42 @@ RequestQueue::RequestQueue(RequestQueueConfig config)
 {}
 
 bool RequestQueue::enqueue(QueuedRequest request) const {
-    return rq_enqueue((*this), std::move(request));
+    if (rusty::detail::rust_not(this->config_.get().enabled)) {
+        rq_invoke_callback_safely(std::move(request.callback), std::move(kRequestQueueRejectedError));
+        return false;
+    }
+    auto guard = this->queue_.lock().unwrap();
+    if (((*guard)).size() >= rusty::detail::deref_if_pointer_like(this->config_.get().max_size)) {
+        switch (this->config_.get().overflow_strategy) {
+        case OverflowStrategy::DROP_OLDEST:
+        {
+            if (((*guard)).size() > 0) {
+                auto oldest = ((*guard)).pop_front().unwrap();
+                rq_invoke_callback_safely(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.callback); }) { return (__r.callback); } else if constexpr (requires { (__r.callback_field); }) { return (__r.callback_field); } else if constexpr (requires { ((*__r).callback); }) { return ((*__r).callback); } else { return ((*__r).callback_field); } }(oldest)), std::move(kRequestQueueRejectedError));
+            }
+            break;
+        }
+        case OverflowStrategy::DROP_NEWEST:
+        {
+            rq_invoke_callback_safely(std::move(request.callback), std::move(kRequestQueueRejectedError));
+            return false;
+        }
+        case OverflowStrategy::FAIL_FAST:
+        {
+            rq_invoke_callback_safely(std::move(request.callback), std::move(kRequestQueueRejectedError));
+            return false;
+        }
+        default:
+        {
+            break;
+        }
+        }
+    }
+    if (rusty::detail::deref_if_pointer_like(request.ttl_ms) == 0) {
+        request.ttl_ms = this->config_.get().default_ttl_ms;
+    }
+    ((*guard)).push_back(std::move(request));
+    return true;
 }
 
 rusty::Option<QueuedRequest> RequestQueue::dequeue() {
@@ -597,32 +661,6 @@ inline void rq_invoke_callback_safely(rusty::Function<void(int)> cb, int err) {
 
 // @unsafe - enqueue: overflow policy + try/catch callback invocation (the
 // try/catch and the interleaved rejection callbacks are not DSL-expressible).
-inline bool rq_enqueue(const RequestQueue& self, QueuedRequest request) {
-    if (!self.config_.get().enabled) {
-        rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
-        return false;
-    }
-    auto guard = self.queue_.lock().unwrap();
-    if ((*guard).size() >= self.config_.get().max_size) {
-        switch (self.config_.get().overflow_strategy) {
-            case OverflowStrategy::DROP_OLDEST:
-                if ((*guard).size() > 0) {
-                    auto oldest = (*guard).pop_front().unwrap();
-                    rq_invoke_callback_safely(std::move(oldest.callback), kRequestQueueRejectedError);
-                }
-                break;
-            case OverflowStrategy::DROP_NEWEST:
-            case OverflowStrategy::FAIL_FAST:
-                rq_invoke_callback_safely(std::move(request.callback), kRequestQueueRejectedError);
-                return false;
-        }
-    }
-    if (request.ttl_ms == 0) {
-        request.ttl_ms = self.config_.get().default_ttl_ms;
-    }
-    (*guard).push_back(std::move(request));
-    return true;
-}
 
 // @unsafe - expire_stale: extract_if + drain callbacks outside the lock with
 // try/catch (the try/catch is not DSL-expressible).
