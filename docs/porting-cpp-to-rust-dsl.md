@@ -3135,3 +3135,39 @@ a probe, and the probe still decides — but it has turned a 24-item list
 into a ranked one, and it explains why the "floor" framing in §7.24 kept
 dissolving: those were all transpiler-maturity claims wearing the
 language of language limits.
+
+### 7.46 Sweep complete — and two ways the grep lies
+
+All ~24 "the DSL can't X" comments in `src/rrr` are now accounted for.
+The last two resolved without a probe, and both were **false positives
+of the search itself**:
+
+ - `server.cpp:580` — "the transpiler cannot see the element type
+   THROUGH the Mutex guard, so it emitted `.close()` on the Box instead
+   of `->close()`. Naming the type restores it." That is a comment
+   documenting a **working idiom** (annotate the binding, §7.21), on
+   code that is *already DSL*. Not a limitation; a recipe.
+ - `circuit_breaker.cpp:22` — "Previously called
+   `clock_gettime(CLOCK_MONOTONIC)` directly — a raw libc syscall the
+   DSL doesn't model. **Now delegates to**
+   `rusty::sys::time::clock_monotonic_us`." A **historical note** about
+   something already fixed, again on code that is already DSL.
+
+So when grepping for stated limitations, expect three kinds of hit and
+only one of them is a target:
+
+| kind | example | action |
+|---|---|---|
+| active limitation | "the DSL can't spell a default `std::vector`" | probe it |
+| working idiom, explained | "…so naming the type restores it" | none — it already works |
+| historical note | "previously called X… now delegates to Y" | none — already fixed |
+
+Both non-targets are *good* comments: they explain why code looks the
+way it does. But they inflate any count derived from the grep, and a
+plan built on that count inherits the inflation. Read the sentence to
+the end before believing the phrase — "the DSL doesn't model" and "now
+delegates to" were in the same sentence.
+
+**Final tally for the sweep:** ~24 comments → 9 disproved constructs,
+4 blocked on one fixable transpiler bug (`#[cfg]`), 8 genuinely real
+across 5 constructs, 2 false positives. Zero unknowns remaining.
