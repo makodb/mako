@@ -71,7 +71,7 @@ public:
 ### Helper Functions
 
 ```cpp
-const char* connection_state_to_string(ConnectionState state);
+std::string_view connection_state_to_string(ConnectionState state);
 ```
 
 ---
@@ -320,7 +320,7 @@ struct RequestOptions {
 ### Helper Functions
 
 ```cpp
-const char* timeout_type_to_string(TimeoutType type);
+std::string_view timeout_type_to_string(TimeoutType ty);
 ```
 
 ---

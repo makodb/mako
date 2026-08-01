@@ -288,7 +288,7 @@ ctest -L chaos
 // Check connection state
 if (!client->connected()) {
     ConnectionState state = client->connection_state();
-    Log_warn("Not connected, state: %s",
+    Log_warn("Not connected, state: {}",
              connection_state_to_string(state));
 }
 ```
@@ -297,7 +297,7 @@ if (!client->connected()) {
 
 ```cpp
 if (!breaker.allow_request()) {
-    Log_warn("Circuit breaker open. State: %s, Failures: %lu",
+    Log_warn("Circuit breaker open. State: {}, Failures: {}",
              circuit_state_to_string(breaker.state()),
              breaker.failure_count());
 }
