@@ -172,8 +172,8 @@ class ServerChannelRecvTest : public ::testing::Test {
         rusty::HashMap<i32, std::size_t> rpc_to_service;
         rusty::HashSet<i32> fast_rpc_ids;
         rusty::Vec<rusty::RefCell<ServiceProxy>> services;
-        auto pending = rusty::Arc<std::atomic<int>>::make(0);
-        auto drop = rusty::Arc<std::atomic<bool>>::make(false);
+        auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+        auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
         ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
             RpcServiceContext::new_(
                 std::move(rpc_to_service),
@@ -306,8 +306,8 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     rpc_to_service.insert(RecordingService::kEchoRpcId, std::size_t{0});
     rusty::HashSet<i32> fast_rpc_ids;
     fast_rpc_ids.insert(RecordingService::kEchoRpcId);
-    auto pending = rusty::Arc<std::atomic<int>>::make(0);
-    auto drop = rusty::Arc<std::atomic<bool>>::make(false);
+    auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
+    auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
     ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
         RpcServiceContext::new_(
             std::move(rpc_to_service),
