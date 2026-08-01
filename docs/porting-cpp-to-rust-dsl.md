@@ -2230,3 +2230,53 @@ its cause is classified in seconds; a kernel that does not is re-derived
 by every person who passes. `rand.cpp` is the model — every kernel there
 says `rdtsc asm`, `pthread_key_create`, `malloc`, `pthread_once`, and the
 whole file triages in one pass.
+
+### 7.34 Inlining a kernel can relocate the call across the export boundary — a LINK error
+
+§7.20 says a DSL block cannot *read* a static defined in the impl
+namespace. This is the same boundary breaking a *function call*, and it
+is worse in one respect: **the compile is clean and only the link fails.**
+
+`frame_codec.cpp` is laid out as
+
+    export namespace rrr {   // lines 26-524   <- DSL blocks + their GEN
+    }
+    namespace rrr {          // after 547      <- hand-written kernels
+        void fsr_compact_if_needed(FrameStreamReader&) { … }   // 654
+    }
+
+`fsr_consume_frame` used to live down with the kernels, so its call to
+`fsr_compact_if_needed` was an ordinary same-block call. Inlining it into
+the DSL method `FrameStreamReader::consume_frame` moved the call site up
+into the *exported* block, where the callee is neither declared nor
+visible.
+
+Adding a forward declaration inside the export block fixes the compile
+and then fails at link:
+
+    undefined reference to `rrr::fsr_compact_if_needed@rrr.frame_codec(...)'
+
+because an **exported declaration** and a **non-exported definition** are
+not the same entity. Everything inside `export namespace rrr { }` is
+exported; you cannot write a non-exported declaration there.
+
+The two real fixes are both bigger than the conversion:
+ - export the kernel — changes the module's public surface for the sake
+   of an internal helper;
+ - restructure the namespace blocks so the kernel is declared before the
+   DSL block in a non-exported `namespace rrr`.
+
+For `fsr_consume_frame` (15 lines) neither was worth it; the conversion
+was reverted.
+
+**Check before inlining a kernel into a DSL method:** does the body call
+anything defined in the impl namespace? If so, the call is about to cross
+the export boundary and you are choosing between a module API change and
+a file restructure. A clean compile does not settle it — build far enough
+to link.
+
+This was one of three distinct failures from that single 15-line
+function, each caught by a different mechanism and none visible in the
+DSL source: a `self`-named parameter becoming a receiver (caught by
+reading GEN), the call emitted above its callee's declaration (caught by
+compile), and this (caught only by link).
