@@ -2857,3 +2857,36 @@ DECLARATIONS was wrong once the BODIES were read — first the overload
 family hiding behind "plain templates", now the iteration split hiding
 behind namespace names. In a file this dense, read bodies before
 slicing.
+
+**RETRACTION — the `std::` fork does not exist.** The note above poses
+(a) an adapter kernel vs (b) dropping `std::` container support, on the
+premise that `begin()/end()` iteration "has NO DSL spelling". Probed:
+it does.
+
+DSL `for e in v` lowers to `for (auto&& e : rusty::for_in(rusty::iter(v)))`
+— identically for `rusty::Vec` and `std::set` — and `rusty::iter` has an
+explicit STL arm (slice.hpp ~1960):
+
+```cpp
+} else if constexpr (requires { std::begin(range); std::end(range); }) {
+    return std::forward<Range>(range);
+}
+```
+
+So any `std::begin`/`std::end` container passes straight through to a
+C++ range-for. `std::vector`, `std::list`, `std::set`,
+`std::unordered_set`, `std::map`, `std::unordered_map` and
+`rusty::Vec` are all directly DSL-expressible. No adapter kernel, no
+RPC-surface change, no decision required.
+
+That makes the slice **7 of the 12 container types**, not the two
+BTree ones. Only `rusty::HashSet` / `rusty::HashMap` still need their
+own review — for the documented hashbrown enumeration hazard recorded
+in their own comments, not for anything about the DSL.
+
+Three "blockers" in this one file have now evaporated on contact with a
+probe: "plain class templates" (an overload family), "`rusty::` vs
+`std::` iteration" (`rusty::Vec` IS `std::vector`), and now "`std::`
+containers have no DSL iteration". Each was stated confidently in a
+comment or a plan and each cost one command to disprove. In this
+codebase, probe before believing — including before believing yourself.
