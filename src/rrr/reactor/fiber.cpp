@@ -38,22 +38,36 @@ namespace this_fiber {
 /**
  * Get the ID of the currently executing fiber.
  *
- * Not migrated to inline Rust DSL: the body needs `fiber.unwrap()->id`,
- * the smart-pointer `->` deref on `Rc<Fiber>`. The transpiler emits
- * `.id` instead of `->id` for `Rc<T>` field access, which fails to
- * compile. Stays as plain inline C++ until the transpiler gains
- * smart-pointer field-access lowering.
+ * Authored as inline Rust DSL. The comment here used to say this could
+ * not be migrated because the transpiler emitted `.id` rather than
+ * `->id` for `Rc<T>` field access — that lowering exists now
+ * (`rc.field` -> `(*rc).field`), provided the binding's type is known,
+ * hence the annotation below.
  *
  * @return Fiber ID (uint64_t), or 0 if called outside fiber context
  */
-inline uint64_t get_id() noexcept {
-    auto fiber = Fiber::current_fiber();
-    if (fiber.is_some()) {
-        // @unsafe { accessing Rc internals }
-        return fiber.unwrap()->id.get();
+#if RUSTYCPP_RUST
+fn get_id() -> u64 {
+    // Annotated: current_fiber() is a C++ static, so the transpiler cannot
+    // infer Option<Rc<Fiber>> and would emit `.id` on the Rc (playbook §7.13).
+    let fiber: rusty::Option<rusty::Rc<Fiber>> = Fiber::current_fiber();
+    if fiber.is_some() {
+        return fiber.unwrap().id.get();
     }
-    return 0;
+    0u64
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=fiber.get_id version=1 rust_sha256=a403e0ef3bfeefa596ae162f66f6b116433aaa1105fe3fe412c5b7ca0419dc0e*/
+uint64_t get_id();
+
+uint64_t get_id() {
+    rusty::Option<rusty::Rc<Fiber>> fiber = Fiber::current_fiber();
+    if (fiber.is_some()) {
+        return (*fiber.unwrap()).id.get();
+    }
+    return static_cast<uint64_t>(0);
+}
+/*RUSTYCPP:GEN-END id=fiber.get_id*/
 
 /**
  * Get the currently executing fiber as an Option<Rc<Fiber>>.
