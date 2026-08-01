@@ -1497,3 +1497,51 @@ impossible, not just enum-matching ones. It is the same open decision
 from §7.18 — the rename is right for a fn NAMED errno and wrong for DSL
 that READS it — and this is now a concrete cost of leaving it unresolved,
 not a hypothetical one. tcp_channel.cpp has 350 hand-written lines.
+
+### 7.24 Class templates are a hard floor — and the burndown metric was blind to it
+
+`pub struct` lowers to a **concrete** C++ class. The DSL has no
+class-template construct. Function templates are fine (`fn foo<T>` →
+`template<...>`, see §7.9), but a `template<typename T> class X` — and
+every member of it, template or not — cannot be authored as DSL.
+
+This is category (3) under the decision rule: not a translator bug, not
+rewritable at the call site. It is a legitimate C++ kernel.
+
+**How this cost time.** `serializable_envelope.cpp` was carried in my
+own notes as "the concrete unexplored target — 158 hand-written lines,
+0 DSL". Reading it took one minute to discover the entire file is one
+class template `SerializableEnvelope<TypeList>` plus template free
+functions. Zero of the 158 lines were ever convertible. The census
+reported the number that made it look like the biggest untouched
+opportunity in the tree.
+
+**The measurement.** Splitting all remaining hand-written lines by
+whether they sit inside a class template vs a function template vs
+plain code:
+
+| | lines |
+|---|---|
+| class templates (floor) | **530** |
+| function templates (convertible, §7.9) | 656 |
+| plain (convertible) | 4,606 |
+
+Concentrated in `serializable.cpp` (272), `serializable_envelope.cpp`
+(124), `client.cpp` (62), `callback_wrapper.cpp` (24), `reactor.cpp`
+(30), `misc.cpp` (18).
+
+**So step 1's reachable target is ~5,260, not 0** — unless the DSL gains
+a class-template construct, which is a transpiler feature request, not a
+porting task.
+
+`scripts/rrr_handwritten_census.py` now reports this as a separate
+advisory line. It is deliberately NOT folded into the headline number:
+the classifier is a regex heuristic (it reads the text between
+`template<` and the opening brace), and a metric that is exact should
+not be silently contaminated by one that is estimated. The two numbers
+disagree by ~2 lines on the current tree, which is about the accuracy
+you should expect from it.
+
+**Generalisable lesson.** A burndown metric that counts lines cannot see
+*expressibility*. Before treating a high-count file as an opportunity,
+open it — the count is evidence about size, never about tractability.

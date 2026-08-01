@@ -6,6 +6,10 @@ line is either inline-Rust DSL, C++ generated from that DSL, or an
 external C kernel reached through `extern "C"`. This counts what is
 left.
 
+Caveat on "NO": class templates are a structural floor — see the
+`class_tmpl` advisory below. Absent a class-template construct in the
+DSL, the reachable target is the headline number MINUS that floor.
+
 Tests are reported separately and are NOT part of the target — the C++
 gtest suite is the oracle the converted code is verified against, so it
 stays C++ on purpose.
@@ -13,6 +17,7 @@ stays C++ on purpose.
 Usage:  python3 scripts/rrr_handwritten_census.py [--files]
 """
 import os
+import re
 import sys
 
 ROOT = "src/rrr"
@@ -63,9 +68,27 @@ def is_scaffold(t):
 
 
 def classify(path):
-    """Return (dsl, generated, handwritten, scaffold) non-comment line counts."""
-    dsl = gen = hand = scaffold = 0
+    """Return (dsl, generated, handwritten, scaffold, class_tmpl) line counts.
+
+    `class_tmpl` is an ADVISORY sub-count of `handwritten`: lines sitting
+    inside a `template<...> class/struct` body. The inline-Rust DSL has no
+    class-template construct — `pub struct` lowers to a concrete C++ class —
+    so these are a structural FLOOR, not backlog. Function templates are
+    NOT counted: `fn foo<T>` lowers to `template<...>` fine.
+
+    This exists because the raw hand-written count is blind to it, and that
+    blindness cost real time: `serializable_envelope.cpp` was surveyed as a
+    conversion target on the strength of "158 hand-written, 0 DSL" when the
+    entire file is one class template. The classifier is a regex heuristic —
+    it is reported as a separate advisory line and deliberately NOT folded
+    into the headline number, which stays exact.
+    """
+    dsl = gen = hand = scaffold = class_tmpl = 0
     in_dsl = in_gen = False
+    depth = 0          # brace depth
+    tmpl_depth = None  # depth at which the enclosing class template opened
+    pending = False    # saw `template<`, still looking for its `{`
+    head = ""
     with open(path, errors="replace") as fh:
         for line in fh:
             t = line.strip()
@@ -101,34 +124,59 @@ def classify(path):
                 scaffold += 1
             else:
                 hand += 1
-    return dsl, gen, hand, scaffold
+                # Brace depth is tracked over hand-written lines ONLY. DSL and
+                # GEN blocks are internally balanced, and the scaffold namespace
+                # open/close are both scaffold, so skipping them keeps depth
+                # consistent for the code we actually classify.
+                if re.match(r"template\s*<", t):
+                    pending = True
+                    head = ""
+                if pending:
+                    head += " " + t
+                    if "{" in t and tmpl_depth is None:
+                        # Classify on the text before the opening brace: a
+                        # `class`/`struct` name there means a class template;
+                        # anything else is a function template (DSL-expressible).
+                        before = head.split("{")[0]
+                        if re.search(r"\b(class|struct)\s+\w", before):
+                            tmpl_depth = depth
+                        pending = False
+                if tmpl_depth is not None:
+                    class_tmpl += 1
+                depth += line.count("{") - line.count("}")
+                if tmpl_depth is not None and depth <= tmpl_depth:
+                    tmpl_depth = None
+    return dsl, gen, hand, scaffold, class_tmpl
 
 
 def main():
     show_files = "--files" in sys.argv
-    totals = {"prod": [0, 0, 0, 0], "test": [0, 0, 0, 0]}
+    totals = {"prod": [0, 0, 0, 0, 0], "test": [0, 0, 0, 0, 0]}
     rows = []
     for dirpath, _, names in os.walk(ROOT):
         for name in names:
             if not name.endswith(EXTS):
                 continue
             path = os.path.join(dirpath, name)
-            dsl, gen, hand, scaffold = classify(path)
+            dsl, gen, hand, scaffold, ctmpl = classify(path)
             bucket = "test" if "/tests/" in path else "prod"
-            for i, v in enumerate((dsl, gen, hand, scaffold)):
+            for i, v in enumerate((dsl, gen, hand, scaffold, ctmpl)):
                 totals[bucket][i] += v
             if hand and bucket == "prod":
-                rows.append((hand, dsl, path))
+                rows.append((hand, dsl, ctmpl, path))
 
     p = totals["prod"]
     print(f"production   dsl={p[0]}  generated={p[1]}  HAND-WRITTEN={p[2]}"
           f"  (+{p[3]} module scaffolding, exempt)")
+    print(f"             of the hand-written, ~{p[4]} sit inside class templates"
+          f" — a DSL floor, not backlog (advisory, regex-estimated)")
+    print(f"             so the reachable target is ~{p[2] - p[4]}, not 0")
     print(f"tests        hand-written={totals['test'][2]}  (oracle, not a target)")
     rows.sort(reverse=True)
     if show_files:
-        print("\nremaining hand-written C++ (hand / dsl):")
-        for hand, dsl, path in rows:
-            print(f"  {hand:6} {dsl:6}  {path}")
+        print("\nremaining hand-written C++ (hand / dsl / class-tmpl floor):")
+        for hand, dsl, ctmpl, path in rows:
+            print(f"  {hand:6} {dsl:6} {ctmpl:6}  {path}")
     else:
         print(f"\n{len(rows)} production files still contain hand-written C++;"
               f" pass --files to list them")
