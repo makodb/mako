@@ -3407,3 +3407,101 @@ change get as far as regeneration.
 By contrast the nullptr kernel in the same file (§7.49) *was* stale, and
 its replacement was verified by compiling the emitted
 `cb(ENOTCONN, rusty::ptr::null(), 0)` rather than assuming the conversion.
+
+#### 7.50.1 Root cause, and a call-site route that does not need the fix
+
+Tracing the guard case to its origin: the collapse predicate
+`unary_deref_should_collapse_reference_like_operand` (codegen/mod.rs
+~13248) is **already correct** for this shape -- it explicitly preserves
+the deref for pointer-like referents:
+
+    // preserve deref for pointer-like owners (e.g. `&Box<T>`)
+    !self.type_is_pointer_like_owner_type(&reference.elem)
+
+The failure is upstream of it. When `infer_simple_expr_type` cannot type
+the operand, the function takes an early return:
+
+    let Some(inferred) = inferred else {
+        return !matches!(self.peel_paren_group_expr(expr), syn::Expr::Path(_));
+    };
+
+i.e. *collapse anything that is not a bare path*. Inference succeeds for
+`self.o.as_ref().unwrap()` (yields `&Box<Chan>` -> no collapse, correct)
+and **fails through a `MutexGuard`**, so `(*guard).as_ref().unwrap()`
+falls into the fallback and is collapsed. The bug is that the
+inference-failure fallback defaults to the *unsound* answer for
+pointer-like referents.
+
+The real fix is to make inference see through guards (`*guard` where
+`guard: MutexGuard<T>` yields `T`), which would let the existing correct
+predicate do its job. That is transpiler work and wants the full suite.
+
+**But the call site has a route today** (decision rule #2), and it is the
+spelling Rust would want anyway -- bind the referent to a typed local:
+
+    let mut guard = self.m.lock().unwrap();
+    if (*guard).is_some() {
+        let ch: &mut rusty::Box<Chan> = (*guard).as_mut().unwrap();
+        (*ch).close();
+    }
+
+    -> rusty::Box<Chan>& ch = ((*guard)).as_mut().unwrap();
+       ((rusty::detail::deref_if_pointer_like(ch))).close();      // compiles
+
+Two details that are easy to get wrong:
+
+ - It must be **`as_mut()`, not `as_ref()`**. `as_ref()` yields
+   `Option<&T>`, so binding it to `&mut T` is a Rust type error -- it
+   happens to lower to working C++, but Goal 0 requires the DSL to be
+   real Rust, so the C++-only spelling is not acceptable.
+ - The binding must be `&mut`. A `&` binding lowers to
+   `const Box<T>&`, and both `close()` and `bind_callbacks()` are
+   `&mut self`, so the const form fails at the call.
+
+Verified by compiling the emitted C++ in both shapes, not by inspection.
+
+#### 7.50.2 The precise transpiler fix (for whoever does it)
+
+Tracing one level further than §7.50.1. `infer_simple_expr_type`'s
+`UnOp::Deref` arm (codegen/inference.rs ~6901) ends in
+
+    self.infer_deref_result_type_from_type(&base_ty)
+
+and that function (~9455) only knows how to deref these owners:
+
+    "Box" | "NonNull" | "ConstNonNull" | "Ptr" | "MutPtr" | "Unique"
+        | "reference_wrapper"  => first_type_arg(),
+    _ => None,
+
+**The RAII guards are absent.** So `*guard` types as `None` even when
+`guard`'s own type is known, the collapse predicate hits its
+inference-failure fallback, and the deref is dropped (§7.50).
+
+The telling detail: `emit_expr.rs` already carries the exact set that is
+missing here --
+
+    "Ref" | "RefMut" | "MutexGuard" | "SpinMutexGuard"
+        | "RwLockReadGuard" | "RwLockWriteGuard"
+
+-- in its guard-deref arm. Two places encode "what is a guard" and only
+one of them was taught to type the deref. Adding those six idents to
+`infer_deref_result_type_from_type` is general and simply true
+(`MutexGuard<T>` derefs to `T`), not an srpc special case.
+
+Two things to check when doing it, rather than assuming:
+
+ 1. Whether `let guard = self.m.lock().unwrap();` gives `guard` an
+    inferable type at all. If `lock()`/`unwrap()` are not modelled, the
+    deref arm never gets a `base_ty` and part 1 alone changes nothing --
+    the repro in `docs/repro/` is the check.
+ 2. Whether making these deref *stops* the intended
+    `format!("*{}", operand)` guard branch from firing. That branch
+    exists so `*guard = expr` lowers as a real assignment through the
+    guard; it is gated on the same idents, so a naive change could
+    reroute assignments into `deref_if_pointer_like` and break SFINAE --
+    which is precisely the behaviour its comment says to preserve.
+
+That second point is why this is a dedicated run with the full suite
+(1955 tests) and not a drive-by edit. Deliberately not applied here: an
+untested transpiler change sitting in the submodule is worse than a
+documented one, because the next regen would silently bake it in.

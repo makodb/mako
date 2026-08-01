@@ -1085,17 +1085,6 @@ struct ReconnectState {
 using AsyncReplyCallback = rusty::Function<
     void(i32 /*error_code*/, const uint8_t* /*reply_bytes*/, size_t /*reply_size*/)>;
 
-// @safe - null reply-bytes sentinel for empty-reply async callbacks.
-// Hand-written (and forward-visible to the DSL) because the inline-rust
-// grammar has no nullptr literal; mirrors the fut_secs / make_pending_queue
-// helper pattern. Lets the DSL invalidate path pass "no reply" to a
-// callback as `null_reply_bytes()`.
-// @unsafe - returns a raw null. The DSL cannot emit `nullptr`: it lowers
-// to a non-existent `nullptr_` (§7.31), so this stays a C++ kernel.
-inline const uint8_t* null_reply_bytes() {
-  return nullptr;
-}
-
 // @unsafe - reaches the owned FiberChannel through its Box (Box::operator->).
 // Hand-written (forward-visible to the DSL) because the inline-rust grammar
 // emits a Box method call as `box.method()` (dot) rather than `box->method()`;
@@ -1430,7 +1419,7 @@ impl ClientConnection {
         }
         for cb in &mut drained_callbacks {
             self.metrics_.record_request_dropped();
-            cb(ENOTCONN, null_reply_bytes(), 0);
+            cb(ENOTCONN, core::ptr::null(), 0);
         }
 
         // Drain the pending-future map in one pass: HashMap::drain() empties
@@ -1752,7 +1741,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=e08b96a2edb7ab404ef02bedae7d30a9efc34d0c750242bea880b8f0307ddd46*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=0a520c0b362fb70fea27f800db092e309545b1da92be5c2191d35294764ec3bb*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2101,7 +2090,7 @@ void ClientConnection::invalidate_pending_futures() const {
     }
     for (auto&& cb : rusty::for_in(rusty::iter_mut(drained_callbacks))) {
         this->metrics_.record_request_dropped();
-        cb(ENOTCONN, null_reply_bytes(), 0);
+        cb(ENOTCONN, rusty::ptr::null(), 0);
     }
     rusty::Vec<rusty::Arc<Future>> futures = rusty::Vec<rusty::Arc<Future>>::new_();
     auto guard = this->pending_fu_.lock().unwrap();
