@@ -1124,21 +1124,6 @@ inline const int8_t* str_as_i8(const std::string& s) {
   return reinterpret_cast<const int8_t*>(s.c_str());
 }
 
-// @unsafe - Log_error wrappers for connect()'s error paths. Called bare from
-// the DSL (like verify): a Log_error inside an inline-rust `unsafe { }` block
-// in a non-void method is miscodegen'd with a spurious return-type qualifier
-// (`int32_t::Log_error`), so the I/O is isolated in these void helpers instead.
-inline void log_connect_bad_state(ConnectionState state) {
-  Log_error("rrr::ClientConnection: cannot connect from state {}",
-            connection_state_to_string(state));
-}
-inline void log_connect_no_factory() {
-  Log_error("rrr::ClientConnection::connect: factory not bound. "
-            "Channel mode requires a ChannelFactoryProxy installed via "
-            "Client::set_channel_factory(...) or auto-installed by "
-            "Client::connect (the latter happens unconditionally now).");
-}
-
 // @unsafe - Build the pre-filled async-callback slot vector
 // (kAsyncSlotCount Nones) for ClientConnection::pending_cb_slots_.
 // Factored out of the ctor body because the Phase 5 DSL `#[cpp_ctor]` has
@@ -1364,7 +1349,8 @@ impl ClientConnection {
         verify(!self.state_machine_.is_connected());
 
         if !self.state_machine_.transition_to(ConnectionState::CONNECTING) {
-            log_connect_bad_state(self.state_machine_.state());
+            unsafe { Log_error("rrr::ClientConnection: cannot connect from state {}",
+                               connection_state_to_string(self.state_machine_.state())); }
             self.invoke_error_callback(EINVAL, "invalid state for connect");
             return EINVAL;
         }
@@ -1374,7 +1360,7 @@ impl ClientConnection {
         // factory->connect(addr), hands the proxy to bind_channel_direct, and
         // records reconnect_address_ for the close-side reconnect spawn.
         if !self.is_factory_bound() {
-            log_connect_no_factory();
+            unsafe { Log_error("rrr::ClientConnection::connect: factory not bound. Channel mode requires a ChannelFactoryProxy installed via Client::set_channel_factory(...) or auto-installed by Client::connect (the latter happens unconditionally now)."); }
             self.state_machine_.transition_to(ConnectionState::FAILED);
             self.invoke_error_callback(EINVAL, "no channel factory bound");
             return EINVAL;
@@ -1768,7 +1754,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=b338705e4e71f4945ccde7890bff92ef91f11414decb59897cc7e9cd6af133fd*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=e08b96a2edb7ab404ef02bedae7d30a9efc34d0c750242bea880b8f0307ddd46*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2034,12 +2020,18 @@ void ClientConnection::reset_channel_mode_for_reconnect() const {
 int32_t ClientConnection::connect(const int8_t* addr) const {
     verify(rusty::detail::rust_not(this->state_machine_.is_connected()));
     if (rusty::detail::rust_not(this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::CONNECTING))))) {
-        log_connect_bad_state(this->state_machine_.state());
+        // @unsafe
+        {
+            Log_error("rrr::ClientConnection: cannot connect from state {}", connection_state_to_string(this->state_machine_.state()));
+        }
         this->invoke_error_callback(EINVAL, "invalid state for connect");
         return EINVAL;
     }
     if (!this->is_factory_bound()) {
-        log_connect_no_factory();
+        // @unsafe
+        {
+            Log_error("rrr::ClientConnection::connect: factory not bound. Channel mode requires a ChannelFactoryProxy installed via Client::set_channel_factory(...) or auto-installed by Client::connect (the latter happens unconditionally now).");
+        }
         this->state_machine_.transition_to(rusty::clone(rusty::clone(ConnectionState::FAILED)));
         this->invoke_error_callback(EINVAL, "no channel factory bound");
         return EINVAL;
