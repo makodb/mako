@@ -468,9 +468,6 @@ uint64_t IdempotencyKeyGenerator::current_sequence() const {
 // block. (lookup writes through `int32_t&`/`Vec<u8>&` out-params + copies
 // via cached_response_get; store copies via cached_response_set.)
 struct IdempotencyCache;  // defined by the GEN block below
-void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
-                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
-                uint64_t current_time_ms);
 
 // LRU idempotency cache. Reshaped away from `std::list<CachedResponse>` +
 // `HashMap<IdempotencyKey, std::list::iterator>` (the opaque non-Copy
@@ -557,9 +554,42 @@ impl IdempotencyCache {
         return false;
     }
 
+    // Body inlined from the former idem_store kernel. Guard BOUND then
+    // dereferenced (§7.33). Writes through `(*guard)[i].field` lower to a
+    // reference (probe-verified), and the new-entry path uses a struct
+    // literal + cached_response_set rather than the C++
+    // default-construct-then-assign.
     fn store(&self, key: &IdempotencyKey, error_code: i32,
              response: &Vec<u8>, current_time_ms: u64) {
-        idem_store(self, key, error_code, response, current_time_ms)
+        let cfg = self.config_.get();
+        if !cfg.enabled || !key.is_valid() {
+            return;
+        }
+        let mut guard = self.cache_.lock().unwrap();
+        let mut i: usize = 0usize;
+        while i < (*guard).len() {
+            if (*guard)[i].key == (*key) {
+                (*guard)[i].error_code = error_code;
+                cached_response_set(&(*guard)[i], response);
+                (*guard)[i].timestamp_ms = current_time_ms;
+                let entry = (*guard).remove(i).unwrap();
+                (*guard).push_front(entry);
+                return;
+            }
+            i += 1usize;
+        }
+        while (*guard).len() >= cfg.max_entries && (*guard).len() > 0usize {
+            (*guard).pop_back();
+            self.evictions_.set(self.evictions_.get() + 1);
+        }
+        let mut entry = CachedResponse {
+            key: (*key).clone(),
+            error_code: error_code,
+            response_data: rusty::Vec::<u8>::new(),
+            timestamp_ms: current_time_ms,
+        };
+        cached_response_set(&entry, response);
+        (*guard).push_front(entry);
     }
 
     fn remove(&self, key: &IdempotencyKey) -> bool {
@@ -635,7 +665,7 @@ impl IdempotencyCache {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=a970c8e5833347f00b3eac8429412afc874fdf2ba5ccd5c6ed0da3919a71d117*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.cache version=1 rust_sha256=2c229a437d9fa0133379cfd4c3f8e82fdb4a1b9886d2aebc9b62010c384f29c5*/
 struct IdempotencyCache;
 
 struct IdempotencyCache {
@@ -722,7 +752,30 @@ bool IdempotencyCache::lookup(const IdempotencyKey& key, uint64_t current_time_m
 }
 
 void IdempotencyCache::store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const {
-    idem_store((*this), key, std::move(error_code), response, std::move(current_time_ms));
+    const auto cfg = this->config_.get();
+    if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.enabled); }) { return (__r.enabled); } else if constexpr (requires { (__r.enabled_field); }) { return (__r.enabled_field); } else if constexpr (requires { ((*__r).enabled); }) { return ((*__r).enabled); } else { return ((*__r).enabled_field); } }(cfg)) || rusty::detail::rust_not(key.is_valid())) {
+        return;
+    }
+    auto guard = this->cache_.lock().unwrap();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*guard))) {
+        if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.key); }) { return (__r.key); } else if constexpr (requires { (__r.key_field); }) { return (__r.key_field); } else if constexpr (requires { ((*__r).key); }) { return ((*__r).key); } else { return ((*__r).key_field); } }((*guard)[i])) == (key)) {
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.error_code); }) { return (__r.error_code); } else if constexpr (requires { (__r.error_code_field); }) { return (__r.error_code_field); } else if constexpr (requires { ((*__r).error_code); }) { return ((*__r).error_code); } else { return ((*__r).error_code_field); } }((*guard)[i]) = std::move(error_code);
+            cached_response_set((*guard)[i], response);
+            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.timestamp_ms); }) { return (__r.timestamp_ms); } else if constexpr (requires { (__r.timestamp_ms_field); }) { return (__r.timestamp_ms_field); } else if constexpr (requires { ((*__r).timestamp_ms); }) { return ((*__r).timestamp_ms); } else { return ((*__r).timestamp_ms_field); } }((*guard)[i]) = std::move(current_time_ms);
+            auto entry = ((*guard)).remove(i).unwrap();
+            ((*guard)).push_front(std::move(entry));
+            return;
+        }
+        i += static_cast<size_t>(1);
+    }
+    while ((rusty::len((*guard)) >= rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.max_entries); }) { return (__r.max_entries); } else if constexpr (requires { (__r.max_entries_field); }) { return (__r.max_entries_field); } else if constexpr (requires { ((*__r).max_entries); }) { return ((*__r).max_entries); } else { return ((*__r).max_entries_field); } }(cfg))) && (rusty::len((*guard)) > static_cast<size_t>(0))) {
+        ((*guard)).pop_back();
+        this->evictions_.set(this->evictions_.get() + static_cast<uint64_t>(1));
+    }
+    auto entry = CachedResponse{.key = rusty::clone(((key))), .error_code = std::move(error_code), .response_data = rusty::Vec<uint8_t>::new_(), .timestamp_ms = std::move(current_time_ms)};
+    cached_response_set(entry, response);
+    ((*guard)).push_front(std::move(entry));
 }
 
 bool IdempotencyCache::remove(const IdempotencyKey& key) const {
@@ -803,35 +856,6 @@ size_t IdempotencyCache::evict_expired(uint64_t current_time_ms) const {
 
 // @unsafe - scan for an existing entry (update + move-to-front) else evict
 // LRU at capacity and push the new entry; byte copy via cached_response_set.
-void idem_store(const IdempotencyCache& self, const IdempotencyKey& key,
-                int32_t error_code, const rusty::Vec<std::uint8_t>& response,
-                uint64_t current_time_ms) {
-    auto cfg = self.config_.get();
-    if (!cfg.enabled || !key.is_valid()) {
-        return;
-    }
-    auto guard = self.cache_.lock().unwrap();
-    for (size_t i = 0; i < guard->len(); ++i) {
-        if ((*guard)[i].key == key) {
-            (*guard)[i].error_code = error_code;
-            cached_response_set((*guard)[i], response);
-            (*guard)[i].timestamp_ms = current_time_ms;
-            auto entry = guard->remove(i).unwrap();
-            guard->push_front(std::move(entry));
-            return;
-        }
-    }
-    while (guard->len() >= cfg.max_entries && guard->len() > 0) {
-        (void)guard->pop_back();
-        self.evictions_.set(self.evictions_.get() + 1);
-    }
-    CachedResponse entry;
-    entry.key = key;
-    entry.error_code = error_code;
-    cached_response_set(entry, response);
-    entry.timestamp_ms = current_time_ms;
-    guard->push_front(std::move(entry));
-}
 
 
 }  // export namespace rrr
