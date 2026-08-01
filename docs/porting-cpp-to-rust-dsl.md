@@ -1885,3 +1885,29 @@ rather than an opinion.
 **And grep for the blocker, not for mentions of it.** `Marshal` appeared
 42 times in `src/rrr` and every one was a comment describing the historical
 migration. The type had been gone for some time.
+
+### 7.31 `!= nullptr` emits a non-existent `nullptr_`; use `.is_null()`
+
+The natural spelling of a null check does not work:
+
+| DSL | generated | verdict |
+|---|---|---|
+| `p != nullptr` | `deref_if_pointer_like(p) != deref_if_pointer_like(nullptr_)` | ❌ `nullptr_` is not defined anywhere in the runtime |
+| `!p.is_null()` | `rusty::detail::rust_not((p == nullptr))` | ✅ real `nullptr`, correct |
+| `p != std::ptr::null_mut()` | `deref_if_pointer_like(p) != rusty::ptr::null_mut()` | ✅ compiles, but wordier |
+| `p` (truthiness) | `verify(p)` | ✅ works; loses the explicit intent |
+
+`nullptr` is picking up the same trailing-underscore rename that hits
+`errno` (§7.18, §7.23) — the transpiler's libc-identifier handling
+applied to a C++ keyword. It fails loudly at build time rather than
+silently, but the error names `nullptr_`, which appears nowhere in the
+source and reads as nonsense.
+
+**Use `!p.is_null()`.** It is the Rust-native spelling anyway, and it
+lowers to exactly the C++ you would write by hand.
+
+Found while converting `fiber_yield_invoke` (§7.30 table): the *stated*
+blocker (raw-pointer deref) really had expired, but probing the actual
+function shape surfaced this second, unstated one. Worth generalising —
+**"the stated blocker expired" does not mean "the conversion works".**
+Probe the real body, not the claim about it.
