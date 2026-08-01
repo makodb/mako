@@ -1262,8 +1262,55 @@ the capture, so `mutable` is unnecessary; emitting it is what closes the
 door. A `move` closure whose captures are all Copy and which never
 mutates them should lower without `mutable`.
 
+**Where the fix goes:** `emit_expr.rs:24350` —
+`let lambda_mutability = if is_move_closure { " mutable" } else { "" };`
+— which adds `mutable` to EVERY move closure unconditionally.
+
+`mutable` is only actually required when the body ASSIGNS to a capture,
+or calls a non-const method on a captured VALUE. Calling through a
+captured raw pointer (our case) needs neither: the pointer itself is
+never modified. So the guard wants to be "move closure AND body mutates
+a capture".
+
+One shortcut that does NOT work: keying it off a const-callable expected
+type. The expected type is not threaded to these call arguments — the
+evidence is that closure parameter types had to be annotated by hand
+(`|f: &ChannelFrame|`) rather than inferred from `set_on_frame`'s
+signature.
+
 Until then, callback installation is rule-3 floor. Note this is NOT the
 same as the `{}` default-callback problem — that one was solvable with
 channel.cpp's `empty_*_callback` factories (see the FiberChannel Drop
 conversion, fb430ec9), and only affects DETACHING callbacks, not
 installing them.
+
+### 7.20 A DSL block cannot read a static defined in the impl namespace
+
+`rand.cpp` declares helpers in the EXPORTED namespace and defines them
+further down in a plain `namespace rrr { ... }` impl section, where the
+file-scope statics (`randgen_nu_constant`, the seed) live. That split is
+fine for hand-written C++: the declaration is exported, the definition
+sees the statics.
+
+A DSL block cannot reproduce it. `inline-rust` emits the declaration AND
+the definition together, inside the block, which sits in the exported
+namespace — so the static it reads is a DIFFERENT entity under C++
+modules:
+
+```
+undefined reference to `rrr::randgen_nu_constant@rrr.rand'
+```
+
+Adding `extern int randgen_nu_constant;` above the block does not help,
+for the same reason — the extern is then declared in the exported
+namespace too.
+
+So `randgen_nu_constant_now()` stays C++, while `randgen_rand_max()`
+converts fine: it reads only the `RAND_MAX` macro, which is not a
+module-scoped entity.
+
+**Rule of thumb:** a function is convertible only if everything it reads
+is visible from the exported namespace. A file-scope static in the impl
+section is not. Converting one means first moving the state (e.g. behind
+an accessor that is itself exported), which is a design change, not a
+port.

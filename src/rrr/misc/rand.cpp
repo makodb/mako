@@ -27,7 +27,19 @@ struct RandomGenerator;
 // std::string / std::vector surgery). Definitions in the impl
 // namespace; the seed plumbing lives in an anonymous namespace there.
 int randgen_rand_raw();
+// Authored as inline Rust DSL — RAND_MAX widened to double, no kernel.
+#if RUSTYCPP_RUST
+fn randgen_rand_max() -> f64 {
+    RAND_MAX as f64
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=rand.rand_max version=1 rust_sha256=e16936a0504c4b38cef24916eeb30d744f0e03cca557de7876579749f19eb0fc*/
 double randgen_rand_max();
+
+double randgen_rand_max() {
+    return static_cast<double>(RAND_MAX);
+}
+/*RUSTYCPP:GEN-END id=rand.rand_max*/
 int randgen_nu_constant_now();
 // Left-pad (or right-truncate) `s` to exactly `length` chars. Authored as
 // inline Rust DSL — pure std::string control flow, no kernel needed.
@@ -296,9 +308,6 @@ int randgen_rand_raw() {
 
 // @safe - RAND_MAX as a double for the DSL's scale math (the macro has
 // no DSL spelling).
-double randgen_rand_max() {
-    return static_cast<double>(RAND_MAX);
-}
 
 // @safe - accessor over the impl-namespace nu_rand constant.
 int randgen_nu_constant_now() {
