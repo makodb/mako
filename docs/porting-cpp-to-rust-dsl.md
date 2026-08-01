@@ -1911,3 +1911,37 @@ blocker (raw-pointer deref) really had expired, but probing the actual
 function shape surfaced this second, unstated one. Worth generalising —
 **"the stated blocker expired" does not mean "the conversion works".**
 Probe the real body, not the claim about it.
+
+#### 7.30a The discriminator says what to CHECK first, not what to assume
+
+§7.30 says deferrals naming a *structural fact* hold and those naming a
+*tool limitation* rot. Six rotted; that is a real signal. It is not a
+licence to treat "tool limitation" as "probably expired, go convert it."
+
+`clientpool_get_healthy_client_count` (client.cpp) is delegated to a
+hand-written free fn with this stated cause:
+
+> the inline `let clients = opt.unwrap()` lowered to a Vec copy (vs the
+> `auto& clients` reference here), which corrupted the cached Arcs.
+> Keep the proven reference-based body.
+
+That names a *tool behaviour*, so by the discriminator it is a rot
+candidate. Probed it:
+
+    DSL:  let clients = opt.unwrap();
+    GEN:  const auto clients = opt.unwrap();      // BY VALUE. still a copy.
+
+Still true. The deferral holds and the function stays hand-written.
+
+Note what is different about this one: **the failure mode is silent.** A
+wrong `nullptr_` fails at build; a wrong memory ordering is at least
+findable by reading the diff; but an `Option::unwrap` that copies a
+`Vec<Arc<Client>>` instead of borrowing it corrupts refcounted state and
+compiles cleanly. Tests may well pass. For deferrals whose stated
+consequence is corruption rather than a compile error, probe first and
+treat a green build as weak evidence — the original author wrote
+"keep the proven body" for a reason.
+
+Two deferrals now checked and CONFIRMED VALID: this one, and
+`frame_codec.cpp:519` (§7.30). Both were worth the check; neither was
+worth the conversion.
