@@ -3954,3 +3954,47 @@ client.cpp stay, and stay accurate.
 Fixing this properly means feeding the transpiler aliases from imported
 modules, which is a different and much larger change than one alias hop
 within a TU — it needs the module graph, not a line scan.
+
+### 7.54 Goal 0 census (2026-08-02) — and why (b) does not close on this track
+
+Measured, not recalled. Goal 0 has two halves:
+
+  (a) reduce hand-written C++ in src/rrr to zero via the DSL;
+  (b) compile that DSL with **both** rustc and the C++ compiler.
+
+**(a) — ~234 hand-written kernels remain** in the DSL files:
+
+| file | kernels |
+|---|---|
+| misc/serializable.cpp | **104** (untouched: mutual recursion, partial conversion does not compile) |
+| reactor/reactor.cpp | 30 |
+| rpc/client.cpp | 21 (at floor) |
+| rpc/server.cpp | 16 (at floor) |
+| rpc/tcp_channel.cpp | 10 |
+| misc/any_message.cpp | 9 |
+| others | ~44 |
+
+Plus four non-test files with no DSL at all (`base/callback_wrapper.cpp`,
+`base/strop.cpp`, `misc/serializable_envelope.cpp`,
+`reactor/epoll_platform_kqueue.cc`), two `.S` files that are permanently
+assembly, and 79 test files. `serializable.cpp` alone is 44% of the
+remainder.
+
+**(b) — structurally unreachable for the inline DSL.** The `#if
+RUSTYCPP_RUST` blocks in src/rrr name C++ types (`CallbackWrapper`,
+`ChannelFrame`, rrr module types). rustc cannot compile them: this is not
+Rust that happens to be untested, it is Rust that cannot stand alone.
+Only `crates/srpc` is genuinely dual-compiled.
+
+**So finishing (a) does not deliver (b).** It yields a codebase whose DSL
+is *shaped* like Rust and checked only by the C++ compiler — which is
+exactly how three Rust-side errors got through in one session: `as_ref`
+where `as_mut` was required, a missing `let mut` on a guard, and a `let`
+binding that made a move-only type copy. Every one lowered to correct C++
+and would have been a rustc error.
+
+That is worth stating plainly because it reframes the remaining work:
+the inline DSL is a **migration vehicle**, not an end state. The end state
+where (b) holds is the crate. Whether to keep converting C++ in place, or
+to move logic into `crates/srpc` instead, is a direction call about the
+project — not something the kernel count answers.
