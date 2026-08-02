@@ -592,3 +592,19 @@ that the phrase grep missed) and skips comments that describe history.
 
 No further comment-sweeping planned; the remaining hand-written C++ is
 the backlog, not an undiscovered seam.
+
+## Pollworker triage (2026-08-02 pm)
+
+`PollThreadWorker` is already a DSL struct; its three big free-fn bodies:
+
+| fn | lines | verdict |
+|---|---|---|
+| `pollworker_process_commands` | 31 | **kernel** — `std::visit` + `if constexpr` over the `PollCommand` `std::variant` typedef (not a DSL enum). Convertible only by re-modelling PollCommand as a DSL data-enum, which is a design change to the command channel |
+| `pollworker_trigger_job` | 28 | **kernel** — `const_cast<Job*>` + virtual `Ready()`/`Work()` dispatch |
+| `pollworker_poll_loop` | 87 | borderline — the `Epoll::Wait` callback shape carries several known mangle risks; defer until the ref-arg fix lands |
+
+With the cheap conversions exhausted, the highest-leverage single item is
+now the **ref-arg emission fix** (`&waker` dropping its `&`, `&mut x`
+arguments becoming address-of): it unblocks `spawn_stackless_task`, the
+`spawn_stackless_task_with_result` template body, and likely
+`poll_loop`'s callback — three of the largest remaining bodies.
