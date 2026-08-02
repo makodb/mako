@@ -4039,3 +4039,38 @@ What this does and does not invalidate:
 Always run rusty-cpp's tests with `CARGO_TARGET_DIR` on local disk. mako's
 own gates were never affected — `build_crate.sh` builds in `/var/tmp`
 on local btrfs, which is why they stayed consistent all campaign.
+
+### 7.56 `core::mem::take` DOES lower and DOES exist — a truncated grep said otherwise
+
+First recorded here as "third nonexistent-symbol emission: rusty::mem::take
+does not exist." **That was false.** `mem.hpp:341` defines exactly the free
+function needed:
+
+    template<typename T>
+    requires std::is_default_constructible_v<T>
+    inline T take(T& destination) { return replace(destination, T{}); }
+
+The error was mine: the check was `grep -n take mem.hpp | head -3`, and the
+first three hits are comments about `ManuallyDrop::take` — the real
+definition was cut off by the `head`. Fifth self-inflicted measurement
+error of the campaign, same lesson as the others: an absence conclusion
+needs a check that can actually see presence (here: drop the `head`, or
+compile the emitted call, which was never done).
+
+Consequence: the move-out-of-a-reference floor (§7.53.1's
+`fiberchannel_try_pop`, and `process_stackless_tasks`) is NOT a floor —
+`core::mem::take` is the Rust-legal spelling and it lowers to a real
+function. `rusty::Function` satisfies the `default_constructible`
+requirement (value-init is exactly what `default_like`'s tier 3 uses).
+
+Also probed: `rusty::Waker { f: closure }` struct-literals work, but
+**reference arguments mangle** — `waker: &waker` emits `.waker = waker`
+(the `&` dropped) and a `&mut ctx` call argument emits `&ctx` (address-of
+instead of by-ref). Until that is fixed, waker-wiring bodies
+(`process_stackless_tasks`, `spawn_stackless_task`) stay kernels.
+
+And a genuine floor pair, recorded from reading rather than probing:
+`get_or_create_fiber` / `create_run_fiber_at` keep their `const char*`
+file/line debug parameters (no DSL spelling for `char*` — `*const i8` is
+`int8_t*`, a distinct type) and `Fiber::global_id++` mutates a class
+static. They stay kernels behind the 1-arg DSL `create_run_fiber`.

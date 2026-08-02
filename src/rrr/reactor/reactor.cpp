@@ -1858,6 +1858,10 @@ inline thread_local std::size_t reactor_prune_hwm_th_ = 64;
 // Stackless-profile observability shim, defined next to g_stackless_profile
 // further down (the DSL method cannot name the later-defined global).
 void stackless_profile_note_enqueue();
+void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now);
+bool reactor_poll_one(const Reactor& self, size_t idx, rusty::Function<bool(rusty::Context&)>* poll_fn);
+void stackless_profile_note_poll_ready();
+void stackless_profile_report_periodic_shim();
 
 // The thread-local singleton/running-fiber accessors, defined (in DSL)
 // later in this file; the GEN method bodies below call them.
@@ -1870,8 +1874,6 @@ void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber);
 // @unsafe kernels the DSL methods (and each other) delegate to; bodies
 // below the class, renamed from the old member definitions.
 rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
-size_t reactor_register_stackless_poller_impl(const Reactor& self, rusty::Function<bool(rusty::Context&)> poller);
-bool reactor_process_stackless_tasks_impl(const Reactor& self);
 void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> task);
 rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self, rusty::Function<void()> func);
 rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
@@ -1951,7 +1953,7 @@ impl Reactor {
             let mut found_ready_events = true;
             while found_ready_events {
                 found_ready_events = false;
-                if reactor_process_stackless_tasks_impl(self) {
+                if self.process_stackless_tasks() {
                     found_ready_events = true;
                 }
                 let mut ready_events: rusty::VecDeque<rusty::Arc<EventPollable>> = Default::default();
@@ -2148,6 +2150,92 @@ impl Reactor {
         self.ready_stackless_tasks_.borrow_mut().push_back(idx);
     }
 
+    fn register_stackless_poller(&self, poller: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool>) -> usize {
+        let scanned: usize = 0usize;
+        {
+            let mut free_guard = self.free_stackless_task_slots_.borrow_mut();
+            if !free_guard.is_empty() {
+                let idx: usize = free_guard.back();
+                free_guard.pop();
+                let mut tasks_guard = self.stackless_tasks_.borrow_mut();
+                if idx < tasks_guard.len() {
+                    (*tasks_guard)[idx].active = true;
+                    (*tasks_guard)[idx].queued = false;
+                    (*tasks_guard)[idx].poll_once = poller;
+                    stackless_profile_note_register(scanned, true, tasks_guard.len());
+                    return idx;
+                }
+            }
+        }
+        let mut tasks_guard = self.stackless_tasks_.borrow_mut();
+        tasks_guard.push(StacklessTaskEntry { active: true, queued: false, poll_once: poller });
+        stackless_profile_note_register(scanned, false, tasks_guard.len());
+        tasks_guard.len() - 1usize
+    }
+
+    fn process_stackless_tasks(&self) -> bool {
+        let mut did_work = false;
+        let mut keep_going = true;
+        while keep_going {
+            let mut idx: usize = 0usize;
+            let mut have_task = false;
+            {
+                let mut ready_guard = self.ready_stackless_tasks_.borrow_mut();
+                if ready_guard.is_empty() {
+                    keep_going = false;
+                } else {
+                    idx = (*ready_guard)[0usize];
+                    ready_guard.pop_front();
+                    have_task = true;
+                }
+            }
+            if have_task {
+                // Move the poll function out of its slot before invoking it
+                // (rusty::Function is move-only; take() leaves an empty one
+                // behind). Reactor is single-threaded: a synchronous waker
+                // during poll only mutates queued/active, never poll_once.
+                let mut poll_fn: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool> = Default::default();
+                let mut runnable = false;
+                {
+                    let mut tasks_guard = self.stackless_tasks_.borrow_mut();
+                    if idx < tasks_guard.len() {
+                        (*tasks_guard)[idx].queued = false;
+                        if (*tasks_guard)[idx].active && (*tasks_guard)[idx].poll_once {
+                            poll_fn = core::mem::take(&mut (*tasks_guard)[idx].poll_once);
+                            runnable = true;
+                        }
+                    }
+                }
+                if runnable {
+                    did_work = true;
+                    // Waker + Context wiring stays a kernel: reference
+                    // arguments to struct literals mangle in the DSL
+                    // (docs 7.56 sibling note).
+                    let ready = reactor_poll_one(self, idx, &raw mut poll_fn);
+                    {
+                        let mut tasks_guard = self.stackless_tasks_.borrow_mut();
+                        if idx < tasks_guard.len() {
+                            if ready {
+                                stackless_profile_note_poll_ready();
+                                (*tasks_guard)[idx].active = false;
+                                (*tasks_guard)[idx].queued = false;
+                                let empty_fn: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool> = Default::default();
+                                (*tasks_guard)[idx].poll_once = empty_fn;
+                                let mut free_guard = self.free_stackless_task_slots_.borrow_mut();
+                                free_guard.push(idx as usize);
+                            } else {
+                                // Put the function back for the next poll.
+                                (*tasks_guard)[idx].poll_once = poll_fn;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stackless_profile_report_periodic_shim();
+        did_work
+    }
+
     fn check_timeout(&self, ready_events: &mut rusty::VecDeque<rusty::Arc<EventPollable>>) {
         let time_now: i64 = Time::now(true);
         let mut guard = self.timeout_events_.borrow_mut();
@@ -2190,7 +2278,7 @@ impl Drop for Reactor {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=44279ad2ac18d44b49623f84ee83cb27bae7f721a85fd92155297084a6a9b542*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=76daac0af7c559891da57fbb172542ba980905aa2fb7aeb6b9d0fb45fd93ce56*/
 struct Reactor;
 
 struct Reactor {
@@ -2238,6 +2326,8 @@ struct Reactor {
     void register_fiber(const rusty::Rc<Fiber>& fiber) const;
     void recycle(rusty::Rc<Fiber>& fiber) const;
     void enqueue_stackless_task(size_t idx) const;
+    size_t register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const;
+    bool process_stackless_tasks() const;
     void check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const;
     ~Reactor() noexcept(false);
 };
@@ -2294,7 +2384,7 @@ void Reactor::run_loop(bool infinite, bool do_check_timeout) const {
         auto found_ready_events = true;
         while (found_ready_events) {
             found_ready_events = false;
-            if (reactor_process_stackless_tasks_impl((*this))) {
+            if (this->process_stackless_tasks()) {
                 found_ready_events = true;
             }
             rusty::VecDeque<rusty::Arc<EventPollable>> ready_events = rusty::default_like<rusty::VecDeque<rusty::Arc<EventPollable>>>();
@@ -2489,6 +2579,84 @@ void Reactor::enqueue_stackless_task(size_t idx) const {
     this->ready_stackless_tasks_.borrow_mut()->push_back(std::move(idx));
 }
 
+size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const {
+    const size_t scanned = static_cast<size_t>(0);
+    {
+        auto free_guard = this->free_stackless_task_slots_.borrow_mut();
+        if (rusty::detail::rust_not(rusty::is_empty(free_guard))) {
+            size_t idx = free_guard->back();
+            free_guard->pop();
+            auto tasks_guard = this->stackless_tasks_.borrow_mut();
+            if (rusty::detail::deref_if_pointer_like(idx) < rusty::len(tasks_guard)) {
+                [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.active); }) { return (__r.active); } else if constexpr (requires { (__r.active_field); }) { return (__r.active_field); } else if constexpr (requires { ((*__r).active); }) { return ((*__r).active); } else { return ((*__r).active_field); } }((*tasks_guard)[idx]) = true;
+                [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((*tasks_guard)[idx]) = false;
+                [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.poll_once); }) { return (__r.poll_once); } else if constexpr (requires { (__r.poll_once_field); }) { return (__r.poll_once_field); } else if constexpr (requires { ((*__r).poll_once); }) { return ((*__r).poll_once); } else { return ((*__r).poll_once_field); } }((*tasks_guard)[idx]) = std::move(poller);
+                stackless_profile_note_register(std::move(scanned), true, rusty::len(tasks_guard));
+                return std::move(idx);
+            }
+        }
+    }
+    auto tasks_guard = this->stackless_tasks_.borrow_mut();
+    tasks_guard->push(StacklessTaskEntry{.active = true, .queued = false, .poll_once = std::move(poller)});
+    stackless_profile_note_register(std::move(scanned), false, rusty::len(tasks_guard));
+    return rusty::len(tasks_guard) - static_cast<size_t>(1);
+}
+
+bool Reactor::process_stackless_tasks() const {
+    auto did_work = false;
+    auto keep_going = true;
+    while (keep_going) {
+        size_t idx = static_cast<size_t>(0);
+        auto have_task = false;
+        {
+            auto ready_guard = this->ready_stackless_tasks_.borrow_mut();
+            if (rusty::is_empty(ready_guard)) {
+                keep_going = false;
+            } else {
+                idx = (*ready_guard)[static_cast<size_t>(0)];
+                ready_guard->pop_front();
+                have_task = true;
+            }
+        }
+        if (have_task) {
+            rusty::Function<bool(rusty::Context&)> poll_fn = rusty::default_like<rusty::Function<bool(rusty::Context&)>>();
+            auto runnable = false;
+            {
+                auto tasks_guard = this->stackless_tasks_.borrow_mut();
+                if (rusty::detail::deref_if_pointer_like(idx) < rusty::len(tasks_guard)) {
+                    [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((*tasks_guard)[idx]) = false;
+                    if (rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.active); }) { return (__r.active); } else if constexpr (requires { (__r.active_field); }) { return (__r.active_field); } else if constexpr (requires { ((*__r).active); }) { return ((*__r).active); } else { return ((*__r).active_field); } }((*tasks_guard)[idx])) && rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.poll_once); }) { return (__r.poll_once); } else if constexpr (requires { (__r.poll_once_field); }) { return (__r.poll_once_field); } else if constexpr (requires { ((*__r).poll_once); }) { return ((*__r).poll_once); } else { return ((*__r).poll_once_field); } }((*tasks_guard)[idx]))) {
+                        poll_fn = rusty::mem::take([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.poll_once); }) { return (__r.poll_once); } else if constexpr (requires { (__r.poll_once_field); }) { return (__r.poll_once_field); } else if constexpr (requires { ((*__r).poll_once); }) { return ((*__r).poll_once); } else { return ((*__r).poll_once_field); } }((*tasks_guard)[idx]));
+                        runnable = true;
+                    }
+                }
+            }
+            if (runnable) {
+                did_work = true;
+                const auto ready = reactor_poll_one((*this), std::move(idx), &poll_fn);
+                {
+                    auto tasks_guard = this->stackless_tasks_.borrow_mut();
+                    if (rusty::detail::deref_if_pointer_like(idx) < rusty::len(tasks_guard)) {
+                        if (ready) {
+                            stackless_profile_note_poll_ready();
+                            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.active); }) { return (__r.active); } else if constexpr (requires { (__r.active_field); }) { return (__r.active_field); } else if constexpr (requires { ((*__r).active); }) { return ((*__r).active); } else { return ((*__r).active_field); } }((*tasks_guard)[idx]) = false;
+                            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((*tasks_guard)[idx]) = false;
+                            rusty::Function<bool(rusty::Context&)> empty_fn = rusty::default_like<rusty::Function<bool(rusty::Context&)>>();
+                            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.poll_once); }) { return (__r.poll_once); } else if constexpr (requires { (__r.poll_once_field); }) { return (__r.poll_once_field); } else if constexpr (requires { ((*__r).poll_once); }) { return ((*__r).poll_once); } else { return ((*__r).poll_once_field); } }((*tasks_guard)[idx]) = std::move(empty_fn);
+                            auto free_guard = this->free_stackless_task_slots_.borrow_mut();
+                            free_guard->push(static_cast<size_t>(idx));
+                        } else {
+                            [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.poll_once); }) { return (__r.poll_once); } else if constexpr (requires { (__r.poll_once_field); }) { return (__r.poll_once_field); } else if constexpr (requires { ((*__r).poll_once); }) { return ((*__r).poll_once); } else { return ((*__r).poll_once_field); } }((*tasks_guard)[idx]) = std::move(poll_fn);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    stackless_profile_report_periodic_shim();
+    return std::move(did_work);
+}
+
 void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const {
     const int64_t time_now = Time::now(true);
     auto guard = this->timeout_events_.borrow_mut();
@@ -2580,7 +2748,7 @@ inline void reactor_spawn_stackless_task_with_result(const Reactor& self, rusty:
 
   // SAFETY: TaskState is only accessed through the Arc captured by the poller.
   auto state = reactor_make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
-  auto idx = reactor_register_stackless_poller_impl(self, [state](rusty::Context& ctx) mutable {
+  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (!poll_result.is_ready()) {
       return false;
@@ -4294,6 +4462,45 @@ void stackless_profile_note_enqueue() {
   }
 }
 
+// Poll-one micro-kernel: the Waker/Context wiring the DSL cannot spell
+// (reference arguments to struct literals mangle). The loop and slot
+// bookkeeping around it are DSL (Reactor::process_stackless_tasks).
+bool reactor_poll_one(const Reactor& self, size_t idx, rusty::Function<bool(rusty::Context&)>* poll_fn) {
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.poll_calls.fetch_add(1, std::memory_order_relaxed);
+  }
+  rusty::Waker waker{[rp = &self, idx]() {
+    rp->enqueue_stackless_task(idx);
+  }};
+  rusty::Context ctx{&waker};
+  return (*poll_fn)(ctx);
+}
+
+// Ready-count + periodic-report shims for the DSL poll loop.
+void stackless_profile_note_poll_ready() {
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+void stackless_profile_report_periodic_shim() {
+  stackless_profile_report_periodic();
+}
+
+// Register-path profile shim (same linkage note as above).
+void stackless_profile_note_register(size_t scanned, bool reuse, size_t slots_now) {
+  if (!stackless_profile_enabled()) {
+    return;
+  }
+  g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
+  g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
+  if (reuse) {
+    g_stackless_profile.reg_reuse.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    g_stackless_profile.reg_new.fetch_add(1, std::memory_order_relaxed);
+    stackless_profile_update_max_slots(slots_now);
+  }
+}
+
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
@@ -4480,106 +4687,8 @@ rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Fu
 // @unsafe - Queue a stackless task slot for polling if not already queued.
 
 // @unsafe - Register a stackless task poller and return slot index.
-size_t reactor_register_stackless_poller_impl(const Reactor& self, rusty::Function<bool(rusty::Context&)> poller) {
-  size_t scanned = 0;
-  {
-    auto free_guard = self.free_stackless_task_slots_.borrow_mut();
-    if (!free_guard->is_empty()) {
-      size_t idx = free_guard->back();
-      free_guard->pop();
-      auto tasks_guard = self.stackless_tasks_.borrow_mut();
-      if (idx < tasks_guard->size()) {
-        auto& entry = (*tasks_guard)[idx];
-        entry.active = true;
-        entry.queued = false;
-        entry.poll_once = std::move(poller);
-        if (stackless_profile_enabled()) {
-          g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
-          g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
-          g_stackless_profile.reg_reuse.fetch_add(1, std::memory_order_relaxed);
-        }
-        return idx;
-      }
-    }
-  }
-
-  auto tasks_guard = self.stackless_tasks_.borrow_mut();
-  StacklessTaskEntry entry{true, false, std::move(poller)};
-  tasks_guard->push(std::move(entry));
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
-    g_stackless_profile.reg_scan_steps.fetch_add(scanned, std::memory_order_relaxed);
-    g_stackless_profile.reg_new.fetch_add(1, std::memory_order_relaxed);
-    stackless_profile_update_max_slots(tasks_guard->size());
-  }
-  return tasks_guard->size() - 1;
-}
 
 // @unsafe - Poll all queued stackless tasks once.
-bool reactor_process_stackless_tasks_impl(const Reactor& self) {
-  bool did_work = false;
-  for (;;) {
-    size_t idx = 0;
-    {
-      auto ready_guard = self.ready_stackless_tasks_.borrow_mut();
-      if (ready_guard->is_empty()) {
-        break;
-      }
-      idx = (*ready_guard)[0];
-      ready_guard->pop_front();
-    }
-
-    // Move the poll function out of its slot before invoking it; rusty::Function
-    // is move-only so we can't keep a copy in-place. Reactor is single-threaded,
-    // so any synchronous waker callback during poll only mutates queued/active
-    // flags (never poll_once), and we put the function back below if the poll
-    // didn't complete the task.
-    rusty::Function<bool(rusty::Context&)> poll_fn;
-    {
-      auto tasks_guard = self.stackless_tasks_.borrow_mut();
-      if (idx >= tasks_guard->size()) {
-        continue;
-      }
-      auto& entry = (*tasks_guard)[idx];
-      entry.queued = false;
-      if (!entry.active || !entry.poll_once) {
-        continue;
-      }
-      poll_fn = std::move(entry.poll_once);
-    }
-
-    did_work = true;
-    if (stackless_profile_enabled()) {
-      g_stackless_profile.poll_calls.fetch_add(1, std::memory_order_relaxed);
-    }
-    rusty::Waker waker{[rp = &self, idx]() {
-      rp->enqueue_stackless_task(idx);
-    }};
-    rusty::Context ctx{&waker};
-    bool ready = poll_fn(ctx);
-
-    {
-      auto tasks_guard = self.stackless_tasks_.borrow_mut();
-      if (idx < tasks_guard->size()) {
-        auto& entry = (*tasks_guard)[idx];
-        if (ready) {
-          if (stackless_profile_enabled()) {
-            g_stackless_profile.poll_ready.fetch_add(1, std::memory_order_relaxed);
-          }
-          entry.active = false;
-          entry.queued = false;
-          entry.poll_once = {};
-          self.free_stackless_task_slots_.borrow_mut()->push(idx);
-        } else {
-          // Put the function back so the next poll iteration can fire it.
-          entry.poll_once = std::move(poll_fn);
-        }
-      }
-    }
-  }
-  stackless_profile_report_periodic();
-  return did_work;
-}
 
 // =============================================================================
 // Main create_run_fiber - orchestrates the helper functions
@@ -4719,7 +4828,7 @@ void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> ta
   };
 
   auto state = reactor_make_arc<TaskState>(std::move(task), std::move(early_wake));
-  auto idx = reactor_register_stackless_poller_impl(self, [state](rusty::Context& ctx) mutable {
+  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (poll_result.is_ready()) {
       state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
