@@ -67,8 +67,14 @@ impl IdempotencyKey {
         self.client_id != 0u64 || self.sequence != 0u64
     }
 }
+
+impl PartialEq for IdempotencyKey {
+    fn eq(&self, other: &IdempotencyKey) -> bool {
+        self.client_id == other.client_id && self.sequence == other.sequence
+    }
+}
 #endif
-/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=b30b49bf92b45a1e3fe177126b5097c83a8c77174e2f341f33bb64bb279dbd6c*/
+/*RUSTYCPP:GEN-BEGIN id=idempotency.0a version=1 rust_sha256=c4e6702ea7035a3a70f1799a197d3bd44c1c71bf162343cf2d09f5297a8fdb10*/
 struct IdempotencyKey;
 
 struct IdempotencyKey {
@@ -78,6 +84,7 @@ struct IdempotencyKey {
     static IdempotencyKey new_(uint64_t client_id, uint64_t sequence);
     static IdempotencyKey empty();
     bool is_valid() const;
+    bool operator==(const IdempotencyKey& other) const;
     // Rust derives Send/Sync from the field types; C++ cannot see them.
     static constexpr bool is_send = true;
     static constexpr bool is_sync = true;
@@ -85,28 +92,21 @@ struct IdempotencyKey {
 
 
 IdempotencyKey IdempotencyKey::new_(uint64_t client_id, uint64_t sequence) {
-    return IdempotencyKey{.client_id = std::move(client_id), .sequence = std::move(sequence)};
+    return IdempotencyKey(std::move(client_id), std::move(sequence));
 }
 
 IdempotencyKey IdempotencyKey::empty() {
-    return IdempotencyKey{.client_id = static_cast<uint64_t>(0), .sequence = static_cast<uint64_t>(0)};
+    return IdempotencyKey(static_cast<uint64_t>(0), static_cast<uint64_t>(0));
 }
 
 bool IdempotencyKey::is_valid() const {
     return (rusty::detail::deref_if_pointer_like(this->client_id) != static_cast<uint64_t>(0)) || (rusty::detail::deref_if_pointer_like(this->sequence) != static_cast<uint64_t>(0));
 }
+
+bool IdempotencyKey::operator==(const IdempotencyKey& other) const {
+    return (rusty::detail::deref_if_pointer_like(this->client_id) == rusty::detail::deref_if_pointer_like(other.client_id)) && (rusty::detail::deref_if_pointer_like(this->sequence) == rusty::detail::deref_if_pointer_like(other.sequence));
+}
 /*RUSTYCPP:GEN-END id=idempotency.0a*/
-
-// @safe - Equality comparison (operator overloading lives outside the
-// DSL block; the DSL grammar does not model operator overloading).
-inline bool operator==(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
-    return lhs.client_id == rhs.client_id && lhs.sequence == rhs.sequence;
-}
-
-// @safe - Inequality comparison
-inline bool operator!=(const IdempotencyKey& lhs, const IdempotencyKey& rhs) {
-    return !(lhs == rhs);
-}
 
 // Hash function for IdempotencyKey. Only the hashbrown-style
 // `hash_one()` is provided — that is what `rusty::HashMap` (the
