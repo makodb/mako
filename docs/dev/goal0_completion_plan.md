@@ -479,3 +479,38 @@ functions and update call sites. Roughly 10 of the 25.
 not be a rewrite at all. Estimating "operator overloads" as a single
 category would have overstated it by 2.5x and hidden the fact that most
 resolve for free when their enclosing type converts.
+
+## Tooling correction: the region detector was fooled by comments
+
+Every survey in this document used a helper that tracked "am I inside a
+GEN block?" by testing whether a line *contains* `GEN-BEGIN`. Several
+files carry a comment like
+
+    // the transpiler regenerates the matching
+    // `/*RUSTYCPP:GEN-BEGIN ... END*/` block below it.
+
+which latches the flag on permanently — the comment has no matching
+`GEN-END`, so everything after it in that file reads as generated and is
+skipped. `callbacks.cpp`'s hand-written `try/catch` was invisible for
+exactly this reason.
+
+Fixed by matching the real marker at line start
+(`^\s*/\*RUSTYCPP:GEN-BEGIN\b`). Corrected numbers:
+
+| measure | reported | corrected |
+|---|---|---|
+| hand-written code lines | 5453 | **5591** |
+| try/catch occurrences | 8 | 8 (same total, different files — `callbacks.cpp` appears, `request_queue` drops to 1) |
+| operator declarations | 25 | **28** |
+
+**The file ranking is unchanged** — reactor 1487, client 1017,
+serializable 498, tcp_channel 383, server 354 — so every conclusion drawn
+from the census still holds, including the reordering. The undercount was
+2.5%.
+
+Worth recording anyway: this is the *fourth* measurement error this
+session (kernel-count metric, stale suite baseline, NFS-degraded test
+runs, and now the region detector). Three of the four were tools I wrote
+to check my own work. A survey helper deserves the same "verify it on a
+case you know the answer to" treatment as any other measurement — here,
+noticing that a file I *knew* contained `try/catch` did not appear.
