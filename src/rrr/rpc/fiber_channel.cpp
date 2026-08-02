@@ -119,7 +119,6 @@ struct OwnedFrame {
 // bind_callbacks lambdas). The custom dtor (detach callbacks before member
 // teardown) maps to `impl Drop`. Defined in the impl namespace below.
 struct FiberChannel;  // defined by the GEN block below
-rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self);
 rusty::Arc<IntEvent>      fiberchannel_make_event();
 void                      fiberchannel_wait_event(FiberChannel& self);
 void                      fiberchannel_arm(FiberChannel& self);
@@ -181,9 +180,24 @@ impl FiberChannel {
     // event and suspend until the inbound callback signals. The
     // move-out-of-deque pop, event construction, and fiber-suspending
     // wait are kernels; the loop/arming logic lives here.
+    fn try_pop(&mut self) -> rusty::Option<OwnedFrame> {
+        let mut guard = self.queue_.lock().unwrap();
+        if (*guard).empty() {
+            return None;
+        }
+        // Move the front frame out with mem::take (leaves an empty
+        // OwnedFrame behind), then drop the emptied slot. This was the
+        // canonical "move out of a reference" floor until 7.56 corrected
+        // the record: core::mem::take is the Rust-legal spelling and
+        // rusty::mem::take exists.
+        let f = core::mem::take(&mut (*guard).front());
+        (*guard).pop_front();
+        rusty::Some(f)
+    }
+
     fn recv_frame(&mut self) -> rusty::Option<OwnedFrame> {
         while true {
-            let popped = fiberchannel_try_pop(self);
+            let popped = self.try_pop();
             if popped.is_some() {
                 return popped;
             }
@@ -267,7 +281,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=6c09406423c158f4965e8be84f9bc1cd2c03aff158b26aa3d4f6660227a5b41c*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=48f6f0ad0c7a7b8576d5170950a48247abe7caf9498dbb26e3e8235b58d6cd11*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -296,6 +310,7 @@ struct FiberChannel {
 
     FiberChannel(ChannelConnectionProxy ch);
     void bind_callbacks();
+    rusty::Option<OwnedFrame> try_pop();
     rusty::Option<OwnedFrame> recv_frame();
     void on_inbound_frame(const ChannelFrame& f);
     void on_inbound_closed();
@@ -333,9 +348,19 @@ void FiberChannel::bind_callbacks() {
 });
 }
 
+rusty::Option<OwnedFrame> FiberChannel::try_pop() {
+    auto guard = this->queue_.lock().unwrap();
+    if (((*guard)).empty()) {
+        return rusty::Option<OwnedFrame>{rusty::None};
+    }
+    auto f = rusty::mem::take(((*guard)).front());
+    ((*guard)).pop_front();
+    return rusty::Option<OwnedFrame>(f);
+}
+
 rusty::Option<OwnedFrame> FiberChannel::recv_frame() {
     while (true) {
-        auto popped = fiberchannel_try_pop((*this));
+        auto popped = this->try_pop();
         if (popped.is_some()) {
             return std::move(popped);
         }
@@ -502,15 +527,6 @@ void fiberchannel_close(FiberChannel& self) {
 
 // @unsafe - Mutex lock + move-out-of-deque (the DSL cannot spell a
 // container front()-move); one lock covers test+move+pop.
-rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self) {
-    auto guard = self.queue_.lock().unwrap();
-    if ((*guard).empty()) {
-        return rusty::None;
-    }
-    OwnedFrame f = std::move((*guard).front());
-    (*guard).pop_front();
-    return rusty::Some(std::move(f));
-}
 
 // @unsafe - Reactor template factory + Arc hand-off.
 rusty::Arc<IntEvent> fiberchannel_make_event() {
