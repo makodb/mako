@@ -3831,3 +3831,47 @@ pointer-like", each with its own list, and two of the three could not see
 through a `using`. When a lowering looks wrong for a type behind an alias,
 suspect a *by-name* test that nobody taught about aliases — and check
 whether the site you are looking at is the only one.
+
+### 7.53 The `default_like` fix unlocks the "can't spell a default ctor" family
+
+A payoff of `44e1d3f8` that was not the point of the fix. Now that
+`Default::default()` lowers to a call that exists, the DSL *can* spell a
+default-constructed value:
+
+    fn fv_empty() -> FV      { Default::default() }  -> rusty::default_like<FV>()
+    fn rf_empty() -> ReplyFn { Default::default() }  -> rusty::default_like<ReplyFn>()
+
+Both compile. `default_like`'s bottom tier is `V{}`, so for a DSL-emitted
+aggregate it is *exactly* the value-init the kernels were written to
+provide — and it works for `rusty::Function` too, which is what
+server.cpp:480 said could not be expressed.
+
+**This corrects §7.49.1, which was too broad.** Two different things were
+filed under one "real floor":
+
+| construct | status |
+|---|---|
+| default **field** initializers — `struct V { a: i32 = 5 }` | **still a real floor** — a parse error; Rust has no such syntax |
+| spelling a default-constructed **value** — `FrameView{}`, `Function<..>{}` | **no longer a floor** — `Default::default()` |
+
+Only the first is a Rust-expressiveness gap. The second was a missing
+lowering all along, and its "we tried, it doesn't work" evidence was the
+`default_value` bug: `Default::default()` *did* emit something, it just
+emitted a call to a function that did not exist (§7.51.1). A tool that
+fails by emitting a plausible-looking symbol teaches the wrong lesson.
+
+Ten sites still carry a "cannot spell" comment; most are this family:
+
+    rpc/server.cpp:480,497   rpc/channel.cpp:137
+    rpc/tcp_channel.cpp:644  rpc/fiber_channel.cpp:131,262,500
+    rpc/inmemory_channel.cpp:69   misc/any_message.cpp:384,411
+
+Also relevant: `tcpconn_frame_view_empty` returns `FrameView`, which
+§7.51.2 called "a hand-written C++ POD". **That was wrong** — `FrameView`
+is DSL-defined (frame_codec.cpp), so both it and `ChannelFrame` are
+expressible, and that kernel pair can go entirely.
+
+Each conversion still needs its own gate, and a few of the ten are not
+this family (fiber_channel:500 is a Mutex + move-out-of-deque, and
+any_message:384 returns a reference to a local static). Check the type
+before assuming, per §7.51.2.
