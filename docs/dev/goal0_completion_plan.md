@@ -314,3 +314,46 @@ That is worth knowing now rather than at Phase 3. It means:
    neither the DSL nor C can express, and that category needs an explicit
    policy: keep it as documented exceptions, or redesign the API to avoid
    it.
+
+---
+
+## Policy update: no permanent exceptions — rewrite instead
+
+Owner ruling: **if a construct can be neither DSL nor C, rewrite it into
+convertible code with the same function.** So the terminal-state table
+gains no "documented exception" row, and the Phase 1 "hard" category is
+not a floor — it is a **rewrite backlog**.
+
+This makes Goal 0 reachable, and it is more work than converting. Each
+item below is rewriting *working* code to remove a C++ type-system
+dependency.
+
+### The rewrite backlog, from Phase 1
+
+| construct | where | rewrite to |
+|---|---|---|
+| `operator<<` / `operator>>` overloads | client, any_message, serializable | **named functions.** Precedent exists: Phase 8 deleted 97 such forwarders and made serde the only surface. This is the cheapest item and the pattern is proven |
+| `try/catch` | server (`parse_port`, shutdown hooks) | **`Result`-returning code.** `parse_port` already returns `Option`; the catch exists only because `std::stoi` throws. `strtol` does not |
+| generic `F&& write_fn` | client (6 kernels) | **`rusty::Function<..>`.** Call-site-compatible; needs a perf check on the request path |
+| variadic `deserialize_from(Ts&...)` | client, **88 call sites in `src/deptran`** | **fixed-arity** or a builder. The cost is the call sites, not the function |
+| variadic `Log_*(fmt, Args&&...)` | logging (5) | hardest of the variadics — every log call site in the tree feeds it |
+| RTTI registry (`typeid`/`type_index`) | any_message (5) | **explicit type ids.** A registry keyed by a declared id rather than `typeid` is convertible; this is a real redesign of `AnyMessage` |
+| C++20 coroutine awaiter | client (4) | **rewrite the await path**, or express the awaiter as generated C++ from a DSL shape. Largest single item |
+| `std::hash<Arc<T>>` specialization | client | **a named hash function** plus a map that takes it, instead of specialising in `namespace std` |
+
+### Ordering implication
+
+The rewrite backlog should be attacked **cheapest-proven-first**, because
+each rewrite is a behaviour-preserving change to working code and the
+early ones build confidence in the pattern:
+
+1. operator overloads → named functions (proven precedent)
+2. `try/catch` → `Result` (small, local)
+3. `F&&` → `rusty::Function` (mechanical, needs a perf number)
+4. `std::hash` specialization (small, one call site family)
+5. variadic `deserialize_from` (88 external call sites — mechanical but wide)
+6. RTTI registry redesign (design work)
+7. coroutine awaiter (design work)
+8. variadic `Log_*` (widest blast radius in the tree)
+
+Items 6-8 deserve their own design note before any code moves.
