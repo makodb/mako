@@ -59,9 +59,12 @@ inline constexpr RpcErrorCategory RpcErrorCategory_TIMEOUT() { return RpcErrorCa
 inline constexpr RpcErrorCategory RpcErrorCategory_INTERNAL() { return RpcErrorCategory::INTERNAL; }
 /*RUSTYCPP:GEN-END id=errors.error_category*/
 
-// Returns `&'static str` (lowering to std::string_view), not `const char*`:
-// the DSL has no way to spell a literal as a raw pointer. Same shape as
-// logging.cpp's log_level_tag. Callers are tests only, and EXPECT_STREQ
+// Returns `&'static str` (lowering to std::string_view), not `const char*`.
+// Same shape as logging.cpp's log_level_tag. (The original reason -- "the
+// DSL has no way to spell a literal as a raw pointer" -- overstates it:
+// `core::ptr::null()` and casts do lower. `&'static str` is kept because
+// a string_view return is the better API, not because char* is
+// unreachable.) Callers are tests only, and EXPECT_STREQ
 // (which needs a char*) becomes EXPECT_EQ against a string_view — the same
 // assertion, since string_view compares equal to a string literal.
 #if RUSTYCPP_RUST

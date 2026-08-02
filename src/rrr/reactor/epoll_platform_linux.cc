@@ -29,8 +29,11 @@ inline struct epoll_event epoll_event_zeroed() {
 // The Linux epoll_ctl(ADD) body — registration flags, EEXIST
 // del-then-re-add retry, and the EBADF teardown-race tolerance — as
 // DSL over the zeroed-event factory. The DEL retry passes &ev instead
-// of the legacy nullptr (the kernel ignores the payload for DEL;
-// the DSL has no null-pointer spelling).
+// of the legacy nullptr; the kernel ignores the payload for DEL, so
+// either is correct. (The original reason -- "the DSL has no
+// null-pointer spelling" -- is no longer true: `core::ptr::null_mut()`
+// lowers to `rusty::ptr::null_mut()`. Passing &ev is kept because it is
+// clearer, not because null is unavailable.)
 #if RUSTYCPP_RUST
 fn epoll_add_impl(poll_fd: i32, fd: i32, poll_mode: i32) -> i32 {
     let mut ev = epoll_event_zeroed();
