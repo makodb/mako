@@ -226,3 +226,34 @@ wrong-type bug.
    bare field/method refs with `self.` (scriptable from the 20-field
    inventory; every miss is a compile error since those names do not
    exist at namespace scope). DSL impl methods delegate.
+
+## Ref-arg emission fix — spec for a supervised run (not attempted unattended)
+
+Two mangles, both in the `syn::Expr::Reference` arm of
+`emit_expr_to_string` (the §7.50.4 neighborhood):
+
+ 1. **Struct-literal field init**: `Context { waker: &waker }` where the
+    C++ field is a raw pointer (`Waker*`) emits `.waker = waker` — the
+    `&` is collapsed as if binding a reference, but the target is a
+    pointer, so the address-of is load-bearing. The collapse logic needs
+    the *field's* C++ type, not just the operand's shape.
+ 2. **Reference call-arguments**: `poll_fn(&mut ctx)` where the callee
+    parameter lowers to `Context&` emits `poll_fn(&ctx)` — address-of
+    instead of the plain `ctx` a reference bind needs. Inverse error of
+    (1): here the `&` must drop, there it must stay. Correctness requires
+    the parameter type, which for `rusty::Function` calls is available
+    from the Function's signature.
+
+Deliberately NOT attempted in this run: §7.50.3 demonstrated empirically
+that changes in this family can fix their target, pass the whole suite,
+and still break the consumer build — and the working sidestep (kernel
+takes a POINTER; DSL passes `&raw mut x`, which lowers cleanly) costs a
+few lines per site. The three bodies waiting on this fix
+(`spawn_stackless_task`, `spawn_stackless_task_with_result`,
+`pollworker_poll_loop`) are all waker/callback machinery where the
+micro-kernel split (DSL owns control flow, kernel owns the waker wiring)
+already applies — `process_stackless_tasks` is the worked example.
+
+Verification requirements when attempted: fresh local-disk suite baseline
+(stash/unstash), regenerate-all + FULL build, and the failing-set
+comparison — with the §7.48 backlog separation if the pin has moved.
