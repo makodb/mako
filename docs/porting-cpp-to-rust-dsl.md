@@ -3875,3 +3875,32 @@ Each conversion still needs its own gate, and a few of the ten are not
 this family (fiber_channel:500 is a Mutex + move-out-of-deque, and
 any_message:384 returns a reference to a local static). Check the type
 before assuming, per §7.51.2.
+
+#### 7.53.1 The family is done; the two survivors are real
+
+The default-construction sweep finished at **16 kernels across five
+files**. Every one traced to `Default::default()` emitting
+`rusty::default_value<T>()`, a function that never existed (§7.51.1).
+
+Two "cannot spell" comments remain in src/rrr, and neither is this
+family. Checked on their own terms rather than assumed to follow the
+pattern:
+
+**`fiberchannel_try_pop`** (fiber_channel.cpp) --
+
+    OwnedFrame f = std::move((*guard).front());
+    (*guard).pop_front();
+
+moves out of a container element *through a reference*. Safe Rust cannot
+do that: you would need `pop_front()` to return the value, and
+`std::deque::pop_front` returns `void`. **Real.**
+
+**`registry()`** (any_message.cpp) -- a function-local `static` with
+runtime initialisation, returning a reference to it. Rust has no
+lazily-initialised mutable static short of `OnceLock`, and `&'static mut`
+is not safely expressible. **Real.**
+
+Both are "Rust has no way to say X", which §7.45 predicts is a genuine
+floor — and both survived a sweep that disproved thirteen claims of the
+other kind. That is the heuristic working in both directions, which is
+what makes it worth trusting: it is not simply "everything is stale".
