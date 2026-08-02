@@ -3614,3 +3614,52 @@ Verification for the pair cannot be the transpiler suite -- §7.50.3
 showed it reports an identical failing set while the tree is broken.
 It has to be: regenerate src/rrr, build `rrr`, and run a full gate,
 with backlog separated from the change's own effect (§7.48).
+
+### 7.51 Where the remaining kernels are, and which claims to re-check
+
+**Count kernels outside GEN regions.** A naive
+`grep -c '^inline\|^static'` counts *generated* code and is badly
+misleading: it ranked `rpc/errors.cpp` at 34, but every one of those is a
+transpiler-emitted `RpcError_XXX()` enum accessor inside a GEN block. The
+file has zero hand-written kernels. Excluding GEN regions:
+
+| file | hand-written kernels |
+|---|---|
+| misc/serializable.cpp | 104 |
+| reactor/reactor.cpp | 30 |
+| rpc/client.cpp | 21 |
+| rpc/server.cpp | 19 |
+| rpc/tcp_channel.cpp | 14 |
+| misc/any_message.cpp | 9 |
+
+`client.cpp` is at its floor after this pass: what remains is
+variadic/SFINAE templates, `reinterpret_cast` helpers (`str_as_i8`,
+`client_dsl_addr_to_cstr`), the single `std::chrono` interop point
+(`fut_secs`), and default-ctor factories (`reply_buffer_empty`,
+`make_pending_queue`) -- the last being the confirmed real floor (§7.49.1).
+
+**Triage of the stated causes in the next two targets**, by the §7.45
+phrasing rule:
+
+| site | claim | verdict |
+|---|---|---|
+| reactor 1294 | variadic ctor / `add_event(Args...)` | **real** — Rust has no variadics |
+| server 497 | `#[cpp_ctor]` default-init | **real** — §7.49.1 |
+| server 1080 | `*_to_string` varargs | **real** — varargs UB |
+| reactor 2607 | `QuorumFinalizeFn` fn-type arg | **stale** (§7.49) — kept only as kernel vocabulary |
+| reactor 3762 | "RefCell borrow returns a temporary Ref the DSL can't bind as a named guard" | **stale** — probed |
+| reactor 739, 2269 | "aliased so the DSL can spell" | unprobed |
+| server 480, 932 | "cannot spell" / "does not parse" | unprobed |
+
+The 3762 probe, for the record:
+
+    let guard = slot_.borrow();          -> auto&& guard = rusty::borrow(slot_);
+    let mut guard = slot_.borrow_mut();  -> auto&& guard = slot_.borrow_mut();
+
+with `deref_if_pointer_like(guard)` for the access, so both
+`reactor_tls_save_running_impl` and `reactor_tls_restore_running_impl`
+are convertible. (Note the asymmetry: the shared borrow lowers to the free
+function `rusty::borrow(x)`, the mutable one stays a method.)
+
+That makes **11 stale against 3 real** so far, and the phrasing rule has
+predicted every one.
