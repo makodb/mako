@@ -1800,6 +1800,29 @@ class Fiber {
 // continue_, raw pointer access through the class-static thread_local
 // fields, get_reactor returning thread-local Rc) carry their own
 // `// @unsafe` overrides; the rest is now analyzed as @safe by default.
+// One slot in the reactor's stackless-task table. Hoisted out of
+// `class Reactor` (Rust does not allow item declarations inside an
+// `impl`, so a nested struct could never convert in place -- same move
+// server.cpp made for ShutdownState). The `= false` field defaults are
+// gone (Rust has no default field initializers); the one construction
+// site aggregate-initialises instead.
+#if RUSTYCPP_RUST
+struct StacklessTaskEntry {
+    active: bool,
+    queued: bool,
+    poll_once: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool>,
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.14 version=1 rust_sha256=ade01046467a0dbcee0cfcc44953857b6c2ec4348e591ad6961d68a9c00eacbf*/
+struct StacklessTaskEntry;
+
+struct StacklessTaskEntry {
+    bool active;
+    bool queued;
+    rusty::Function<bool(rusty::Context&)> poll_once;
+};
+/*RUSTYCPP:GEN-END id=reactor.14*/
+
 class Reactor {
  public:
   // Default constructor - all fields have default constructors
@@ -1876,11 +1899,6 @@ class Reactor {
   // moves the function out of its slot before invoking it (so the
   // reactor's RefCell guards on `stackless_tasks_` aren't held across
   // user code), then moves it back if the poll didn't return Ready.
-  struct StacklessTaskEntry {
-    bool active = false;
-    bool queued = false;
-    rusty::Function<bool(rusty::Context&)> poll_once;
-  };
   rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
   rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
   rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
@@ -3991,10 +4009,7 @@ size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)>
   }
 
   auto tasks_guard = stackless_tasks_.borrow_mut();
-  StacklessTaskEntry entry;
-  entry.active = true;
-  entry.queued = false;
-  entry.poll_once = std::move(poller);
+  StacklessTaskEntry entry{true, false, std::move(poller)};
   tasks_guard->push(std::move(entry));
   if (stackless_profile_enabled()) {
     g_stackless_profile.reg_calls.fetch_add(1, std::memory_order_relaxed);
