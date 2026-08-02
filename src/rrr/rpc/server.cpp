@@ -484,7 +484,6 @@ using ServerReplyFn = rusty::Function<void(BinaryWriteArchive&)>;
 // file; each carries its own `// @unsafe` at the definition site.
 void sconn_reply(const ServerConnection& self, const Request& req,
                  i32 error_code, ServerReplyFn write_fn);
-void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy);
 void sconn_decode_request_and_dispatch(const ServerConnection& self,
                                        const std::uint8_t* bytes, std::size_t size);
 void sconn_dispatch_response_frame_via_channel(const ServerConnection& self,
@@ -574,8 +573,63 @@ impl ServerConnection {
         }
     }
 
-    fn bind_channel(&mut self, proxy: ChannelConnectionProxy) {
-        sconn_bind_channel(self, proxy)
+    // Mirrors ClientConnection::bind_channel_direct (client.cpp): weak
+    // clones — one per closure — so the callbacks never cycle through
+    // `channel_proxy_`; callbacks installed BEFORE the proxy moves into
+    // the slot so none of them runs under the rusty::Mutex.
+    fn bind_channel(&mut self, mut proxy: ChannelConnectionProxy) {
+        if !proxy.is_valid() {
+            return;
+        }
+        let weak_frame: WeakServerConnection = self.weak_self_.clone();
+        let weak_closed: WeakServerConnection = self.weak_self_.clone();
+        let weak_error: WeakServerConnection = self.weak_self_.clone();
+        {
+            // Concrete `Box<..>`, not the ChannelConnectionProxy alias:
+            // through the alias the pointer-like check fails and the calls
+            // lower to `.set_on_frame(..)` (dot) instead of `->` (docs 7.50).
+            let ch: &mut Box<ChannelConnectionBase> = &mut proxy;
+            ch.set_on_frame(move |f: &ChannelFrame| {
+                let sconn_opt = weak_frame.upgrade();
+                if sconn_opt.is_none() {
+                    return;
+                }
+                let sconn = sconn_opt.unwrap();
+                // Dispatch only READS the connection (status_ via Cell,
+                // ctx_ through the Arc), so it takes a const&.
+                sconn_decode_request_and_dispatch((*sconn), f.payload, f.size);
+            });
+            // on_closed runs the existing close path so the connection
+            // transitions to CLOSED. The channel-layer contract guarantees
+            // on_closed fires exactly once; close() is itself idempotent
+            // (status_ == CLOSED short-circuits).
+            ch.set_on_closed(move |reason: ChannelError| {
+                let sconn_opt = weak_closed.upgrade();
+                if sconn_opt.is_none() {
+                    return;
+                }
+                let sconn = sconn_opt.unwrap();
+                (*sconn).close();
+            });
+            // on_error logs and force-closes. Per the channel-layer
+            // contract, fatal errors are followed by on_closed, so the
+            // close() here is also defensive — close() is idempotent.
+            ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+                let sconn_opt = weak_error.upgrade();
+                if sconn_opt.is_none() {
+                    return;
+                }
+                let sconn = sconn_opt.unwrap();
+                Log_warn("rrr::ServerConnection: channel error {}: {}",
+                         channel_error_to_string(err), msg);
+                (*sconn).close();
+            });
+        }
+        {
+            let mut guard = self.channel_proxy_.lock().unwrap();
+            *guard = rusty::Some(proxy);
+        }
+        self.channel_mode_.set(true);
     }
 
     fn run_async(&self, f: rusty::Function<dyn FnMut()>) -> i32 {
@@ -588,7 +642,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=f87c207ae32b740d974ce395c4e036f0da7638995b1833207bc3f84020e62157*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=c2bf67870cd84340a0ca1e2aa6933e506acc50fcd4512ee39211344bb524824b*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -663,7 +717,45 @@ void ServerConnection::close() const {
 }
 
 void ServerConnection::bind_channel(ChannelConnectionProxy proxy) {
-    sconn_bind_channel((*this), std::move(proxy));
+    if (rusty::detail::rust_not(proxy.is_valid())) {
+        return;
+    }
+    WeakServerConnection weak_frame = rusty::clone(this->weak_self_);
+    WeakServerConnection weak_closed = rusty::clone(this->weak_self_);
+    WeakServerConnection weak_error = rusty::clone(this->weak_self_);
+    {
+        rusty::Box<ChannelConnectionBase>& ch = proxy;
+        ch->set_on_frame([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
+auto sconn_opt = weak_frame.upgrade();
+if (sconn_opt.is_none()) {
+    return;
+}
+const auto sconn = sconn_opt.unwrap();
+sconn_decode_request_and_dispatch((rusty::detail::deref_if_pointer_like(sconn)), f.payload, f.size);
+});
+        ch->set_on_closed([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
+auto sconn_opt = weak_closed.upgrade();
+if (sconn_opt.is_none()) {
+    return;
+}
+const auto sconn = sconn_opt.unwrap();
+((rusty::detail::deref_if_pointer_like(sconn))).close();
+});
+        ch->set_on_error([=, weak_error = std::move(weak_error)](ChannelError err, std::string_view msg) {
+auto sconn_opt = weak_error.upgrade();
+if (sconn_opt.is_none()) {
+    return;
+}
+const auto sconn = sconn_opt.unwrap();
+Log_warn("rrr::ServerConnection: channel error {}: {}", channel_error_to_string(std::move(err)), std::move(msg));
+((rusty::detail::deref_if_pointer_like(sconn))).close();
+});
+    }
+    {
+        auto guard = this->channel_proxy_.lock().unwrap();
+        *guard = rusty::Option<ChannelConnectionProxy>(std::move(proxy));
+    }
+    this->channel_mode_.set(true);
 }
 
 int32_t ServerConnection::run_async(rusty::Function<void()> f) const {
@@ -1190,14 +1282,6 @@ inline void server_invoke_shutdown_hook_safely(ShutdownHook& hook) {
 // express directly.
 int32_t server_start_impl(Server& self, const int8_t* bind_addr);
 
-// Forward declaration for the `server_drop_impl` helper — the body
-// is defined in plain C++ further down. Auto-deref on
-// `Box<ChannelListenerBase>` for `.close()` and on
-// `Arc<ServerConnection>` (via `Vec[i]`) for `.close()` doesn't fire
-// in the DSL emission for these complex chained accesses, so the
-// body is hand-written.
-void server_drop_impl(Server& self);
-
 // @safe - Iterate over each registered service and invoke the
 // callback. Lives here as a free function template so the DSL's
 // `for_each_service<F>` can delegate without trying to emit the
@@ -1261,8 +1345,37 @@ struct Server {
 }
 
 impl Drop for Server {
+    // 5e/5f teardown. The channel-mode listener close is scheduled on
+    // the poll thread via a OneTimeJob so commands are processed in
+    // order (mirrors `Client::close`'s 4g3c3 fix); dropping the Box
+    // inside the job then releases the backend listener, closing its
+    // fd. Accepted channel connections are closed eagerly so peers see
+    // EOF immediately; close() is idempotent everywhere here. Services
+    // outlive this via each ServerConnection's Arc<RpcServiceContext>.
     fn drop(&mut self) {
-        server_drop_impl(self);
+        if self.channel_listener_field.is_some() {
+            let listener_opt: Option<ChannelListenerProxy> =
+                core::mem::take(&mut self.channel_listener_field);
+            let mut listener_box: Box<ChannelListenerBase> = listener_opt.unwrap();
+            let close_job: Arc<OneTimeJob> =
+                Arc::<OneTimeJob>::new_(OneTimeJob::new_(move || {
+                    listener_box.close();
+                }));
+            // Implicit Arc<OneTimeJob> -> Arc<Job> upcast via rusty::Arc's
+            // template ctor (U* convertible to T*).
+            let pt: &Arc<PollThread> = self.poll_thread_field.as_ref().unwrap();
+            pt.add(close_job);
+        }
+        {
+            let mut guard = self.channel_sconns_field.lock().unwrap();
+            let mut i: usize = 0usize;
+            while i < (*guard).len() {
+                (*(*guard)[i]).close();
+                i += 1usize;
+            }
+            (*guard).clear();
+        }
+        self.ctx_field = None;
     }
 }
 
@@ -1453,7 +1566,7 @@ impl Server {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=29325d674696bf2e2fb28ee5610c5f027085de3dc9f124b30ff0357583dde95a*/
+/*RUSTYCPP:GEN-BEGIN id=server.1 version=1 rust_sha256=2508f05f06986c754962b3c51f6101d5f7eb85ff62c23525906c5f4fa389e04c*/
 struct Server;
 
 struct Server {
@@ -1526,7 +1639,25 @@ struct Server {
 
 Server::~Server() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    server_drop_impl((*this));
+    if (this->channel_listener_field.is_some()) {
+        rusty::Option<ChannelListenerProxy> listener_opt = rusty::mem::take(this->channel_listener_field);
+        rusty::Box<ChannelListenerBase> listener_box = listener_opt.unwrap();
+        const rusty::Arc<OneTimeJob> close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([=, listener_box = std::move(listener_box)]() mutable {
+listener_box->close();
+}));
+        const rusty::Arc<PollThread>& pt = this->poll_thread_field.as_ref().unwrap();
+        pt->add(std::move(close_job));
+    }
+    {
+        auto guard = this->channel_sconns_field.lock().unwrap();
+        size_t i = static_cast<size_t>(0);
+        while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*guard))) {
+            ((rusty::detail::deref_if_pointer_like((*guard)[i]))).close();
+            i += static_cast<size_t>(1);
+        }
+        ((*guard)).clear();
+    }
+    this->ctx_field = rusty::Option<rusty::Arc<RpcServiceContext>>{rusty::None};
 }
 
 Server Server::new_(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
@@ -1761,55 +1892,6 @@ void sconn_reply(const ServerConnection& self, const Request& req,
 // fails and the callback short-circuits). The accept path in
 // subsequent leaves (5e) wires `weak_self_` immediately after
 // construction.
-void sconn_bind_channel(ServerConnection& self, ChannelConnectionProxy proxy) {
-    if (!proxy) return;
-
-    // Install callbacks BEFORE moving the proxy into the slot, so
-    // the callbacks can capture a Weak<ServerConnection> without
-    // holding the rusty::Mutex.
-    WeakServerConnection weak_self = self.weak_self_;
-
-    // @unsafe - lambda capture, channel proxy mutator
-    proxy->set_on_frame([weak_self](const ChannelFrame& f) {
-        auto sconn_opt = weak_self.upgrade();
-        if (sconn_opt.is_none()) return;
-        auto sconn = sconn_opt.unwrap();
-        // No cast: dispatch only READS the connection (status_ via Cell,
-        // ctx_ through the Arc), so it takes a const&.
-        sconn_decode_request_and_dispatch(*sconn, f.payload, f.size);
-    });
-    // 5d: on_closed runs the existing close path so the connection
-    // transitions to CLOSED. The channel-layer contract guarantees
-    // on_closed fires exactly once; close() is itself idempotent
-    // (status_ == CLOSED short-circuits).
-    proxy->set_on_closed([weak_self](ChannelError /*reason*/) {
-        auto sconn_opt = weak_self.upgrade();
-        if (sconn_opt.is_none()) return;
-        auto sconn = sconn_opt.unwrap();
-        sconn->close();   // close() is const now — no cast needed
-    });
-    // 5d: on_error logs and force-closes. Per the channel-layer
-    // contract, fatal errors are followed by on_closed, so the
-    // close() here is also defensive — close() is idempotent.
-    proxy->set_on_error([weak_self](ChannelError err,
-                                    std::string_view message) {
-        auto sconn_opt = weak_self.upgrade();
-        if (sconn_opt.is_none()) return;
-        auto sconn = sconn_opt.unwrap();
-        Log_warn("rrr::ServerConnection: channel error {}: {}",
-                 channel_error_to_string(err),
-                 std::string_view(message.data(), message.size()));
-        sconn->close();   // close() is const now — no cast needed
-    });
-
-    // @unsafe { rusty::Mutex::lock + ChannelConnectionProxy move }
-    {
-        auto guard = self.channel_proxy_.lock().unwrap();
-        *guard = rusty::Some(std::move(proxy));
-    }
-    self.channel_mode_.set(true);
-}
-
 // @unsafe - 5c: decode one channel-mode request frame and dispatch.
 //
 // Mirrors the per-packet body of `handle_read` minus the size-framed
@@ -2084,47 +2166,6 @@ int32_t server_start_impl(Server& self, const int8_t* bind_addr_raw) {
 
     verify(false);
     return -1;
-}
-
-// @unsafe - The destructor body. Lifted from the legacy `~Server()`
-// out-of-line, only with `self.field` instead of bare member names.
-// Kept out of the DSL because the OneTimeJob lambda init-capture
-// (`[listener_box = std::move(...).unwrap()]`) and the channel-
-// connection iteration through rusty::Mutex guard rely on auto-deref
-// quirks that don't emit cleanly through the DSL pipeline.
-void server_drop_impl(Server& self) {
-    // 5e/5f: tear down the channel-mode listener (if bound). The
-    // proxy's close() is idempotent; dropping the Box afterwards
-    // releases the proxy's underlying TcpListener (or other
-    // backend), which closes its listening fd via its destructor.
-    // We schedule the close on the poll thread via a OneTimeJob so
-    // commands are processed in order (mirrors `Client::close`'s
-    // 4g3c3 fix).
-    if (self.channel_listener_field.is_some()) {
-        auto close_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
-            [listener_box = std::move(self.channel_listener_field).unwrap()]() mutable {
-                listener_box->close();
-            }));
-        auto close_job_base = rusty::Arc<Job>(close_job);
-        self.poll_thread_field.as_ref().unwrap()->add(std::move(close_job_base));
-        self.channel_listener_field = rusty::None;
-    }
-    // 5f: actively close each accepted channel-mode ServerConnection
-    // before dropping the Arcs. ServerConnection::close() drives
-    // the bound channel proxy's close() which closes the underlying
-    // TcpConnection's fd, so the peer (Client) sees EOF
-    // immediately. close() is idempotent.
-    {
-        auto guard = self.channel_sconns_field.lock().unwrap();
-        for (auto& sconn : *guard) {
-            sconn->close();   // close() is const (status_ is a Cell)
-        }
-        (*guard).clear();
-    }
-    // No need to wait for connections - Arc<RpcServiceContext>
-    // ensures services stay alive until the last ServerConnection
-    // drops its Arc reference.
-    self.ctx_field = rusty::None;
 }
 
 }  // namespace rrr

@@ -475,8 +475,8 @@ inline rusty::Box<PairAndProxies> make_pair_with_capture(
     auto out = rusty::make_box<PairAndProxies>();
     auto pair = make_channel_pair_for_testing(std::move(a_addr),
                                               std::move(b_addr));
-    out->a = rusty::Some(std::move(pair.first));
-    out->b = rusty::Some(std::move(pair.second));
+    out->a = rusty::Some(std::move(std::get<0>(pair)));
+    out->b = rusty::Some(std::move(std::get<1>(pair)));
     out->a_proxy = rusty::Some(
         make_inmemory_channel_proxy(out->a.as_ref().unwrap().clone()));
     out->b_proxy = rusty::Some(

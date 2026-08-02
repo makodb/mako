@@ -41,6 +41,12 @@ RUSTY_METHOD_DISPATCH(unwrap)
 
 export namespace rrr {
 
+// @safe - name bridges: the DSL writes bare `AtomicU64::new(...)` /
+// `Ordering::Relaxed` (factory_connect's client-address counter); the
+// GEN resolves them through these using-declarations, mirroring
+// connection_metrics.cpp.
+using rusty::sync::atomic::AtomicU64;
+using rusty::sync::atomic::Ordering;
 
 class InMemoryListener;
 
@@ -1065,7 +1071,7 @@ ChannelFactoryProxy make_inmemory_factory_proxy(rusty::Arc<InMemoryFactory> fact
  * (which internally builds a pair via this same path); this
  * helper is a test-only shortcut.
  */
-std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
+std::tuple<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
 make_channel_pair_for_testing(std::string a_addr, std::string b_addr);
 
 
@@ -1087,87 +1093,145 @@ namespace rrr {
 // InMemoryChannel
 // ---------------------------------------------------------------------------
 
-// @unsafe - const_cast<InMemoryConnectionState&>(*self.state_.get()) const_cast + raw `uint8_t*` byte slicing
-// (`bytes.assign(f.payload, f.payload + f.size)` then `bytes.data()`).
-ChannelError inmemory_channel_send_frame(const InMemoryChannel& self, const ChannelFrame& f) {
-    // Default-constructed wrapper: Arc holds an empty Function; we'll
-    // either reassign (wrapper copy = Arc clone, atomic refcount bump)
-    // or leave it empty.
-    OnFrameCallback peer_on_frame;
-    bool peer_already_closed = false;
-    bool self_already_closed = false;
-    bool drop_this_send      = false;
-    bool inject_error        = false;
-    ChannelError injected_err = ChannelError::None;
-
-    // Snapshot the peer's on_frame and the closed flags under the
-    // lock; release the lock before invoking the callback so the
-    // callback can call back into this channel without deadlocking
-    // (typical pattern: receiver fires send_frame in response).
-    //
-    // 6c: also consume one tick of the per-side fault injection
-    // counters here. Drop counter takes precedence over error
-    // counter — if both are set, drops fire first while the drop
-    // counter is positive.
+// Authored as inline Rust DSL. The old body's stated blockers expired:
+// the const_cast was never needed (rusty::Mutex::lock() has a const
+// overload), and the raw `uint8_t*` byte copy is `from_raw_parts` +
+// `extend_from_slice` — same reserve-then-copy, length carried by the
+// slice.
+//
+// Snapshot the peer's on_frame and the closed flags under the lock;
+// release the lock before invoking the callback so the callback can
+// call back into this channel without deadlocking (typical pattern:
+// receiver fires send_frame in response). 6c: also consume one tick of
+// the per-side fault-injection counters — drops fire first while the
+// drop counter is positive.
+#if RUSTYCPP_RUST
+fn inmemory_channel_send_frame(ch: &InMemoryChannel, f: &ChannelFrame) -> ChannelError {
+    // Default wrapper: an empty Function; either reassigned under the
+    // lock (wrapper copy = Arc clone) or left empty.
+    let mut peer_on_frame: OnFrameCallback = Default::default();
+    let mut peer_already_closed = false;
+    let mut self_already_closed = false;
+    let mut drop_this_send = false;
+    let mut inject_error = false;
+    let mut injected_err: ChannelError = ChannelError_None();
     {
-        // rusty::Mutex::lock() has a const overload returning a mutable
-        // guard, so the shared Arc view suffices — no const_cast.
-        auto guard = (*self.state_).inner.lock().unwrap();
-        if (self.is_a_side_) {
+        let mut guard = (*ch.state_).inner.lock().unwrap();
+        if ch.is_a_side_ {
             self_already_closed = (*guard).a_closed;
             peer_already_closed = (*guard).b_closed;
-            peer_on_frame       = (*guard).b_on_frame;
-            if ((*guard).drop_next_sends_a > 0) {
+            peer_on_frame = (*guard).b_on_frame.clone();
+            if (*guard).drop_next_sends_a > 0i32 {
                 drop_this_send = true;
-                --(*guard).drop_next_sends_a;
-            } else if ((*guard).send_error_count_a > 0) {
-                inject_error  = true;
-                injected_err  = (*guard).send_error_a;
-                --(*guard).send_error_count_a;
+                (*guard).drop_next_sends_a -= 1i32;
+            } else if (*guard).send_error_count_a > 0i32 {
+                inject_error = true;
+                injected_err = (*guard).send_error_a;
+                (*guard).send_error_count_a -= 1i32;
             }
         } else {
             self_already_closed = (*guard).b_closed;
             peer_already_closed = (*guard).a_closed;
-            peer_on_frame       = (*guard).a_on_frame;
-            if ((*guard).drop_next_sends_b > 0) {
+            peer_on_frame = (*guard).a_on_frame.clone();
+            if (*guard).drop_next_sends_b > 0i32 {
                 drop_this_send = true;
-                --(*guard).drop_next_sends_b;
-            } else if ((*guard).send_error_count_b > 0) {
-                inject_error  = true;
-                injected_err  = (*guard).send_error_b;
-                --(*guard).send_error_count_b;
+                (*guard).drop_next_sends_b -= 1i32;
+            } else if (*guard).send_error_count_b > 0i32 {
+                inject_error = true;
+                injected_err = (*guard).send_error_b;
+                (*guard).send_error_count_b -= 1i32;
             }
         }
     }
 
-    if (self_already_closed) {
-        return ChannelError::ConnectionReset;
+    if self_already_closed {
+        return ChannelError_ConnectionReset();
     }
-    if (peer_already_closed) {
-        return ChannelError::ConnectionReset;
+    if peer_already_closed {
+        return ChannelError_ConnectionReset();
     }
     // 6c: fault injection. Drop happens first; then error.
-    if (drop_this_send) {
-        return ChannelError::None;  // silent drop; sender unaware
+    if drop_this_send {
+        return ChannelError_None(); // silent drop; sender unaware
     }
-    if (inject_error) {
+    if inject_error {
         return injected_err;
     }
 
     // Copy bytes into a temporary buffer so the peer's callback can
     // safely retain a pointer for the duration of the call (the
     // ChannelFrame contract: payload valid only during on_frame).
-    std::vector<std::uint8_t> bytes;
-    if (f.size > 0 && f.payload != nullptr) {
-        bytes.assign(f.payload, f.payload + f.size);
+    let mut bytes: Vec<u8> = Vec::new();
+    if f.size > 0usize && !f.payload.is_null() {
+        bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(f.payload, f.size) });
     }
-    ChannelFrame delivered{bytes.data(), bytes.size()};
+    let delivered = ChannelFrame { payload: bytes.as_ptr(), size: bytes.len() };
 
-    if (peer_on_frame) {
+    if peer_on_frame {
         peer_on_frame(delivered);
     }
-    return ChannelError::None;
+    ChannelError_None()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.14 version=1 rust_sha256=488bd7d4a5e17dab8f0540f73ba54d3077ab2f6f1b1db23f754232a1f9c9b3ac*/
+ChannelError inmemory_channel_send_frame(const InMemoryChannel& ch, const ChannelFrame& f) {
+    OnFrameCallback peer_on_frame = rusty::default_like<OnFrameCallback>();
+    auto peer_already_closed = false;
+    auto self_already_closed = false;
+    auto drop_this_send = false;
+    auto inject_error = false;
+    ChannelError injected_err = ChannelError_None();
+    {
+        auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(ch.state_)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+        if (ch.is_a_side_) {
+            self_already_closed = (rusty::detail::deref_if_pointer_like(guard)).a_closed;
+            peer_already_closed = (rusty::detail::deref_if_pointer_like(guard)).b_closed;
+            peer_on_frame = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).b_on_frame);
+            if (rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_a) > static_cast<int32_t>(0)) {
+                drop_this_send = true;
+                rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_a) -= static_cast<int32_t>(1);
+            } else if (rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).send_error_count_a) > static_cast<int32_t>(0)) {
+                inject_error = true;
+                injected_err = (rusty::detail::deref_if_pointer_like(guard)).send_error_a;
+                rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).send_error_count_a) -= static_cast<int32_t>(1);
+            }
+        } else {
+            self_already_closed = (rusty::detail::deref_if_pointer_like(guard)).b_closed;
+            peer_already_closed = (rusty::detail::deref_if_pointer_like(guard)).a_closed;
+            peer_on_frame = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).a_on_frame);
+            if (rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_b) > static_cast<int32_t>(0)) {
+                drop_this_send = true;
+                rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).drop_next_sends_b) -= static_cast<int32_t>(1);
+            } else if (rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).send_error_count_b) > static_cast<int32_t>(0)) {
+                inject_error = true;
+                injected_err = (rusty::detail::deref_if_pointer_like(guard)).send_error_b;
+                rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).send_error_count_b) -= static_cast<int32_t>(1);
+            }
+        }
+    }
+    if (self_already_closed) {
+        return ChannelError_ConnectionReset();
+    }
+    if (peer_already_closed) {
+        return ChannelError_ConnectionReset();
+    }
+    if (drop_this_send) {
+        return ChannelError_None();
+    }
+    if (inject_error) {
+        return std::move(injected_err);
+    }
+    rusty::Vec<uint8_t> bytes = rusty::Vec<uint8_t>::new_();
+    if ((rusty::detail::deref_if_pointer_like(f.size) > static_cast<size_t>(0)) && rusty::detail::rust_not((f.payload == nullptr))) {
+        bytes.extend_from_slice(rusty::from_raw_parts(f.payload, f.size));
+    }
+    const auto delivered = ChannelFrame{.payload = rusty::as_ptr(bytes), .size = rusty::len(bytes)};
+    if (peer_on_frame) {
+        peer_on_frame(std::move(delivered));
+    }
+    return ChannelError_None();
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.14*/
 
 // ---------------------------------------------------------------------------
 // 6c: fault injection methods (test-only).
@@ -1274,146 +1338,216 @@ void inmemory_channel_clear_fault_injection(const InMemoryChannel& ch) {
 // InMemoryListener
 // ---------------------------------------------------------------------------
 
-// @unsafe - inline `const_cast<InMemoryConnectionState*>(state.get())`
-// to bootstrap the shared connection state before the per-side Arcs
-// are constructed.
-rusty::Option<rusty::Arc<InMemoryChannel>>
-inmemory_listener_accept_for_connect(const InMemoryListener& self, const std::string& client_address) {
-    OnAcceptCallback cb_to_fire;
-    std::string server_address;
+// Authored as inline Rust DSL. The old const_cast bootstrap is gone:
+// rusty::Mutex::lock() has a const overload, so the freshly minted
+// Arc's shared view seeds the peer addresses directly.
+//
+// Naming convention for the paired state: each side's *own* identity
+// is stored in `<side>_peer_address`; the peer_address() accessors
+// swap, so A (client) reads b_peer_address (the server's identity)
+// and B (server) reads a_peer_address (the client's identity).
+#if RUSTYCPP_RUST
+fn inmemory_listener_accept_for_connect(
+    lst: &InMemoryListener,
+    client_address: &std::string,
+) -> Option<Arc<InMemoryChannel>> {
+    let mut cb_to_fire: OnAcceptCallback = Default::default();
+    let mut server_address: std::string = Default::default();
     {
-        auto guard = self.inner_.lock().unwrap();
-        if ((*guard).closed || (*guard).local_address.empty()) {
-            return rusty::None;
+        let mut guard = lst.inner_.lock().unwrap();
+        if (*guard).closed || (*guard).local_address.is_empty() {
+            return None;
         }
-        cb_to_fire = (*guard).on_accept;  // wrapper copy = Arc clone (refcount++)
-        server_address = (*guard).local_address;
+        // wrapper copy = Arc clone (refcount++)
+        cb_to_fire = (*guard).on_accept.clone();
+        server_address = (*guard).local_address.clone();
     }
-    if (!cb_to_fire) {
+    if !cb_to_fire {
         // Listener exists but has no accept handler installed yet.
-        // Mirror TCP: accept the connection and the proxy is dropped
-        // (effectively connection refused from the user's perspective).
-        // Return None so the factory surfaces ConnectionRefused.
-        return rusty::None;
+        // Mirror TCP: return None so the factory surfaces
+        // ConnectionRefused.
+        return None;
     }
 
-    // Build the paired connection state. Naming convention:
-    // `a_peer_address` is the peer of the A-side (client), so it
-    // holds the *server's* address. `b_peer_address` is the peer of
-    // the B-side (server), holding the *client's* address. The
-    // peer_address() accessors swap accordingly:
-    //   - A-side (client).peer_address() = b_peer_address... wait,
-    // let me re-derive: peer_address() returns the OTHER side's
-    // identity. From A's perspective, the peer is B (server). So
-    // A.peer_address() = server's identity.
-    //
-    // Layout: store each side's *own* identity in
-    // `<side>_peer_address`. Then A.peer_address() returns
-    // b_peer_address (B's identity = the server addr); B's
-    // peer_address() returns a_peer_address (A's identity = the
-    // client addr).
-    // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so build
-    // the state with an explicitly value-initialized inner instead of make().
-    auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{
-        .inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(InMemoryConnectionStateInner{})});
+    // rusty::Mutex has no default ctor, so build the state with an
+    // explicitly value-initialized inner instead of make().
+    let state = Arc::<InMemoryConnectionState>::new_(InMemoryConnectionState {
+        inner: rusty::Mutex::<InMemoryConnectionStateInner>::new(Default::default()),
+    });
     {
-        // No external mutators yet — but the rusty::Mutex-owned inner
-        // requires going through the lock guard for any access.
-        auto guard = (*state).inner.lock().unwrap();
-        (*guard).a_peer_address = client_address;  // A is the client
-        (*guard).b_peer_address = server_address;  // B is the server
+        let mut guard = (*state).inner.lock().unwrap();
+        (*guard).a_peer_address = client_address.clone(); // A is the client
+        (*guard).b_peer_address = server_address;         // B is the server
     }
-    auto client_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(),
-                                                          /*is_a_side=*/true));
-    auto server_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(),
-                                                          /*is_a_side=*/false));
+    let client_side = Arc::<InMemoryChannel>::new_(InMemoryChannel::new(state.clone(), true));
+    let server_side = Arc::<InMemoryChannel>::new_(InMemoryChannel::new(state.clone(), false));
 
     // Hand the server-side proxy to the on_accept callback. The
-    // callback typically wires server-side handlers (set_on_frame
-    // etc.) inline.
-    cb_to_fire(make_inmemory_channel_proxy(std::move(server_side)));
+    // callback typically wires server-side handlers inline.
+    cb_to_fire(make_inmemory_channel_proxy(server_side));
 
-    return rusty::Some(std::move(client_side));
+    Some(client_side)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.16 version=1 rust_sha256=5cbbca2e53f8730446cc4549a8c3a0ef9eacb492caad68f9e42f2e1d0f99c0f0*/
+rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(const InMemoryListener& lst, const std::string& client_address) {
+    OnAcceptCallback cb_to_fire = rusty::default_like<OnAcceptCallback>();
+    std::string server_address = rusty::default_like<std::string>();
+    {
+        auto&& guard = rusty::deref_call(lst.inner_.lock(), rusty::detail::__mdisp_unwrap{});
+        if (rusty::detail::deref_if_pointer_like((rusty::detail::deref_if_pointer_like(guard)).closed) || rusty::is_empty((rusty::detail::deref_if_pointer_like(guard)).local_address)) {
+            return rusty::Option<rusty::Arc<InMemoryChannel>>{rusty::None};
+        }
+        cb_to_fire = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).on_accept);
+        server_address = rusty::clone((rusty::detail::deref_if_pointer_like(guard)).local_address);
+    }
+    if (rusty::detail::rust_not(cb_to_fire)) {
+        return rusty::Option<rusty::Arc<InMemoryChannel>>{rusty::None};
+    }
+    const auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{.inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(rusty::default_like<InMemoryConnectionStateInner>())});
+    {
+        auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(state)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+        (rusty::detail::deref_if_pointer_like(guard)).a_peer_address = rusty::clone(client_address);
+        (rusty::detail::deref_if_pointer_like(guard)).b_peer_address = std::move(server_address);
+    }
+    auto client_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), true));
+    const auto server_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), false));
+    cb_to_fire(make_inmemory_channel_proxy(std::move(server_side)));
+    return rusty::Option<rusty::Arc<InMemoryChannel>>(std::move(client_side));
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.16*/
 
 // ---------------------------------------------------------------------------
 // InMemoryFactory
 // ---------------------------------------------------------------------------
 
-// @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
-// invoke accept_for_connect on the listener pulled out of the
-// switchboard.
-ConnectResult inmemory_factory_connect(const InMemoryFactory& self, std::string_view addr) {
-    std::string addr_str(addr);
-    auto listener_opt = (*self.switchboard_.get()).find_listener(addr_str);
-    if (listener_opt.is_none()) {
-        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
+// Authored as inline Rust DSL. The old const_cast is gone (accept_for_
+// connect takes `const InMemoryListener&` and locks through the
+// const-lockable rusty::Mutex).
+#if RUSTYCPP_RUST
+fn inmemory_factory_connect(fac: &InMemoryFactory, addr: std::string_view) -> ConnectResult {
+    let addr_str: std::string = format!("{}", addr);
+    let listener_opt = (*fac.switchboard_).find_listener(addr_str);
+    if listener_opt.is_none() {
+        return ConnectResult {
+            connection: None,
+            error: ChannelError_ConnectionRefused(),
+        };
     }
-    auto listener = listener_opt.unwrap();
+    let listener = listener_opt.unwrap();
     // Use a synthesized client address. Future work could let the
     // factory accept a configurable client-side identity for tests
     // that care about peer_address() values.
-    static std::atomic<uint64_t> client_counter{0};
-    uint64_t client_id = client_counter.fetch_add(1, std::memory_order_relaxed);
-    std::string client_address = "inmemory://client-" + std::to_string(client_id);
+    static CLIENT_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let client_id: u64 = CLIENT_COUNTER.fetch_add(1u64, Ordering::Relaxed);
+    let client_address: std::string = format!("inmemory://client-{}", client_id);
 
-    // No cast: accept_for_connect already takes `const InMemoryListener&`
-    // and reaches its state through a const-lockable rusty::Mutex.
-    auto client_opt = inmemory_listener_accept_for_connect(*listener, client_address);
-    if (client_opt.is_none()) {
-        return ConnectResult{rusty::None, ChannelError::ConnectionRefused};
+    let client_opt = inmemory_listener_accept_for_connect((*listener), client_address);
+    if client_opt.is_none() {
+        return ConnectResult {
+            connection: None,
+            error: ChannelError_ConnectionRefused(),
+        };
     }
-    auto client_side = client_opt.unwrap();
-    return ConnectResult{
-        rusty::Some(make_inmemory_channel_proxy(std::move(client_side))),
-        ChannelError::None,
-    };
+    let client_side = client_opt.unwrap();
+    ConnectResult {
+        connection: Some(make_inmemory_channel_proxy(client_side)),
+        error: ChannelError_None(),
+    }
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.17 version=1 rust_sha256=862fc4f0698a96e3e9ab789758d72c2b664713d78073318b9b9cd548a93ad0f3*/
+ConnectResult inmemory_factory_connect(const InMemoryFactory& fac, std::string_view addr) {
+    static rusty::sync::atomic::AtomicU64 CLIENT_COUNTER = AtomicU64::new_(0);
+    const std::string addr_str = std::format("{}" , addr);
+    auto listener_opt = ((rusty::detail::deref_if_pointer_like(fac.switchboard_))).find_listener(std::move(addr_str));
+    if (listener_opt.is_none()) {
+        return ConnectResult{.connection = rusty::None, .error = ChannelError_ConnectionRefused()};
+    }
+    const auto listener = listener_opt.unwrap();
+    const uint64_t client_id = CLIENT_COUNTER.fetch_add(static_cast<uint64_t>(1), Ordering::Relaxed);
+    const std::string client_address = std::format("inmemory://client-{}" , client_id);
+    auto client_opt = inmemory_listener_accept_for_connect((rusty::detail::deref_if_pointer_like(listener)), std::move(client_address));
+    if (client_opt.is_none()) {
+        return ConnectResult{.connection = rusty::None, .error = ChannelError_ConnectionRefused()};
+    }
+    const auto client_side = client_opt.unwrap();
+    return ConnectResult{.connection = rusty::Some(make_inmemory_channel_proxy(std::move(client_side))), .error = ChannelError_None()};
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.17*/
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// @unsafe - inline `const_cast<InMemoryConnectionState*>(state.get())`
-// to bootstrap the shared connection state.
-std::pair<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>>
-make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
-    // rusty::Mutex has no default ctor (unlike the retired SpinMutex), so build
-    // the state with an explicitly value-initialized inner instead of make().
-    auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{
-        .inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(InMemoryConnectionStateInner{})});
+// Authored as inline Rust DSL. Returns a Rust tuple (lowers to
+// std::tuple, not the previous std::pair — the one test-helper caller
+// reads it via std::get). The old const_cast bootstrap is gone:
+// rusty::Mutex::lock() has a const overload, so the Arc's shared view
+// seeds the peer addresses.
+#if RUSTYCPP_RUST
+fn make_channel_pair_for_testing(
+    a_addr: std::string,
+    b_addr: std::string,
+) -> (Arc<InMemoryChannel>, Arc<InMemoryChannel>) {
+    // rusty::Mutex has no default ctor, so build the state with an
+    // explicitly value-initialized inner instead of make().
+    let state = Arc::<InMemoryConnectionState>::new_(InMemoryConnectionState {
+        inner: rusty::Mutex::<InMemoryConnectionStateInner>::new(Default::default()),
+    });
     {
-        // No const_cast: rusty::Mutex::lock() has a const overload that hands
-        // back a mutable guard (interior mutability, as Rust's Mutex does), so
-        // the Arc's const view is enough to seed the peer addresses.
-        auto guard = (*state).inner.lock().unwrap();
-        (*guard).a_peer_address = std::move(a_addr);
-        (*guard).b_peer_address = std::move(b_addr);
+        let mut guard = (*state).inner.lock().unwrap();
+        (*guard).a_peer_address = a_addr;
+        (*guard).b_peer_address = b_addr;
     }
-    auto a_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/true));
-    auto b_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(state.clone(), /*is_a_side=*/false));
-    return {std::move(a_side), std::move(b_side)};
+    let a_side = Arc::<InMemoryChannel>::new_(InMemoryChannel::new(state.clone(), true));
+    let b_side = Arc::<InMemoryChannel>::new_(InMemoryChannel::new(state.clone(), false));
+    (a_side, b_side)
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.18 version=1 rust_sha256=852588ddb819e284040f5f697f0d6ffb069ee1826d4713a31d0cf2f1f4cbadde*/
+std::tuple<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>> make_channel_pair_for_testing(std::string a_addr, std::string b_addr) {
+    const auto state = rusty::Arc<InMemoryConnectionState>::new_(InMemoryConnectionState{.inner = rusty::Mutex<InMemoryConnectionStateInner>::new_(rusty::default_like<InMemoryConnectionStateInner>())});
+    {
+        auto&& guard = rusty::deref_call((rusty::detail::deref_if_pointer_like(state)).inner.lock(), rusty::detail::__mdisp_unwrap{});
+        (rusty::detail::deref_if_pointer_like(guard)).a_peer_address = std::move(a_addr);
+        (rusty::detail::deref_if_pointer_like(guard)).b_peer_address = std::move(b_addr);
+    }
+    auto a_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), true));
+    auto b_side = rusty::Arc<InMemoryChannel>::new_(InMemoryChannel::new_(rusty::clone(state), false));
+    return std::make_tuple(std::move(a_side), std::move(b_side));
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.18*/
 
-// @unsafe - inline `const_cast<InMemoryListener&>(*listener.get())` to
-// wire `self_weak_` before publishing the listener.
-// @unsafe - Arc::get_mut mint window (see below).
-rusty::Option<ChannelListenerProxy> inmemory_factory_make_listener(const InMemoryFactory& self) {
-    auto listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(self.switchboard_));
+// Authored as inline Rust DSL, using the get_mut mint window (the Arc
+// is freshly minted and uniquely owned, which is precisely when Rust's
+// Arc::get_mut hands back a &mut — no const_cast lie about aliasing).
+// Mirrors TcpFactory::make_listener and ClientPool::connect's DSL shape.
+#if RUSTYCPP_RUST
+fn inmemory_factory_make_listener(fac: &InMemoryFactory) -> Option<ChannelListenerProxy> {
+    let mut listener: Arc<InMemoryListener> =
+        Arc::<InMemoryListener>::new_(InMemoryListener::new(fac.switchboard_.clone()));
     // Wire the self-weak so the listener can register itself in the
-    // switchboard. Mirrors TcpFactory::make_listener.
-    //
-    // get_mut(), not const_cast: the Arc was just minted and is still
-    // uniquely owned here, which is precisely when Rust's Arc::get_mut
-    // hands back a &mut. Casting away const on a shared Arc is a lie
-    // about aliasing; get_mut is the same operation with the uniqueness
-    // actually checked.
+    // switchboard.
     {
-        auto mut_l = listener.get_mut();
-        mut_l.unwrap().set_self_weak(rusty::sync::downgrade(listener));
+        let opt = listener.get_mut();
+        let mut_l: &mut InMemoryListener = opt.unwrap();
+        mut_l.set_self_weak(rusty::sync::downgrade(listener));
     }
-    return rusty::Some(make_inmemory_listener_proxy(std::move(listener)));
+    Some(make_inmemory_listener_proxy(listener))
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.19 version=1 rust_sha256=e83592f4577d38ae22b3e89f9169700040d156328be910ca0ea229e936a9df98*/
+rusty::Option<ChannelListenerProxy> inmemory_factory_make_listener(const InMemoryFactory& fac) {
+    rusty::Arc<InMemoryListener> listener = rusty::Arc<InMemoryListener>::new_(InMemoryListener::new_(rusty::clone(fac.switchboard_)));
+    {
+        auto opt = listener.get_mut();
+        InMemoryListener& mut_l = opt.unwrap();
+        mut_l.set_self_weak(rusty::sync::downgrade(std::move(listener)));
+    }
+    return rusty::Option<ChannelListenerProxy>(make_inmemory_listener_proxy(std::move(listener)));
+}
+/*RUSTYCPP:GEN-END id=inmemory_channel.19*/
 
 
 }  // namespace rrr

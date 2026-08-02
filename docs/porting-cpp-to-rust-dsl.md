@@ -4074,3 +4074,62 @@ And a genuine floor pair, recorded from reading rather than probing:
 file/line debug parameters (no DSL spelling for `char*` — `*const i8` is
 `int8_t*`, a distinct type) and `Fiber::global_id++` mutates a class
 static. They stay kernels behind the 1-arg DSL `create_run_fiber`.
+
+### 7.57 Closure captures of const-PROPAGATING handles need `mutable` (fixed in the transpiler)
+
+The closure-mutability analysis exempted every "non-mutating handle"
+(Box/Rc/Arc/guards/Weak) from forcing `mutable`, reasoning that a method
+call reaches the pointee, not the handle. That reasoning is Rust-true but
+C++-incomplete: in a non-`mutable` lambda every by-value capture is
+const, and the handles differ in what a CONST handle hands back:
+
+  * **const-only shared handles** — `Arc`, `Rc`, `Weak`, `Ref`,
+    `RwLockReadGuard` expose exactly one (const) `operator->`; lambda
+    constness cannot change what compiles. Exemption sound.
+  * **const-transparent** — `RefMut::operator*() const` returns `T&`;
+    a const capture still reaches the mutable pointee. Exemption sound.
+  * **const-propagating** — `Box`, `MutexGuard`, `SpinMutexGuard`,
+    `RwLockWriteGuard` pair a const overload returning `const T*` with a
+    non-const one. A const capture downgrades the pointee, and a
+    `&mut self` method (`ChannelListenerBase::close`) stops compiling.
+
+Hit converting `Server`'s Drop body: the OneTimeJob closure that moves
+the listener `Box` in and calls `close()` emitted a non-mutable lambda →
+`'this' argument ... but function is not marked const`. Fixed in
+`is_non_mutating_handle_name` (the predicate now lists only the sound
+exemptions); `mutable` returns for Box-and-guard captures with method
+calls. Two codegen tests pin it (Box keeps mutable / Arc stays
+const-callable). Emission after the fix:
+`[=, listener_box = std::move(listener_box)]() mutable { listener_box->close(); }`.
+
+### 7.58 Expired causes, batch 2 — lb generics, inmemory bodies
+
+Re-checking recorded "not DSL-expressible" causes (the §7.52 habit)
+closed two more families this session:
+
+  * **`load_balancer` selector templates** ("generic arrow-deref …
+    neither is DSL-expressible"): `fn f<ClientVec>(clients: &ClientVec)`
+    lowers to the same `template<typename ClientVec>` free fn, and the
+    element's method chain works once the DSL spells the deref
+    explicitly — `(*clients[i]).metrics()` emits
+    `deref_if_pointer_like(clients[i]).metrics()`, which covers
+    `Arc<Client>` and the tests' `shared_ptr<Mock>` alike. A BARE
+    `clients[i].metrics()` does NOT dispatch (dot on the handle);
+    the explicit `*` is what recruits the helper.
+  * **the four inmemory bodies** (const_cast bootstrap / raw byte copy /
+    static counter / get_mut mint): all four causes expired.
+    `rusty::Mutex::lock()`'s const overload replaced every const_cast;
+    the byte copy is `extend_from_slice(from_raw_parts(p, n))` (the
+    transpiler knows `core::slice::from_raw_parts`); the client-address
+    counter is a DSL fn-local `static CLIENT_COUNTER: AtomicU64` (add
+    the `using rusty::sync::atomic::{AtomicU64, Ordering}` name bridges
+    the connection_metrics module already models); the mint window is
+    client.cpp's proven `let opt = arc.get_mut(); let m: &mut T =
+    opt.unwrap();` shape — remember `let mut` on the Arc binding, since
+    `get_mut()` is a non-const member of the HANDLE.
+  * Wrapper copies out of a locked guard must be spelled `.clone()`
+    (`rusty::clone` falls back to copy-construction for C++-copyable
+    types like CallbackWrapper); a bare field read would MOVE out of the
+    guard.
+  * A DSL fn returning a Rust tuple lowers to `std::tuple`, not
+    `std::pair` — update `.first/.second` callers to `std::get<>`.

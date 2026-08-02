@@ -144,62 +144,99 @@ void LoadBalancerState::reset() const {
 }
 /*RUSTYCPP:GEN-END id=load_balancer.1*/
 
-// Hand-written generic helpers backing the DSL LoadBalancer below.
-// They stay template free fns because they are generic over the client
-// container (production: rusty::Vec<Arc<ClientConnection>>-shaped pools;
-// tests: std::vector of mock clients) and their bodies arrow-deref the
-// client handle — neither is DSL-expressible.
-
-// @safe - container size via the generic `.size()`.
-template<typename ClientVec>
-size_t lb_pool_size(const ClientVec& clients) {
-    return clients.size();
+// Generic helpers backing the DSL LoadBalancer below, authored as DSL
+// generic fns (`fn f<ClientVec>` lowers to a template). They are generic
+// over the client container (production: rusty::Vec<Arc<ClientConnection>>-
+// shaped pools; tests: std::vector of mock clients); the client handle's
+// method chain goes through the transpiler's pointer-like deref dispatch,
+// which covers Arc and shared_ptr alike. `UINT64_MAX` is spelled as its
+// literal (the DSL has no C macro access).
+#if RUSTYCPP_RUST
+fn lb_pool_size<ClientVec>(clients: &ClientVec) -> usize {
+    clients.len()
 }
 
-// @unsafe - generic arrow-deref of the client handle (Arc in production,
-// raw/mock pointer in tests) to read its ConnectionMetrics.
-template<typename ClientVec>
-size_t lb_select_least_connections(const ClientVec& clients) {
-    size_t best_idx = 0;
-    uint64_t min_pending = UINT64_MAX;
-
-    for (size_t i = 0; i < clients.size(); i++) {
-        const auto& client = clients[i];
-        const auto& metrics = client->metrics();
-        uint64_t pending = metrics.in_flight_requests();
-        if (pending < min_pending) {
+fn lb_select_least_connections<ClientVec>(clients: &ClientVec) -> usize {
+    let mut best_idx: usize = 0usize;
+    let mut min_pending: u64 = 18446744073709551615u64;
+    let mut i: usize = 0usize;
+    while i < clients.len() {
+        let pending: u64 = (*clients[i]).metrics().in_flight_requests();
+        if pending < min_pending {
             min_pending = pending;
             best_idx = i;
         }
+        i += 1usize;
     }
-
-    return best_idx;
+    best_idx
 }
 
-// @unsafe - generic arrow-deref of the client handle (Arc in production,
-// raw/mock pointer in tests) to read its ConnectionMetrics.
+fn lb_select_least_latency<ClientVec>(clients: &ClientVec) -> usize {
+    let mut best_idx: usize = 0usize;
+    let mut min_latency: u64 = 18446744073709551615u64;
+    let mut i: usize = 0usize;
+    while i < clients.len() {
+        let avg_latency: u64 = (*clients[i]).metrics().avg_latency_us();
+        let completed: u64 = (*clients[i]).metrics().requests_completed();
+        if !(avg_latency == 0u64 && completed == 0u64) {
+            if avg_latency < min_latency {
+                min_latency = avg_latency;
+                best_idx = i;
+            }
+        }
+        i += 1usize;
+    }
+    best_idx
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=load_balancer.4 version=1 rust_sha256=2a4b2f469516da12a99bbec5f952cb4a18b6ce2cee3e4f04931e7bf90e20cf74*/
+template<typename ClientVec>
+size_t lb_pool_size(const ClientVec& clients);
+template<typename ClientVec>
+size_t lb_select_least_connections(const ClientVec& clients);
+template<typename ClientVec>
+size_t lb_select_least_latency(const ClientVec& clients);
+
+template<typename ClientVec>
+size_t lb_pool_size(const ClientVec& clients) {
+    return rusty::len(clients);
+}
+
+template<typename ClientVec>
+size_t lb_select_least_connections(const ClientVec& clients) {
+    size_t best_idx = static_cast<size_t>(0);
+    uint64_t min_pending = static_cast<uint64_t>(18446744073709551615);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(clients)) {
+        uint64_t pending = ((rusty::detail::deref_if_pointer_like(clients[i]))).metrics().in_flight_requests();
+        if (rusty::detail::deref_if_pointer_like(pending) < rusty::detail::deref_if_pointer_like(min_pending)) {
+            min_pending = std::move(pending);
+            best_idx = std::move(i);
+        }
+        i += static_cast<size_t>(1);
+    }
+    return std::move(best_idx);
+}
+
 template<typename ClientVec>
 size_t lb_select_least_latency(const ClientVec& clients) {
-    size_t best_idx = 0;
-    uint64_t min_latency = UINT64_MAX;
-
-    for (size_t i = 0; i < clients.size(); i++) {
-        const auto& client = clients[i];
-        const auto& metrics = client->metrics();
-        uint64_t avg_latency = metrics.avg_latency_us();
-
-        if (avg_latency == 0 && metrics.requests_completed() == 0) {
-            continue;
+    size_t best_idx = static_cast<size_t>(0);
+    uint64_t min_latency = static_cast<uint64_t>(18446744073709551615);
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(clients)) {
+        uint64_t avg_latency = ((rusty::detail::deref_if_pointer_like(clients[i]))).metrics().avg_latency_us();
+        const uint64_t completed = ((rusty::detail::deref_if_pointer_like(clients[i]))).metrics().requests_completed();
+        if (!((rusty::detail::deref_if_pointer_like(avg_latency) == static_cast<uint64_t>(0)) && (rusty::detail::deref_if_pointer_like(completed) == static_cast<uint64_t>(0)))) {
+            if (rusty::detail::deref_if_pointer_like(avg_latency) < rusty::detail::deref_if_pointer_like(min_latency)) {
+                min_latency = std::move(avg_latency);
+                best_idx = std::move(i);
+            }
         }
-
-        if (avg_latency < min_latency) {
-            min_latency = avg_latency;
-            best_idx = i;
-        }
+        i += static_cast<size_t>(1);
     }
-
-    return best_idx;
+    return std::move(best_idx);
 }
+/*RUSTYCPP:GEN-END id=load_balancer.4*/
 
 // `LoadBalancer` — pure stateless dispatch over LoadBalancingStrategy.
 // Authored as inline Rust DSL: the `#if RUSTYCPP_RUST` block below is
