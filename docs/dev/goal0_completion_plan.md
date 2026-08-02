@@ -22,9 +22,38 @@ The order of attack per kernel stays the standing rule
 demote to external C. C is last because it is *permanently* not Rust —
 every line sent to C is a line the eventual rustc pass can never cover.
 
-## What is left (measured 2026-08-02, playbook §7.54)
+## What is left — CORRECTED measurement
 
-234 hand-written kernels across the DSL files:
+> **The kernel count below is the wrong metric and its file ranking is
+> wrong.** It counts lines matching `^inline|^static|^template<`, which
+> misses every plain definition (`int set_nonblocking(int, bool) {`) and
+> counts a declaration the same as a 200-line body. Measured by
+> hand-written **code lines** outside GEN and DSL blocks (non-test files,
+> comments and blanks excluded):
+>
+> | file | hand-written code lines |
+> |---|---|
+> | `reactor/reactor.cpp` | **1483** |
+> | `rpc/client.cpp` | **1017** |
+> | `misc/serializable.cpp` | 490 |
+> | `rpc/tcp_channel.cpp` | 383 |
+> | `rpc/server.cpp` | 354 |
+> | `misc/serializable_envelope.cpp` | 170 (no DSL at all) |
+> | `rpc/inmemory_channel.cpp` | 161 |
+> | `misc/any_message.cpp` | 125 |
+> | remainder | ~1270 |
+> | **TOTAL** | **5453** |
+>
+> Whole-file shares: src/rrr non-test is 33,074 lines = 16,874 GEN +
+> 4,489 DSL + 11,711 hand-written (35.4%).
+>
+> **This reorders the plan.** `reactor.cpp` and `client.cpp` are 46% of
+> the remaining work between them; `serializable.cpp` is 9%, not the 44%
+> the kernel count implied. Phase 4's "biggest block, do it last"
+> rationale does not survive the correction — Phase 3 (`reactor.cpp`) is
+> the biggest block.
+
+The original kernel count, kept for reference:
 
 | file | kernels | notes |
 |---|---|---|
