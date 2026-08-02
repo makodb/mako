@@ -3752,28 +3752,7 @@ void Fiber::sleep(uint64_t microseconds) {
 // @unsafe - Rc<Reactor> allocation + the create-time log lines (kept
 // as kernels: Rc::<T>::make turbofish adjacent to a Log_* call
 // mis-lowers the log as a member of the turbofish expression).
-rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl();
-void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber);
-void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber);
 rusty::Rc<Reactor> reactor_make() { return rusty::Rc<Reactor>::make(); }
-// @unsafe - RefCell borrow returns a temporary Ref the DSL can't bind
-// as a named guard; the read is one line, kept as a kernel.
-rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running_impl() {
-    auto guard = sp_running_fiber_th_.borrow();
-    if ((*guard).is_some()) {
-        return rusty::Some((*guard).as_ref().unwrap().clone());
-    }
-    return rusty::Option<rusty::Rc<Fiber>>{};
-}
-
-// @unsafe - RefMut borrow_mut() returns a temporary the DSL binds as
-// address-of; these one-line writes stay kernels.
-void reactor_tls_restore_running_impl(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
-    *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber);
-}
-void reactor_tls_set_running_impl(const rusty::Rc<Fiber>& fiber) {
-    *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone());
-}
 void reactor_log_create(bool disk) {
     if (disk) { Log_debug("create a disk fiber scheduler"); return; }
     Log_debug("create a fiber scheduler");
@@ -3805,18 +3784,24 @@ fn reactor_tls_get_disk() -> rusty::Rc<Reactor> {
 }
 
 fn reactor_tls_save_running() -> rusty::Option<rusty::Rc<Fiber>> {
-    reactor_tls_save_running_impl()
+    let guard = sp_running_fiber_th_.borrow();
+    if (*guard).is_some() {
+        return rusty::Some((*guard).as_ref().unwrap().clone());
+    }
+    None
 }
 
 fn reactor_tls_restore_running(old_fiber: rusty::Option<rusty::Rc<Fiber>>) {
-    reactor_tls_restore_running_impl(old_fiber);
+    let mut guard = sp_running_fiber_th_.borrow_mut();
+    *guard = old_fiber;
 }
 
 fn reactor_tls_set_running(fiber: &rusty::Rc<Fiber>) {
-    reactor_tls_set_running_impl(fiber);
+    let mut guard = sp_running_fiber_th_.borrow_mut();
+    *guard = rusty::Some(fiber.clone());
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.tls_singletons version=1 rust_sha256=9dd0ea584d04ac0dd0add842e3fcc67c71a447e5aa5febec38e93cf2bd096889*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.tls_singletons version=1 rust_sha256=c58f69aa33122664c9f9897f7d877a2215ab95bd74fa27ba19b4590b753e702f*/
 rusty::Rc<Reactor> reactor_tls_get() {
     if (sp_reactor_th_.is_none()) {
         reactor_log_create(false);
@@ -3838,15 +3823,21 @@ rusty::Rc<Reactor> reactor_tls_get_disk() {
 }
 
 rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running() {
-    return reactor_tls_save_running_impl();
+    auto&& guard = rusty::borrow(sp_running_fiber_th_);
+    if (((rusty::detail::deref_if_pointer_like(guard))).is_some()) {
+        return rusty::Option<rusty::Rc<Fiber>>(rusty::clone(((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap()));
+    }
+    return rusty::Option<rusty::Rc<Fiber>>{rusty::None};
 }
 
 void reactor_tls_restore_running(rusty::Option<rusty::Rc<Fiber>> old_fiber) {
-    reactor_tls_restore_running_impl(std::move(old_fiber));
+    auto&& guard = sp_running_fiber_th_.borrow_mut();
+    rusty::detail::deref_if_pointer_like(guard) = std::move(old_fiber);
 }
 
 void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
-    reactor_tls_set_running_impl(fiber);
+    auto&& guard = sp_running_fiber_th_.borrow_mut();
+    rusty::detail::deref_if_pointer_like(guard) = rusty::Option<rusty::Rc<Fiber>>(rusty::clone(fiber));
 }
 /*RUSTYCPP:GEN-END id=reactor.tls_singletons*/
 
