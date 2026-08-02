@@ -386,3 +386,55 @@ early ones build confidence in the pattern:
 8. variadic `Log_*` (widest blast radius in the tree)
 
 Items 6-8 deserve their own design note before any code moves.
+
+## Phase 3 characterisation — `reactor.cpp` is a different KIND of work
+
+Now the biggest block (1483 hand-written code lines, 27% of the
+remainder). Characterised before scheduling, because it is not the same
+shape as anything converted so far.
+
+**Every other file this campaign touched is "a DSL struct with C++ helper
+kernels around it". `reactor.cpp` is not: `class Reactor` (line 1803, 265
+lines, ~31 methods, ~24 fields) is hand-written C++ and was never
+converted at all.**
+
+Its 63 hand-written function bodies (1122 lines) are dominated by the
+event loop and fiber machinery:
+
+| lines | function |
+|---|---|
+| 113 | `Reactor::loop` |
+| 87 | `pollworker_poll_loop` |
+| 64 | `Reactor::process_stackless_tasks` |
+| 57 | `Reactor::spawn_stackless_task` |
+| 45 | `Reactor::check_timeout` |
+| 44 | `Reactor::create_run_fiber` |
+| 42 | `Reactor::continue_fiber` |
+| 41 | `pollthread_create` |
+| 40 | `fiber_task_t::init_context` |
+
+**Why this is more promising than its size suggests:** the bodies are
+procedural control flow over rusty types (`VecDeque<Arc<EventPollable>>`,
+`Function<void()>`, `Task<void>`), which is the DSL's stated sweet spot —
+not the type-system features that block `client.cpp`. There is no
+operator overloading, no RTTI, no variadic template in this list.
+
+**Why it is still the hard one:** converting it means converting a
+*class*, not removing helpers — fields, ctor, and 31 methods move into a
+DSL `struct` + `impl` together. That is one large, indivisible change to
+the event-loop core, and it cannot be batched into 5-kernel gates the way
+the default-construction sweep was.
+
+### Revised ordering
+
+1. **`reactor.cpp`** — biggest (27%), and its blockers are procedural
+   rather than type-system, so it is the best ratio of lines-removed to
+   rewrite-backlog-incurred. Needs its own design note first: the class
+   conversion is the unit of work, not the individual functions.
+2. **`client.cpp`** (19%) — second by size, but most of its remainder is
+   the rewrite backlog (awaiter, variadics, operators), so progress here
+   is gated on those rewrites rather than on conversion effort.
+3. **`serializable.cpp`** (9%) — was scheduled last as "the big one"; at
+   9% that rationale is gone. Its all-or-nothing property still argues
+   for doing it after the mechanics are proven.
+4. the tail.
