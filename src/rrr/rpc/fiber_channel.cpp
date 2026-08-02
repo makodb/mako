@@ -128,11 +128,6 @@ void                      fiberchannel_signal_pending_recv(FiberChannel& self);
 ChannelError              fiberchannel_send_frame(FiberChannel& self, const ChannelFrame& f);
 void                      fiberchannel_close(FiberChannel& self);
 
-// Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
-// std::deque / empty Option inline).
-inline std::deque<OwnedFrame>              fiberchannel_empty_queue() { return std::deque<OwnedFrame>{}; }
-inline rusty::Option<rusty::Arc<IntEvent>> fiberchannel_null_event()  { return rusty::Option<rusty::Arc<IntEvent>>(rusty::None); }
-
 // Fiber-blocking wrapper over a `ChannelConnectionProxy` (see file header).
 // Interior state (rusty::Mutex<std::deque> inbound queue + a dedicated
 // rusty::Mutex<Option<Arc<IntEvent>>> single-waiter handle + Cell<bool>
@@ -158,8 +153,8 @@ impl FiberChannel {
     #[cpp_ctor] fn new(ch: ChannelConnectionProxy) -> FiberChannel {
         FiberChannel {
             ch_: ch,
-            queue_: rusty::Mutex::<std::deque<OwnedFrame>>::new(fiberchannel_empty_queue()),
-            pending_recv_event_: rusty::Mutex::<rusty::Option<rusty::Arc<IntEvent>>>::new(fiberchannel_null_event()),
+            queue_: rusty::Mutex::<std::deque<OwnedFrame>>::new(Default::default()),
+            pending_recv_event_: rusty::Mutex::<rusty::Option<rusty::Arc<IntEvent>>>::new(None),
             closed_: Cell::new(false),
         }
     }
@@ -272,7 +267,7 @@ impl Drop for FiberChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=ff514bccec1e5440f5f0e5b14e9d948fabd8199e79c1dc2b4e29f132e7d393da*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=6c09406423c158f4965e8be84f9bc1cd2c03aff158b26aa3d4f6660227a5b41c*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -314,8 +309,8 @@ struct FiberChannel {
 
 FiberChannel::FiberChannel(ChannelConnectionProxy ch)
     : ch_(std::move(ch))
-    , queue_(rusty::Mutex<std::deque<OwnedFrame>>::new_(fiberchannel_empty_queue()))
-    , pending_recv_event_(rusty::Mutex<rusty::Option<rusty::Arc<IntEvent>>>::new_(fiberchannel_null_event()))
+    , queue_(rusty::Mutex<std::deque<OwnedFrame>>::new_(rusty::default_like<std::deque<OwnedFrame>>()))
+    , pending_recv_event_(rusty::Mutex<rusty::Option<rusty::Arc<IntEvent>>>::new_(rusty::Option<rusty::Arc<IntEvent>>{rusty::None}))
     , closed_(rusty::Cell<bool>::new_(false))
 {}
 

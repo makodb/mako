@@ -65,10 +65,6 @@ class InMemoryListener;
 // lowered — category-K sweep). Methods take &self: the Mutex's
 // const-qualified lock() provides the interior mutability, so
 // Arc-holding callers need no const_cast.
-// Hand-bridge (playbook §7.2): rusty::sync::Weak has only a default C++
-// ctor, which the DSL cannot spell.
-inline rusty::sync::Weak<InMemoryListener> empty_listener_weak() { return {}; }
-
 #if RUSTYCPP_RUST
 struct InMemorySwitchboard {
     listeners_: rusty::Mutex<rusty::HashMap<std::string, rusty::sync::Weak<InMemoryListener>>>,
@@ -660,7 +656,7 @@ impl InMemoryListener {
     // register with the switchboard OUTSIDE the lock (its own mutex; keeps
     // the original lock ordering). Rolls back the claim on collision.
     fn listen(&self, addr: std::string_view) -> ChannelError {
-        let mut w = empty_listener_weak();
+        let mut w: rusty::sync::Weak<InMemoryListener> = Default::default();
         {
             let mut guard = self.inner_.lock().unwrap();
             if (*guard).closed {
@@ -728,7 +724,7 @@ impl InMemoryListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=633a52629cffdbbdd512df2ef14021581247305951dd5637146cc50ddb16cb0c*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.listener version=1 rust_sha256=6219059593e8d8f53d52250e100821b0c64197cecc766f4c02c2f28ace25fb98*/
 struct InMemoryListener;
 
 struct InMemoryListener {
@@ -752,7 +748,7 @@ InMemoryListener InMemoryListener::new_(rusty::Arc<InMemorySwitchboard> switchbo
 }
 
 ChannelError InMemoryListener::listen(std::string_view addr) const {
-    auto w = empty_listener_weak();
+    rusty::sync::Weak<InMemoryListener> w = rusty::default_like<rusty::sync::Weak<InMemoryListener>>();
     {
         auto guard = this->inner_.lock().unwrap();
         if ((*guard).closed) {
