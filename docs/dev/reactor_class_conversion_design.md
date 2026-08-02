@@ -53,6 +53,32 @@ constraint.
 **Route: hoist to a top-level DSL struct.** `server.cpp` already did this
 for `ShutdownState`, with the reasoning recorded there.
 
+**Attempted and reverted — blocked on block-id assignment.** Inserting a
+new `#if RUSTYCPP_RUST` block before `class Reactor` fails:
+
+    inline-rust error: reactor.cpp:3063: duplicate inline block id=reactor.13
+
+Block ids are name-derived for struct blocks (`reactor.event_state`) but
+**positional for anonymous ones** (`reactor.3`, from a bare `fn`).
+reactor.cpp has many anonymous blocks, so inserting one mid-file renumbers
+every later one and collides with an id already written into an existing
+GEN marker.
+
+Two consequences:
+
+ - **Do not insert DSL blocks into the middle of a file with anonymous
+   blocks** until the id scheme is understood. Appending at the end is
+   safe (nothing renumbers); inserting is not.
+ - This error path is the one that has previously **deleted a function
+   body before erroring** — so commit before regenerating. In this
+   attempt the file was intact (the collision was detected before the
+   rewrite), but that is not guaranteed.
+
+The hoist is therefore best done *as part of* the class conversion, when
+every block in the file is being rewritten together anyway — or after a
+dedicated look at how ids are assigned and whether a block can be named
+explicitly.
+
 ## Blocker 4 — the class is deliberately non-movable
 
     Reactor(const Reactor&) = delete;
