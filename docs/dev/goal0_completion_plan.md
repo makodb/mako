@@ -514,3 +514,41 @@ runs, and now the region detector). Three of the four were tools I wrote
 to check my own work. A survey helper deserves the same "verify it on a
 case you know the answer to" treatment as any other measurement — here,
 noticing that a file I *knew* contained `try/catch` did not appear.
+
+## Sizing the `Log_*` variadics — and a route that is not 2476 rewrites
+
+The five `Log_*` kernels are variadic templates over `std::format_string`:
+
+    template<typename... Args>
+    inline void Log_info(std::format_string<Args...> fmt, Args&&... args);
+
+Call sites across the tree: **2476** (Log_info 1722, Log_debug 486,
+Log_error 141, Log_warn 88, Log_fatal 39). That is the widest blast
+radius in the backlog by an order of magnitude.
+
+Options, and why three of them are wrong:
+
+ - **DSL as-is:** Rust has no variadic functions. Real floor.
+ - **Demote to C:** C varargs is printf-style and untyped. This would
+   also *undo* commit `c3c9998b`, which migrated ~2570 sites from `%d`
+   to `{}` precisely to escape varargs UB. Going backwards for a
+   definitional win is the wrong trade.
+ - **Fixed-arity overloads** (`Log_info1`, `Log_info2`, …): expressible,
+   but it puts the arity in the name at 2476 sites.
+
+**The route worth taking:** make the parameter a single pre-formatted
+string, and let callers use `format!`, which the DSL already supports
+(`c3c9998b` shipped DSL-native logging built on `format!` → `std::format`).
+
+    fn Log_info(msg: &str)          // DSL-expressible, no variadics
+    Log_info(format!("id {} closed", id))   // at the call site
+
+The call-site edit is mechanical and the *shape* is already familiar to
+this codebase — the same 2476 sites were touched once before for the
+`%d` → `{}` migration, so there is precedent for a sweep of this size
+here.
+
+It remains last in the ordering: 2476 sites is a wide, low-risk,
+high-tedium change that should not be attempted while any of the
+narrower items are still moving, and it wants a scripted rewrite plus a
+full gate rather than hand edits.
