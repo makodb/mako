@@ -163,3 +163,39 @@ DSL into a generated constant the DSL reads. Do not let it reach the
    the build.
 
 Steps 2 and 3 are safe to do now and shrink the indivisible step 4.
+
+## Staging (final, 2026-08-02) — PhantomPinned landed, rustc struck from scope
+
+Blocker 4's fix is pushed and pinned (`6d17411e`). Reading the class in
+full adds one structural fact the blocker list missed: **four member
+templates live inside the class**, and they are its hard core —
+
+  * `create_sp_event<Ev, Args...>` — variadic static event factory,
+    **123 call sites** across the tree
+  * `create_event<Ev, Args...>` — 1 external call site
+  * `make_arc<T, Args...>` — internal helper
+  * `spawn_stackless_task_with_result<T, OnReady>` — the async-task
+    machinery: local structs, atomics, wakers
+
+A DSL struct's GEN is fully generated — hand-written members cannot be
+mixed in — so these must leave the class before it can convert.
+
+**Stage A — hoist the four templates to free function templates.**
+`Reactor::create_sp_event<T>(..)` becomes `reactor_create_sp_event<T>(..)`;
+mechanical sweep of ~125 sites. The hoisted templates remain hand-written
+C++ (they are variadic — already in the rewrite backlog); this stage
+does not remove them, it unblocks the class.
+
+**Stage B — convert the class.** Fields + `fn new()` (Default::default
+per §7.53, PhantomPinned field for the move-deletion), statics hoisted,
+nested struct hoisted, non-template methods declared in the DSL impl with
+bodies delegating to the existing out-of-line definitions renamed as
+`reactor_*` free-fn kernels. This is the indivisible gate.
+
+**Stage C… — convert the kernels one at a time.** `loop` (113),
+`pollworker_poll_loop` (87), `process_stackless_tasks` (64) … are
+procedural control flow over rusty types, each its own gate.
+
+**Left in the backlog at the end:** the variadic factories and the
+task-spawn machinery, resolved later by the variadic rewrite
+(fixed-arity or per-event factories), not by this conversion.
