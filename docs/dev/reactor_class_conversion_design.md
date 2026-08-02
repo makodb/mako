@@ -42,6 +42,21 @@ and `g_current_poll_worker`, and its own comment records why: *"the DSL
 free fns that own the singleton logic cannot name class statics"*. Follow
 the precedent that is already in the file.
 
+**Surveyed — the two are not the same case:**
+
+ - **`dangling_ips_` is dead.** A word-boundary search of the whole tree
+   finds its declaration and one comment, nothing else. Delete it rather
+   than hoist it.
+ - **`clients_` is live cross-module.** `src/deptran/communicator.cc`
+   calls `Reactor::clients_.contains_key / .insert / .get` (3 sites), so
+   hoisting it to namespace scope is an API change outside `src/rrr` —
+   small, but it lands in the same category as `deserialize_from`'s 88
+   call sites: the blast radius leaves the module.
+
+Neither is worth its own ~2h gate; batch both with the class conversion.
+Worth noting the first, narrower grep suggested *both* were dead — the
+qualified `Reactor::clients_` form was what a naive search missed.
+
 ## Blocker 3 — the nested `StacklessTaskEntry` struct
 
     struct StacklessTaskEntry { bool active; bool queued; Function<bool(Context&)> poll_once; };
