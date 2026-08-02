@@ -269,3 +269,48 @@ emitted GEN before building, which is the habit that caught it.
 
 **The five kernels stay for now**, blocked on this bug rather than on
 anything about their own shape.
+
+## Phase 1 result — `any_message.cpp` (9), and the Phase 1 conclusion
+
+`any_message.cpp` is floored by what it *is*: an RTTI-based dynamic-type
+registry.
+
+| # | kernel | verdict |
+|---|---|---|
+| 5 | `reg_any_message_as<T>`, `anymessage_is_a<T>`, `anymessage_unpack<T>`, `anymessage_pack<T>`, `pack_as` | **hard** — templates over `typeid` / `std::type_index`. RTTI has no Rust equivalent and C has neither templates nor RTTI |
+| 2 | `operator<<` / `operator>>` | **hard** — operator overloading floor |
+| 2 | `serialize` / `deserialize` one-line forwarders | possible DSL — they are just `am.save(ar)` / `am.load(ar)` |
+
+### The Phase 1 conclusion, which revises this plan's premise
+
+Across the four files (56 kernels), the tolerate-C rule helps **far less
+than expected**:
+
+| blocker | C helps? |
+|---|---|
+| templates (`F&&`, `T`, variadic) | **no** — C has no templates |
+| RTTI (`typeid`, `type_index`) | **no** |
+| operator overloading | **no** |
+| C++20 coroutine awaiters | **no** |
+| `try/catch` | **no** |
+| C++ types in the signature (`Box`, `Arc`, `std::string`) | only after a signature change |
+| procedural bodies over C-compatible types | **yes** — but these are the minority here |
+
+**C is an escape hatch for *procedural* kernels, and the "floor" files are
+not floored on procedure.** They are floored on C++ *type-system*
+features. Of 56 kernels, I found roughly 3 that C actually unblocks
+(`server_random_u64`, two `addr_to_cstr`-shaped casts) and one that a
+rusty surface unblocks (`server_now_nanos`).
+
+That is worth knowing now rather than at Phase 3. It means:
+
+ - the phases whose kernels are *procedural* (`logging.cpp`,
+   `utils.cpp`, parts of `reactor.cpp`) are where C pays off, so **Phase 2
+   should move ahead of the rest of Phase 1's leftovers**;
+ - `client.cpp` / `any_message.cpp` will not reach zero without changing
+   API surface that `src/deptran` consumes — that is a product decision,
+   not a conversion;
+ - the honest finish line for Goal 0 includes a category of C++ that
+   neither the DSL nor C can express, and that category needs an explicit
+   policy: keep it as documented exceptions, or redesign the API to avoid
+   it.
