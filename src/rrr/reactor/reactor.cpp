@@ -736,8 +736,7 @@ inline bool int_event_is_ready(const IntEvent& self) {
 // `SharedIntEvent` — a shared counter that wakes IntEvent waiters when
 // it crosses their thresholds. The `rusty::Arc<IntEvent>` element
 // type stays std (Reactor::create_sp_event hands out shared_ptr — a
-// declared boundary type), aliased so the DSL can spell the Vec.
-using IntEventSp = rusty::Arc<IntEvent>;
+// declared boundary type).
 
 struct SharedIntEvent;
 
@@ -761,7 +760,7 @@ void shared_int_event_wait(SharedIntEvent& self, EventTestFn f);
 #if RUSTYCPP_RUST
 struct SharedIntEvent {
     value_: i32,
-    events_: Vec<IntEventSp>,
+    events_: Vec<rusty::Arc<IntEvent>>,
 }
 
 impl SharedIntEvent {
@@ -778,12 +777,12 @@ impl SharedIntEvent {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.shared_int_event version=1 rust_sha256=a1fe4b98eed4b6baf839a49046bc8047706af69bd90bb9c7a9c058663ce300f2*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.shared_int_event version=1 rust_sha256=e399535422082fc86a72614021d2a6e3ccfa69d63b28b68d79b0484f48293737*/
 struct SharedIntEvent;
 
 struct SharedIntEvent {
     int32_t value_;
-    rusty::Vec<IntEventSp> events_;
+    rusty::Vec<rusty::Arc<IntEvent>> events_;
 
     int32_t set(const int32_t& v);
     void wait(EventTestFn f);
@@ -2266,8 +2265,6 @@ inline bool pollworker_is_on_poll_thread() { return g_current_poll_worker != nul
 // =============================================================================
 // PollThread - Handle for controlling the poll thread
 // =============================================================================
-// Type aliases so the DSL can spell the angle-bracketed field types.
-using PollCmdSender = rusty::sync::mpsc::Sender<PollCommand>;
 // `rusty::Unit` (= std::tuple<>), NOT `void`: Rust has no void, so a
 // closure returning nothing returns `()`, and thread::spawn DEDUCES
 // `JoinHandle<std::tuple<>>` (see detail::SpawnResultType in
@@ -2314,7 +2311,7 @@ void pollthread_drop(const PollThread& self);
 //     keeps its name.
 #if RUSTYCPP_RUST
 struct PollThread {
-    sender_: PollCmdSender,
+    sender_: rusty::sync::mpsc::Sender<PollCommand>,
     join_handle_: PollJoinSlot,
     // Thread id of the poll thread as raw u64 bits (bit_cast of the
     // native id) — used to detect self-join attempts in shutdown.
@@ -2408,16 +2405,16 @@ impl Drop for PollThread {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=d776bf09dd7aaa39d27ae46f7321b66f62669c46198070524a095e3f20656984*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.poll_thread version=1 rust_sha256=71ba4dfeb8629bff1325aaddd1cc943302bfd07265293f1612c4ea1fcba134bb*/
 struct PollThread;
 
 struct PollThread {
-    PollCmdSender sender_;
+    rusty::sync::mpsc::Sender<PollCommand> sender_;
     PollJoinSlot join_handle_;
     rusty::sync::atomic::AtomicU64 poll_thread_id_bits_;
     rusty::sync::atomic::AtomicBool shutdown_called_;
     mutable bool _rusty_forgotten = false;
-    PollThread(PollCmdSender sender__init, PollJoinSlot join_handle__init, rusty::sync::atomic::AtomicU64 poll_thread_id_bits__init, rusty::sync::atomic::AtomicBool shutdown_called__init) : sender_(std::move(sender__init)), join_handle_(std::move(join_handle__init)), poll_thread_id_bits_(std::move(poll_thread_id_bits__init)), shutdown_called_(std::move(shutdown_called__init)) {}
+    PollThread(rusty::sync::mpsc::Sender<PollCommand> sender__init, PollJoinSlot join_handle__init, rusty::sync::atomic::AtomicU64 poll_thread_id_bits__init, rusty::sync::atomic::AtomicBool shutdown_called__init) : sender_(std::move(sender__init)), join_handle_(std::move(join_handle__init)), poll_thread_id_bits_(std::move(poll_thread_id_bits__init)), shutdown_called_(std::move(shutdown_called__init)) {}
     PollThread(const PollThread&) = default;
     PollThread(PollThread&& other) noexcept : sender_(std::move(other.sender_)), join_handle_(std::move(other.join_handle_)), poll_thread_id_bits_(std::move(other.poll_thread_id_bits_)), shutdown_called_(std::move(other.shutdown_called_)) {
         this->_rusty_forgotten = other._rusty_forgotten;
