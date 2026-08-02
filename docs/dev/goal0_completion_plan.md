@@ -139,3 +139,47 @@ this campaign apply to every step:
    session it was the EADDRINUSE-under-`-j8` flake, and both times the
    discriminator was re-running the *actual* failing condition rather
    than the test alone.
+
+---
+
+## Phase 1 result — `client.cpp` (21 kernels)
+
+Re-read under the tolerate-C rule. The character is **different from the
+default-construction family**: these are not "the DSL can't spell it"
+claims that dissolve on re-measurement. They are C++ language features
+with no Rust *or* C equivalent, and several are API surface consumed from
+outside `src/rrr`.
+
+| # | kernel | verdict |
+|---|---|---|
+| 2 | `operator>>(RefMut<ReplyBuffer>&, U&)` x2 | **hard** — operator overloading is a standing DSL floor; C has no templates |
+| 1 | `deserialize_from(RefMut&&, Ts&...)` | **hard** — variadic fold. Rust has no variadics, and it has **88 call sites in `src/deptran`** |
+| 4 | `TypedFutureAwaiter` + `make_typed_future_awaitable` | **hard** — a C++20 coroutine awaiter class template |
+| 1 | `std::hash<Arc<ClientConnection>>` specialization | **hard** — specializing a `std::` template in `namespace std` |
+| 6 | `clientconn_request_*(.., F&& write_fn)` | **route exists** — take `rusty::Function<..>` instead of a generic `F&&`; call sites pass lambdas either way. Cost is type erasure on a request path, so measure before committing |
+| 1 | `client_dsl_addr_to_cstr(const int8_t*)` | **C-demotable now** — signature is already C-compatible |
+| 1 | `str_as_i8(const std::string&)` | **C after a call-site change** — pass `const char*` and it is C |
+| 2 | `make_pending_queue` (decl + defn) | returns a C++ type; DSL or stay |
+| 1 | `fut_secs(double)` | returns `std::chrono::duration`; DSL or stay |
+| 1 | `reply_buffer_empty()` | recheck against `Default::default()` — it survived the §7.53 sweep and may not need to have |
+
+So `client.cpp` splits roughly: **8 hard**, **7 with a route**, **6 to
+recheck**. It will not reach zero without an API change, because four of
+the hard ones are the awaiter and the `std::hash` specialization, and the
+other four are the operator/variadic surface that `src/deptran` calls.
+
+**Two things this changes about the plan:**
+
+1. **The blast radius leaves `src/rrr`.** `deserialize_from` alone is 88
+   call sites in `deptran`. Any plan that says "finish `src/rrr`" has to
+   decide whether rewriting `deptran` call sites is in scope — this is
+   the same shape as the tests question, and bigger.
+
+2. **`F&&` -> `rusty::Function` is the highest-leverage single move here**
+   (6 of 21), and it is a *call-site-compatible* change: lambdas convert
+   implicitly. It trades a template for type erasure on the request path,
+   so it needs a perf check against `docs/dev/srpc_rpcbench_baseline.md`
+   rather than being taken on principle.
+
+Neither of the two genuinely-C candidates is worth a gate on its own;
+they should ride along with the `F&&` change if that goes ahead.
