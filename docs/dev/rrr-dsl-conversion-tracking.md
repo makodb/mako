@@ -217,7 +217,9 @@ async/stream paths); ~several asserts to rewrite to the serialize/deserialize fo
   returns (string_view) all lower in the pinned transpiler (verified by compiled probes).
   SWEEP LESSONS: cross-module DSL enum variants = generated factory calls (ChannelError_None()
   not ChannelError::None in return position); hand-bridges for C++-ctor-only types
-  (empty_on_*_callback in channel.cpp, empty_listener_weak); prefer &self + interior mutability.
+  (empty_on_*_callback in channel.cpp, empty_listener_weak -- SUPERSEDED 2026-08-02: both deleted,
+  `Default::default()` reaches them once the transpiler stopped emitting a nonexistent
+  `default_value`, playbook 7.53); prefer &self + interior mutability.
   GATE UPGRADED: full-target build + full ctest (was dbtest-only — that gap had hidden ~280 raw
   test streams, 23 umbrella-trim import breaks, and years of never-built-target rot, all now
   repaired; srpc-book.md snippets updated to the current serde/request/Server API and

@@ -2959,6 +2959,11 @@ helpers deleted. The `std::`-typed ones (`tcpconn_empty_buf`,
 `tcplistener_empty_addr`) genuinely cannot be, because the DSL lowers
 `T::new()` to `T::new_()` and the std types have no such static.
 
+> **Superseded (§7.53).** The `std::`-typed conclusion was right about
+> `T::new()` and wrong overall: `Default::default()` reaches them, and
+> `tcplistener_empty_addr` is now deleted. `T::new()` was simply not the
+> spelling to try.
+
 Untested alternative worth one compile: `rusty::Vec::<u8>::new()` emits
 `rusty::Vec<uint8_t>::new_()`, and `rusty::Vec` IS `std::vector`, so if
 that factory exists the vector helper is reclaimable too. Likewise
@@ -3709,6 +3714,12 @@ if a change breaks real code. It needs the regenerate-and-build check.
 Meanwhile server.cpp:480's `empty_server_reply_fn()` kernel stays: the
 claim is **real** as written, since neither spelling works today.
 
+> **Superseded (§7.53).** True only *before* the `default_value` ->
+> `default_like` fix in the same section. Once that landed,
+> `Default::default()` worked and the kernel was deleted. Note the shape:
+> this claim was accurate when written and falsified by a fix recorded
+> four paragraphs above it.
+
 #### 7.51.2 tcp_channel triage, and a claim that is only half true
 
 Three stated causes in `rpc/tcp_channel.cpp`:
@@ -3730,6 +3741,10 @@ is DSL+GEN-local. Same class as EventTestFn / QuorumFinalizeFn.
     ChannelFrame tcpconn_frame_of(FrameView* v) {                     // stale
         return ChannelFrame{v->payload, v->payload_size};
     }
+
+> **Superseded (§7.53/§7.53.1).** Both are gone. `FrameView` is
+> DSL-defined too -- calling it "a hand-written C++ POD" below was simply
+> wrong -- and `Default::default()` covers it.
 
 `ChannelFrame` is **DSL-defined** (channel.cpp, `payload: *const u8`,
 `size: usize`), so a DSL struct literal expresses it directly — the
