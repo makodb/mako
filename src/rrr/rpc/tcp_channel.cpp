@@ -1245,8 +1245,6 @@ struct RecvScratch { std::uint8_t arr[kRecvScratchBytes]; };
 RecvScratch* tcpconn_scratch();
 int64_t      tcpconn_recv_bytes(const TcpConnection& conn, RecvScratch* s);
 FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v);
-FrameView    tcpconn_frame_view_empty();
-ChannelFrame tcpconn_frame_of(FrameView* v);
 void         tcpconn_append_inbound(const TcpConnection& conn, std::size_t n);
 void         tcpconn_consume_inbound(const TcpConnection& conn);
 void         tcpconn_reset_inbound(const TcpConnection& conn);
@@ -1470,10 +1468,10 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
 
     let mut decoding = true;
     while decoding {
-        let mut v = tcpconn_frame_view_empty();
+        let mut v: FrameView = Default::default();
         let s = tcpconn_next_frame(conn, &mut v);
         if s == FrameDecodeStatus::Complete {
-            let cf = tcpconn_frame_of(&mut v);
+            let cf = ChannelFrame { payload: v.payload, size: v.payload_size };
             {
                 let mut guard = conn.on_frame_.lock().unwrap();
                 if *guard {
@@ -1501,7 +1499,7 @@ fn tcpconn_handle_read(conn: &TcpConnection) -> bool {
     any_progress
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=62f096913102c8052146fad0fb0cf51ba572d5c5a8576f8361a3bd626adea2f3*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.handle_read version=1 rust_sha256=0a9f9cd82cdfa7eec33669e9c9df0b123743e056812b7884a668f99d4b56dad0*/
 bool tcpconn_handle_read(const TcpConnection& conn) {
     if (conn.closed_.get()) {
         return false;
@@ -1543,10 +1541,10 @@ bool tcpconn_handle_read(const TcpConnection& conn) {
     }
     auto decoding = true;
     while (decoding) {
-        auto v = tcpconn_frame_view_empty();
+        FrameView v = rusty::default_like<FrameView>();
         const auto s = tcpconn_next_frame(conn, &v);
         if (rusty::detail::deref_if_pointer_like(s) == rusty::detail::deref_if_pointer_like(FrameDecodeStatus::Complete)) {
-            const auto cf = tcpconn_frame_of(&v);
+            const auto cf = ChannelFrame{.payload = std::move(v.payload), .size = std::move(v.payload_size)};
             {
                 auto&& guard = rusty::deref_call(conn.on_frame_.lock(), rusty::detail::__mdisp_unwrap{});
                 if (rusty::detail::deref_if_pointer_like(guard)) {
@@ -1602,12 +1600,6 @@ void tcpconn_consume_inbound(const TcpConnection& conn) {
 }
 void tcpconn_reset_inbound(const TcpConnection& conn) {
     conn.inbound_.borrow_mut()->reset();
-}
-
-// @unsafe - POD builders the DSL grammar cannot spell (braced init).
-FrameView tcpconn_frame_view_empty() { return FrameView{}; }
-ChannelFrame tcpconn_frame_of(FrameView* v) {
-    return ChannelFrame{v->payload, v->payload_size};
 }
 
 // Write-readiness: drain what the kernel will take, keep or drop the

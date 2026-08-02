@@ -475,10 +475,6 @@ RpcServiceContext RpcServiceContext::new_(rusty::HashMap<int32_t, size_t> rpc_ma
 // take `Function<Sig>` as a generic type argument).
 using ServerReplyFn = rusty::Function<void(BinaryWriteArchive&)>;
 
-// Hand-bridge (playbook 7.2), same shape as channel.cpp's
-// empty_on_frame_callback: rusty::Function's default ctor is a `{}` the
-// DSL cannot spell, so reply_error gets its "no writer" argument here.
-inline ServerReplyFn empty_server_reply_fn() { return {}; }
 
 // Free-fn implementations of the channel-dispatch / Marshal-operator /
 // fiber / closure-heavy methods; the DSL methods below delegate to these.
@@ -800,7 +796,8 @@ impl DeferredReply {
         let sconn_opt = self.weak_sconn_field.upgrade();
         if sconn_opt.is_some() {
             let sconn = sconn_opt.unwrap();
-            (*sconn).reply(&*self.req_field, error_code, empty_server_reply_fn());
+            let mut no_writer: ServerReplyFn = Default::default();
+            (*sconn).reply(&*self.req_field, error_code, no_writer);
         } else {
             unsafe { Log_debug("Connection closed before error reply sent, dropping reply") };
         }
@@ -815,7 +812,7 @@ impl Drop for DeferredReply {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=a9899d77cc7192b2594f26059e6e7219ef3e3a8ecda366a54dfd372f6a42192d*/
+/*RUSTYCPP:GEN-BEGIN id=deferred_reply.0 version=1 rust_sha256=4105a49cd117308bd0a5af707bec71427dddb51693e9a1d39d26147bb754ddd5*/
 struct DeferredReply;
 
 struct DeferredReply {
@@ -892,7 +889,8 @@ void DeferredReply::reply_error(int32_t error_code) {
     auto sconn_opt = this->weak_sconn_field.upgrade();
     if (sconn_opt.is_some()) {
         const auto sconn = sconn_opt.unwrap();
-        ((rusty::detail::deref_if_pointer_like(sconn))).reply(rusty::detail::deref_if_pointer_like(this->req_field), std::move(error_code), empty_server_reply_fn());
+        ServerReplyFn no_writer = rusty::default_like<ServerReplyFn>();
+        ((rusty::detail::deref_if_pointer_like(sconn))).reply(rusty::detail::deref_if_pointer_like(this->req_field), std::move(error_code), std::move(no_writer));
     } else {
         // @unsafe
         {
