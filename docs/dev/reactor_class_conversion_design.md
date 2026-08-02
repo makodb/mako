@@ -199,3 +199,30 @@ procedural control flow over rusty types, each its own gate.
 **Left in the backlog at the end:** the variadic factories and the
 task-spawn machinery, resolved later by the variadic rewrite
 (fixed-arity or per-event factories), not by this conversion.
+
+## Stage B executable spec (probes done 2026-08-02)
+
+**Construction recipe — proven by probe.** `#[cpp_ctor] fn new()` + a
+`_pin: rusty::marker::PhantomPinned` field emits a real in-place C++
+default constructor (member-init list) plus `PR(PR&&) = delete` — the
+struct is constructible in place (so `Rc<Reactor>::make()` keeps working)
+and neither movable nor copyable. This resolves the interaction that
+would otherwise sink it: a deleted-move struct is not an aggregate and
+loses its implicit default ctor, and `fn new() -> Reactor` by value would
+need the deleted move. No parameter on `new()` = clear of the §7.51.2
+wrong-type bug.
+
+**Per-method wrinkles:**
+
+ - `loop` is a Rust keyword → rename to `run_loop`, sweep 42 call sites
+   (constrained to reactor receivers; compile catches strays).
+ - Default args (`loop(false, true)` defaults, `create_run_fiber(f, "", 0)`)
+   → DSL has none; sweep call sites to pass all args explicitly.
+ - Destructor's two Log_debug lines → `impl Drop` with `format!`.
+ - `clients_` static → namespace-scope thread_local + sweep 3
+   communicator.cc sites; `dangling_ips_` → delete (dead).
+ - Method bodies: rename out-of-line `T Reactor::name(args) const` to
+   free kernels `T reactor_name_impl(const Reactor& self, args)`, prefix
+   bare field/method refs with `self.` (scriptable from the 20-field
+   inventory; every miss is a compile error since those names do not
+   exist at namespace scope). DSL impl methods delegate.
