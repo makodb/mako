@@ -490,13 +490,6 @@ void sconn_decode_request_and_dispatch(const ServerConnection& self,
 void sconn_dispatch_response_frame_via_channel(const ServerConnection& self,
                                                const std::uint8_t* bytes, std::size_t size);
 
-// Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
-// Weak or a typed `None` Option inline).
-inline WeakServerConnection sconn_default_weak() { return WeakServerConnection(); }
-inline rusty::Option<ChannelConnectionProxy> sconn_no_proxy() {
-    return rusty::Option<ChannelConnectionProxy>(rusty::None);
-}
-
 // ServerConnection — one client connection's server-side state. All fields
 // are already rusty (Arc / rusty::Mutex / Cell / Weak), so the struct is
 // borrow-checked. The reply/dispatch/decode/close/bind bodies (Marshal
@@ -537,8 +530,8 @@ impl ServerConnection {
         ServerConnection {
             ctx_: ctx,
             status_: Cell::new(ServerConnStatus::CONNECTED),
-            weak_self_: sconn_default_weak(),
-            channel_proxy_: rusty::Mutex::<Option<ChannelConnectionProxy>>::new(sconn_no_proxy()),
+            weak_self_: Default::default(),
+            channel_proxy_: rusty::Mutex::<Option<ChannelConnectionProxy>>::new(None),
             channel_mode_: Cell::new(false),
             count: 0i32,
         }
@@ -595,7 +588,7 @@ impl ServerConnection {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=35b0e2219b3cfb3423982066852ef3a21f6709c3787fc193b37287064709f399*/
+/*RUSTYCPP:GEN-BEGIN id=server.server_connection version=1 rust_sha256=f87c207ae32b740d974ce395c4e036f0da7638995b1833207bc3f84020e62157*/
 enum class ServerConnStatus;
 constexpr ServerConnStatus ServerConnStatus_CONNECTED();
 constexpr ServerConnStatus ServerConnStatus_CLOSED();
@@ -631,8 +624,8 @@ struct ServerConnection {
 ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int32_t socket)
     : ctx_(std::move(ctx))
     , status_(rusty::Cell<ServerConnStatus>::new_(rusty::clone(rusty::clone(ServerConnStatus_CONNECTED()))))
-    , weak_self_(sconn_default_weak())
-    , channel_proxy_(rusty::Mutex<rusty::Option<ChannelConnectionProxy>>::new_(sconn_no_proxy()))
+    , weak_self_(rusty::default_like<WeakServerConnection>())
+    , channel_proxy_(rusty::Mutex<rusty::Option<ChannelConnectionProxy>>::new_(rusty::Option<ChannelConnectionProxy>{rusty::None}))
     , channel_mode_(rusty::Cell<bool>::new_(false))
     , count(static_cast<int32_t>(0))
 {}

@@ -641,13 +641,6 @@ void         tcplistener_close(const TcpListener& self);
 bool         tcplistener_handle_read(const TcpListener& self);
 void         tcplistener_handle_error(const TcpListener& self);
 
-// Default-init helpers for the `#[cpp_ctor]` (the DSL can't spell a default
-// rusty::net::TcpListener / std::string / On*Callback inline).
-inline rusty::net::TcpListener tcplistener_default_net()    { return rusty::net::TcpListener(); }
-inline std::string             tcplistener_empty_addr()     { return std::string(); }
-inline OnAcceptCallback        tcplistener_default_on_accept() { return OnAcceptCallback{}; }
-inline OnErrorCallback         tcplistener_default_on_error()  { return OnErrorCallback{}; }
-
 // Server-side TCP listener — owns a `rusty::net::TcpListener` (RAII-closes
 // the listen fd on drop) + an accept loop. All fields are already rusty
 // (net::TcpListener / Cell / Option / rusty::Mutex), so the struct is
@@ -675,14 +668,14 @@ struct TcpListener {
 impl TcpListener {
     #[cpp_ctor] fn new() -> TcpListener {
         TcpListener {
-            listener_: tcplistener_default_net(),
-            bound_address_: tcplistener_empty_addr(),
+            listener_: Default::default(),
+            bound_address_: Default::default(),
             closed_: Cell::new(false),
             listened_: Cell::new(false),
             poll_thread_: None,
             self_weak_: None,
-            on_accept_: rusty::Mutex::<OnAcceptCallback>::new(tcplistener_default_on_accept()),
-            on_error_: rusty::Mutex::<OnErrorCallback>::new(tcplistener_default_on_error()),
+            on_accept_: rusty::Mutex::<OnAcceptCallback>::new(Default::default()),
+            on_error_: rusty::Mutex::<OnErrorCallback>::new(Default::default()),
         }
     }
 
@@ -749,7 +742,7 @@ impl TcpListener {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=497562e866cf8f75eece0f1f42de1261749087d90d1e51a4b09e34485aa6239e*/
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.listener version=1 rust_sha256=9c2a598c8bbec81550f6af69586f06c03def4cc63cf427dc85a7fd53c5223e7e*/
 struct TcpListener;
 
 struct TcpListener {
@@ -782,14 +775,14 @@ struct TcpListener {
 
 
 TcpListener::TcpListener()
-    : listener_(tcplistener_default_net())
-    , bound_address_(tcplistener_empty_addr())
+    : listener_(rusty::default_like<rusty::net::TcpListener>())
+    , bound_address_(rusty::default_like<std::string>())
     , closed_(rusty::Cell<bool>::new_(false))
     , listened_(rusty::Cell<bool>::new_(false))
     , poll_thread_(rusty::Option<rusty::Arc<PollThread>>{rusty::None})
     , self_weak_(rusty::Option<rusty::sync::Weak<TcpListener>>{rusty::None})
-    , on_accept_(rusty::Mutex<OnAcceptCallback>::new_(tcplistener_default_on_accept()))
-    , on_error_(rusty::Mutex<OnErrorCallback>::new_(tcplistener_default_on_error()))
+    , on_accept_(rusty::Mutex<OnAcceptCallback>::new_(rusty::default_like<OnAcceptCallback>()))
+    , on_error_(rusty::Mutex<OnErrorCallback>::new_(rusty::default_like<OnErrorCallback>()))
 {}
 
 ChannelError TcpListener::listen(std::string_view addr) const {
