@@ -1,9 +1,12 @@
 # Goal 0 completion plan
 
-Goal 0: **no hand-written C++ in `src/rrr`.** The DSL is the target; the
-inline blocks are not compiled by rustc today and that is accepted — we
-will attempt it later, hit blockers, and fix them. This pipeline is
-preferred over rewriting Rust from scratch.
+Goal 0: **no hand-written C++ in `src/rrr`.** The DSL is the target.
+
+**Scope ruling (owner, 2026-08-02): rustc compilation of the DSL is
+REMOVED from Goal 0.** The goal is complete when the hand-written C++ is
+gone — DSL, generated C++, external C, or assembly. Whether the inline
+blocks ever compile under rustc is a separate, later question; Phase 6
+below is struck.
 
 ## Terminal states
 
@@ -143,10 +146,9 @@ effort with no runtime payoff; leaving them is a documented exception.
 This should be decided before Phase 1 finishes, because it changes the
 finish line by roughly a third.
 
-### Phase 6 — attempt rustc on the inline DSL
-Expected to fail initially: the blocks name C++ types. Value is in the
-*error list* — it enumerates precisely what stands between the DSL and
-real Rust, which is the input to whatever comes after Goal 0.
+### ~~Phase 6 — attempt rustc on the inline DSL~~ (struck: out of scope)
+Removed from Goal 0 by owner ruling. Kept here so the strike-through is
+visible history rather than silent deletion.
 
 ## Throughput
 
