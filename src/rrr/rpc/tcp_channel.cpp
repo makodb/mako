@@ -64,6 +64,8 @@ import rrr.threading;
 // TcpConnection, its two adapters, TcpFactory, and the adapter set.
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(consume_frame)
+RUSTY_METHOD_DISPATCH(reset)
 RUSTY_METHOD_DISPATCH(unwrap)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
 /*RUSTYCPP:GEN-DISPATCH-END*/
@@ -1588,12 +1590,28 @@ void tcpconn_append_inbound(const TcpConnection& conn, std::size_t n) {
 FrameDecodeStatus tcpconn_next_frame(const TcpConnection& conn, FrameView* v) {
     return conn.inbound_.borrow()->next_frame(*v);
 }
+#if RUSTYCPP_RUST
+fn tcpconn_consume_inbound(conn: &TcpConnection) {
+    let mut guard = conn.inbound_.borrow_mut();
+    guard.consume_frame();
+}
+
+fn tcpconn_reset_inbound(conn: &TcpConnection) {
+    let mut guard = conn.inbound_.borrow_mut();
+    guard.reset();
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.13 version=1 rust_sha256=0317def90e6a944dc338fde6c6ce54481f1c9df9c90b0d730bef6b8262963d17*/
 void tcpconn_consume_inbound(const TcpConnection& conn) {
-    conn.inbound_.borrow_mut()->consume_frame();
+    auto&& guard = conn.inbound_.borrow_mut();
+    rusty::deref_call(guard, rusty::detail::__mdisp_consume_frame{});
 }
+
 void tcpconn_reset_inbound(const TcpConnection& conn) {
-    conn.inbound_.borrow_mut()->reset();
+    auto&& guard = conn.inbound_.borrow_mut();
+    rusty::deref_call(guard, rusty::detail::__mdisp_reset{});
 }
+/*RUSTYCPP:GEN-END id=tcp_channel.13*/
 
 // Write-readiness: drain what the kernel will take, keep or drop the
 // WRITE interest, and run the hard-error teardown — all DSL; the send
@@ -1868,6 +1886,12 @@ namespace {
 // (rusty::io::Error::Kind::X) in DSL comparison position get the
 // variant-call lowering (X() — invalid); only same-file DSL enums
 // compare cleanly. This mapper therefore stays hand-written C++.
+// @unsafe kernel by verdict: a match/comparison over rusty::io::Error::Kind
+// is not DSL-expressible today -- ANY qualified C++ enum-class variant path
+// (Kind::ConnectionRefused) emits a nullary variant CALL (Kind::ConnectionRefused()),
+// the DSL-enum factory convention misapplied to a plain C++ enum. Same trap
+// family as the docs 7.51-era notes; needs a transpiler-side "is this a DSL
+// enum" check before appending parens.
 ChannelError io_kind_to_channel_error(rusty::io::Error::Kind kind) {
     switch (kind) {
         case rusty::io::Error::Kind::ConnectionRefused: return ChannelError::ConnectionRefused;
@@ -2116,9 +2140,16 @@ AcceptStep tcplistener_accept_step_new() { return AcceptStep{}; }
 ChannelConnectionProxy tcplistener_take_proxy(AcceptStep* s) { return s->proxy.take().unwrap(); }
 
 // @unsafe - const method on the foreign rusty::net::TcpListener field.
-bool tcplistener_is_bound(const TcpListener& self) {
-    return self.listener_.is_bound();
+#if RUSTYCPP_RUST
+fn tcplistener_is_bound(lst: &TcpListener) -> bool {
+    lst.listener_.is_bound()
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=tcp_channel.22 version=1 rust_sha256=d2e9594a77040a29371fe7770bd14915523ab8a7fb1c253ddf1f30ad60a6f3cf*/
+bool tcplistener_is_bound(const TcpListener& lst) {
+    return lst.listener_.is_bound();
+}
+/*RUSTYCPP:GEN-END id=tcp_channel.22*/
 
 // @unsafe - accept(2) via rusty::net + the full accepted-socket wrap.
 int32_t tcplistener_accept_step(const TcpListener& self, AcceptStep* out) {
