@@ -438,3 +438,44 @@ the default-construction sweep was.
    9% that rationale is gone. Its all-or-nothing property still argues
    for doing it after the mechanics are proven.
 4. the tail.
+
+## Refinement: "operator overloads" is three different things
+
+Surveying all 25 hand-written operator declarations outside GEN/DSL shows
+the backlog item above is over-broad. They split into three groups with
+different answers:
+
+**1. Special-member control (not a rewrite target).**
+
+    fiber_task_t& operator=(const fiber_task_t&) = delete;
+    CallbackWrapper& operator=(CallbackWrapper&&) noexcept = default;
+
+`= delete` / `= default` on copy and move are how C++ *spells* "this type
+is (not) copyable". They are not overloads to replace with named
+functions — the DSL emits its own, derived from field types (and now from
+`PhantomPinned`). These disappear when the enclosing type converts, and
+need no separate work. Roughly 10 of the 25, concentrated in
+`reactor.cpp` and `callback_wrapper.cpp`.
+
+**2. Comparison operators — a DSL route, not a named-function rewrite.**
+
+    inline bool operator==(const IdempotencyKey&, const IdempotencyKey&);
+    inline bool operator!=(const IdempotencyKey&, const IdempotencyKey&);
+
+Rust spells this `impl PartialEq`, which is a trait impl the DSL already
+handles for other traits. Worth probing before assuming they need
+rewriting — this is plausibly a straight conversion.
+
+**3. Stream-style overloads — the actual rewrite target.**
+
+    rusty::RefMut<ReplyBuffer>& operator>>(RefMut&, U&);          // client
+    BinaryWriteArchive& operator<<(BinaryWriteArchive&, const AnyMessage&);
+    SerializableEnvelope& operator=(rusty::Arc<T> sp);            // envelope
+
+These are the ones Phase 8's precedent applies to: replace with named
+functions and update call sites. Roughly 10 of the 25.
+
+**So the item is ~10 rewrites, not 25**, and one of the three groups may
+not be a rewrite at all. Estimating "operator overloads" as a single
+category would have overstated it by 2.5x and hidden the fact that most
+resolve for free when their enclosing type converts.
