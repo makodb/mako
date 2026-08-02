@@ -3708,3 +3708,41 @@ if a change breaks real code. It needs the regenerate-and-build check.
 
 Meanwhile server.cpp:480's `empty_server_reply_fn()` kernel stays: the
 claim is **real** as written, since neither spelling works today.
+
+#### 7.51.2 tcp_channel triage, and a claim that is only half true
+
+Three stated causes in `rpc/tcp_channel.cpp`:
+
+**`#[cpp_ctor]` default-init helpers (644)** — real, the confirmed
+default-field-initializer floor (§7.49.1).
+
+**`TcpOutBuf` alias (1238)** — "so the DSL can spell the parameter type".
+The alias itself is unnecessary (`Vec<u8>` lowers to the same
+`std::vector<uint8_t>`), but it is named by **four kernel signatures**
+(`drain_outbound_locked`, `send_bytes`, `trim_sent`, `drop_after_error`),
+so it stays under the rule the sweep settled on: an alias goes only if it
+is DSL+GEN-local. Same class as EventTestFn / QuorumFinalizeFn.
+
+**"POD builders the DSL grammar cannot spell (braced init)" (1607)** —
+**half stale**, and the halves differ by who owns the type:
+
+    FrameView tcpconn_frame_view_empty() { return FrameView{}; }      // real
+    ChannelFrame tcpconn_frame_of(FrameView* v) {                     // stale
+        return ChannelFrame{v->payload, v->payload_size};
+    }
+
+`ChannelFrame` is **DSL-defined** (channel.cpp, `payload: *const u8`,
+`size: usize`), so a DSL struct literal expresses it directly — the
+grammar can spell that one. `FrameView{}` is value-init of a
+hand-written C++ POD, which is the default-ctor floor again.
+
+The general rule this suggests: *"the DSL cannot construct type X"* is
+worth splitting by **whether X is DSL-defined**. For a DSL struct the
+literal is available; for a hand-written C++ aggregate you are back at
+the `{}` floor. A comment covering several builders at once can be right
+about some and wrong about others, so check each type rather than the
+sentence.
+
+Not converted: `frame_of` is two lines and needs an `unsafe` raw-pointer
+deref in the DSL, so the win does not pay for a full gate cycle on its
+own. Worth folding into the next tcp_channel change.
