@@ -3777,3 +3777,57 @@ verification (§7.50.3 showed the suite cannot see this class of
 breakage), and the `default_value`/`default_like` bug (§7.51.1). Both
 want a session where intermediate results can be inspected, not an
 unattended one.
+
+#### 7.50.5 Both triggers fixed — and §7.50.2/§7.50.4 prescribed the wrong fix
+
+Superseding the plan in §7.50.2 and §7.50.4. Both are now known to be
+wrong, in two separate ways, and the working fixes are elsewhere.
+
+**What §7.50.2 got wrong.** It said the fix was to add the six RAII guard
+idents to `infer_deref_result_type_from_type`, and that this one change
+would fix the bug. Neither half held:
+
+ - it *breaks the build* (§7.50.3 — teaching inference more makes other
+   emitters stop guessing, and `&mut hook` over a loop binding flips from
+   `hook` to `&hook`); and
+ - it would not have fixed the alias case anyway, because that path never
+   reaches the inference-failure fallback at all.
+
+**The two triggers are separate defects that present identically.**
+
+| trigger | mechanism | fix |
+|---|---|---|
+| guard-rooted chain `(*(*guard).as_ref().unwrap())` | inference **fails**, and the fallback defaults to collapsing | default to *not* collapsing |
+| alias-typed local `let ch: &mut Proxy` | inference **succeeds**; the deref-owner test cannot see through `using Proxy = Box<T>` | resolve one alias hop |
+
+Neither touches inference, so neither starts the cascade that broke
+`server.cpp`.
+
+**Fix 1 — the failure default was unsound.**
+
+    let Some(inferred) = inferred else {
+        return !matches!(peel(expr), syn::Expr::Path(_));   // collapse
+    };
+
+Collapsing when you do not know is unsound; *not* collapsing is safe
+either way, because the fallthrough wraps the operand in
+`deref_if_pointer_like`, which is the identity for anything not
+pointer-like. So a plain `&T` lowers exactly as it did before.
+
+**Fix 2 — a third pointer-likeness test, also alias-blind.**
+`collapse_local_nonpointer_path` (emit_expr.rs) matched a local's type by
+name against a hardcoded `Box|Rc|Arc|Lazy|Ref|RefMut|MutexGuard|...`
+list. Factored into `is_deref_owner_or_guard_name` /
+`type_is_deref_owner_or_guard_type`, which mirrors
+`type_is_pointer_like_owner_type` including its one alias hop.
+
+**Why two lists, not one.** The wider set must **deref**; the pointer-like
+set drives **autoderef**, and a guard must not autoderef (Rust makes you
+`.upgrade()`/`.borrow()` first). Merging them would be the same mistake as
+putting `Weak` in the autoderef list (§7.47).
+
+**The standing lesson.** Three separate places now answer "is this
+pointer-like", each with its own list, and two of the three could not see
+through a `using`. When a lowering looks wrong for a type behind an alias,
+suspect a *by-name* test that nobody taught about aliases — and check
+whether the site you are looking at is the only one.
