@@ -1849,6 +1849,12 @@ struct StacklessTaskEntry {
 // `dangling_ips_` was dead and is deleted.
 inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> reactor_clients_th_{};
 
+// Amortized-prune high-water mark, hoisted out of
+// reactor_prune_finished_events_impl (a function-local static is not
+// DSL-expressible; a namespace thread_local is just a global the DSL
+// reads and assigns).
+inline thread_local std::size_t reactor_prune_hwm_th_ = 64;
+
 // Stackless-profile observability shim, defined next to g_stackless_profile
 // further down (the DSL method cannot name the later-defined global).
 void stackless_profile_note_enqueue();
@@ -1866,8 +1872,6 @@ void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber);
 rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
 size_t reactor_register_stackless_poller_impl(const Reactor& self, rusty::Function<bool(rusty::Context&)> poller);
 bool reactor_process_stackless_tasks_impl(const Reactor& self);
-void reactor_prune_finished_events_impl(const Reactor& self);
-void reactor_run_loop_impl(const Reactor& self, bool infinite, bool do_check_timeout);
 void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> task);
 rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self, rusty::Function<void()> func);
 rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
@@ -1941,7 +1945,110 @@ impl Reactor {
         reactor_tls_set_running(fiber);
     }
     fn run_loop(&self, infinite: bool, do_check_timeout: bool) {
-        reactor_run_loop_impl(self, infinite, do_check_timeout);
+        verify(rusty::thread::current_id() == self.thread_id_.get());
+        self.looping_.set(infinite);
+        loop {
+            let mut found_ready_events = true;
+            while found_ready_events {
+                found_ready_events = false;
+                if reactor_process_stackless_tasks_impl(self) {
+                    found_ready_events = true;
+                }
+                let mut ready_events: rusty::VecDeque<rusty::Arc<EventPollable>> = Default::default();
+                {
+                    let mut waiting_guard = self.waiting_events_.borrow_mut();
+                    let mut i: usize = 0usize;
+                    while i < waiting_guard.len() {
+                        let ev = (*waiting_guard)[i].clone();
+                        (*ev).test();
+                        i += 1usize;
+                    }
+                    let n_before = ready_events.len();
+                    ready_events.append(waiting_guard.extract_if(move |ev: &rusty::Arc<EventPollable>| -> bool {
+                        (*ev).status() == EventStatus::READY
+                    }));
+                    if ready_events.len() > n_before {
+                        found_ready_events = true;
+                    }
+                    waiting_guard.retain(move |ev: &rusty::Arc<EventPollable>| -> bool {
+                        (*ev).status() != EventStatus::DONE
+                    });
+                }
+                {
+                    let mut composite_guard = self.composite_events_.borrow_mut();
+                    let mut i: usize = 0usize;
+                    while i < composite_guard.len() {
+                        let ev = (*composite_guard)[i].clone();
+                        (*ev).test();
+                        i += 1usize;
+                    }
+                    let n_before = ready_events.len();
+                    ready_events.append(composite_guard.extract_if(move |ev: &rusty::Arc<EventPollable>| -> bool {
+                        (*ev).status() == EventStatus::READY
+                    }));
+                    if ready_events.len() > n_before {
+                        found_ready_events = true;
+                    }
+                    composite_guard.retain(move |ev: &rusty::Arc<EventPollable>| -> bool {
+                        (*ev).status() != EventStatus::DONE
+                    });
+                }
+                if do_check_timeout {
+                    let before = ready_events.len();
+                    self.check_timeout(&mut ready_events);
+                    if ready_events.len() > before {
+                        found_ready_events = true;
+                    }
+                }
+                // Dispatch ready events. `continue` restructured as nested
+                // ifs (the DSL has no continue); the Arc is cloned out of
+                // the deque so no reference is held across continue_fiber.
+                {
+                    let mut i: usize = 0usize;
+                    while i < ready_events.len() {
+                        let ev = ready_events[i].clone();
+                        i += 1usize;
+                        if (*ev).status() != EventStatus::DONE {
+                            let option_fiber = (*ev).upgrade_fiber();
+                            if option_fiber.is_some() {
+                                let fiber = option_fiber.unwrap();
+                                let mut known = false;
+                                {
+                                    let fibers_guard = self.fibers_.borrow();
+                                    known = (*fibers_guard).contains(fiber);
+                                }
+                                if known {
+                                    verify(fiber.status_.get() == Fiber::PAUSED);
+                                    if (*ev).status() == EventStatus::READY {
+                                        (*ev).set_status(EventStatus::DONE);
+                                    } else {
+                                        verify((*ev).status() == EventStatus::TIMEOUT);
+                                    }
+                                    self.continue_fiber(&fiber);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !infinite && !found_ready_events {
+                    break;
+                }
+            }
+            if !self.looping_.get() {
+                break;
+            }
+        }
+    }
+
+    fn prune_finished_events(&self) {
+        let mut guard = self.all_events_.borrow_mut();
+        if guard.len() < reactor_prune_hwm_th_ {
+            return;
+        }
+        guard.retain(move |e: &rusty::Arc<EventPollable>| -> bool {
+            e.strong_count() > 1usize || !(*e).prunable()
+        });
+        reactor_prune_hwm_th_ = guard.len() * 2usize + 64usize;
     }
     fn create_run_fiber(&self, func: rusty::Function<dyn FnMut()>) -> rusty::Rc<Fiber> {
         reactor_create_run_fiber_impl(self, func)
@@ -2083,7 +2190,7 @@ impl Drop for Reactor {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=1577ad15ab517ad9c306b57da141231db86f2cf4460f6de7c3dda5824b1f3997*/
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=44279ad2ac18d44b49623f84ee83cb27bae7f721a85fd92155297084a6a9b542*/
 struct Reactor;
 
 struct Reactor {
@@ -2124,6 +2231,7 @@ struct Reactor {
     void restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const;
     void set_running_fiber(const rusty::Rc<Fiber>& fiber) const;
     void run_loop(bool infinite, bool do_check_timeout) const;
+    void prune_finished_events() const;
     rusty::Rc<Fiber> create_run_fiber(rusty::Function<void()> func) const;
     void continue_fiber(const rusty::Rc<Fiber>& fiber) const;
     void display_waiting_ev() const;
@@ -2180,7 +2288,107 @@ void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
 }
 
 void Reactor::run_loop(bool infinite, bool do_check_timeout) const {
-    reactor_run_loop_impl((*this), std::move(infinite), std::move(do_check_timeout));
+    verify(rusty::thread::current_id() == this->thread_id_.get());
+    this->looping_.set(std::move(infinite));
+    while (true) {
+        auto found_ready_events = true;
+        while (found_ready_events) {
+            found_ready_events = false;
+            if (reactor_process_stackless_tasks_impl((*this))) {
+                found_ready_events = true;
+            }
+            rusty::VecDeque<rusty::Arc<EventPollable>> ready_events = rusty::default_like<rusty::VecDeque<rusty::Arc<EventPollable>>>();
+            {
+                auto waiting_guard = this->waiting_events_.borrow_mut();
+                size_t i = static_cast<size_t>(0);
+                while (rusty::detail::deref_if_pointer_like(i) < rusty::len(waiting_guard)) {
+                    const auto ev = rusty::clone((*waiting_guard)[i]);
+                    ((rusty::detail::deref_if_pointer_like(ev))).test();
+                    i += static_cast<size_t>(1);
+                }
+                const auto n_before = rusty::len(ready_events);
+                ready_events.append(waiting_guard->extract_if([=](const rusty::Arc<EventPollable>& ev) -> bool {
+return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY);
+}));
+                if (rusty::len(ready_events) > rusty::detail::deref_if_pointer_like(n_before)) {
+                    found_ready_events = true;
+                }
+                waiting_guard->retain([=](const rusty::Arc<EventPollable>& ev) -> bool {
+return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE);
+});
+            }
+            {
+                auto composite_guard = this->composite_events_.borrow_mut();
+                size_t i = static_cast<size_t>(0);
+                while (rusty::detail::deref_if_pointer_like(i) < rusty::len(composite_guard)) {
+                    const auto ev = rusty::clone((*composite_guard)[i]);
+                    ((rusty::detail::deref_if_pointer_like(ev))).test();
+                    i += static_cast<size_t>(1);
+                }
+                const auto n_before = rusty::len(ready_events);
+                ready_events.append(composite_guard->extract_if([=](const rusty::Arc<EventPollable>& ev) -> bool {
+return ((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY);
+}));
+                if (rusty::len(ready_events) > rusty::detail::deref_if_pointer_like(n_before)) {
+                    found_ready_events = true;
+                }
+                composite_guard->retain([=](const rusty::Arc<EventPollable>& ev) -> bool {
+return ((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE);
+});
+            }
+            if (do_check_timeout) {
+                const auto before = rusty::len(ready_events);
+                this->check_timeout(ready_events);
+                if (rusty::len(ready_events) > rusty::detail::deref_if_pointer_like(before)) {
+                    found_ready_events = true;
+                }
+            }
+            {
+                size_t i = static_cast<size_t>(0);
+                while (rusty::detail::deref_if_pointer_like(i) < rusty::len(ready_events)) {
+                    const auto ev = rusty::clone(ready_events[i]);
+                    i += static_cast<size_t>(1);
+                    if (((rusty::detail::deref_if_pointer_like(ev))).status() != rusty::clone(EventStatus::DONE)) {
+                        auto option_fiber = ((rusty::detail::deref_if_pointer_like(ev))).upgrade_fiber();
+                        if (option_fiber.is_some()) {
+                            const auto fiber = option_fiber.unwrap();
+                            auto known = false;
+                            {
+                                const auto fibers_guard = this->fibers_.borrow();
+                                known = rusty::contains((*fibers_guard), std::move(fiber));
+                            }
+                            if (known) {
+                                verify([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.status_); }) { return (__r.status_); } else if constexpr (requires { (__r.status__field); }) { return (__r.status__field); } else if constexpr (requires { ((*__r).status_); }) { return ((*__r).status_); } else { return ((*__r).status__field); } }(fiber).get() == rusty::clone(Fiber::PAUSED));
+                                if (((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::READY)) {
+                                    ((rusty::detail::deref_if_pointer_like(ev))).set_status(rusty::clone(rusty::clone(EventStatus::DONE)));
+                                } else {
+                                    verify(((rusty::detail::deref_if_pointer_like(ev))).status() == rusty::clone(EventStatus::TIMEOUT));
+                                }
+                                this->continue_fiber(fiber);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!infinite && rusty::detail::rust_not(found_ready_events)) {
+                break;
+            }
+        }
+        if (rusty::detail::rust_not(this->looping_.get())) {
+            break;
+        }
+    }
+}
+
+void Reactor::prune_finished_events() const {
+    auto guard = this->all_events_.borrow_mut();
+    if (rusty::len(guard) < rusty::detail::deref_if_pointer_like(reactor_prune_hwm_th_)) {
+        return;
+    }
+    guard->retain([=](const rusty::Arc<EventPollable>& e) -> bool {
+return (e.strong_count() > static_cast<size_t>(1)) || rusty::detail::rust_not(((rusty::detail::deref_if_pointer_like(e))).prunable());
+});
+    reactor_prune_hwm_th_ = (rusty::len(guard) * static_cast<size_t>(2)) + static_cast<size_t>(64);
 }
 
 rusty::Rc<Fiber> Reactor::create_run_fiber(rusty::Function<void()> func) const {
@@ -2421,7 +2629,7 @@ inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
   auto reactor = Reactor::get_reactor();
   reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
   // Clear out finished events the reactor is the sole owner of (bounded growth).
-  reactor_prune_finished_events_impl(*reactor);
+  (*reactor).prune_finished_events();
   return ev;
 }
 
@@ -4026,13 +4234,6 @@ struct StacklessProfileCounters {
 
 StacklessProfileCounters g_stackless_profile;
 
-// Shim for the DSL enqueue path (declared above the Reactor DSL block).
-void stackless_profile_note_enqueue() {
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
-  }
-}
-
 inline void stackless_profile_update_max_slots(size_t slots) {
   size_t old = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
   while (slots > old &&
@@ -4081,6 +4282,18 @@ inline void stackless_profile_report_periodic() {
 }
 
 }  // namespace
+
+// Shim for the DSL enqueue path (declared, exported, above the Reactor DSL
+// block). Defined OUTSIDE the anonymous namespace -- inside it the
+// definition has internal linkage and never matches the exported
+// declaration (gate32's 108 undefined-reference link failures). The
+// anon-namespace globals it reads are still visible here in-TU.
+void stackless_profile_note_enqueue() {
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
 
 // sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ are
 // `static inline thread_local` in the class declaration above (vague linkage).
@@ -4423,7 +4636,7 @@ rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Fu
   // Step 6: Process events
   // @unsafe
   {
-    reactor_run_loop_impl(self, false, true);
+    self.run_loop(false, true);
   }
 
   // Step 7: Restore previous running fiber
@@ -4448,131 +4661,6 @@ rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Fu
 // @unsafe - FUNCTION-LOCAL STATIC (`static thread_local size_t prune_hwm`).
 // The DSL has no construct for a static declared inside a function body
 // (§7.24b); hoisting it would change the per-thread high-water semantics.
-void reactor_prune_finished_events_impl(const Reactor& self) {
-  static thread_local std::size_t prune_hwm = 64;
-  auto guard = self.all_events_.borrow_mut();
-  if (guard->len() < prune_hwm) {
-    return;
-  }
-  guard->retain(rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-    [](const rusty::Arc<EventPollable>& e) {
-      return e.strong_count() > 1 || !e->prunable();
-    }));
-  prune_hwm = guard->len() * 2 + 64;
-}
-void reactor_run_loop_impl(const Reactor& self, bool infinite, bool do_check_timeout) {
-  verify(rusty::thread::current_id() == self.thread_id_.get());
-
-  self.looping_.set(infinite);
-
-  do {
-    bool found_ready_events = true;
-    while (found_ready_events) {
-      found_ready_events = false;
-      if (reactor_process_stackless_tasks_impl(self)) {
-        found_ready_events = true;
-      }
-      rusty::VecDeque<rusty::Arc<EventPollable>> ready_events;
-
-      // Process waiting events using RefCell
-      {
-        auto waiting_guard = self.waiting_events_.borrow_mut();
-        // Test waiting events
-        for (size_t i = 0; i < waiting_guard->len(); ++i) {
-          (*waiting_guard)[i]->test();
-        }
-        // Extract READY events
-        {
-          auto ready_from_waiting = waiting_guard->extract_if(
-            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-              [](const rusty::Arc<EventPollable>& ev) {
-                return ev->status() == EventStatus::READY;
-              }));
-          if (!ready_from_waiting.is_empty()) {
-            ready_events.append(std::move(ready_from_waiting));
-            found_ready_events = true;
-          }
-        }
-        // Remove DONE events
-        {
-          waiting_guard->retain(
-            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-              [](const rusty::Arc<EventPollable>& ev) {
-                return ev->status() != EventStatus::DONE;
-              }));
-        }
-      }
-
-      // Process composite events using RefCell
-      {
-        auto composite_guard = self.composite_events_.borrow_mut();
-        for (size_t i = 0; i < composite_guard->len(); ++i) {
-          (*composite_guard)[i]->test();
-        }
-        {
-          auto ready_from_composite = composite_guard->extract_if(
-            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-              [](const rusty::Arc<EventPollable>& ev) {
-                return ev->status() == EventStatus::READY;
-              }));
-          if (!ready_from_composite.is_empty()) {
-            ready_events.append(std::move(ready_from_composite));
-            found_ready_events = true;
-          }
-        }
-        {
-          composite_guard->retain(
-            rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-              [](const rusty::Arc<EventPollable>& ev) {
-                return ev->status() != EventStatus::DONE;
-              }));
-        }
-      }
-
-      // Check timeouts using RefCell-based check_timeout
-      if (do_check_timeout) {
-        size_t before = ready_events.len();
-        // @unsafe { check_timeout is per-method @unsafe due to raw
-        // std::shared_ptr<Event> handling + Status::TIMEOUT mutation. }
-        { self.check_timeout(ready_events); }
-        if (ready_events.len() > before) {
-          found_ready_events = true;
-        }
-      }
-
-      // Process ready events
-      // @unsafe - Weak::upgrade, continue_fiber with potential use-after-move patterns
-      {
-        for (size_t i = 0; i < ready_events.len(); ++i) {
-          auto& ev = ready_events[i];
-          if (ev->status() == EventStatus::DONE) {
-            continue;
-          }
-          auto option_fiber = ev->upgrade_fiber();
-          if (option_fiber.is_none()) {
-            continue;
-          }
-          auto fiber = option_fiber.unwrap();
-          if (!self.fibers_.borrow()->contains(fiber)) {
-            continue;
-          }
-          verify(fiber->status_.get() == Fiber::PAUSED);
-          if (ev->status() == EventStatus::READY) {
-            ev->set_status(EventStatus::DONE);
-          } else {
-            verify(ev->status() == EventStatus::TIMEOUT);
-          }
-          self.continue_fiber(fiber);
-        }
-      }
-
-      if (!infinite && !found_ready_events) {
-        break;
-      }
-    }
-
-  } while (self.looping_.get());
-}
 
 // @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls.
 // Takes the Rc by const reference: passing by value would invoke the port
