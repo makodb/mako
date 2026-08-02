@@ -283,7 +283,7 @@ TEST_F(ClientChannelFactoryTest,
            factory_->connect_count() < 2u) {
         // Drive the test-thread reactor too so the recv-loop fiber's
         // close-side fan-out runs.
-        reactor->loop();
+        reactor->run_loop(false, true);
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
@@ -306,7 +306,7 @@ TEST_F(ClientChannelFactoryTest,
     auto last_stub = factory_->last_stub();
     if (last_stub && !last_stub->is_closed()) {
         last_stub->deliver_closed(ChannelError::None);
-        for (int i = 0; i < 5; ++i) reactor->loop();
+        for (int i = 0; i < 5; ++i) reactor->run_loop(false, true);
     }
 }
 

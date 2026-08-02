@@ -116,7 +116,7 @@ void run_in_fiber(F&& body) {
     // `loop()` runs ready fibers; once the body's fiber completes,
     // `done` is set and we exit.
     while (done->value_.get() < 1) {
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
 }
 

@@ -45,7 +45,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         });
         
         // Process - event is already ready, so waiter should complete
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         EXPECT_TRUE(completed);
         EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::DONE));
@@ -66,7 +66,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         
         // Sleep longer than timeout
         std::this_thread::sleep_for(milliseconds(10));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         EXPECT_TRUE(completed);
         EXPECT_EQ(final_status.load(), static_cast<int>(EventStatus::TIMEOUT));
@@ -90,14 +90,14 @@ TEST_F(TimeoutRaceTest, DoubleListBehavior) {
     // Process events multiple times before timeout
     for (int i = 0; i < 5; i++) {
         std::this_thread::sleep_for(milliseconds(5));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         loop_count++;
         if (completed) break;
     }
     
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(60));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
     std::cout << "Event processed after " << loop_count 
@@ -141,7 +141,7 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
     // Process events over time
     for (int i = 0; i < 20; i++) {
         std::this_thread::sleep_for(milliseconds(10));
-        reactor->loop(false);
+        reactor->run_loop(false, true);
     }
     
     std::cout << "Results: Ready=" << ready_count 
@@ -171,7 +171,7 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
     
     // Wait for all timeouts
     std::this_thread::sleep_for(milliseconds(20));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_EQ(completed_count, 5);
     
@@ -213,7 +213,7 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
         if (iter % 3 != 0) {
             std::this_thread::sleep_for(milliseconds(2));
         }
-        reactor->loop(false);
+        reactor->run_loop(false, true);
     }
     
     std::cout << "Results after " << num_iterations << " iterations: "
@@ -239,7 +239,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(10));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(first_done);
     
@@ -262,7 +262,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
                   << static_cast<int>(sp_event->status_.get()) << std::endl;
     });
     
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     // The second fiber should complete
     EXPECT_TRUE(second_done);

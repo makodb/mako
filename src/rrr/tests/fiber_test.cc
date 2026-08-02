@@ -19,7 +19,7 @@ protected:
         // Drop the thread-local reactor + any running-fiber slot between
         // tests so each test gets a fresh scheduler. Without this, fibers
         // suspended in one test (e.g. after a yield/sleep) stay registered
-        // in the next test's `reactor->loop()` call and block it forever.
+        // in the next test's `reactor->run_loop(false, true)` call and block it forever.
         // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
         *rrr::sp_running_fiber_th_.borrow_mut() = rusty::None;
         rrr::sp_reactor_th_ = rusty::None;
@@ -74,7 +74,7 @@ TEST_F(FiberTest, GetIdInsideFiberContext) {
         captured_id = this_fiber::get_id();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Inside fiber context, should return non-zero ID
     EXPECT_NE(0u, captured_id);
@@ -92,7 +92,7 @@ TEST_F(FiberTest, GetIdUniquePerFiber) {
         id2 = this_fiber::get_id();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Each fiber should have a unique ID
     EXPECT_NE(0u, id1);
@@ -119,7 +119,7 @@ TEST_F(FiberTest, CurrentInsideFiberContext) {
         got_current = current.is_some();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Inside fiber context, should return Some
     EXPECT_TRUE(got_current);
@@ -141,7 +141,7 @@ TEST_F(FiberTest, InFiberContextInside) {
         inside = this_fiber::in_fiber_context();
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(inside);
 }
@@ -189,7 +189,7 @@ TEST_F(FiberTest, SleepUsZero) {
         completed = true;
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(completed);
 }
@@ -205,7 +205,7 @@ TEST_F(FiberTest, SleepUsPositive) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Should have slept at least the specified duration
     EXPECT_GE(end_time - start_time, sleep_duration);
@@ -226,7 +226,7 @@ TEST_F(FiberTest, SleepMsConversion) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Should have slept at least 5ms = 5000us
     EXPECT_GE(end_time - start_time, sleep_ms * 1000);
@@ -267,7 +267,7 @@ TEST_F(FiberTest, SleepUntilPastTime) {
         end_time = Time::now(true);
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     // Should return immediately (within a few hundred microseconds)
     EXPECT_LT(end_time - start_time, 10000u); // Less than 10ms
@@ -357,7 +357,7 @@ TEST_F(FiberTest, FutureGetValueInFiber) {
     promise.set_value(42);
 
     // Run reactor to let consumer fiber complete
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_EQ(42, received_value);
 }
@@ -374,7 +374,7 @@ TEST_F(FiberTest, FutureWaitForTimeout) {
         ready = future.wait_for(1000);  // 1ms timeout
     });
 
-    reactor->loop();
+    reactor->run_loop(false, true);
 
     EXPECT_FALSE(ready);
 }

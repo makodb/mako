@@ -159,7 +159,7 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
     auto reactor = Reactor::get_reactor();
     for (int i = 0; i < max_iterations; ++i) {
         if (pred()) return;
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
     FAIL() << "pump_until: predicate never satisfied (recv-loop fiber wedged?)";
 }
@@ -198,7 +198,7 @@ class ClientChannelRecvTest : public ::testing::Test {
         // the reactor so the close propagates through the fiber.
         if (stub_) {
             stub_->deliver_closed();
-            (void)Reactor::get_reactor()->loop();
+            (void)Reactor::get_reactor()->run_loop(false, true);
         }
         conn_ = rusty::None;
         if (poll_thread_.is_some()) {
@@ -341,7 +341,7 @@ TEST_F(ClientChannelRecvTest, ResponseForUnknownXidIsDroppedSilently) {
 
     // Pump a few iterations so the recv-loop has a chance to drain.
     auto reactor = Reactor::get_reactor();
-    for (int i = 0; i < 10; ++i) reactor->loop();
+    for (int i = 0; i < 10; ++i) reactor->run_loop(false, true);
 
     // No crash, no future to verify — just make sure the recv-loop is
     // still parked and ready for more (we exercise the "drain payload"
@@ -363,7 +363,7 @@ TEST_F(ClientChannelRecvTest, RecvLoopExitsCleanlyOnChannelClose) {
     // latch is still set.
     stub_->deliver_closed();
     auto reactor = Reactor::get_reactor();
-    for (int i = 0; i < 10; ++i) reactor->loop();
+    for (int i = 0; i < 10; ++i) reactor->run_loop(false, true);
 
     EXPECT_TRUE(mut_conn().is_channel_mode());
     // A subsequent request fails with ENOTCONN because the

@@ -30,12 +30,12 @@ TEST(AndEventTest, BasicAndEvent) {
     
     // Set only first event - WaitAll should NOT trigger
     event1->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_FALSE(and_triggered);
     
     // Set second event - now WaitAll should trigger (use target value)
     event2->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_TRUE(and_triggered);
 }
 
@@ -59,15 +59,15 @@ TEST(AndEventTest, ThreeEventAnd) {
     
     // Set events in different order
     event2->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 0); // Not ready yet
     
     event3->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 0); // Still not ready
     
     event1->set(1);
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_EQ(completion_value, 3); // Now all are ready: 1+1+1
 }
 
@@ -97,7 +97,7 @@ TEST(AndEventTest, AndWithTimeout) {
 
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(100));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
 
     EXPECT_TRUE(completed);
     // Should have timed out since event2 was never set
@@ -128,7 +128,7 @@ TEST(AndEventTest, VariadicConstructor) {
     event2->set(1);
     event3->set(1);
     
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     EXPECT_TRUE(completed);
 }
 
@@ -154,7 +154,7 @@ TEST(AndEventTest, MixedEventTypes) {
     
     // Wait for timeout event to become ready
     std::this_thread::sleep_for(milliseconds(150));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
 }

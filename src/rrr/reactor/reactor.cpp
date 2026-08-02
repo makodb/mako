@@ -79,10 +79,14 @@ import rrr.pollable_proxy;
 // `janus` (its 41 deptran use sites name it there).
 /*RUSTYCPP:GEN-DISPATCH-BEGIN*/
 namespace rusty { namespace detail {
+RUSTY_METHOD_DISPATCH(extract_if)
 RUSTY_METHOD_DISPATCH(get_self)
+RUSTY_METHOD_DISPATCH(insert)
 RUSTY_METHOD_DISPATCH(is_composite_event)
 RUSTY_METHOD_DISPATCH(is_ready)
 RUSTY_METHOD_DISPATCH(push_back)
+RUSTY_METHOD_DISPATCH(retain)
+RUSTY_METHOD_DISPATCH(size)
 RUSTY_METHOD_DISPATCH(upgrade)
 } } // namespace rusty::detail (issue #31 deref_call dispatch)
 /*RUSTYCPP:GEN-DISPATCH-END*/
@@ -1823,158 +1827,495 @@ struct StacklessTaskEntry {
 };
 /*RUSTYCPP:GEN-END id=reactor.14*/
 
-class Reactor {
- public:
-  // Default constructor - all fields have default constructors
-  Reactor() = default;
-
-  // Delete copy and move constructors (RefCell and Cell are not copyable/movable)
-  Reactor(const Reactor&) = delete;
-  Reactor& operator=(const Reactor&) = delete;
-  Reactor(Reactor&&) = delete;
-  Reactor& operator=(Reactor&&) = delete;
-
-  // @unsafe - Returns thread-local reactor instance with single-threaded Rc
-  // SAFETY: Thread-local storage, single-threaded access only
-  static rusty::Rc<Reactor> get_reactor();
-  // @unsafe - Returns thread-local disk reactor instance
-  static rusty::Rc<Reactor> get_disk_reactor();
-  // `inline` keeps these in vague linkage. Without it, clang 21 emits the
-  // module-attached class-static thread_local storage as a strong external
-  // in every TU that uses it via an inline accessor, causing duplicate-
-  // definition linker errors. clang 22 happened to avoid this; we use
-  // `inline` to make the linkage explicit and toolchain-independent.
-  // (sp_reactor_th_ / sp_disk_reactor_th_ / sp_running_fiber_th_ hoisted
-  // to namespace-scope thread_locals above the class — the DSL free fns
-  // that own the singleton/running-fiber logic cannot name class
-  // statics; same move the file already made for g_current_poll_worker.)
-
-  // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
-  // Using Cell for safe interior mutability (int is trivially copyable)
-  rusty::Cell<int> server_id_{0};
-
-  /**
-   * A reactor needs to keep reference to all fibers created,
-   * in case it is freed by the caller after a yield.
-   */
-  // Events managed with std::shared_ptr<Event> for polymorphism support
-  // Using RefCell<VecDeque> for safe interior mutability in const methods
-  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events_{};
-  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events_{};
-  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events_{};
-  rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
-  // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
-  // Fibers managed with single-threaded Rc
-  // Using rusty::BTreeSet for @safe contains() checks
-  // Using RefCell for safe interior mutability in const methods
-  // std::set (not rusty::BTreeSet) — BTreeSet::remove() triggers a
-  // cascade of transpiler bugs in btree_internal (OccupiedEntry
-  // remove_entry path has ._0 variant-access typos, non-const member
-  // calls, NodeRef temporary binding issues). Migrate back when the
-  // upstream bugs are patched.
-  rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_{};
-  rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_{};
-  // Note: processors_ and opened_files_ were removed as dead code (never used)
-  // `inline` keeps these in vague linkage — see sp_reactor_th_ above for why.
-  // (Function-local-static accessor `clients()` was used during the
-  // module-attached TLS dup-symbol investigation; the `static inline
-  // thread_local` pattern at class scope is the cleaner equivalent fix
-  // that matches sp_reactor_th_ et al.)
-  static inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> clients_{};
-  static inline thread_local rusty::HashSet<std::string> dangling_ips_{};
-  // Interior mutability using Cell<T> for safe const method access
-  rusty::Cell<bool> looping_{false};
-  rusty::Cell<bool> slow_{false};
-  rusty::Cell<int> slow_count_{0};
-  rusty::Cell<int> trying_count_{0};
-  rusty::Cell<rusty::thread::ThreadId> thread_id_{};
-  // Jetpack fiber counters - using Cell for interior mutability
-  rusty::Cell<int64_t> n_created_fibers_{0};
-  rusty::Cell<int64_t> n_busy_fibers_{0};
-  rusty::Cell<int64_t> n_active_fibers_{0};
-  rusty::Cell<int64_t> n_active_fibers_2_{0};
-  rusty::Cell<int64_t> n_idle_fibers_{0};
-  // Stackless coroutine task slots managed by the reactor loop.
-  // `poll_once` is move-only (rusty::Function): `process_stackless_tasks`
-  // moves the function out of its slot before invoking it (so the
-  // reactor's RefCell guards on `stackless_tasks_` aren't held across
-  // user code), then moves it back if the poll didn't return Ready.
-  rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_{};
-  rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_{};
-  rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_{};
+// Reactor -- converted to inline-Rust DSL (Goal 0 Stage B). The struct is
+// deliberately NON-movable and NON-copyable: it is thread-affine
+// (thread_id_ is verified inside the loop) and held through Rc<Reactor>,
+// so `_pin: PhantomPinned` makes the transpiler emit deleted move
+// operations, and `#[cpp_ctor] fn new()` emits a real in-place default
+// constructor so `Rc<Reactor>::make()` keeps working. Method bodies with
+// real logic live in the `reactor_*_impl` kernels below the class; the
+// DSL methods delegate. `loop` was renamed `run_loop` (Rust keyword) and
+// its two default arguments became explicit at the ~43 call sites;
+// `create_run_fiber` lost its never-used file/line default parameters.
 #if defined(REUSE_FIBER) || defined(REUSE_CORO)
 #define REUSING_FIBER (true)
 #else
 #define REUSING_FIBER (false)
 #endif
 
-  // Checks and processes timeout events with std::shared_ptr<Event>
-  void check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>&) const;
-  /**
-   * @param ev. is usually allocated on a fiber stack. memory managed by user.
-   */
-  // @safe - Creates and runs a new fiber with rusty::Rc ownership
-  // Refactored into smaller safe helper functions for clarity and safety.
-  // Jetpack: file/line parameters for debugging fiber creation location
-  rusty::Rc<Fiber> create_run_fiber(rusty::Function<void()> func,
-                                            const char* file = "",
-                                            int64_t line = 0) const;
+// Hoisted class statics (a DSL struct holds no statics -- same move as
+// sp_reactor_th_ / g_current_poll_worker). `reactor_clients_th_` is the
+// old `Reactor::clients_`, still consumed by deptran/communicator.cc;
+// `dangling_ips_` was dead and is deleted.
+inline thread_local rusty::HashMap<std::string, rusty::Vec<PollableProxy>> reactor_clients_th_{};
 
- private:
-  // Helper functions for create_run_fiber - each is @safe with internal @unsafe blocks
+// Stackless-profile observability shim, defined next to g_stackless_profile
+// further down (the DSL method cannot name the later-defined global).
+void stackless_profile_note_enqueue();
 
-  // @safe - Gets a recycled fiber or creates a new one
-  rusty::Rc<Fiber> get_or_create_fiber(rusty::Function<void()> func,
-                                               const char* file,
-                                               int64_t line) const;
+// The thread-local singleton/running-fiber accessors, defined (in DSL)
+// later in this file; the GEN method bodies below call them.
+rusty::Rc<Reactor> reactor_tls_get();
+rusty::Rc<Reactor> reactor_tls_get_disk();
+rusty::Option<rusty::Rc<Fiber>> reactor_tls_save_running();
+void reactor_tls_restore_running(rusty::Option<rusty::Rc<Fiber>> old_fiber);
+void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber);
 
-  // @safe - Saves current running fiber to allow nesting
-  rusty::Option<rusty::Rc<Fiber>> save_running_fiber() const;
+// @unsafe kernels the DSL methods (and each other) delegate to; bodies
+// below the class, renamed from the old member definitions.
+rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
+size_t reactor_register_stackless_poller_impl(const Reactor& self, rusty::Function<bool(rusty::Context&)> poller);
+bool reactor_process_stackless_tasks_impl(const Reactor& self);
+void reactor_prune_finished_events_impl(const Reactor& self);
+void reactor_run_loop_impl(const Reactor& self, bool infinite, bool do_check_timeout);
+void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> task);
+rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self, rusty::Function<void()> func);
+rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line);
 
-  // @safe - Restores previously saved running fiber
-  void restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const;
+#if RUSTYCPP_RUST
+struct Reactor {
+    server_id_: rusty::Cell<i32>,
+    all_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
+    waiting_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
+    timeout_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
+    composite_events_: rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>,
+    fibers_: rusty::RefCell<std::set<rusty::Rc<Fiber>>>,
+    available_fibers_: rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>>,
+    looping_: rusty::Cell<bool>,
+    slow_: rusty::Cell<bool>,
+    slow_count_: rusty::Cell<i32>,
+    trying_count_: rusty::Cell<i32>,
+    thread_id_: rusty::Cell<rusty::thread::ThreadId>,
+    n_created_fibers_: rusty::Cell<i64>,
+    n_busy_fibers_: rusty::Cell<i64>,
+    n_active_fibers_: rusty::Cell<i64>,
+    n_active_fibers_2_: rusty::Cell<i64>,
+    n_idle_fibers_: rusty::Cell<i64>,
+    stackless_tasks_: rusty::RefCell<rusty::Vec<StacklessTaskEntry>>,
+    free_stackless_task_slots_: rusty::RefCell<rusty::Vec<usize>>,
+    ready_stackless_tasks_: rusty::RefCell<rusty::VecDeque<usize>>,
+    _pin: rusty::marker::PhantomPinned,
+}
 
-  // @safe - Sets the current running fiber
-  void set_running_fiber(const rusty::Rc<Fiber>& fiber) const;
+impl Reactor {
+    #[cpp_ctor]
+    fn new() -> Reactor {
+        Reactor {
+            server_id_: Default::default(),
+            all_events_: Default::default(),
+            waiting_events_: Default::default(),
+            timeout_events_: Default::default(),
+            composite_events_: Default::default(),
+            fibers_: Default::default(),
+            available_fibers_: Default::default(),
+            looping_: Default::default(),
+            slow_: Default::default(),
+            slow_count_: Default::default(),
+            trying_count_: Default::default(),
+            thread_id_: Default::default(),
+            n_created_fibers_: Default::default(),
+            n_busy_fibers_: Default::default(),
+            n_active_fibers_: Default::default(),
+            n_active_fibers_2_: Default::default(),
+            n_idle_fibers_: Default::default(),
+            stackless_tasks_: Default::default(),
+            free_stackless_task_slots_: Default::default(),
+            ready_stackless_tasks_: Default::default(),
+            _pin: rusty::marker::PhantomPinned {},
+        }
+    }
 
-  // @safe - Registers a fiber in the active set
-  void register_fiber(const rusty::Rc<Fiber>& fiber) const;
+    fn get_reactor() -> rusty::Rc<Reactor> {
+        reactor_tls_get()
+    }
+    fn get_disk_reactor() -> rusty::Rc<Reactor> {
+        reactor_tls_get_disk()
+    }
+    fn save_running_fiber(&self) -> rusty::Option<rusty::Rc<Fiber>> {
+        reactor_tls_save_running()
+    }
+    fn restore_running_fiber(&self, old_fiber: rusty::Option<rusty::Rc<Fiber>>) {
+        reactor_tls_restore_running(old_fiber);
+    }
+    fn set_running_fiber(&self, fiber: &rusty::Rc<Fiber>) {
+        reactor_tls_set_running(fiber);
+    }
+    fn run_loop(&self, infinite: bool, do_check_timeout: bool) {
+        reactor_run_loop_impl(self, infinite, do_check_timeout);
+    }
+    fn create_run_fiber(&self, func: rusty::Function<dyn FnMut()>) -> rusty::Rc<Fiber> {
+        reactor_create_run_fiber_impl(self, func)
+    }
+    fn continue_fiber(&self, fiber: &rusty::Rc<Fiber>) {
+        // Save current running fiber for nesting support.
+        let mut old_fiber: rusty::Option<rusty::Rc<Fiber>> = None;
+        {
+            let guard = sp_running_fiber_th_.borrow();
+            if (*guard).is_some() {
+                old_fiber = rusty::Some((*guard).as_ref().unwrap().clone());
+            }
+        }
+        {
+            let mut guard = sp_running_fiber_th_.borrow_mut();
+            *guard = rusty::Some(fiber.clone());
+        }
+        {
+            let guard = sp_running_fiber_th_.borrow();
+            let running: &rusty::Rc<Fiber> = (*guard).as_ref().unwrap();
+            verify(!running.finished());
+        }
+        self.n_active_fibers_.set(self.n_active_fibers_.get() + 1i64);
+        if fiber.status_.get() == Fiber::INIT {
+            fiber.run();
+        } else {
+            // Don't hold a borrow across continue_(): the fiber may call
+            // create_run() (RefCell double-borrow crash during restart).
+            fiber.continue_();
+        }
+        {
+            let guard = sp_running_fiber_th_.borrow();
+            let running: &rusty::Rc<Fiber> = (*guard).as_ref().unwrap();
+            if running.finished() {
+                let mut fiber_ref = running.clone();
+                self.recycle(&mut fiber_ref);
+            }
+        }
+        {
+            let mut guard = sp_running_fiber_th_.borrow_mut();
+            *guard = old_fiber;
+        }
+    }
 
- public:
-  // @safe - Queue a stackless task slot for polling if not already queued.
-  void enqueue_stackless_task(size_t idx) const;
+    fn display_waiting_ev(&self) {
+        Log_info("waiting_events_: {}, composite_events_: {}",
+                 self.waiting_events_.borrow().len(), self.composite_events_.borrow().len());
+    }
 
-  // @safe - Register a stackless task poller and return slot index.
-  size_t register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const;
+    fn register_fiber(&self, fiber: &rusty::Rc<Fiber>) {
+        // std::set::insert returns pair<iterator, bool>; `.second` is true
+        // when the value was newly inserted.
+        let mut guard = self.fibers_.borrow_mut();
+        let inserted = guard.insert(fiber.clone()).second;
+        if !inserted {
+            unsafe { Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!"); }
+            unsafe { Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", guard.size(), REUSING_FIBER); }
+        }
+        verify(inserted);
+        verify(guard.size() > 0usize);
+    }
 
-  // @safe - Poll all queued stackless tasks once.
-  // Returns true if at least one stackless task was polled.
-  bool process_stackless_tasks() const;
+    fn recycle(&self, fiber: &mut rusty::Rc<Fiber>) {
+        // Fixes fibers not being recycled when they don't finish immediately.
+        if REUSING_FIBER {
+            fiber.status_.set(Fiber::RECYCLED);
+            let empty_fn: rusty::Function<dyn FnMut()> = Default::default();
+            *fiber.func_.borrow_mut() = empty_fn;
+            self.n_idle_fibers_.set(self.n_idle_fibers_.get() + 1i64);
+            self.available_fibers_.borrow_mut().push(fiber.clone());
+        }
+        self.n_busy_fibers_.set(self.n_busy_fibers_.get() - 1i64);
+        self.fibers_.borrow_mut().erase(fiber);
+    }
 
- public:
-  // Public (were private): the hoisted free templates
-  // `reactor_spawn_stackless_task_with_result` / its EarlyWakeState waker
-  // call these from outside the class. The DSL end-state is an all-public
-  // struct anyway (playbook: the all-public DSL struct needs no friends).
-  // @safe - Amortized prune of finished events from all_events_ (drops events
-  // the list is the sole owner of; non-prunable events are retained).
-  void prune_finished_events() const;
-  // @safe - Main event loop
-  void loop(bool infinite = false, bool do_check_timeout = true) const;
-  // @safe - Continues execution of a paused fiber
-  void continue_fiber(const rusty::Rc<Fiber>& fiber) const;
-  void recycle(rusty::Rc<Fiber>& fiber) const;
-  void display_waiting_ev() const;
-  // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
-  void spawn_stackless_task(rusty::Task<void> task) const;
-  ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
-              all_events_.borrow()->len(), fibers_.borrow()->size());
-    // Note: destructor body runs BEFORE member variables are destroyed
-    Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
-  }
+    fn enqueue_stackless_task(&self, idx: usize) {
+        stackless_profile_note_enqueue();
+        {
+            let guard = self.stackless_tasks_.borrow();
+            if idx >= guard.len() {
+                return;
+            }
+            if !(*guard)[idx].active || (*guard)[idx].queued {
+                return;
+            }
+        }
+        {
+            let mut guard = self.stackless_tasks_.borrow_mut();
+            if idx >= guard.len() {
+                return;
+            }
+            if !(*guard)[idx].active || (*guard)[idx].queued {
+                return;
+            }
+            (*guard)[idx].queued = true;
+        }
+        self.ready_stackless_tasks_.borrow_mut().push_back(idx);
+    }
 
+    fn check_timeout(&self, ready_events: &mut rusty::VecDeque<rusty::Arc<EventPollable>>) {
+        let time_now: i64 = Time::now(true);
+        let mut guard = self.timeout_events_.borrow_mut();
+        // First pass: update the status of timed-out events. The Arc is
+        // cloned per slot so no reference into the guard is held across
+        // the status mutations.
+        let mut i: usize = 0usize;
+        while i < guard.len() {
+            let event = (*guard)[i].clone();
+            if (*event).status() == EventStatus::WAIT {
+                let wakeup_time = (*event).wakeup_time();
+                verify(wakeup_time > 0u64);
+                if time_now >= wakeup_time as i64 {
+                    if (*event).is_ready() {
+                        (*event).set_status(EventStatus::READY);
+                    } else {
+                        (*event).set_status(EventStatus::TIMEOUT);
+                    }
+                }
+            }
+            i += 1usize;
+        }
+        // Extract events that are READY or TIMEOUT.
+        ready_events.append(guard.extract_if(move |sp: &rusty::Arc<EventPollable>| -> bool {
+            let status = (*sp).status();
+            status == EventStatus::READY || status == EventStatus::TIMEOUT
+        }));
+        // Drop events that are DONE.
+        guard.retain(move |sp: &rusty::Arc<EventPollable>| -> bool {
+            (*sp).status() != EventStatus::DONE
+        });
+    }
+}
+
+impl Drop for Reactor {
+    fn drop(&mut self) {
+        Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
+                  self.all_events_.borrow().len(), self.fibers_.borrow().size());
+        Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
+    }
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.15 version=1 rust_sha256=1577ad15ab517ad9c306b57da141231db86f2cf4460f6de7c3dda5824b1f3997*/
+struct Reactor;
+
+struct Reactor {
+    rusty::Cell<int32_t> server_id_;
+    rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events_;
+    rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events_;
+    rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events_;
+    rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events_;
+    rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers_;
+    rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers_;
+    rusty::Cell<bool> looping_;
+    rusty::Cell<bool> slow_;
+    rusty::Cell<int32_t> slow_count_;
+    rusty::Cell<int32_t> trying_count_;
+    rusty::Cell<rusty::thread::ThreadId> thread_id_;
+    rusty::Cell<int64_t> n_created_fibers_;
+    rusty::Cell<int64_t> n_busy_fibers_;
+    rusty::Cell<int64_t> n_active_fibers_;
+    rusty::Cell<int64_t> n_active_fibers_2_;
+    rusty::Cell<int64_t> n_idle_fibers_;
+    rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks_;
+    rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots_;
+    rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks_;
+    rusty::marker::PhantomPinned _pin;
+    mutable bool _rusty_forgotten = false;
+    Reactor(rusty::Cell<int32_t> server_id__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> all_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> waiting_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> timeout_events__init, rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>> composite_events__init, rusty::RefCell<std::set<rusty::Rc<Fiber>>> fibers__init, rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>> available_fibers__init, rusty::Cell<bool> looping__init, rusty::Cell<bool> slow__init, rusty::Cell<int32_t> slow_count__init, rusty::Cell<int32_t> trying_count__init, rusty::Cell<rusty::thread::ThreadId> thread_id__init, rusty::Cell<int64_t> n_created_fibers__init, rusty::Cell<int64_t> n_busy_fibers__init, rusty::Cell<int64_t> n_active_fibers__init, rusty::Cell<int64_t> n_active_fibers_2__init, rusty::Cell<int64_t> n_idle_fibers__init, rusty::RefCell<rusty::Vec<StacklessTaskEntry>> stackless_tasks__init, rusty::RefCell<rusty::Vec<size_t>> free_stackless_task_slots__init, rusty::RefCell<rusty::VecDeque<size_t>> ready_stackless_tasks__init, rusty::marker::PhantomPinned _pin_init) : server_id_(std::move(server_id__init)), all_events_(std::move(all_events__init)), waiting_events_(std::move(waiting_events__init)), timeout_events_(std::move(timeout_events__init)), composite_events_(std::move(composite_events__init)), fibers_(std::move(fibers__init)), available_fibers_(std::move(available_fibers__init)), looping_(std::move(looping__init)), slow_(std::move(slow__init)), slow_count_(std::move(slow_count__init)), trying_count_(std::move(trying_count__init)), thread_id_(std::move(thread_id__init)), n_created_fibers_(std::move(n_created_fibers__init)), n_busy_fibers_(std::move(n_busy_fibers__init)), n_active_fibers_(std::move(n_active_fibers__init)), n_active_fibers_2_(std::move(n_active_fibers_2__init)), n_idle_fibers_(std::move(n_idle_fibers__init)), stackless_tasks_(std::move(stackless_tasks__init)), free_stackless_task_slots_(std::move(free_stackless_task_slots__init)), ready_stackless_tasks_(std::move(ready_stackless_tasks__init)), _pin(std::move(_pin_init)) {}
+    Reactor(const Reactor&) = delete;
+    Reactor(Reactor&&) = delete;
+    Reactor& operator=(const Reactor&) = delete;
+    Reactor& operator=(Reactor&&) = delete;
+    void rusty_mark_forgotten() const noexcept { _rusty_forgotten = true; rusty::detail::mark_forgotten_if_supported(this->server_id_); rusty::detail::mark_forgotten_if_supported(this->all_events_); rusty::detail::mark_forgotten_if_supported(this->waiting_events_); rusty::detail::mark_forgotten_if_supported(this->timeout_events_); rusty::detail::mark_forgotten_if_supported(this->composite_events_); rusty::detail::mark_forgotten_if_supported(this->fibers_); rusty::detail::mark_forgotten_if_supported(this->available_fibers_); rusty::detail::mark_forgotten_if_supported(this->looping_); rusty::detail::mark_forgotten_if_supported(this->slow_); rusty::detail::mark_forgotten_if_supported(this->slow_count_); rusty::detail::mark_forgotten_if_supported(this->trying_count_); rusty::detail::mark_forgotten_if_supported(this->thread_id_); rusty::detail::mark_forgotten_if_supported(this->n_created_fibers_); rusty::detail::mark_forgotten_if_supported(this->n_busy_fibers_); rusty::detail::mark_forgotten_if_supported(this->n_active_fibers_); rusty::detail::mark_forgotten_if_supported(this->n_active_fibers_2_); rusty::detail::mark_forgotten_if_supported(this->n_idle_fibers_); rusty::detail::mark_forgotten_if_supported(this->stackless_tasks_); rusty::detail::mark_forgotten_if_supported(this->free_stackless_task_slots_); rusty::detail::mark_forgotten_if_supported(this->ready_stackless_tasks_); rusty::detail::mark_forgotten_if_supported(this->_pin); }
+
+
+    Reactor();
+    static rusty::Rc<Reactor> get_reactor();
+    static rusty::Rc<Reactor> get_disk_reactor();
+    rusty::Option<rusty::Rc<Fiber>> save_running_fiber() const;
+    void restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const;
+    void set_running_fiber(const rusty::Rc<Fiber>& fiber) const;
+    void run_loop(bool infinite, bool do_check_timeout) const;
+    rusty::Rc<Fiber> create_run_fiber(rusty::Function<void()> func) const;
+    void continue_fiber(const rusty::Rc<Fiber>& fiber) const;
+    void display_waiting_ev() const;
+    void register_fiber(const rusty::Rc<Fiber>& fiber) const;
+    void recycle(rusty::Rc<Fiber>& fiber) const;
+    void enqueue_stackless_task(size_t idx) const;
+    void check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const;
+    ~Reactor() noexcept(false);
 };
+
+
+Reactor::Reactor()
+    : server_id_(rusty::default_like<rusty::Cell<int32_t>>())
+    , all_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
+    , waiting_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
+    , timeout_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
+    , composite_events_(rusty::default_like<rusty::RefCell<rusty::VecDeque<rusty::Arc<EventPollable>>>>())
+    , fibers_(rusty::default_like<rusty::RefCell<std::set<rusty::Rc<Fiber>>>>())
+    , available_fibers_(rusty::default_like<rusty::RefCell<rusty::Vec<rusty::Rc<Fiber>>>>())
+    , looping_(rusty::default_like<rusty::Cell<bool>>())
+    , slow_(rusty::default_like<rusty::Cell<bool>>())
+    , slow_count_(rusty::default_like<rusty::Cell<int32_t>>())
+    , trying_count_(rusty::default_like<rusty::Cell<int32_t>>())
+    , thread_id_(rusty::default_like<rusty::Cell<rusty::thread::ThreadId>>())
+    , n_created_fibers_(rusty::default_like<rusty::Cell<int64_t>>())
+    , n_busy_fibers_(rusty::default_like<rusty::Cell<int64_t>>())
+    , n_active_fibers_(rusty::default_like<rusty::Cell<int64_t>>())
+    , n_active_fibers_2_(rusty::default_like<rusty::Cell<int64_t>>())
+    , n_idle_fibers_(rusty::default_like<rusty::Cell<int64_t>>())
+    , stackless_tasks_(rusty::default_like<rusty::RefCell<rusty::Vec<StacklessTaskEntry>>>())
+    , free_stackless_task_slots_(rusty::default_like<rusty::RefCell<rusty::Vec<size_t>>>())
+    , ready_stackless_tasks_(rusty::default_like<rusty::RefCell<rusty::VecDeque<size_t>>>())
+    , _pin(rusty::marker::PhantomPinned{})
+{}
+
+rusty::Rc<Reactor> Reactor::get_reactor() {
+    return reactor_tls_get();
+}
+
+rusty::Rc<Reactor> Reactor::get_disk_reactor() {
+    return reactor_tls_get_disk();
+}
+
+rusty::Option<rusty::Rc<Fiber>> Reactor::save_running_fiber() const {
+    return reactor_tls_save_running();
+}
+
+void Reactor::restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const {
+    reactor_tls_restore_running(std::move(old_fiber));
+}
+
+void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
+    reactor_tls_set_running(fiber);
+}
+
+void Reactor::run_loop(bool infinite, bool do_check_timeout) const {
+    reactor_run_loop_impl((*this), std::move(infinite), std::move(do_check_timeout));
+}
+
+rusty::Rc<Fiber> Reactor::create_run_fiber(rusty::Function<void()> func) const {
+    return reactor_create_run_fiber_impl((*this), std::move(func));
+}
+
+void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
+    rusty::Option<rusty::Rc<Fiber>> old_fiber = rusty::Option<rusty::Rc<Fiber>>{rusty::None};
+    {
+        auto&& guard = rusty::borrow(sp_running_fiber_th_);
+        if (((rusty::detail::deref_if_pointer_like(guard))).is_some()) {
+            old_fiber = rusty::Option<rusty::Rc<Fiber>>(rusty::clone(((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap()));
+        }
+    }
+    {
+        auto&& guard = sp_running_fiber_th_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(guard) = rusty::Option<rusty::Rc<Fiber>>(rusty::clone(fiber));
+    }
+    {
+        auto&& guard = rusty::borrow(sp_running_fiber_th_);
+        const rusty::Rc<Fiber>& running = ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap();
+        verify(rusty::detail::rust_not(running->finished()));
+    }
+    this->n_active_fibers_.set(this->n_active_fibers_.get() + static_cast<int64_t>(1));
+    if ((*fiber).status_.get() == rusty::clone(Fiber::INIT)) {
+        fiber->run();
+    } else {
+        fiber->continue_();
+    }
+    {
+        auto&& guard = rusty::borrow(sp_running_fiber_th_);
+        const rusty::Rc<Fiber>& running = ((rusty::detail::deref_if_pointer_like(guard))).as_ref().unwrap();
+        if (running->finished()) {
+            auto fiber_ref = rusty::clone(running);
+            this->recycle(fiber_ref);
+        }
+    }
+    {
+        auto&& guard = sp_running_fiber_th_.borrow_mut();
+        rusty::detail::deref_if_pointer_like(guard) = std::move(old_fiber);
+    }
+}
+
+void Reactor::display_waiting_ev() const {
+    Log_info("waiting_events_: {}, composite_events_: {}", rusty::len(this->waiting_events_.borrow()), rusty::len(this->composite_events_.borrow()));
+}
+
+void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
+    auto guard = this->fibers_.borrow_mut();
+    const auto inserted = rusty::deref_call(guard, rusty::detail::__mdisp_insert{}, rusty::clone(fiber)).second;
+    if (rusty::detail::rust_not(inserted)) {
+        // @unsafe
+        {
+            Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
+        }
+        // @unsafe
+        {
+            Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", rusty::deref_call(guard, rusty::detail::__mdisp_size{}), REUSING_FIBER);
+        }
+    }
+    verify(std::move(inserted));
+    verify(rusty::deref_call(guard, rusty::detail::__mdisp_size{}) > static_cast<size_t>(0));
+}
+
+void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
+    if (REUSING_FIBER) {
+        (*fiber).status_.set(rusty::clone(rusty::clone(Fiber::RECYCLED)));
+        rusty::Function<void()> empty_fn = rusty::default_like<rusty::Function<void()>>();
+        rusty::detail::deref_if_pointer_like((*fiber).func_.borrow_mut()) = std::move(empty_fn);
+        this->n_idle_fibers_.set(this->n_idle_fibers_.get() + static_cast<int64_t>(1));
+        this->available_fibers_.borrow_mut()->push(rusty::clone(fiber));
+    }
+    this->n_busy_fibers_.set(this->n_busy_fibers_.get() - static_cast<int64_t>(1));
+    this->fibers_.borrow_mut()->erase(fiber);
+}
+
+void Reactor::enqueue_stackless_task(size_t idx) const {
+    stackless_profile_note_enqueue();
+    {
+        const auto guard = this->stackless_tasks_.borrow();
+        if (rusty::detail::deref_if_pointer_like(idx) >= rusty::len(guard)) {
+            return;
+        }
+        if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.active); }) { return (__r.active); } else if constexpr (requires { (__r.active_field); }) { return (__r.active_field); } else if constexpr (requires { ((*__r).active); }) { return ((*__r).active); } else { return ((*__r).active_field); } }((rusty::detail::deref_if_pointer_like(guard))[idx])) || rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((rusty::detail::deref_if_pointer_like(guard))[idx]))) {
+            return;
+        }
+    }
+    {
+        auto guard = this->stackless_tasks_.borrow_mut();
+        if (rusty::detail::deref_if_pointer_like(idx) >= rusty::len(guard)) {
+            return;
+        }
+        if (rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.active); }) { return (__r.active); } else if constexpr (requires { (__r.active_field); }) { return (__r.active_field); } else if constexpr (requires { ((*__r).active); }) { return ((*__r).active); } else { return ((*__r).active_field); } }((rusty::detail::deref_if_pointer_like(guard))[idx])) || rusty::detail::deref_if_pointer_like([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((rusty::detail::deref_if_pointer_like(guard))[idx]))) {
+            return;
+        }
+        [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.queued); }) { return (__r.queued); } else if constexpr (requires { (__r.queued_field); }) { return (__r.queued_field); } else if constexpr (requires { ((*__r).queued); }) { return ((*__r).queued); } else { return ((*__r).queued_field); } }((rusty::detail::deref_if_pointer_like(guard))[idx]) = true;
+    }
+    this->ready_stackless_tasks_.borrow_mut()->push_back(std::move(idx));
+}
+
+void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const {
+    const int64_t time_now = Time::now(true);
+    auto guard = this->timeout_events_.borrow_mut();
+    size_t i = static_cast<size_t>(0);
+    while (rusty::detail::deref_if_pointer_like(i) < rusty::len(guard)) {
+        const auto event = rusty::clone((rusty::detail::deref_if_pointer_like(guard))[i]);
+        if (((rusty::detail::deref_if_pointer_like(event))).status() == rusty::clone(EventStatus::WAIT)) {
+            const auto wakeup_time = ((rusty::detail::deref_if_pointer_like(event))).wakeup_time();
+            verify(rusty::detail::deref_if_pointer_like(wakeup_time) > static_cast<uint64_t>(0));
+            if (rusty::detail::deref_if_pointer_like(time_now) >= (static_cast<int64_t>(wakeup_time))) {
+                if (((rusty::detail::deref_if_pointer_like(event))).is_ready()) {
+                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus::READY)));
+                } else {
+                    ((rusty::detail::deref_if_pointer_like(event))).set_status(rusty::clone(rusty::clone(EventStatus::TIMEOUT)));
+                }
+            }
+        }
+        i += static_cast<size_t>(1);
+    }
+    ready_events.append(rusty::deref_call(guard, rusty::detail::__mdisp_extract_if{}, [=](const rusty::Arc<EventPollable>& sp) -> bool {
+const auto status = ((rusty::detail::deref_if_pointer_like(sp))).status();
+return (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus::READY)) || (rusty::detail::deref_if_pointer_like(status) == rusty::clone(EventStatus::TIMEOUT));
+}));
+    rusty::deref_call(guard, rusty::detail::__mdisp_retain{}, [=](const rusty::Arc<EventPollable>& sp) -> bool {
+return ((rusty::detail::deref_if_pointer_like(sp))).status() != rusty::clone(EventStatus::DONE);
+});
+}
+
+Reactor::~Reactor() noexcept(false) {
+    if (_rusty_forgotten) { return; }
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}", rusty::len(this->all_events_.borrow()), this->fibers_.borrow()->size());
+    Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
+}
+/*RUSTYCPP:GEN-END id=reactor.15*/
+
 
 // ==== Member templates hoisted out of `class Reactor` (Goal 0 Stage A:
 // a DSL struct's GEN cannot mix in hand-written members, so the class's
@@ -2031,7 +2372,7 @@ inline void reactor_spawn_stackless_task_with_result(const Reactor& self, rusty:
 
   // SAFETY: TaskState is only accessed through the Arc captured by the poller.
   auto state = reactor_make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
-  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
+  auto idx = reactor_register_stackless_poller_impl(self, [state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (!poll_result.is_ready()) {
       return false;
@@ -2080,7 +2421,7 @@ inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
   auto reactor = Reactor::get_reactor();
   reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
   // Clear out finished events the reactor is the sole owner of (bounded growth).
-  reactor->prune_finished_events();
+  reactor_prune_finished_events_impl(*reactor);
   return ev;
 }
 
@@ -3685,6 +4026,13 @@ struct StacklessProfileCounters {
 
 StacklessProfileCounters g_stackless_profile;
 
+// Shim for the DSL enqueue path (declared above the Reactor DSL block).
+void stackless_profile_note_enqueue() {
+  if (stackless_profile_enabled()) {
+    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
 inline void stackless_profile_update_max_slots(size_t slots) {
   size_t old = g_stackless_profile.max_slots.load(std::memory_order_relaxed);
   while (slots > old &&
@@ -3757,7 +4105,7 @@ rusty::Rc<Fiber>
 Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::get_reactor();
   // Rc gives const access, create_run_fiber is const (safe: thread-local, single owner)
-  auto fiber = reactor_rc->create_run_fiber(std::move(func), file, line);
+  auto fiber = reactor_create_run_fiber_at_impl(*reactor_rc, std::move(func), file, line);
   // some events might be triggered in the last fiber.
   return fiber;
 }
@@ -3875,28 +4223,17 @@ void reactor_tls_set_running(const rusty::Rc<Fiber>& fiber) {
 }
 /*RUSTYCPP:GEN-END id=reactor.tls_singletons*/
 
-rusty::Rc<Reactor>
-Reactor::get_reactor() {
-  return reactor_tls_get();
-}
-
-rusty::Rc<Reactor>
-Reactor::get_disk_reactor() {
-  return reactor_tls_get_disk();
-}
-
 // =============================================================================
 // Helper functions for create_run_fiber
 // =============================================================================
 
-// @safe - Gets a recycled fiber or creates a new one
-rusty::Rc<Fiber>
-Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
+// @safe -Gets a recycled fiber or creates a new one
+rusty::Rc<Fiber> reactor_get_or_create_fiber_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line) {
   // @unsafe
   {
-    auto available_guard = available_fibers_.borrow_mut();
+    auto available_guard = self.available_fibers_.borrow_mut();
     if (REUSING_FIBER && available_guard->size() > 0) {
-      n_idle_fibers_.set(n_idle_fibers_.get() - 1);
+      self.n_idle_fibers_.set(self.n_idle_fibers_.get() - 1);
       auto fiber = available_guard->back().clone();
       available_guard->pop();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
@@ -3909,13 +4246,13 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
       return fiber;
     } else {
       auto fiber = rusty::Rc<Fiber>::make(std::move(func));
-      n_created_fibers_.set(n_created_fibers_.get() + 1);
-      if (n_created_fibers_.get() % 1024 == 0) {
+      self.n_created_fibers_.set(self.n_created_fibers_.get() + 1);
+      if (self.n_created_fibers_.get() % 1024 == 0) {
         Log_debug("created {}, busy {}, idle {} fibers on server {}, recent {}:{}",
-                 (int)n_created_fibers_.get(),
-                 (int)n_busy_fibers_.get(),
-                 (int)n_idle_fibers_.get(),
-                 server_id_.get(),
+                 (int)self.n_created_fibers_.get(),
+                 (int)self.n_busy_fibers_.get(),
+                 (int)self.n_idle_fibers_.get(),
+                 self.server_id_.get(),
                  file,
                  (long long)line);
       }
@@ -3925,74 +4262,19 @@ Reactor::get_or_create_fiber(rusty::Function<void()> func, const char* file, int
 }
 
 // @safe - 1-line shims into the DSL TLS helpers above.
-rusty::Option<rusty::Rc<Fiber>>
-Reactor::save_running_fiber() const {
-  return reactor_tls_save_running();
-}
-
-void Reactor::restore_running_fiber(rusty::Option<rusty::Rc<Fiber>> old_fiber) const {
-  reactor_tls_restore_running(std::move(old_fiber));
-}
-
-void Reactor::set_running_fiber(const rusty::Rc<Fiber>& fiber) const {
-  reactor_tls_set_running(fiber);
-}
-
-// @safe - Registers a fiber in the active set
-void Reactor::register_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // @unsafe { RefCell::borrow_mut, std::set::insert are not borrow-checked }
-  {
-  // std::set::insert returns pair<iterator, bool>; `.second` is true
-  // when the value was newly inserted.
-  auto fibers_guard = fibers_.borrow_mut();
-  bool inserted = fibers_guard->insert(fiber.clone()).second;
-  if (!inserted) {
-    Log_error("[DEBUG] RegisterFiber: Failed to insert fiber into fibers_ set!");
-    Log_error("[DEBUG] fibers_ size: {}, REUSING_FIBER: {}", fibers_guard->size(), REUSING_FIBER);
-  }
-  verify(inserted);
-  verify(fibers_guard->size() > 0);
-  }
-}
+// @safe -Registers a fiber in the active set
 
 // @unsafe - Queue a stackless task slot for polling if not already queued.
-void Reactor::enqueue_stackless_task(size_t idx) const {
-  if (stackless_profile_enabled()) {
-    g_stackless_profile.enqueue_calls.fetch_add(1, std::memory_order_relaxed);
-  }
-  // @unsafe
-  {
-    auto tasks_guard = stackless_tasks_.borrow();
-    if (idx >= tasks_guard->size()) {
-      return;
-    }
-    if (!(*tasks_guard)[idx].active || (*tasks_guard)[idx].queued) {
-      return;
-    }
-  }
-  {
-    auto tasks_guard = stackless_tasks_.borrow_mut();
-    if (idx >= tasks_guard->size()) {
-      return;
-    }
-    auto& entry = (*tasks_guard)[idx];
-    if (!entry.active || entry.queued) {
-      return;
-    }
-    entry.queued = true;
-  }
-  ready_stackless_tasks_.borrow_mut()->push_back(idx);
-}
 
 // @unsafe - Register a stackless task poller and return slot index.
-size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)> poller) const {
+size_t reactor_register_stackless_poller_impl(const Reactor& self, rusty::Function<bool(rusty::Context&)> poller) {
   size_t scanned = 0;
   {
-    auto free_guard = free_stackless_task_slots_.borrow_mut();
+    auto free_guard = self.free_stackless_task_slots_.borrow_mut();
     if (!free_guard->is_empty()) {
       size_t idx = free_guard->back();
       free_guard->pop();
-      auto tasks_guard = stackless_tasks_.borrow_mut();
+      auto tasks_guard = self.stackless_tasks_.borrow_mut();
       if (idx < tasks_guard->size()) {
         auto& entry = (*tasks_guard)[idx];
         entry.active = true;
@@ -4008,7 +4290,7 @@ size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)>
     }
   }
 
-  auto tasks_guard = stackless_tasks_.borrow_mut();
+  auto tasks_guard = self.stackless_tasks_.borrow_mut();
   StacklessTaskEntry entry{true, false, std::move(poller)};
   tasks_guard->push(std::move(entry));
   if (stackless_profile_enabled()) {
@@ -4021,12 +4303,12 @@ size_t Reactor::register_stackless_poller(rusty::Function<bool(rusty::Context&)>
 }
 
 // @unsafe - Poll all queued stackless tasks once.
-bool Reactor::process_stackless_tasks() const {
+bool reactor_process_stackless_tasks_impl(const Reactor& self) {
   bool did_work = false;
   for (;;) {
     size_t idx = 0;
     {
-      auto ready_guard = ready_stackless_tasks_.borrow_mut();
+      auto ready_guard = self.ready_stackless_tasks_.borrow_mut();
       if (ready_guard->is_empty()) {
         break;
       }
@@ -4041,7 +4323,7 @@ bool Reactor::process_stackless_tasks() const {
     // didn't complete the task.
     rusty::Function<bool(rusty::Context&)> poll_fn;
     {
-      auto tasks_guard = stackless_tasks_.borrow_mut();
+      auto tasks_guard = self.stackless_tasks_.borrow_mut();
       if (idx >= tasks_guard->size()) {
         continue;
       }
@@ -4057,14 +4339,14 @@ bool Reactor::process_stackless_tasks() const {
     if (stackless_profile_enabled()) {
       g_stackless_profile.poll_calls.fetch_add(1, std::memory_order_relaxed);
     }
-    rusty::Waker waker{[this, idx]() {
-      this->enqueue_stackless_task(idx);
+    rusty::Waker waker{[rp = &self, idx]() {
+      rp->enqueue_stackless_task(idx);
     }};
     rusty::Context ctx{&waker};
     bool ready = poll_fn(ctx);
 
     {
-      auto tasks_guard = stackless_tasks_.borrow_mut();
+      auto tasks_guard = self.stackless_tasks_.borrow_mut();
       if (idx < tasks_guard->size()) {
         auto& entry = (*tasks_guard)[idx];
         if (ready) {
@@ -4074,7 +4356,7 @@ bool Reactor::process_stackless_tasks() const {
           entry.active = false;
           entry.queued = false;
           entry.poll_once = {};
-          free_stackless_task_slots_.borrow_mut()->push(idx);
+          self.free_stackless_task_slots_.borrow_mut()->push(idx);
         } else {
           // Put the function back so the next poll iteration can fire it.
           entry.poll_once = std::move(poll_fn);
@@ -4095,30 +4377,33 @@ bool Reactor::process_stackless_tasks() const {
  * @return
  */
 // @safe - Creates and runs a fiber using safe helper functions
-rusty::Rc<Fiber>
 // KERNEL by verdict (reactor slice 2b): orchestration dominated by
 // Rc<Fiber> arrow-method calls (run/continue_/finished/status) where
 // the DSL's last-use move-insertion mis-handles the repeatedly-passed
 // Rc, plus Reactor being a hand-written class (a DSL `self` param
 // emits `this->` with no receiver). Converting would need per-call
 // clone-guards + a member-shim dance for zero borrow-check gain.
-Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_t line) const {
+rusty::Rc<Fiber> reactor_create_run_fiber_impl(const Reactor& self, rusty::Function<void()> func) {
+  return reactor_create_run_fiber_at_impl(self, std::move(func), "", 0);
+}
+
+rusty::Rc<Fiber> reactor_create_run_fiber_at_impl(const Reactor& self, rusty::Function<void()> func, const char* file, int64_t line) {
   // Step 1: Get or create a fiber
-  auto fiber = get_or_create_fiber(std::move(func), file, line);
+  auto fiber = reactor_get_or_create_fiber_impl(self, std::move(func), file, line);
 
   // @unsafe
   {
-    n_busy_fibers_.set(n_busy_fibers_.get() + 1);
+    self.n_busy_fibers_.set(self.n_busy_fibers_.get() + 1);
   }
 
   // Step 2: Save current running fiber context (for nesting)
-  auto old_fiber = save_running_fiber();
+  auto old_fiber = self.save_running_fiber();
 
   // Step 3: Set this as the running fiber
-  set_running_fiber(fiber);
+  self.set_running_fiber(fiber);
 
   // Step 4: Register in the active fibers set
-  register_fiber(fiber);
+  self.register_fiber(fiber);
 
   // Step 5: Run the fiber
   // @unsafe
@@ -4131,18 +4416,18 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
       fiber->continue_();
     }
     if (fiber->finished()) {
-      recycle(fiber);
+      self.recycle(fiber);
     }
   }
 
   // Step 6: Process events
   // @unsafe
   {
-    loop(false, true);
+    reactor_run_loop_impl(self, false, true);
   }
 
   // Step 7: Restore previous running fiber
-  restore_running_fiber(std::move(old_fiber));
+  self.restore_running_fiber(std::move(old_fiber));
 
   return fiber;
 }
@@ -4152,51 +4437,6 @@ Reactor::create_run_fiber(rusty::Function<void()> func, const char* file, int64_
 // virtual-dispatch status()/wakeup_time()/is_ready() (arrow wall), and
 // extract_if/retain take rusty::Function predicates that themselves
 // cross the sp-> arrow — all-kernel body, no separable DSL policy.
-void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_events) const {
-  // Time::now is @safe via rusty::sys::time::clock_monotonic_us.
-  int64_t time_now = Time::now(true);
-
-  // @unsafe { RefCell::borrow_mut is not borrow-checked }
-  auto guard = timeout_events_.borrow_mut();
-
-  // First pass: update status of timed-out events
-  for (size_t i = 0; i < guard->len(); ++i) {
-    auto& sp = (*guard)[i];
-    const EventPollable& event = *sp;
-    auto status = event.status();
-    if (status == EventStatus::WAIT) {
-      const auto wakeup_time = event.wakeup_time();
-      verify(wakeup_time > 0);
-      if (time_now >= static_cast<int64_t>(wakeup_time)) {
-        if (event.is_ready()) {
-          event.set_status(EventStatus::READY);
-        } else {
-          event.set_status(EventStatus::TIMEOUT);
-        }
-      }
-    }
-  }
-
-  // Extract events that are READY or TIMEOUT (timed out)
-  {
-    auto timed_out = guard->extract_if(
-      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-        [](const rusty::Arc<EventPollable>& sp) {
-          auto status = sp->status();
-          return status == EventStatus::READY || status == EventStatus::TIMEOUT;
-        }));
-    ready_events.append(std::move(timed_out));
-  }
-
-  // Remove events that are DONE (shouldn't happen often, but clean up)
-  {
-    guard->retain(
-      rusty::Function<bool(const rusty::Arc<EventPollable>&)>(
-        [](const rusty::Arc<EventPollable>& sp) {
-          return sp->status() != EventStatus::DONE;
-        }));
-  }
-}
 
 // @unsafe - shared_ptr::use_count + rusty::Function in the retain predicate.
 // Amortized cleanup of `all_events_`: drop events the list is the sole owner of
@@ -4208,9 +4448,9 @@ void Reactor::check_timeout(rusty::VecDeque<rusty::Arc<EventPollable>>& ready_ev
 // @unsafe - FUNCTION-LOCAL STATIC (`static thread_local size_t prune_hwm`).
 // The DSL has no construct for a static declared inside a function body
 // (§7.24b); hoisting it would change the per-thread high-water semantics.
-void Reactor::prune_finished_events() const {
+void reactor_prune_finished_events_impl(const Reactor& self) {
   static thread_local std::size_t prune_hwm = 64;
-  auto guard = all_events_.borrow_mut();
+  auto guard = self.all_events_.borrow_mut();
   if (guard->len() < prune_hwm) {
     return;
   }
@@ -4220,24 +4460,23 @@ void Reactor::prune_finished_events() const {
     }));
   prune_hwm = guard->len() * 2 + 64;
 }
+void reactor_run_loop_impl(const Reactor& self, bool infinite, bool do_check_timeout) {
+  verify(rusty::thread::current_id() == self.thread_id_.get());
 
-void Reactor::loop(bool infinite, bool do_check_timeout) const {
-  verify(rusty::thread::current_id() == thread_id_.get());
-
-  looping_.set(infinite);
+  self.looping_.set(infinite);
 
   do {
     bool found_ready_events = true;
     while (found_ready_events) {
       found_ready_events = false;
-      if (process_stackless_tasks()) {
+      if (reactor_process_stackless_tasks_impl(self)) {
         found_ready_events = true;
       }
       rusty::VecDeque<rusty::Arc<EventPollable>> ready_events;
 
       // Process waiting events using RefCell
       {
-        auto waiting_guard = waiting_events_.borrow_mut();
+        auto waiting_guard = self.waiting_events_.borrow_mut();
         // Test waiting events
         for (size_t i = 0; i < waiting_guard->len(); ++i) {
           (*waiting_guard)[i]->test();
@@ -4266,7 +4505,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
 
       // Process composite events using RefCell
       {
-        auto composite_guard = composite_events_.borrow_mut();
+        auto composite_guard = self.composite_events_.borrow_mut();
         for (size_t i = 0; i < composite_guard->len(); ++i) {
           (*composite_guard)[i]->test();
         }
@@ -4295,7 +4534,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
         size_t before = ready_events.len();
         // @unsafe { check_timeout is per-method @unsafe due to raw
         // std::shared_ptr<Event> handling + Status::TIMEOUT mutation. }
-        { check_timeout(ready_events); }
+        { self.check_timeout(ready_events); }
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
@@ -4314,7 +4553,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             continue;
           }
           auto fiber = option_fiber.unwrap();
-          if (!fibers_.borrow()->contains(fiber)) {
+          if (!self.fibers_.borrow()->contains(fiber)) {
             continue;
           }
           verify(fiber->status_.get() == Fiber::PAUSED);
@@ -4323,7 +4562,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           } else {
             verify(ev->status() == EventStatus::TIMEOUT);
           }
-          continue_fiber(fiber);
+          self.continue_fiber(fiber);
         }
       }
 
@@ -4332,7 +4571,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       }
     }
 
-  } while (looping_.get());
+  } while (self.looping_.get());
 }
 
 // @unsafe - Continues execution of a paused fiber; RefCell ops and fiber calls.
@@ -4344,73 +4583,12 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
 // KERNEL by verdict: dense RefCell borrow guards (named-guard binding
 // emits address-of-temporary) around Rc<Fiber> arrow calls; same walls
 // as create_run_fiber.
-void Reactor::continue_fiber(const rusty::Rc<Fiber>& fiber) const {
-  // Save current running fiber for nesting support
-  rusty::Option<rusty::Rc<Fiber>> old_fiber;
-  // @unsafe { RefCell::borrow, Option operator=, unwrap are not borrow-checked }
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    old_fiber = (*guard).is_some()
-      ? rusty::Some((*guard).as_ref().unwrap().clone())
-      : rusty::Option<rusty::Rc<Fiber>>{};
-  }
-
-  // RefCell::borrow_mut + Option::operator= are both @safe.
-  { *sp_running_fiber_th_.borrow_mut() = rusty::Some(fiber.clone()); }
-
-  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    verify(!(*guard).as_ref().unwrap()->finished());
-  }
-
-  n_active_fibers_.set(n_active_fibers_.get() + 1);
-
-  if (fiber->status_.get() == Fiber::INIT) {
-    fiber->run();
-  } else {
-    // Don't hold borrow during continue_() as fiber may call create_run().
-    // This fixes RefCell double-borrow crash during server restart.
-    fiber->continue_();
-  }
-
-  // RefCell::borrow + Option::as_ref + Fiber::finished() are all @safe.
-  {
-    auto guard = sp_running_fiber_th_.borrow();
-    if ((*guard).as_ref().unwrap()->finished()) {
-      auto fiber_ref = (*guard).as_ref().unwrap().clone();
-      recycle(fiber_ref);
-    }
-  }
-
-  // RefCell::borrow_mut + Option::operator= are both @safe.
-  { *sp_running_fiber_th_.borrow_mut() = std::move(old_fiber); }
-}
 
 // @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
-void Reactor::recycle(rusty::Rc<Fiber>& fiber) const {
-  // This fixes the bug that fibers are not recycled if they don't finish immediately.
-  if (REUSING_FIBER) {
-    // Use Cell/RefCell for interior mutability (safe: single-threaded)
-    const auto& fiber_ref = *fiber;
-    fiber_ref.status_.set(Fiber::RECYCLED);
-    *fiber_ref.func_.borrow_mut() = {};
-    n_idle_fibers_.set(n_idle_fibers_.get() + 1);
-    available_fibers_.borrow_mut()->push(fiber.clone());  // @unsafe
-  }
-  n_busy_fibers_.set(n_busy_fibers_.get() - 1);
-  // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, fiber is still valid
-  { fibers_.borrow_mut()->erase(fiber); }  // std::set::erase (was BTreeSet::remove)
-}
-
-void Reactor::display_waiting_ev() const {
-  Log_info("waiting_events_: {}, composite_events_: {}",
-           waiting_events_.borrow()->len(), composite_events_.borrow()->len());
-}
 
 // @unsafe - Spawn a stackless task and schedule first poll on this reactor.
-void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
-  verify(rusty::thread::current_id() == thread_id_.get());
+void reactor_spawn_stackless_task_impl(const Reactor& self, rusty::Task<void> task) {
+  verify(rusty::thread::current_id() == self.thread_id_.get());
   constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
   // @unsafe - mutable atomic fields are storage for cross-thread
   // wake-state mutations from the early_waker lambda. The struct is
@@ -4425,7 +4603,7 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
     mutable std::atomic<bool> pending_wake{false};
   };
 
-  auto early_wake = reactor_make_arc<EarlyWakeState>(this);
+  auto early_wake = reactor_make_arc<EarlyWakeState>(&self);
 
   rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
     size_t idx = early_wake->idx.load(std::memory_order_acquire);
@@ -4453,7 +4631,7 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   };
 
   auto state = reactor_make_arc<TaskState>(std::move(task), std::move(early_wake));
-  auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
+  auto idx = reactor_register_stackless_poller_impl(self, [state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (poll_result.is_ready()) {
       state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
@@ -4463,7 +4641,7 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
   });
   state->early_wake->idx.store(idx, std::memory_order_release);
   if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
-    enqueue_stackless_task(idx);
+    self.enqueue_stackless_task(idx);
   }
 }
 
@@ -4539,7 +4717,7 @@ void pollworker_poll_loop(PollThreadWorker& self) {
     pollworker_process_pending_removals(self);
 
     pollworker_trigger_job(self);
-    Reactor::get_reactor()->loop();
+    Reactor::get_reactor()->run_loop(false, true);
 
     // Check for pending write updates (set by end_reply() during fiber execution)
     // @unsafe - reads a pollable's interior-mutable pending_write_update_

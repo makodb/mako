@@ -104,7 +104,7 @@ void pump_until(Pred&& pred, int max_iterations = 1000) {
     auto reactor = Reactor::get_reactor();
     for (int i = 0; i < max_iterations; ++i) {
         if (pred()) return;
-        reactor->loop();
+        reactor->run_loop(false, true);
     }
     FAIL() << "pump_until: predicate never satisfied (recv-loop fiber wedged?)";
 }
@@ -148,7 +148,7 @@ class ClientChannelCloseTest : public ::testing::Test {
         // so the recv-loop fiber exits.
         if (stub_ && !stub_->is_closed()) {
             stub_->deliver_closed(ChannelError::None);
-            (void)Reactor::get_reactor()->loop();
+            (void)Reactor::get_reactor()->run_loop(false, true);
         }
         conn_ = rusty::None;
         if (poll_thread_.is_some()) {

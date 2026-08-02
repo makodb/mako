@@ -151,7 +151,7 @@ TEST(FiberRuntimeTest, timeout) {
     Log_debug("end timeout, end wait");
     Reactor::get_reactor()->looping_.set(false);
   });
-  Reactor::get_reactor()->loop(true);
+  Reactor::get_reactor()->run_loop(true, true);
 }
 
 TEST(FiberRuntimeTest, orevent) {

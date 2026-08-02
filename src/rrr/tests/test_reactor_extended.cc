@@ -42,7 +42,7 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     
     // Give enough time for timeout
     std::this_thread::sleep_for(milliseconds(150));
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     EXPECT_TRUE(completed);
 }
@@ -145,7 +145,7 @@ TEST_F(ExtendedReactorTest, EventChain) {
     sp_event1->set(10);
     
     // Process events - with our fix, one Loop() should process the whole chain!
-    reactor->loop(false);
+    reactor->run_loop(false, true);
     
     std::cout << "Event1 value: " << sp_event1->value_.get() << " (expected 10)" << std::endl;
     std::cout << "Event2 value: " << sp_event2->value_.get() << " (expected 20)" << std::endl;
@@ -297,7 +297,7 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
         }
         
         // Process
-        reactor->loop(false);
+        reactor->run_loop(false, true);
         
         // Clear for next iteration (test cleanup)
         events.clear();

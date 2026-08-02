@@ -351,13 +351,13 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
       auto conn_opt = rpc_cli->connection();
       if (conn_opt.is_some()) {
         // Client::host() now returns rusty::String (post-DSL migration);
-        // Reactor::clients_ is keyed by std::string — convert once.
+        // rrr::reactor_clients_th_ is keyed by std::string — convert once.
         std::string host_key = rpc_cli->host().to_string();
-        if (!Reactor::clients_.contains_key(host_key)) {
-          Reactor::clients_.insert(host_key, rusty::Vec<rrr::PollableProxy>{});
+        if (!rrr::reactor_clients_th_.contains_key(host_key)) {
+          rrr::reactor_clients_th_.insert(host_key, rusty::Vec<rrr::PollableProxy>{});
         }
         auto conn_proxy = rrr::make_pollable_proxy_from_typed_arc(conn_opt.as_ref().unwrap().clone());
-        Reactor::clients_.get(host_key).unwrap().push(std::move(conn_proxy));
+        rrr::reactor_clients_th_.get(host_key).unwrap().push(std::move(conn_proxy));
       }
       Log_info("connect to site: {} success!", addr.c_str());
       return std::make_pair(SUCCESS, rpc_proxy);
