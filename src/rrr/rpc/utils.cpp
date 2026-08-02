@@ -7,6 +7,9 @@ module;
 // suppression emitted into `rusty_mark_forgotten`), and that helper is
 // header-only — it is not in the transpiled `rusty` module. A GMF must
 // include what its own GEN names.
+// Reachability again: the GEN now names `rusty::ptr::null_mut()` for the
+// DSL's `core::ptr::null_mut()`.
+#include <rusty/ptr.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/sys/env.hpp>
 
@@ -39,17 +42,6 @@ import rrr.logging;
 // close, gethostname) and are `// @unsafe`.
 export namespace rrr {
 
-// @unsafe - a null `struct addrinfo*` (default/invalid AddrInfo state).
-inline struct addrinfo* addrinfo_null() { return nullptr; }
-// @unsafe - nullptr check on the raw `struct addrinfo*`.
-inline bool addrinfo_valid(struct addrinfo* info) { return info != nullptr; }
-// @unsafe - `freeaddrinfo` libc call on the owned raw `struct addrinfo*`.
-inline void addrinfo_free(struct addrinfo* info) {
-    if (info) {
-        freeaddrinfo(info);
-    }
-}
-
 // @safe - owns a `struct addrinfo*`; see file header. Move-only via the
 // `owned_` Cell marker; freed once on drop.
 #if RUSTYCPP_RUST
@@ -62,7 +54,7 @@ impl AddrInfo {
     // Default: an invalid AddrInfo (null pointer).
     #[cpp_ctor]
     fn new() -> AddrInfo {
-        AddrInfo { info_: addrinfo_null(), owned_: rusty::Cell::new(false) }
+        AddrInfo { info_: core::ptr::null_mut(), owned_: rusty::Cell::new(false) }
     }
     // Adopt ownership of a raw `struct addrinfo*` (e.g. from getaddrinfo).
     #[cpp_ctor]
@@ -73,17 +65,19 @@ impl AddrInfo {
         self.info_
     }
     fn valid(&self) -> bool {
-        addrinfo_valid(self.info_)
+        !self.info_.is_null()
     }
 }
 
 impl Drop for AddrInfo {
     fn drop(&mut self) {
-        addrinfo_free(self.info_);
+        if !self.info_.is_null() {
+            unsafe { freeaddrinfo(self.info_); }
+        }
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=utils.addrinfo version=1 rust_sha256=3fd23d765adad249edafb8386feea9ba7c1de045c106e34180e970312cfdcf77*/
+/*RUSTYCPP:GEN-BEGIN id=utils.addrinfo version=1 rust_sha256=1d64fe0ea13a5236550f4ce60d2ffb6162f1777a1465bf19b6d5950c29e13fc7*/
 struct AddrInfo;
 
 struct AddrInfo {
@@ -117,7 +111,7 @@ struct AddrInfo {
 
 
 AddrInfo::AddrInfo()
-    : info_(addrinfo_null())
+    : info_(rusty::ptr::null_mut())
     , owned_(rusty::Cell<bool>::new_(false))
 {}
 
@@ -131,12 +125,17 @@ addrinfo* AddrInfo::get() const {
 }
 
 bool AddrInfo::valid() const {
-    return addrinfo_valid(this->info_);
+    return rusty::detail::rust_not((this->info_ == nullptr));
 }
 
 AddrInfo::~AddrInfo() noexcept(false) {
     if (_rusty_forgotten) { return; }
-    addrinfo_free(this->info_);
+    if (rusty::detail::rust_not((this->info_ == nullptr))) {
+        // @unsafe
+        {
+            freeaddrinfo(this->info_);
+        }
+    }
 }
 /*RUSTYCPP:GEN-END id=utils.addrinfo*/
 
