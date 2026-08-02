@@ -63,12 +63,36 @@ make a struct move-only, and the transpiler then *emits* a move
 constructor. Here both copy **and** move are deleted on purpose — a
 `Reactor` is pinned, and it is held through `Rc<Reactor>`.
 
-**This is the open question.** Emitting a move ctor for a type the C++
-deliberately pins would be a real semantic change, not a cosmetic one.
-Probe before designing around it: does the DSL have a way to express
-"neither copyable nor movable"? If not, this needs a transpiler feature
-or a marker field, and it should be settled *before* any code moves,
-because it affects the struct definition rather than a method body.
+**SETTLED BY PROBE — it needs a transpiler feature.** Measured:
+
+  * A DSL struct of `Cell`/`RefCell` fields emits a **plain aggregate** —
+    no ctors, no `= delete`. Copy/move semantics come from the fields.
+  * That aggregate is correctly **not copy-constructible**, but it **is
+    move-constructible** (`static_assert(!is_move_constructible_v<..>)`
+    fails).
+
+So a straight conversion would silently make `Reactor` movable. That is
+not cosmetic: `Reactor` is thread-affine (`thread_id_` is verified inside
+`loop()`) and held through `Rc<Reactor>`, so the `= delete` is
+load-bearing and a moved Reactor is a bug.
+
+`rusty::marker::PhantomPinned` exists — but it is literally
+`struct PhantomPinned {};`, an empty aggregate that is itself movable, so
+adding it as a field **does not pin** anything. It is a marker for Rust
+semantics that the C++ side does not act on. (Note it lives in
+`rusty::marker::`, not `rusty::`.)
+
+**Proposed route: teach the transpiler to honour `PhantomPinned`** — a
+DSL struct with a `PhantomPinned` field emits `T(T&&) = delete;` and
+`T& operator=(T&&) = delete;`. That mapping is faithful to Rust, where
+`PhantomPinned` makes a type `!Unpin`, and it reuses a marker that
+already exists rather than inventing an attribute. It is also generally
+useful: any thread-affine or self-referential type in this codebase has
+the same need.
+
+Until that lands, `class Reactor` cannot be converted without changing
+its semantics — this is now the single blocking item for the largest
+remaining block of hand-written C++.
 
 ## Blocker 5 — project-macro `#[cfg]`
 
