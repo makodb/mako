@@ -183,3 +183,41 @@ other four are the operator/variadic surface that `src/deptran` calls.
 
 Neither of the two genuinely-C candidates is worth a gate on its own;
 they should ride along with the `F&&` change if that goes ahead.
+
+## Phase 1 result — `server.cpp` (16 kernels)
+
+| # | kernel | verdict |
+|---|---|---|
+| 1 | `server_now_nanos()` | **DSL, no C needed** — `rusty::sys::time::clock_monotonic_us()` already exists and the DSL beside it already calls `rusty::sys::process::getpid()`. us vs ns is immaterial: the value is XOR'd into an instance id |
+| 1 | `server_random_u64()` | **C** — no `rusty::sys::random`; `getrandom()` is the C equivalent of `std::random_device` |
+| 1 | `server_parse_port(const std::string&)` | **C after a signature change** — `strtol` replaces `stoi`+`try/catch`, once the parameter is `const char*` |
+| 1 | `server_dsl_addr_to_cstr(const int8_t*)` | **C now** — signature already C-compatible |
+| 2 | `pending_guard_acquire` / `_release` | route exists — the pointer/reference asymmetry is the documented `&self.field` lowering, not a defect |
+| 1 | `server_invoke_shutdown_hook_safely` | **hard** — `try/catch` (no Rust equivalent) over a C++ `ShutdownHook&` |
+| 2 | `make_service_proxy_from_box` / `_typed_box` | **hard** — `Box<Service>` + template |
+| 2 | `server_for_each_service_impl` (decl + defn) | **hard** — template over a callback |
+| 1 | `g_rpc_id_missing` | **hard** — file-static `Mutex<HashSet<i32>>` |
+| 4 | remainder | recheck |
+
+### The lesson worth generalising
+
+**Check the `rusty::sys` surface before demoting anything to C.**
+`server_now_nanos` looks like a textbook C kernel — `steady_clock`, a
+`duration_cast`, returns `uint64_t`, no C++ in its signature. Demoting it
+would have been easy, mechanical, and *wrong*: `rusty::sys::time` already
+covers it, so it belongs in the DSL, and C would have permanently removed
+a line the eventual rustc pass could otherwise cover.
+
+`rusty::sys` currently offers `env`, `fs`, `process`, `pthread`, `time`.
+So clock, pid, environment and filesystem kernels are DSL candidates, not
+C candidates. Random is the visible gap.
+
+That reorders the per-kernel question:
+
+1. does the DSL express it? →
+2. does `rusty::sys` (or another rusty surface) already wrap it? →
+3. can a call-site change make it expressible? →
+4. only then: C.
+
+Step 2 is new and it is cheap to check — one `ls` of the include
+directory. It should run before any C demotion in every later phase.
