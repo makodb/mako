@@ -3746,3 +3746,34 @@ sentence.
 Not converted: `frame_of` is two lines and needs an `unsafe` raw-pointer
 deref in the DSL, so the win does not pay for a full gate cycle on its
 own. Worth folding into the next tcp_channel change.
+
+### 7.52 Where the src/rrr sweep stands
+
+After this pass, the four files worked are at or near their floor, and
+the remaining kernels are genuine rather than stale:
+
+| file | state |
+|---|---|
+| rpc/client.cpp | **at floor** — variadic/SFINAE templates, `reinterpret_cast`, one `std::chrono` interop point, default-ctor factories |
+| reactor/reactor.cpp | identified conversions done (TLS trio, two aliases); rest is variadic `add_event(Args...)`, fiber-context asm, `sprintf` |
+| rpc/server.cpp | **at floor** — `try/catch` (Rust has no exceptions), clock/RNG syscalls, `reinterpret_cast`, default-ctor factories |
+| rpc/tcp_channel.cpp | one small item left (`frame_of`, §7.51.2); rest is `#[cpp_ctor]` defaults + kernel vocabulary |
+| misc/serializable.cpp | 104 kernels, deliberately untouched (mutual recursion — a partial serde conversion does not compile) |
+
+Two things in server.cpp are worth not re-litigating:
+
+ - `server_parse_port` wraps `std::stoi` in `try/catch`. The comment is
+   right that the catch is the irreducible part; it also makes a real
+   design point — returning `Option` keeps a throw distinct from a
+   legitimately parsed negative, which the old `-1` folded together.
+ - `pending_guard_release` takes a **pointer** where `acquire` takes a
+   reference. That asymmetry is not a defect: `&self.field` lowers to an
+   address-of while a `&T` parameter lowers to a reference, which is the
+   documented rule. The kernel is shaped to match it.
+
+**The remaining high-value work is the two-half guard-deref fix
+(§7.50.4)**, which is transpiler work needing regenerate-and-build
+verification (§7.50.3 showed the suite cannot see this class of
+breakage), and the `default_value`/`default_like` bug (§7.51.1). Both
+want a session where intermediate results can be inspected, not an
+unattended one.
