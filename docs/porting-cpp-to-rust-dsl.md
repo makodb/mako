@@ -3904,3 +3904,38 @@ Both are "Rust has no way to say X", which §7.45 predicts is a genuine
 floor — and both survived a sweep that disproved thirteen claims of the
 other kind. That is the heuristic working in both directions, which is
 what makes it worth trusting: it is not simply "everything is stale".
+
+#### 7.53.2 The alias-deref fix is SINGLE-FILE — cross-module aliases still need the concrete type
+
+Tried to simplify client.cpp's workaround now that `5a8e8754` resolves a
+`using` when testing for deref-ownership, replacing
+
+    let ch: &mut Box<ChannelConnectionBase> = ...
+
+with the alias `ChannelConnectionProxy`. **It regressed** — back to a dot
+on a Box:
+
+    ChannelConnectionProxy& ch = channel;
+    ch.set_on_frame(...);          // dot: ill-formed
+    ((ch)).close();                // deref dropped
+
+The reason is a limit I did not state when landing the fix.
+`collect_cpp_type_aliases` scans **the file being transpiled**
+(inline_rust.rs), so it only sees `using X = Y;` in that TU. In mako the
+aliases live in the module that owns the type —
+`using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;` is in
+`channel.cpp`, and `client.cpp` imports it. From client.cpp's transpile
+the alias simply does not exist.
+
+So the rule for DSL authors is:
+
+ - alias declared **in the same file** -> either spelling works;
+ - alias **imported from another module** -> spell the concrete type.
+
+Since cross-module is the normal case here, the practical guidance is
+unchanged: **spell the concrete type**. The workaround comments in
+client.cpp stay, and stay accurate.
+
+Fixing this properly means feeding the transpiler aliases from imported
+modules, which is a different and much larger change than one alias hop
+within a TU — it needs the module graph, not a line scan.
