@@ -552,3 +552,41 @@ It remains last in the ordering: 2476 sites is a wide, low-risk,
 high-tedium change that should not be attempted while any of the
 narrower items are still moving, and it wants a scripted rewrite plus a
 full gate rather than hand edits.
+
+## The claim-comment seam is largely exhausted
+
+Swept all 55 comments in hand-written regions matching
+`(DSL|grammar|transpiler) … (cannot|can't|does not|no …)`. The yield is
+much lower than the earlier sweeps, and for an instructive reason: a
+comment matching that pattern is not necessarily an *active* claim.
+
+Three categories, only one actionable:
+
+**1. Historical notes on already-converted code.** e.g.
+`connection_state.cpp:87`, `heartbeat.cpp:41`, `request_queue.cpp:87`:
+
+> *"It used to live outside the DSL block because the transpiler could
+> not spell a C++ function-type template argument. **Fixed upstream** —"*
+
+These read as claims to a grep and are accurate history. Matching
+`could not spell` without reading the next clause finds them all.
+
+**2. Stale claims on code that is already DSL.** e.g.
+`epoll_platform_linux.cc:33` ("the DSL has no null-pointer spelling",
+now false — `core::ptr::null()`) and `errors.cpp:63` ("no way to spell a
+literal as a raw pointer"). Both describe a *workaround already taken* in
+DSL, not a kernel. Correcting them is documentation hygiene; it removes
+no C++.
+
+**3. Active claims justifying hand-written C++** — the actionable set,
+and the one already catalogued in the rewrite backlog above (variadics,
+RTTI, awaiter, statics-in-a-struct, `void*`, local arrays, inline asm).
+
+So the productive form of this sweep is **not** grepping comments — it is
+what the operator and default-construction sweeps did: **match the
+code's shape**, then read the comment only to understand *why*. Shape
+finds kernels that carry no comment at all (the five `tcpconn_default_*`
+that the phrase grep missed) and skips comments that describe history.
+
+No further comment-sweeping planned; the remaining hand-written C++ is
+the backlog, not an undiscovered seam.
