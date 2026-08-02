@@ -3998,3 +3998,44 @@ the inline DSL is a **migration vehicle**, not an end state. The end state
 where (b) holds is the crate. Whether to keep converting C++ in place, or
 to move logic into `crates/srpc` instead, is a direction call about the
 project — not something the kernel count answers.
+
+### 7.55 The transpiler suite was reading a degraded sample (NFS + SIGBUS)
+
+Every "the suite is 428 passed / 16 failed, failing set identical to
+baseline" claim in §§7.50-7.53 was measured against a **broken test run**.
+
+`cargo test` in the rusty-cpp submodule puts `target/` on the NFS home.
+`rustc` mmaps its inputs, and mmap-on-NFS gives **SIGBUS** — 60 to 110
+crashes per run. Crashed compilations mean test binaries that never link,
+so only **3 to 5 of 80** ever ran.
+
+Same tree, same commit, four consecutive runs:
+
+| run | passed | failed | failing tests |
+|---|---|---|---|
+| A | 428 | 16 | borrow/lifetime analyzer set |
+| B | 429 | 15 | borrow/lifetime analyzer set |
+| C | 491 | 6 | char_ptr / string_literal set |
+| D | 493 | 4 | char_ptr / string_literal set |
+
+**On local disk** (`CARGO_TARGET_DIR=/var/tmp/rustycpp-target`):
+0 SIGBUS, 80 suites, **1131 passed, 2 failed** — and the 2 are stable
+(`test_option_hpp_passes`, `test_result_hpp_passes`).
+
+**The tell was not the failures, it was the totals.** Pass/fail flipping
+is ordinary flakiness. The *number of tests executed* changing by 53
+between runs is not — it means binaries are not building. Watch the run
+count, not just the failure list.
+
+What this does and does not invalidate:
+
+ - **Does not** invalidate the three landed transpiler fixes. Each was
+   verified by compiling its emitted output and by regenerating all of
+   src/rrr — checks that never touched the suite (and §7.50.3's point was
+   precisely that the suite cannot see consumer breakage anyway).
+ - **Does** invalidate the suite half of those write-ups. "Failing set
+   identical to baseline" compared two differently-degraded samples.
+
+Always run rusty-cpp's tests with `CARGO_TARGET_DIR` on local disk. mako's
+own gates were never affected — `build_crate.sh` builds in `/var/tmp`
+on local btrfs, which is why they stayed consistent all campaign.
