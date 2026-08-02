@@ -1140,7 +1140,6 @@ ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& self,
 int clientconn_reconnect(const ClientConnection& self, rusty::Function<void(bool)> on_complete);
 int clientconn_connect_via_factory(const ClientConnection& self, const int8_t* addr);
 void clientconn_bind_channel_via_poll_thread(const ClientConnection& self, ChannelConnectionProxy channel);
-void clientconn_bind_channel_direct(const ClientConnection& self, ChannelConnectionProxy channel);
 RpcError clientconn_map_system_error(i32 err);
 uint64_t clientconn_monotonic_ms_now();
 template<typename F>
@@ -1368,7 +1367,57 @@ impl ClientConnection {
         }, __FILE__, __LINE__);
     }
     fn bind_channel_via_poll_thread(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_via_poll_thread(self, channel); }
-    fn bind_channel_direct(&self, channel: ChannelConnectionProxy) { clientconn_bind_channel_direct(self, channel); }
+    // Direct on_frame / on_closed binding: bypasses FiberChannel and the
+    // recv-loop fiber entirely, installing the callbacks on the proxy itself.
+    // Both fire on whichever thread the channel layer dispatches from -- for
+    // TCP that is the poll thread, the same one whose handle_read parses the
+    // frames. send_frame remains callable from any thread (dispatch_frame_via
+    // _channel uses it from user threads).
+    //
+    // Callbacks are installed BEFORE the proxy moves into `direct_channel_`.
+    // Once it is in the slot, dropping the slot drops the callbacks, so any
+    // in-flight dispatch must complete before the drop -- the same contract
+    // the FiberChannel destructor honours.
+    fn bind_channel_direct(&self, mut channel: ChannelConnectionProxy) {
+        if !channel.is_valid() {
+            return;
+        }
+        // Weak, one clone per closure: a strong capture would cycle through
+        // `direct_channel_` + the callbacks and leak the connection.
+        let weak_frame: WeakClientConnection = self.weak_self_.clone();
+        let weak_closed: WeakClientConnection = self.weak_self_.clone();
+        {
+            // Concrete `Box<..>`, not the ChannelConnectionProxy alias: through
+            // the alias the pointer-like check fails and the calls lower to
+            // `channel.set_on_frame(..)` (dot) instead of `->` (docs 7.50).
+            let ch: &mut Box<ChannelConnectionBase> = &mut channel;
+            ch.set_on_frame(move |f: &ChannelFrame| {
+                let conn_opt = weak_frame.upgrade();
+                if conn_opt.is_none() {
+                    return;
+                }
+                let conn = conn_opt.unwrap();
+                (*conn).decode_response_and_notify(f.payload, f.size);
+            });
+            ch.set_on_closed(move |reason: ChannelError| {
+                let conn_opt = weak_closed.upgrade();
+                if conn_opt.is_none() {
+                    return;
+                }
+                let conn = conn_opt.unwrap();
+                (*conn).on_channel_closed_fan_out();
+            });
+            // on_error is not surfaced in this mode: the channel-layer contract
+            // follows a fatal error with on_closed, so the fan-out covers it.
+            ch.set_on_error(move |err: ChannelError, msg: std::string_view| {
+            });
+        }
+        {
+            let mut guard = self.direct_channel_.lock().unwrap();
+            *guard = rusty::Some(channel);
+        }
+        self.channel_mode_.set(true);
+    }
     fn bind_factory(&mut self, factory: ChannelFactoryProxy) {
         if !factory.is_valid() {
             return;
@@ -1728,7 +1777,7 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=3cb0418815132533e8c7d2db1ee362ad319e2913b91d6557b59e1fbf8cbeb26c*/
+/*RUSTYCPP:GEN-BEGIN id=client.8 version=1 rust_sha256=5d6915ec48a93e69a798c2793a3bc248bafaac0c349a42432b640ead0251fc68*/
 struct ClientConnection;
 
 struct ClientConnection {
@@ -2040,7 +2089,37 @@ void ClientConnection::bind_channel_via_poll_thread(ChannelConnectionProxy chann
 }
 
 void ClientConnection::bind_channel_direct(ChannelConnectionProxy channel) const {
-    clientconn_bind_channel_direct((*this), std::move(channel));
+    if (rusty::detail::rust_not(channel.is_valid())) {
+        return;
+    }
+    WeakClientConnection weak_frame = rusty::clone(this->weak_self_);
+    WeakClientConnection weak_closed = rusty::clone(this->weak_self_);
+    {
+        rusty::Box<ChannelConnectionBase>& ch = channel;
+        ch->set_on_frame([=, weak_frame = std::move(weak_frame)](const ChannelFrame& f) {
+auto conn_opt = weak_frame.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+((rusty::detail::deref_if_pointer_like(conn))).decode_response_and_notify(f.payload, f.size);
+});
+        ch->set_on_closed([=, weak_closed = std::move(weak_closed)](ChannelError reason) {
+auto conn_opt = weak_closed.upgrade();
+if (conn_opt.is_none()) {
+    return;
+}
+const auto conn = conn_opt.unwrap();
+((rusty::detail::deref_if_pointer_like(conn))).on_channel_closed_fan_out();
+});
+        ch->set_on_error([=](ChannelError err, std::string_view msg) {
+});
+    }
+    {
+        auto guard = this->direct_channel_.lock().unwrap();
+        *guard = rusty::Option<ChannelConnectionProxy>(std::move(channel));
+    }
+    this->channel_mode_.set(true);
 }
 
 void ClientConnection::bind_factory(ChannelFactoryProxy factory) {
@@ -4632,67 +4711,6 @@ void clientconn_bind_channel_via_poll_thread(
 }
 
 
-// @unsafe - Direct on_frame / on_closed callback binding.
-//
-// Bypasses FiberChannel + recv-loop fiber entirely. Installs the
-// callbacks directly on the channel proxy:
-//   - on_frame: builds a copy of the frame bytes (the channel-layer
-//     contract makes the frame.payload pointer valid only during the
-//     callback) and calls decode_response_and_notify on the same
-//     thread the channel layer fires on. For TCP, that's the poll
-//     thread — same thread that handles_read parses frames.
-//   - on_closed: invokes on_channel_closed_fan_out on the same
-//     thread.
-//
-// The proxy's other thread-safety properties carry over: send_frame
-// is callable from any thread (we use it that way from
-// dispatch_frame_via_channel in user threads).
-//
-// Stores the proxy in `direct_channel_`. The connection's
-// `Arc<ClientConnection>` lifetime is captured weakly in the
-// callbacks, so the connection can be torn down without leaving a
-// dangling pointer in the proxy's installed callbacks. When
-// `direct_channel_` is destroyed, the proxy's destructor drops the
-// callbacks, so any in-flight callback dispatch from the channel
-// layer must complete before drop is allowed (this matches the
-// FiberChannel destructor's contract).
-void clientconn_bind_channel_direct(const ClientConnection& self, ChannelConnectionProxy channel) {
-  if (!channel) return;
-
-  // Capture a weak ref so the proxy's installed callbacks don't
-  // extend the ClientConnection's lifetime (avoids a refcount cycle
-  // through `direct_channel_` + the callbacks).
-  WeakClientConnection weak_self = self.weak_self_;
-
-  // Install callbacks BEFORE moving the proxy into the slot. After
-  // the move, the proxy lives in `direct_channel_`; the lambdas
-  // capture only the weak self-ref.
-  // @unsafe { lambda capture, channel proxy mutator }
-  channel->set_on_frame([weak_self](const ChannelFrame& f) {
-    auto conn_opt = weak_self.upgrade();
-    if (conn_opt.is_none()) return;
-    auto conn = conn_opt.unwrap();
-    conn->decode_response_and_notify(f.payload, f.size);
-  });
-  channel->set_on_closed([weak_self](ChannelError /*reason*/) {
-    auto conn_opt = weak_self.upgrade();
-    if (conn_opt.is_none()) return;
-    auto conn = conn_opt.unwrap();
-    conn->on_channel_closed_fan_out();
-  });
-  // on_error is not surfaced to the RPC layer in this binding mode
-  // (the channel-layer contract follows fatal errors with on_closed,
-  // so on_channel_closed_fan_out covers the recovery path).
-  channel->set_on_error([](ChannelError, std::string_view) {});
-
-  // Move the proxy into the slot and flip the channel-mode latch.
-  // rusty::Mutex::lock + Option::operator= are both @safe.
-  {
-    auto guard = self.direct_channel_.lock().unwrap();
-    *guard = rusty::Some(std::move(channel));
-  }
-  self.channel_mode_.set(true);
-}
 
 
 // @unsafe - Drives Marshal / Future / pending_fu_ from a fiber.
