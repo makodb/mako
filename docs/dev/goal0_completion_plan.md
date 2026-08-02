@@ -221,3 +221,51 @@ That reorders the per-kernel question:
 
 Step 2 is new and it is cheap to check — one `ls` of the include
 directory. It should run before any C demotion in every later phase.
+
+## Phase 1 result — `tcp_channel.cpp` (10 kernels), and two corrections
+
+### My §7.53 sweep was incomplete
+
+Five default-construction kernels survived it —
+`tcpconn_empty_buf`, `tcpconn_default_inbound`,
+`tcpconn_default_on_frame/_on_closed/_on_error` — because the sweep was
+driven by grepping the comment text `DSL can't spell`, and this block says
+*"the DSL **struct literal** can't spell"*. Same claim, intervening words,
+missed.
+
+**Detect by shape, not by comment.** A nullary `inline T f() { return
+{}; }` (or `T{}` / `T()` / `T::new_()`) is the shape; matching it across
+src/rrr finds six, five of which the phrase grep missed. The sixth is in
+`serializable.cpp` (`varint_buf_new`), which is Phase 4.
+
+### A wrong-type transpiler bug, caught before it cost a gate
+
+Converting those five emitted **the wrong type**:
+
+    outbound_: rusty::Mutex::<std::vector<u8>>::new(Default::default())
+      -> rusty::Mutex<std::vector<uint8_t>>::new_(rusty::default_like<int32_t>())
+
+`int32_t` is the type of `TcpConnection::new`'s `fd` parameter. All four
+`Default::default()` fields in that ctor collapsed to it.
+
+Repro vendored at `docs/repro/default_default_wrong_type_repro.cpp`.
+Ruled out individually — each of these alone lowers correctly:
+
+  * `#[cpp_ctor]` with an i32 parameter that is not stored;
+  * `#[cpp_ctor]` with an i32 field but no parameter;
+  * a plain fn with the parameter stored;
+  * `#[cpp_ctor]` + stored parameter + exactly **one** Default field;
+  * two Default fields (including `std::vector<u8>`) with no parameter.
+
+It needs `#[cpp_ctor]` **+ a stored parameter + at least two Default
+fields**, which reads like a positional mismatch rather than a failed type
+lookup. `TcpListener` in the same file takes no parameters and lowers
+correctly, which is why the earlier conversion there was clean.
+
+The C++ build rejects the bad output (no implicit `int32_t` ->
+`vector<uint8_t>` or `-> Function`), so this could not have shipped — but
+it would have cost a ~2h gate to discover. Cheap to catch by reading the
+emitted GEN before building, which is the habit that caught it.
+
+**The five kernels stay for now**, blocked on this bug rather than on
+anything about their own shape.
