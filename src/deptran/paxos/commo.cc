@@ -36,7 +36,7 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                  const janus::Command& cmd) {
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-//  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
+//  auto e = reactor_create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
   auto e = std::make_shared<PaxosAcceptQuorumEvent>(n, n);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
@@ -82,7 +82,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   // Log_info("ForwardToLearner: par_id={}, slot={}, n={}, proxies.size={}, batch_idx={}",
   //          par_id, slot, n, proxies.size(), cur_batch_idx);
 
-  //auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1,1);
+  //auto e = reactor_create_sp_event<PaxosAcceptQuorumEvent>(1,1);
   int sent_count = 0;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);

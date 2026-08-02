@@ -395,7 +395,7 @@ class Communicator {
 	//   non-null (Arc has no null state); only read on the dead `paused`
 	//   debug path in client_worker.cc / classic/coordinator.cc, both of
 	//   which deref it via `->`. Was a default-null shared_ptr before. }
-	rusty::Arc<QuorumEvent> qe{Reactor::create_sp_event<QuorumEvent>(1, 1)};
+	rusty::Arc<QuorumEvent> qe{reactor_create_sp_event<QuorumEvent>(1, 1)};
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;

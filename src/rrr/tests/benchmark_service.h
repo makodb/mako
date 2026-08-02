@@ -662,7 +662,7 @@ private:
             auto __async_req__ = std::move(req);
             auto __async_weak_sconn__ = weak_sconn;
             auto __async_task__ = this->async_nop(__typed_req__);
-            rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {
+            rrr::reactor_spawn_stackless_task_with_result(*rrr::Reactor::get_reactor(), std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {
                 auto sconn_opt = __async_weak_sconn__.upgrade();
                 if (sconn_opt.is_some()) {
                     auto sconn = sconn_opt.unwrap();

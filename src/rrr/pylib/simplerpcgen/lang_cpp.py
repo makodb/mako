@@ -446,7 +446,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         f.writeln("auto __async_req__ = std::move(req);")
                         f.writeln("auto __async_weak_sconn__ = weak_sconn;")
                         f.writeln("auto __async_task__ = this->%s(__typed_req__);" % func.name)
-                        f.writeln("rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {")
+                        f.writeln("rrr::reactor_spawn_stackless_task_with_result(*rrr::Reactor::get_reactor(), std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {")
                         with f.indent():
                             f.writeln("auto sconn_opt = __async_weak_sconn__.upgrade();")
                             f.writeln("if (sconn_opt.is_some()) {")

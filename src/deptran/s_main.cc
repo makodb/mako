@@ -351,7 +351,7 @@ void server_failover_co(bool random, bool leader, int srv_idx)
         Log_info("!!!!!!!!!!!!!!!!!!!! before run_int wait {} s", run_int);
 #endif
         sleep(run_int) ;
-        // auto r = Reactor::create_sp_event<TimeoutEvent>(run_int * 1000 * 1000);
+        // auto r = reactor_create_sp_event<TimeoutEvent>(run_int * 1000 * 1000);
         // r->wait();
 #ifdef FAILOVER_DEBUG
         Log_info("!!!!!!!!!!!!!!!!!!!! after run_int wait");
@@ -402,7 +402,7 @@ void server_failover_co(bool random, bool leader, int srv_idx)
 #endif
         Log_info("server {} paused for failover test", idx);
         sleep(stop_int) ;
-        // auto s = Reactor::create_sp_event<TimeoutEvent>(stop_int * 1000 * 1000);
+        // auto s = reactor_create_sp_event<TimeoutEvent>(stop_int * 1000 * 1000);
         // s->wait() ;      
 #ifdef FAILOVER_DEBUG  
         Log_info("!!!!!!!!!!!!!! after stop_int wait");

@@ -309,7 +309,7 @@ def verify_alpha_service_block(block: str) -> None:
         "            auto __async_req__ = std::move(req);\n"
         "            auto __async_weak_sconn__ = weak_sconn;\n"
         "            auto __async_task__ = this->async_wait(__typed_req__);\n"
-        "            rrr::Reactor::get_reactor()->spawn_stackless_task_with_result(std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {\n"
+        "            rrr::reactor_spawn_stackless_task_with_result(*rrr::Reactor::get_reactor(), std::move(__async_task__), [__async_req__ = std::move(__async_req__), __async_weak_sconn__](auto __typed_result__) mutable {\n"
         "                auto sconn_opt = __async_weak_sconn__.upgrade();\n"
         "                if (sconn_opt.is_some()) {\n"
         "                    auto sconn = sconn_opt.unwrap();\n"

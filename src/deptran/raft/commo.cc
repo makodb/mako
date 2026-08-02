@@ -48,7 +48,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              ) {
   // Allocate response data with shared_ptr - callback captures this to keep memory valid
   auto response = std::make_shared<AppendEntriesResponse>();
-  response->event = Reactor::create_sp_event<IntEvent>();
+  response->event = reactor_create_sp_event<IntEvent>();
 
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;

@@ -235,21 +235,21 @@ void ClientWorker::Work() {
       }
       locid_t idx = 0;
       while (!*failover_server_quit_) {
-        auto r = Reactor::create_sp_event<NeverEvent>();
+        auto r = reactor_create_sp_event<NeverEvent>();
         r->wait_timeout(run_int);
         *failover_trigger_ = true;
         while (*failover_trigger_) {
-          auto e = Reactor::create_sp_event<NeverEvent>();
+          auto e = reactor_create_sp_event<NeverEvent>();
           e->wait_timeout(wait_int);
           if (*failover_server_quit_) return;
         }
         Pause(idx);
         *failover_trigger_ = true;
         Log_info("server {} paused for failover test", idx);
-        auto s = Reactor::create_sp_event<NeverEvent>();
+        auto s = reactor_create_sp_event<NeverEvent>();
         s->wait_timeout(stop_int);
         while (*failover_trigger_) {
-          auto e = Reactor::create_sp_event<NeverEvent>();
+          auto e = reactor_create_sp_event<NeverEvent>();
           e->wait_timeout(wait_int);
           if (*failover_server_quit_) return;
         }
@@ -291,7 +291,7 @@ void ClientWorker::Work() {
           }
           if (config_->client_max_undone_ > 0
               && n_undone_tx > config_->client_max_undone_) {
-            Reactor::create_sp_event<NeverEvent>()->wait_timeout(pow(10, 4));
+            reactor_create_sp_event<NeverEvent>()->wait_timeout(pow(10, 4));
           } else {
             break;
           }
@@ -301,8 +301,8 @@ void ClientWorker::Work() {
         coo->cli_id_ = cli_id_;
         verify(coo->sp_ev_commit_.is_none());
         verify(coo->sp_ev_done_.is_none());
-        coo->sp_ev_commit_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
-        coo->sp_ev_done_ = rusty::Some(Reactor::create_sp_event<IntEvent>());
+        coo->sp_ev_commit_ = rusty::Some(reactor_create_sp_event<IntEvent>());
+        coo->sp_ev_done_ = rusty::Some(reactor_create_sp_event<IntEvent>());
 
         Log_debug("Dispatching request for {}", n_tx);
         this->outbound++;
@@ -319,7 +319,7 @@ void ClientWorker::Work() {
             first = false;
           }
           Log_info("total: {}", coo->commo_->total_);
-          auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
+          auto t = reactor_create_sp_event<TimeoutEvent>(0.1*1000*1000);
           t->wait();
         }
 #ifdef DB_CHECKSUM
@@ -339,7 +339,7 @@ void ClientWorker::Work() {
           this->outbound--;
           verify(ev->status_.get() != EventStatus::TIMEOUT);
         } else {
-          auto sp_event = Reactor::create_sp_event<NeverEvent>();
+          auto sp_event = reactor_create_sp_event<NeverEvent>();
           wait_recordplace(sp_event, wait_timeout(pow(10, 6)));
         }
         Fiber::create_run([this, coo](){
@@ -462,14 +462,14 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       failover_pause_start = false;
       for (auto it = n_pause_concurrent_.begin(); it != n_pause_concurrent_.end(); it++) {
         while (!it->second) {
-          auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
+          auto sp_e = reactor_create_sp_event<TimeoutEvent>(300 * 1000);
           sp_e->wait();
         }
       }
       failover_pause_start = true;
     } else {
       while (!failover_pause_start) {
-        auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
+        auto sp_e = reactor_create_sp_event<TimeoutEvent>(300 * 1000);
         sp_e->wait();
       }
     }
@@ -481,7 +481,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       *failover_trigger_ = false;
     }
     while (!*failover_trigger_) {
-      auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
+      auto sp_e = reactor_create_sp_event<TimeoutEvent>(300 * 1000);
       sp_e->wait();
       if (*failover_server_quit_) break;
     }
@@ -493,7 +493,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       failover_wait_leader_ = false;
     } else {
       while (failover_wait_leader_ && !*failover_server_quit_) {
-        auto sp_e = Reactor::create_sp_event<TimeoutEvent>(500 * 1000);
+        auto sp_e = reactor_create_sp_event<TimeoutEvent>(500 * 1000);
         sp_e->wait();
       }
     }

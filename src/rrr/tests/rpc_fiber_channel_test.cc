@@ -105,7 +105,7 @@ inline ChannelConnectionProxy make_fake_proxy(
 template <typename F>
 void run_in_fiber(F&& body) {
     auto reactor = Reactor::get_reactor();
-    auto done = Reactor::create_sp_event<IntEvent>();
+    auto done = reactor_create_sp_event<IntEvent>();
     reactor->create_run_fiber([done, body = std::forward<F>(body)]() mutable {
         body();
         done->set(1);
@@ -183,7 +183,7 @@ TEST(FiberChannelTest, RecvFrameSuspendsThenWakesOnDelivery) {
 
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto recv_done = Reactor::create_sp_event<IntEvent>();
+        auto recv_done = reactor_create_sp_event<IntEvent>();
 
         // Spawn the recv fiber. `create_run_fiber` runs the fiber
         // synchronously up to its first yield (the wait() inside
@@ -279,7 +279,7 @@ TEST(FiberChannelTest, ParkedRecvWakesOnClose) {
     bool got_none = false;
     run_in_fiber([&]() {
         auto reactor = Reactor::get_reactor();
-        auto done = Reactor::create_sp_event<IntEvent>();
+        auto done = reactor_create_sp_event<IntEvent>();
 
         // Spawn recv fiber — it parks on IntEvent inside recv_frame.
         reactor->create_run_fiber([&, done]() {

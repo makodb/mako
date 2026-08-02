@@ -56,7 +56,7 @@ class TpcCommitCommand : public rrr::Serializable<TpcCommitCommand,
 class TpcEmptyCommand : public rrr::Serializable<TpcEmptyCommand,
                                                  MakoCommands> {
  private:
-  rusty::Arc<BoxEvent<bool>> event{Reactor::create_sp_event<BoxEvent<bool>>()};
+  rusty::Arc<BoxEvent<bool>> event{reactor_create_sp_event<BoxEvent<bool>>()};
 
  public:
   void save(BinaryWriteArchive&) const {}

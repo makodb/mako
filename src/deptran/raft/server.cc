@@ -1450,7 +1450,7 @@ void RaftServer::HeartbeatLoop() {
     {
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
-        ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
+        ready_for_replication_ = reactor_create_sp_event<IntEvent>();
         ready_for_replication_.as_ref().unwrap()->set(0);
       }
       ready_for_replication_.as_ref().unwrap()->wait_timeout(heartbeat_interval_us_);

@@ -367,7 +367,7 @@ void FpgaRaftServer::StartTimer()
                     RequestVote() ;
                     /*while(req_voting_)
                     {
-                      auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(wait_int_);
+                      auto sp_e1 = reactor_create_sp_event<TimeoutEvent>(wait_int_);
                       sp_e1->wait_timeout(wait_int_) ;
                       if(stop_) return ;
                     }*/
@@ -375,7 +375,7 @@ void FpgaRaftServer::StartTimer()
                     resetTimer() ;
                     duration = randDuration() ;
                 }
-                auto sp_e2 = Reactor::create_sp_event<TimeoutEvent>(wait_int_);
+                auto sp_e2 = reactor_create_sp_event<TimeoutEvent>(wait_int_);
                 sp_e2->wait() ;
             } 
         });

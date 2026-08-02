@@ -514,7 +514,7 @@ rusty::Option<OwnedFrame> fiberchannel_try_pop(FiberChannel& self) {
 
 // @unsafe - Reactor template factory + Arc hand-off.
 rusty::Arc<IntEvent> fiberchannel_make_event() {
-    return Reactor::create_sp_event<IntEvent>();
+    return reactor_create_sp_event<IntEvent>();
 }
 
 // @unsafe - fiber-suspending Event::wait through the Arc (a defensive

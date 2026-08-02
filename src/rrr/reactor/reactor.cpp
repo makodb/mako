@@ -1922,6 +1922,7 @@ class Reactor {
   // @safe - Registers a fiber in the active set
   void register_fiber(const rusty::Rc<Fiber>& fiber) const;
 
+ public:
   // @safe - Queue a stackless task slot for polling if not already queued.
   void enqueue_stackless_task(size_t idx) const;
 
@@ -1932,13 +1933,11 @@ class Reactor {
   // Returns true if at least one stackless task was polled.
   bool process_stackless_tasks() const;
 
-  // @safe - Arc::make is @safe in the library.
-  template <typename U, typename... Args>
-  static rusty::Arc<U> make_arc(Args&&... args) {
-    return rusty::Arc<U>::make(std::forward<Args>(args)...);
-  }
-
  public:
+  // Public (were private): the hoisted free templates
+  // `reactor_spawn_stackless_task_with_result` / its EarlyWakeState waker
+  // call these from outside the class. The DSL end-state is an all-public
+  // struct anyway (playbook: the all-public DSL struct needs no friends).
   // @safe - Amortized prune of finished events from all_events_ (drops events
   // the list is the sole owner of; non-prunable events are retained).
   void prune_finished_events() const;
@@ -1950,65 +1949,6 @@ class Reactor {
   void display_waiting_ev() const;
   // @safe - Spawn a stackless C++20 coroutine task managed by the reactor.
   void spawn_stackless_task(rusty::Task<void> task) const;
-  // @safe - Spawn a stackless task with a completion callback when ready.
-  template <typename T, typename OnReady>
-  void spawn_stackless_task_with_result(rusty::Task<T> task, OnReady on_ready) const {
-    constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
-    struct EarlyWakeState {
-      explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
-      const Reactor* reactor;
-      mutable std::atomic<size_t> idx{kUnregisteredSlot};
-      mutable std::atomic<bool> pending_wake{false};
-    };
-
-    // SAFETY: shared state is heap-owned; reactor outlives callback execution.
-    auto early_wake = make_arc<EarlyWakeState>(this);
-
-    rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
-      size_t idx = early_wake->idx.load(std::memory_order_acquire);
-      if (idx == kUnregisteredSlot) {
-        early_wake->pending_wake.store(true, std::memory_order_release);
-        return;
-      }
-      early_wake->reactor->enqueue_stackless_task(idx);
-    }};
-    rusty::Context early_ctx{&early_waker};
-    auto early_poll = task.poll(early_ctx);
-    if (early_poll.is_ready()) {
-      on_ready(std::move(early_poll.value));
-      return;
-    }
-
-    struct TaskState {
-      mutable rusty::Task<T> task;
-      mutable rusty::Option<OnReady> on_ready;
-      rusty::Arc<EarlyWakeState> early_wake;
-
-      TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
-          : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
-    };
-
-    // SAFETY: TaskState is only accessed through the Arc captured by the poller.
-    auto state = make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
-    auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
-      auto poll_result = state->task.poll(ctx);
-      if (!poll_result.is_ready()) {
-        return false;
-      }
-      state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
-      if (state->on_ready.is_some()) {
-        // unwrap() consumes: moves out and sets to None in one step.
-        auto cb = state->on_ready.unwrap();
-        cb(std::move(poll_result.value));
-      }
-      return true;
-    });
-    state->early_wake->idx.store(idx, std::memory_order_release);
-    if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
-      enqueue_stackless_task(idx);
-    }
-  }
-
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
               all_events_.borrow()->len(), fibers_.borrow()->size());
@@ -2016,55 +1956,131 @@ class Reactor {
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
 
-  // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
-  // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
-  //   1. shared_ptr is stored in all_events_ list (an owner of the reactor)
-  //      while the event is live
-  //   2. Reactor lives for entire program duration
-  //   3. Finished events (sole-owned by all_events_, i.e. use_count()==1) are
-  //      pruned amortized via prune_finished_events(), so the list stays bounded
-  //      under sustained event churn (e.g. one IntEvent per recv_frame).
-  // Cross-thread notification reaches an event via its weak_ptr self-ref
-  // (get_self()), so a pruned/freed event is observed as null — no use-after-free.
-  template <typename Ev, typename... Args>
-  static rusty::Arc<Ev> create_sp_event(Args&&... args) {  // @unsafe
-    auto ev = event_make<Ev>(args...);
-    // Unique-owner init window: ev is freshly minted (strong_count 1),
-    // so get_mut() gives the one mutable access needed to stamp
-    // __debug_creator and install the self weak-ref before ev is ever
-    // shared. The self-ref is a sync::Weak<EventPollable> obtained by
-    // upcasting Arc<Ev> -> Arc<EventPollable> (single-base) then
-    // downgrading (sync::Weak has no derived->base converting ctor).
-    {
-      auto mut_opt = ev.get_mut();
-      verify(mut_opt.is_some());
-      Ev& m = mut_opt.unwrap();
-      m.state_.__debug_creator = 1;
-      m.set_self(rusty::sync::downgrade(rusty::Arc<EventPollable>(ev)));
+};
+
+// ==== Member templates hoisted out of `class Reactor` (Goal 0 Stage A:
+// a DSL struct's GEN cannot mix in hand-written members, so the class's
+// template members become free function templates; they stay hand-written
+// C++ and remain in the variadic rewrite backlog). ====
+
+// @safe - Arc::make is @safe in the library. Hoisted out of `class Reactor`
+// (was the private member template `make_arc`).
+template <typename U, typename... Args>
+inline rusty::Arc<U> reactor_make_arc(Args&&... args) {
+  return rusty::Arc<U>::make(std::forward<Args>(args)...);
+}
+
+// @safe - Spawn a stackless task with a completion callback when ready.
+// Hoisted out of `class Reactor` (member template; a DSL struct's GEN is
+// fully generated so hand-written members cannot remain). Behaviour is
+// identical; `self` replaces the implicit `this`.
+template <typename T, typename OnReady>
+inline void reactor_spawn_stackless_task_with_result(const Reactor& self, rusty::Task<T> task, OnReady on_ready) {
+  constexpr size_t kUnregisteredSlot = std::numeric_limits<size_t>::max();
+  struct EarlyWakeState {
+    explicit EarlyWakeState(const Reactor* reactor_ptr) : reactor(reactor_ptr) {}
+    const Reactor* reactor;
+    mutable std::atomic<size_t> idx{kUnregisteredSlot};
+    mutable std::atomic<bool> pending_wake{false};
+  };
+
+  // SAFETY: shared state is heap-owned; reactor outlives callback execution.
+  auto early_wake = reactor_make_arc<EarlyWakeState>(&self);
+
+  rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
+    size_t idx = early_wake->idx.load(std::memory_order_acquire);
+    if (idx == kUnregisteredSlot) {
+      early_wake->pending_wake.store(true, std::memory_order_release);
+      return;
     }
-    // Store the canonical strong ref in all_events_ (upcast clone).
-    auto reactor = get_reactor();
-    reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
-    // Clear out finished events the reactor is the sole owner of (bounded growth).
-    reactor->prune_finished_events();
-    return ev;
+    early_wake->reactor->enqueue_stackless_task(idx);
+  }};
+  rusty::Context early_ctx{&early_waker};
+  auto early_poll = task.poll(early_ctx);
+  if (early_poll.is_ready()) {
+    on_ready(std::move(early_poll.value));
+    return;
   }
 
-  // @unsafe - Creates event and returns reference to shared_ptr content
-  // SAFETY: Returned reference is valid because:
-  //   1. Event is created via create_sp_event and stored in all_events_
-  //   2. The event is marked NON-prunable so all_events_ retains it (the
-  //      returned bare Event& is the caller's only handle — there is no
-  //      shared_ptr to keep it alive, so it must not be pruned)
-  //   3. Returned reference points to heap-allocated Event managed by shared_ptr
-  // Manual verification required: reference lifetime extends beyond function scope
-  template <typename Ev, typename... Args>
-  static const Ev& create_event(Args&&... args) {  // @unsafe
-    auto sp = create_sp_event<Ev>(args...);
-    sp->set_prunable(false);
-    return *sp;
+  struct TaskState {
+    mutable rusty::Task<T> task;
+    mutable rusty::Option<OnReady> on_ready;
+    rusty::Arc<EarlyWakeState> early_wake;
+
+    TaskState(rusty::Task<T> t, OnReady cb, rusty::Arc<EarlyWakeState> ew)
+        : task(std::move(t)), on_ready(std::move(cb)), early_wake(std::move(ew)) {}
+  };
+
+  // SAFETY: TaskState is only accessed through the Arc captured by the poller.
+  auto state = reactor_make_arc<TaskState>(std::move(task), std::move(on_ready), std::move(early_wake));
+  auto idx = self.register_stackless_poller([state](rusty::Context& ctx) mutable {
+    auto poll_result = state->task.poll(ctx);
+    if (!poll_result.is_ready()) {
+      return false;
+    }
+    state->early_wake->idx.store(kUnregisteredSlot, std::memory_order_release);
+    if (state->on_ready.is_some()) {
+      // unwrap() consumes: moves out and sets to None in one step.
+      auto cb = state->on_ready.unwrap();
+      cb(std::move(poll_result.value));
+    }
+    return true;
+  });
+  state->early_wake->idx.store(idx, std::memory_order_release);
+  if (state->early_wake->pending_wake.exchange(false, std::memory_order_acq_rel)) {
+    self.enqueue_stackless_task(idx);
   }
-};
+}
+
+// @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
+// SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
+//   1. shared_ptr is stored in all_events_ list (an owner of the reactor)
+//      while the event is live
+//   2. Reactor lives for entire program duration
+//   3. Finished events (sole-owned by all_events_, i.e. use_count()==1) are
+//      pruned amortized via prune_finished_events(), so the list stays bounded
+//      under sustained event churn (e.g. one IntEvent per recv_frame).
+// Cross-thread notification reaches an event via its weak_ptr self-ref
+// (get_self()), so a pruned/freed event is observed as null — no use-after-free.
+template <typename Ev, typename... Args>
+inline rusty::Arc<Ev> reactor_create_sp_event(Args&&... args) {  // @unsafe
+  auto ev = event_make<Ev>(args...);
+  // Unique-owner init window: ev is freshly minted (strong_count 1),
+  // so get_mut() gives the one mutable access needed to stamp
+  // __debug_creator and install the self weak-ref before ev is ever
+  // shared. The self-ref is a sync::Weak<EventPollable> obtained by
+  // upcasting Arc<Ev> -> Arc<EventPollable> (single-base) then
+  // downgrading (sync::Weak has no derived->base converting ctor).
+  {
+    auto mut_opt = ev.get_mut();
+    verify(mut_opt.is_some());
+    Ev& m = mut_opt.unwrap();
+    m.state_.__debug_creator = 1;
+    m.set_self(rusty::sync::downgrade(rusty::Arc<EventPollable>(ev)));
+  }
+  // Store the canonical strong ref in all_events_ (upcast clone).
+  auto reactor = Reactor::get_reactor();
+  reactor->all_events_.borrow_mut()->push_back(rusty::Arc<EventPollable>(ev));
+  // Clear out finished events the reactor is the sole owner of (bounded growth).
+  reactor->prune_finished_events();
+  return ev;
+}
+
+// @unsafe - Creates event and returns reference to shared_ptr content
+// SAFETY: Returned reference is valid because:
+//   1. Event is created via create_sp_event and stored in all_events_
+//   2. The event is marked NON-prunable so all_events_ retains it (the
+//      returned bare Event& is the caller's only handle — there is no
+//      shared_ptr to keep it alive, so it must not be pruned)
+//   3. Returned reference points to heap-allocated Event managed by shared_ptr
+// Manual verification required: reference lifetime extends beyond function scope
+template <typename Ev, typename... Args>
+inline const Ev& reactor_create_event(Args&&... args) {  // @unsafe
+  auto sp = reactor_create_sp_event<Ev>(args...);
+  sp->set_prunable(false);
+  return *sp;
+}
+
 
 // Forward declarations
 class PollThread;
@@ -2963,7 +2979,7 @@ class QuorumEventWrapper {
   rusty::Arc<QuorumEvent> q_;
 
   QuorumEventWrapper(int n_total, int quorum)
-      : q_(rrr::Reactor::create_sp_event<QuorumEvent>(n_total, quorum)) {}
+      : q_(rrr::reactor_create_sp_event<QuorumEvent>(n_total, quorum)) {}
 
   // Arc is const-view; every QuorumEvent field mutation now goes
   // through Cell::set / RefCell (both const), so a const ref suffices.
@@ -3444,7 +3460,7 @@ bool shared_int_event_wait_until_gte(SharedIntEvent& self, int x, int timeout) {
   if (self.value_ >= x) {
     return false;
   }
-  auto ev =  Reactor::create_sp_event<IntEvent>();
+  auto ev =  reactor_create_sp_event<IntEvent>();
   ev->value_.set(self.value_);
   ev->target_.set(x);
   self.events_.push(ev);
@@ -3464,7 +3480,7 @@ void shared_int_event_wait(SharedIntEvent& self, EventTestFn f) {
   if (f(self.value_)) {
     return;
   }
-  auto ev =  Reactor::create_sp_event<IntEvent>();
+  auto ev =  reactor_create_sp_event<IntEvent>();
   ev->value_.set(self.value_);
   (*ev->state_.test_.borrow_mut()) = std::move(f);
   self.events_.push(ev);
@@ -3732,7 +3748,7 @@ void Fiber::sleep(uint64_t microseconds) {
   if (microseconds == 0) {
     return;
   }
-  auto x = Reactor::create_sp_event<TimeoutEvent>(microseconds);
+  auto x = reactor_create_sp_event<TimeoutEvent>(microseconds);
   x->wait();
 }
 
@@ -4394,7 +4410,7 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
     mutable std::atomic<bool> pending_wake{false};
   };
 
-  auto early_wake = make_arc<EarlyWakeState>(this);
+  auto early_wake = reactor_make_arc<EarlyWakeState>(this);
 
   rusty::Waker early_waker{[early_wake, kUnregisteredSlot]() {
     size_t idx = early_wake->idx.load(std::memory_order_acquire);
@@ -4421,7 +4437,7 @@ void Reactor::spawn_stackless_task(rusty::Task<void> task) const {
         : task(std::move(t)), early_wake(std::move(ew)) {}
   };
 
-  auto state = make_arc<TaskState>(std::move(task), std::move(early_wake));
+  auto state = reactor_make_arc<TaskState>(std::move(task), std::move(early_wake));
   auto idx = register_stackless_poller([state](rusty::Context& ctx) mutable {
     auto poll_result = state->task.poll(ctx);
     if (poll_result.is_ready()) {
@@ -5110,7 +5126,7 @@ rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
       rusty::Cell<uint32_t>::new_(0),                         // leader_id_
       rusty::Cell<int64_t>::new_(-1),                         // par_id_
       rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(-1)), // id_
-      rrr::Reactor::create_sp_event<IntEvent>(n_total));      // finalize_event_
+      rrr::reactor_create_sp_event<IntEvent>(n_total));      // finalize_event_
   event_state_seed(sp->state_);
   return sp;
 }

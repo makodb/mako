@@ -85,7 +85,7 @@ void RccCommo::SendFinish(parid_t pid,
 shared_ptr<map<txid_t, parent_set_t>>
 RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
   auto ret = std::make_shared<map<txid_t, parent_set_t>>();
-  auto ev = Reactor::create_sp_event<IntEvent>();
+  auto ev = reactor_create_sp_event<IntEvent>();
   FutureAttr fuattr;
   function<void(rusty::Arc<Future>)> cb = [ret, &ev] (rusty::Arc<Future> fu) {
     if (fu->get_error_code() != 0) {

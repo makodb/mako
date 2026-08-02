@@ -62,7 +62,7 @@ struct FiberFuture;
 // @unsafe - constructs a BoxEvent<T> as an Arc via Reactor internals.
 template <typename T>
 rusty::Arc<BoxEvent<T>> fiber_make_state() {
-  return Reactor::create_sp_event<BoxEvent<T>>();
+  return reactor_create_sp_event<BoxEvent<T>>();
 }
 
 // @safe - the empty (None) state, for a default/invalid FiberFuture.

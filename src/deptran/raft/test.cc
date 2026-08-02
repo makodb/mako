@@ -2080,7 +2080,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
 }
 
 void RaftLabTest::wait(uint64_t microseconds) {
-  Reactor::create_sp_event<TimeoutEvent>(microseconds)->wait();
+  reactor_create_sp_event<TimeoutEvent>(microseconds)->wait();
 }
 
 // ============================================================================
