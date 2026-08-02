@@ -3663,3 +3663,48 @@ function `rusty::borrow(x)`, the mutable one stays a method.)
 
 That makes **11 stale against 3 real** so far, and the phrasing rule has
 predicted every one.
+
+#### 7.51.1 Latent transpiler bug: `default_value` vs `default_like`
+
+Probing server.cpp:480's claim ("rusty::Function's default ctor is a `{}`
+the DSL cannot spell") turned up a transpiler bug rather than a floor.
+
+Both DSL spellings of "default-construct" lower to something, and
+**neither compiles**:
+
+    rusty::Function::<dyn FnMut(&mut BinaryWriteArchive)>::new()
+      -> rusty::Function<void(BinaryWriteArchive&)>::new_()
+      error: no member named 'new_' in 'rusty::Function<...>'
+
+    Default::default()
+      -> rusty::default_value<rusty::Function<void(BinaryWriteArchive&)>>()
+      error: no template named 'default_value' in namespace 'rusty';
+             did you mean 'default_like'?
+
+The second is the interesting one. `rusty::default_value<T>()` **does not
+exist anywhere** -- the only matches in `include/` are parameter names in
+`unwrap_or(T default_value)`. The helper that does exist is
+`rusty::default_like<T>()` (dispatch.hpp:280), with its own tiered
+member -> ADL-marker -> value-init dispatch.
+
+The transpiler emits both names:
+
+| emitted | sites | exists |
+|---|---|---|
+| `rusty::default_value<T>()` | 14 | **no** |
+| `rusty::default_like<T>()` | 1 (+ tests assert it) | yes |
+
+So `Default::default()` in an expression position emits a call to a
+function that was never defined. It is latent only because no current DSL
+in src/rrr takes that path -- the moment one does, it is a compile error
+with no DSL-level warning. Same family as `std::ptr::null()` (§7.49):
+plausible output, no such symbol.
+
+**Do not "fix" this by renaming all 14 blindly.** The two names may not be
+interchangeable at every site (`default_like` is the type-param dispatcher;
+some `default_value` sites are inside lambdas over deduced `_rusty_inner_t`
+types), and §7.50.3 established that the transpiler suite will not tell you
+if a change breaks real code. It needs the regenerate-and-build check.
+
+Meanwhile server.cpp:480's `empty_server_reply_fn()` kernel stays: the
+claim is **real** as written, since neither spelling works today.
