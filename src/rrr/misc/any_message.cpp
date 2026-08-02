@@ -408,10 +408,6 @@ int any_message_registry::register_type(std::string name,
   return 0;
 }
 
-// @unsafe - trivial factory the DSL cannot spell (default
-// construction of a foreign type).
-std::string anymessage_empty_string() { return std::string(); }
-
 // Registry queries, authored as inline Rust DSL (register_type stays a
 // hand-written kernel above: its body must use the `name` parameter
 // twice across two map inserts, which Rust move semantics reject).
@@ -432,7 +428,7 @@ fn name_for_type_owned(ti: std::type_index) -> std::string {
     let guard = registry().lock().unwrap();
     let entry = (*guard).name_by_type_hash.get(ti.hash_code());
     if entry.is_none() {
-        return anymessage_empty_string();
+        return Default::default();
     }
     entry.unwrap()
 }
@@ -453,7 +449,7 @@ fn clear_for_testing() {
     (*guard).name_by_type_hash.clear();
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=fd9cb276dc62424ff420a185fb1ce4752503fb580de883f6be906235ac758eb7*/
+/*RUSTYCPP:GEN-BEGIN id=any_message.registry_queries version=1 rust_sha256=9b1f2cd57d3ac02d74868301f0d96573cca643897adf77554d84772307f45727*/
 std::string name_for_type_owned(std::type_index ti);
 bool is_registered_name(const std::string& name);
 bool is_registered_type(std::type_index ti);
@@ -472,7 +468,7 @@ std::string name_for_type_owned(std::type_index ti) {
     const auto&& guard = rusty::deref_call(registry().lock(), rusty::detail::__mdisp_unwrap{});
     auto entry = (rusty::detail::deref_if_pointer_like(guard)).name_by_type_hash.get(ti.hash_code());
     if (entry.is_none()) {
-        return anymessage_empty_string();
+        return rusty::default_like<std::string>();
     }
     return entry.unwrap();
 }

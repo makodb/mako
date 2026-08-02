@@ -324,7 +324,7 @@ impl InMemoryChannel {
     // rusty::Mutex::lock() is const-qualified (interior mutability), so
     // no const_cast is needed — the old free-fn's cast was vestigial.
     fn close(&self) {
-        let mut peer_on_closed = empty_on_closed_callback();
+        let mut peer_on_closed: OnClosedCallback = Default::default();
         let mut fire_peer_closed = false;
         {
             let mut guard = self.state_.inner.lock().unwrap();
@@ -381,7 +381,7 @@ impl InMemoryChannel {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=1ee505d9094ee40fb84530c86f83b746c8dad4a466a2cb120f739023a1bc14cf*/
+/*RUSTYCPP:GEN-BEGIN id=inmemory_channel.channel version=1 rust_sha256=1b8ccf9c009063f74e0e7f9dfa30bbfec489614f229341a3c41e7a5c8e649bc5*/
 struct InMemoryChannel;
 
 struct InMemoryChannel {
@@ -412,7 +412,7 @@ void InMemoryChannel::flush() const {
 }
 
 void InMemoryChannel::close() const {
-    auto peer_on_closed = empty_on_closed_callback();
+    OnClosedCallback peer_on_closed = rusty::default_like<OnClosedCallback>();
     auto fire_peer_closed = false;
     {
         auto&& guard = rusty::deref_call((*this->state_).inner.lock(), rusty::detail::__mdisp_unwrap{});

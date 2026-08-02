@@ -258,16 +258,21 @@ impl Drop for FiberChannel {
     fn drop(&mut self) {
         // Detach callbacks before the proxy destructor runs, so an
         // in-flight callback dispatch cannot race with member teardown.
-        // The empty_*_callback factories are channel.cpp's hand-bridge for
-        // the `{}` default ctor the DSL cannot spell (playbook §7.2).
+        // `Default::default()` needs a known target type, so these are
+        // typed locals rather than inline arguments; `mut` because the
+        // wrappers are move-only and a const binding would select the
+        // deleted copy ctor at the call (docs 7.53).
         let ch: &mut Box<ChannelConnectionBase> = &mut self.ch_;
-        ch.set_on_frame(empty_on_frame_callback());
-        ch.set_on_closed(empty_on_closed_callback());
-        ch.set_on_error(empty_on_error_callback());
+        let mut no_frame: OnFrameCallback = Default::default();
+        let mut no_closed: OnClosedCallback = Default::default();
+        let mut no_error: OnErrorCallback = Default::default();
+        ch.set_on_frame(no_frame);
+        ch.set_on_closed(no_closed);
+        ch.set_on_error(no_error);
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=950c58a923c0e19e455a812c668d3d01c596ba8505f22d977a80fbff2bb487a0*/
+/*RUSTYCPP:GEN-BEGIN id=fiber_channel.fiber_channel version=1 rust_sha256=ff514bccec1e5440f5f0e5b14e9d948fabd8199e79c1dc2b4e29f132e7d393da*/
 struct FiberChannel;
 
 struct FiberChannel {
@@ -396,9 +401,12 @@ ChannelConnectionProxy& FiberChannel::channel_for_test() {
 FiberChannel::~FiberChannel() noexcept(false) {
     if (_rusty_forgotten) { return; }
     rusty::Box<ChannelConnectionBase>& ch = this->ch_;
-    ch->set_on_frame(empty_on_frame_callback());
-    ch->set_on_closed(empty_on_closed_callback());
-    ch->set_on_error(empty_on_error_callback());
+    OnFrameCallback no_frame = rusty::default_like<OnFrameCallback>();
+    OnClosedCallback no_closed = rusty::default_like<OnClosedCallback>();
+    OnErrorCallback no_error = rusty::default_like<OnErrorCallback>();
+    ch->set_on_frame(std::move(no_frame));
+    ch->set_on_closed(std::move(no_closed));
+    ch->set_on_error(std::move(no_error));
 }
 /*RUSTYCPP:GEN-END id=fiber_channel.fiber_channel*/
 
