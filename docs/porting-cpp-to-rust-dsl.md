@@ -4166,3 +4166,19 @@ Also recorded from the same body: a cross-file `#[cpp_ctor]` type has
 NO DSL construction spelling from another file (the ctor lives in the
 defining file's GEN; `Type::new_` does not exist) — keep a small
 make_box kernel at the boundary (clientconn_make_fiber_channel).
+
+### 7.61 Three call-shape rules from converting connect_via_factory
+
+  * **Nested calls inside `format!` can emit an unresolvable
+    `rusty::to_string` wrap** (`format!("{}", channel_error_to_string(e))`
+    → `std::format(..., rusty::to_string(...))` with no declaration in
+    module scope). Bind the value to a `let` first and format the
+    binding.
+  * **Moving an Option FIELD out of a struct local** is
+    `let mut result` + `result.field.take().unwrap()` — a bare
+    `result.field.unwrap()` copies (deleted for Box payloads).
+  * **The RECEIVING binding of a move-only value must be `let mut`** —
+    a const binding plus the emitter's `std::move` at the next use
+    selects the deleted copy constructor (same rule as §7.53's
+    move-only locals, restated because it also applies to bindings that
+    are only ever moved FROM once).
