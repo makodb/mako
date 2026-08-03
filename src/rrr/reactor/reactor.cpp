@@ -5623,32 +5623,45 @@ using rrr::EventStatus;
 // get_self() into the reactor queues, which for an unregistered event is null
 // (latent crash on the copilot finalize path). Nested create is safe: this runs
 // inside the outer create_sp_event's make, BEFORE the outer all_events_ borrow.
-rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
-  auto sp = rusty::Arc<QuorumEvent>::make(
-      rusty::Cell<EventStatus>::new_(EventStatus::INIT),      // status_
-      rusty::thread::current_id(),                            // owner_thread_
-      EventState{},                                           // state_
-      rusty::Cell<bool>::new_(true),                          // prunable_
-      rusty::sync::Weak<EventPollable>(),                     // self_
-      rusty::Cell<int32_t>::new_(0),                          // n_voted_yes_
-      rusty::Cell<int32_t>::new_(0),                          // n_voted_no_
-      rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(),   // xids_
-      n_total,                                                // n_total_
-      quorum,                                                 // quorum_
-      rusty::Cell<QuorumPolicy>::new_(QuorumPolicy::DEFAULT), // policy_
-      rusty::Cell<bool>::new_(false),                         // committed_seen_
-      rusty::Cell<int32_t>::new_(0),                          // num_leader_
-      rusty::Cell<int32_t>::new_(0),                          // n_leader_yes_
-      rusty::Cell<int32_t>::new_(0),                          // n_leader_no_
-      rusty::Cell<int64_t>::new_(0),                          // highest_term_
-      rusty::Cell<bool>::new_(false),                         // timeouted_
-      rusty::Cell<uint32_t>::new_(0),                         // leader_id_
-      rusty::Cell<int64_t>::new_(-1),                         // par_id_
-      rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(-1)), // id_
-      rrr::reactor_create_sp_event<IntEvent>(n_total));      // finalize_event_
-  event_state_seed(sp->state_);
-  return sp;
+// Authored as inline Rust DSL — the waitall_make_from construction
+// spelling, plus the §7.59 turbofish factory call for finalize_event_
+// (a variadic factory WITH an argument also lowers).
+#if RUSTYCPP_RUST
+fn quorum_event_make(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
+    let sp = rusty::Arc::<QuorumEvent>::make(
+        rusty::Cell::<EventStatus>::new(EventStatus::INIT),      // status_
+        rusty::thread::current_id(),                             // owner_thread_
+        EventState {},                                           // state_
+        rusty::Cell::<bool>::new(true),                          // prunable_
+        rusty::sync::Weak::<EventPollable>(),                    // self_
+        rusty::Cell::<i32>::new(0i32),                           // n_voted_yes_
+        rusty::Cell::<i32>::new(0i32),                           // n_voted_no_
+        rusty::RefCell::<rusty::HashMap<u16, rrr::i64>>(rusty::HashMap::<u16, rrr::i64>::new()), // xids_
+        n_total,                                                 // n_total_
+        quorum,                                                  // quorum_
+        rusty::Cell::<QuorumPolicy>::new(QuorumPolicy::DEFAULT), // policy_
+        rusty::Cell::<bool>::new(false),                         // committed_seen_
+        rusty::Cell::<i32>::new(0i32),                           // num_leader_
+        rusty::Cell::<i32>::new(0i32),                           // n_leader_yes_
+        rusty::Cell::<i32>::new(0i32),                           // n_leader_no_
+        rusty::Cell::<i64>::new(0i64),                           // highest_term_
+        rusty::Cell::<bool>::new(false),                         // timeouted_
+        rusty::Cell::<u32>::new(0u32),                           // leader_id_
+        rusty::Cell::<i64>::new(-1i64),                          // par_id_
+        rusty::Cell::<u64>::new(18446744073709551615u64),        // id_ (u64 -1)
+        rrr::reactor_create_sp_event::<IntEvent>(n_total),       // finalize_event_
+    );
+    event_state_seed(sp.state_);
+    return sp;
 }
+#endif
+/*RUSTYCPP:GEN-BEGIN id=reactor.38 version=1 rust_sha256=48aa033ae98f36241bb18f89357738d0cf2e5f94b7e73e6efbc42f80c656a3bd*/
+rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum) {
+    auto sp = rusty::Arc<QuorumEvent>::make(rusty::Cell<EventStatus>::new_(rusty::clone(rusty::clone(EventStatus::INIT))), rusty::thread::current_id(), EventState{}, rusty::Cell<bool>::new_(true), rusty::sync::Weak<EventPollable>(), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::RefCell<rusty::HashMap<uint16_t, rrr::i64>>(rusty::HashMap<uint16_t, rrr::i64>()), std::move(n_total), std::move(quorum), rusty::Cell<QuorumPolicy>::new_(rusty::clone(rusty::clone(QuorumPolicy::DEFAULT))), rusty::Cell<bool>::new_(false), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int32_t>::new_(static_cast<int32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(0)), rusty::Cell<bool>::new_(false), rusty::Cell<uint32_t>::new_(static_cast<uint32_t>(0)), rusty::Cell<int64_t>::new_(static_cast<int64_t>(-1)), rusty::Cell<uint64_t>::new_(static_cast<uint64_t>(18446744073709551615)), rrr::reactor_create_sp_event<IntEvent>(std::move(n_total)));
+    event_state_seed(std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.state_); }) { return (__r.state_); } else if constexpr (requires { (__r.state__field); }) { return (__r.state__field); } else if constexpr (requires { ((*__r).state_); }) { return ((*__r).state_); } else { return ((*__r).state__field); } }(sp)));
+    return std::move(sp);
+}
+/*RUSTYCPP:GEN-END id=reactor.38*/
 
 // @unsafe - spawns a background fiber whose mutable closure captures the
 // move-only finalize_func + a reference to `self`. Faithful port of the former
