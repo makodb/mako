@@ -17,6 +17,7 @@
 #include "sync_util.hh"
 #include "lib/common.h"
 #include <atomic>
+#include <rusty/function.hpp>
 #include "common.hh"
 #include "stdlib.h"
 
@@ -55,6 +56,15 @@ public:
 protected:
 
   typedef Box versioned_value;
+  struct table_params : public Masstree::nodeparams<15,15> {
+    typedef versioned_value* value_type;
+    typedef Masstree::value_print<value_type> value_print_type;
+    typedef threadinfo threadinfo_type;
+  };
+  typedef Masstree::basic_table<table_params> table_type;
+  typedef Masstree::unlocked_tcursor<table_params> unlocked_cursor_type;
+  typedef Masstree::tcursor<table_params> cursor_type;
+  typedef Masstree::leaf<table_params> leaf_type;
   
 public:
     typedef V write_value_type;
@@ -128,7 +138,7 @@ public:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
     /// in the original implement, throw exception to distinguish case2
-    unlocked_cursor_type lp(table_, key);
+    auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -169,7 +179,7 @@ public:
 
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
-    unlocked_cursor_type lp(table_, key);
+    auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -217,7 +227,7 @@ private:
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
     // optimization to do an unlocked lookup first
     if (SET) {
-      unlocked_cursor_type lp(table_, key);
+      auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
       bool found = lp.find_unlocked(*ti.ti);
       if (found) {
         if (compar != nullptr) {
@@ -235,7 +245,7 @@ private:
       }
     }
 
-    cursor_type lp(table_, key);
+    auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_insert(*ti.ti);
     if (found) {
       versioned_value *e = lp.value();
@@ -270,7 +280,7 @@ private:
         // add any new nodes as a result of splits, etc. to the read/absent set
 #if !ABORT_ON_WRITE_READ_CONFLICT
         for (auto&& pair : lp.new_nodes()) {
-          auto nodeitem = Sto::new_item(this, tag_inter(pair.first));
+          auto nodeitem = Sto::new_item(this, make_internode_key(pair.first));
           if (Opacity)
             nodeitem.add_read_opaque(pair.second);
           else
@@ -317,29 +327,15 @@ public:
     return size_count_;
   }
 
-  // goddammit templates/hax
-  template <typename Callback, typename V2>
-  static bool query_callback_overload(Str key, versioned_value_struct<V2> *val, Callback c) {
-    return c(key, val->read_value());
-  }
+  using RangeCallback = rusty::Function<bool(Str, value_type&)>;
+  using ValueAllocator = rusty::Function<value_type*()>;
 
-  template <typename Callback>
-  static bool query_callback_overload(Str key, versioned_str_struct *val, Callback c) {
-    return c(key, val);
+  static value_type* allocate_value(ValueAllocator* allocator) {
+    return allocator ? (*allocator)() : nullptr;
   }
-
-  // unused (we just stack alloc if no allocator is passed)
-  class DefaultValAllocator {
-  public:
-    value_type* operator()() {
-      assert(0);
-      return new value_type();
-    }
-  };
 
   // range queries
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void transQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+  void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -363,7 +359,7 @@ public:
 // #endif
       // not sure of a better way to do this
       value_type stack_val;
-      value_type& val = va ? *(*va)() : stack_val;
+      value_type& val = va ? *allocate_value(va) : stack_val;
       Version v;
       if(!atomicRead(e, v, val)){
         Sto::abort();
@@ -379,7 +375,7 @@ public:
                                           TThread::txn->get_current_term(), 
                                           sync_util::sync_logger::hist_timestamp);
       if (ret){
-        return callback(key, val);//query_callback_overload(key, val, callback);
+        return callback(key, val);
       }else {
         deleted_cnt++;
         if (deleted_cnt>10){
@@ -393,8 +389,7 @@ public:
     table_.scan(begin, true, scanner, *ti.ti);
   }
 
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void transRQuery(Str begin, Str end, Callback callback, ValAllocator *va = NULL, threadinfo_type& ti = mythreadinfo) {
+  void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -403,7 +398,7 @@ public:
       auto item = this->t_read_only_item(e);
       // not sure of a better way to do this
       value_type stack_val;
-      value_type& val = va ? *(*va)() : stack_val;
+      value_type& val = va ? *allocate_value(va) : stack_val;
 // #if READ_MY_WRITES
 //       if (has_delete(item)) {
 //         return true;
@@ -431,7 +426,7 @@ public:
                                           TThread::txn->get_current_term(), 
                                           sync_util::sync_logger::hist_timestamp);
       if (ret)
-        return callback(key, val);//query_callback_overload(key, val, callback);
+        return callback(key, val);
       else {
         deleted_cnt++;
         if (deleted_cnt>10){
@@ -446,18 +441,17 @@ public:
   }
 
 #if READ_MY_WRITES
-  template <typename Callback, typename ValAllocator>
   // for some reason inlining this/not making it a function gives a 5% slowdown on g++...
-  static __attribute__((noinline)) bool range_query_has_insert(Callback callback, Str key, versioned_value *e, ValAllocator *va) {
+  static __attribute__((noinline)) bool range_query_has_insert(RangeCallback& callback, Str key, versioned_value *e, ValueAllocator *va) {
     value_type stack_val;
-    value_type& val = va ? *(*va)() : stack_val;
+    value_type& val = va ? *allocate_value(va) : stack_val;
     assign_val(val, e->read_value());
     return callback(key, val);
   }
 #endif
 
 protected:
-  // range query class thang
+  // range query class
   template <typename Nodecallback, typename Valuecallback, bool Reverse = false>
   class range_scanner {
   public:
@@ -550,22 +544,20 @@ public:
 
   // Forward range scan over [begin, end). Callback is invoked per
   // key-value pair; return false from the callback to stop early.
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void scan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+  void scan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
             threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transQuery(begin, end, callback, va, ti);
+    transQuery(begin, end, std::move(callback), va, ti);
     Sto::commit();
   }
 
   // Reverse range scan; same contract as scan but descending order.
-  template <typename Callback, typename ValAllocator = DefaultValAllocator>
-  void rscan(Str begin, Str end, Callback callback, ValAllocator *va = NULL,
+  void rscan(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr,
              threadinfo_type& ti = mythreadinfo) {
     // @unsafe: Sto uses thread-local global transaction state.
     Sto::start_transaction();
-    transRQuery(begin, end, callback, va, ti);
+    transRQuery(begin, end, std::move(callback), va, ti);
     Sto::commit();
   }
 
@@ -583,8 +575,8 @@ public:
         return txn.try_lock(item, vv->version());
     }
   bool check(TransItem& item, Transaction&) override {
-    if (is_inter(item)) {
-      auto n = untag_inter(item.key<leaf_type*>());
+    if (has_internode_key(item)) {
+      auto n = internode_from_item(item);
       auto cur_version = n->full_version_value();
       auto read_version = item.template read_value<typename unlocked_cursor_type::nodeversion_value_type>();
       return cur_version == read_version;
@@ -606,7 +598,7 @@ public:
     header->data_size = 0; 
 
   void install(TransItem& item, Transaction& t) override {
-    assert(!is_inter(item));
+    assert(!has_internode_key(item));
     versioned_value* e = item.key<versioned_value*>();
     assert(is_locked(e->version()));
     bool isInsert = has_insert(item), isDelete = has_delete(item);
@@ -688,7 +680,7 @@ public:
   }
 
   bool remove(const Str& key, threadinfo_type& ti = mythreadinfo) {
-    cursor_type lp(table_, key);
+    auto lp = cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_locked(*ti.ti);
     // Only deallocate when the key exists: on a miss the cursor's
     // value slot is uninitialized and dereferencing it is UB.
@@ -730,7 +722,7 @@ protected:
         // copied version is going to be invalid because we just had to mark e invalid
         new_location->version() &= ~invalid_bit;
       }
-      cursor_type lp(table_, key);
+      auto lp = cursor_type::from_mutable_str(table_, key);
       // TODO: not even trying to pass around threadinfo here
       bool found = lp.find_locked(*mythreadinfo.ti);
       (void)found;
@@ -806,7 +798,7 @@ protected:
   template <typename NODE, typename VERSION>
   void ensureNotFound(NODE n, VERSION v) {
     // TODO: could be more efficient to use fresh_item here, but that will also require more work for read-then-insert
-    auto item = t_read_only_item(tag_inter(n));
+    auto item = t_read_only_item(make_internode_key(n));
     if (Opacity)
       item.add_read_opaque(v);
     else
@@ -815,7 +807,7 @@ protected:
 
   template <typename NODE, typename VERSION>
   bool updateNodeVersion(NODE *node, VERSION prev_version, VERSION new_version) {
-    if (auto node_item = Sto::check_item(this, tag_inter(node))) {
+    if (auto node_item = Sto::check_item(this, make_internode_key(node))) {
       if (node_item->has_read() &&
           prev_version == node_item->template read_value<VERSION>()) {
         node_item->update_read(node_item->template read_value<VERSION>(),
@@ -864,20 +856,35 @@ protected:
   static constexpr TransItem::flags_type insert_bit = TransItem::user0_bit;
   static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit<<1;
 
+private:
+  // @unsafe - pointer tagging stores the internode marker in the low alignment bit.
   template <typename T>
   static T* tag_inter(T* p) {
     return (T*)((uintptr_t)p | internode_bit);
   }
+  // @unsafe - clears the internode marker before the pointer is dereferenced.
   template <typename T>
   static T* untag_inter(T* p) {
     return (T*)((uintptr_t)p & ~internode_bit);
   }
+  // @unsafe - inspects the low alignment bit of a possibly tagged pointer.
   template <typename T>
   static bool is_inter(T* p) {
     return (uintptr_t)p & internode_bit;
   }
-  static bool is_inter(const TransItem& t) {
-      return is_inter(t.key<versioned_value*>());
+
+protected:
+  template <typename T>
+  static T* make_internode_key(T* node) {
+    return tag_inter(node);
+  }
+
+  static leaf_type* internode_from_item(const TransItem& item) {
+    return untag_inter(item.key<leaf_type*>());
+  }
+
+  static bool has_internode_key(const TransItem& item) {
+    return is_inter(item.key<versioned_value*>());
   }
 
   static void check_opacity(Version& v) {
@@ -938,15 +945,6 @@ protected:
     val.assign(val_to_assign.data(), val_to_assign.length());
   }
 
-  struct table_params : public Masstree::nodeparams<15,15> {
-    typedef versioned_value* value_type;
-    typedef Masstree::value_print<value_type> value_print_type;
-    typedef threadinfo threadinfo_type;
-  };
-  typedef Masstree::basic_table<table_params> table_type;
-  typedef Masstree::unlocked_tcursor<table_params> unlocked_cursor_type;
-  typedef Masstree::tcursor<table_params> cursor_type;
-  typedef Masstree::leaf<table_params> leaf_type;
   table_type table_;
   // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
   size_t size_count_{0};
@@ -957,4 +955,3 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
-

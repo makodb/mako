@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -111,16 +112,16 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   constexpr uint64_t kChurnBase = 1ull << 40;
   constexpr uint64_t kChurnPerWriter = 4096;
 
-  std::atomic<bool> stop{false};
-  std::atomic<uint64_t> reader_failures{0};
-  std::atomic<uint64_t> reader_ops{0};
+  rusty::sync::atomic::Atomic<bool> stop{false};
+  rusty::sync::atomic::Atomic<uint64_t> reader_failures{0};
+  rusty::sync::atomic::Atomic<uint64_t> reader_ops{0};
 
   auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(
       kWriters + kReaders);
   for (int w = 0; w < kWriters; ++w) {
     threads.push(rusty::thread::spawn([&, w]() {
       const uint64_t base = kChurnBase + static_cast<uint64_t>(w) * kChurnPerWriter;
-      while (!stop.load(std::memory_order_acquire)) {
+      while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
         for (uint64_t i = 0; i < kChurnPerWriter; ++i) {
           tree.insert(K(base + i), ToValue(base + i));
         }
@@ -132,7 +133,7 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
   }
   for (int r = 0; r < kReaders; ++r) {
     threads.push(rusty::thread::spawn([&]() {
-      while (!stop.load(std::memory_order_acquire)) {
+      while (!stop.load(rusty::sync::atomic::Ordering::Acquire)) {
         for (uint64_t k = 0; k < kStable; ++k) {
           TestTree::value_type out = nullptr;
           if (!tree.search(K(k), out) ||
@@ -145,7 +146,7 @@ TEST(MasstreeMemory, ReadersSurviveAggressiveWriterChurn) {
     }));
   }
   rusty::thread::sleep(std::chrono::milliseconds(2000));
-  stop.store(true, std::memory_order_release);
+  stop.store(true, rusty::sync::atomic::Ordering::Release);
   for (auto& t : threads) { auto _ = t.join(); }
 
   EXPECT_EQ(reader_failures.load(), 0u);

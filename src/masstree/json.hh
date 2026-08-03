@@ -22,7 +22,7 @@
 #define JSON_HH
 #include "straccum.hh"
 #include "str.hh"
-#include <vector>
+#include <rusty/vec.hpp>
 #include <utility>
 #include <stdlib.h>
 namespace lcdf {
@@ -96,7 +96,7 @@ class Json {
     inline Json(const std::string& x);
     inline Json(Str x);
     inline Json(const char* x);
-    template <typename T> inline Json(const std::vector<T>& x);
+    template <typename T> inline Json(const rusty::Vec<T>& x);
     template <typename T> inline Json(T first, T last);
     inline ~Json();
 
@@ -302,9 +302,11 @@ class Json {
 
     // Parsing
     inline bool assign_parse(const String& str);
+    inline bool assign_parse(const char* cstr);
     inline bool assign_parse(const char* first, const char* last);
 
     static inline Json parse(const String& str);
+    static inline Json parse(const char* cstr);
     static inline Json parse(const char* first, const char* last);
 
     // Assignment
@@ -449,7 +451,7 @@ struct Json::ObjectJson : public ComplexJson {
     ObjectItem *os_;
     int n_;
     int capacity_;
-    std::vector<int> hash_;
+    rusty::Vec<int> hash_;
     ObjectJson()
         : os_(), n_(0), capacity_(0) {
         size = 0;
@@ -1579,11 +1581,10 @@ inline Json::Json(const char* x) {
 }
 /** @brief Construct an array Json containing the elements of @a x. */
 template <typename T>
-inline Json::Json(const std::vector<T> &x) {
+inline Json::Json(const rusty::Vec<T> &x) {
     u_.a.type = j_array;
     u_.a.x = ArrayJson::make(int(x.size()));
-    for (typename std::vector<T>::const_iterator it = x.begin();
-         it != x.end(); ++it) {
+    for (const T* it = x.begin(); it != x.end(); ++it) {
         new((void*) &u_.a.x->a[u_.a.x->size]) Json(*it);
         ++u_.a.x->size;
     }
@@ -2843,7 +2844,7 @@ class Json::streaming_parser {
     };
 
     int state_;
-    std::vector<Json*> stack_;
+    rusty::Vec<Json*> stack_;
     String str_;
     Json json_;
 
@@ -2910,12 +2911,22 @@ inline bool Json::assign_parse(const String &str) {
     return assign_parse(str.begin(), str.end(), str);
 }
 
+/** @brief Parse @a cstr as UTF-8 JSON into this Json object.
+    @return true iff the parse succeeded.
+
+    An unsuccessful parse does not modify *this. */
+inline bool Json::assign_parse(const char *cstr) {
+    String source(cstr);
+    return assign_parse(source.begin(), source.end(), source);
+}
+
 /** @brief Parse [@a first, @a last) as UTF-8 JSON into this Json object.
     @return true iff the parse succeeded.
 
     An unsuccessful parse does not modify *this. */
 inline bool Json::assign_parse(const char *first, const char *last) {
-    return assign_parse(first, last, String());
+    String source(first, last);
+    return assign_parse(source.begin(), source.end(), source);
 }
 
 /** @brief Return @a str parsed as UTF-8 JSON.
@@ -2924,6 +2935,15 @@ inline bool Json::assign_parse(const char *first, const char *last) {
 inline Json Json::parse(const String &str) {
     Json j;
     (void) j.assign_parse(str);
+    return j;
+}
+
+/** @brief Return @a cstr parsed as UTF-8 JSON.
+
+    Returns a null JSON object if the parse fails. */
+inline Json Json::parse(const char *cstr) {
+    Json j;
+    (void) j.assign_parse(cstr);
     return j;
 }
 

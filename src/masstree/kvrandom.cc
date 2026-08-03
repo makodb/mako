@@ -30,7 +30,7 @@ const uint32_t kvrandom_psdes_nr::c2[] = {
     0x4B0F3B58U, 0xE874F0C3U, 0x6955C5A6U, 0x55A7CA46U
 };
 
-// @safe - only uses bitwise ops and arithmetic on stack variables, no pointers or allocations
+// @unsafe - indexes static arrays, which RustyCpp treats as pointer arithmetic
 uint32_t kvrandom_psdes_nr::psdes(uint32_t lword, uint32_t irword) {
     for (int i = 0; i < niter; ++i) {
 	uint32_t iswap = irword;

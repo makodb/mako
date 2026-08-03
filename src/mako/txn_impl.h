@@ -87,7 +87,7 @@ transaction<Protocol, Traits>::cleanup_inserted_tuple_marker(
   INVARIANT(marker->is_locked());
   INVARIANT(marker->is_lock_owner());
   typename concurrent_btree::value_type removed = 0;
-  const bool did_remove = btr->remove(varkey(key), &removed);
+  const bool did_remove = btr->remove_with_old(varkey(key), removed);
   if (unlikely(!did_remove)) {
 #ifdef CHECK_INVARIANTS
     std::cerr << " *** could not remove key: " << util::hexify(key)  << std::endl;
@@ -419,8 +419,8 @@ transaction<Protocol, Traits>::commit(bool doThrow)
             // need to unlink tuple from underlying btree, replacing
             // with ret.rest_ (atomically)
             typename concurrent_btree::value_type old_v = 0;
-            if (it->get_btree()->insert(
-                  varkey(it->get_key()), (typename concurrent_btree::value_type) ret.head_, &old_v, NULL))
+            if (it->get_btree()->insert_with_old(
+                  varkey(it->get_key()), (typename concurrent_btree::value_type) ret.head_, old_v))
               // should already exist in tree
               INVARIANT(false);
             INVARIANT(old_v == (typename concurrent_btree::value_type) tuple);
@@ -527,7 +527,7 @@ transaction<Protocol, Traits>::try_insert_new_tuple(
   // fails- this would allow us to avoid having to do another search
   typename concurrent_btree::insert_info_t insert_info;
   if (unlikely(!btr.insert_if_absent(
-          varkey(*key), (typename concurrent_btree::value_type) tuple, &insert_info))) {
+          varkey(*key), (typename concurrent_btree::value_type) tuple, insert_info))) {
     VERBOSE(std::cerr << "insert_if_absent failed for key: " << util::hexify(key) << std::endl);
     tuple->clear_latest();
     tuple->unlock();

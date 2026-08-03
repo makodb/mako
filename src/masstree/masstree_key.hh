@@ -45,45 +45,48 @@ class key {
     /** @brief Size of ikeys in bytes. */
     static constexpr int ikey_size = sizeof(ikey_type);
 
-    // @safe - default construction
-    /** @brief Construct an uninitialized key. */
-    key() {
-    }
     // @safe - initializes from string view
     /** @brief Construct a key for string @a s. */
-    key(Str s)
-        : ikey0_(string_slice<ikey_type>::make_comparable(s.s, s.len)),
-          len_(s.len), s_(s.s), first_(s.s) {
+    static key from_str(Str s) {
+        return from_chars(s.s, s.len);
     }
-    // @safe - initializes from buffer and length
+
+    // @safe - initializes from string view
+    /** @brief Construct a key for string @a s. */
+    static key from_chars(const char* s, int len) {
+        return key(string_slice<ikey_type>::make_comparable(s, len),
+                   len, s, s);
+    }
+
+    // @safe - initializes from byte buffer and length
     /** @brief Construct a key for string @a s with length @a len.
         @pre @a len >= 0 */
-    key(const char* s, int len)
-        : ikey0_(string_slice<ikey_type>::make_comparable(s, len)),
-          len_(len), s_(s), first_(s) {
+    static key from_bytes(const unsigned char* s, int len) {
+        return from_chars(reinterpret_cast<const char*>(s), len);
     }
+
     // @safe - initializes from ikey value
     /** @brief Construct a key for ikey @a ikey.
 
         Any trailing zero bytes in @a ikey are not counted towards the key's
         length. */
-    explicit key(ikey_type ikey)
-        : ikey0_(ikey),
-          len_(ikey ? ikey_size - ctz(ikey) / 8 : 0), s_(0), first_(0) {
+    static key from_ikey(ikey_type ikey) {
+        return key(ikey, ikey ? ikey_size - ctz(ikey) / 8 : 0, 0, 0);
     }
+
     // @safe - initializes from ikey value and length
     /** @brief Construct a key for ikey @a ikey with length @a len.
         @pre @a len >= 0
         @post length() >= 0 && length() <= ikey_size */
-    key(ikey_type ikey, int len)
-        : ikey0_(ikey),
-          len_(std::min(len, ikey_size)), s_(0), first_(0) {
+    static key from_ikey_len(ikey_type ikey, int len) {
+        return key(ikey, std::min(len, ikey_size), 0, 0);
     }
+
     // @safe - initializes from ikey and suffix
     /** @brief Construct a key with ikey @a ikey and suffix @a suf. */
-    key(ikey_type ikey, Str suf)
-        : ikey0_(ikey),
-          len_(ikey_size + suf.len), s_(suf.s - ikey_size), first_(s_) {
+    static key from_ikey_suffix(ikey_type ikey, Str suf) {
+        const char* first = suf.s - ikey_size;
+        return key(ikey, ikey_size + suf.len, first, first);
     }
 
     // @safe - value comparison
@@ -110,8 +113,7 @@ class key {
     /** @brief Return this key's suffix.
         @pre has_suffix() */
     Str suffix() const {
-        // @unsafe - Str constructor
-        { return Str(s_ + ikey_size, len_ - ikey_size); }
+        return Str::from_chars(s_ + ikey_size, len_ - ikey_size);
     }
     // @safe - pure arithmetic
     /** @brief Return the length of this key's suffix.
@@ -191,15 +193,14 @@ class key {
     }
     // @unsafe - calls unparse() which writes to raw buffer
     static String unparse_ikey(ikey_type ikey) {
-        key<ikey_type> k(ikey);
+        key<ikey_type> k = key<ikey_type>::from_ikey(ikey);
         return k.unparse(); // @unsafe
     }
 
     // used during scan
     // @safe - returns string view
     Str prefix_string() const {
-        // @unsafe - Str constructor
-        { return Str(first_, s_); }
+        return Str::from_range(first_, s_);
     }
     // @unsafe { pointer arithmetic on raw pointers }
     int prefix_length() const {
@@ -207,8 +208,7 @@ class key {
     }
     // @safe - returns string view
     Str full_string() const {
-        // @unsafe - Str constructor
-        { return Str(first_, s_ + len_); }
+        return Str::from_range(first_, s_ + len_);
     }
     // @safe - conversion to Str
     operator Str() const {
@@ -261,6 +261,10 @@ class key {
     }
 
   private:
+    key(ikey_type ikey, int len, const char* s, const char* first)
+        : ikey0_(ikey), len_(len), s_(s), first_(first) {
+    }
+
     ikey_type ikey0_;
     int len_;
     const char* s_;

@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include <rusty/hashset.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <rusty/thread.hpp>
 #include <rusty/vec.hpp>
 
@@ -232,7 +234,7 @@ TEST_F(MasstreeInternalsTest, ThreadPurposes) {
 TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
     const int NUM_THREADS = 4;
     auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
-    std::atomic<int> created{0};
+    rusty::sync::atomic::Atomic<int> created{0};
     auto thread_infos = rusty::Vec<threadinfo*>::with_capacity(NUM_THREADS);
     for (int i = 0; i < NUM_THREADS; ++i) thread_infos.push(nullptr);
 
@@ -269,7 +271,7 @@ TEST_F(MasstreeInternalsTest, MultithreadedThreadInfoCreation) {
 TEST_F(MasstreeInternalsTest, MultithreadedRcuOperations) {
     const int NUM_THREADS = 4;
     auto threads = rusty::Vec<rusty::thread::JoinHandle<void>>::with_capacity(NUM_THREADS);
-    std::atomic<int> completed{0};
+    rusty::sync::atomic::Atomic<int> completed{0};
 
     for (int i = 0; i < NUM_THREADS; ++i) {
         threads.push(rusty::thread::spawn([i, &completed]() {

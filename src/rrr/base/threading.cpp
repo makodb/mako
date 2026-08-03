@@ -17,6 +17,9 @@ import rrr.debugging;  // for verify
 // @safe
 export namespace rrr {
 
+#ifdef __APPLE__
+using pthread_spinlock_t = pthread_mutex_t;
+#endif
 
 // The Pthread_* wrappers below pass through a raw pointer (provided
 // by the caller) to a libc pthread_* function and `verify()` the
@@ -34,22 +37,39 @@ export namespace rrr {
 #if RUSTYCPP_RUST
 fn Pthread_spin_init(lock: *mut pthread_spinlock_t, pshared: i32) {
     // @unsafe { libc pthread_spin_init }
+#ifdef __APPLE__
+    (void) pshared;
+    { verify(pthread_mutex_init(lock, nullptr) == 0); }
+#else
     { verify(pthread_spin_init(lock, pshared) == 0); }
+#endif
 }
 
 fn Pthread_spin_lock(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_lock }
+#ifdef __APPLE__
+    { verify(pthread_mutex_lock(lock) == 0); }
+#else
     { verify(pthread_spin_lock(lock) == 0); }
+#endif
 }
 
 fn Pthread_spin_unlock(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_unlock }
+#ifdef __APPLE__
+    { verify(pthread_mutex_unlock(lock) == 0); }
+#else
     { verify(pthread_spin_unlock(lock) == 0); }
+#endif
 }
 
 fn Pthread_spin_destroy(lock: *mut pthread_spinlock_t) {
     // @unsafe { libc pthread_spin_destroy }
+#ifdef __APPLE__
+    { verify(pthread_mutex_destroy(lock) == 0); }
+#else
     { verify(pthread_spin_destroy(lock) == 0); }
+#endif
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=threading.pthread_spin version=1 rust_sha256=2beea7b64b35e14d0fc3301e572e477dc6f5792d62795118122329b24336b3be*/

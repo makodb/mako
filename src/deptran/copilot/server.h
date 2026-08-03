@@ -4,7 +4,6 @@
 #include "../constants.h"
 #include "../scheduler.h"
 #include "../classic/tpc_command.h"
-#include <stack>
 
 #define REVERSE(p) (1 - (p))
 
@@ -49,8 +48,38 @@ struct KeyValue {
   i32 value;
 };
 
+class CopilotStack {
+ public:
+  bool empty() const {
+    return items_.empty();
+  }
+
+  void push(const shared_ptr<CopilotData>& item) {
+    items_.push_back(item);
+  }
+
+  void push(shared_ptr<CopilotData>&& item) {
+    items_.push_back(std::move(item));
+  }
+
+  shared_ptr<CopilotData>& top() {
+    return items_.back();
+  }
+
+  const shared_ptr<CopilotData>& top() const {
+    return items_.back();
+  }
+
+  void pop() {
+    items_.pop_back();
+  }
+
+ private:
+  vector<shared_ptr<CopilotData> > items_;
+};
+
 class CopilotServer : public TxLogServer {
-  using copilot_stack_t = std::stack<shared_ptr<CopilotData> >;
+  using copilot_stack_t = CopilotStack;
   using visited_map_t = std::map<shared_ptr<CopilotData>, bool>;
  private:
   uint16_t id_;

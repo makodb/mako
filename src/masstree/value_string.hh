@@ -112,10 +112,10 @@ inline unsigned value_string::index_last_offset(index_type idx) {
 
 inline lcdf::Str value_string::col(index_type idx) const {
     if (idx == 0)
-        return Str(s_, vallen_);
+        return Str::from_chars(s_, vallen_);
     else {
         unsigned off = std::min(vallen_, index_offset(idx));
-        return Str(s_ + off, std::min(vallen_ - off, index_length(idx)));
+        return Str::from_chars(s_ + off, std::min(vallen_ - off, index_length(idx)));
     }
 }
 
@@ -199,7 +199,7 @@ inline value_string* value_string::checkpoint_read(PARSER& par,
 
 template <typename UNPARSER>
 inline void value_string::checkpoint_write(UNPARSER& unpar) const {
-    unpar << Str(s_, vallen_);
+    unpar << Str::from_chars(s_, vallen_);
 }
 
 #endif

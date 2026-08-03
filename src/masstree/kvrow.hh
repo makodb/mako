@@ -25,7 +25,7 @@
 #include "json.hh"
 #include <algorithm>
 #include <rusty/ptr.hpp>
-
+#include <rusty/vec.hpp>
 #if MASSTREE_ROW_TYPE_ARRAY
 # include "value_array.hh"
 typedef value_array row_type;
@@ -43,7 +43,7 @@ typedef value_bag<uint16_t> row_type;
 template <typename R>
 struct query_helper {
     // @safe - Returns rusty::Ptr (borrow-checked pointer type)
-    inline rusty::Ptr<R> snapshot(rusty::Ptr<R> row, const std::vector<typename R::index_type>&, threadinfo&) {
+    inline rusty::Ptr<R> snapshot(rusty::Ptr<R> row, const rusty::Vec<typename R::index_type>&, threadinfo&) {
         return row;
     }
 };
@@ -78,7 +78,7 @@ class query {
     }
 
   private:
-    std::vector<typename R::index_type> f_;
+    rusty::Vec<typename R::index_type> f_;
     loginfo::query_times qtimes_;
     query_helper<R> helper_;
     lcdf::String scankey_;
@@ -102,11 +102,11 @@ template <typename R>
 // @unsafe { Accesses row columns via pointer snapshot }
 void query<R>::emit_fields(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
     rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
-    if (f_.empty()) {
+    if (f_.is_empty()) {
         for (int i = 0; i != snapshot->ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(i)));
     } else {
-        for (int i = 0; i != (int) f_.size(); ++i)
+        for (int i = 0; i != (int) f_.len(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
     }
 }
@@ -115,13 +115,13 @@ template <typename R>
 // @unsafe { Accesses row columns via pointer snapshot }
 void query<R>::emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
     rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
-    if ((f_.empty() && snapshot->ncol() == 1) || f_.size() == 1)
-        req = lcdf::String::make_stable(snapshot->col(f_.empty() ? 0 : f_[0]));
-    else if (f_.empty()) {
+    if ((f_.is_empty() && snapshot->ncol() == 1) || f_.len() == 1)
+        req = lcdf::String::make_stable(snapshot->col(f_.is_empty() ? 0 : f_[0]));
+    else if (f_.is_empty()) {
         for (int i = 0; i != snapshot->ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(i)));
     } else {
-        for (int i = 0; i != (int) f_.size(); ++i)
+        for (int i = 0; i != (int) f_.len(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
     }
 }
@@ -130,7 +130,7 @@ void query<R>::emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
 template <typename R> template <typename T>
 // @unsafe { Traverses Masstree via unlocked cursor, accesses row values }
 void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
-    typename T::unlocked_cursor_type lp(table, req[2].as_s());
+    auto lp = T::unlocked_cursor_type::from_mutable_str(table, req[2].as_s());
     bool found = lp.find_unlocked(ti);
     if (found && row_is_marker(lp.value()))
         found = false;
@@ -146,7 +146,7 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
 template <typename R> template <typename T>
 // @unsafe { Traverses Masstree via unlocked cursor, returns column value }
 bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) {
-    typename T::unlocked_cursor_type lp(table, key);
+    auto lp = T::unlocked_cursor_type::from_mutable_str(table, key);
     bool found = lp.find_unlocked(ti);
     if (found && row_is_marker(lp.value()))
         found = false;
@@ -157,14 +157,14 @@ bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) 
 
 
 template <typename R>
-// @safe - updates timestamp via threadinfo
+// @unsafe - calls threadinfo::update_timestamp, which mutates timestamp state
 inline void query<R>::assign_timestamp(threadinfo& ti) {
     qtimes_.ts = ti.update_timestamp();
     qtimes_.prev_ts = 0;
 }
 
 template <typename R>
-// @safe - updates timestamp via threadinfo with minimum
+// @unsafe - calls threadinfo::update_timestamp, which mutates timestamp state
 inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
     qtimes_.ts = ti.update_timestamp(min_ts);
     qtimes_.prev_ts = min_ts;
@@ -176,7 +176,7 @@ template <typename R> template <typename T>
 result_t query<R>::run_put(T& table, Str key,
                            const Json* firstreq, const Json* lastreq,
                            threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
         ti.observe_phantoms(lp.node());
@@ -219,7 +219,7 @@ inline bool query<R>::apply_put(rusty::MutPtr<R>& value, bool found, const Json*
 template <typename R> template <typename T>
 // @unsafe { Uses cursor to find/insert, replaces raw row data }
 result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
         ti.observe_phantoms(lp.node());
@@ -252,7 +252,7 @@ inline bool query<R>::apply_replace(rusty::MutPtr<R>& value, bool found, Str new
 template <typename R> template <typename T>
 // @unsafe { Uses locked cursor, frees row via RCU }
 bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
-    typename T::cursor_type lp(table, key);
+    auto lp = T::cursor_type::from_mutable_str(table, key);
     bool found = lp.find_locked(ti);
     if (found)
         apply_remove(lp.value(), lp.node()->phantom_epoch_[0], ti);
@@ -323,7 +323,7 @@ void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
     for (int i = 4; i != request.size(); ++i)
-        f_.push_back(request[i].as_i());
+        f_.push(request[i].as_i());
     query_json_scanner<R> scanf(*this, request);
     table.scan(scanf.firstkey(), true, scanf, ti);
 }
@@ -334,7 +334,7 @@ void query<R>::run_rscan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
     for (int i = 4; i != request.size(); ++i)
-        f_.push_back(request[i].as_i());
+        f_.push(request[i].as_i());
     query_json_scanner<R> scanf(*this, request);
     table.rscan(scanf.firstkey(), true, scanf, ti);
 }

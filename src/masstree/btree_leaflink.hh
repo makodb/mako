@@ -20,6 +20,7 @@
 #ifndef BTREE_LEAFLINK_HH
 #define BTREE_LEAFLINK_HH 1
 #include "compiler.hh"
+#include <rusty/ptr.hpp>
 
 /** @brief Operations to manage linked lists of B+tree leaves.
 
@@ -33,20 +34,45 @@ template <typename N, bool CONCURRENT = N::concurrent> struct btree_leaflink {};
 // operations.
 template <typename N> struct btree_leaflink<N, true> {
   private:
-    static inline N *mark(N *n) {
+    typedef rusty::MutPtr<N> node_ptr;
+
+    // @unsafe - tags raw leaf pointers by setting the low address bit
+    static inline node_ptr mark(node_ptr n) {
         return reinterpret_cast<N *>(reinterpret_cast<uintptr_t>(n) + 1);
     }
-    static inline bool is_marked(N *n) {
+    // @unsafe - inspects low-bit tag on raw leaf pointer representation
+    static inline bool is_marked(node_ptr n) {
         return reinterpret_cast<uintptr_t>(n) & 1;
     }
+
+    // @unsafe - reads the raw linked-list next pointer
+    static inline node_ptr next_ptr(node_ptr n) {
+        return n->next_.ptr;
+    }
+
+    // @unsafe - writes the raw linked-list next pointer
+    static inline void set_next(node_ptr n, node_ptr next) {
+        n->next_.ptr = next;
+    }
+
+    // @unsafe - writes the raw linked-list prev pointer
+    static inline void set_prev(node_ptr n, node_ptr prev) {
+        n->prev_ = prev;
+    }
+
+    // @unsafe - CAS over the raw linked-list next pointer
+    static inline bool cas_next(node_ptr n, node_ptr expected, node_ptr desired) {
+        return bool_cmpxchg(&n->next_.ptr, expected, desired);
+    }
+
     template <typename SF>
     // @unsafe - manipulates raw next pointers with CAS
-    static inline N *lock_next(N *n, SF spin_function) {
+    static inline node_ptr lock_next(node_ptr n, SF spin_function) {
         while (1) {
-            N *next = n->next_.ptr;
+            node_ptr next = next_ptr(n);
             if (!next
                 || (!is_marked(next)
-                    && bool_cmpxchg(&n->next_.ptr, next, mark(next))))
+                    && cas_next(n, next, mark(next))))
                 return next;
             spin_function();
         }
@@ -60,19 +86,20 @@ template <typename N> struct btree_leaflink<N, true> {
         valid, even if @a n's successor is deleted concurrently. */
     // @unsafe - mutates linked list pointers without borrow tracking
     // @unsafe - raw pointer rewiring without concurrency support
-    static void link_split(N *n, N *nr) {
+    static void link_split(node_ptr n, node_ptr nr) {
         link_split(n, nr, relax_fence_function());
     }
     /** @overload */
     template <typename SF>
-    static void link_split(N *n, N *nr, SF spin_function) {
-        nr->prev_ = n;
-        N *next = lock_next(n, spin_function);
-        nr->next_.ptr = next;
+    // @unsafe - rewires raw leaf links and publishes with compiler fences
+    static void link_split(node_ptr n, node_ptr nr, SF spin_function) {
+        set_prev(nr, n);
+        node_ptr next = lock_next(n, spin_function);
+        set_next(nr, next);
         if (next)
-            next->prev_ = nr;
+            set_prev(next, nr);
         fence();
-        n->next_.ptr = nr;
+        set_next(n, nr);
     }
 
     /** @brief Unlink @a n from the list.
@@ -82,48 +109,55 @@ template <typename N> struct btree_leaflink<N, true> {
         splits and deletes. */
     // @unsafe - rewires prev/next pointers of raw leaves
     // @unsafe - raw unlink operation
-    static void unlink(N *n) {
+    static void unlink(node_ptr n) {
         unlink(n, relax_fence_function());
     }
     /** @overload */
     template <typename SF>
-    static void unlink(N *n, SF spin_function) {
+    // @unsafe - rewires raw leaf links using CAS and compiler fences
+    static void unlink(node_ptr n, SF spin_function) {
         // Assume node order A <-> N <-> B. Since n is locked, n cannot split;
         // next node will always be B or one of its successors.
-        N *next = lock_next(n, spin_function);
-        N *prev;
+        node_ptr next = lock_next(n, spin_function);
+        node_ptr prev;
         while (1) {
             prev = n->prev_;
-            if (bool_cmpxchg(&prev->next_.ptr, n, mark(n)))
+            if (cas_next(prev, n, mark(n)))
                 break;
             spin_function();
         }
         if (next)
-            next->prev_ = prev;
+            set_prev(next, prev);
         fence();
-        prev->next_.ptr = next;
+        set_next(prev, next);
     }
 };
 
 
 // This is the single-threaded-only fast version of btree_leaflink.
 template <typename N> struct btree_leaflink<N, false> {
-    static void link_split(N *n, N *nr) {
+    typedef rusty::MutPtr<N> node_ptr;
+
+    // @unsafe - delegates to raw single-threaded leaf link rewiring
+    static void link_split(node_ptr n, node_ptr nr) {
         link_split(n, nr, do_nothing());
     }
     template <typename SF>
-    static void link_split(N *n, N *nr, SF) {
+    // @unsafe - rewires raw prev/next leaf links without borrow tracking
+    static void link_split(node_ptr n, node_ptr nr, SF) {
         nr->prev_ = n;
         nr->next_.ptr = n->next_.ptr;
         n->next_.ptr = nr;
         if (nr->next_.ptr)
             nr->next_.ptr->prev_ = nr;
     }
-    static void unlink(N *n) {
+    // @unsafe - delegates to raw single-threaded leaf unlink rewiring
+    static void unlink(node_ptr n) {
         unlink(n, do_nothing());
     }
     template <typename SF>
-    static void unlink(N *n, SF) {
+    // @unsafe - rewires raw prev/next leaf links without borrow tracking
+    static void unlink(node_ptr n, SF) {
         if (n->next_.ptr)
             n->next_.ptr->prev_ = n->prev_;
         n->prev_->next_.ptr = n->next_.ptr;

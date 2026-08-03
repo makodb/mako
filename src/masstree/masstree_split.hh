@@ -52,7 +52,7 @@ leaf<P>::ikey_after_insert(const permuter_type& perm, int i,
     nr and no other keys were moved). */
 template <typename P>
 // @unsafe { Redistributes keys via assign_initialize(), modifies permutation }
-int leaf<P>::split_into(leaf<P>* nr, int p, const key_type& ka,
+int leaf<P>::split_into(rusty::MutPtr<leaf<P>> nr, int p, const key_type& ka,
                         ikey_type& split_ikey, threadinfo& ti)
 {
     // B+tree leaf insertion.
@@ -115,8 +115,8 @@ int leaf<P>::split_into(leaf<P>* nr, int p, const key_type& ka,
 
 template <typename P>
 // @unsafe { Uses shift_from()/assign() for key redistribution, modifies parent }
-int internode<P>::split_into(internode<P> *nr, int p, ikey_type ka,
-                             node_base<P> *value, ikey_type& split_ikey,
+int internode<P>::split_into(rusty::MutPtr<internode<P>> nr, int p, ikey_type ka,
+                             rusty::MutPtr<node_base<P>> value, ikey_type& split_ikey,
                              int split_type)
 {
     // B+tree internal node insertion.
@@ -187,8 +187,8 @@ bool tcursor<P>::make_split(threadinfo& ti)
         }
     }
 
-    node_type* n = n_;
-    node_type* child = leaf_type::make(n_->ksuf_used_capacity(), n_->phantom_epoch(), ti);
+    rusty::MutPtr<node_type> n = n_;
+    rusty::MutPtr<node_type> child = leaf_type::make(n_->ksuf_used_capacity(), n_->phantom_epoch(), ti);
     child->assign_version(*n_);
     ikey_type xikey[2];
     int split_type = n_->split_into(static_cast<leaf_type *>(child),
@@ -197,12 +197,12 @@ bool tcursor<P>::make_split(threadinfo& ti)
 
     while (1) {
         masstree_invariant(!n->concurrent || (n->locked() && child->locked() && (n->isleaf() || n->splitting())));
-        internode_type *next_child = 0;
+        rusty::MutPtr<internode_type> next_child = 0;
 
-        internode_type *p = n->locked_parent(ti);
+        rusty::MutPtr<internode_type> p = n->locked_parent(ti);
 
         if (!n->parent_exists(p)) {
-            internode_type *nn = internode_type::make(ti);
+            rusty::MutPtr<internode_type> nn = internode_type::make(ti);
             nn->child_[0] = n;
             nn->assign(0, xikey[sense], child);
             nn->nkeys_ = 1;
@@ -231,8 +231,8 @@ bool tcursor<P>::make_split(threadinfo& ti)
         }
 
         if (n->isleaf()) {
-            leaf_type *nl = static_cast<leaf_type *>(n);
-            leaf_type *nr = static_cast<leaf_type *>(child);
+            rusty::MutPtr<leaf_type> nl = static_cast<leaf_type *>(n);
+            rusty::MutPtr<leaf_type> nr = static_cast<leaf_type *>(child);
             permuter_type perml(nl->permutation_);
             int width = perml.size();
             perml.set_size(width - nr->size());

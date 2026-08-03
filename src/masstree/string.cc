@@ -53,7 +53,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <inttypes.h>
-
+#include <rusty/vec.hpp>
 import std;
 namespace lcdf {
 
@@ -298,7 +298,7 @@ String_generic::hashcode(const char *s, int len)
 #undef get16
 #if !HAVE_INDIFFERENT_ALIGNMENT
     } else {
-# if !__i386__ && !__x86_64__ && !__arch_um__
+# if WORDS_BIGENDIAN
 #  define get16(p) (((unsigned char) (p)[0] << 8) + (unsigned char) (p)[1])
 # else
 #  define get16(p) ((unsigned char) (p)[0] + ((unsigned char) (p)[1] << 8))
@@ -430,8 +430,8 @@ bool String_generic::glob_match(const char* sbegin, int slen,
         else
             return false;
 
-    std::vector<const char*> state, nextstate;
-    state.push_back(pbegin);
+    rusty::Vec<const char*> state, nextstate;
+    state.push(pbegin);
 
     for (const char* s = sbegin; s != send && state.size(); ++s) {
         nextstate.clear();
@@ -440,13 +440,13 @@ bool String_generic::glob_match(const char* sbegin, int slen,
               reswitch:
                 switch (**pp) {
                   case '?':
-                    nextstate.push_back(*pp + 1);
+                    nextstate.push(*pp + 1);
                     break;
                   case '*':
                     if (*pp + 1 == pend)
                         return true;
-                    if (nextstate.empty() || nextstate.back() != *pp)
-                        nextstate.push_back(*pp);
+                    if (nextstate.is_empty() || nextstate.back() != *pp)
+                        nextstate.push(*pp);
                     ++*pp;
                     goto reswitch;
                   case '\\':
@@ -473,17 +473,17 @@ bool String_generic::glob_match(const char* sbegin, int slen,
                           goto normal_char;
 
                       if (found == !negated)
-                          nextstate.push_back(ec + 1);
+                          nextstate.push(ec + 1);
                       break;
                   }
                   normal_char:
                   default:
                     if (**pp == *s)
-                        nextstate.push_back(*pp + 1);
+                        nextstate.push(*pp + 1);
                     break;
                 }
             }
-        state.swap(nextstate);
+        state = std::move(nextstate);
     }
 
     for (const char** pp = state.data(); pp != state.data() + state.size(); ++pp) {
