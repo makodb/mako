@@ -25,19 +25,11 @@ import rrr.basetypes;
 // `// @unsafe` overrides.
 export namespace rrr {
 
-// @unsafe - inline `rdtsc` / aarch64 `mrs` asm.
+// The cycle-counter read lives in srpc_timing.c now (plain C, Goal-0 C
+// demotion — inline asm will never be Rust DSL).
+extern "C" uint64_t srpc_rdtsc_raw(void);
 inline uint64_t rdtsc() {
-#if defined(__i386__) || defined(__x86_64__)
-  uint32_t hi, lo;
-  __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-  return (((uint64_t)hi) << 32) | ((uint64_t)lo);
-#elif defined(__aarch64__)
-  uint64_t val;
-  __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
-  return val;
-#else
-  return 0;
-#endif
+  return srpc_rdtsc_raw();
 }
 
 // Authored as inline Rust DSL — multi-parameter fn templates lower

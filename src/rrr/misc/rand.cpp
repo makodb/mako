@@ -243,22 +243,11 @@ pthread_once_t randgen_delete_key_once = PTHREAD_ONCE_INIT;
 
 int randgen_nu_constant = 0;
 
-// @unsafe - inline `rdtsc` asm + clock_gettime syscall.
+// The cycle-counter read lives in srpc_timing.c now (plain C, Goal-0 C
+// demotion — inline asm will never be Rust DSL).
+extern "C" std::uint64_t srpc_rdtsc(void);
 unsigned long long randgen_rdtsc() {
-#if defined(__APPLE__)
-    return static_cast<unsigned long long>(mach_absolute_time());
-#elif defined(__x86_64__) || defined(__i386__)
-    unsigned int lo, hi;
-    __asm__ __volatile__("rdtsc" : "=a" (lo), "=d" (hi));
-    return ((unsigned long long)hi << 32) | lo;
-#elif defined(__clang__) && __has_builtin(__builtin_readcyclecounter)
-    return static_cast<unsigned long long>(__builtin_readcyclecounter());
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (static_cast<unsigned long long>(ts.tv_sec) << 32) ^
-           static_cast<unsigned long long>(ts.tv_nsec);
-#endif
+    return static_cast<unsigned long long>(srpc_rdtsc());
 }
 
 #if defined(__APPLE__) || defined(__clang__)

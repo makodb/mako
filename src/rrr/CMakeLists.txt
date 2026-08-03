@@ -115,6 +115,7 @@ if(NOT TARGET rrr)
     # them); the C++ modules keep thin type-converting shims.
     target_sources(rrr PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/rpc/srpc_connect.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/misc/srpc_timing.c
     )
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.
